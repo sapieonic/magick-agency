@@ -46,8 +46,8 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   //
   // `agency_call_attempts` is the audit spine (one row
   // per dial), and these routes are what read it. The aggregate counters on
-  // `/stats` cannot answer per-number questions, and `/app/calls/dialer/history`
-  // is a CALL list that structurally cannot show an attempt which never
+  // `/stats` cannot answer per-number questions, and a CALL list structurally
+  // cannot show an attempt which never
   // connected, a suppressed contact, or a disposition. A supervisor needs not
   // only "Manas stopped the campaign at 14:22" but "we dialled this number four
   // times and Ravi marked it Not Interested" — and the second is what a
@@ -149,9 +149,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
 
   // ── The agency-native call read ──────────────────────────────
   //
-  // Without this surface the agency workspace would have to link its attempt rows
-  // to a generic call page outside `AgencyLayout`, with the campaign context and
-  // the list the reader came from both gone.
+  // Without this surface the console would have to link a campaign's attempt rows
+  // to a generic call page outside the campaign's pages, with the campaign context
+  // and the list the reader came from both gone.
   //
   // It reaches the call through the ATTEMPT, which is the right spine for it: the
   // attempt is what the reader clicked, it is campaign-scoped (so ownership is

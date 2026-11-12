@@ -72,7 +72,7 @@ describe('the mark-DNC confirmation names the campaign', () => {
 
     expect(message()).toContain('+919820041772');
     // The default option is campaign-scoped; only the escalation may say this.
-    expect(message()).not.toContain('any campaign in this workspace');
+    expect(message()).not.toContain('any campaign in this organisation');
   });
 });
 

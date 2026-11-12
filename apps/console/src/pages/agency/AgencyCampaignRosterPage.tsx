@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Download, ListChecks, RefreshCw, RotateCcw, Search, Upload, UserPlus, Users } from 'lucide-react';
+import { AlertCircle, Download, ListChecks, RefreshCw, RotateCcw, Search, Upload, UserPlus, Users } from 'lucide-react';
+import { phoneFilterDraftError, phoneFilterUsable } from '../../utils/agencyCampaignAttemptParams';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignContacts } from '../../api/agencySpine';
@@ -34,13 +36,13 @@ import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
+  PHONE_FILTER_PLACEHOLDER,
   ROSTER_DESCRIPTION,
   SPINE_PRIVACY_NOTE,
   dispositionLabel,
   exportTruncationNotice,
   formatSpineTimestamp,
 } from '../../utils/agencySpineCopy';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -140,6 +142,7 @@ export function AgencyCampaignRosterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign, 'contacts');
   const [rows, setRows] = useState<AgencyRosterContact[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   /** The server's exact count of the filtered roster (`?include_total=1`), or null without one. */
@@ -172,6 +175,8 @@ export function AgencyCampaignRosterPage() {
     () => filters.last_disposition ?? [],
   );
   const [draftPhone, setDraftPhone] = useState(() => filters.phone ?? '');
+  /** Apply was pressed on a phone filter with no digit: say so even for a bare "+". */
+  const [phoneChecked, setPhoneChecked] = useState(false);
   const [draftAssignees, setDraftAssignees] = useState<string[]>(() => filters.assigned_to ?? []);
   const [retryOpen, setRetryOpen] = useState(false);
 
@@ -393,6 +398,11 @@ export function AgencyCampaignRosterPage() {
   }, [id, filters, campaign, tenantId, accountId, showToast, showErrorToast]);
 
   const applyFilters = useCallback(() => {
+    // A phone filter with no digit is refused by the server: said under the field, not sent.
+    if (!phoneFilterUsable(draftPhone)) {
+      setPhoneChecked(true);
+      return;
+    }
     applyToUrl({
       // The two filters only a link sets (no control on this form) are kept, so
       // Apply narrows an Insights drill-down rather than silently undoing it.
@@ -411,6 +421,8 @@ export function AgencyCampaignRosterPage() {
   }, [applyToUrl]);
 
   const filtered = useMemo(() => isRosterFiltered(filters), [filters]);
+  // The server's rule (a phone filter needs a digit), said before Apply, as on the call log.
+  const phoneError = phoneFilterDraftError(draftPhone, phoneChecked);
 
   const linkChips = useMemo(() => rosterLinkFilterChips(filters), [filters]);
   const removeLinkChip = useCallback((chipId: string) => {
@@ -457,13 +469,6 @@ export function AgencyCampaignRosterPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Contacts' },
-        ]}
-      />
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
@@ -675,16 +680,28 @@ export function AgencyCampaignRosterPage() {
                 type="text"
                 className={spine.fieldInput}
                 value={draftPhone}
-                placeholder="Whole number, or the last few digits"
-                onChange={(e) => setDraftPhone(e.target.value)}
+                placeholder={PHONE_FILTER_PLACEHOLDER}
+                aria-invalid={phoneError !== null || undefined}
+                aria-describedby={phoneError !== null ? 'roster-phone-unusable' : undefined}
+                onChange={(e) => {
+                  setDraftPhone(e.target.value);
+                  if (phoneFilterUsable(e.target.value)) setPhoneChecked(false);
+                }}
               />
             </span>
           </label>
         </div>
 
         <div className={spine.filterFooter}>
+          {/* The call log's rule and words (`phoneFilterDraftError`), so the two pages agree. */}
+          {phoneError !== null && (
+            <p className={spine.filterError} role="alert" id="roster-phone-unusable" data-testid="roster-phone-unusable">
+              <AlertCircle size={13} aria-hidden="true" />
+              {phoneError}
+            </p>
+          )}
           <div className={spine.filterActions}>
-            <button type="button" className="btn-primary" onClick={applyFilters}>Apply</button>
+            <button type="button" className="btn-primary" onClick={applyFilters} disabled={phoneError !== null}>Apply</button>
             {filtered && (
               <button type="button" className="btn-secondary" onClick={clearFilters}>Clear</button>
             )}

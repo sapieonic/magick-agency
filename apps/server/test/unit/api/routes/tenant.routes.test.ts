@@ -222,7 +222,7 @@ describe('tenant.routes — path id must match the proven tenant', () => {
         const res = await app.inject({ method: 'GET', url: `/tenants/${THEIRS}/members` });
 
         expect(res.statusCode).toBe(404);
-        expect(res.json()).toEqual({ error: 'Not Found', message: 'Tenant not found' });
+        expect(res.json()).toEqual({ error: 'Not Found', message: 'Organisation not found' });
         expect(mocks.findByTenantIdWithUser).not.toHaveBeenCalled();
         await app.close();
       });
@@ -233,7 +233,7 @@ describe('tenant.routes — path id must match the proven tenant', () => {
       const res = await app.inject({ method: 'GET', url: `/tenants/${THEIRS}/members` });
 
       expect(res.statusCode).toBe(404);
-      expect(res.json()).toEqual({ error: 'Not Found', message: 'Tenant not found' });
+      expect(res.json()).toEqual({ error: 'Not Found', message: 'Organisation not found' });
       expect(mocks.findByTenantIdWithUser).not.toHaveBeenCalled();
       await app.close();
     });

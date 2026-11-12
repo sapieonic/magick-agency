@@ -56,6 +56,7 @@ import type {
   AgencyInsightsAllocation,
   AgencyInsightsAllocationRow,
 } from '@magick-agency/contracts/api/agency/insights';
+import { attentionStaffing, type AgencyAttentionStaffing } from '@magick-agency/contracts/api/agency/home';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { platformAuditRepository } from '@magick-agency/db/repositories/platform/audit.repository';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
@@ -70,6 +71,7 @@ import { callbackCodes } from '../../db/repositories/agency/assignment-sql.js';
 import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { localDayEnd } from '../calling-hours.js';
 import { actorOf, iso, reconcile, successCodes } from './shared.js';
+import { insightsCache, insightsCacheKey } from './cache.js';
 
 /** A due backlog at least this many times the staffed average is "high". */
 export const IMBALANCE_HIGH_FACTOR = 1.5;
@@ -93,6 +95,25 @@ export const ALLOCATION_CHECKS = {
 type Totals = AgencyInsightsAllocation['totals'];
 
 const AGENT_STATES: ReadonlySet<string> = new Set(['offline', 'available', 'reserved', 'on_call', 'wrapup', 'break']);
+
+/** An agent's state on the allocation: their joined session's (`agentStates`), `offline` when none. */
+function agentStateOf(states: ReadonlyMap<string, string>, id: string): AgencyAgentState {
+  const state = states.get(id);
+  return (state && AGENT_STATES.has(state) ? state : 'offline') as AgencyAgentState;
+}
+
+/**
+ * The allocation's staffing, alone (Home's board, every board for a moving campaign): the same two
+ * reads and the same state rule as {@link computeAllocation}'s agent rows, counted by
+ * `attentionStaffing`, so it equals `attentionStaffing(allocation.agents)` for the same rows.
+ */
+export async function campaignStaffing(campaign: AgencyCampaignRecord): Promise<AgencyAttentionStaffing> {
+  const [staffing, states] = await Promise.all([
+    agencyCampaignAgentRepository.listActiveForCampaign(campaign.id, campaign.tenant_id),
+    agencyInsightsReadRepository.agentStates(campaign.id),
+  ]);
+  return attentionStaffing(staffing.map((s) => ({ staffed: true, state: agentStateOf(states, s.user_id) })));
+}
 
 function emptyCounts(uid: string | null): OwnerCounts {
   return {
@@ -167,6 +188,15 @@ async function history(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAl
   });
 }
 
+/**
+ * The allocation as every caller reads it: through the insights cache (`cache.ts`), under the one
+ * key the allocation route and the activity read share, so they never compute it twice for the
+ * same campaign state.
+ */
+export function cachedAllocation(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAllocation> {
+  return insightsCache.get(insightsCacheKey('allocation', campaign), () => computeAllocation(campaign));
+}
+
 export async function computeAllocation(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAllocation> {
   const now = new Date();
   const absentAfter = AGENCY_ASSIGNMENT_ABSENT_AFTER_MINUTES;
@@ -198,12 +228,11 @@ export async function computeAllocation(campaign: AgencyCampaignRecord): Promise
   const agents: AgencyInsightsAllocationRow[] = ids.map((id) => {
     const c = byOwner.get(id) ?? emptyCounts(id);
     const session = presence.get(id);
-    const state = states.get(id);
     return {
       agent_user_id: id,
       agent_name: names.get(id) ?? null,
       staffed: staffed.has(id),
-      state: (state && AGENT_STATES.has(state) ? state : 'offline') as AgencyAgentState,
+      state: agentStateOf(states, id),
       last_seen_at: iso(session?.last_seen_at ?? null),
       ...columns(c, counters.get(id) ?? NO_ATTEMPTS),
       due_while_absent: agentAbsent(session, nowMs, absentAfter) ? c.due_now : 0,

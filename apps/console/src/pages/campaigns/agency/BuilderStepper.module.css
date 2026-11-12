@@ -109,9 +109,17 @@
   }
 }
 
+/*
+  A phone: only the current step keeps its label, and its item keeps the width that label needs
+  (the others, bare numbers, share what is left). Sharing equally cut "Basics" to "Bas…".
+*/
 @container stepper (max-width: 520px) {
   .labelShort {
     display: none;
+  }
+
+  .item[data-current='true'] {
+    flex: 0 0 auto;
   }
 
   .step[data-current='true'] .labelShort {

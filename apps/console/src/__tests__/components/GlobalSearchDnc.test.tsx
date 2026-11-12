@@ -5,10 +5,11 @@ import { MemoryRouter } from 'react-router-dom';
 /**
  * How the Do Not Call list presents itself in the command palette.
  *
- * The palette is reached from inside the `/app` zone, where no shell tells the
- * reader which surface a result belongs to — so the entry's own words are the
- * only scope it has. `compliance` and `opt out` were keywords on it, which made
- * the palette answer a wider question with an agency-only page.
+ * It used to be "Agency Do Not Call", because the palette opened inside a second shell where
+ * nothing said which surface a result belonged to. There is one shell now (B28), and the sidebar
+ * and the page both say "Do Not Call", so the palette does too. What stays: `compliance` and
+ * `opt out` are not words for it, because the list binds the dialler only and someone typing
+ * those is asking a wider question than this page answers.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -43,31 +44,31 @@ function openPalette() {
   });
   render(
     <MemoryRouter>
-      <GlobalSearch />
+      <GlobalSearch open onOpenChange={() => {}} />
     </MemoryRouter>,
   );
-  fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
-  return screen.getByRole('dialog', { name: /Quick navigation/i });
+  return screen.getByRole('dialog', { name: 'Search' });
 }
 
 function search(dialog: HTMLElement, query: string) {
-  fireEvent.change(within(dialog).getByLabelText('Search pages'), { target: { value: query } });
+  fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: query } });
 }
 
+const dnc = (dialog: HTMLElement) => within(dialog).queryByRole('option', { name: /^Do Not Call/ });
+
 describe('the Do Not Call entry', () => {
-  it('names the product it belongs to', () => {
+  it('reads as the sidebar names it', () => {
     const dialog = openPalette();
-    expect(within(dialog).getByText('Agency Do Not Call')).toBeTruthy();
+    expect(dnc(dialog)).not.toBeNull();
   });
 
   it('is still found by the words an operator actually types', () => {
-    // Narrowing the entry must not make it unfindable — someone looking for the
-    // suppression list has to land on it.
+    // Someone looking for the suppression list has to land on it.
     for (const query of ['do not call', 'dnc', 'suppress', 'blocklist']) {
       cleanup();
       const dialog = openPalette();
       search(dialog, query);
-      expect(within(dialog).getByText('Agency Do Not Call'), query).toBeTruthy();
+      expect(dnc(dialog), query).not.toBeNull();
     }
   });
 
@@ -77,12 +78,12 @@ describe('the Do Not Call entry', () => {
     // honours it. Only agency dialling does.
     const dialog = openPalette();
     search(dialog, 'compliance');
-    expect(within(dialog).queryByText('Agency Do Not Call')).toBeNull();
+    expect(dnc(dialog)).toBeNull();
   });
 
   it('is not offered as the answer to "opt out" either', () => {
     const dialog = openPalette();
     search(dialog, 'opt out');
-    expect(within(dialog).queryByText('Agency Do Not Call')).toBeNull();
+    expect(dnc(dialog)).toBeNull();
   });
 });

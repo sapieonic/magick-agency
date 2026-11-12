@@ -113,7 +113,7 @@ void main() {
 
     test('says when no reason was recorded, and a workspace-wide entry as such', () {
       final facts = factsOf(describeDncRefusal(dnc(scope: 'tenant', reason: null), number: '+919820461733', calendar: ist));
-      expect(facts['Listed for'], 'Every campaign and account in this workspace');
+      expect(facts['Listed for'], 'Every campaign and account in this organisation');
       expect(facts['Reason'], 'No reason was recorded');
     });
 

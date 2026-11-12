@@ -3,23 +3,25 @@ import { ChevronRight, TriangleAlert } from 'lucide-react';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { formatDate } from '@magick-agency/web-ui/format';
 import { listWorkedRing } from '../../../utils/agency/overview/pulse';
-import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { stallCopy } from '../../../utils/agencyHealthStrip';
-import { formatCount } from '../../../utils/format/number';
+import { activeCardFigures, concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
-import { readyStats, type StatsState } from './useCampaignsHome';
+import { readyStats, type CardState } from './useActiveCards';
 import styles from '../AgencyCampaignsPage.module.css';
 
-function figure(value: number | undefined): string {
-  return typeof value === 'number' ? formatCount(value) : '—';
-}
-
-export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampaign; state: StatsState }) {
+/**
+ * One active campaign: its status, the health strip's top diagnosis, its calls in progress, who is
+ * on its floor, who was reached of the dials placed, what is still waiting to dial, its
+ * abandonment over the guardrail's 24 hours against its ceiling, its place in the account's line
+ * limit and how much of its list is worked. The numbers are Home's board's (`useActiveCards`).
+ */
+export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampaign; state: CardState }) {
   const stats = readyStats(state);
   const dialing = campaign.status === 'running';
-  const worked = listWorkedRing(stats);
   const stall = stats?.stall ? stallCopy(stats.stall, formatDate) : null;
+  const figures = activeCardFigures(stats);
+  const worked = listWorkedRing(stats);
   // Its live calls against its share of the account's lines, when other campaigns run too.
   const lines = concurrencyLine(campaign.status, stats?.concurrency);
   const href = `/agency/campaigns/${campaign.id}`;
@@ -59,16 +61,21 @@ export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampai
       ) : (
         <>
           <dl className={styles.metrics}>
-            <Metric label="Calls in progress" value={figure(stats?.attempts_live)} />
-            <Metric label="Agents on the floor" value={figure(stats?.agents_live)} />
+            <Metric label="Calls in progress" value={figures.callsLive} />
+            <Metric label="Agents on the floor" value={figures.agentsLive} />
+            {/* A call being connected to an agent counts as on a call, as on Home's floor. */}
+            <Metric label="On a call" value={figures.onCall} />
+            <Metric label="Available" value={figures.available} />
             {/* "Reached someone", as on the detail page: `attempts_connected`
                 counts answering machines too. A person is `human_connects`. */}
+            <Metric label="Reached someone" value={figures.reached} sub={`of ${figures.dials} dials`} />
+            <Metric label="Waiting to dial" value={figures.waiting} />
             <Metric
-              label="Reached someone"
-              value={figure(stats?.attempts_connected)}
-              sub={`of ${figure(stats?.attempts_total)} dials`}
+              label="Abandoned (24h)"
+              value={figures.abandonment.text}
+              sub={figures.abandonment.sub}
+              tone={figures.abandonment.level}
             />
-            <Metric label="Waiting to dial" value={figure(stats?.contacts_pending)} />
           </dl>
 
           {/* Not a live region either, for the headline's reason above. */}
@@ -107,11 +114,21 @@ export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampai
   );
 }
 
-function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Metric({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string | null;
+  tone?: 'near' | 'over' | null;
+}) {
   return (
     <div className={styles.metric}>
       <dt className={styles.metricLabel}>{label}</dt>
-      <dd className={styles.metricValue}>
+      <dd className={`${styles.metricValue} ${tone ? styles[`metric_${tone}`] : ''}`} data-tone={tone ?? undefined}>
         {value}
         {sub && <span className={styles.metricSub}>{sub}</span>}
       </dd>

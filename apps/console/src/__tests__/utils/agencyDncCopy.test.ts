@@ -34,7 +34,7 @@ describe('the campaign-scoped default states its (narrower) scope before the age
     expect(message).toContain('Renewals');
     // The default option must NOT claim the wider scope — that overstatement is
     // exactly what the tenant-wide escalation exists to keep out of the default.
-    expect(message).not.toContain('any campaign in this workspace');
+    expect(message).not.toContain('any campaign in this organisation');
   });
 
   it('says it cannot be undone from the console, and who can', () => {
@@ -48,7 +48,7 @@ describe('the tenant-wide escalation states the wider scope and its permanence',
   it('names the number and the workspace-wide, permanent effect', () => {
     const hint = dncTenantConfirmHint('+919820041772');
     expect(hint).toContain('+919820041772');
-    expect(hint).toContain('any campaign in this workspace');
+    expect(hint).toContain('any campaign in this organisation');
     expect(hint).toContain('permanently');
   });
 
@@ -64,7 +64,7 @@ describe('the tenant-wide escalation states the wider scope and its permanence',
 describe('the outcome promises only what the response promised', () => {
   it('the campaign-scoped mark never claims the wider, workspace-wide scope', () => {
     const copy = dncOutcomeCopy(response({ dnc_recorded: true }), 'campaign');
-    expect(copy).not.toContain('No campaign in this workspace');
+    expect(copy).not.toContain('No campaign in this organisation');
     expect(copy).toContain('this campaign');
   });
 
@@ -100,23 +100,23 @@ describe('the outcome promises only what the response promised', () => {
     expect(copy).toContain('new upload');
     expect(copy).toContain('check the list');
     // It must not silently borrow the tenant-wide arm's wording either.
-    expect(copy).not.toContain('No campaign in this workspace');
+    expect(copy).not.toContain('No campaign in this organisation');
     expect(copy).not.toContain('workspace Do Not Call list');
   });
 
   it('the tenant-wide mark claims the workspace-wide scope once the list write landed', () => {
     const copy = dncOutcomeCopy(response({ dnc_recorded: true }), 'tenant');
-    expect(copy).toContain('in this workspace will dial it again');
+    expect(copy).toContain('in this organisation will dial it again');
   });
 
   it('the tenant-wide mark narrows the claim to AGENCY dialing (Q2)', () => {
-    // The unqualified "no campaign in this workspace will dial it again" is the
+    // The unqualified "no campaign in this organisation will dial it again" is the
     // sentence `DncPage` narrowed away from: the dial-time gate lives in the API's
     // `agency/pre-dial-gates.ts` and nothing else consults it, so the
     // widest true claim is every agency campaign. This is the copy an AGENT reads
     // and may repeat to the customer, so it must be no wider than the page's.
     const copy = dncOutcomeCopy(response({ dnc_recorded: true }), 'tenant');
-    expect(copy).toContain('No agency campaign in this workspace');
+    expect(copy).toContain('No agency campaign in this organisation');
   });
 
   it('the tenant-wide mark WEAKENS to this campaign only while the list write is in flight', () => {
@@ -125,7 +125,7 @@ describe('the outcome promises only what the response promised', () => {
     // not confirmed. An agent may repeat this sentence to the customer.
     const copy = dncOutcomeCopy(response({ dnc_recorded: false }), 'tenant');
     expect(copy).toContain('this campaign');
-    expect(copy).not.toContain('No campaign in this workspace');
+    expect(copy).not.toContain('No campaign in this organisation');
     // And it says how to be sure, rather than leaving the gap unnamed.
     expect(copy).toContain('check the list');
   });

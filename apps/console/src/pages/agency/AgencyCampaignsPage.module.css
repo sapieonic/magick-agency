@@ -212,6 +212,11 @@ a.liveOpen {
   background: var(--bg-secondary);
 }
 
+/* An odd tile out (seven figures) spans the row rather than leaving a hole in the grid. */
+.metric:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .metricLabel {
   font-size: 12px;
   color: var(--text-muted);
@@ -235,6 +240,15 @@ a.liveOpen {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
+}
+
+/* Abandonment in the meter's warning band, or over the ceiling: Home's floor's tones. */
+.metric_near {
+  color: var(--warning);
+}
+
+.metric_over {
+  color: var(--danger);
 }
 
 .progress {
@@ -556,63 +570,6 @@ a.liveOpen {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.shortcuts {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 -8px -8px;
-}
-
-.shortcut {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px;
-  border-radius: var(--radius);
-  text-decoration: none;
-  transition: background var(--transition);
-}
-
-.shortcut:hover {
-  background: var(--bg-tertiary);
-}
-
-.shortcutIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius);
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
-}
-
-.shortcutText {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.shortcutLabel {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.shortcutHint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.shortcutChevron {
-  flex-shrink: 0;
   color: var(--text-muted);
 }
 

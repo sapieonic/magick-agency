@@ -1,8 +1,14 @@
+import { PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY } from '@magick-agency/contracts/api/platform/audit';
 import { describe, expect, it } from 'vitest';
 import { TELEPHONY_PROVIDER_ALIASES } from '@magick-agency/web-ui/telephonyProviders';
 import {
   CONFIG_FIELD_LABEL,
+  activityDetailKeyLabel,
   activityDetailSummary,
+  activityDetailValue,
+  activityTargetLabel,
+  activityTargetPath,
+  isActivityId,
   formatActivityTimestamp,
   partialNotice,
   retentionNotice,
@@ -123,6 +129,12 @@ describe('formatActivityTimestamp', () => {
 
     expect(rendered).toMatch(/\d{1,2}:\d{2}:\d{2}/);
     expect(rendered).toMatch(/[A-Z]{2,5}|GMT|UTC/);
+  });
+
+  // The run's locale is en-US (vite.config.ts), so a formatter that follows the browser
+  // prints `Aug 1, 2026, 11:00:07 AM UTC` here and fails.
+  it('uses the console display locale, not the browser one', () => {
+    expect(formatActivityTimestamp('2026-08-01T11:00:07.000Z')).toBe('1 Aug 2026, 11:00:07 am UTC');
   });
 
   it('falls back to the raw value rather than rendering "Invalid Date"', () => {
@@ -407,5 +419,52 @@ describe('the config-change summary is vendor-free and id-free for every setting
       const alias = TELEPHONY_PROVIDER_ALIASES[slug]!;
       expect(summary).toBe(`Changed carrier (${alias} → ${alias}).`);
     }
+  });
+});
+
+describe('History row words', () => {
+  it('names a record type, and an unknown one as "Record", never its code', () => {
+    expect(activityTargetLabel('agency_manual_call')).toBe('Soft-phone call');
+    expect(activityTargetLabel('agency_session')).toBe('Agent session');
+    expect(activityTargetLabel('call')).toBe('Call');
+    expect(activityTargetLabel('something_new')).toBe('Record');
+    expect(activityTargetLabel(null)).toBe('Record');
+  });
+
+  it('names every audit resource type as the Audit Log filter does (the contract’s labels)', () => {
+    for (const { value, label } of PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY) {
+      expect(activityTargetLabel(value), value).toBe(label);
+    }
+    expect(activityTargetLabel('agency_disposition')).toBe('Call outcome');
+    expect(activityTargetLabel('agency_campaign_agent')).toBe('Agent assignment');
+    expect(activityTargetLabel('dnc_entry')).toBe('Do Not Call entry');
+  });
+
+  it('opens a call, a contact and a soft-phone call on their own pages; nothing else', () => {
+    expect(activityTargetPath({ type: 'agency_attempt', id: 'a1' }, 'c1', true)).toBe('/agency/campaigns/c1/attempts/a1');
+    expect(activityTargetPath({ type: 'agency_disposition', id: 'a1' }, 'c1', true)).toBe('/agency/campaigns/c1/attempts/a1');
+    expect(activityTargetPath({ type: 'agency_contact', id: 'k1' }, 'c1', true)).toBe('/agency/campaigns/c1/contacts/k1');
+    expect(activityTargetPath({ type: 'agency_manual_call', id: 'm1' }, 'c1', true)).toBe('/agency/softphone/calls/m1');
+    expect(activityTargetPath({ type: 'agency_session', id: 's1' }, 'c1', true)).toBeNull();
+    expect(activityTargetPath({ type: 'agency_attempt', id: null }, 'c1', true)).toBeNull();
+    // The soft-phone call page is behind its flag; off, the row is not linked to it.
+    expect(activityTargetPath({ type: 'agency_manual_call', id: 'm1' }, 'c1', false)).toBeNull();
+    expect(activityTargetPath({ type: 'agency_attempt', id: 'a1' }, 'c1', false)).toBe('/agency/campaigns/c1/attempts/a1');
+  });
+
+  it('names a detail key in words, a known one by name and any other in sentence case', () => {
+    expect(activityDetailKeyLabel('session_id')).toBe('Agent session');
+    expect(activityDetailKeyLabel('dnc_entry_id')).toBe(activityTargetLabel('dnc_entry'));
+    expect(activityDetailKeyLabel('dnc_entry_id')).toBe('Do Not Call entry');
+    expect(activityDetailKeyLabel('call_id')).toBe('Call');
+    expect(activityDetailKeyLabel('retry_count')).toBe('Retry count');
+  });
+
+  it('reads a flag as yes or no and spots an id', () => {
+    expect(activityDetailValue(true)).toBe('Yes');
+    expect(activityDetailValue(false)).toBe('No');
+    expect(activityDetailValue(3)).toBe('3');
+    expect(isActivityId('8c1dab83-bba7-477c-abad-1271ba787ddc')).toBe(true);
+    expect(isActivityId('not an id')).toBe(false);
   });
 });

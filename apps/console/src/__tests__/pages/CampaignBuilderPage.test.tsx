@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import type { AgencyColumnAnalysis, AgencyIngestJob } from '../../types/agency-campaign';
 
 /**
@@ -502,5 +502,84 @@ describe('the stepper does not tick a step nobody has been to', () => {
     expect(tickOf('When to call')).toBe('true');
     // The step never opened stays untouched, which is the whole distinction.
     expect(tickOf('How agents work')).toBeNull();
+  });
+});
+
+/**
+ * A roster picked and waiting for its columns to be mapped is input the builder would lose:
+ * leaving then asks, even with the name and numbers taken back off.
+ */
+describe('leaving the builder mid-upload', () => {
+  function JumpAway() {
+    const navigate = useNavigate();
+    return <button type="button" onClick={() => navigate('/agency/campaigns')}>Jump</button>;
+  }
+
+  it('asks while a roster waits for its mapping', async () => {
+    const { default: CampaignBuilderPage } = await import(
+      '../../pages/campaigns/agency/CampaignBuilderPage'
+    );
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/new']}>
+        <Routes>
+          <Route path="/agency/campaigns/new" element={<CampaignBuilderPage />} />
+          <Route path="*" element={<p>Campaigns list</p>} />
+        </Routes>
+        <JumpAway />
+      </MemoryRouter>,
+    );
+    fillBasics();
+    goToStep('Who to call');
+    const input = screen.getByLabelText('CSV file') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['Cust Mobile\n9820041772\n'], 'c.csv', { type: 'text/csv' })] } });
+    await screen.findByLabelText('Use Cust Mobile as');
+    // No draft yet (it is created when the import starts): take the basics back off.
+    goToStep('Name & numbers');
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
+    expect(mocks.createAgencyCampaign).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  Once a roster upload has created the draft, Save campaign is a PATCH. A rename (or new
+  numbers) on Basics after the upload has to ride on it, or the server keeps the old name while
+  the page counts nothing unsaved and lets the person leave.
+*/
+describe('basics changed after the roster upload created the draft', () => {
+  async function importThenBack() {
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
+    goToStep('Name & numbers');
+  }
+  const patchBody = () => mocks.updateAgencyCampaign.mock.calls.at(-1)![1] as Record<string, unknown>;
+
+  it('sends the new name on Save campaign, and not the numbers or carrier that did not move', async () => {
+    await importThenBack();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections Q4 ' } });
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
+    expect(patchBody().name).toBe('Collections Q4');
+    expect(patchBody()).not.toHaveProperty('caller_ids');
+    expect(patchBody()).not.toHaveProperty('telephony_provider');
+  });
+
+  it('sends no basics when none moved since the draft was created', async () => {
+    await importThenBack();
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(patchBody()).not.toHaveProperty('name');
+    expect(patchBody()).not.toHaveProperty('caller_ids');
+    expect(patchBody()).not.toHaveProperty('telephony_provider');
   });
 });

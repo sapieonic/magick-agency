@@ -694,7 +694,7 @@ describe('AgentConsolePage — the join conflict', () => {
    * ── The dead end this screen used to be ────────────────────────────────────
    *
    * It returns before the header, so there is no `StationMenu`, no nav and no
-   * sidebar — the console is full-viewport, outside `AppLayout`. An assigned
+   * sidebar — the console is full-viewport, outside the console shell. An assigned
    * agent whose campaign is paused is refused here, and `/app`, `/` and the
    * catch-all all resolve their assignment and return them to this same screen.
    * The only escape was a query param nobody can be expected to know.

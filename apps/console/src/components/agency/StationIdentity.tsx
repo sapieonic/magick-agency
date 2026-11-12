@@ -1,5 +1,5 @@
-import { agentInitials } from '../../utils/agencyAgentRoster';
 import { stationAgentLabel } from '../../utils/agencyStationIdle';
+import { UserAvatar } from '../common/UserAvatar';
 import styles from './StationIdentity.module.css';
 
 export interface StationIdentityUser {
@@ -11,8 +11,8 @@ export interface StationIdentityUser {
 /**
  * Who is on this station, in the header.
  *
- * The console is full-viewport and outside every shell, so there is no TopBar
- * avatar to read. A shared seat, a supervisor covering a shift, or an agent
+ * The console is full-viewport and outside every shell, so there is no profile
+ * menu to read. A shared seat, a supervisor covering a shift, or an agent
  * who just sat down at the next desk all need the same fact: whose session
  * this is. Display-only — a button here would compete with the station menu
  * beside it, and one of those items ends the session.
@@ -28,13 +28,10 @@ export function StationIdentity({
   subline: string;
 }) {
   const name = stationAgentLabel(user);
-  const initials = agentInitials(name);
 
   return (
     <div className={styles.wrap} data-testid="station-identity">
-      <span className={styles.avatar} aria-hidden="true">
-        {user?.avatar_url ? <img src={user.avatar_url} alt="" /> : initials}
-      </span>
+      <UserAvatar user={user} size="md" />
       <div className={styles.text}>
         <span className={styles.name}>{name}</span>
         <span className={styles.subline}>{subline}</span>

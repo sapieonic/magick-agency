@@ -26,10 +26,10 @@ import styles from './AgentPerformancePage.module.css';
 /**
  * "My performance" — one agent's own numbers, at `/dialer/performance`.
  *
- * ── Full-viewport and OUTSIDE both shells ──────────────────────────────────
+ * ── Full-viewport and OUTSIDE the console shell ────────────────────────────
  * For exactly the reason `/station` and `/dialer` are. An `agent` is hierarchy
- * level 5 and inherits no navigation: `AppLayout`'s nav floors at `viewer` and
- * `AgencyLayout`'s entries do too, so either shell would render its chrome around
+ * level 5 and inherits no navigation: the console shell's entries floor at
+ * `viewer`, so the shell would render its chrome around
  * nothing's *"that is not navigation, it is noise"*. The route therefore
  * sits beside `/dialer` in `App.tsx`, gated identically (`RequireAuth` +
  * `RequireCapability capability="agency"` + `RequireFlag
@@ -68,13 +68,13 @@ import styles from './AgentPerformancePage.module.css';
  * dials behind, and the two questions are one conversation. Both pages therefore
  * carry a link to the other in the one piece of chrome they have.
  *
- * ── Deliberately absent from `GlobalSearch` and from `AgencySidebar` ───────
+ * ── Deliberately absent from `GlobalSearch` and from the console sidebar ───
  * The house rule is that a new page joins `GlobalSearch`'s list. This one does
  * not, and the exception is the same rule as above rather than an oversight:
- * `GlobalSearch` lives in `TopBar`, inside `AppLayout`, so the only people who
+ * `GlobalSearch` lives in the console shell, so the only people who
  * could ever find this through it are the roles that have a shell — and every one
  * of those is a supervisor or above, who must not be SENT here. A dedicated
- * `agent` never renders `AppLayout` at all, so an entry would be invisible to the
+ * `agent` never renders that shell at all, so an entry would be invisible to the
  * only person it is for. The link on `AgentHomePage` is the entry point, and it
  * is the one screen every agent passes through.
  *
@@ -236,7 +236,7 @@ function AgentPerformanceWorkspace() {
         persona === 'supervisor' ? (
           <>
             These are your own calls. For your team’s, open{' '}
-            <Link to="/agency/analytics">Analytics</Link> in the campaigns workspace.
+            <Link to="/agency/analytics">Analytics</Link> under Reports.
           </>
         ) : undefined
       }

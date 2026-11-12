@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act, fireEvent, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
@@ -104,6 +105,18 @@ async function renderList() {
 }
 
 describe('Soft-phone calls (the account list)', () => {
+  it('links to the soft phone’s settings', async () => {
+    await renderList();
+    const link = screen.getByRole('link', { name: 'Soft phone settings' });
+    expect(link.getAttribute('href')).toBe('/settings/softphone');
+  });
+
+  it('does not offer the soft phone’s settings without the `agency` capability', async () => {
+    mocks.isEnabled.mockImplementation((c: string) => c !== 'agency');
+    await renderList();
+    expect(screen.queryByRole('link', { name: 'Soft phone settings' })).toBeNull();
+  });
+
   it('opens on today, account-wide, newest first', async () => {
     await renderList();
     const query = mocks.listManualCalls.mock.calls[0]![0];
@@ -196,6 +209,14 @@ describe('Soft-phone calls (the account list)', () => {
     expect(screen.queryByTestId('summary-status')).toBeNull();
   });
 
+  it('gives the number filter a hint short enough to read whole in its column', async () => {
+    // "Whole number, or the last few digits" was cut to "Whole number, or the last f"
+    // in the 180px-minimum filter column. The hint is the call logs' shared one.
+    await renderList();
+    const input = screen.getByLabelText('Phone number') as HTMLInputElement;
+    expect(input.placeholder).toBe('Number or last digits');
+  });
+
   it('refuses an inverted date range before it is sent', async () => {
     await renderList();
     fireEvent.change(screen.getByTestId('filter-from'), { target: { value: '2026-10-31' } });
@@ -265,7 +286,12 @@ describe('a campaign’s Manual calls', () => {
     await act(async () => {});
     expect(mocks.listManualCalls.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1' });
     expect(screen.queryByTestId('filter-campaign')).toBeNull();
-    expect(screen.getByTestId('campaign-tab-manual').getAttribute('aria-current')).toBe('page');
+    // A view of Call log since IN14: the bar marks Call log, the views mark this one.
+    expect(screen.getByTestId('campaign-tab-attempts').getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
+    expect(screen.getByTestId('call-log-view-manual').getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Call log');
   });
 });
 
@@ -301,9 +327,11 @@ const MEDIA: WebRtcCallRecord = {
 async function renderDetail() {
   render(
     <MemoryRouter initialEntries={['/agency/softphone/calls/mc-tag']}>
-      <Routes>
-        <Route path="/agency/softphone/calls/:callId" element={<SoftphoneCallDetailPage />} />
-      </Routes>
+      <WithPageCrumbs>
+        <Routes>
+          <Route path="/agency/softphone/calls/:callId" element={<SoftphoneCallDetailPage />} />
+        </Routes>
+      </WithPageCrumbs>
     </MemoryRouter>,
   );
   await act(async () => {});
@@ -339,8 +367,9 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/Listed on12 Oct 2026/);
     expect(document.body.textContent).not.toContain('dnc-1');
     // The trail goes back through the campaign the call was logged to.
-    const trail = within(screen.getByRole('navigation', { name: 'Breadcrumb' }));
-    expect(trail.getByRole('link', { name: 'Home Loan Renewals' }).getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
+    expect(suppliedCrumbs()).toMatch(
+      /^Soft-phone calls→\/agency\/softphone \/ Home Loan Renewals→\/agency\/campaigns\/camp-1\/manual-calls \/ .+/,
+    );
   });
 
   it('names the supervisor who saved an outcome on the agent’s behalf, and says only what it knows without a name', async () => {

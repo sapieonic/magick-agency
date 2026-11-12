@@ -32,7 +32,7 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 
 import { ExportReportButton, mayExport, type ExportEntryTarget } from '../../components/agency/reports/ExportReportButton';
-import { AgencySidebar } from '../../components/layout/AgencySidebar';
+import { tabBarFor, visibleSections, type GateInput } from '../../utils/consoleNav';
 import { AgentNav } from '../../components/agency/AgentNav';
 
 const AGENT_TARGET: ExportEntryTarget = { kind: 'agent', subject: { id: 'agent-9', name: 'Priya S' } };
@@ -129,29 +129,26 @@ describe('ExportReportButton', () => {
 });
 
 describe('navigation', () => {
-  const sidebarLinks = () =>
-    screen.queryAllByRole('link').map((a) => (a.textContent ?? '').trim());
+  const gates = (role: string, reports: boolean): GateInput => ({
+    role: role as GateInput['role'],
+    isFlagEnabled: (f) => f === 'agency_dialer_enabled' || (reports && f === 'agency_reports_enabled'),
+    isCapabilityEnabled: () => true,
+  });
+  const reportTabs = (role: string, reports: boolean) =>
+    tabBarFor('/agency/analytics', gates(role, reports))?.tabs.map((t) => [t.label, t.to]) ?? [];
 
-  it('the agency sidebar offers Reports only while the flag is on', () => {
-    as('account_admin', true);
-    const { unmount } = render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(sidebarLinks()).toContain('Reports');
-    expect(screen.getByRole('link', { name: 'Reports' }).getAttribute('href')).toBe('/agency/reports');
-    unmount();
-
-    as('account_admin', false);
-    render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(sidebarLinks()).not.toContain('Reports');
+  it('the console groups Exports (the reports page) beside Analytics only while the flag is on', () => {
+    expect(reportTabs('account_admin', true)).toEqual([
+      ['Analytics', '/agency/analytics'],
+      ['Exports', '/agency/reports'],
+    ]);
+    expect(reportTabs('account_admin', false)).toEqual([]);
   });
 
-  it('the agency sidebar offers a viewer Reports (their own runs) but never a dedicated agent', () => {
-    as('viewer', true);
-    const { unmount } = render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(sidebarLinks()).toContain('Reports');
-    unmount();
-    as('agent', true);
-    render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(sidebarLinks()).toEqual([]);
+  it('the console offers a viewer Exports (their own runs) but never a dedicated agent', () => {
+    expect(reportTabs('viewer', true).map(([label]) => label)).toContain('Exports');
+    // A dedicated agent is offered only the way back to the dialler.
+    expect(visibleSections(gates('agent', true)).map((s) => s.section.id)).toEqual(['dialer']);
   });
 
   it('the agent nav offers My reports only while the flag is on', () => {

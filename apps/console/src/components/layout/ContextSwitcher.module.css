@@ -1,0 +1,109 @@
+/* The sidebar's context block (decision B28): the tenant and account lines share this shape and
+   differ only in size and colour, set by a modifier on the trigger (`.tenant`, `.account`). */
+.switcher {
+  position: relative;
+  width: 100%;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 2px 4px;
+  cursor: pointer;
+  min-height: auto;
+  transition: all var(--transition);
+}
+
+button.trigger:hover {
+  background: var(--bg-tertiary);
+}
+
+.triggerIcon {
+  flex-shrink: 0;
+}
+
+.triggerName {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triggerChevron {
+  width: 14px;
+  height: 14px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  transition: transform var(--transition);
+}
+
+.triggerChevronOpen {
+  transform: rotate(180deg);
+}
+
+/* The tenant line: small and muted. */
+.tenant {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tenant .triggerIcon {
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+}
+
+/* The account line: in bold under the tenant. */
+.account {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.account .triggerIcon {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+/*
+ * The narrowed-account-list warning. Shown only when `GET /accounts` failed for a
+ * reason that was NOT a permission refusal, so the switcher above may be missing
+ * accounts the user has access to.
+ *
+ * Deliberately understated — it is a caveat on a control, not an outage. Warning
+ * colour and a click target, no red, no animation: the user can still work, and the
+ * only action on offer is "try again".
+ */
+.degraded {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--warning);
+  font-size: 0.7rem;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.degraded:hover {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.degradedIcon {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex-shrink: 0;
+}

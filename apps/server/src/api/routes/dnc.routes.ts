@@ -4,7 +4,7 @@ import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
-import { dncService, DNC_ADD_MAX_NUMBERS } from '../../dnc/dnc.service.js';
+import { dncPhoneSearch, dncService, DNC_ADD_MAX_NUMBERS } from '../../dnc/dnc.service.js';
 import { DNC_SOURCES, dncScopeLabel, dncScopeUuid } from '../../dnc/dnc.repository.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
@@ -72,6 +72,11 @@ const addSchema = z.object({
  * campaign — is the single most useful filter here.
  */
 const listSchema = z.object({
+  /**
+   * Typed text: a whole number in any common form, its last digits (at least 4), or a `+` (or
+   * `00`) number cut short (`dncPhoneSearch`; too few digits is a 400 `search_too_short`, or
+   * `search_prefix_too_short` for a `+` number short of its calling code and 4 more digits).
+   */
   phone: z.string().min(1).max(40).optional(),
   account_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
   campaign_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
@@ -158,9 +163,15 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     }
     const effectiveAccountId = callerAccountId !== null ? callerAccountId : requestedAccountId;
 
+    // Too few digits is refused rather than run: one digit read a tenth of the list.
+    const phone = q.phone !== undefined ? dncPhoneSearch(q.phone) : undefined;
+    if (phone && !phone.ok) {
+      return reply.code(400).send({ error: 'Bad Request', code: phone.code, message: phone.message });
+    }
+
     const { entries, total } = await dncService.list({
       tenantId: request.tenantId!,
-      ...(q.phone !== undefined ? { phone: q.phone } : {}),
+      ...(phone ? { phone: phone.search } : {}),
       ...(effectiveAccountId !== undefined ? { accountId: effectiveAccountId } : {}),
       ...(scopeFilter(q.campaign_id) !== undefined ? { campaignId: scopeFilter(q.campaign_id) } : {}),
       ...(q.source !== undefined ? { source: q.source } : {}),

@@ -21,6 +21,11 @@ vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../hooks/usePermission', () => ({ usePermission: mocks.usePermission }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    memberships: [{ tenant_id: 'tenant-1', account_id: null, role: 'tenant_admin', status: 'active' }],
+  }),
+}));
 vi.mock('../../api/users', () => ({
   inviteUser: mocks.inviteUser,
   updateUserRole: mocks.updateUserRole,
@@ -29,6 +34,7 @@ vi.mock('../../api/users', () => ({
 vi.mock('../../analytics/events', () => ({ trackSetupEvent: vi.fn() }));
 
 import TeamPage from '../../pages/team/TeamPage';
+import { ROLE_DESCRIPTIONS } from '../../pages/team/teamRoles';
 
 function makeMember(overrides?: {
   role?: TenantMember['membership']['role'];
@@ -110,7 +116,7 @@ describe('TeamPage — member actions menu (overflow clip regression)', () => {
     const menu = screen.getByRole('menu', { name: 'Member actions' });
     expect(menu).toBeTruthy();
     expect(menu.parentElement).toBe(document.body);
-    expect(screen.getByRole('menuitem', { name: /Change Role/i })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Change role/i })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: /^Remove$/i })).toBeTruthy();
 
     // Fixed positioning is applied so the menu escapes overflow containers.
@@ -193,7 +199,7 @@ describe('TeamPage — the agent role is offered in both pickers', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Member actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /Change Role/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
 
     expect(screen.getByRole('menuitem', { name: /^Agent$/i })).toBeTruthy();
   });
@@ -293,5 +299,112 @@ describe('TeamPage — invite column', () => {
     // has its own `status`, and super-admin's tenant-members table already
     // renders a green "Active" under a header by that name.
     expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull();
+  });
+});
+
+/**
+ * Dismissal (QA team:ux:31465a4f9b): Escape did nothing, and the only way out was a click whose
+ * first press a full-screen backdrop swallowed, so Invite member needed two clicks.
+ */
+describe('TeamPage — closing the member actions menu', () => {
+  function openMenu() {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Member actions' });
+    fireEvent.click(trigger);
+    expect(screen.getByRole('menu', { name: 'Member actions' })).toBeTruthy();
+    return trigger;
+  }
+
+  it('closes on Escape and gives focus back to the ⋮ button', () => {
+    const trigger = openMenu();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Member actions' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('closes on Escape with Change role open too', () => {
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Member actions' })).toBeNull();
+  });
+
+  it('puts nothing over the page but the menu, so a click outside reaches its target', () => {
+    // The old backdrop was a second portaled element covering the viewport. happy-dom does no
+    // hit testing, so the click below would pass with it; this is what pins that it is gone.
+    const trigger = openMenu();
+    const menu = screen.getByRole('menu', { name: 'Member actions' });
+    // Everything in <body> except the page's own render root.
+    const portaled = Array.from(document.body.children).filter((el) => !el.contains(trigger));
+    expect(portaled).toEqual([menu]);
+  });
+
+  it('a press on Invite member closes the menu, and the same click opens the invite', () => {
+    openMenu();
+    const invite = screen.getAllByRole('button', { name: /Invite member/i })[0]!;
+    fireEvent.mouseDown(invite);
+    expect(screen.queryByRole('menu', { name: 'Member actions' })).toBeNull();
+    fireEvent.click(invite);
+    expect(screen.getByRole('dialog', { name: 'Invite team member' })).toBeTruthy();
+  });
+
+  it('stays open for a press inside it', () => {
+    openMenu();
+    fireEvent.mouseDown(screen.getByRole('menuitem', { name: /Change role/i }));
+    expect(screen.getByRole('menu', { name: 'Member actions' })).toBeTruthy();
+  });
+});
+
+/**
+ * What each role can do, where it is picked (decision AA7): under the invite's Role select, and
+ * on each Change role option. The page guide says the same as the table: viewers and operators
+ * can both take calls, and the whole tenant is "the organisation".
+ */
+describe('TeamPage — roles say what they can do', () => {
+  it('describes the role picked in the invite, and follows the pick', () => {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }));
+    const role = screen.getByLabelText('Role') as HTMLSelectElement;
+    const description = () => screen.getByTestId('invite-role-description');
+    expect(document.getElementById(role.getAttribute('aria-describedby')!)).toBe(description());
+    fireEvent.change(role, { target: { value: 'agent' } });
+    expect(description().textContent).toBe(ROLE_DESCRIPTIONS.agent);
+    fireEvent.change(role, { target: { value: 'viewer' } });
+    expect(description().textContent).toBe(ROLE_DESCRIPTIONS.viewer);
+    expect(screen.getByRole('option', { name: 'All accounts (whole organisation)' })).toBeTruthy();
+  });
+
+  it('describes each role Change role offers', () => {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Member actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
+    const operator = screen.getByRole('menuitem', { name: 'Operator' });
+    expect(operator.getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(operator.getAttribute('aria-describedby')!)?.textContent).toBe(ROLE_DESCRIPTIONS.operator);
+  });
+
+  it('guides truthfully: viewers and operators can both take calls, across the organisation', () => {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/viewers can only see data/)).toBeNull();
+    expect(screen.getByText(/viewers and operators see campaigns and results and can take calls too \(the two roles are the same today\)/)).toBeTruthy();
+    expect(screen.getByText(/join your organisation/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/workspace/);
   });
 });

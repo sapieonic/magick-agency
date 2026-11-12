@@ -12,7 +12,7 @@ import { render, cleanup } from '@testing-library/react';
  * call site to thread a property through.
  *
  * The case worth testing is not "does register get called". It is the UNSET one:
- * a page outside both shells must send events with no `product` at all, because
+ * a page outside the console shell must send events with no `product` at all, because
  * a stale `product: 'agency'` on a login-page event is indistinguishable from a
  * real one and would misattribute whole funnels to whichever shell happened to
  * mount last.
@@ -176,26 +176,28 @@ describe('who calls it', () => {
     return readFileSync(resolve(process.cwd(), `src/components/layout/${name}`), 'utf8');
   }
 
-  it("AppLayout registers 'ai' for the /app zone", () => {
-    expect(layout('AppLayout.tsx')).toContain("useProductSurface('ai')");
-  });
-
-  it('AgencyLayout claims the agency product', () => {
-    expect(layout('AgencyLayout.tsx')).toContain("useProductSurface('agency')");
+  /**
+   * One shell since decision B28, so the product follows the path: `'agency'` on the work
+   * pages, `'ai'` on Settings and `/app` (the values the two old shells sent, so the series
+   * carry on). The mapping itself is pinned in `consoleNav.test.ts`, and the layout calling it
+   * in `ConsoleLayout.mobileDrawer.test.tsx`.
+   */
+  it('ConsoleLayout claims the product for the path it is on', () => {
+    expect(layout('ConsoleLayout.tsx')).toContain('useProductSurface(productSurfaceForPath(pathname))');
   });
 
   /**
    * The agency routes that have no shell to claim them.
    *
    * `/station`, `/dialer`, `/dialer/performance` and `/dialer/attempts` are
-   * deliberately full-viewport and OUTSIDE both shells, so an agent on a live call
+   * deliberately full-viewport and OUTSIDE the console shell, so an agent on a live call
    * cannot navigate away and drop the station socket. Under a strictly shell-set
    * rule they therefore reported **no product at all** — and they are where
    * dispositions and mid-call DNC marks come from, i.e. the most agency-specific
    * events the platform records were the ones missing from the agency's funnel.
    *
    * `/agency/join/:token` joined them for a different reason and with the same
-   * consequence: it is the invite landing page, it is outside both shells because
+   * consequence: it is the invite landing page, it is outside the console shell because
    * the visitor has no session to hang one on, and the events it fires are the
    * only measurement of whether agency onboarding works at all.
    *

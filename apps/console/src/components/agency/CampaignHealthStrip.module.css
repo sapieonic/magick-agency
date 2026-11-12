@@ -162,8 +162,21 @@
     flex-wrap: wrap;
   }
 
+  /* Beside the icon, not on a row below it: a phone has no height to spare above the tabs. */
+  .diagnosisBody {
+    flex: 1 1 0;
+  }
+
   .diagnosisActions {
+    justify-content: flex-start;
     margin-left: 0;
     width: 100%;
+  }
+}
+
+@media (max-width: 680px) {
+  .diagnosis {
+    gap: 10px 12px;
+    padding: 12px 14px;
   }
 }

@@ -223,10 +223,16 @@ bench database first (from `packages/db`, `DATABASE_URL` the bench's).
 
 ## 5. Clients
 
-- **Console**: a "Search a number" box with a country picker in the agency top bar
-  (`CustomerSearchPopover` in `AgencyLayout`), and for agents a "Search a number" entry in
-  `AgentNav` that opens `/dialer/customers`; both open the Customer history page
-  (`/agency/customers`, and `/dialer/customers` for agents). The country picker starts on the
+- **Console**: the console's one search (decision B28). The top bar's field ("Search pages,
+  campaigns, settings or a number") and ⌘K open `GlobalSearch`; a query the box's rule reads as a
+  full number (`parseSearchNumber`, in the country the box starts on; another country's number is
+  typed with its `+` code) puts "Calls to <number>" first, and Enter runs the same search as the
+  box (`hooks/useCustomerSearchRun.ts`, shared by both): the same `POST`, account header, recent
+  list and history state. An unfinished number shows the rule's refusal instead, and a server
+  refusal (the 429 included) shows in the search, which stays open. Offered under the old button's
+  gate: `agency.customer_history.read`, an active account and the dialer on. The full box, with
+  the country picker, is on the Customer history page (`/agency/customers`), and for agents a
+  "Search a number" entry in `AgentNav` opens `/dialer/customers`. The country picker starts on the
   answer of `GET /proxy/agency/customers/options`, read once per page load
   (`hooks/useCustomerSearchDefaultCallingCode.ts`); a failed read is not kept, so the next box to
   mount reads it again. The box shows the helper text and the live
@@ -235,8 +241,7 @@ bench database first (from `packages/db`, `DATABASE_URL` the bench's).
   only after Search, Enter or leaving the field (`aria-invalid` only then). A search still in
   flight when the box goes away is cancelled, and a late answer never navigates. The box keeps the
   last five numbers searched on this device (`localStorage`), one list shared by every box on the
-  page and across tabs, cleared by "Clear recent searches" and on sign-out. In the top-bar panel,
-  Tab stays inside the panel while it is open. The page puts focus on its "Results for …" heading,
+  page and across tabs, cleared by "Clear recent searches" and on sign-out. The page puts focus on its "Results for …" heading,
   and shows a "Copy number" button, the summary, the filters, the timeline with "Load more", and
   "Export CSV". A filter change clears the rows and the cursor at once; a failed page shows the
   error with "Try again" and no rows. A reversed date range is refused on the page ("The end date
@@ -247,7 +252,7 @@ bench database first (from `packages/db`, `DATABASE_URL` the bench's).
   state "No calls to this number in the accounts you can see" shows only when the answer has no
   timeline entry of any kind, no live call and no contact; the DNC status shows either way, and
   otherwise the summary, the timeline and Export show (a number with only DNC marks or an untagged
-  soft-phone call ringing is not empty). The box, the top-bar panel and the results are
+  soft-phone call ringing is not empty). The box, the search dialog and the results are
   `ph-no-capture`, so product analytics never record the number, names or loan numbers. A call
   entry opens the existing call page, switching account scope when the call is in another account.
 - **Agent app** (`apps/mobile`): the search from the Calls tab with the console's input help

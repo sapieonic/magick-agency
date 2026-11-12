@@ -110,7 +110,7 @@ abstract final class StationCopy {
   static const breakSheetNow = 'You’re available, so the break starts now and no calls come through.';
   static const breakSheetQueued = 'The break starts when you finish this call.';
   static const breakSheetOnCallNote = 'On a call? The break waits until you finish.';
-  static const breakUnconfigured = 'Your workspace hasn’t set up break reasons yet. Ask your supervisor.';
+  static const breakUnconfigured = 'Your organisation hasn’t set up break reasons yet. Ask your supervisor.';
   static const cancel = 'Cancel';
 
   // ── Queued break ──
@@ -177,7 +177,7 @@ abstract final class StationCopy {
   static const dncAction = 'Don’t call in this campaign';
   static const dncNotMarked = 'The call ended before Do Not Call was marked, so nothing was recorded.';
   static String dncMessage(String phone, String campaign) =>
-      '$phone won’t be called again by ${campaign.trim().isEmpty ? 'this campaign' : campaign}. Other campaigns in this workspace can still reach them. You can’t undo this from the app — an admin has to remove it.';
+      '$phone won’t be called again by ${campaign.trim().isEmpty ? 'this campaign' : campaign}. Other campaigns in this organisation can still reach them. You can’t undo this from the app — an admin has to remove it.';
 
   // ── Notes (agencyNotes) ──
   static const notes = 'Notes';

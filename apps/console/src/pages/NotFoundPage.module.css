@@ -1,0 +1,20 @@
+.notFound {
+  max-width: 520px;
+  margin: 64px auto;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.notFound h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.notFound p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}

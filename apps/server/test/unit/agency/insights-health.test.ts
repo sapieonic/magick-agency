@@ -40,7 +40,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   },
 }));
 
-import { computeHealth, isGuardrailPause } from '../../../src/agency/insights/health.js';
+import { computeHealth, isGuardrailPause, todayRange } from '../../../src/agency/insights/health.js';
 import type { AgencyCampaignRecord } from '../../../src/db/models/agency.model.js';
 import type { ServedInsightsRange } from '../../../src/agency/insights/range.js';
 
@@ -113,5 +113,35 @@ describe('isGuardrailPause', () => {
     expect(isGuardrailPause({ reason: 'carrier_auth' })).toBe(false);
     expect(isGuardrailPause({ reason: 'carrier_account_unavailable' })).toBe(false);
     expect(isGuardrailPause({ reason: 'carrier_refusing_calls' })).toBe(false);
+  });
+});
+
+describe('todayRange (Home’s "today": the console’s Today range, as the range reads serve it)', () => {
+  const campaign = (zone: string, createdAt = '2026-01-01T00:00:00.000Z') =>
+    ({ default_timezone: zone, created_at: new Date(createdAt) }) as unknown as AgencyCampaignRecord;
+
+  it('starts at the campaign zone’s midnight and ends at the bucket now falls in', () => {
+    const now = new Date('2026-11-12T10:07:00.000Z');
+    const range = todayRange(campaign('Asia/Kolkata'), now);
+    // 12 Nov in Kolkata began at 18:30 UTC on the 11th.
+    expect(range.from.toISOString()).toBe('2026-11-11T18:30:00.000Z');
+    expect(range.to.toISOString()).toBe('2026-11-12T10:15:00.000Z');
+    expect(range.lifetime).toBe(false);
+  });
+
+  it('is the UTC day when the zone is unknown, and the day before midnight in the zone is not today', () => {
+    expect(todayRange(campaign('Mars/Olympus'), new Date('2026-11-12T10:07:00.000Z')).from.toISOString())
+      .toBe('2026-11-12T00:00:00.000Z');
+    // 18:20 UTC is still the 12th in UTC but 23:50 in Kolkata; 18:40 UTC is the 13th there.
+    expect(todayRange(campaign('Asia/Kolkata'), new Date('2026-11-12T18:20:00.000Z')).from.toISOString())
+      .toBe('2026-11-11T18:30:00.000Z');
+    expect(todayRange(campaign('Asia/Kolkata'), new Date('2026-11-12T18:40:00.000Z')).from.toISOString())
+      .toBe('2026-11-12T18:30:00.000Z');
+  });
+
+  it('a day 23 hours long (a spring-forward zone) still starts at its own midnight', () => {
+    // 29 Mar 2026 in London: midnight is 00:00 GMT, the clocks go forward at 01:00.
+    const range = todayRange(campaign('Europe/London'), new Date('2026-03-29T22:00:00.000Z'));
+    expect(range.from.toISOString()).toBe('2026-03-29T00:00:00.000Z');
   });
 });

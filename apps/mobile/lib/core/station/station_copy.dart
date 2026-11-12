@@ -147,7 +147,7 @@ String leaveOtherUnknownCopy(String campaignName) =>
     'We can’t close $campaignName from here. Leave it where it’s open (the console or your other phone), then come back here.';
 
 const notStaffedCopy = 'You’re not on this campaign’s team. Ask your supervisor to add you.';
-const featureDisabledCopy = 'Calling is switched off for your workspace right now. Ask your supervisor.';
+const featureDisabledCopy = 'Calling is switched off for your organisation right now. Ask your supervisor.';
 const joinFailedCopy = 'Could not join the campaign.';
 
 const softphoneCallPendingCopy =

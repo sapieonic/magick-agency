@@ -1120,8 +1120,8 @@ not be promised a callback; the warning says so in the editor's names for the tw
 with no recording is no warning: our standard recording plays (§3.4). The P2 warnings about a
 silent overflow and a voicemail with no prompt are gone with the silence they described.
 
-**Console.** Settings → **Inbound calls** (`/app/inbound`, `/app/inbound/new`, `/app/inbound/:id`;
-account admins; also "Inbound settings" in the agency sidebar): the routes and the route editor
+**Console.** Settings → **Inbound routing** (`/settings/inbound`, `/settings/inbound/new`,
+`/settings/inbound/:id`; the old `/app/inbound*` URLs redirect there (B28); account admins): the routes and the route editor
 (name, time zone, numbers with why one cannot be chosen, weekly hours (a new route starts open
 Monday to Friday, 09:00–17:30, in the browser's zone: the account has none of its own; editable;
 the hours card names the zone they are read in), holidays, the six clips from the account's

@@ -27,6 +27,8 @@ vi.mock('@magick-agency/observability', () => ({
 import {
   DncService,
   DncUnavailableError,
+  dncPhoneSearch,
+  DNC_SEARCH_MIN_DIGITS,
   toDncE164,
 } from '../../../src/dnc/dnc.service.js';
 
@@ -107,6 +109,104 @@ describe('toDncE164 — strict on purpose, because the alternative fails open', 
     expect(toDncE164('+1234567890123456')).toBeNull(); // too long
     expect(toDncE164('+1555abc0001')).toBeNull();
     expect(toDncE164('')).toBeNull();
+  });
+});
+
+describe('dncPhoneSearch — what the list search box finds (India the default)', () => {
+  const LISTED = '+919908815060';
+
+  /** The search `typed` reads as, India the default; a refusal fails the test. */
+  function read(typed: string, defaultCallingCode = '91') {
+    const result = dncPhoneSearch(typed, defaultCallingCode);
+    if (!result.ok) throw new Error(`${typed} was refused: ${result.message}`);
+    return result.search;
+  }
+
+  it.each([
+    ['+919908815060'],
+    ['9908815060'],
+    ['919908815060'],
+    ['+91 99088 15060'],
+    ['099088-15060'],
+    ['0091 99088 15060'],
+  ])('reads %s as the whole number', (typed) => {
+    expect(read(typed).e164).toBe(LISTED);
+  });
+
+  it('keeps a whole number\'s digits as an ending, its trunk or international zeros dropped', () => {
+    expect(read('+91 99088 15060')).toEqual({ e164: LISTED, endsWith: '919908815060', startsWith: null });
+    expect(read('099088-15060')).toEqual({ e164: LISTED, endsWith: '9908815060', startsWith: null });
+  });
+
+  it('a partial number of 4 digits or more is an ending only', () => {
+    expect(read('15060')).toEqual({ e164: null, endsWith: '15060', startsWith: null });
+    expect(read('150 60')).toEqual({ e164: null, endsWith: '15060', startsWith: null });
+    // A partial number's zeros are part of the ending.
+    expect(read('0060')).toEqual({ e164: null, endsWith: '0060', startsWith: null });
+  });
+
+  it('refuses an ending of fewer than 4 digits rather than reading a tenth of the list', () => {
+    for (const typed of ['0', '060', '1 2 3']) {
+      expect(dncPhoneSearch(typed, '91'), typed).toEqual({
+        ok: false, code: 'search_too_short', message: 'Type at least 4 digits of the number.',
+      });
+    }
+    expect(DNC_SEARCH_MIN_DIGITS).toBe(4);
+  });
+
+  it('a + number cut short is the start of a number, never an ending', () => {
+    expect(read('+91 99088')).toEqual({ e164: null, endsWith: null, startsWith: '+9199088' });
+    // The bracketed trunk after the calling code is dropped, as the number rule drops it.
+    expect(read('+44 (0)20 794')).toEqual({ e164: null, endsWith: null, startsWith: '+4420794' });
+  });
+
+  it('refuses a + number cut short before its calling code and 4 more digits, with its own code and words', () => {
+    expect(dncPhoneSearch('+91 990', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 4 digits after +91, or leave off the + to search by the last digits.',
+    });
+    expect(dncPhoneSearch('+1 555', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 4 digits after +1, or leave off the + to search by the last digits.',
+    });
+    // A calling code the number rule does not list has no known length: 7 digits in all.
+    expect(dncPhoneSearch('+27 8212', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 7 digits after the +, or leave off the + to search by the last digits.',
+    });
+  });
+
+  it('runs a + number cut short once it has its calling code and 4 more digits, whatever the code’s length', () => {
+    expect(read('+91 9908').startsWith).toBe('+919908');
+    expect(read('+1 5551').startsWith).toBe('+15551');
+    expect(read('+44 2079').startsWith).toBe('+442079');
+    expect(read('+971 5012').startsWith).toBe('+9715012');
+    expect(read('+27 82123').startsWith).toBe('+2782123');
+  });
+
+  it('text typed with 00 is an ending as typed, and the start of a number once what follows clears the + floor', () => {
+    expect(read('0044 2079')).toEqual({ e164: null, endsWith: '00442079', startsWith: '+442079' });
+    expect(read('0091 99088')).toEqual({ e164: null, endsWith: '009199088', startsWith: '+9199088' });
+    // Too short to be a number cut short: an ending only, its zeros kept.
+    expect(read('0044 207')).toEqual({ e164: null, endsWith: '0044207', startsWith: null });
+    expect(read('0060')).toEqual({ e164: null, endsWith: '0060', startsWith: null });
+  });
+
+  it('a national number of another country is still found by its ending', () => {
+    // The default reads it as +91…, which is not the US entry; the ending is.
+    expect(read('5551234567')).toEqual({ e164: '+915551234567', endsWith: '5551234567', startsWith: null });
+  });
+
+  it('follows the platform default country', () => {
+    expect(read('(555) 123-4567', '1').e164).toBe('+15551234567');
+  });
+
+  it('letters, a spreadsheet number or nothing usable match nothing', () => {
+    const none = { e164: null, endsWith: null, startsWith: null };
+    expect(read('abc')).toEqual(none);
+    expect(read('99088abc')).toEqual(none);
+    expect(read('9.19908E+11')).toEqual(none);
+    expect(read('   ')).toEqual(none);
   });
 });
 

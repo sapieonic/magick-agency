@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import {
+  Activity,
   Headphones,
   Pause,
   Play,
@@ -11,10 +12,16 @@ import {
 } from 'lucide-react';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import { CampaignLineageStrip } from '../../../components/agency/CampaignLineageStrip';
-import type {
-  AgencyCampaignAction as Action,
+import { CampaignHistoryLink } from '../../../components/agency/CampaignHistoryLink';
+import type { Role } from '../../../types/auth';
+import {
   agencyCampaignControls,
+  campaignEnding,
+  PAUSE_IN_FLIGHT_NOTE,
+  showsPauseInFlightNote,
+  type AgencyCampaignAction as Action,
 } from '../../../utils/agencyCampaignControls';
+import { campaignTimeline } from '../../../utils/agency/overview/lifecycle';
 import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { formatClockTime } from '../../../utils/format/date';
 import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/agency-campaign';
@@ -27,61 +34,86 @@ const ACTION_META: Record<Action, { label: string; icon: typeof Play; danger?: b
   stop: { label: 'Stop', icon: Square, danger: true },
 };
 
+/** Beside the header's "Updated" stamp while the page polls (see the stamp). */
+export const HEADER_POLL_NOTE = 'status and agents auto-refresh';
+
 interface CampaignDetailHeaderProps {
   campaign: AgencyCampaign;
   /** When this screen last read the server, or `null` before the first answer. */
   lastUpdatedAt: Date | null;
   /** The page is polling — said beside the stamp. */
-  autoRefreshing: boolean;
-  /** "Started …" / "Running for …", absent facts already dropped. */
-  timelineParts: string[];
+  autoRefreshing?: boolean;
   /**
    * The stats' `concurrency` block, said through `concurrencyLine` against
    * `campaign.status` (the status the badge shows, not the stats' copy of it).
-   * Absent or `null` on a draft, a finished campaign or an older server.
+   * Absent or `null` on a draft, a finished campaign or an older server, and on a
+   * page that reads no stats (Settings).
    */
-  concurrency: AgencyCampaignConcurrency | null | undefined;
+  concurrency?: AgencyCampaignConcurrency | null;
   tenantId: string | null;
   accountId: string | null;
   /** `agency.supervise`: the lifecycle buttons and the secondary actions. */
   canControl: boolean;
-  controls: ReturnType<typeof agencyCampaignControls>;
   /** The lifecycle action in flight, which disables every button. */
   busy: Action | null;
   onAction: (action: Action) => void;
-  terminal: boolean;
-  canRetry: boolean;
-  onRetry: () => void;
+  /** Retry contacts, offered only when given: by the page that owns the retry dialog, to a role allowed it. */
+  onRetry?: () => void;
   canJoinStation: boolean;
+  /** For History, which follows its page's own gate (`audit.read`), not `canControl`. */
+  role: Role | undefined;
   onRefresh: () => void;
 }
 
 /**
- * The campaign's title, status, clocks and lineage on the left, and on the right
+ * The campaign's header on every Monitor tab and on Settings: its title, status, clocks and
+ * lineage on the left, and on the right
  * every affordance that CHANGES the campaign: the lifecycle controls, Add
- * contacts / New campaign, Retry contacts, Join as agent and Refresh. Out of
- * `AgencyCampaignDetailPage`, which owns the state those controls act on.
+ * contacts / New campaign, Retry contacts, Join as agent and Refresh; and
+ * History, the campaign's activity trail (decision IN14). The page owns the state those
+ * controls act on (`useCampaignLifecycle`); beneath the header, the note that a pause stops
+ * new calls only.
  */
 export function CampaignDetailHeader({
   campaign,
   lastUpdatedAt,
   autoRefreshing,
-  timelineParts,
   concurrency,
   tenantId,
   accountId,
   canControl,
-  controls,
   busy,
   onAction,
-  terminal,
-  canRetry,
   onRetry,
   canJoinStation,
+  role,
   onRefresh,
 }: CampaignDetailHeaderProps) {
   const linesInUse = concurrencyLine(campaign.status, concurrency);
+  const controls = agencyCampaignControls(campaign.status);
+  /*
+    HOW it ended, not merely THAT it did. `stopped` and `completed` are different
+    events — a supervisor ended one, the other ran out of list — and the badge
+    beside the title already distinguishes them. Collapsing both into a boolean
+    is what had a completed campaign reporting "Stopped by: Automatically",
+    which reads as the dialer having killed it.
+  */
+  const ending = campaignEnding(campaign.status);
+  const terminal = ending !== null;
+  /*
+    The two clock facts, in reading order, with the absent ones dropped rather
+    than dashed — `campaignTimeline` returns `null` for anything this server did
+    not carry, and "Started —" reads as a failed read (or, on a campaign that
+    genuinely never started, as a wrong one). One `now` for the render: the
+    page re-renders every 10s from the poll, which is what keeps "Running for
+    6 hours" honest.
+  */
+  const timeline = campaignTimeline(campaign, ending, new Date());
+  const timelineParts = [timeline.started, timeline.ran].filter(
+    (part): part is string => part !== null,
+  );
   return (
+    <>
     <header className={styles.header}>
       <div className={styles.headerCopy}>
         <div className={styles.headerMain}>
@@ -92,7 +124,13 @@ export function CampaignDetailHeader({
           {lastUpdatedAt
             ? `Updated ${formatClockTime(lastUpdatedAt)}`
             : 'Loading latest activity…'}
-          {autoRefreshing ? ' · Auto-refreshing' : ''}
+          {/*
+            Says WHAT refreshes: this page's poll re-reads the campaign and its
+            floor, never the tab's figures below, whose own stamp says whether
+            they refresh. A bare "Auto-refreshing" here sat above "not refreshing"
+            in the range bar and read as a contradiction.
+          */}
+          {autoRefreshing ? ` · ${HEADER_POLL_NOTE}` : ''}
         </p>
         {/*
           The campaign's OWN clock, beneath the console's. "Updated 10:23" is
@@ -140,7 +178,13 @@ export function CampaignDetailHeader({
         />
       </div>
 
-      <div className={styles.actions}>
+      {/*
+        On a phone the lifecycle buttons keep their words and everything after
+        them shrinks to its icon (the label stays as the accessible name and the
+        tooltip), so the row is two lines at most and the tabs stay on the first
+        screen. They used to stack a full-width row each, about 800px of buttons.
+      */}
+      <div className={styles.actions} data-testid="campaign-actions">
         {canControl
           && controls.map(({ action, disabledReason }) => {
             const meta = ACTION_META[action];
@@ -153,7 +197,7 @@ export function CampaignDetailHeader({
                   disabled={busy !== null || disabledReason !== null}
                   title={disabledReason ?? undefined}
                 >
-                  <meta.icon size={16} />
+                  <meta.icon size={16} aria-hidden="true" />
                   {busy === action ? 'Working…' : meta.label}
                 </button>
                 {disabledReason && (
@@ -170,17 +214,19 @@ export function CampaignDetailHeader({
               <Link
                 to="/agency/campaigns/new"
                 className={`${styles.actionButton} ${styles.secondaryAction}`}
+                title="New campaign"
               >
-                <Plus size={16} />
-                New campaign
+                <Plus size={16} aria-hidden="true" />
+                <span className={styles.actionLabel}>New campaign</span>
               </Link>
             ) : (
               <Link
                 to={`/agency/campaigns/${campaign.id}/contacts/add`}
                 className={`${styles.actionButton} ${styles.secondaryAction}`}
+                title="Add contacts"
               >
-                <Upload size={16} />
-                Add contacts
+                <Upload size={16} aria-hidden="true" />
+                <span className={styles.actionLabel}>Add contacts</span>
               </Link>
             )}
           </>
@@ -197,7 +243,7 @@ export function CampaignDetailHeader({
           campaign is a perfectly ordinary thing to retry part of, and a
           running one's child can run beside it (the dialog says how).
         */}
-        {canRetry && (
+        {onRetry && (
           <button
             type="button"
             className={`${styles.actionButton} ${styles.secondaryAction}`}
@@ -205,8 +251,8 @@ export function CampaignDetailHeader({
             data-testid="campaign-retry-action"
             title="Create a new campaign from the contacts this one did not reach"
           >
-            <RotateCcw size={16} />
-            Retry contacts
+            <RotateCcw size={16} aria-hidden="true" />
+            <span className={styles.actionLabel}>Retry contacts</span>
           </button>
         )}
         {/*
@@ -215,7 +261,7 @@ export function CampaignDetailHeader({
           reads `?campaign=` and refuses without it. This is the only place in
           the workspace where an id is in scope.
 
-          It leaves the agency shell for a full-viewport console with no way
+          It leaves the console shell for a full-viewport console with no way
           back, so it is styled as a secondary action and says what it does.
         */}
         {canJoinStation && (
@@ -224,10 +270,16 @@ export function CampaignDetailHeader({
             className={`${styles.actionButton} ${styles.stationAction}`}
             title="Join this campaign's pool and start taking its calls"
           >
-            <Headphones size={16} />
-            Join as agent
+            <Headphones size={16} aria-hidden="true" />
+            <span className={styles.actionLabel}>Join as agent</span>
           </Link>
         )}
+        {/*
+          History (the activity trail) left the tab bar for here (decision
+          IN14): who changed what is a fact about the campaign, read now and
+          then, not one of the questions the tabs answer.
+        */}
+        <CampaignHistoryLink campaignId={campaign.id} role={role} compactOnPhone />
         <button
           type="button"
           className={`${styles.actionButton} ${styles.iconAction}`}
@@ -235,9 +287,21 @@ export function CampaignDetailHeader({
           aria-label="Refresh"
           title="Refresh campaign activity"
         >
-          <RefreshCw size={17} />
+          <RefreshCw size={17} aria-hidden="true" />
         </button>
       </div>
     </header>
+    {/*
+      Said out loud rather than left to be inferred from a counter that keeps
+      moving: pause stops NEW calls only. A supervisor who believes they cut
+      off live conversations may say so to a customer who is still on one.
+    */}
+    {canControl && showsPauseInFlightNote(campaign.status) && (
+      <p className={styles.pauseNote}>
+        <Activity size={15} aria-hidden="true" />
+        {PAUSE_IN_FLIGHT_NOTE}
+      </p>
+    )}
+    </>
   );
 }

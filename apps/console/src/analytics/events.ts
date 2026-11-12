@@ -46,13 +46,13 @@ import type { ReportWindowPreset } from '../utils/reports/reportWindow';
  * ── The product dimension is NOT declared here ─────────────────────────
  * The names in this catalog are flat and stay flat. The separator between shells
  * is a `product` super-property — `'ai'` | `'agency'` — registered by whichever
- * shell is mounted (`useProductSurface`, called by `AppLayout` for the `/app`
- * zone and by `AgencyLayout`). Every
+ * part of the console shell is open (`useProductSurface`, called by
+ * `ConsoleLayout` with `productSurfaceForPath`). Every
  * event below carries it without any emitter or call site knowing it exists, and
  * so do autocapture, pageviews and errors. Do NOT add a `product` property to an
  * emitter's shape: two sources for one dimension is how the two disagree.
  *
- * Events fired outside both shells (login, onboarding, super-admin) deliberately
+ * Events fired outside every shell (login, onboarding, super-admin) deliberately
  * carry no `product` at all.
  */
 

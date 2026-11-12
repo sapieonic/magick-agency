@@ -84,7 +84,7 @@ describe('the DNC override says exactly what matched', () => {
       { number: '+919820461733', campaignName: null },
     );
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
-    expect(facts['Listed for']).toBe('Every campaign and account in this workspace');
+    expect(facts['Listed for']).toBe('Every campaign and account in this organisation');
     expect(facts['Reason']).toBe('No reason was recorded');
   });
 });

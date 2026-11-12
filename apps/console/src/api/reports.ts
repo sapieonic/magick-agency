@@ -190,7 +190,7 @@ export const REPORT_ERROR_MESSAGES: Record<ReportRefusalCode, string> = {
   report_timezone_invalid: 'That time zone isn’t recognised. Choose another.',
   report_subject_not_found: 'That agent, campaign or account can’t be reported on from this account.',
   report_queue_full:
-    'Your workspace already has the most reports being prepared at once. Try again when one of them is ready.',
+    'Your organisation already has the most reports being prepared at once. Try again when one of them is ready.',
   report_rate_limited: 'You’ve asked for several reports in the last minute. Wait a minute and try again.',
   report_not_found: 'This report doesn’t exist, or you don’t have access to it.',
   report_not_ready: 'This report isn’t ready to download yet.',

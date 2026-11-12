@@ -484,7 +484,7 @@ describe('a scope this person cannot open', () => {
   it('a tenant not in the session is refused, without asking for its accounts', async () => {
     openAt('/t/t-zzz/a/acct-1/agency/campaigns');
 
-    await screen.findByText('You can’t open this workspace');
+    await screen.findByText('You can’t open this organisation');
     expect(screen.queryByRole('heading', { name: 'campaigns' })).toBeNull();
     // The address bar still names what was asked for: nothing was quietly opened.
     expect(window.location.pathname).toBe('/t/t-zzz/a/acct-1/agency/campaigns');
@@ -504,7 +504,7 @@ describe('a scope this person cannot open', () => {
       rerender(<TestApp />);
     }
 
-    await screen.findByText('You can’t open this workspace');
+    await screen.findByText('You can’t open this organisation');
     // The stored tenant, not the session's first one.
     await waitFor(() => expect(mocks.listAccounts).toHaveBeenCalledWith('t-b'));
     expect(mocks.listAccounts).not.toHaveBeenCalledWith('t-a');
@@ -512,11 +512,11 @@ describe('a scope this person cannot open', () => {
     expect(storedTenant()).toEqual({ tenantId: 't-b', accountId: 'acct-b2' });
   });
 
-  it('"Go to my workspace" loads the unscoped root, which opens the stored workspace', async () => {
+  it('"Go to my organisation" loads the unscoped root, which opens the stored workspace', async () => {
     openAt('/t/t-zzz/a/acct-1/agency/campaigns');
-    await screen.findByText('You can’t open this workspace');
+    await screen.findByText('You can’t open this organisation');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Go to my workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to my organisation' }));
 
     expect(mocks.loadPage).toHaveBeenCalledTimes(1);
     expect(mocks.loadPage).toHaveBeenCalledWith('/');
@@ -555,7 +555,7 @@ describe('a scope this person cannot open', () => {
       memberships: [membership('m-a', 't-a')],
     });
     const { rerender } = openAt('/t/t-b/a/acct-b1/agency/campaigns');
-    await screen.findByText('You can’t open this workspace');
+    await screen.findByText('You can’t open this organisation');
 
     signIn();
     rerender(<TestApp />);

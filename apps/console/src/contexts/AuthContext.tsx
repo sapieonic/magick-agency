@@ -17,8 +17,13 @@ import { resetAnalytics } from '../analytics/posthog';
 import { markSessionStart, clearSessionStart, isSessionExpired, SESSION_EXPIRED_MESSAGE } from '../utils/session';
 import { isLoginPath, sessionExpiredLoginUrl } from '../utils/returnPath';
 import { clearAllLiveSessions } from '../utils/agencyLiveSession';
-import { browserStorage, clearRecentCustomerSearches } from '../utils/customerSearchRecent';
+import { clearRecentCustomerSearches } from '../utils/customerSearchRecent';
+import { browserStorage } from '../utils/browserStorage';
 import { clearCustomerSearchAnswers } from '../utils/customerHistoryStore';
+import { resetSearchCampaignsCache } from '../hooks/useSearchCampaigns';
+import { resetCampaignTabBadges } from '../hooks/useCampaignTabBadges';
+import { resetHomeAcks } from '../hooks/useHomeAcks';
+import { clearRecentCampaigns } from '../utils/recentCampaigns';
 import { isJoinInProgress, isThisTabsJoin } from '../utils/inviteJoin';
 import type { User, Tenant, Membership, SessionResponse, SessionRefusalCode } from '../types/auth';
 import { sessionRefusalCode } from '../utils/sessionRefusal';
@@ -28,13 +33,24 @@ import type { InviteCredentialRequest, InviteCredential } from './authInvite';
 import { useSessionWatchdog } from './useSessionWatchdog';
 
 /**
- * Customer history's numbers (`docs/customer-history.md` §5): the recent searches
- * on this device and the answers held in memory. A phone number is personal data,
- * and on a shared machine the next person must not inherit the last one's.
+ * What one person's session left in this tab, cleared on every sign-out. Sign-out is in place
+ * (`setState(SIGNED_OUT)`), not a page load, so module stores outlive it and the next person to
+ * sign in here would inherit them:
+ *
+ * - customer history's numbers (`docs/customer-history.md` §5): the recent searches on this
+ *   device and the answers held in memory. A phone number is personal data, and on a shared
+ *   machine the next person must not inherit the last one's;
+ * - search's campaign list (`useSearchCampaigns`) and the campaign bar's badge counts
+ *   (`useCampaignTabBadges`), each kept for up to a minute per account;
+ * - search's recent campaigns on this device (`utils/recentCampaigns.ts`).
  */
-function clearCustomerSearches(): void {
+function clearSignedInStores(): void {
   clearRecentCustomerSearches(browserStorage());
   clearCustomerSearchAnswers();
+  resetSearchCampaignsCache();
+  resetCampaignTabBadges();
+  clearRecentCampaigns(browserStorage());
+  resetHomeAcks();
 }
 
 // The invite types are part of this context's API; they live with the flow.
@@ -228,7 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     endJoin();
     resetAnalytics();
     clearAllLiveSessions();
-    clearCustomerSearches();
+    clearSignedInStores();
     setState({ ...SIGNED_OUT, error: SESSION_EXPIRED_MESSAGE });
     // Redirect to login so the expiry message renders deterministically via the
     // URL. The in-context `error` above is unreliable on this path: signOut()
@@ -339,7 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         clearAllLiveSessions();
-        clearCustomerSearches();
+        clearSignedInStores();
         setState(SIGNED_OUT);
       }
     });
@@ -460,7 +476,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     endJoin();
     resetAnalytics();
     clearAllLiveSessions();
-    clearCustomerSearches();
+    clearSignedInStores();
     setState(SIGNED_OUT);
   }, [endJoin]);
 

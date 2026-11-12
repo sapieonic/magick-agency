@@ -47,7 +47,7 @@ describe('createAccount', () => {
   });
 
   it('lets a refusal through unchanged for the modal to show', async () => {
-    const refusal = new Error('There is already an account called "Renewals" in this workspace.');
+    const refusal = new Error('There is already an account called "Renewals" in this organisation.');
     mocks.apiFetch.mockRejectedValue(refusal);
 
     await expect(createAccount('tenant-1', 'Renewals')).rejects.toBe(refusal);

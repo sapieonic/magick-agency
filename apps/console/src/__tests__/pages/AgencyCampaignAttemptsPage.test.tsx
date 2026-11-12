@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
 
 /**
@@ -22,14 +22,19 @@ const mocks = vi.hoisted(() => ({
   getAgencyCampaign: vi.fn(),
   getCampaignAttempts: vi.fn(),
   downloadSpineCsv: vi.fn(),
+  listCampaignAgents: vi.fn(),
   // Typed with the parameter it really takes: inferred from `() => true`
   // the mock is zero-arg, and a per-capability `mockImplementation`
   // then fails to typecheck (vitest does not typecheck, so only `tsc`
   // catches it).
   isEnabled: vi.fn((_capability: string) => true),
+  flags: new Set<string>(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags.has(flag) }),
+}));
 // The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
 vi.mock('../../api/agencyInsights', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
@@ -42,12 +47,14 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
+vi.mock('../../api/agency', () => ({ listCampaignAgents: mocks.listCampaignAgents }));
 vi.mock('../../api/agencySpine', () => ({
   getCampaignAttempts: mocks.getCampaignAttempts,
   downloadSpineCsv: mocks.downloadSpineCsv,
 }));
 
 import AttemptsPage from '../../pages/agency/AgencyCampaignAttemptsPage';
+import { ApiError } from '../../api/client';
 
 /** Connected, agent named, recording reachable. */
 const BRIDGED: AgencyAttempt = {
@@ -118,6 +125,7 @@ function renderPage(initialPath = '/agency/campaigns/camp-1/attempts') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.flags = new Set();
   mocks.isEnabled.mockReturnValue(true);
   mocks.useTenant.mockReturnValue({
     tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin',
@@ -125,6 +133,7 @@ beforeEach(() => {
   // A STOPPED campaign by default: the primary case, not an afterthought.
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
   mocks.getCampaignAttempts.mockResolvedValue(page([BRIDGED, ABANDONED, ORPHANED, CANCELED]));
+  mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
 });
 
 afterEach(cleanup);
@@ -233,7 +242,8 @@ describe('a terminal campaign is the primary case', () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     expect(mocks.getCampaignAttempts).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('Q3 Renewals')).toBeTruthy();
+    // The campaign's name is the top bar's (`useCampaignCrumbs`); its status is the header's.
+    expect(await screen.findByText('Stopped')).toBeTruthy();
   });
 });
 
@@ -379,7 +389,7 @@ describe('the recording link stays inside the agency workspace', () => {
    * ─── THE BUG THIS PAGE REPORTED ──────────────────────────────────────────
    *
    * This link used to point at `/app/calls/dialer/history/:id` — out of
-   * `AgencyLayout`, into the `/app` zone, onto a
+   * the agency workspace, into the old `/app` zone, onto a
    * `calls.dialer`-gated route, with the campaign context and this very list
    * gone. It pointed there because that
    * was the only place a call detail existed.
@@ -447,14 +457,40 @@ describe('the recording link stays inside the agency workspace', () => {
  * whole reason this test exists.
  */
 describe('the campaign section bar', () => {
-  it('renders the bar and marks Call attempts as the current section', async () => {
+  it('renders the bar and marks Call log as the current section', async () => {
     renderPage();
 
     const tab = await screen.findByTestId('campaign-tab-attempts');
     expect(tab.getAttribute('aria-current')).toBe('page');
+    expect(tab.textContent).toBe('Call log');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Call log');
+  });
+
+  /*
+    Call log's views (IN14): Dialler calls here, Soft-phone calls at `…/manual-calls`,
+    the second only behind the soft phone's flag, as its route is.
+  */
+  it('offers Dialler calls | Soft-phone calls with the soft phone on, this view current', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    renderPage();
+
+    const dialler = await screen.findByTestId('call-log-view-attempts');
+    expect(dialler.getAttribute('aria-current')).toBe('page');
+    expect(dialler.textContent).toBe('Dialler calls');
+    const softphone = screen.getByTestId('call-log-view-manual');
+    expect(softphone.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
+    expect(softphone.getAttribute('aria-current')).toBeNull();
+    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
+  });
+
+  it('offers no views with the soft phone off', async () => {
+    renderPage();
+
+    await screen.findByTestId('campaign-tab-attempts');
+    expect(screen.queryByTestId('call-log-views')).toBeNull();
   });
 });
 
@@ -519,7 +555,7 @@ describe('filters in the URL', () => {
       disposition_catalog: [{ code: 'not_interested', label: 'Not interested' }],
     });
     renderWithLocation(DRILLDOWN);
-    await screen.findByText('Q3 Renewals');
+    await screen.findByText('Stopped');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     const applied = within(screen.getByTestId('attempts-applied'));
     expect(applied.getByText('Outcome: Connected')).toBeTruthy();
@@ -572,7 +608,7 @@ describe('filters in the URL', () => {
     renderWithLocation('?outcome=busy&phone=98765');
     const chip = (await screen.findByLabelText('Busy')) as HTMLInputElement;
     expect(chip.checked).toBe(true);
-    expect((screen.getByPlaceholderText('Whole number, or the last few digits') as HTMLInputElement).value).toBe('98765');
+    expect((screen.getByPlaceholderText('Number or last digits') as HTMLInputElement).value).toBe('98765');
   });
 
   it('ignores an unknown key and a malformed flag rather than failing the page', async () => {
@@ -651,5 +687,193 @@ describe('an automatic outcome (decisions OD1–OD8)', () => {
     // The Disposition column (When, Number, Try, Agent, Outcome, Disposition, …).
     expect(row.querySelectorAll('td')[5]?.textContent).toBe('—');
     expect(screen.queryByTestId(`attempt-auto-disposition-${ABANDONED.id}`)).toBeNull();
+  });
+});
+
+/** The server's 400 for a filter it refuses: `{ error, details: [{ param, message }] }`. */
+function refusal(param: string, message: string): ApiError {
+  return new ApiError(400, { error: 'Validation failed', details: [{ param, message }] });
+}
+
+const PRIYA_ID = 'b2c3d4e5-2222-4333-8444-555566667777';
+
+describe('a filter the server refuses', () => {
+  it('shows no rows under it, plain copy, and no Retry that would send it again', async () => {
+    // The first load answers rows; the agent filter from the URL is then refused.
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('agent_user_id', 'must be an agent id'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => expect(screen.queryByTestId(`attempt-row-${BRIDGED.id}`)).toBeNull());
+    const alert = await screen.findByText(/The agent filter does not match an agent/);
+    expect(alert.textContent).not.toContain('must be an agent id');
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    expect(screen.getByTestId('attempts-count').textContent).toBe('');
+  });
+
+  it('names the phone filter for a link that carries one with no digits', async () => {
+    mocks.getCampaignAttempts.mockRejectedValue(
+      refusal('phone', 'must contain at least one digit — search by the whole number or its last few digits'),
+    );
+    renderWithLocation('?phone=abc!!');
+
+    expect(await screen.findByText(/The phone number filter needs at least one digit\./)).toBeTruthy();
+    expect(screen.queryByText(/must contain at least one digit/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+  });
+
+  it('keeps Retry, and clears the stale rows, for a failure retrying can fix', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    mocks.getCampaignAttempts.mockRejectedValueOnce(new ApiError(503, { message: 'Service unavailable' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByRole('button', { name: /Retry/ })).toBeTruthy();
+    expect(screen.queryByTestId(`attempt-row-${BRIDGED.id}`)).toBeNull();
+  });
+});
+
+describe('the agent filter is picked by name', () => {
+  it('offers the campaign’s agents and the agents on the rows, and sends the id', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({
+      agents: [{ user_id: PRIYA_ID, name: 'Priya Shah', email: 'priya@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }],
+    });
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(mocks.listCampaignAgents).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+
+    const select = screen.getByTestId('attempts-agent-filter') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map((o) => o.textContent)).toEqual(
+      // Ravi is not assigned any more but has a row on screen.
+      ['All agents', 'Priya Shah', 'Ravi Menon'],
+    ));
+
+    fireEvent.change(select, { target: { value: PRIYA_ID } });
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() => expect(currentQuery().get('agent_user_id')).toBe(PRIYA_ID));
+    expect(screen.getByText('Agent: Priya Shah')).toBeTruthy();
+  });
+});
+
+describe('moving to another campaign on the same page', () => {
+  it('drops the previous campaign’s agents and header at once, and ignores its late answers', async () => {
+    // camp-1's header and agents answer only after the move to camp-2, which answers at once.
+    let campaignOne: (value: unknown) => void = () => undefined;
+    let agentsOne: (value: unknown) => void = () => undefined;
+    mocks.getAgencyCampaign.mockImplementation((id: string) => (id === 'camp-1'
+      ? new Promise((resolve) => { campaignOne = resolve; })
+      : Promise.resolve({ id: 'camp-2', name: 'Q4 Winback', status: 'running' })));
+    mocks.listCampaignAgents.mockImplementation((id: string) => (id === 'camp-1'
+      ? new Promise((resolve) => { agentsOne = resolve; })
+      : Promise.resolve({ agents: [{ user_id: 'asha-id', name: 'Asha Rao', email: 'asha@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }] })));
+    let go: (to: string) => void = () => undefined;
+    function Driver() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/attempts']}>
+        <Driver />
+        <Routes>
+          <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+
+    act(() => go('/agency/campaigns/camp-2/attempts'));
+    await waitFor(() => expect(mocks.listCampaignAgents).toHaveBeenCalledWith('camp-2', 'tenant-1', 'account-1'));
+    await act(async () => {
+      campaignOne({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
+      agentsOne({ agents: [{ user_id: PRIYA_ID, name: 'Priya Shah', email: 'priya@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }] });
+    });
+
+    const select = screen.getByTestId('attempts-agent-filter') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map((o) => o.textContent)).toEqual(['All agents', 'Asha Rao', 'Ravi Menon']));
+    expect(screen.getByText('Call attempts on Q4 Winback, newest first')).toBeTruthy();
+  });
+});
+
+describe('moving to another campaign before its agents answer', () => {
+  it('no longer offers the previous campaign’s agents while the new list is on its way', async () => {
+    mocks.listCampaignAgents.mockImplementation((id: string) => (id === 'camp-1'
+      ? Promise.resolve({ agents: [{ user_id: PRIYA_ID, name: 'Priya Shah', email: 'priya@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }] })
+      : new Promise(() => {})));
+    let go: (to: string) => void = () => undefined;
+    function Driver() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/attempts']}>
+        <Driver />
+        <Routes>
+          <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const options = () => [...(screen.getByTestId('attempts-agent-filter') as HTMLSelectElement).options].map((o) => o.textContent);
+    await waitFor(() => expect(options()).toContain('Priya Shah'));
+
+    act(() => go('/agency/campaigns/camp-2/attempts'));
+    await waitFor(() => expect(mocks.listCampaignAgents).toHaveBeenCalledWith('camp-2', 'tenant-1', 'account-1'));
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(options()).toEqual(['All agents', 'Ravi Menon']);
+  });
+});
+
+describe('a phone filter with no digits is caught in the form', () => {
+  it('says so in a sentence and does not send it', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const calls = mocks.getCampaignAttempts.mock.calls.length;
+
+    fireEvent.change(screen.getByPlaceholderText('Number or last digits'), { target: { value: 'abc!!' } });
+
+    expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
+    expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('a phone number still being typed', () => {
+  it('is not an error at its first "+", is said on Apply, and is never sent', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const calls = mocks.getCampaignAttempts.mock.calls.length;
+    const field = screen.getByPlaceholderText('Number or last digits');
+
+    fireEvent.change(field, { target: { value: '+' } });
+    expect(screen.queryByTestId('attempts-phone-unusable')).toBeNull();
+    expect(field.getAttribute('aria-invalid')).toBeNull();
+    expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByText('Apply'));
+    expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+
+    // A digit clears it, and Apply sends it.
+    fireEvent.change(field, { target: { value: '+9' } });
+    expect(screen.queryByTestId('attempts-phone-unusable')).toBeNull();
+    fireEvent.click(screen.getByText('Apply'));
+    await waitFor(() => expect(currentQuery().get('phone')).toBe('+9'));
+  });
+});
+
+describe('a link whose dates are the wrong way round', () => {
+  it('says to swap them, not that a date cannot be read', async () => {
+    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('from', '`from` must not be later than `to`'));
+    renderWithLocation('?from=2026-08-20T00:00:00.000Z&to=2026-08-10T00:00:00.000Z');
+
+    // The refusal itself, not the form's own check of the drafts the link filled in.
+    const said = await screen.findByText(/Change or remove it above to see the call log/);
+    expect(said.textContent).toContain('The “From” date is after the “To” date');
+    expect(said.textContent).not.toContain('not a date this list can use');
   });
 });

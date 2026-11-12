@@ -30,6 +30,7 @@ import { fetchOwnedCoreCampaign, stringField } from '../helpers/core-campaign.js
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
 import { config } from '../../../config/index.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { accountOrRefuse } from '../helpers/account-scope.js';
 
 const log = createChildLogger({ component: 'proxy-agency-campaigns' });
 
@@ -213,7 +214,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
     // could name a sibling account's rejected-rows export (keyed by nothing but the
     // job id) and read that back the same way. See `agency-ingest-keys.ts`.
     if (!isTenantUploadKey(parsed.data.s3_key, request.tenantId!)) {
-      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
+      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this organisation.' });
     }
 
     try {
@@ -250,7 +251,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
 
     // The same upload-key proof as the analyzer's, above.
     if (!isTenantUploadKey(input.s3_key, request.tenantId!)) {
-      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
+      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this organisation.' });
     }
     if (!input.dry_run && !input.campaign_id) {
       return reply.code(400).send({
@@ -793,19 +794,14 @@ async function proveCampaignOwnedForWrite(
   campaignId: string,
   accountId: string | null,
 ): Promise<string | null> {
-  if (!accountId) {
-    // The handler's `requireOwned` compares the campaign's account to the
-    // account header; with none there is nothing to compare, and the handler
-    // would 400 on the missing header anyway. Refused here so the caller gets a
-    // named reason rather than a masked handler complaint.
-    await reply.code(400).send({
-      error: 'Bad Request',
-      code: 'account_scope_required',
-      message: 'Loading or clearing a campaign roster is scoped to one account. Send X-Account-Id.',
-    });
-    return null;
-  }
-  const probe = await fetchOwnedCoreCampaign(request, campaignId, accountId);
+  // The handler's `requireOwned` compares the campaign's account to the
+  // account header; with none there is nothing to compare, and the handler
+  // would 400 on the missing header anyway. Refused here so the caller gets a
+  // named reason rather than a masked handler complaint.
+  const scoped = accountOrRefuse(accountId, reply,
+    'Loading or clearing a campaign roster is scoped to one account. Send X-Account-Id.');
+  if (!scoped) return null;
+  const probe = await fetchOwnedCoreCampaign(request, campaignId, scoped);
   if (!probe.ok) {
     // Forwarded unchanged: a sibling account's campaign, another tenant's and a
     // nonexistent one are all the handler's 404, and must stay indistinguishable.

@@ -25,3 +25,24 @@ describe('shouldCloseSwitcherOnBlur', () => {
     expect(shouldCloseSwitcherOnBlur(null, outside)).toBe(false);
   });
 });
+
+describe('shouldCloseSwitcherOnBlur — a layer above', () => {
+  it('does not close when focus moves into a modal dialog opened over it (the search)', () => {
+    const root = document.createElement('div');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const input = document.createElement('input');
+    dialog.appendChild(input);
+    expect(shouldCloseSwitcherOnBlur(root, input)).toBe(false);
+  });
+
+  it('still closes for a dialog that is not modal', () => {
+    const root = document.createElement('div');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const input = document.createElement('input');
+    dialog.appendChild(input);
+    expect(shouldCloseSwitcherOnBlur(root, input)).toBe(true);
+  });
+});

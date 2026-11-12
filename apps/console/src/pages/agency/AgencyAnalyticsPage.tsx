@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMountedRef } from '../../hooks/useMountedRef';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ChartNoAxesCombined, Plus } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { listAgencyCampaigns, getAgencyCampaignStats } from '../../api/agencyCampaigns';
@@ -24,7 +24,7 @@ import styles from './AgencyAnalyticsPage.module.css';
  * another. The other half of the workspace, beside campaign setup.
  *
  * ── Why this exists, and why the sidebar's old note is now spent ────────────
- * `AgencySidebar` used to carry a comment explaining that the Supervisor
+ * The old agency sidebar used to carry a comment explaining that the Supervisor
  * Dashboard was "deliberately absent rather than present-and-empty", because
  * the API's stats payload produced no `pacing_state`, `stall_reason`, per-agent rows
  * or connect split — and "a health strip with no diagnosis in it is worse than no
@@ -134,6 +134,31 @@ function statsWindow(rows: readonly AgencyCampaign[], shown: number): AgencyCamp
 /** The two questions this page answers. */
 type AnalyticsTab = 'campaigns' | 'agents';
 
+/**
+ * The page guide, per view: each says what its own half shows, so the agent view does not
+ * describe campaigns side by side.
+ */
+const GUIDE: Record<AnalyticsTab, { description: string; tips: string[] }> = {
+  campaigns: {
+    description:
+      'Every campaign’s numbers side by side, so you can see which one needs you without opening each in turn.\n' +
+      'Health warnings appear only for campaigns that are running, paused or stopping — a campaign that isn’t dialling has nothing to diagnose.',
+    tips: [
+      'Open a campaign’s name for its contacts, attempts and the agents currently on it.',
+      'Connect rate, handle time and wrap-up are derived figures — each can be legitimately absent when a campaign has not produced enough calls to divide by.',
+    ],
+  },
+  agents: {
+    description:
+      'Every agent’s numbers over one period, ranked, with the team’s median beside each person so you can see who to ask about first.\n' +
+      'Open a row for that person’s figures and the calls behind them.',
+    tips: [
+      'Pick a campaign, the period and the order above the table; a person’s figures open on the same period.',
+      'Tick two to four people to compare them side by side.',
+    ],
+  },
+};
+
 export function AgencyAnalyticsPage() {
   const { tenantId, accountId, role, accounts } = useTenant();
   const [campaigns, setCampaigns] = useState<AgencyCampaign[] | null>(null);
@@ -144,15 +169,14 @@ export function AgencyAnalyticsPage() {
   const [shown, setShown] = useState(STATS_BATCH);
   const [loadingMore, setLoadingMore] = useState(false);
   /**
-   * Which half of the page is on screen.
+   * Which half of the page is on screen: `?view=agents`, else the campaigns.
    *
-   * Component state rather than a URL param: `SAUsagePage`'s rule is that view
-   * state worth sharing belongs in the URL, and this is one control with two
-   * values on a page whose campaign half is the default for everybody. A param
-   * for it would restore half a view, which that page's own comment calls worse
-   * than none.
+   * In the URL (QA analytics:ux:fb184751aa), so a reload, a shared link and Back from a campaign
+   * keep the view the reader chose. Replaced, not pushed: switching halves is not a page Back
+   * should step through. Read only for someone the agent half is offered to, so a link to it
+   * opens the campaigns for anyone else.
    */
-  const [tab, setTab] = useState<AnalyticsTab>('campaigns');
+  const [searchParams, setSearchParams] = useSearchParams();
 
   /**
    * The in-flight generation. Incremented by every `load()`, so a result can ask
@@ -240,8 +264,8 @@ export function AgencyAnalyticsPage() {
        * show the LAST account's campaigns and figures, which is worse than an empty
        * page because it looks like data about the account you are now in.
        *
-       * Unreachable through `AgencyLayout` today, which renders no `Outlet` at all
-       * without an account and keys it by `accountId` so a switch remounts this
+       * Unreachable through the console shell today, which renders no page at all
+       * without an account (`AgencyArea`) and keys it by `accountId` so a switch remounts this
        * page. That makes this defensive — but the correctness of a page should not
        * rest on a parent's gate, and the cost here is three setState calls on a path
        * that renders nothing.
@@ -318,6 +342,18 @@ export function AgencyAnalyticsPage() {
    */
   const canSupervise = hasPermission(role, 'agency.supervise');
   const accountName = accounts?.find((a) => a.id === accountId)?.name ?? null;
+  const tab: AnalyticsTab = canSupervise && searchParams.get('view') === 'agents' ? 'agents' : 'campaigns';
+  const setTab = (next: AnalyticsTab) => {
+    setSearchParams(
+      (prev) => {
+        const updated = new URLSearchParams(prev);
+        if (next === 'agents') updated.set('view', 'agents');
+        else updated.delete('view');
+        return updated;
+      },
+      { replace: true },
+    );
+  };
 
   return (
     <div className={styles.page}>
@@ -374,14 +410,8 @@ export function AgencyAnalyticsPage() {
 
       <PageDescription
         pageKey="agency-analytics"
-        description={
-          'Every campaign’s numbers side by side, so you can see which one needs you without opening each in turn.\n' +
-          'Health warnings appear only for campaigns that are running, paused or stopping — a campaign that isn’t dialling has nothing to diagnose.'
-        }
-        tips={[
-          'Open a campaign’s name for its contacts, attempts and the agents currently on it.',
-          'Connect rate, handle time and wrap-up are derived figures — each can be legitimately absent when a campaign has not produced enough calls to divide by.',
-        ]}
+        description={GUIDE[tab].description}
+        tips={GUIDE[tab].tips}
       />
 
       {error && <ErrorAlert message={error} onRetry={load} />}

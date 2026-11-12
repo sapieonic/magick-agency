@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   refreshSession: vi.fn(),
   setActiveAccountId: vi.fn(),
   trackSetupEvent: vi.fn(),
+  inviteUser: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: mocks.useAuth }));
@@ -27,6 +28,13 @@ vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../api/accounts', () => ({ createAccount: mocks.createAccount }));
 vi.mock('../../analytics/events', () => ({ trackSetupEvent: mocks.trackSetupEvent }));
+vi.mock('../../api/users', () => ({ inviteUser: mocks.inviteUser }));
+vi.mock('../../contexts/GovernanceContext', () => ({
+  useGovernance: () => ({ isEnabled: () => true, loading: false }),
+}));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: () => true, status: 'ready' }),
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));
@@ -109,6 +117,12 @@ describe('AccountsPage — the list', () => {
     expect(within(screen.getByTestId('account-row-acct-2')).getByText('Not set yet')).toBeTruthy();
   });
 
+  it('points at the account switcher where it is, in the sidebar', () => {
+    setup();
+    expect(screen.getByText(/account switcher in the sidebar/)).toBeTruthy();
+    expect(screen.queryByText(/switcher at the top/)).toBeNull();
+  });
+
   it('labels the actions column for screen readers', () => {
     setup();
     expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
@@ -151,7 +165,7 @@ describe('AccountsPage — who may create', () => {
   it('with no accounts, tells someone who cannot create one whom to ask', () => {
     setup({ accounts: [], memberships: [membership('account_admin', null)] });
     expect(screen.queryByRole('button', { name: /New account/i })).toBeNull();
-    expect(screen.getByText(/Ask an admin with access to the whole workspace/)).toBeTruthy();
+    expect(screen.getByText(/Ask an admin with access to the whole organisation/)).toBeTruthy();
   });
 });
 
@@ -193,7 +207,7 @@ describe('AccountsPage — creating', () => {
     fireEvent.change(within(dialog).getByLabelText('Account name'), { target: { value: '  Collections ' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /Create account/i }));
 
-    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Account "Collections" created', 'success'));
+    await screen.findByTestId('new-account-ready');
     expect(mocks.createAccount).toHaveBeenCalledWith(TENANT, 'Collections');
     expect(mocks.reload).toHaveBeenCalledTimes(1);
     expect(mocks.reloadAccounts).toHaveBeenCalledTimes(1);
@@ -211,7 +225,7 @@ describe('AccountsPage — creating', () => {
   it('keeps the modal open with the server\'s sentence when the name is taken', async () => {
     mocks.createAccount.mockRejectedValue(new ApiError(409, {
       error: 'Conflict', code: 'account_name_taken',
-      message: 'There is already an account called "Renewals" in this workspace.',
+      message: 'There is already an account called "Renewals" in this organisation.',
     }));
     setup();
     const dialog = openModal();
@@ -220,7 +234,7 @@ describe('AccountsPage — creating', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /Create account/i }));
 
     expect((await screen.findByTestId('create-account-error')).textContent).toBe(
-      'There is already an account called "Renewals" in this workspace.',
+      'There is already an account called "Renewals" in this organisation.',
     );
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(mocks.reload).not.toHaveBeenCalled();
@@ -241,7 +255,7 @@ describe('AccountsPage — creating', () => {
   it('reports a refusal of an account-scoped seat with its own reason', async () => {
     mocks.createAccount.mockRejectedValue(new ApiError(403, {
       error: 'Forbidden', code: 'tenant_wide_membership_required',
-      message: 'Your admin access covers one account, not the whole workspace, so you cannot create accounts.',
+      message: 'Your admin access covers one account, not the whole organisation, so you cannot create accounts.',
     }));
     setup();
     const dialog = openModal();
@@ -256,5 +270,91 @@ describe('AccountsPage — creating', () => {
     setup();
     const dialog = openModal();
     expect(within(dialog).getByLabelText('Account name').getAttribute('maxlength')).toBe('100');
+  });
+});
+
+describe('AccountsPage — after creating, invite the person who will run it', () => {
+  async function createCollections() {
+    mocks.createAccount.mockResolvedValue(account('acct-3', 'Collections'));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New account/i }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Account name'), { target: { value: 'Collections' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create account/i }));
+    return screen.findByTestId('new-account-ready');
+  }
+
+  it('says the account is ready, what comes next, and that the reader stays where they are', async () => {
+    const panel = await createCollections();
+
+    expect(within(panel).getByRole('heading', { name: 'Collections is ready' })).toBeTruthy();
+    expect(panel.textContent).toMatch(/Next, invite the person who’ll run it\. You stay in Default while you do\./);
+    expect(mocks.setActiveAccountId).not.toHaveBeenCalled();
+  });
+
+  it('starts on Supervisor, with the account fixed to the new one', async () => {
+    const panel = await createCollections();
+
+    expect((within(panel).getByLabelText('Role') as HTMLSelectElement).value).toBe('account_admin');
+    expect(within(panel).getByRole('option', { name: 'Supervisor (account admin)' })).toBeTruthy();
+    const accountField = within(panel).getByLabelText('Account') as HTMLInputElement;
+    expect(accountField.value).toBe('Collections');
+    expect(accountField.readOnly).toBe(true);
+  });
+
+  it('sends the invite into the new account only, then shows the hand-off', async () => {
+    mocks.inviteUser.mockResolvedValue({ invite_email: { sent: true } });
+    const panel = await createCollections();
+
+    fireEvent.change(within(panel).getByLabelText('Email'), { target: { value: ' lead@example.com ' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Send invite' }));
+
+    await waitFor(() => expect(mocks.inviteUser).toHaveBeenCalledTimes(1));
+    expect(mocks.inviteUser).toHaveBeenCalledWith(TENANT, {
+      email: 'lead@example.com', role: 'account_admin', account_id: 'acct-3',
+    });
+    expect(mocks.trackSetupEvent).toHaveBeenCalledWith('team_invite_sent', { role: 'account_admin', account_scoped: true });
+    expect(await within(panel).findByTestId('invite-emailed')).toBeTruthy();
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Done' }));
+    expect(screen.queryByTestId('new-account-ready')).toBeNull();
+  });
+
+  it('keeps the form and says why when the invite is refused', async () => {
+    mocks.inviteUser.mockRejectedValue(new Error('already a member'));
+    const panel = await createCollections();
+
+    fireEvent.change(within(panel).getByLabelText('Email'), { target: { value: 'lead@example.com' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Send invite' }));
+
+    expect((await within(panel).findByRole('alert')).textContent).toMatch(/already a member/);
+    expect(within(panel).getByRole('button', { name: 'Send invite' })).toBeTruthy();
+  });
+
+  it('holds "Later" while the invite is being sent, so the link hand-off is not lost', async () => {
+    /* When the server could not email the invitee, the hand-off is the only place the link
+       is shown; putting the panel away mid-request still created the invite. */
+    let settle!: (value: unknown) => void;
+    mocks.inviteUser.mockReturnValue(new Promise((resolve) => { settle = resolve; }));
+    const panel = await createCollections();
+
+    fireEvent.change(within(panel).getByLabelText('Email'), { target: { value: 'lead@example.com' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Send invite' }));
+    const later = within(panel).getByRole('button', { name: 'Later' }) as HTMLButtonElement;
+    await waitFor(() => expect(later.disabled).toBe(true));
+    fireEvent.click(later);
+    expect(screen.getByTestId('new-account-ready')).toBeTruthy();
+
+    settle({ invite_email: { sent: false } });
+    expect(await within(panel).findByTestId('invite-handoff')).toBeTruthy();
+  });
+
+  it('"Later" puts the panel away and sends nothing', async () => {
+    const panel = await createCollections();
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Later' }));
+
+    expect(screen.queryByTestId('new-account-ready')).toBeNull();
+    expect(mocks.inviteUser).not.toHaveBeenCalled();
   });
 });

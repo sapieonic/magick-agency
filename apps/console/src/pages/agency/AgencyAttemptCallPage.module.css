@@ -3,8 +3,8 @@
 
   Its own stack rather than the whole column's: `CallDetailView` supplies the
   24px card rhythm on the ordinary path and this branch does not render it, while
-  the breadcrumb trail and the section bar above both carry their own margins —
-  so a gap on the outer div would push the section bar off the line it holds on
+  the section bar above carries its own margins — so a gap on the outer div
+  would push the section bar off the line it holds on
   every other campaign screen.
 */
 .attemptRecord {

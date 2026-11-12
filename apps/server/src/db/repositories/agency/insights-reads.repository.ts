@@ -32,6 +32,7 @@ import type { AgencyMyContactBucket } from '@magick-agency/contracts/api/agency/
 import { contactBucketSql, openContactSql } from './assignment-sql.js';
 import {
   attemptedSql,
+  callbackOverdueSql,
   pendingCallbackSql,
   rosterBucketPredicates,
   ROSTER_BUCKETS,
@@ -167,7 +168,7 @@ export function allocationStatement(input: AllocationCountsInput): InsightsState
            (count(*) FILTER (WHERE ${waitingRetrySql('c', codes)}))::int AS waiting_retry,
            (count(*) FILTER (WHERE ${callback} AND c.next_attempt_at >= now()
                                AND c.next_attempt_at < ${dayEnd}::timestamptz))::int AS callbacks_due_today,
-           (count(*) FILTER (WHERE ${callback} AND c.next_attempt_at < now()))::int AS callbacks_overdue,
+           (count(*) FILTER (WHERE ${callbackOverdueSql('c', codes)}))::int AS callbacks_overdue,
            (count(*) FILTER (WHERE ${bucket('reached')}))::int AS reached,
            (count(*) FILTER (WHERE ${bucket('not_reached')}))::int AS not_reached,
            (count(*) FILTER (WHERE ${bucket('exhausted')}))::int AS exhausted,

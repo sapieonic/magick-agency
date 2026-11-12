@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 import type { AgencyAttempt } from '../../types/agency-spine';
 import type { WebRtcCallRecord } from '../../types/webrtc-call';
 import type { AgencyAttemptCallDetail } from '../../api/agencySpine';
@@ -101,23 +102,16 @@ function detail(over: Partial<AgencyAttemptCallDetail> = {}): AgencyAttemptCallD
   return { attempt: ATTEMPT, call: CALL, call_availability: 'available', ...over };
 }
 
-/**
- * The breadcrumb trail, scoped.
- *
- * "Call attempts" is a link in BOTH the trail and the section bar, to the same
- * path — which is exactly what this page was missing, so both are asserted, each
- * within its own landmark rather than by a name lookup that finds two.
- */
-function trail() {
-  return within(screen.getByRole('navigation', { name: 'Breadcrumb' }));
-}
+const CRUMB_CALL_LOG = 'Call log→/agency/campaigns/camp-1/attempts';
 
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/agency/campaigns/camp-1/attempts/attempt-1']}>
-      <Routes>
-        <Route path="/agency/campaigns/:id/attempts/:attemptId" element={<AgencyAttemptCallPage />} />
-      </Routes>
+      <WithPageCrumbs>
+        <Routes>
+          <Route path="/agency/campaigns/:id/attempts/:attemptId" element={<AgencyAttemptCallPage />} />
+        </Routes>
+      </WithPageCrumbs>
     </MemoryRouter>,
   );
 }
@@ -329,9 +323,8 @@ describe('every state keeps the way back to the campaign', () => {
     );
     renderPage();
 
-    // The trail back exists before the call does.
-    const back = await trail().findByRole('link', { name: 'Call attempts' });
-    expect(back.getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
+    // The trail back (in the top bar) exists before the call does.
+    await waitFor(() => expect(suppliedCrumbs()).toContain(`${CRUMB_CALL_LOG} / Attempt`));
     expect(screen.getByTestId('campaign-tabs')).toBeTruthy();
 
     release(detail());
@@ -346,11 +339,11 @@ describe('every state keeps the way back to the campaign', () => {
     renderPage();
 
     await screen.findByTestId('call-fact-Agent');
-    const placeholder = trail().getByRole('link', { name: 'Campaign' });
-    expect(placeholder.getAttribute('href')).toBe('/agency/campaigns/camp-1');
+    expect(suppliedCrumbs()).toBe(`Campaign→/agency/campaigns/camp-1 / ${CRUMB_CALL_LOG} / Attempt 3`);
 
     releaseCampaign({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
-    expect(await trail().findByRole('link', { name: 'Q3 Renewals' })).toBeTruthy();
+    await waitFor(() => expect(suppliedCrumbs())
+      .toBe(`Q3 Renewals→/agency/campaigns/camp-1 / ${CRUMB_CALL_LOG} / Attempt 3`));
   });
 
   it('shows the trail on a stale link, and offers no retry that cannot work', async () => {
@@ -365,8 +358,10 @@ describe('every state keeps the way back to the campaign', () => {
     expect(await screen.findByText('We can’t show this call')).toBeTruthy();
     expect(screen.getByText(/Attempt not found on this campaign/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry loading' })).toBeNull();
-    // The way back is on the one state that most needs it.
-    expect(trail().getByRole('link', { name: 'Call attempts' })).toBeTruthy();
+    // The way back is on the one state that most needs it: in the empty state, the trail and the bar.
+    expect(screen.getByRole('link', { name: 'Back to the call log' }).getAttribute('href'))
+      .toBe('/agency/campaigns/camp-1/attempts');
+    expect(suppliedCrumbs()).toContain(CRUMB_CALL_LOG);
     expect(screen.getByTestId('campaign-tabs')).toBeTruthy();
   });
 
@@ -377,7 +372,7 @@ describe('every state keeps the way back to the campaign', () => {
     renderPage();
 
     expect(await screen.findByRole('button', { name: 'Retry loading' })).toBeTruthy();
-    expect(trail().getByRole('link', { name: 'Call attempts' })).toBeTruthy();
+    expect(suppliedCrumbs()).toContain(CRUMB_CALL_LOG);
   });
 });
 

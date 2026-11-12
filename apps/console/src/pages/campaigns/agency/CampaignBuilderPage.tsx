@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Upload } from 'lucide-react';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ColumnMapper } from './ColumnMapper';
 import { IngestSummary } from './IngestSummary';
 import { CampaignBehaviourSection } from './CampaignBehaviourSection';
@@ -25,6 +24,7 @@ import {
   NO_ANALYSIS_PROFILE,
   campaignSaveRefusal,
   recordingPayload,
+  type CampaignRecordingState,
 } from '../../../utils/agencyCampaignRecording';
 import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyCampaigns';
 import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
@@ -64,6 +64,9 @@ import {
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
 import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
+import { changedSettings, samePool, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
+import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
+import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -81,7 +84,22 @@ import styles from './CampaignBuilderPage.module.css';
  * Everything the page decides is still delegated to the pure modules —
  * `agencyColumnMapping`, `agencyIngestSummary`, `agencyCampaignConfigForm`,
  * `builderFlow` — so the page is composition.
+ *
+ * Leaving with input not yet saved asks first, as campaign Settings does
+ * (`useUnsavedChangesGuard`): what is typed is compared with what the server has (nothing
+ * at first; the name, numbers and carrier once a roster upload creates the draft; the whole
+ * form once Save campaign succeeds), and a roster upload still being mapped counts too.
  */
+
+/**
+ * What the builder holds that a save sends, as campaign Settings counts it, except that the
+ * carrier is `null` while the page's default stands: that default moves as the carriers and
+ * numbers load, and is not an edit.
+ */
+type BuilderForm = Omit<CampaignSettingsForm, 'carrier'> & { carrier: CarrierChoice | null };
+
+/** The builder's recording as a form holds it: on or off, never with an analysis profile. */
+const builderRecording = (record: boolean): CampaignRecordingState => ({ record, profileId: NO_ANALYSIS_PROFILE });
 
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
@@ -123,6 +141,22 @@ export default function CampaignBuilderPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [savingConfig, setSavingConfig] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
+  /** The form as the server has it: empty until a draft is created, then as last saved. */
+  const [savedForm, setSavedForm] = useState<BuilderForm>(() => ({
+    name: '',
+    callerIds: [],
+    carrier: null,
+    recording: builderRecording(false),
+    config,
+  }));
+  /**
+   * The draft's basics as the server has them (null until the draft exists): the name, the
+   * caller IDs and the carrier account sent on create, then on each Save campaign. Once the
+   * draft exists the save is a PATCH, and it carries any of the three that moved since, or a
+   * rename on Basics after a roster upload would never reach the server. A ref, not state:
+   * the save reads it straight after `ensureCampaign` may have set it.
+   */
+  const serverBasicsRef = useRef<{ name: string; callerIds: readonly string[]; carrier: CarrierChoice } | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -188,8 +222,11 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
+    serverBasicsRef.current = { name: name.trim(), callerIds: [...callerIds], carrier };
+    // The draft has the basics now; the rest is saved by Save campaign.
+    setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
     return created.id;
-  }, [campaignId, name, callerIds, carrier, ceilingForCreate, tenantId, accountId]);
+  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, tenantId, accountId]);
 
   const {
     limits,
@@ -259,20 +296,45 @@ export default function CampaignBuilderPage() {
     const { record_calls } = recordingPayload({
       recordingEnabled,
       analyticsEnabled: false,
-      next: { record: recordCalls, profileId: NO_ANALYSIS_PROFILE },
+      next: builderRecording(recordCalls),
     });
     try {
       const id = await ensureCampaign();
-      await updateAgencyCampaign(
-        id,
-        {
-          ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
-          ...(record_calls !== undefined ? { record_calls } : {}),
-        },
-        tenantId ?? undefined,
-        accountId ?? undefined,
-      );
+      /*
+        The basics the draft was created with, or last saved with. Any that moved since go in
+        this PATCH (a draft takes all three); the carrier re-judges the pool, so a carrier move
+        sends the caller IDs as well, the rule campaign Settings saves by.
+      */
+      const server = serverBasicsRef.current;
+      const trimmedName = name.trim();
+      const sendName = server === null || trimmedName !== server.name;
+      const sendCarrier = server === null || !sameCarrier(carrier, server.carrier);
+      const sendCallerIds = sendCarrier || server === null || !samePool(callerIds, server.callerIds);
+      try {
+        await updateAgencyCampaign(
+          id,
+          {
+            ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
+            ...(record_calls !== undefined ? { record_calls } : {}),
+            ...(sendName ? { name: trimmedName } : {}),
+            ...(sendCallerIds ? { caller_ids: callerIds } : {}),
+            ...(sendCarrier
+              ? {
+                telephony_provider: carrier.telephony_provider,
+                telephony_credential_id: carrier.telephony_credential_id,
+              }
+              : {}),
+          },
+          tenantId ?? undefined,
+          accountId ?? undefined,
+        );
+      } catch (err: unknown) {
+        // A carrier refusal says the operator's sentence and goes to Basics, as on create.
+        throw withCarrierRefusalCopy(err);
+      }
+      serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
       setConfigSaved(true);
+      setSavedForm({ name, callerIds, carrier: chosenCarrier, recording: builderRecording(recordCalls), config });
       {
         const priorOrder = initialDispositionOrderRef.current;
         const nextOrder = config.dispositions.map((d) => d.code);
@@ -324,7 +386,12 @@ export default function CampaignBuilderPage() {
       // the body, so the message lands on the field that caused it rather than
       // in one banner the operator has to map back by hand.
       const mapped = fieldErrorsFromResponse(err);
-      if (Object.keys(mapped).length > 0) {
+      // The name and the caller IDs are on Basics, which shows the refusal as the page's banner.
+      const basicsRefusal = mapped.name ?? mapped.caller_ids;
+      if (basicsRefusal !== undefined) {
+        setError(basicsRefusal);
+        goTo('basics');
+      } else if (Object.keys(mapped).length > 0) {
         setFieldErrors(mapped);
         if (mapped.default_timezone || mapped.calling_window_start || mapped.calling_window_end || mapped.calling_days) {
           goTo('hours');
@@ -337,7 +404,10 @@ export default function CampaignBuilderPage() {
     } finally {
       setSavingConfig(false);
     }
-  }, [config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError]);
+  }, [
+    config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
+    name, callerIds, carrier, chosenCarrier,
+  ]);
 
   const backToMapping = useCallback(() => {
     setPhase('mapping');
@@ -419,18 +489,22 @@ export default function CampaignBuilderPage() {
     if (previous) goTo(previous);
   }, [step, goTo]);
 
+  /*
+    Unsaved input, for the leave guard: any setting that differs from what the server has
+    (the carrier as the page would send it, so a default it settles on is not an edit), or a
+    roster upload not yet imported.
+  */
+  const unsaved = changedSettings(
+    { ...savedForm, carrier: savedForm.carrier ?? carrier },
+    { name, callerIds, carrier, recording: builderRecording(recordCalls), config },
+  ).length > 0 || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
+  const leaveGuard = useUnsavedChangesGuard(unsaved);
+
   const continueDisabled = step === 'basics' && basicsBlock !== null;
   const saveDisabled = savingConfig || configBlock !== null || !basicsReady;
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: 'New campaign' },
-        ]}
-      />
-
       <header className={styles.header}>
         <h1 className={styles.title}>New campaign</h1>
         <p className={styles.subtitle}>
@@ -834,6 +908,11 @@ export default function CampaignBuilderPage() {
           />
         </div>
       </div>
+
+      <LeaveUnsavedDialog
+        guard={leaveGuard}
+        message="What you have entered for this new campaign is not saved. Leave now and it is lost; Cancel keeps you here to save it."
+      />
     </div>
   );
 }

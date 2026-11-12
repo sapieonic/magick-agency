@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { useState } from 'react';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { CampaignBehaviourSection } from '../../pages/campaigns/agency/CampaignBehaviourSection';
+import { CampaignBehaviourSection, type BehaviourSectionId } from '../../pages/campaigns/agency/CampaignBehaviourSection';
 import {
   configFromCampaign,
   type CampaignConfigState,
@@ -116,7 +116,7 @@ function Editor({
 }: {
   initial?: AgencyCampaign;
   fieldErrors?: Record<string, string>;
-  include?: ('hours' | 'behaviour')[];
+  include?: BehaviourSectionId[];
 }) {
   const [state, setState] = useState<CampaignConfigState>(() =>
     configFromCampaign(initial ?? { id: 'camp-1', name: 'Collections', status: 'draft' }),
@@ -247,5 +247,28 @@ describe('wrap-up', () => {
     fireEvent.change(screen.getByLabelText('Wrap-up seconds (0 = none)'), { target: { value: '0' } });
     expect(screen.getByTestId('auto-return-hint').textContent)
       .toContain('With no wrap-up window there is no countdown');
+  });
+});
+
+/*
+  The settings page's sections (IN14) render `behaviour` in three slices. Each editor is in
+  exactly one, so nothing is lost or shown twice between them.
+*/
+describe('the settings page’s slices of behaviour', () => {
+  const editors = () => ({
+    retries: screen.queryByTestId('fixed-invalid') !== null,
+    outcomes: screen.queryByLabelText('Outcome 1 label') !== null,
+    wrapup: screen.queryByTestId('auto-return-hint') !== null,
+  });
+
+  it('puts the retry table in retries, the outcomes and wrap-up in outcomes', () => {
+    render(<Editor include={['retries']} />);
+    expect(editors()).toEqual({ retries: true, outcomes: false, wrapup: false });
+    cleanup();
+    render(<Editor include={['outcomes']} />);
+    expect(editors()).toEqual({ retries: false, outcomes: true, wrapup: true });
+    cleanup();
+    render(<Editor include={['agents']} />);
+    expect(editors()).toEqual({ retries: false, outcomes: false, wrapup: false });
   });
 });

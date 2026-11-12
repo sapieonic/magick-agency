@@ -44,7 +44,7 @@ export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
  * `/dialer/phone` — the soft phone for an agent who is not on a campaign
  * (`docs/softphone.md` §2, §7).
  *
- * Full-viewport and outside both shells, gated like `/station`; the page reads
+ * Full-viewport and outside the console shell, gated like `/station`; the page reads
  * `agency_softphone_enabled` itself rather than through `RequireFlag`, because
  * the flag turned off must not take a call away from the agent on it: with the
  * flag off it rehydrates only a soft-phone session that already exists in this
@@ -321,7 +321,7 @@ function SoftphoneConsole({
 /** The soft phone is off here and the agent's session is in another account: what is true, and who can finish it. */
 export const SOFTPHONE_STRANDED_COPY = {
   title: 'Your soft phone is open in another account',
-  detail: 'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this workspace. Switch to that account to finish there, or close it here.',
+  detail: 'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this organisation. Switch to that account to finish there, or close it here.',
   owed: 'Your last call there still needs its outcome. A supervisor can save it for you from Soft-phone calls.',
   close: 'Close the soft phone so you can join a campaign.',
 } as const;
@@ -412,7 +412,7 @@ export const SOFTPHONE_ELSEWHERE_COPY = {
   detail: (account: string | null) =>
     account
       ? `Your soft-phone session is open in ${account}. You can only have one session at a time.`
-      : 'Your soft-phone session is open in another account of this workspace. You can only have one session at a time.',
+      : 'Your soft-phone session is open in another account of this organisation. You can only have one session at a time.',
   close: 'Close it and open the soft phone here',
   callPending: (account: string | null) =>
     `Your soft phone ${account ? `in ${account}` : 'in the other account'} has a call that isn’t finished, so it’s still open. Hang up and save its outcome there first.`,

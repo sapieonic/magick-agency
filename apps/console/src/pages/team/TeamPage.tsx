@@ -105,12 +105,13 @@ function InviteStateBadge({ member }: { member: TenantMember }) {
 /* ── Team Page ────────────────────────────────── */
 
 /**
- * The Account cell: the account's name once a tenant can hold several, falling back
+ * The Account cell: "All accounts" for a tenant-wide seat (the invite form's words for
+ * it), else the account's name once a tenant can hold several, falling back
  * to the id's first eight characters for an account the switcher's list does not
  * carry (an account-scoped viewer sees only their own).
  */
 export function accountLabel(accountId: string | null, names: ReadonlyMap<string, string>): string {
-  if (!accountId) return 'Tenant-level';
+  if (!accountId) return 'All accounts';
   return names.get(accountId) ?? accountId.slice(0, 8);
 }
 
@@ -199,7 +200,7 @@ export default function TeamPage() {
               onClick={() => setShowInvite(true)}
             >
               <UserPlus size={14} />
-              Invite Member
+              Invite member
             </button>
           ) : undefined
         }
@@ -208,8 +209,8 @@ export default function TeamPage() {
         pageKey="team"
         description="Manage your team members and their access levels. Invite new users by email, assign roles to control what they can see and do, and remove members when needed."
         tips={[
-          'Roles control access: Viewers can only see data, Operators can make calls, Admins can manage the account.',
-          'Invited users will receive an email with instructions to join your workspace.',
+          'Roles control access: agents take calls and follow up their own missed calls; viewers and operators see campaigns and results and can take calls too (the two roles are the same today); supervisors run an account; admins also create accounts and change people’s access across the organisation.',
+          'Invited users will receive an email with instructions to join your organisation.',
         ]}
       />
 
@@ -223,7 +224,7 @@ export default function TeamPage() {
         <EmptyState
           icon={<Users size={32} />}
           title="No team members"
-          description="Invite your team members to collaborate on this workspace."
+          description="Invite your team members to collaborate on this organisation."
           action={
             canInvite ? (
               <button
@@ -232,7 +233,7 @@ export default function TeamPage() {
                 onClick={() => setShowInvite(true)}
               >
                 <UserPlus size={14} />
-                Invite Member
+                Invite member
               </button>
             ) : undefined
           }
@@ -344,8 +345,8 @@ export default function TeamPage() {
 
       <ConfirmDialog
         open={!!confirmRemove}
-        title="Remove Team Member"
-        message={`Are you sure you want to remove ${confirmRemove?.user.display_name || confirmRemove?.user.email}? They will lose access to this workspace.`}
+        title="Remove team member"
+        message={`Are you sure you want to remove ${confirmRemove?.user.display_name || confirmRemove?.user.email}? They will lose access to this organisation.`}
         confirmLabel={removing ? 'Removing...' : 'Remove'}
         danger
         onConfirm={handleRemove}

@@ -31,14 +31,15 @@ export const AGENCY_UUID_RE =
  * below is what makes a second call for the same campaign harmless.
  *
  * ── Where the link points ────────────────────────────────────────────────────
- * An agency campaign lives at `/agency/campaigns/:id`, inside the console's
- * `AgencyLayout`, with its attempts at `/agency/campaigns/:id/attempts/:attemptId`.
+ * An agency campaign lives at `/agency/campaigns/:id`, inside the console's one
+ * shell (B28), with its attempts at `/agency/campaigns/:id/attempts/:attemptId`.
  * It is scoped to the campaign's own tenant and account (B26, see
  * {@link agencyCampaignUrl}).
- * Mailing an agency supervisor a link into the `/app` shell instead would be a
- * link that crosses shells, which is a bug even when the data it lands on is
- * correct — and an email is the worst place for one, because a link in an inbox
- * outlives every redirect we would later add to cover for it.
+ * Never an `/app/...` link: `/app` is no longer a page of its own. An old
+ * `/app/<page>` URL only redirects to `/settings/<page>`, and anything else under
+ * `/app/` is the console's not-found page (`LegacyAppRedirect`), so a campaign link
+ * through it would land nowhere — and an email is the worst place for one, because
+ * a link in an inbox outlives every redirect we would later add to cover for it.
  *
  * Three further properties, none of them cosmetic:
  *
@@ -378,9 +379,10 @@ export type AgencyCampaignLinkTarget = Pick<
 /**
  * The one link in this file, and the reason the file exists.
  *
- * `/t/:tenantId/a/:accountId/agency/campaigns/:id` — inside the agency shell,
+ * `/t/:tenantId/a/:accountId/agency/campaigns/:id` — inside the console shell,
  * which is where the campaign and its attempts live, and pinned to the campaign's
- * own tenant and account. **Not** `/app/...`: see the module header.
+ * own tenant and account. **Not** `/app/...`, which only redirects to Settings
+ * (anything else there is not found): see the module header.
  *
  * ── Why the tenant and account are in it (B26) ─────────────────────────────
  * Every signed-in console URL carries its scope, and the console opens the

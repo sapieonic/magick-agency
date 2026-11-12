@@ -2753,6 +2753,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/home",
+      "source": "apps/console/src/api/agencyHome.ts",
+      "status": "served",
+      "reason": "Home's board: the active campaigns with their stall, abandonment, floor and overdue callbacks in one read, served by the public API layer (decision B28a; contracts api/agency/home.ts)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/customers/options",
       "source": "apps/console/src/api/customerHistory.ts",
       "status": "served",

@@ -55,7 +55,7 @@ export const AGENCY_STALL_LABELS: Record<AgencyStallCode, string> = {
   no_carrier_capacity: 'No call capacity on this carrier',
   dnc_unavailable: 'Do Not Call check unavailable',
   no_agents_available: 'No agents available',
-  concurrency_saturated: 'At the concurrency limit',
+  concurrency_saturated: 'All lines in use',
   outside_calling_hours: 'Outside calling hours',
   list_exhausted_retries_pending: 'Waiting on scheduled retries',
   elevated_failure_rate: 'Unusually many failed calls',
@@ -177,10 +177,17 @@ const CARRIER_PAUSE_FALLBACK: Pick<CarrierPauseCopy, 'cause' | 'action'> = {
  * `formatInstant` is injected rather than imported so the caller owns the
  * locale/timezone decision (and so a test can pin the output without pinning the
  * host's clock formatting).
+ *
+ * `agentsOnShift` is the console's own count (`agentsOnShift` over the same payload's
+ * floor rows), when the caller has the rows. It replaces the stall's
+ * `agents_on_shift`, which the server takes from `agents_live`. The server now counts
+ * the same rows (every state but `offline`), so the two agree; the override stays so
+ * the banner and the floor beside it are one observation of one payload.
  */
 export function stallCopy(
   stall: AgencyStall,
   formatInstant: (iso: string) => string,
+  options: { agentsOnShift?: number | null } = {},
 ): StallCopy {
   switch (stall.code) {
     case 'auto_paused_abandonment': {
@@ -236,7 +243,7 @@ export function stallCopy(
         facts: [
           {
             text: stall.tenant_wide
-              ? 'The Do Not Call list is shared across this whole workspace, so every campaign in it is stopped by the same fault.'
+              ? 'The Do Not Call list is shared across this whole organisation, so every campaign in it is stopped by the same fault.'
               : 'The Do Not Call list could not be read.',
           },
         ],
@@ -245,8 +252,9 @@ export function stallCopy(
 
     case 'no_agents_available': {
       const breaks = breakClause(stall.on_break_by_reason);
+      const onShift = options.agentsOnShift ?? stall.agents_on_shift;
       const facts: StallFact[] = [
-        { text: `${count(stall.agents_on_shift, 'agent')} on shift`, emphasis: num(stall.agents_on_shift) },
+        { text: `${count(onShift, 'agent')} on shift`, emphasis: num(onShift) },
         // `num()` like every other count on this run. A raw interpolation drops
         // the thousands separator, so a large floor read "1234 on a call" beside
         // "1,234 agents on shift" — and the emphasis substring then failed to
@@ -275,9 +283,9 @@ export function stallCopy(
 
     case 'concurrency_saturated':
       return diagnosis({
-        headline: `At your concurrency limit — ${stall.in_use} of ${stall.limit} lines in use.`,
+        headline: `All your lines are in use: ${stall.in_use} of ${stall.limit}.`,
         facts: [
-          { text: 'The limit is account-wide, so other calls in this workspace count against it too.' },
+          { text: 'The limit is account-wide, so other calls in this account count against it too.' },
         ],
         // `shift_seconds`: there is no tenant-facing setter, so the honest advice names who
         // can change it rather than implying the supervisor can.

@@ -1,5 +1,6 @@
 import { Phone } from 'lucide-react';
 import { PageDescription } from '../../../components/common/PageDescription';
+import { SettingsEntryLink } from '../../../components/common/SettingsEntryLink';
 import { SoftphoneCallsList } from '../../../components/softphone/SoftphoneCallsList';
 import { useGovernance } from '../../../contexts/GovernanceContext';
 import { AGENCY_ANALYTICS_CAPABILITY } from '../../../utils/agencyCampaignRecording';
@@ -34,6 +35,7 @@ export default function SoftphoneCallsPage() {
           </span>
           <h1 className={spine.title}>Soft-phone calls</h1>
         </div>
+        <SettingsEntryLink entry="softphone" />
       </header>
       <PageDescription
         pageKey="agency-softphone-calls"

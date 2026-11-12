@@ -3,9 +3,10 @@ import { formatCount } from '../../format/number';
 import { DASH } from './figure';
 
 /*
-  The campaigns home's "list worked" ring (`ActiveCampaignCard`): how much of a campaign's list
-  nothing will dial again. The rest of the Overview panel this file served (the pulse strip, the
-  floor bar) went with the panel when the Insights tab replaced it (IN1).
+  The campaigns home's "list worked" bar (`ActiveCampaignCard`, from the contact counts on Home's
+  board, B28a): how much of a campaign's list nothing will dial again. The rest of the Overview
+  panel this file served (the pulse strip, the floor bar) went with the panel when the Insights
+  tab replaced it (IN1).
 */
 
 export const RING_RADIUS = 30;
@@ -36,7 +37,9 @@ export interface ListWorkedRing {
  * three understates the campaign by an unknowable amount while looking exactly
  * as authoritative as a complete one.
  */
-export function listWorkedRing(stats: AgencyCampaignStats | null): ListWorkedRing {
+export function listWorkedRing(
+  stats: Pick<AgencyCampaignStats, 'contacts_total' | 'contacts_completed' | 'contacts_suppressed' | 'contacts_exhausted'> | null,
+): ListWorkedRing {
   const total = stats?.contacts_total;
   const parts = [stats?.contacts_completed, stats?.contacts_suppressed, stats?.contacts_exhausted];
 

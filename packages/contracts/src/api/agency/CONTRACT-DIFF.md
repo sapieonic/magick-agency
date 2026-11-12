@@ -155,6 +155,18 @@ counterpart (`CustomerSearchOptionsResponse` included). It reuses the dialer voc
 `AgencyAttemptOutcome`, `AgencyCampaignStatus`, `AgencyContactState`, `AgencyDncEntryScope` and
 `AgencyOverrideKind` (`override_applied`) by import rather than redeclaring them.
 
+Home's board (`home.ts`, `GET /proxy/agency/home`, decision B28a) is console-side only: the public
+API layer assembles it (the campaign list, the internal stats handler's payload through
+`helpers/live-stats.ts`, the insights allocation through its cache, the health read's rollup
+figures for today). `AgencyHomeCampaignStats` is a `Pick` of the console `AgencyCampaignStats` over
+`AGENCY_HOME_STATS_FIELDS` (Home's fields and the Campaigns page's Active cards'), so its fields
+keep that type's optionality. The attention facts (`AgencyAttentionAllocation`,
+`AgencyAttentionStaffing`, `AgencyAttentionRangeFigures`, `AgencyAttentionSettings`) are projections
+of the console Insights types, made by the functions beside them on both sides. The board is read
+at `agency.campaigns.read`; below `agency.supervise` the server does not read the insights parts
+and serves `staffing`, `allocation`, `today` and `settings` null, which is why `settings` is
+nullable.
+
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 `AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.

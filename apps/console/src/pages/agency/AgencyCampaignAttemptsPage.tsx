@@ -13,14 +13,17 @@ import {
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
+import { listCampaignAgents } from '../../api/agency';
 import { downloadSpineCsv, getCampaignAttempts } from '../../api/agencySpine';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   ATTEMPTS_DESCRIPTION,
+  PHONE_FILTER_PLACEHOLDER,
   SPINE_PRIVACY_NOTE,
   agentCellCopy,
   dispositionLabel,
@@ -30,8 +33,8 @@ import {
   recordingCellCopy,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CallLogViews } from '../../components/agency/CallLogViews';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -46,14 +49,19 @@ import {
   type AgencyAttempt,
   type AgencyAttemptFilters,
 } from '../../types/agency-spine';
-import type { AgencyCampaign } from '../../types/agency-campaign';
+import type { AgencyAssignedAgent, AgencyCampaign } from '../../types/agency-campaign';
 import spine from '../../components/agency/SpineListLayout.module.css';
 import { attemptDateRange } from '../../utils/agencyAttemptFilters';
 import {
+  campaignAttemptAgentOptions,
   campaignAttemptFilterChips,
+  campaignAttemptFilterRefusal,
   campaignAttemptFiltersFromParams,
   campaignAttemptFiltersToParams,
   isCampaignAttemptFiltered,
+  phoneFilterUsable,
+  phoneFilterDraftError,
+  INVERTED_RANGE_COPY,
 } from '../../utils/agencyCampaignAttemptParams';
 import { formatCount } from '../../utils/format/number';
 import styles from './AgencyCampaignAttemptsPage.module.css';
@@ -97,13 +105,18 @@ export function AgencyCampaignAttemptsPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign, 'attempts');
   const [rows, setRows] = useState<AgencyAttempt[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The server refused the filters themselves: Retry would send them again, so none is offered. */
+  const [filterRefused, setFilterRefused] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** The campaign's assigned agents, for the Agent filter. A courtesy: rows still name the rest. */
+  const [assignedAgents, setAssignedAgents] = useState<AgencyAssignedAgent[]>([]);
 
   /*
     ── The applied filters live in the URL; the drafts do not ────────────────
@@ -125,6 +138,8 @@ export function AgencyCampaignAttemptsPage() {
   // export is guaranteed to match exactly what is on screen.
   const [draftOutcomes, setDraftOutcomes] = useState<string[]>(() => filters.outcome ?? []);
   const [draftPhone, setDraftPhone] = useState(() => filters.phone ?? '');
+  /** Apply was pressed on a phone filter with no digit: say so even for a bare "+". */
+  const [phoneChecked, setPhoneChecked] = useState(false);
   const [draftAgent, setDraftAgent] = useState(() => filters.agent_user_id ?? '');
   const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
   const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
@@ -155,6 +170,7 @@ export function AgencyCampaignAttemptsPage() {
     const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
+    setFilterRefused(false);
     try {
       const page = await getCampaignAttempts(
         id, active, { limit: PAGE_SIZE, includeTotal: true }, tenantId, accountId,
@@ -165,19 +181,43 @@ export function AgencyCampaignAttemptsPage() {
       setTotal(typeof page.total === 'number' ? page.total : null);
     } catch (err: unknown) {
       if (seq !== requestSeq.current) return;
-      setError(getErrorMessage(err, 'Could not load this campaign’s call attempts.'));
+      /*
+        The rows on screen belong to the PREVIOUS filters. Left under the new chips and the
+        error they read as the filtered answer: "Agent: hari" above all 284 rows, every
+        agent among them. A failed load shows no rows.
+      */
+      setRows([]);
+      setNextCursor(null);
+      setTotal(null);
+      const refusal = campaignAttemptFilterRefusal(err);
+      setFilterRefused(refusal !== null);
+      setError(refusal ?? getErrorMessage(err, 'Could not load this campaign’s call attempts.'));
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
+    /*
+      The route has no `key`, so moving to another campaign (or account) keeps this page mounted:
+      drop the previous campaign's header and agents at once, or the Agent picker offers them
+      until the new answer lands, and ignore an answer that lands after the move.
+    */
+    setCampaign(null);
+    setAssignedAgents([]);
     if (!id || !tenantId || !accountId) return;
+    let live = true;
     getAgencyCampaign(id, tenantId, accountId)
       // The attempts are the point of the page; a header that will not load is
       // not a reason to withhold them.
-      .then(setCampaign)
-      .catch(() => setCampaign(null));
+      .then((answer) => { if (live) setCampaign(answer); })
+      .catch(() => { if (live) setCampaign(null); });
+    listCampaignAgents(id, tenantId, accountId)
+      .then((answer) => { if (live) setAssignedAgents(answer.agents ?? []); })
+      .catch(() => { if (live) setAssignedAgents([]); });
+    return () => {
+      live = false;
+    };
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
@@ -245,6 +285,11 @@ export function AgencyCampaignAttemptsPage() {
   }, [id, filters, campaign, tenantId, accountId, showToast, showErrorToast]);
 
   const applyFilters = useCallback(() => {
+    // A phone filter with no digit is refused by the server: said under the field, not sent.
+    if (!phoneFilterUsable(draftPhone)) {
+      setPhoneChecked(true);
+      return;
+    }
     // The form's five controls are rebuilt from the drafts; every filter the form
     // has no control for (a link's dialled window, caller ID, flags, write-up,
     // contact) is kept, so Apply narrows a drill-down rather than undoing it.
@@ -276,10 +321,15 @@ export function AgencyCampaignAttemptsPage() {
   // counts, by construction.
   const filtered = useMemo(() => isCampaignAttemptFiltered(filters), [filters]);
 
+  const agentOptions = useMemo(
+    () => campaignAttemptAgentOptions(assignedAgents, rows, filters.agent_user_id),
+    [assignedAgents, rows, filters.agent_user_id],
+  );
+
   const chips = useMemo(() => campaignAttemptFilterChips(filters, {
     dispositionLabel: (code) => dispositionLabel(code, campaign?.disposition_catalog),
-    agentName: (userId) => rows.find((row) => row.agent_user_id === userId)?.agent_name ?? null,
-  }), [filters, campaign, rows]);
+    agentName: (userId) => agentOptions.find((option) => option.id === userId)?.name ?? null,
+  }), [filters, campaign, agentOptions]);
 
   const removeChip = useCallback((chipId: string) => {
     const chip = chips.find((c) => c.id === chipId);
@@ -316,16 +366,12 @@ export function AgencyCampaignAttemptsPage() {
   // supervisor before they press Apply is the difference between a correction
   // and a support ticket.
   const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
+  // The server's rule too (a phone filter needs a digit), said here before Apply; a number
+  // still being typed ("+") is said only once Apply is pressed (`phoneFilterDraftError`).
+  const phoneError = phoneFilterDraftError(draftPhone, phoneChecked);
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Call attempts' },
-        ]}
-      />
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
@@ -338,10 +384,13 @@ export function AgencyCampaignAttemptsPage() {
         <CampaignTabs campaignId={id} active="attempts" role={role} campaignStatus={campaign?.status} />
       )}
 
+      {/* Dialler calls | Soft-phone calls (decision IN14); nothing when only this view is open. */}
+      {id && <CallLogViews campaignId={id} active="attempts" role={role} />}
+
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><PhoneOutgoing size={20} /></span>
-          <h1 className={spine.title}>Call attempts</h1>
+          <h1 className={spine.title}>Call log</h1>
           {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
         </div>
         <div className={spine.actions}>
@@ -429,22 +478,32 @@ export function AgencyCampaignAttemptsPage() {
                   type="text"
                   className={spine.fieldInput}
                   value={draftPhone}
-                  placeholder="Whole number, or the last few digits"
-                  onChange={(e) => setDraftPhone(e.target.value)}
+                  placeholder={PHONE_FILTER_PLACEHOLDER}
+                  aria-invalid={phoneError !== null || undefined}
+                  aria-describedby={phoneError !== null ? 'attempts-phone-unusable' : undefined}
+                  onChange={(e) => {
+                    setDraftPhone(e.target.value);
+                    if (phoneFilterUsable(e.target.value)) setPhoneChecked(false);
+                  }}
                 />
               </span>
             </label>
+            {/* Picked by name from the campaign's agents; the id is what is sent. */}
             <label className={spine.field}>
               <span className={spine.fieldLabel}>Agent</span>
               <span className={spine.inputWrap}>
                 <User size={14} className={spine.inputIcon} aria-hidden="true" />
-                <input
-                  type="text"
+                <select
                   className={spine.fieldInput}
                   value={draftAgent}
-                  placeholder="Agent user id"
                   onChange={(e) => setDraftAgent(e.target.value)}
-                />
+                  data-testid="attempts-agent-filter"
+                >
+                  <option value="">All agents</option>
+                  {agentOptions.map((agent) => (
+                    <option key={agent.id} value={agent.id}>{agent.name}</option>
+                  ))}
+                </select>
               </span>
             </label>
             <label className={spine.field}>
@@ -477,11 +536,17 @@ export function AgencyCampaignAttemptsPage() {
             {invertedRange && (
               <p className={spine.filterError} role="alert" data-testid="attempts-inverted-range">
                 <AlertCircle size={13} aria-hidden="true" />
-                The “From” date is after the “To” date, so nothing could match. Swap them to continue.
+                {INVERTED_RANGE_COPY}
+              </p>
+            )}
+            {phoneError !== null && (
+              <p className={spine.filterError} role="alert" id="attempts-phone-unusable" data-testid="attempts-phone-unusable">
+                <AlertCircle size={13} aria-hidden="true" />
+                {phoneError}
               </p>
             )}
             <div className={spine.filterActions}>
-              <button type="button" className="btn-primary" onClick={applyFilters} disabled={invertedRange}>
+              <button type="button" className="btn-primary" onClick={applyFilters} disabled={invertedRange || phoneError !== null}>
                 Apply
               </button>
               {filtered && (
@@ -498,7 +563,7 @@ export function AgencyCampaignAttemptsPage() {
         testIdPrefix="attempts"
       />
 
-      {error && <ErrorAlert message={error} onRetry={() => void load(filters)} />}
+      {error && <ErrorAlert message={error} onRetry={filterRefused ? undefined : () => void load(filters)} />}
 
       {/*
         Mounted UNCONDITIONALLY. A screen reader only announces an `aria-live`

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useLayoutEffect, type CSSProperties } from 'react';
+import { useState, useCallback, useEffect, useId, useRef, useLayoutEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, MoreVertical, Send, Shield, Trash2 } from 'lucide-react';
 import { canManageRole } from '@magick-agency/contracts/rbac';
@@ -7,7 +7,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { updateUserRole } from '../../api/users';
 import type { TenantMember, UpdateRoleInput } from '../../types/team';
 import type { Role } from '../../types/auth';
-import { CHANGE_ROLES, getRoleColor } from './teamRoles';
+import { CHANGE_ROLES, getRoleColor, getRoleDescription } from './teamRoles';
 import { invitationIsResendable } from './teamInvites';
 import styles from './TeamPage.module.css';
 
@@ -53,6 +53,7 @@ export function MemberActionsMenu({
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
 
   // The contract's rule, the one the server applies: strictly higher in
   // `ROLE_HIERARCHY` (`agent` sits below `viewer`). No resolved role acts on nobody.
@@ -103,6 +104,34 @@ export function MemberActionsMenu({
     };
   }, [open, roleMenuOpen, reposition]);
 
+  /*
+    Dismissal, as the station's menu does it (QA team:ux:31465a4f9b). Escape closes the menu and
+    gives focus back to the ⋮ button. A press outside closes it and is NOT swallowed: there is no
+    full-screen backdrop any more (the one there was ate the first click, so Invite member needed
+    two), only a document listener that lets the press go on to whatever it landed on.
+  */
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if (buttonRef.current?.contains(target)) return;
+      closeMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      closeMenu();
+      buttonRef.current?.focus();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, closeMenu]);
+
   const handleRoleChange = async (newRole: Role) => {
     if (!tenantId) return;
     setUpdating(true);
@@ -146,7 +175,6 @@ export function MemberActionsMenu({
       </button>
       {open && createPortal(
         <>
-          <div className={styles.actionsBackdrop} onClick={closeMenu} />
           <div
             className={styles.actionsMenu}
             ref={menuRef}
@@ -163,27 +191,38 @@ export function MemberActionsMenu({
                   onClick={() => setRoleMenuOpen(!roleMenuOpen)}
                 >
                   <Shield size={14} />
-                  Change Role
+                  Change role
                   <ChevronDown size={12} className={styles.actionsChevron} />
                 </button>
                 {roleMenuOpen && (
                   <div className={styles.roleSubmenu}>
-                    {assignable.map((r) => (
-                      <button
-                        key={r.value}
-                        type="button"
-                        className={styles.roleOption}
-                        role="menuitem"
-                        onClick={() => handleRoleChange(r.value)}
-                        disabled={updating}
-                      >
-                        <span
-                          className={styles.roleOptionDot}
-                          style={{ backgroundColor: getRoleColor(r.value) }}
-                        />
-                        {r.label}
-                      </button>
-                    ))}
+                    {assignable.map((r) => {
+                      // Named by the role, described by what it can do.
+                      const optionId = `${menuId}-${r.value}`;
+                      return (
+                        <button
+                          key={r.value}
+                          type="button"
+                          className={styles.roleOption}
+                          role="menuitem"
+                          aria-labelledby={`${optionId}-label`}
+                          aria-describedby={`${optionId}-description`}
+                          onClick={() => handleRoleChange(r.value)}
+                          disabled={updating}
+                        >
+                          <span
+                            className={styles.roleOptionDot}
+                            style={{ backgroundColor: getRoleColor(r.value) }}
+                          />
+                          <span className={styles.roleOptionText}>
+                            <span id={`${optionId}-label`}>{r.label}</span>
+                            <span id={`${optionId}-description`} className={styles.roleOptionDescription}>
+                              {getRoleDescription(r.value)}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -199,7 +238,7 @@ export function MemberActionsMenu({
                 onClick={() => { onResendClick(member); closeMenu(); }}
               >
                 <Send size={14} />
-                Resend Invite
+                Resend invite
               </button>
             )}
             {canRemove && (

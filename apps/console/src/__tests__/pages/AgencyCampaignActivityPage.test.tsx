@@ -23,9 +23,15 @@ const mocks = vi.hoisted(() => ({
   getAgencyCampaign: vi.fn(),
   getCampaignActivity: vi.fn(),
   downloadCampaignActivityCsv: vi.fn(),
+  softphoneOn: true,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The soft phone's flag gates its call page, and so the link to it from a history row.
+vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
+  useFeatureFlagEnabled: (flag: string) => (flag === 'agency_softphone_enabled' ? mocks.softphoneOn : false),
+}));
 // The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
 vi.mock('../../api/agencyInsights', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
@@ -765,7 +771,7 @@ describe('accessibility', () => {
     renderPage();
 
     const table = await screen.findByRole('table', { name: /Q3 collections/ });
-    // Visually hidden, not absent: sighted users already have the "Activity"
+    // Visually hidden, not absent: sighted users already have the "History"
     // heading and the campaign badge, so the caption must not duplicate that
     // on screen while still being the table's accessible name.
     expect(table.querySelector('caption')?.className).toMatch(/srOnly/);
@@ -882,7 +888,7 @@ describe('accessibility', () => {
 
     await waitFor(() => expect(screen.getByTestId('activity-row-master:m-disp')).toBeTruthy());
     expect(
-      screen.getByText(/Console is someone in this workspace pressing a control/),
+      screen.getByText(/Console is someone in this organisation pressing a control/),
     ).toBeTruthy();
 
     const tag = screen.getByTestId('activity-source-master');
@@ -902,14 +908,32 @@ describe('accessibility', () => {
  * whole reason this test exists.
  */
 describe('the campaign section bar', () => {
-  it('renders the bar and marks Activity as the current section', async () => {
+  it('renders the bar with no tab current: this is the header’s History, not a tab (IN14)', async () => {
     renderPage();
 
-    const tab = await screen.findByTestId('campaign-tab-activity');
-    expect(tab.getAttribute('aria-current')).toBe('page');
+    await screen.findByTestId('campaign-tabs');
+    expect(screen.queryByTestId('campaign-tab-activity')).toBeNull();
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tabs').querySelector('[aria-current="page"]')).toBeNull();
+  });
+
+  it('marks the History button as the current page and titles the page History', async () => {
+    renderPage();
+
+    const history = await screen.findByTestId('campaign-history-link');
+    expect(history.getAttribute('aria-current')).toBe('page');
+    expect(history.getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('History');
+  });
+
+  it('offers a way back to Overview, where a supervisor’s campaign opens', async () => {
+    renderPage();
+
+    const back = await screen.findByTestId('campaign-history-back');
+    expect(back.getAttribute('href')).toBe('/agency/campaigns/camp-1/overview');
+    expect(back.textContent).toBe('Back to Overview');
   });
 });
 
@@ -1020,5 +1044,89 @@ describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
     renderPage();
 
     expect(await screen.findByText('system:abandonment-guardrail')).not.toBeNull();
+  });
+});
+
+describe('the page names the campaign', () => {
+  it('under the heading, since at phone width the top bar says only "History"', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'CD 11TH NOV — Retry 1', status: 'paused' });
+    renderPage();
+    expect((await screen.findByTestId('history-campaign-name')).textContent).toBe('CD 11TH NOV — Retry 1');
+  });
+});
+
+describe('rows say what they are about in words', () => {
+  const SESSION = '8c1dab83-bba7-477c-abad-1271ba787ddc';
+  const MANUAL_CALL = '6a16fcaf-16c0-4969-93b6-5b099f66788f';
+  /** A soft-phone call placed: the row QA read as `agency_manual_call 6a16fcaf-…` and `session_id 8c1dab83-…`. */
+  const PLACED: ActivityRow = {
+    id: 'master:m-placed',
+    at: '2026-11-11T12:40:00.000Z',
+    source: 'master',
+    action: 'agency_manual_call.placed',
+    actor: { type: 'human', system: false, user_id: 'user-1', api_key_id: null, display: 'hari' },
+    target: { type: 'agency_manual_call', id: MANUAL_CALL },
+    detail: { session_id: SESSION, campaign_id: 'camp-1', dnc_overridden: true },
+  };
+  const JOINED: ActivityRow = {
+    ...PLACED,
+    id: 'master:m-joined',
+    action: 'agency_session.joined',
+    target: { type: 'agency_session', id: SESSION },
+    detail: {},
+  };
+
+  it('links a soft-phone call by name and shows no raw type or full id', async () => {
+    mocks.getCampaignActivity.mockResolvedValue(page({
+      rows: [PLACED, JOINED, DISPOSITION, AUTO_PAUSE],
+      available_actions: [
+        ...SERVED_ACTIONS,
+        { value: 'agency_manual_call.placed', label: 'Soft-phone call placed', group: 'Calls' },
+      ],
+    }));
+    renderPage();
+    await screen.findByTestId('activity-row-master:m-placed');
+
+    const placed = screen.getByTestId('activity-row-master:m-placed');
+    const link = within(placed).getByRole('link', { name: 'Soft-phone call' });
+    expect(link.getAttribute('href')).toBe(`/agency/softphone/calls/${MANUAL_CALL}`);
+    expect(placed.textContent).not.toContain('agency_manual_call');
+    expect(placed.textContent).not.toContain('session_id');
+    expect(placed.textContent).toContain('Agent session');
+    expect(placed.textContent).toContain('Called despite Do Not Call');
+    expect(placed.textContent).not.toContain(SESSION);
+    // The id is still reachable: copyable, and named in full for a screen reader.
+    expect(within(placed).getByRole('button', { name: new RegExp(`Agent session ID ${SESSION}`) })).toBeTruthy();
+  });
+
+  it('does not link a soft-phone call while the soft phone is off: its page is behind the flag', async () => {
+    mocks.softphoneOn = false;
+    try {
+      mocks.getCampaignActivity.mockResolvedValue(page({ rows: [PLACED] }));
+      renderPage();
+      const placed = await screen.findByTestId('activity-row-master:m-placed');
+      expect(within(placed).queryByRole('link', { name: 'Soft-phone call' })).toBeNull();
+      expect(placed.textContent).toContain('Soft-phone call');
+      expect(within(placed).getByRole('button', { name: new RegExp(`Soft-phone call ID ${MANUAL_CALL}`) })).toBeTruthy();
+    } finally {
+      mocks.softphoneOn = true;
+    }
+  });
+
+  it('names a record with no page of its own, its id short', async () => {
+    mocks.getCampaignActivity.mockResolvedValue(page({ rows: [JOINED] }));
+    renderPage();
+    const joined = await screen.findByTestId('activity-row-master:m-joined');
+    expect(joined.textContent).toContain('Agent session');
+    expect(joined.textContent).not.toContain('agency_session');
+    expect(joined.textContent).not.toContain(SESSION);
+  });
+
+  it('links a disposition to the call it was filed on, and calls the campaign "This campaign"', async () => {
+    renderPage();
+    const disposition = await screen.findByTestId(`activity-row-${DISPOSITION.id}`);
+    expect(within(disposition).getByRole('link', { name: 'Call outcome' }).getAttribute('href'))
+      .toBe('/agency/campaigns/camp-1/attempts/attempt-9');
+    expect(screen.getByTestId(`activity-row-${AUTO_PAUSE.id}`).textContent).toContain('This campaign');
   });
 });

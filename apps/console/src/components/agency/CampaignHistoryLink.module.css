@@ -1,0 +1,65 @@
+/* Geometry matches the campaign header's secondary actions, beside which it sits. */
+.link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.link:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* On the History page: where you are, not somewhere to go. */
+.current,
+.current:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+}
+
+/* In the campaign header on a phone: the icon alone, the word kept for assistive tech. */
+@media (max-width: 680px) {
+  .compact {
+    width: 40px;
+    padding: 0;
+  }
+
+  /* The global `.sr-only`, spelled out: `composes` cannot sit in a media query. */
+  .compact .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media print {
+  .link {
+    display: none !important;
+  }
+}

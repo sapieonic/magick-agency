@@ -74,8 +74,6 @@ const CALL: WebRtcCallRecord = {
 function props(overrides: Partial<CallDetailViewProps> = {}): CallDetailViewProps {
   return {
     call: CALL,
-    breadcrumbs: [{ label: 'Campaigns', href: '/agency/campaigns' }],
-    leafLabel: 'Attempt 2',
     subtitle: 'Connected',
     roleLabels: { agent: 'Agent', customer: 'Customer' },
     identityFacts: [],
@@ -196,6 +194,43 @@ describe('a missing recording says which kind of missing', () => {
     const note = await screen.findByTestId('recording-note');
     expect(note.textContent).toContain('not enabled for this account');
     expect(note.textContent).not.toContain('check back soon');
+  });
+
+  it('says a call that was never answered has no recording, not that one is coming', async () => {
+    // A busy call: recording asked for, never answered, so nothing was ever recorded.
+    renderView({
+      call: { ...CALL, recording_url: null, recording_requested: true, answered_at: null, talk_time_seconds: 0 },
+      recordingEnabled: true,
+    });
+
+    const note = await screen.findByTestId('recording-note');
+    expect(note.textContent).toBe('No recording: the call was not answered.');
+  });
+
+  it('does not call a call still ringing unanswered: it may yet be answered and recorded', async () => {
+    renderView({
+      call: {
+        ...CALL, status: 'ringing', recording_url: null, recording_requested: true,
+        answered_at: null, ended_at: null, talk_time_seconds: 0,
+      },
+      recordingEnabled: true,
+    });
+
+    const note = await screen.findByTestId('recording-note');
+    expect(note.textContent).not.toContain('not answered');
+    expect(note.textContent).toContain("isn't available yet");
+  });
+
+  it('says not answered for a call that ended unanswered even before its end time is written', async () => {
+    renderView({
+      call: {
+        ...CALL, status: 'no_answer', recording_url: null, recording_requested: true,
+        answered_at: null, ended_at: null, talk_time_seconds: 0,
+      },
+      recordingEnabled: true,
+    });
+
+    expect((await screen.findByTestId('recording-note')).textContent).toBe('No recording: the call was not answered.');
   });
 
   it('still says "check back soon" when the recording really is finalising', async () => {

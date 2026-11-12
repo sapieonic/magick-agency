@@ -716,6 +716,7 @@ packages/
 - **Wire types.** `agency_wire` is written by hand against `packages/contracts`. Drift is caught from both sides:
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
   - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (62: the soft phone's, customer history's and inbound calls' included, with `station_capabilities`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
+  - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling".
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
   - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
 

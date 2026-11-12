@@ -1,6 +1,7 @@
 import { PhoneIncoming } from 'lucide-react';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
+import { SettingsEntryLink } from '../../common/SettingsEntryLink';
 import { useInboundQueue } from '../../../hooks/useInboundQueue';
 import { INBOUND_FLAG } from '../../../utils/inbound/inboundFlag';
 import { hasPermission } from '../../../utils/permissions';
@@ -67,7 +68,9 @@ export function InboundQueueTiles() {
       ) : null}
       {tiles && tiles.length === 0 ? (
         <p className={styles.hint} data-testid="inbound-queue-empty">
-          No inbound routes are answering calls in this account.
+          No inbound routes are answering calls in this account.{' '}
+          {/* Where a route is set up, for the reader who may set one up. */}
+          <SettingsEntryLink entry="inbound" />
         </p>
       ) : null}
       {tiles && tiles.length > 0 ? (

@@ -1,285 +1,305 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { useGovernance } from '../../contexts/GovernanceContext';
+import { Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { hasPermission, type Permission } from '../../utils/permissions';
+import { useNavGate } from '../../hooks/useNavGate';
+import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
+import { useCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
+import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
+import { browserStorage } from '../../utils/browserStorage';
+import { readRecentCampaigns } from '../../utils/recentCampaigns';
+import { plural } from '../../utils/format/number';
+import {
+  canSearchCampaigns,
+  canSearchNumbers,
+  searchConsole,
+  searchPlaceholder,
+  type SearchResult,
+} from '../../utils/consoleSearch';
 import styles from './GlobalSearch.module.css';
 
-interface PageEntry {
-  label: string;
-  path: string;
-  section: string;
-  keywords: string[];
-  /** Optional client-exposed feature flag gating this entry. */
-  flag?: string;
-  /** Optional governance capability gating this entry. */
-  capability?: string;
-  /** Optional permission the active role must hold, as the sidebar entry requires it. */
-  permission?: Permission;
+/** Where customer history opens inside the console shell (`docs/customer-history.md` §5). */
+const CUSTOMER_RESULTS_PATH = '/agency/customers';
+
+export interface GlobalSearchProps {
+  /** The shell holds it, so the top bar's search field can open it too. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-// The page directory: the agency workspace, Team, Accounts and Notifications, plus
-// `Call Summaries` for the analysis profiles page (gated on the
-// `agency_call_analysis` flag and `agency.analytics` capability, as its route is).
-const PAGES: PageEntry[] = [
-  // Agency Dialer. These live OUTSIDE `/app` in their own workspace shell, so
-  // selecting one leaves the main app — which is exactly what the sidebar's
-  // "Switch to Magick Agency" control does, and why they belong here rather
-  // than being unreachable by search. Gated identically to that control.
-  { label: 'Agency Campaigns', path: '/agency/campaigns', section: 'Agency', keywords: ['agency', 'dialer', 'campaign', 'power dial', 'outbound', 'agent'], flag: 'agency_dialer_enabled', capability: 'agency' },
-  { label: 'New Agency Campaign', path: '/agency/campaigns/new', section: 'Agency', keywords: ['agency', 'dialer', 'campaign', 'new', 'create', 'roster', 'upload'], flag: 'agency_dialer_enabled', capability: 'agency' },
-  // DNC suppresses agency dialing and nothing else. The label carries that scope
-  // because this result is reached from inside the `/app` zone, where no shell
-  // supplies it; and `compliance` / `opt out` are gone, because someone typing
-  // those is asking a wider question than this page answers. Offering it as the
-  // answer is the misreading.
-  //
-  // So this reads "Agency Do Not Call" while the page's own `<h1>` and the
-  // agency sidebar entry both say "Do Not Call". The divergence is a decision,
-  // not drift: inside `/agency` the shell IS the scope and repeating it in the
-  // heading is noise, whereas the command palette opens over any page in the
-  // `/app` zone, where a bare "Do Not Call" reads as tenant-wide.
-  { label: 'Agency Do Not Call', path: '/agency/dnc', section: 'Agency', keywords: ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'agency', 'dialing'], flag: 'agency_dialer_enabled', capability: 'agency' },
-  { label: 'Team', path: '/app/team', section: 'Admin', keywords: ['team', 'member', 'invite'] },
-  // Gated like its sidebar entry: only the roles that can create accounts have anything
-  // to do there; everyone else moves between accounts with the switcher.
-  { label: 'Accounts', path: '/app/accounts', section: 'Admin', keywords: ['account', 'accounts', 'new account', 'create account'], permission: 'account.create' },
-  // No `capability` and no permission: the page manages the signed-in person's
-  // own email subscriptions. "unsubscribe" is in the keywords because that is
-  // the word somebody reaches for search with when a digest arrives they did
-  // not want.
-  { label: 'Notifications', path: '/app/notifications', section: 'Admin', keywords: ['notification', 'email', 'digest', 'summary', 'unsubscribe', 'alert'] },
-  { label: 'Call Summaries', path: '/app/call-summaries', section: 'Admin', keywords: ['summary', 'summaries', 'analysis', 'transcript', 'sentiment', 'profile'], flag: 'agency_call_analysis', capability: 'agency.analytics' },
-];
+/**
+ * ⌘K / Ctrl+K, and the top bar's search field (decision B28): one search for pages, Settings,
+ * campaigns and a phone number's history, each result offered under its destination's gate
+ * (`utils/consoleSearch.ts`). With nothing typed it lists the pages, the reader's recently
+ * opened campaigns (`utils/recentCampaigns.ts`) and the Settings pages. Escape, a click outside
+ * or ⌘K again closes it and puts focus back where it was (the top bar's field, when that opened
+ * it); choosing a result leaves focus to the page it opens.
+ */
+export function GlobalSearch({ open, onOpenChange: setOpen }: GlobalSearchProps) {
+  const openRef = useRef(open);
+  openRef.current = open;
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
-export function GlobalSearch() {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const navigate = useNavigate();
-  const { isEnabled } = useFeatureFlags();
-  const { isEnabled: isCapabilityEnabled } = useGovernance();
-  const { role } = useTenant();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
-
-  // Pages visible given the current tenant's feature flags, governance capabilities
-  // and the active role (an entry may require any of them).
-  const availablePages = useMemo(
-    () => PAGES.filter((page) =>
-      (!page.flag || isEnabled(page.flag))
-      && (!page.capability || isCapabilityEnabled(page.capability))
-      && (!page.permission || hasPermission(role, page.permission)),
-    ),
-    [isEnabled, isCapabilityEnabled, role],
-  );
-
-  // Filter pages based on query
-  const filtered = useMemo(() => {
-    if (!query.trim()) return availablePages;
-    const q = query.toLowerCase().trim();
-    return availablePages.filter((page) => {
-      if (page.label.toLowerCase().includes(q)) return true;
-      if (page.section.toLowerCase().includes(q)) return true;
-      return page.keywords.some((kw) => kw.toLowerCase().includes(q));
-    });
-  }, [query, availablePages]);
-
-  // Build a flat list with section headers for rendering
-  const grouped = useMemo(() => {
-    const sections: { section: string; items: PageEntry[] }[] = [];
-    const sectionMap = new Map<string, PageEntry[]>();
-
-    for (const page of filtered) {
-      const existing = sectionMap.get(page.section);
-      if (existing) {
-        existing.push(page);
-      } else {
-        const items = [page];
-        sectionMap.set(page.section, items);
-        sections.push({ section: page.section, items });
-      }
-    }
-
-    return sections;
-  }, [filtered]);
-
-  // Reset selection when results change
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [filtered]);
-
-  // Global shortcut: Cmd+K / Ctrl+K
-  useEffect(() => {
-    function handleGlobalKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setOpen((prev) => {
-          if (!prev) {
-            setQuery('');
-            setSelectedIndex(0);
-          }
-          return !prev;
-        });
-      }
-    }
-
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
-
-  // Auto-focus input when opened
-  useEffect(() => {
-    if (open) {
-      const timer = setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-      return () => clearTimeout(timer);
-    }
+  // Remember what had focus as it opens (the dialog's input takes it a moment later).
+  useLayoutEffect(() => {
+    if (open) returnFocusRef.current = document.activeElement as HTMLElement | null;
   }, [open]);
 
-  // Scroll selected item into view
-  useEffect(() => {
-    if (!resultsRef.current) return;
-    const items = resultsRef.current.querySelectorAll<HTMLElement>('[data-result-index]');
-    const target = items[selectedIndex];
-    if (target) {
-      target.scrollIntoView({ block: 'nearest' });
-    }
-  }, [selectedIndex]);
+  /** `restoreFocus`: closed without choosing, so focus goes back to where it was. */
+  const close = useCallback(
+    (restoreFocus: boolean) => {
+      setOpen(false);
+      const target = returnFocusRef.current;
+      returnFocusRef.current = null;
+      if (restoreFocus && target && target !== document.body && target.isConnected) target.focus();
+    },
+    [setOpen],
+  );
 
-  const close = useCallback(() => {
-    setOpen(false);
-    setQuery('');
-    setSelectedIndex(0);
+  // Global shortcut: Cmd+K / Ctrl+K toggles.
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (openRef.current) close(true);
+        else setOpen(true);
+      }
+    }
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [close, setOpen]);
+
+  if (!open) return null;
+  return <Palette onClose={close} />;
+}
+
+interface DialogProps {
+  onClose: (restoreFocus: boolean) => void;
+}
+
+function Palette({ onClose }: DialogProps) {
+  const { tenantId, accountId } = useTenant();
+  /* Missed calls' rule shares the sidebar's read (`useMissedCallsCount`): opening search asks for nothing new. */
+  const gate = useNavGate({ missed: true });
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
+  /*
+    The highlighted result, by its key rather than its place: the list changes without any typing
+    (recent campaigns resolving, the campaign list arriving, the missed-calls gate settling), and
+    a highlight held by position would then sit on another result, which Enter would open. Null,
+    or a key no longer listed: the first row.
+  */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const store = useMemo(() => browserStorage(), []);
+  const id = useId();
+  const listboxId = `${id}-results`;
+  const optionId = (index: number) => `${id}-option-${index}`;
+
+  const numbersAllowed = canSearchNumbers(gate, accountId ?? null);
+  const campaignsAllowed = canSearchCampaigns(gate, accountId ?? null);
+  const callingCode = useCustomerSearchDefaultCallingCode(numbersAllowed);
+  const campaigns = useSearchCampaigns(campaignsAllowed, tenantId ?? null, accountId ?? null);
+  const recentCampaigns = useMemo(
+    () => readRecentCampaigns(tenantId ?? null, accountId ?? null, store),
+    [tenantId, accountId, store],
+  );
+  const { run: runNumberSearch, busy: numberBusy, error: numberError, clearError: clearNumberError } =
+    useCustomerSearchRun(CUSTOMER_RESULTS_PATH, store);
+  const placeholder = searchPlaceholder(numbersAllowed, campaignsAllowed);
+
+  const answer = useMemo(
+    () =>
+      searchConsole({
+        query,
+        gate,
+        accountId: accountId ?? null,
+        defaultCallingCode: callingCode,
+        campaigns: campaigns.campaigns,
+        recentCampaigns,
+      }),
+    [query, gate, accountId, callingCode, campaigns, recentCampaigns],
+  );
+  const flat = useMemo(() => answer.groups.flatMap((g) => g.results), [answer]);
+  const selectedIndex = Math.max(0, selectedKey === null ? 0 : flat.findIndex((r) => r.key === selectedKey));
+
+  useEffect(() => {
+    const timer = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(timer);
   }, []);
 
-  const navigateTo = useCallback(
-    (path: string) => {
-      navigate(path);
-      close();
+  useEffect(() => {
+    const target = resultsRef.current?.querySelector<HTMLElement>(`[data-result-index="${selectedIndex}"]`);
+    target?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedIndex]);
+
+  const choose = useCallback(
+    (result: SearchResult | undefined) => {
+      if (!result) return;
+      if (result.target.type === 'path') {
+        navigate(result.target.to);
+        onClose(false);
+        return;
+      }
+      if (numberBusy) return;
+      void runNumberSearch(result.target.raw, result.target.countryIso).then((opened) => {
+        if (opened) onClose(false);
+      });
     },
-    [navigate, close],
+    [navigate, onClose, numberBusy, runNumberSearch],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // The topmost layer only: the phone's navigation drawer under it, and the profile menu,
+        // skip an Escape already handled (`defaultPrevented`), and it goes no further anyway.
         e.preventDefault();
-        close();
+        e.stopPropagation();
+        onClose(true);
         return;
       }
-
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedIndex((prev) => (prev < filtered.length - 1 ? prev + 1 : 0));
+        if (flat.length > 0) setSelectedKey(flat[selectedIndex < flat.length - 1 ? selectedIndex + 1 : 0]!.key);
         return;
       }
-
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : filtered.length - 1));
+        if (flat.length > 0) setSelectedKey(flat[selectedIndex > 0 ? selectedIndex - 1 : flat.length - 1]!.key);
         return;
       }
-
       if (e.key === 'Enter') {
+        // An Enter that ends an IME composition (Hindi, Japanese…) commits the word typed; it
+        // is not a choice. Safari reports it as keyCode 229 without `isComposing`.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
-        const page = filtered[selectedIndex];
-        if (page) {
-          navigateTo(page.path);
-        }
+        choose(flat[selectedIndex]);
         return;
       }
-
-      // Focus trap: keep focus in the container
-      if (e.key === 'Tab') {
-        e.preventDefault();
-      }
+      // Focus stays on the input: the results are reached with the arrow keys.
+      if (e.key === 'Tab') e.preventDefault();
     },
-    [close, filtered, selectedIndex, navigateTo],
+    [onClose, flat, selectedIndex, choose],
   );
 
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) {
-        close();
-      }
+      if (e.target === e.currentTarget) onClose(true);
     },
-    [close],
+    [onClose],
   );
 
-  if (!open) return null;
+  const trimmed = query.trim();
+  const campaignsLoading = campaignsAllowed && trimmed !== '' && campaigns.status === 'loading';
+  const campaignsFailed = campaignsAllowed && trimmed !== '' && campaigns.status === 'error';
+  const status = numberBusy
+    ? 'Searching…'
+    : flat.length === 0
+      ? trimmed === '' ? '' : 'No results'
+      : plural(flat.length, 'result');
+  const active = flat[selectedIndex];
 
   let flatIndex = -1;
 
   return (
-    <div className={styles.overlay} onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-label="Quick navigation">
-      <div className={styles.container} ref={containerRef} onKeyDown={handleKeyDown}>
+    /*
+      `ph-no-capture`: a phone number can be typed here and shown in a result, and PostHog
+      autocapture records a clicked element's text (CH6: the number never reaches analytics),
+      as the old "Search a number" panel was.
+    */
+    <div
+      className={`${styles.overlay} ph-no-capture`}
+      onClick={handleOverlayClick}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Search"
+      data-testid="global-search-dialog"
+    >
+      <div className={styles.container} onKeyDown={handleKeyDown}>
         <div className={styles.inputWrapper}>
-          <svg
-            className={styles.searchIcon}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
+          <Search className={styles.searchIcon} aria-hidden="true" />
           <input
             ref={inputRef}
             className={styles.input}
             type="text"
-            placeholder="Search pages..."
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={active ? optionId(selectedIndex) : undefined}
+            aria-label={placeholder}
+            placeholder={placeholder}
+            autoComplete="off"
+            spellCheck={false}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search pages"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelectedKey(null);
+              clearNumberError();
+            }}
           />
+          <kbd className={styles.escKey} aria-hidden="true">Esc</kbd>
         </div>
 
-        <div className={styles.results} ref={resultsRef}>
-          {filtered.length === 0 ? (
-            <div className={styles.empty}>No results found</div>
+        {answer.numberNote && (
+          <p className={styles.note} data-testid="global-search-number-note">{answer.numberNote}</p>
+        )}
+        {numberError && (
+          <p className={styles.error} role="alert" data-testid="global-search-error">{numberError}</p>
+        )}
+
+        <div className={styles.results} ref={resultsRef} id={listboxId} role="listbox" aria-label="Results">
+          {flat.length === 0 && !campaignsLoading ? (
+            <div className={styles.empty}>{trimmed === '' ? 'Nothing to search here' : `Nothing matches “${trimmed}”`}</div>
           ) : (
-            grouped.map((group) => (
-              <div key={group.section}>
-                <div className={styles.sectionHeader}>{group.section}</div>
-                {group.items.map((page) => {
+            answer.groups.map((group) => (
+              <div key={group.id} role="group" aria-labelledby={`${id}-group-${group.id}`}>
+                <div className={styles.sectionHeader} id={`${id}-group-${group.id}`} role="presentation">{group.title}</div>
+                {group.results.map((result) => {
                   flatIndex++;
                   const idx = flatIndex;
                   const isSelected = idx === selectedIndex;
                   return (
                     <div
-                      key={page.path}
+                      key={result.key}
+                      id={optionId(idx)}
                       data-result-index={idx}
                       className={`${styles.resultItem} ${isSelected ? styles.resultItemSelected : ''}`}
-                      onClick={() => navigateTo(page.path)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
+                      onClick={() => choose(result)}
+                      onMouseMove={() => {
+                        if (selectedIndex !== idx) setSelectedKey(result.key);
+                      }}
                       role="option"
                       aria-selected={isSelected}
                     >
-                      <span className={styles.resultLabel}>{page.label}</span>
-                      <span className={styles.resultSection}>{page.section}</span>
+                      <span className={styles.resultText}>
+                        <span className={styles.resultLabel}>{result.title}</span>
+                        {result.detail && <span className={styles.resultDetail}>{result.detail}</span>}
+                      </span>
+                      <span className={styles.resultSection}>{result.kind}</span>
                     </div>
                   );
                 })}
               </div>
             ))
           )}
+          {campaignsLoading && <div className={styles.pending}>Loading campaigns…</div>}
+          {campaignsFailed && <div className={styles.pending}>Couldn’t load campaigns. Close and open search to try again.</div>}
         </div>
 
+        <div className={styles.srOnly} aria-live="polite" data-testid="global-search-status">{status}</div>
+
         <div className={styles.hintBar}>
-          <span className={styles.hintKey}>&uarr;</span>
-          <span className={styles.hintKey}>&darr;</span>
-          {' Navigate  '}
-          <span className={styles.hintKey}>Enter</span>
-          {' Open  '}
-          <span className={styles.hintKey}>Esc</span>
-          {' Close'}
+          {numbersAllowed && <span>Type a phone number to see every call to it, across campaigns</span>}
+          <span className={styles.hintKeys}>
+            <span className={styles.hintKey}>&uarr;</span>
+            <span className={styles.hintKey}>&darr;</span>
+            {' to move  '}
+            <span className={styles.hintKey}>Enter</span>
+            {' to open'}
+          </span>
         </div>
       </div>
     </div>

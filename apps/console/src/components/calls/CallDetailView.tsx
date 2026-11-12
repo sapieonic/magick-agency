@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Info, Clock, AlertTriangle, Mic, Download, MessageSquare } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -57,11 +56,11 @@ export type { RecordingOutcome };
  *
  * ── Every caller-specific prop is REQUIRED, and that is the design ─────────
  *
- * Not one of `breadcrumbs`, `leafLabel`, `subtitle`, `roleLabels`,
+ * Not one of `subtitle`, `roleLabels`,
  * `identityFacts`, `identityCards`, `analysisEnabled`, `analysisTitle`,
  * `analysisMessages`, `retryLabel`, `recordingEnabled`, `fetchRecording` or
  * `onRetryAnalysis` has a default. A default here would be somebody's wording,
- * and a new consumer would then inherit a breadcrumb, a recording URL and a
+ * and a new consumer would then inherit a subtitle, a recording URL and a
  * session UUID by saying nothing at all. The compile error is the point, the
  * same way it is for the `scope` parameter on the API's repository reads.
  *
@@ -147,9 +146,6 @@ export interface CallFactCard {
 
 export interface CallDetailViewProps {
   call: WebRtcCallRecord;
-  /** The trail ABOVE this page. The leaf is `leafLabel`. */
-  breadcrumbs: Array<{ label: string; href?: string }>;
-  leafLabel: string;
   /** Under the destination number — the caller's one-line "what happened". */
   subtitle: string;
   /**
@@ -208,6 +204,9 @@ const STATUS_COLOR_MAP: Record<string, string> = {
 
 /** Statuses that mean the call did not complete normally — surface the error block. */
 const FAILURE_STATUSES: ReadonlySet<string> = new Set(['failed', 'no_answer', 'busy']);
+
+/** Statuses a call record settles into once the call is over (the rest are a call still going). */
+const ENDED_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'no_answer', 'busy', 'canceled']);
 
 function statusColor(status: WebRtcCallRecordStatus): string {
   return STATUS_COLOR_MAP[status] ?? 'var(--accent)';
@@ -294,8 +293,6 @@ export function FactCard({ card, icon }: { card: CallFactCard; icon: React.React
 
 export function CallDetailView({
   call,
-  breadcrumbs,
-  leafLabel,
   subtitle,
   roleLabels,
   identityFacts,
@@ -322,9 +319,6 @@ export function CallDetailView({
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[...breadcrumbs, { label: leafLabel }]}
-      />
       <PageHeader
         title={formatPhone(call.destination_phone)}
         subtitle={subtitle}
@@ -623,6 +617,18 @@ function RecordingSection({
   // (d) Recording was never enabled for this call — subtle note, keep the section.
   if (!hasRecording && !call.recording_requested) {
     return note('Recording was not enabled for this call.');
+  }
+
+  /*
+   * (e) The call was never answered, so there was never anything to record. Before
+   * the two branches below: both promise (or withhold) a recording, and a busy or
+   * unanswered call read "isn't available yet … check back soon" a day later.
+   * Only once the call is over: `answered_at` is null while a call still rings or
+   * queues too, and that call may yet be answered and recorded.
+   */
+  const callEnded = call.ended_at != null || ENDED_STATUSES.has(call.status);
+  if (!hasRecording && call.answered_at == null && callEnded) {
+    return note('No recording: the call was not answered.');
   }
 
   /*

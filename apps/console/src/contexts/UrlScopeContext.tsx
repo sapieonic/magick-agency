@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { UNSAFE_createBrowserHistory, type Location, type NavigationType } from 'react-router-dom';
 import { currentPath } from '../utils/returnPath';
+import { navigationBlockers, type NavigationBlockers } from '../utils/navigationBlockers';
 import { parseUrlScope, scopePrefixOf, stripUrlScope, withUrlScope, type UrlScope } from '../utils/urlScope';
 
 type BrowserHistory = ReturnType<typeof UNSAFE_createBrowserHistory>;
@@ -34,6 +35,13 @@ type BrowserHistory = ReturnType<typeof UNSAFE_createBrowserHistory>;
  * The router joins `navigate()` to the basename it was rendered with, so a
  * `navigate()` in the same handler as a `go()` to another scope lands back in the
  * old one. Do one or the other; `go` takes the path.
+ *
+ * ── Holding navigation (`useUnsavedChangesGuard`) ───────────────────────────
+ * The provider wraps its history's `push`, `replace` and `go` once, as it creates it
+ * (`utils/navigationBlockers.ts`), and holds Back and Forward in its one listener; both
+ * ask the same stack of blockers. `go(…, { force: true })` passes every blocker: a
+ * redirect that must happen whatever is unsaved (`TenantContext`, when the open account
+ * is taken away).
  */
 export interface UrlScopeValue {
   /** The scope in the URL, or `null` on an unscoped page. */
@@ -47,7 +55,7 @@ export interface UrlScopeValue {
    * unscoped when `scope` is `null`. Defaults to the current app path, so
    * `go(next)` re-points the page the user is on at another account.
    */
-  go: (scope: UrlScope | null, path?: string, options?: { replace?: boolean }) => void;
+  go: (scope: UrlScope | null, path?: string, options?: { replace?: boolean; force?: boolean }) => void;
 }
 
 /** The current location, which only the router needs: it changes on every navigation. */
@@ -78,21 +86,87 @@ const UNSCOPED: UrlScopeValue = {
 const UrlScopeContext = createContext<UrlScopeValue>(UNSCOPED);
 const UrlLocationContext = createContext<UrlLocationValue | null>(null);
 
+/** react-router's index of the current entry, kept in `history.state.idx`; `null` without one. */
+function entryIndex(): number | null {
+  const idx = (window.history.state as { idx?: unknown } | null)?.idx;
+  return typeof idx === 'number' ? idx : null;
+}
+
 export function UrlScopeProvider({ children }: { children: ReactNode }) {
-  const historyRef = useRef<BrowserHistory | null>(null);
+  const historyRef = useRef<{ history: BrowserHistory; blockers: NavigationBlockers } | null>(null);
   if (!historyRef.current) {
     // `v5Compat` so `listen` hears push/replace as well as POP — what
     // `BrowserRouter` does with the same history.
-    historyRef.current = UNSAFE_createBrowserHistory({ window, v5Compat: true });
+    const created = UNSAFE_createBrowserHistory({ window, v5Compat: true });
+    historyRef.current = { history: created, blockers: navigationBlockers(created) };
   }
-  const history = historyRef.current;
+  const { history, blockers } = historyRef.current;
 
   const [state, setState] = useState<UrlLocationValue>(() => ({
     action: history.action,
     location: history.location,
   }));
   useLayoutEffect(() => {
-    const unlisten = history.listen(({ action, location }) => setState({ action, location }));
+    /*
+     * Back and Forward are held HERE, in the history's one listener, before the router hears
+     * of them. A page cannot do it with a `popstate` listener of its own: Chromium runs a
+     * window's listeners in the order they were added, capture phase or not, so this one,
+     * added when the app mounts, always ran first and the router left the page before the
+     * page's listener could stop it.
+     *
+     * Positions are react-router's entry index (`history.state.idx`). `shown` is the entry the
+     * router shows; `at` is where the browser is. A held step is undone with `go(shown - at)`,
+     * and the POP that brings the browser back is not passed on: the router stays where it
+     * was. Chromium takes steps one after another, so a second Back pressed before that return
+     * trip lands is taken first: it is not asked about again (the question is already up), and
+     * when the return trip lands short of `shown` the browser is sent the rest of the way from
+     * where it really is. A step from or to an entry without an index (a fragment typed into
+     * the address bar) cannot be measured, so it goes through.
+     */
+    let shown = entryIndex();
+    let at = shown;
+    /** The step back to `shown` on its way, as it was sent; null when none is. */
+    let returning: number | null = null;
+    const sendBack = () => {
+      returning = shown! - at!;
+      // The browser's own, not `history.go`: that one asks the blockers.
+      window.history.go(returning);
+    };
+    const unlisten = history.listen(({ action, location }) => {
+      const next = entryIndex();
+      if (action === 'POP') {
+        const moved = at !== null && next !== null ? next - at : null;
+        at = next;
+        if (returning !== null && moved !== null) {
+          if (moved === returning) {
+            returning = null;
+            if (next !== shown) sendBack();
+          }
+          // Otherwise another step taken before ours landed; ours puts it right when it does.
+          return;
+        }
+        returning = null;
+        /** A step the blockers already let go (Leave), taken once; anything else drops it. */
+        const passed = blockers.takePass();
+        const delta = shown !== null && next !== null ? next - shown : null;
+        if (delta !== null && delta !== 0 && passed !== delta) {
+          const held = blockers.ask({ pathname: location.pathname }, () => {
+            blockers.passNext(delta);
+            window.history.go(delta);
+          });
+          if (held) {
+            sendBack();
+            return;
+          }
+        }
+      } else {
+        blockers.takePass();
+        at = next;
+        returning = null;
+      }
+      shown = next;
+      setState({ action, location });
+    });
     /*
      * Catch up with anything that moved the URL before this subscription existed.
      * Layout effects run child-first on mount, so `ScopedRouter` replacing a scoped
@@ -104,7 +178,7 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
       prev.location === history.location ? prev : { action: history.action, location: history.location },
     );
     return unlisten;
-  }, [history]);
+  }, [history, blockers]);
 
   const pathname = state.location.pathname;
   const parsed = parseUrlScope(pathname);
@@ -124,10 +198,11 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
       const app = path ?? stripUrlScope(current);
       const next = target ? withUrlScope(target, app) : stripUrlScope(app);
       if (next === current) return;
-      if (options?.replace) history.replace(next);
-      else history.push(next);
+      const navigate = () => (options?.replace ? history.replace(next) : history.push(next));
+      if (options?.force) blockers.force(navigate);
+      else navigate();
     },
-    [history],
+    [history, blockers],
   );
 
   const value = useMemo<UrlScopeValue>(() => ({ scope, prefix, history, go }), [scope, prefix, history, go]);

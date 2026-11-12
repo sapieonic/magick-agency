@@ -88,7 +88,7 @@ String hhmm(String value) => _hhmm.hasMatch(value) ? value.substring(0, 5) : val
 /// campaign entry an UNTAGGED call met is one of the account's campaigns,
 /// which is all this copy claims.
 String dncEntryReach(DncEntryScope scope, String? campaignName) => switch (scope) {
-  DncEntryScope.tenant => 'Every campaign and account in this workspace',
+  DncEntryScope.tenant => 'Every campaign and account in this organisation',
   DncEntryScope.account => 'This account',
   DncEntryScope.campaign || DncEntryScope.unknown =>
     campaignName != null ? 'The campaign $campaignName' : 'One of this account’s campaigns',

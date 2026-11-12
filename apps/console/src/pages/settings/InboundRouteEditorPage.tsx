@@ -60,7 +60,7 @@ const COMMON_TIMEZONES = [
 ];
 
 /**
- * Settings → Inbound calls → a route (`/app/inbound/new`, `/app/inbound/:routeId`;
+ * Settings → Inbound calls → a route (`/settings/inbound/new`, `/settings/inbound/:routeId`;
  * `docs/inbound.md` §8.1): name and time zone, the numbers it answers, weekly hours (overnight
  * stretches included) and holidays, the clips callers hear, routing to the caller's agent (IB2),
  * queue limits (§5.1), the wrap-up window of every call on it (IQ52), what happens when nobody
@@ -168,7 +168,7 @@ export default function InboundRouteEditorPage() {
       <div className={styles.page}>
         <PageHeader title={isNew ? 'New inbound route' : 'Inbound route'} />
         <ErrorAlert message={loadError ?? 'We couldn’t load this inbound route.'} onRetry={() => void load()} />
-        <Link to="/app/inbound" className={styles.iconLabel}>
+        <Link to="/settings/inbound" className={styles.iconLabel}>
           <ArrowLeft size={14} aria-hidden="true" /> All inbound routes
         </Link>
       </div>
@@ -200,7 +200,7 @@ export default function InboundRouteEditorPage() {
       setTouched(false);
       setServerErrors({});
       showToast(isNew ? `“${result.value.name}” created.` : 'Inbound route saved.', 'success');
-      if (isNew) navigate(`/app/inbound/${result.value.id}`, { replace: true });
+      if (isNew) navigate(`/settings/inbound/${result.value.id}`, { replace: true });
       return;
     }
     const refusal = result.refusal;
@@ -231,7 +231,7 @@ export default function InboundRouteEditorPage() {
 
   return (
     <div className={styles.page}>
-      <Link to="/app/inbound" className={styles.iconLabel}>
+      <Link to="/settings/inbound" className={styles.iconLabel}>
         <ArrowLeft size={14} aria-hidden="true" /> All inbound routes
       </Link>
       <PageHeader

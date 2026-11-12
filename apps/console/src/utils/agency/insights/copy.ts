@@ -83,7 +83,7 @@ export const ASSIGNMENT_MODE_LABELS: Record<AgencyAssignmentMode, string> = {
 
 export const IDLE_REASON_LABELS: Record<AgencyPacingIdleReason | 'outside_calling_hours', string> = {
   no_agents: 'No agents free',
-  no_slots: 'At the concurrency limit',
+  no_slots: 'All lines in use',
   no_contacts: 'No contacts left to dial',
   no_reservations: 'Could not reserve an agent',
   no_caller_ids: 'No caller ID available',
@@ -202,4 +202,60 @@ export function rangeFreshness(read: { as_of: string | null; pending_buckets: nu
   return read.pending_buckets > 0
     ? `${asOf} · updating (${plural(read.pending_buckets, 'recent period')} still being counted)`
     : asOf;
+}
+
+// ── Callbacks ───────────────────────────────────────────────────────────────
+
+/**
+ * The Callbacks tab's two families of figures, said so they cannot be mistaken
+ * for one another. They come from two server reads with two definitions:
+ *
+ *  - the RANGE figures (`kept_on_time` … `pending_due`, `by_owner`) count each
+ *    callback BOOKED for a time in the range, by that booked time (`callback_at`)
+ *    and whether anyone has dialled the contact since;
+ *  - the NOW figures (`open_overdue`, `open_due_today`, the allocation's totals,
+ *    which the tab badge and the Overview tile also show) count CONTACTS still
+ *    waiting on a callback, by when the dialler will next call them
+ *    (`next_attempt_at`).
+ *
+ * So on Lifetime "past their booked time" and "overdue now" can differ (QA saw
+ * 16 and 14 side by side, both read as "overdue"): a contact whose next call was
+ * moved, or whose latest outcome is no longer the callback, is past its booked
+ * time without waiting on a callback now. The labels name the definition, and
+ * `callbacksGapNote` says why when the two differ.
+ */
+export interface CallbackFigures {
+  kept_on_time: number;
+  kept_late: number;
+  missed: number;
+  pending_future: number;
+  pending_due: number;
+  open_overdue: number;
+  open_due_today: number;
+}
+
+/** Under "Kept on time": the share of the callbacks settled either way, or a plain sentence when there is none. */
+export function keptOnTimeSub(cb: Pick<CallbackFigures, 'kept_on_time' | 'kept_late' | 'missed'>, share: string | null): string {
+  const settled = cb.kept_on_time + cb.kept_late + cb.missed;
+  if (settled === 0) return 'None dialled or missed yet';
+  if (share === null) return `Too few yet for a share (${plural(settled, 'callback')} dialled or missed)`;
+  return `${share} of those dialled or missed`;
+}
+
+/** Under "Not dialled yet" (the range's open callbacks). */
+export function notDialledSub(cb: Pick<CallbackFigures, 'pending_future' | 'pending_due'>): string {
+  return `${formatCount(cb.pending_future)} not due yet · ${formatCount(cb.pending_due)} past their booked time`;
+}
+
+/** Under "Overdue now", whose number is `open_overdue`. */
+export function overdueNowSub(cb: Pick<CallbackFigures, 'open_due_today'>): string {
+  return `Contacts waiting on one, whatever the range · ${formatCount(cb.open_due_today)} more due later today`;
+}
+
+/** Why "past their booked time" and "Overdue now" differ, or null when they agree. */
+export function callbacksGapNote(cb: Pick<CallbackFigures, 'pending_due' | 'open_overdue'>): string | null {
+  if (cb.pending_due === cb.open_overdue) return null;
+  return 'Why two overdue figures: “past their booked time” counts callbacks booked for this range, by the time promised; '
+    + '“Overdue now” counts contacts still waiting on a callback, by when the dialler will next call them. '
+    + 'A callback booked outside the range is only in the second; one whose next call was moved, or whose contact has had another outcome since, only in the first.';
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
+import { AlertCircle, AlertTriangle, ArrowLeft, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
@@ -19,15 +21,21 @@ import {
   ACTIVITY_SOURCE_LABEL,
   ACTIVITY_SOURCE_LEGEND,
   CLIENT_ACTOR_TOOLTIP,
+  activityDetailKeyLabel,
   activityDetailSummary,
+  activityDetailValue,
   activityTableCaption,
+  activityTargetLabel,
+  activityTargetPath,
+  isActivityId,
   formatActivityTimestamp,
   partialNotice,
   retentionNotice,
   truncationNotice,
 } from '../../utils/agencyActivityCopy';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CampaignHistoryLink } from '../../components/agency/CampaignHistoryLink';
+import { CAMPAIGN_TABS, campaignLandingPath } from '../../utils/agencyCampaignTabs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -129,6 +137,7 @@ export function AgencyCampaignActivityPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign, 'activity');
   const [page, setPage] = useState<ActivityPage | null>(null);
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -374,15 +383,6 @@ export function AgencyCampaignActivityPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign
-            ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }]
-            : []),
-          { label: 'Activity' },
-        ]}
-      />
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
@@ -395,13 +395,27 @@ export function AgencyCampaignActivityPage() {
         <CampaignTabs campaignId={id} active="activity" role={role} campaignStatus={campaign?.status} />
       )}
 
+      {/*
+        History is the header's button, not a tab (decision IN14), so no tab
+        above is current here: this link is the way back to where a campaign
+        opens for this role (Overview for a supervisor).
+      */}
+      {id && (
+        <Link to={campaignLandingPath(id, role)} className={styles.backLink} data-testid="campaign-history-back">
+          <ArrowLeft size={15} aria-hidden="true" />
+          {`Back to ${landingLabel(id, role)}`}
+        </Link>
+      )}
+
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><History size={20} /></span>
-          <h1 className={spine.title}>Activity</h1>
+          <h1 className={spine.title}>History</h1>
           {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
         </div>
         <div className={spine.actions}>
+          {/* The header's History button, marked as where you are. */}
+          {id && <CampaignHistoryLink campaignId={id} role={role} current />}
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}
@@ -425,6 +439,14 @@ export function AgencyCampaignActivityPage() {
           )}
         </div>
       </header>
+
+      {/*
+        The campaign, by name. This page has no campaign header, and at phone width the
+        top bar shows only "History", so nothing else on screen said whose history it is.
+      */}
+      {campaign?.name && (
+        <p className={styles.campaignName} data-testid="history-campaign-name">{campaign.name}</p>
+      )}
 
       <PageDescription
         pageKey="agency-campaign-activity"
@@ -472,7 +494,7 @@ export function AgencyCampaignActivityPage() {
         */}
         {actionFilterUnavailable && (
           <p className={styles.retention} data-testid="activity-action-filter-unavailable">
-            Filtering by what happened is unavailable — this workspace’s server did not send the
+            Filtering by what happened is unavailable — the server did not send the
             list of actions it records, and a guessed list would offer filters that match nothing.
             The date range below still works, and every entry is shown.
           </p>
@@ -659,14 +681,7 @@ export function AgencyCampaignActivityPage() {
                       <ActorCell row={row} />
                     </td>
                     <td className={styles.target}>
-                      {row.target.id ? (
-                        <>
-                          <span className={styles.targetType}>{row.target.type ?? 'item'}</span>
-                          <code className={styles.targetId}>{row.target.id}</code>
-                        </>
-                      ) : (
-                        '—'
-                      )}
+                      {id ? <TargetCell target={row.target} campaignId={id} /> : '—'}
                     </td>
                     <td className={styles.detail}>
                       {summary ?? <RawDetail detail={row.detail} />}
@@ -829,14 +844,60 @@ function RawDetail({ detail }: { detail: Record<string, unknown> }) {
   if (entries.length === 0) return <span className={styles.noDetail}>—</span>;
   return (
     <ul className={styles.rawDetail}>
-      {entries.map(([key, value]) => (
-        <li key={key}>
-          <span className={styles.rawKey}>{key}</span>
-          <span>{typeof value === 'string' ? value : JSON.stringify(value)}</span>
-        </li>
-      ))}
+      {entries.map(([key, value]) => {
+        const label = activityDetailKeyLabel(key);
+        return (
+          <li key={key}>
+            <span className={styles.rawKey}>{label}</span>
+            {/* An id is shown short and copyable, not as 36 characters of the cell. */}
+            {isActivityId(value)
+              ? <TruncatedId value={value} label={`${label} ID`} className={styles.targetId} />
+              : <span>{activityDetailValue(value)}</span>}
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
+/**
+ * The "On what" cell: what the row is about, in words, linked to its page where the
+ * console has one (a call, a contact, a soft-phone call). The campaign itself is "This
+ * campaign"; anything else shows its id short and copyable. It used to print the raw
+ * type and a full UUID (`agency_manual_call 6a16fcaf-…`).
+ */
+function TargetCell({
+  target,
+  campaignId,
+}: {
+  target: ActivityRow['target'];
+  campaignId: string;
+}) {
+  // The soft-phone call page's own gate: off, its rows show the id instead of a dead link.
+  const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  if (!target.id) return <>—</>;
+  if (target.type === 'agency_campaign' && target.id === campaignId) return <>This campaign</>;
+  const label = activityTargetLabel(target.type);
+  const path = activityTargetPath(target, campaignId, softphoneEnabled);
+  if (path) {
+    return (
+      <Link to={path} className={styles.targetLink} title={target.id}>
+        {label}
+      </Link>
+    );
+  }
+  return (
+    <>
+      <span className={styles.targetType}>{label}</span>
+      <TruncatedId value={target.id} label={`${label} ID`} className={styles.targetId} />
+    </>
+  );
+}
+
 export default AgencyCampaignActivityPage;
+
+/** The tab a campaign opens on for this role, named for the way-back link. */
+function landingLabel(campaignId: string, role: Parameters<typeof campaignLandingPath>[1]): string {
+  const landing = campaignLandingPath(campaignId, role);
+  return CAMPAIGN_TABS.find((tab) => tab.path(campaignId) === landing)?.label ?? 'the campaign';
+}

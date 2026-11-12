@@ -43,8 +43,34 @@ afterEach(() => cleanup());
 
 describe('AgencyHomeRedirect', () => {
   it.each(['account_admin', 'tenant_admin', 'tenant_owner'] as const)(
-    'sends %s to the campaign list — setting campaigns up is the job',
+    'sends %s to Home, which passes its gate (B28)',
     async (role) => {
+      mocks.useTenant.mockReturnValue({ role });
+
+      renderIndex();
+
+      await waitFor(() =>
+        expect(screen.getByTestId('where').textContent).toBe('/agency/home'),
+      );
+    },
+  );
+
+  it('sends a dedicated agent to /dialer rather than a list they cannot read', async () => {
+    mocks.useTenant.mockReturnValue({ role: 'agent' });
+
+    renderIndex();
+
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
+  });
+
+  it.each(['operator', 'viewer'] as const)(
+    'sends %s to the campaign list in the console, not the agent home',
+    async (role) => {
+      /**
+       * Both read campaigns (`agency.campaigns.read` floors at `viewer`) and neither
+       * holds `agency.supervise`, Home's gate. They used to land on `/dialer`, outside
+       * the console, whose only way out opened Profile and appearance.
+       */
       mocks.useTenant.mockReturnValue({ role });
 
       renderIndex();
@@ -52,17 +78,6 @@ describe('AgencyHomeRedirect', () => {
       await waitFor(() =>
         expect(screen.getByTestId('where').textContent).toBe('/agency/campaigns'),
       );
-    },
-  );
-
-  it.each(['agent', 'operator', 'viewer'] as const)(
-    'sends %s to /dialer rather than a list they cannot read',
-    async (role) => {
-      mocks.useTenant.mockReturnValue({ role });
-
-      renderIndex();
-
-      await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
     },
   );
 

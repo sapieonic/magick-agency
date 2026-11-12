@@ -8,14 +8,14 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import styles from './AgentSurfaceShell.module.css';
 
 /**
- * The frame every full-viewport agent-facing surface outside both shells shares —
+ * The frame every full-viewport agent-facing surface outside the console shell shares —
  * "My performance" at `/dialer/performance` and "My calls" at `/dialer/attempts`.
  *
  * ── Why these pages have no shell, and therefore need this one ─────────────
- * An `agent` is hierarchy level 5 and inherits no navigation. `AppLayout`'s nav
- * floors at `viewer` (10) and every entry in `AgencyLayout` floors at `viewer` or
- * above, so either shell would render its chrome around nothing, which is just noise.
- * `/station` and `/dialer` sit outside both for the
+ * An `agent` is hierarchy level 5 and inherits no navigation. Every work entry in
+ * the console shell (`ConsoleLayout`) floors at `viewer` (10) or above, so the
+ * shell would render its chrome around nothing, which is just noise.
+ * `/station` and `/dialer` sit outside it for the
  * same reason, and these two sit beside them.
  *
  * That leaves a page with no chrome at all, which is the trap `DialerUnavailable`

@@ -55,7 +55,7 @@ abstract final class SoftphoneCopy {
 
   // ── The call on screen ──
   static String from(String callerId) => 'From $callerId';
-  static const statusDialing = 'Dialing';
+  static const statusDialing = 'Dialling';
   static const statusRinging = 'Ringing';
   static const statusConnected = 'Connected';
   static const statusEnded = 'Ended';
@@ -125,7 +125,7 @@ abstract final class SoftphoneCopy {
   static String outcomeFrom(String? campaign) => campaign == null ? 'From the soft phone’s outcome list' : 'From $campaign’s outcome list';
   static const saveOutcome = 'Save outcome';
   static const saving = 'Saving…';
-  static const dialBlockedOwed = 'Dialing is blocked until this call has an outcome.';
+  static const dialBlockedOwed = 'Dialling is blocked until this call has an outcome.';
   static String closesIn(String clock) => 'Without one, it closes in $clock.';
   static const closingNoOutcome = 'Closing with no outcome…';
 
@@ -172,7 +172,7 @@ abstract final class SoftphoneCopy {
 
   static const elsewhereTitle = 'Your soft phone is open in another account';
   static String elsewhereDetail(String? account) => account == null
-      ? 'Your soft-phone session is open in another account of this workspace. You can only have one session at a time.'
+      ? 'Your soft-phone session is open in another account of this organisation. You can only have one session at a time.'
       : 'Your soft-phone session is open in $account. You can only have one session at a time.';
   static const elsewhereClose = 'Close it and open the soft phone here';
   static String elsewhereCallPending(String? account) =>
@@ -185,7 +185,7 @@ abstract final class SoftphoneCopy {
 
   static const strandedTitle = 'Your soft phone is open in another account';
   static const strandedDetail =
-      'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this workspace. Switch to that account to finish there, or close it here.';
+      'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this organisation. Switch to that account to finish there, or close it here.';
   static const strandedOwed = 'Your last call there still needs its outcome. A supervisor can save it for you from Soft-phone calls.';
   static const strandedClose = 'Close the soft phone so you can join a campaign.';
 

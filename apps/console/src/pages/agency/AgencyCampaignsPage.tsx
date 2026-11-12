@@ -1,36 +1,42 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Phone, Plus, Search } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Headset, Phone, Plus, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useNavGate } from '../../hooks/useNavGate';
 import { hasPermission } from '../../utils/permissions';
+import { CONSOLE_SECTIONS, DIALER_PATH, passesGate } from '../../utils/consoleNav';
 import {
   countCampaigns,
   filterCampaigns,
   type CampaignCounts,
   type CampaignFilter,
 } from '../../utils/agencyCampaignsHome';
-import { formatCount } from '../../utils/format/number';
+import { campaignFilterFromParams, withCampaignFilter } from '../../utils/agencyCampaignsFilterParam';
+import { formatCount, plural } from '../../utils/format/number';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { useCampaignsHome } from './campaigns-home/useCampaignsHome';
+import { useActiveCards } from './campaigns-home/useActiveCards';
 import { ActiveCampaignCard } from './campaigns-home/ActiveCampaignCard';
 import { CampaignRow } from './campaigns-home/CampaignRow';
-import { RulesCard, Shortcuts } from './campaigns-home/Shortcuts';
+import { RulesCard } from './campaigns-home/Rules';
 import { GetStarted } from './campaigns-home/GetStarted';
 import { InboundQueueTiles } from '../../components/agency/inbound/InboundQueueTiles';
 import styles from './AgencyCampaignsPage.module.css';
 
 /**
- * The campaigns home: the page a supervisor lands on in `/agency`.
+ * The Campaigns page: the account's campaigns, as a list (decision B28a). A viewer or an
+ * operator lands here from `/agency`; a supervisor lands on Home, which answers what needs them,
+ * and comes here for the list.
  *
- * Three parts, and each one answers its own question:
+ * Two parts, and each one answers its own question:
  *
  *  - **Active now**: what has started and not finished, and is it healthy? One
- *    card per running, stopping or paused campaign, with its live numbers and
- *    the health strip's top diagnosis. This is the only part that reads
- *    `/stats`, and only for those campaigns. Rows in the list stay stats-free
- *    for the reason they always were: N round trips to decorate a list is
- *    numbers nobody reads at that level.
+ *    card per running, stopping or paused campaign, with the health strip's top
+ *    diagnosis, its floor and its 24-hour abandonment, all from ONE read of Home's
+ *    board (`useActiveCards`), for the first 25; past that the section links to
+ *    the Active tab. Rows in the list carry no live numbers: N reads to decorate a
+ *    list is numbers nobody reads at that level.
  *  - **All campaigns**: the list, grouped by filter tabs whose counts double as
  *    the account's summary, with a name search once the list is long enough to
  *    need one, and older campaigns a page at a time.
@@ -39,9 +45,12 @@ import styles from './AgencyCampaignsPage.module.css';
  * campaigns are read in full with the list's `status` filter, because any
  * number can be paused and an old one would otherwise sit unseen on a page
  * nobody loaded, while the card section said nothing was dialing.
- *  - **The rail**: the workspace's other destinations and the three rules every
- *    supervisor trips on once. On a wide screen it sits beside the list; on a
- *    narrow one it drops below it.
+ *
+ * Beside the list sit the three rules every newcomer trips on once; on a narrow
+ * screen they drop below it. Nothing here repeats the sidebar: its entries are
+ * the way to Analytics, Do Not Call and Settings. The one action is the reader's
+ * own: New campaign for whoever can create one, and Take calls for a reader who
+ * takes calls but does not supervise (the sidebar's `dialer` entry, gated as it is).
  *
  * With no campaigns at all, the page is a getting-started guide instead, and the
  * rules move into it. That is where a newcomer is, and a page guide stacked
@@ -51,6 +60,9 @@ import styles from './AgencyCampaignsPage.module.css';
  * sidebar takes a brand-dependent width, so the content box, not the window,
  * decides how many columns fit.
  */
+
+/** The sidebar's Take calls entry (its one tab opens `/dialer`): this page offers it to whoever the sidebar does. */
+const TAKE_CALLS_GATE = CONSOLE_SECTIONS.flatMap((s) => s.tabs).find((t) => t.to === DIALER_PATH)!.gate;
 
 /** Below this many campaigns the tabs are enough, and a search box is clutter. */
 const SEARCH_THRESHOLD = 6;
@@ -71,14 +83,21 @@ export function AgencyCampaignsPage() {
     loading,
     loadingMore,
     moreError,
-    stats,
     campaigns,
     sorted,
     active,
     load,
     loadMore,
   } = useCampaignsHome(tenantId, accountId);
-  const [filter, setFilter] = useState<CampaignFilter>('all');
+  const cards = useActiveCards(tenantId, accountId, role, active, () => load(true));
+  const canTakeCalls = passesGate(TAKE_CALLS_GATE, useNavGate());
+  const [searchParams, setSearchParams] = useSearchParams();
+  // In the URL, so a reload and Back keep it (`campaignFilterFromParams`). Replaced, not pushed:
+  // a filter change is not a page for Back to step through.
+  const filter = campaignFilterFromParams(searchParams);
+  const setFilter = (next: CampaignFilter) => {
+    setSearchParams((prev) => withCampaignFilter(prev, next), { replace: true });
+  };
   const [query, setQuery] = useState('');
   const canCreate = hasPermission(role, 'agency.campaigns.write');
   const accountName = accounts?.find((a) => a.id === accountId)?.name;
@@ -107,6 +126,12 @@ export function AgencyCampaignsPage() {
             New campaign
           </Link>
         )}
+        {canTakeCalls && (
+          <Link to={DIALER_PATH} className={`btn-primary ${styles.headerAction}`}>
+            <Headset size={16} aria-hidden="true" />
+            Take calls
+          </Link>
+        )}
       </header>
 
       {/* Inbound calls (P2): the supervisor's queue, polled; renders nothing without the flag. */}
@@ -126,11 +151,21 @@ export function AgencyCampaignsPage() {
                 Active now
               </h2>
               {active.length > 0 ? (
-                <div className={styles.liveGrid}>
-                  {active.map((c) => (
-                    <ActiveCampaignCard key={c.id} campaign={c} state={stats[c.id] ?? { status: 'loading' }} />
-                  ))}
-                </div>
+                <>
+                  <div className={styles.liveGrid}>
+                    {cards.shown.map((c) => (
+                      <ActiveCampaignCard key={c.id} campaign={c} state={cards.states[c.id] ?? { status: 'loading' }} />
+                    ))}
+                  </div>
+                  {cards.more > 0 && (
+                    <p className={styles.moreText} data-testid="active-more">
+                      {`And ${plural(cards.more, 'more active campaign')}. `}
+                      <Link to={{ search: withCampaignFilter(searchParams, 'active').toString() }}>
+                        See every active campaign
+                      </Link>
+                    </p>
+                  )}
+                </>
               ) : (
                 <div className={styles.idle}>
                   <span className={styles.idleIcon} aria-hidden="true">
@@ -219,7 +254,6 @@ export function AgencyCampaignsPage() {
           </div>
 
           <div className={styles.rail}>
-            <Shortcuts role={role} />
             <RulesCard />
           </div>
         </div>

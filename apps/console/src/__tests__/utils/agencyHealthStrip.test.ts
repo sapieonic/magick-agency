@@ -147,9 +147,9 @@ describe('stallCopy — each arm names its own evidence', () => {
     expect(copy.headline).not.toMatch(/currently|right now/i);
   });
 
-  it('dnc_unavailable says the whole workspace is affected', () => {
+  it('dnc_unavailable says the whole organisation is affected', () => {
     const copy = stallCopy({ code: 'dnc_unavailable', tenant_wide: true }, at);
-    expect(copy.evidence).toMatch(/workspace/i);
+    expect(copy.evidence).toMatch(/whole organisation/i);
     expect(copy.evidence).toMatch(/every campaign/i);
   });
 
@@ -177,6 +177,23 @@ describe('stallCopy — each arm names its own evidence', () => {
     expect(copy.advice).toBeUndefined();
   });
 
+  it('no_agents_available counts on shift by the floor’s rows when the caller has them', () => {
+    // The server's `agents_on_shift` is `agents_live`: signed-out sessions too. The
+    // banner said "2 agents on shift" above a floor of two Offline agents (QA).
+    const stall: AgencyStall = {
+      code: 'no_agents_available',
+      agents_on_shift: 2,
+      on_break_by_reason: {},
+      on_call: 0,
+      last_dial_at: null,
+    };
+    expect(stallCopy(stall, at, { agentsOnShift: 0 }).evidence).toMatch(/^0 agents on shift/);
+    expect(stallCopy(stall, at, { agentsOnShift: 1 }).facts[0]).toEqual({ text: '1 agent on shift', emphasis: '1' });
+    // No rows in the payload ("not known"): the server's figure is all there is.
+    expect(stallCopy(stall, at, { agentsOnShift: null }).evidence).toMatch(/^2 agents on shift/);
+    expect(stallCopy(stall, at).evidence).toMatch(/^2 agents on shift/);
+  });
+
   it('no_agents_available distinguishes “never dialed” from “stopped dialing”', () => {
     const copy = stallCopy(
       {
@@ -199,6 +216,13 @@ describe('stallCopy — each arm names its own evidence', () => {
     expect(copy.headline).toContain('5 of 5');
     // `shift_seconds`: read-only. The advice must not imply the supervisor can raise it.
     expect(copy.advice).toMatch(/support/i);
+  });
+
+  it('concurrency_saturated says "lines", not "concurrency", in its label and headline (the strip and Home share both)', () => {
+    expect(AGENCY_STALL_LABELS.concurrency_saturated).toBe('All lines in use');
+    const copy = stallCopy({ code: 'concurrency_saturated', limit: 5, in_use: 5 }, at);
+    expect(copy.headline).toBe('All your lines are in use: 5 of 5.');
+    expect(`${AGENCY_STALL_LABELS.concurrency_saturated} ${copy.headline}`).not.toMatch(/concurrency/i);
   });
 
   it('outside_calling_hours falls back honestly when no window resolves', () => {

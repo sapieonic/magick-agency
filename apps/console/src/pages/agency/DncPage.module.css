@@ -92,6 +92,15 @@
   font-size: 13px;
 }
 
+.searchShort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 12px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

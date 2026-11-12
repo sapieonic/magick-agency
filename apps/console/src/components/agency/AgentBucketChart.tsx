@@ -13,7 +13,7 @@ import styles from './AgentBucketChart.module.css';
  *
  * ── Why not chart.js, which this repo already ships ────────────────────────
  * `/app/campaign-analytics` uses chart.js and that stays. This chart is on
- * `/dialer/performance`, which is a full-viewport page outside both shells whose
+ * `/dialer/performance`, which is a full-viewport page outside the console shell whose
  * primary reader is a dedicated `agent` — frequently on the oldest machine in the
  * building. chart.js and its date adapter are a ~90 kB parse before a single bar
  * appears, for two series of at most 31 points with no zoom, no pan and no time

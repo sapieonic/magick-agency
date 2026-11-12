@@ -27,11 +27,10 @@ import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
  * did I actually do today" for somebody who worked Renewals in the morning and
  * Collections after lunch.
  *
- * ── Full-viewport and OUTSIDE both shells ─────────────────────────────────
+ * ── Full-viewport and OUTSIDE the console shell ───────────────────────────
  * For exactly the reason `/station`, `/dialer` and `/dialer/performance` are: an
- * `agent` is hierarchy level 5 and inherits no navigation, so `AppLayout`'s nav
- * (floored at `viewer`) and `AgencyLayout`'s entries would each render chrome
- * around nothing's *"that is not navigation, it is noise"*. The route sits
+ * `agent` is hierarchy level 5 and inherits no navigation, so the console shell's
+ * nav (floored at `viewer`) would render chrome around nothing's *"that is not navigation, it is noise"*. The route sits
  * beside `/dialer` in `App.tsx`, gated identically (`RequireAuth` +
  * `RequireCapability capability="agency"` + `RequireFlag
  * flag="agency_dialer_enabled"`, both entitlements default off) and adds nothing to
@@ -52,7 +51,7 @@ import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
  * ── Deliberately absent from `GlobalSearch` ───────────────────────────────
  * The house rule is that a new page joins `GlobalSearch`'s list. This one does not,
  * and it is the same documented exception `AgentPerformancePage` made rather than a
- * forgotten step: `GlobalSearch` lives in `TopBar`, inside `AppLayout`, so a
+ * forgotten step: `GlobalSearch` lives in the console shell, so a
  * dedicated `agent` never renders it and the entry would be invisible to its only
  * audience — while everybody who COULD find it there is a supervisor or above, who
  * must not be sent to an agent-scoped page. `dialerEntryRoutes.test.tsx` pins it.
@@ -192,7 +191,7 @@ export function AgentAttemptsPage() {
         supervisor ? (
           <>
             These are your own calls. For your team’s, open{' '}
-            <Link to="/agency/analytics">Analytics</Link> in the campaigns workspace.
+            <Link to="/agency/analytics">Analytics</Link> under Reports.
           </>
         ) : undefined
       }

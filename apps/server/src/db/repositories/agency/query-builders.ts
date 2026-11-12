@@ -2,7 +2,8 @@
  * The agency repository's WHERE-clause builders and keyset paging: the positional
  * parameter accumulator, the phone / contact / retry-selector / attempt filters, and
  * the keyset predicate and page. A leaf: it imports only `sql-fragments.ts` and the
- * drill-down predicates (`drilldown-sql.ts`, itself a leaf) from this folder.
+ * drill-down predicates (`drilldown-sql.ts`, itself a leaf) from this folder, and the
+ * shared `db/sql-utils.ts`.
  */
 import { encodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import {
@@ -15,6 +16,7 @@ import {
 import type { AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
 import { contactPhoneDigitsSql } from './sql-fragments.js';
+import { endsWithDigitsSql } from '../../sql-utils.js';
 import {
   agentManualAttemptSql,
   agentReopenedAttemptSql,
@@ -104,12 +106,7 @@ export function phoneCondition(
   // `~>=~ / ~<~` rewrite itself — getting the upper bound wrong by hand is a
   // silently short result set. The literal `%` is appended in SQL, so the
   // parameter carries no wildcard and a `%` typed into the search box is data.
-  return `reverse(${digits}) LIKE ${bind.add(reverseString(term))} || '%'`;
-}
-
-/** Reverse a string of digits — the search term, to match the reversed column. */
-function reverseString(value: string): string {
-  return value.split('').reverse().join('');
+  return endsWithDigitsSql(digits, term, bind.add);
 }
 
 /**

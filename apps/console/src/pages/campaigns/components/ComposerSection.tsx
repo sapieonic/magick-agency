@@ -20,6 +20,8 @@ interface ComposerSectionProps {
   helper: string;
   /** Marks the section as satisfied (badge turns into a check). */
   complete?: boolean;
+  /** The section's anchor, for a page that links to its sections (`#id`). */
+  id?: string;
   children: ReactNode;
 }
 
@@ -28,12 +30,12 @@ interface ComposerSectionProps {
  * a title, a one-line helper, then the section body. Shared across all campaign
  * types so sections look identical regardless of type.
  */
-export function ComposerSection({ step, title, helper, complete = false, children }: ComposerSectionProps) {
+export function ComposerSection({ step, title, helper, complete = false, id, children }: ComposerSectionProps) {
   // A tick still earns a badge on a numberless section — "satisfied" is a fact
   // about the section itself, unlike its position in a sequence.
   const badge = complete || step !== undefined;
   return (
-    <section className={styles.section}>
+    <section className={styles.section} id={id}>
       <header className={styles.header}>
         {badge && (
           <span className={`${styles.badge} ${complete ? styles.badgeComplete : ''}`} aria-hidden="true">

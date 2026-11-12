@@ -94,7 +94,7 @@ export function ScopeGate() {
 /**
  * A shared link to a tenant or account the signed-in person cannot open.
  *
- * Full-viewport, outside both shells, so it carries its own way out: back to their
+ * Full-viewport, outside the console shell, so it carries its own way out: back to their
  * own workspace, or sign out — the link may simply have been meant for another of
  * their sign-ins. "Their own workspace" is a full load of the unscoped root, which
  * opens the tenant and account this browser last had (the refused link is never
@@ -111,11 +111,11 @@ function ScopeUnavailable({ what }: { what: 'tenant' | 'account' }) {
     <div style={{ padding: '3rem 1rem' }}>
       <EmptyState
         icon={<Lock size={40} aria-hidden />}
-        title={what === 'tenant' ? 'You can’t open this workspace' : 'You can’t open this account'}
+        title={what === 'tenant' ? 'You can’t open this organisation' : 'You can’t open this account'}
         description={
           mayBeShort
             ? 'We couldn’t load your full list of accounts, so we can’t tell yet whether you have access to the one this link is for. Try again in a moment.'
-            : `This link is for ${what === 'tenant' ? 'a workspace' : 'an account'} you aren’t a member of with this sign-in. Ask whoever sent it to check your access, or carry on in your own.`
+            : `This link is for ${what === 'tenant' ? 'an organisation' : 'an account'} you aren’t a member of with this sign-in. Ask whoever sent it to check your access, or carry on in your own.`
         }
         action={
           <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -125,7 +125,7 @@ function ScopeUnavailable({ what }: { what: 'tenant' | 'account' }) {
               </button>
             ) : null}
             <button type="button" onClick={() => loadPage('/')}>
-              Go to my workspace
+              Go to my organisation
             </button>
             <button type="button" onClick={() => void logout()}>
               Sign out

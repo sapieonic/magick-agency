@@ -7,10 +7,10 @@ import { hasPermission } from '../../utils/permissions';
 import { mappingBlockReason } from '../../utils/agencyColumnMapping';
 import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
 import { IngestSummary } from '../campaigns/agency/IngestSummary';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignContactsPage.module.css';
 
@@ -43,6 +43,9 @@ export function AgencyCampaignContactsPage() {
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // "Campaigns / <name> / Contacts / Add contacts": back to the roster, where this page is
+  // reached from and where an operator who has finished uploading looks at what landed.
+  useCampaignCrumbs(id, campaign, 'contacts', [{ label: 'Add contacts' }]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canAdd = hasPermission(role, 'agency.campaigns.write');
@@ -124,17 +127,6 @@ export function AgencyCampaignContactsPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: campaign.name, href: `/agency/campaigns/${campaign.id}` },
-          // Back to the roster, not just to the campaign: this page is now
-          // reached from there and an operator who has finished uploading wants
-          // to look at what landed.
-          { label: 'Contacts', href: `/agency/campaigns/${campaign.id}/contacts` },
-          { label: 'Add contacts' },
-        ]}
-      />
 
       <div className={styles.header}>
         <h1 className={styles.title}>Add contacts</h1>

@@ -221,6 +221,9 @@ describe('pacingHistory: the stall rule', () => {
 });
 
 describe('pacingHistory: the plan', () => {
+  // Seeding ~400k rows takes most of this test's time (12 s alone on a laptop) and grows when
+  // the integration files run in parallel, as CI runs them. The read itself is held to 5 s below;
+  // the seed is not what this test measures.
   it('reads one campaign\'s range through the primary key on a seeded table (92 days x 3 campaigns)', async () => {
     const target = await insertAgencyCampaign({ status: 'paused' });
     const others = [await insertAgencyCampaign({ status: 'paused' }), await insertAgencyCampaign({ status: 'paused' })];
@@ -260,7 +263,7 @@ describe('pacingHistory: the plan', () => {
       await client.query('ROLLBACK');
       client.release();
     }
-  });
+  }, 60_000);
 
   function later() {
     return { now: new Date(at(0) + 200 * 24 * 60 * MIN) };

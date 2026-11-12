@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { agencyLandingPath } from '../../utils/consoleNav';
 import {
   agencyPersona,
   agencyPersonaLabel,
-  isAgencyAgent,
-  isAgencySupervisor,
   isDedicatedAgent,
 } from '../../utils/agencyPersona';
-import { PERMISSION_MIN_ROLE } from '../../utils/permissions';
+import { PERMISSION_MIN_ROLE, hasPermission } from '../../utils/permissions';
 import type { Role } from '../../types/auth';
 
 /**
@@ -50,8 +49,6 @@ describe('agencyPersona', () => {
    */
   it('does not treat an operator as a supervisor', () => {
     expect(agencyPersona('operator')).not.toBe('supervisor');
-    expect(isAgencySupervisor('operator')).toBe(false);
-    expect(isAgencyAgent('operator')).toBe(true);
   });
 
   /**
@@ -63,7 +60,6 @@ describe('agencyPersona', () => {
    */
   it('resolves a supervisor to supervisor even though they hold the agent permissions', () => {
     expect(agencyPersona('account_admin')).toBe('supervisor');
-    expect(isAgencyAgent('account_admin')).toBe(false);
   });
 
   it('is null for an unresolved role, so callers can wait rather than guess', () => {
@@ -113,7 +109,7 @@ describe('isDedicatedAgent — the predicate that may take navigation away', () 
   /**
    * ── Why this is separate from `agencyPersona`, in one file ────────────────
    * A revision of `AgentLanding` used the persona to decide whether to redirect a
-   * user out of `AppLayout`. Because the agent permissions floor at level 5, that
+   * user out of the old `/app` shell. Because the agent permissions floor at level 5, that
    * sent `viewer` and `operator` to `/dialer` as well — and with the `agency`
    * capability defaulting to off, both landed on a full-viewport capability screen
    * with no navigation and no sign-out, in every tenant without the dialer.
@@ -168,5 +164,31 @@ describe('isDedicatedAgent — the predicate that may take navigation away', () 
     // viewer-floored permission.
     expect(PERMISSION_MIN_ROLE['tenant.read']).toBe('viewer');
     expect(PERMISSION_MIN_ROLE['account.read']).toBe('viewer');
+  });
+});
+
+describe('agencyLandingPath — where /agency sends each role', () => {
+  it.each(['account_admin', 'tenant_admin', 'tenant_owner'] as const)('lands %s on Home', (role) => {
+    expect(agencyLandingPath(role)).toBe('/agency/home');
+  });
+
+  it('lands only a dedicated agent on the agent home', () => {
+    expect(agencyLandingPath('agent')).toBe('/dialer');
+  });
+
+  it.each(['viewer', 'operator'] as const)(
+    'lands %s on the campaign list: they read it, and Home is not theirs',
+    (role) => {
+      /* The reasons, asserted beside the answer: if either floor moves, this fails
+         here rather than landing someone on a page that refuses them. */
+      expect(hasPermission(role, 'agency.campaigns.read')).toBe(true);
+      expect(hasPermission(role, 'agency.supervise')).toBe(false);
+      expect(agencyLandingPath(role)).toBe('/agency/campaigns');
+    },
+  );
+
+  it('is null while the role is unresolved, so the redirect waits', () => {
+    expect(agencyLandingPath(undefined)).toBeNull();
+    expect(agencyLandingPath('galactic_overlord' as Role)).toBeNull();
   });
 });

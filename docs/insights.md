@@ -33,6 +33,14 @@ sections render, print-only, for the printout. A stall going on now is the healt
 attention list's (the health read's stall episodes follow the range). Lifecycle and upload history
 moved to Settings. `…/insights` redirects to Overview. Detail in [`decisions.md`](decisions.md) §4.
 
+IN14 (2026-11-11, the navigation redesign) groups the campaign's bar without nesting it: **Monitor**
+(Overview, Calls, Agents, Callbacks, Health), **Data** (Contacts, Call log) and **Set up**
+(Settings), each still one tab per question. Call attempts is now **Call log** (still `/attempts`),
+with Dialler calls and Soft-phone calls (`/manual-calls`, behind the soft phone's flag) as its two
+views; Activity left the bar for a **History** button in the campaign header (still `/activity`).
+Settings is split into anchored sections (`utils/campaignSettingsSections.ts`, `…/settings#<id>`),
+with Lifecycle and uploads the last.
+
 ## Shape
 
 ```
@@ -271,6 +279,15 @@ single flight, keyed by section, campaign id, status and `updated_at` (a transit
 edit misses), fresh for 5 s or four times the answer's compute time when longer (so one campaign's
 insights keep the database busy at most a quarter of the time; a 1M running summary, measured at
 2.5–2.9 s, is reused for ~10–12 s), at most 500 entries. The guards run on every request before it is consulted.
+The allocation is read through it by one helper (`cachedAllocation` in `allocation.ts`), shared
+by the allocation route, the activity read and Home's board (`GET /proxy/agency/home`, decision
+B28a, `agency/home-board.ts`), which serves each campaign's `attentionAllocation` of it (overdue
+callbacks, contacts held by away agents) and keeps it a minute, its staffing (`campaignStaffing`:
+the allocation's own staffing and state reads, counted by `attentionStaffing`) and today's carrier
+failures and recording (`rangeAttentionFigures` over `todayRange`, the console's "Today"). Those
+projections live beside the board's wire in `contracts/api/agency/home.ts`, and the Overview's
+attention rules read the same ones (`attentionFrom` in the console's `insights/overview.ts`), so
+Home's list is the Overview's.
 
 ## API (range reads)
 

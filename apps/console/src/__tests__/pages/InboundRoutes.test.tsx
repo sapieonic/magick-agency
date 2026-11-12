@@ -81,9 +81,9 @@ async function renderAt(path: string, role = 'account_admin') {
     <MemoryRouter initialEntries={[path]}>
       <Where />
       <Routes>
-        <Route path="/app/inbound" element={<InboundRoutesPage />} />
-        <Route path="/app/inbound/new" element={<InboundRouteEditorPage />} />
-        <Route path="/app/inbound/:routeId" element={<InboundRouteEditorPage />} />
+        <Route path="/settings/inbound" element={<InboundRoutesPage />} />
+        <Route path="/settings/inbound/new" element={<InboundRouteEditorPage />} />
+        <Route path="/settings/inbound/:routeId" element={<InboundRouteEditorPage />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -109,7 +109,7 @@ beforeEach(() => {
 describe('the route list', () => {
   it('lists each route with its numbers and hours, and deletes one after saying what happens to its numbers', async () => {
     mocks.deleteInboundRoute.mockResolvedValue({ ok: true, value: undefined });
-    await renderAt('/app/inbound');
+    await renderAt('/settings/inbound');
     const card = within(screen.getByTestId('inbound-route-r-1'));
     expect(card.getByText('Main line')).toBeTruthy();
     expect(card.getByText(/\+44/)).toBeTruthy();
@@ -124,14 +124,14 @@ describe('the route list', () => {
   });
 
   it('is hidden from a role without agency.inbound.write, and with the flag off', async () => {
-    await renderAt('/app/inbound', 'operator');
+    await renderAt('/settings/inbound', 'operator');
     expect(screen.getByTestId('capability-unavailable')).toBeTruthy();
     expect(mocks.listInboundRoutes).not.toHaveBeenCalled();
   });
 
   it('is hidden with the flag off', async () => {
     mocks.flags = {};
-    await renderAt('/app/inbound/new');
+    await renderAt('/settings/inbound/new');
     expect(screen.getByTestId('capability-unavailable')).toBeTruthy();
     expect(mocks.listInboundNumbers).not.toHaveBeenCalled();
   });
@@ -140,7 +140,7 @@ describe('the route list', () => {
 describe('the route editor', () => {
   it('creates a route on the defaults, with hours, a holiday, a clip and a number', async () => {
     mocks.createInboundRoute.mockResolvedValue({ ok: true, value: { ...ROUTE, id: 'r-new', name: 'Sales' } });
-    await renderAt('/app/inbound/new');
+    await renderAt('/settings/inbound/new');
     // Unavailable numbers say why, and cannot be ticked.
     expect(choice('n-3').disabled).toBe(true);
     expect(screen.getByText(/Contact support to have it linked/)).toBeTruthy();
@@ -192,12 +192,12 @@ describe('the route editor', () => {
     });
     expect(body.weekly_hours.slice(0, 5)).toEqual([1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:30' })));
     expect(body.weekly_hours.at(-1)).toEqual({ day: 6, start: '22:00', end: '02:00' });
-    expect(screen.getByTestId('where').textContent).toBe('/app/inbound/r-new');
+    expect(screen.getByTestId('where').textContent).toBe('/settings/inbound/r-new');
     expect(mocks.showToast).toHaveBeenCalledWith('“Sales” created.', 'success');
   });
 
   it('checks the form before saving and shows the server’s findings on their fields', async () => {
-    await renderAt('/app/inbound/new');
+    await renderAt('/settings/inbound/new');
     await act(async () => {
       fireEvent.click(screen.getByTestId('inbound-route-save'));
     });
@@ -222,7 +222,7 @@ describe('the route editor', () => {
       ok: false,
       refusal: { code: 'inbound_number_in_use', status: 409, message: 'x', details: [], phoneNumberId: 'n-2', routeId: null },
     });
-    await renderAt('/app/inbound/new');
+    await renderAt('/settings/inbound/new');
     fireEvent.change(screen.getByTestId('inbound-route-name'), { target: { value: 'Sales' } });
     fireEvent.click(choice('n-2'));
     await act(async () => {
@@ -234,7 +234,7 @@ describe('the route editor', () => {
 
   it('edits a route and sends only what changed', async () => {
     mocks.updateInboundRoute.mockImplementation(async (_id: string, patch: object) => ({ ok: true, value: { ...ROUTE, ...patch } }));
-    await renderAt('/app/inbound/r-1');
+    await renderAt('/settings/inbound/r-1');
     expect(mocks.getInboundRoute).toHaveBeenCalledWith('r-1', 'tenant-1', 'account-1');
     // The route's own number is selected and can be removed.
     expect(choice('n-1').checked).toBe(true);
@@ -253,7 +253,7 @@ describe('the route editor', () => {
   it('the wrap-up time (IQ52): the route’s own, said as what every call gets, checked, and sent only when changed', async () => {
     mocks.getInboundRoute.mockResolvedValue({ ...ROUTE, wrapup_seconds: 45 });
     mocks.updateInboundRoute.mockImplementation(async (_id: string, patch: object) => ({ ok: true, value: { ...ROUTE, ...patch } }));
-    await renderAt('/app/inbound/r-1');
+    await renderAt('/settings/inbound/r-1');
     const field = screen.getByLabelText('Wrap-up time (seconds)') as HTMLInputElement;
     expect(field.value).toBe('45');
     const hint = field.getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)?.textContent);
@@ -278,7 +278,7 @@ describe('the route editor', () => {
 
   it('a route that no longer exists says so', async () => {
     mocks.getInboundRoute.mockRejectedValue(Object.assign(new Error('Inbound route not found.'), { statusCode: 404 }));
-    await renderAt('/app/inbound/r-gone');
+    await renderAt('/settings/inbound/r-gone');
     expect(screen.getByRole('alert').textContent).toMatch(/not found/);
   });
 });

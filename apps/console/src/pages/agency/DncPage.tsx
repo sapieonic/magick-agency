@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PhoneOff, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, PhoneOff, Search, Trash2 } from 'lucide-react';
+import { dncSearchShortfall } from '@magick-agency/domain/dnc-search';
 import { useTenant } from '../../contexts/TenantContext';
 import { useTeam } from '../../hooks/useTeam';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
@@ -104,17 +105,17 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // the workspace.
   tenant:
     'Enforced for all agency dialling: this number is in the dialler’s block list, so no agency '
-    + 'campaign in this workspace will call it, and it is dropped from every roster import. It '
+    + 'campaign in this organisation will call it, and it is dropped from every roster import. It '
     + 'does not stop AI calls or broadcasts.',
   campaign:
     'Enforced for one campaign only: that campaign won’t dial this number and drops it from its '
     + 'roster imports, and an agent’s mid-call mark also suppresses the contacts already on it. '
-    + 'Every other campaign in this workspace can still call this number. Add a workspace-wide '
-    + 'entry if the customer asked never to be called.',
+    + 'Every other campaign in this organisation can still call this number. Add an '
+    + 'organisation-wide entry if the customer asked never to be called.',
   account:
     'Enforced for one account: none of that account’s campaigns will dial this number, and it is '
     + 'dropped from that account’s roster imports. Campaigns in other accounts are unaffected. Add '
-    + 'a workspace-wide entry if the customer asked never to be called.',
+    + 'an organisation-wide entry if the customer asked never to be called.',
 };
 
 /**
@@ -147,6 +148,8 @@ export function DncPage() {
   const [offset, setOffset] = useState(0);
   const [phoneFilter, setPhoneFilter] = useState('');
   const [appliedFilter, setAppliedFilter] = useState('');
+  /** Why the typed search was not sent (too few digits), shown under the box; null when it was. */
+  const [searchShort, setSearchShort] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,13 +201,31 @@ export function DncPage() {
         setEntries(res.entries);
         setTotal(res.total);
       })
-      .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Could not load the Do Not Call list.'),
-      )
+      .catch((err: unknown) => {
+        // A failed read shows no rows: the last answer's rows under the error would read as
+        // this one's (another search's matches, or the whole list under a search).
+        setEntries([]);
+        setTotal(0);
+        setError(err instanceof Error ? err.message : 'Could not load the Do Not Call list.');
+      })
       .finally(() => setLoading(false));
   }, [tenantId, accountId, offset, appliedFilter]);
 
   useEffect(load, [load]);
+
+  /**
+   * Run the typed search, unless it has too few digits: then say so under the box and send
+   * nothing (the server's own rule, `dncSearchShortfall`, which it refuses with a 400), so the
+   * list keeps the last search's answer and no Retry resends text that cannot run.
+   */
+  const applySearch = useCallback(() => {
+    const text = phoneFilter.trim();
+    const short = dncSearchShortfall(text);
+    setSearchShort(short ? short.message : null);
+    if (short) return;
+    setOffset(0);
+    setAppliedFilter(text);
+  }, [phoneFilter]);
 
   const onAdd = useCallback(async () => {
     const numbers = addInput
@@ -288,13 +309,13 @@ export function DncPage() {
       <PageDescription
         pageKey="agency-dnc"
         description={
-          'Agency campaigns don’t dial the numbers on this list — every campaign for a '
-          + 'workspace-wide entry, or only the campaign or account the Scope column names. '
+          'Agency campaigns don’t dial the numbers on this list — every campaign for an '
+          + 'organisation-wide entry, or only the campaign or account the Scope column names. '
           // The soft phone's sentence only where it is on (SP4): elsewhere it describes a
           // surface the account does not have.
           + (softphoneOn
             ? 'The soft phone checks it too: a call logged to a campaign is stopped by the entries that '
-              + 'campaign honours, and a call logged to no campaign by an entry for the workspace, its '
+              + 'campaign honours, and a call logged to no campaign by an entry for the organisation, its '
               + 'account or any of the account’s campaigns. An agent who is stopped can call only by '
               + 'writing down why — that reason is logged with their name. '
             : '')
@@ -303,7 +324,7 @@ export function DncPage() {
           + 'when a customer asks; you can also add them in bulk here.'
         }
         tips={[
-          'A workspace-wide entry blocks the number in every agency campaign and account.',
+          'An organisation-wide entry blocks the number in every agency campaign and account.',
           'Adding a number that is already listed is harmless — it stays listed once.',
           'Removing a number lets agency campaigns dial it again — if the customer asked not to '
           + 'be called, leave it listed.',
@@ -380,39 +401,43 @@ export function DncPage() {
             className={styles.searchInput}
             aria-label="Search the Do Not Call list by number"
             value={phoneFilter}
-            onChange={(e) => setPhoneFilter(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                setOffset(0);
-                setAppliedFilter(phoneFilter.trim());
-              }
+            onChange={(e) => {
+              setPhoneFilter(e.target.value);
+              setSearchShort(null);
             }}
-            placeholder="Search a number…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') applySearch();
+            }}
+            aria-invalid={searchShort ? true : undefined}
+            aria-describedby={searchShort ? 'dnc-search-short' : undefined}
+            /* The server reads any common form of the whole number, or matches the digits typed
+               as the end of one (`dncPhoneSearch`); too few digits is checked here first
+               (`applySearch`) and said under the box. */
+            placeholder="Whole number, or last 4+ digits"
           />
         </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => {
-            setOffset(0);
-            setAppliedFilter(phoneFilter.trim());
-          }}
-        >
+        <button type="button" className="btn-secondary" onClick={applySearch}>
           Search
         </button>
       </div>
+      {searchShort && (
+        <p id="dnc-search-short" className={styles.searchShort} role="alert">
+          <AlertCircle size={13} aria-hidden="true" />
+          {searchShort}
+        </p>
+      )}
 
       {error && <ErrorAlert message={error} onRetry={load} />}
 
       {loading && <LoadingSpinner />}
 
-      {!loading && entries.length === 0 && (
+      {!loading && !error && entries.length === 0 && (
         <EmptyState
           icon={<PhoneOff size={32} />}
           title={appliedFilter ? 'No match' : 'Nothing on the list'}
           description={
             appliedFilter
-              ? 'No suppressed number matches that search.'
+              ? 'No number on the list matches. Type the whole number, in any format, or at least its last 4 digits.'
               : 'When an agent marks a customer as do-not-call, they appear here and agency '
                 + 'campaigns stop dialling them.'
           }

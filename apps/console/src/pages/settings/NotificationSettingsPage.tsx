@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Mail, Save } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useNavGate } from '../../hooks/useNavGate';
+import { HOME_GATE, HOME_PATH, passesGate } from '../../utils/consoleNav';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import {
   getNotificationPreferences,
@@ -88,8 +91,26 @@ function isAtDefault(
     && value.frequency === event.default_frequency;
 }
 
+/**
+ * The page guide's tips, from the events the server lists, never a fixed list: the catalogue is
+ * served (see above), and a tip about summary emails on a page that lists none (QA
+ * notifications:ux:204961fb8d) described emails nobody can receive.
+ */
+function guideTips(events: readonly NotificationEventPreference[]): string[] {
+  const tips: string[] = [];
+  if (events.some((event) => event.cadence !== 'digest')) {
+    tips.push('Each email goes out as soon as its event happens.');
+  }
+  if (events.some((event) => event.cadence === 'digest')) {
+    tips.push('A summary is only sent for periods with activity, so a quiet week means no email.');
+  }
+  return tips;
+}
+
 export default function NotificationSettingsPage() {
   const { tenantId } = useTenant();
+  /* Home lists what needs a supervisor now; point there only for a reader Home is offered to. */
+  const homeShown = passesGate(HOME_GATE, useNavGate());
   const { showToast, showErrorToast } = useToast();
 
   const [events, setEvents] = useState<NotificationEventPreference[]>([]);
@@ -116,7 +137,7 @@ export default function NotificationSettingsPage() {
    * Not defensive tidiness — without it this page could commit ANOTHER TENANT'S
    * preferences and then save them here. `load` is recreated when `tenantId`
    * changes and the effect re-fires, but nothing cancelled the request already
-   * out, and TopBar's tenant switcher is on this very page:
+   * out, and the sidebar's tenant switcher is on this very page:
    *
    *   1. GET for tenant A is in flight
    *   2. the person switches to tenant B, GET B starts
@@ -226,7 +247,7 @@ export default function NotificationSettingsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Notifications"
+        title="Email notifications"
         actions={
           <div className={styles.headerActions}>
             {changed.length > 0 && (
@@ -249,14 +270,22 @@ export default function NotificationSettingsPage() {
       <PageDescription
         pageKey="notifications"
         description={
-          'Choose which emails you receive from this workspace. These settings are yours alone — '
-          + 'they do not affect your colleagues, and you have separate settings in every workspace '
+          'Choose which emails you receive from this organisation. These settings are yours alone — '
+          + 'they do not affect your colleagues, and you have separate settings in every organisation '
           + 'you belong to.'
         }
-        tips={[
-          'A summary is only sent for periods with activity, so a quiet week means no email.',
-        ]}
+        tips={guideTips(events)}
       />
+
+      {homeShown && (
+        <aside className={styles.homeAside} data-testid="notifications-home-aside">
+          <p>
+            Looking for what needs you right now? Paused campaigns, overdue callbacks and missed calls
+            are listed on Home, under Needs your attention.
+          </p>
+          <Link to={HOME_PATH} className={styles.homeAsideLink}>Go to Home</Link>
+        </aside>
+      )}
 
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
 
@@ -278,7 +307,7 @@ export default function NotificationSettingsPage() {
            * So this is the genuinely-empty catalog, not a role story. Kept
            * because an empty page reads as a failure either way.
            */
-          description="There are no notifications aimed at your role in this workspace yet."
+          description="There are no notifications aimed at your role in this organisation yet."
         />
       )}
 

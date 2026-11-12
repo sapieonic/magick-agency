@@ -159,7 +159,7 @@ void main() {
       await ctl.submitPassword('a brand new one');
       final s = c.read(provider);
       expect(s.existingPassword, isTrue);
-      expect(s.error, 'That address already has a password. Enter it and we will add this workspace to it.');
+      expect(s.error, 'That address already has a password. Enter it and we will add this organisation to it.');
       // The strength rule does not apply to a password they already have.
       await ctl.submitPassword('existing-pass');
       expect(c.read(provider).phase, InvitePhase.done);

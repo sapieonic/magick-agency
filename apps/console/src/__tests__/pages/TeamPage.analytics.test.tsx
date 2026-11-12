@@ -17,6 +17,11 @@ vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../hooks/usePermission', () => ({ usePermission: mocks.usePermission }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    memberships: [{ tenant_id: 'tenant-1', account_id: null, role: 'tenant_admin', status: 'active' }],
+  }),
+}));
 vi.mock('../../api/users', () => ({
   inviteUser: mocks.inviteUser,
   updateUserRole: mocks.updateUserRole,
@@ -35,6 +40,7 @@ vi.mock('@magick-agency/web-ui/components/EmptyState', () => ({
 vi.mock('@magick-agency/web-ui/components/ConfirmDialog', () => ({ ConfirmDialog: () => null }));
 
 import TeamPage from '../../pages/team/TeamPage';
+import { ALL_ACCOUNTS } from '../../pages/team/inviteScope';
 
 describe('TeamPage analytics', () => {
   beforeEach(() => {
@@ -54,10 +60,11 @@ describe('TeamPage analytics', () => {
 
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
 
-    fireEvent.click(screen.getAllByText('Invite Member')[0]!);
+    fireEvent.click(screen.getAllByText('Invite member')[0]!);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'user@example.com' } });
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'viewer' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create Invite' }));
+    fireEvent.change(screen.getByLabelText('Account'), { target: { value: ALL_ACCOUNTS } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => {
       expect(mocks.trackSetupEvent).toHaveBeenCalledWith(
@@ -85,11 +92,11 @@ describe('TeamPage analytics', () => {
 
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
 
-    fireEvent.click(screen.getAllByText('Invite Member')[0]!);
+    fireEvent.click(screen.getAllByText('Invite member')[0]!);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'operator@example.com' } });
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'operator' } });
-    fireEvent.change(screen.getByLabelText('Account (optional)'), { target: { value: 'account-2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create Invite' }));
+    fireEvent.change(screen.getByLabelText('Account'), { target: { value: 'account-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => {
       expect(mocks.trackSetupEvent).toHaveBeenCalledWith(

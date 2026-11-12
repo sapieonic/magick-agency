@@ -47,6 +47,11 @@ function isKnown(status: string): status is AgencyCampaignStatus {
   return status in STATUS_META;
 }
 
+/** A status in the badge's words (`Stopping`); one this build does not know, as sent. */
+export function agencyCampaignStatusLabel(status: string): string {
+  return isKnown(status) ? STATUS_META[status].label : status;
+}
+
 export function AgencyCampaignStatusBadge({ status }: { status: string }) {
   // An unrecognised status is shown as-is rather than mapped to a default.
   // The API's CHECK constraint is the authority on this column; if it grows a value

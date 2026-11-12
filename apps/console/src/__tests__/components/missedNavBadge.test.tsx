@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 
 /**
  * Missed calls in the navigation (`docs/inbound.md` §8.4): the entry carries the open count for
- * the caller's scope as a badge (the agency sidebar and the agent's nav), "99+" past the cap; the
+ * the caller's scope as a badge (the agent's nav here; the console sidebar's Inbound entry in
+ * `ConsoleSidebar.test.tsx`), "99+" past the cap; the
  * entry and the inbound summary stay while inbound is switched off if there are rows to read, and
  * go when there are none; a role without `agency.inbound.read` reads no count at all.
  */
@@ -23,7 +24,6 @@ vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
 vi.mock('../../hooks/useReportsAccess', () => ({ useReportsAccess: () => ({ enabled: false, canSelf: false }) }));
 vi.mock('../../api/inbound', () => ({ getMissedInboundCount: mocks.getMissedInboundCount }));
 
-import { AgencySidebar } from '../../components/layout/AgencySidebar';
 import { AgentNav } from '../../components/agency/AgentNav';
 import { resetMissedCallsCountForTests } from '../../hooks/useMissedCallsCount';
 
@@ -42,50 +42,6 @@ beforeEach(() => {
   mocks.getMissedInboundCount.mockResolvedValue({ open: 4, open_capped: false, has_rows: true });
 });
 afterEach(() => cleanup());
-
-describe('the agency sidebar', () => {
-  it('badges Missed calls with the open count, says it to a screen reader, and offers the summary to a supervisor', async () => {
-    await renderWith(<AgencySidebar />, 'account_admin');
-    const missed = screen.getByRole('link', { name: /Missed calls/ });
-    expect(within(missed).getByTestId('sidebar-missed-badge').textContent).toBe('4, 4 to follow up');
-    expect(missed.textContent).toBe('Missed calls4, 4 to follow up');
-    expect(labels()).toContain('/agency/inbound/summary');
-    // A supervisor's list opens on the account's rows, so the badge counts those (IQ57).
-    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', {});
-  });
-
-  it('shows 99+ past the cap, and no badge with nothing open', async () => {
-    mocks.getMissedInboundCount.mockResolvedValue({ open: 100, open_capped: true, has_rows: true });
-    await renderWith(<AgencySidebar />, 'account_admin');
-    expect(screen.getByTestId('sidebar-missed-badge').textContent).toBe('99+, more than 99 to follow up');
-    cleanup();
-    resetMissedCallsCountForTests();
-    mocks.getMissedInboundCount.mockResolvedValue({ open: 0, open_capped: false, has_rows: true });
-    await renderWith(<AgencySidebar />, 'account_admin');
-    expect(screen.getByRole('link', { name: 'Missed calls' })).toBeTruthy();
-    expect(screen.queryByTestId('sidebar-missed-badge')).toBeNull();
-  });
-
-  it('keeps Missed calls and the summary with inbound off while there are rows, and drops them when there are none', async () => {
-    mocks.flags = {};
-    await renderWith(<AgencySidebar />, 'account_admin');
-    expect(labels()).toEqual(expect.arrayContaining(['/agency/inbound/missed', '/agency/inbound/summary']));
-    cleanup();
-    resetMissedCallsCountForTests();
-    mocks.getMissedInboundCount.mockResolvedValue({ open: 0, open_capped: false, has_rows: false });
-    await renderWith(<AgencySidebar />, 'account_admin');
-    expect(labels()).not.toContain('/agency/inbound/missed');
-    expect(labels()).not.toContain('/agency/inbound/summary');
-  });
-
-  it('gives a viewer the list but not the summary (agency.supervise)', async () => {
-    await renderWith(<AgencySidebar />, 'viewer');
-    expect(labels()).toContain('/agency/inbound/missed');
-    expect(labels()).not.toContain('/agency/inbound/summary');
-    // Without agency.supervise their list is their own rows, and so is the badge.
-    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', { assignee: 'me' });
-  });
-});
 
 describe('the agent`s nav', () => {
   it('badges their own Missed calls, current or not', async () => {

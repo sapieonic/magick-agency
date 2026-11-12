@@ -53,7 +53,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         reply,
         403,
         'tenant_wide_membership_required',
-        'Your admin access covers one account, not the whole workspace, so you cannot create accounts. Ask an admin with access to the whole workspace.',
+        'Your admin access covers one account, not the whole organisation, so you cannot create accounts. Ask an admin with access to the whole organisation.',
       );
     }
 
@@ -67,14 +67,14 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     const result = await createTenantAccount(tenantId, name, { initialMaxConcurrentCalls: 0 });
     if (result.status === 'tenant_not_found') {
       // The tenant-context middleware proved the tenant; it was deleted since.
-      return reply.code(404).send({ error: 'Not Found', message: 'Workspace not found' });
+      return reply.code(404).send({ error: 'Not Found', message: 'Organisation not found' });
     }
     if (result.status === 'name_taken') {
       return sendRefusal<CreateAccountErrorCode>(
         reply,
         409,
         'account_name_taken',
-        `There is already an account called "${name}" in this workspace.`,
+        `There is already an account called "${name}" in this organisation.`,
       );
     }
     const { account } = result;

@@ -69,7 +69,7 @@ export function useReportsAccess(): ReportsAccess {
 
 /**
  * Where the reports pages live for this person: `/dialer/reports` for a dedicated
- * agent (below every entry of the agency shell, so served in the agent's own frame,
+ * agent (below every entry of the console shell, so served in the agent's own frame,
  * like customer history), `/agency/reports` for everybody else.
  */
 export function reportsBasePath(role: Role | undefined): '/dialer/reports' | '/agency/reports' {

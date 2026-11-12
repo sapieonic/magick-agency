@@ -70,6 +70,8 @@ export const SUPERVISOR_SOURCES = [
   'src/utils/agencyCampaignPerformance.ts',
   'src/utils/agencyAgentFloor.ts',
   'src/pages/agency/AgencyAnalyticsPage.tsx',
+  'src/utils/agency/home.ts',
+  'src/utils/agencyCampaignsHome.ts',
 ] as const;
 
 export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
@@ -81,13 +83,21 @@ export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
   above it does the reading. Naming the renderer would make the guard
   pass on a file that has no idea the field exists.
 */
-/** The campaigns home's list-worked ring. */
+/**
+ * The campaigns home's pure layer: the polling rule the campaign detail page and the campaigns
+ * home's list share (`needsPolling`), and the Active card's figures (`activeCardFigures`, over
+ * Home's board, B28a).
+ */
+const CAMPAIGNS_HOME = 'src/utils/agencyCampaignsHome.ts';
+/** The campaigns home's list-worked bar (`listWorkedRing`, over Home's board). */
 const RING = 'src/utils/agency/overview/pulse.ts';
 /** The campaigns home's live card. */
 const CARD = 'src/pages/agency/campaigns-home/ActiveCampaignCard.tsx';
 const STRIP = 'src/components/agency/CampaignHealthStrip.tsx';
 const PERFORMANCE = 'src/utils/agencyCampaignPerformance.ts';
 const FLOOR = 'src/components/agency/AgentFloor.tsx';
+/** Home's rules (B28): the attention list and the floor. */
+const HOME = 'src/utils/agency/home.ts';
 
 export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   keyof AgencyCampaignStats,
@@ -112,9 +122,10 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   // The Overview panel's derivations (the contact funnel, the pulse strip) were the
   // readers of most of these. The Insights tab replaced that panel (IN1) and they were
   // deleted, so each entry now names a live reader — the campaigns home's list-worked
-  // ring and live card, the Analytics page's Performance card — or says it is unread.
+  // bar and live card (both over Home's board, B28a), the Analytics page's Performance
+  // card — or says it is unread.
   contacts_total: { consumedIn: RING },
-  contacts_pending: { consumedIn: CARD },
+  contacts_pending: { consumedIn: CAMPAIGNS_HOME },
   contacts_in_flight: {
     unconsumed:
       'Read only by the Overview contact funnel, deleted with the panel. The Insights tab '
@@ -135,12 +146,13 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   },
   attempts_total: { consumedIn: PERFORMANCE },
   attempts_connected: { consumedIn: PERFORMANCE },
-  // Two readers, and the guard needs only one: the live card renders it, and
-  // `agencyCampaignsHome.ts` reads it to decide whether a campaign is still live.
-  attempts_live: { consumedIn: CARD },
+  // Two readers, and the guard needs only one: the live card's "Calls in progress"
+  // (`activeCardFigures`), and `needsPolling`, which reads it to decide whether a
+  // paused campaign's calls are still draining. Both in the campaigns home's pure layer.
+  attempts_live: { consumedIn: CAMPAIGNS_HOME },
   // Two readers, and the guard needs only one: the floor uses it to distinguish
-  // “the roster did not load” from “nobody is on this campaign”, and the live card
-  // on the campaigns home shows it.
+  // “the roster did not load” from “nobody is on this campaign”, and Home's floor
+  // (and through Home's board the campaigns home's live cards) shows it.
   agents_live: { consumedIn: FLOOR },
 
   // ── the health strip ────────────────────────────────────────────────────
@@ -170,21 +182,11 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
       'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '
       + 'Insights tab shows the rolling rate from its own reads (`health.abandonment.rolling_24h`).',
   },
-  abandonment_ceiling_pct: {
-    unconsumed:
-      'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '
-      + 'Insights tab shows the ceiling from its own reads (`settings.abandonment_ceiling_pct`).',
-  },
-  abandoned_24h: {
-    unconsumed:
-      'Read only by the health strip\'s abandonment sample, deleted with the Overview panel. The '
-      + 'Insights tab divides its own counts (`health.abandonment.rolling_24h.abandoned`).',
-  },
-  answered_24h: {
-    unconsumed:
-      'Read only by the health strip\'s abandonment sample, deleted with the Overview panel. The '
-      + 'Insights tab divides its own counts (`health.abandonment.rolling_24h.answered`).',
-  },
+  // Read again by Home (B28): its abandonment rule and the floor's rate, over the guardrail's
+  // 24 hours with IN5's sample floor. The strip's read-out that read them first is gone.
+  abandonment_ceiling_pct: { consumedIn: HOME },
+  abandoned_24h: { consumedIn: HOME },
+  answered_24h: { consumedIn: HOME },
 
   // ── the derived figures ─────────────────────────────────────────────────
   connect_rate_pct: { consumedIn: PERFORMANCE },

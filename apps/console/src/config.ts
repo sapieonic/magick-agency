@@ -183,6 +183,12 @@ export const ENDPOINTS = {
        */
       campaignInsights: (campaignId: string, section: string) =>
         `${API_BASE}/proxy/agency/campaigns/${encodeURIComponent(campaignId)}/insights/${section}`,
+      /**
+       * Home's board (decision B28a): the active campaigns with what Home reads for each, in
+       * one request. `agency.campaigns.read`; below `agency.supervise` it still answers, with
+       * the Insights parts it shares a cache with (staffing, allocation, today, settings) null.
+       */
+      home: `${API_BASE}/proxy/agency/home`,
     },
   },
   /**
@@ -227,10 +233,19 @@ export const ENDPOINTS = {
 // There are no call languages or text-to-speech options (`LANGUAGES`,
 // `TtsVoice`, `TTS_LANGUAGES`, ...) in this console.
 
+/**
+ * How the console names each role in lists (Team's Role column, a staffing list's
+ * fallback). `account_admin` is "Supervisor", the word the rest of the console uses
+ * for whoever runs an account; where a role is PICKED (Team's invite and change-role
+ * menus, `pages/team/teamRoles.ts`) it reads "Supervisor (account admin)" so the
+ * access level is named too. The super-admin console keeps its own, technical
+ * labels (`apps/super-admin/src/utils/saStatus.ts`): its readers run the service,
+ * not a dialling floor.
+ */
 export const ROLES = [
   { value: 'tenant_owner', label: 'Owner', color: 'var(--accent)' },
   { value: 'tenant_admin', label: 'Admin', color: 'var(--info)' },
-  { value: 'account_admin', label: 'Account Admin', color: 'var(--teal)' },
+  { value: 'account_admin', label: 'Supervisor', color: 'var(--teal)' },
   { value: 'operator', label: 'Operator', color: 'var(--warning)' },
   { value: 'viewer', label: 'Viewer', color: 'var(--text-muted)' },
   // Agency Dialer role. This entry is what makes an existing `agent` membership

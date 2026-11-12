@@ -246,7 +246,7 @@ describe('/dialer/phone', () => {
       // This account cannot rehydrate it, so it is not asked to.
       expect(mocks.openSoftphoneSession).not.toHaveBeenCalled();
       const stranded = screen.getByTestId('softphone-stranded');
-      expect(stranded.textContent).toMatch(/open in another account of this workspace/);
+      expect(stranded.textContent).toMatch(/open in another account of this organisation/);
       // The call is read where the session lives.
       expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
       expect(stranded.textContent).toMatch(/A supervisor can save it for you from Soft-phone calls\./);
@@ -494,7 +494,7 @@ describe('/dialer/phone', () => {
       });
       mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { ...ELSEWHERE, account_name: null } });
       await mount();
-      expect(screen.getByTestId('softphone-elsewhere').textContent).toMatch(/open in another account of this workspace/);
+      expect(screen.getByTestId('softphone-elsewhere').textContent).toMatch(/open in another account of this organisation/);
       expect(screen.getByTestId('softphone-elsewhere-close')).toBeTruthy();
       expect(screen.queryByTestId('softphone-elsewhere-go-there')).toBeNull();
     });

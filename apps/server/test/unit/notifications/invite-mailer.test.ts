@@ -81,8 +81,8 @@ const EXPECTED_LABEL: Record<(typeof ROLES)[number], string> = {
   viewer: 'Viewer',
   operator: 'Operator',
   account_admin: 'Account admin',
-  tenant_admin: 'Workspace admin',
-  tenant_owner: 'Workspace owner',
+  tenant_admin: 'Organisation admin',
+  tenant_owner: 'Organisation owner',
 };
 
 /** Replace the mocked config wholesale; the module reads it per call. */

@@ -24,8 +24,8 @@ export function useFeatureFlagEnabled(flag: string): boolean {
   }
 }
 
-/** The soft phone's flag (`docs/softphone.md`, SP4). */
-export const SOFTPHONE_FLAG = 'agency_softphone_enabled';
+/** The soft phone's flag (`docs/softphone.md`, SP4); declared with the other flags in `utils`. */
+export { SOFTPHONE_FLAG } from '../utils/softphone/softphoneFlag';
 
 /**
  * The call-audio format flag: on (the default), the station socket carries binary

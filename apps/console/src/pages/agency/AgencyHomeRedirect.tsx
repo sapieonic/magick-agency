@@ -1,7 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { agencyPersona } from '../../utils/agencyPersona';
+import { agencyLandingPath } from '../../utils/consoleNav';
 
 /**
  * Where `/agency` goes — which depends on who opened it.
@@ -13,19 +13,25 @@ import { agencyPersona } from '../../utils/agencyPersona';
  * `agent` is level 5 and 403s on it, so the one role the dialer was built for
  * opened the dialer's own workspace and got a permission error.
  *
- * Now the two personas land where their job is:
+ * Now each lands where their job is (`agencyLandingPath`):
  *
- *  - **supervisor** → the campaign list. Setting campaigns up and watching them is
- *    the job, and every campaign's own page carries its health strip, performance
- *    readouts and agent floor.
- *  - **agent** → `/dialer`, the agent home: the campaigns they are staffed on and
- *    the way into each.
+ *  - **supervisor** → Home (`/agency/home`, B28): what needs them now, the floor
+ *    and today so far, across every live campaign. Whoever passes Home's gate
+ *    (`canSeeHome`, `agency.supervise`) lands there, so an account switch, which is a
+ *    full page load at the new account's home, lands there too.
+ *  - **dedicated agent** (`agent`) → `/dialer`, the agent home: the campaigns they
+ *    are staffed on and the way into each.
+ *  - **viewer and operator** → the campaign list, inside the console. They read it
+ *    (`agency.campaigns.read` floors at `viewer`) and hold no `agency.supervise`, so
+ *    Home is not theirs. They used to land on `/dialer`, outside the shell, whose
+ *    only way out opened Profile and appearance; `/dialer` still serves them, and a
+ *    campaign page's "Join as agent" opens its station.
  *
  * ── Why the agent is sent OUT of this shell rather than served inside it ────
- * `AgencyLayout`'s three nav entries floor at `viewer` or above, so an agent
- * renders its chrome — sidebar, switchers, "Team & settings" — around nothing
- * at all. That is the same empty-shell problem `AgentLanding` exists to prevent at
- * `/app`, and the answer is the same: full-viewport, outside every shell. See
+ * The console shell's work entries floor at `viewer` or above, so an agent
+ * renders its chrome — sidebar, switchers, Settings — around nothing
+ * at all. That is the same empty-shell problem `AgentLanding` exists to prevent on
+ * Settings and `/app`, and the answer is the same: full-viewport, outside every shell. See
  * `AgentHomePage`.
  *
  * A redirect rather than rendering `AgentHomePage` here, so the agent home has ONE
@@ -35,7 +41,7 @@ import { agencyPersona } from '../../utils/agencyPersona';
  */
 export function AgencyHomeRedirect() {
   const { role } = useTenant();
-  const persona = agencyPersona(role);
+  const landing = agencyLandingPath(role);
 
   /**
    * `role` is `undefined` for the moment `TenantContext` takes to resolve a
@@ -65,8 +71,8 @@ export function AgencyHomeRedirect() {
    *     staleness window, or `/agency` losing the flag gate, is what would make
    *     this reachable.
    *  2. **It would not be a trap if it were.** This route is `<Route index>`
-   *     inside `AgencyLayout`, so the spinner renders in the shell's outlet, with
-   *     "Team & settings" beside it. That is the difference from the trap
+   *     inside the console shell, so the spinner renders in the shell's outlet, with
+   *     the sidebar and the profile menu's sign-out around it. That is the difference from the trap
    *     `HomeRedirect` had to bound: `/` renders no chrome at all, so a spinner
    *     there has no sign-out in it.
    *
@@ -75,9 +81,8 @@ export function AgencyHomeRedirect() {
    * no demonstrated path to it, and a redirect out of this shell on an
    * unresolvable role would be a new behaviour justified by nothing.
    */
-  if (persona === null) return <LoadingSpinner />;
-
-  return <Navigate to={persona === 'supervisor' ? '/agency/campaigns' : '/dialer'} replace />;
+  if (landing === null) return <LoadingSpinner />;
+  return <Navigate to={landing} replace />;
 }
 
 export default AgencyHomeRedirect;

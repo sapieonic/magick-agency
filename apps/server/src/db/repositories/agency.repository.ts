@@ -112,6 +112,7 @@ export type {
 } from './agency/insights-reads.repository.js';
 export {
   attemptedSql,
+  callbackOverdueSql,
   pendingCallbackSql,
   ROSTER_BUCKETS,
   rosterBucketPredicates,

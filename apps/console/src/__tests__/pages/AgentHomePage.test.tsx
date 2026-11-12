@@ -423,20 +423,21 @@ describe('AgentHomePage — who it is for', () => {
 });
 
 /*
- * NEW in Magick Agency (decision B17): the exit for a viewer/operator on the
- * agent persona read a back link to the old platform; it now reads "Go to settings" and
- * still lands on `/app`, this console's own platform zone. A dedicated agent
- * gets no exit at all (level 5 has nothing to return to).
+ * The exit for a viewer/operator on the agent persona: it read a back link to the old
+ * platform (B17), then "Go to settings", which opened Profile and appearance. It now
+ * reads "Open the console" and lands where `/agency` lands them, the campaign list
+ * (`agencyLandingPath`). A dedicated agent gets no exit at all (level 5 has nothing
+ * to return to).
  */
-describe('AgentHomePage — the way to settings (B17)', () => {
-  it('offers a viewer with nothing assigned "Go to settings" → /app', async () => {
+describe('AgentHomePage — the way back to the console', () => {
+  it('offers a viewer with nothing assigned "Open the console" → the campaign list', async () => {
     mocks.useTenant.mockReturnValue(tenant({ role: 'viewer' }));
     mocks.getMyAssignments.mockResolvedValue([]);
 
     renderAt();
 
-    const link = await screen.findByRole('link', { name: 'Go to settings' });
-    expect(link.getAttribute('href')).toBe('/app');
+    const link = await screen.findByRole('link', { name: 'Open the console' });
+    expect(link.getAttribute('href')).toBe('/agency/campaigns');
   });
 
   it('offers an operator with several campaigns the same exit', async () => {
@@ -448,8 +449,8 @@ describe('AgentHomePage — the way to settings (B17)', () => {
 
     renderAt();
 
-    const link = await screen.findByRole('link', { name: 'Go to settings' });
-    expect(link.getAttribute('href')).toBe('/app');
+    const link = await screen.findByRole('link', { name: 'Open the console' });
+    expect(link.getAttribute('href')).toBe('/agency/campaigns');
   });
 
   it('gives a dedicated agent no exit', async () => {
@@ -458,7 +459,7 @@ describe('AgentHomePage — the way to settings (B17)', () => {
     renderAt();
 
     await screen.findByRole('heading');
-    expect(screen.queryByRole('link', { name: 'Go to settings' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open the console' })).toBeNull();
     expect(screen.queryByText(PARENT_BRAND)).toBeNull();
   });
 });

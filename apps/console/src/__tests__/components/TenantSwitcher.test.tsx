@@ -61,7 +61,7 @@ describe('TenantSwitcher', () => {
     fireEvent.click(screen.getByRole('button', { name: /Acme/ }));
 
     expect(screen.getByTestId('switcher-list')).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: 'Search tenants' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Search organisations' })).toBeTruthy();
     expect(screen.getByText('Initech')).toBeTruthy();
 
     fireEvent.wheel(screen.getByTestId('switcher-list'), { deltaY: 120 });
@@ -75,7 +75,7 @@ describe('TenantSwitcher', () => {
   it('filters tenants by name from the search box', () => {
     setup();
     fireEvent.click(screen.getByRole('button', { name: /Acme/ }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search tenants' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search organisations' }), {
       target: { value: 'initech' },
     });
 
@@ -108,7 +108,7 @@ describe('TenantSwitcher', () => {
     setup();
     const trigger = screen.getByRole('button', { name: /Acme/ });
     fireEvent.click(trigger);
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Search tenants' }), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Search organisations' }), { key: 'Escape' });
     expect(screen.queryByTestId('switcher-list')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });

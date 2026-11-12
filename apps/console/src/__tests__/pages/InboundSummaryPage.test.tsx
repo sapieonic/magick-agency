@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   access: { available: true, inboundOn: true, count: null, settled: true } as Record<string, unknown>,
   getInboundSummary: vi.fn(),
+  flagsOn: true,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -25,6 +26,8 @@ vi.mock('../../components/common/CapabilityUnavailable', () => ({
 }));
 vi.mock('../../components/common/PageDescription', () => ({ PageDescription: () => null }));
 vi.mock('../../api/inbound', () => ({ getInboundSummary: mocks.getInboundSummary }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: () => ({ isEnabled: () => mocks.flagsOn }) }));
+vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: () => ({ isEnabled: () => true }) }));
 
 import InboundSummaryPage from '../../pages/agency/InboundSummaryPage';
 import { inboundSummaryRange } from '../../utils/inbound/inboundSummary';
@@ -58,6 +61,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   mocks.access = { available: true, inboundOn: true, count: null, settled: true };
   mocks.getInboundSummary.mockResolvedValue(summary());
+  mocks.flagsOn = true;
 });
 
 describe('the range', () => {
@@ -80,6 +84,17 @@ describe('the range', () => {
 });
 
 describe('the page', () => {
+  it('links to Inbound routing, while the reader may open it', async () => {
+    await renderPage();
+    expect(screen.getByTestId('settings-entry-link-inbound').getAttribute('href')).toBe('/settings/inbound');
+    cleanup();
+    // Inbound off with history to read: the summary stays, Inbound routing is not offered.
+    mocks.flagsOn = false;
+    await renderPage();
+    expect(screen.getByTestId('summary-calls')).toBeTruthy();
+    expect(screen.queryByTestId('settings-entry-link-inbound')).toBeNull();
+  });
+
   it('reads the last 7 days first and shows the tiles and the agents', async () => {
     await renderPage();
     expect(mocks.getInboundSummary).toHaveBeenCalledWith(

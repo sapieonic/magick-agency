@@ -836,10 +836,62 @@ a rate-limit key and never an auth input.
 
 - **Console** (`apps/console`). Firebase web sign-in (`VITE_FIREBASE_*`), `AgencyLoginPage` and
   `AgencyJoinPage` (no self sign-up), the agent station, campaigns, roster, activity, DNC, analysis
-  profiles, team, accounts and notification settings. Permissions come from `packages/contracts/src/rbac.ts`.
+  profiles, team, accounts, email notifications and the other settings. Permissions come from `packages/contracts/src/rbac.ts`.
   Brand pack `brands/magick-agency/` (B17); a branding guard test
   (`src/__tests__/branding/noParentBrand.test.ts`). In dev, Vite proxies every API prefix to `:3021`
   (`vite.config.ts`), and `devProxyPrefixes.test.ts` fails for any API segment the proxy misses.
+- **One console shell** (decision B28). Every signed-in page outside the agent's full-viewport
+  surfaces (`/station`, `/dialer/*`) renders in `ConsoleLayout` (`components/layout/`), mounted
+  by `ConsoleShell` in `App.tsx`. The sidebar has the tenant and account context block (the
+  existing switchers), Home, the work sections Campaigns, Inbound, Reports and Do Not Call, Take
+  calls (a link out to `/dialer` for whoever takes calls without supervising), then Settings at
+  the foot of the same Main landmark, and the version; the top bar has a breadcrumb (on a phone
+  the current page with a back arrow to the nearest crumb above it that is not this page), one search field and the profile
+  menu (a disclosure: name, email, ids, theme, sign out). The field and ⌘K open `GlobalSearch` on
+  every page: pages, Settings, campaigns, each campaign's own pages (its tabs, History, Soft-phone
+  calls), the campaign Settings sections its page has and a phone number's customer history, each
+  offered under its destination's gate (`utils/consoleSearch.ts`, which reads `consoleNav.ts`;
+  the campaign list is kept per tenant and account for the session, `hooks/useSearchCampaigns.ts`).
+  Escape closes only the topmost layer (search, then the phone's drawer). A section that groups
+  pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and Soft-phone calls,
+  Missed calls and Summary, Analytics and Exports, each tab gated as its page. The navigation
+  model, with every entry's gate, is `utils/consoleNav.ts`; `navRouteGates.test.ts` checks every
+  offer against the route it opens, for every role and flag. Settings is a hub at `/settings/*`
+  grouped by who a setting affects (you, this account, people and access), with an "Applies to"
+  line per page (people and access says the account for a seat scoped to one); `/settings`
+  reopens the page last visited (per viewer, `utils/settingsLastVisited.ts`), else Team for whoever
+  has it, else the first entry, and on a phone the sub-nav is one picker. The old `/app/<page>`
+  URLs redirect to `/settings/<page>` (`LegacyAppRedirect`); `/app` itself is the home decision
+  (`AppHomeRedirect`). `AgentLanding` keeps a dedicated agent out of the shell on Settings and
+  `/app` while the dialer is on, so neither the sidebar nor search offers them Settings then; the
+  `/agency` pages send an agent to their own `/dialer/*` twin. PostHog's `product` stays
+  `'agency'` on `/agency` and `'ai'` elsewhere (`productSurfaceForPath`).
+- **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
+  (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
+  switch lands there too; a dedicated agent lands on `/dialer`, a viewer or operator on the campaign
+  list, `agencyLandingPath` in `utils/consoleNav.ts`) and the first sidebar entry, with a badge
+  counting the dangers and warnings on its list (not a waiting campaign, and not the missed calls
+  the Inbound badge carries).
+  Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
+  every row of the campaign Overview's "Needs your attention" run over the board with today for its
+  range figures (`attentionFrom`, shared, not copied), the account's open missed calls), each
+  linking to the campaign tab or page that fixes it, derived on every refresh
+  (`utils/agency/home.ts`, `homeAttention`), with the information rows (a campaign waiting for its
+  hours or a retry, today's carrier failures, calling hours left at the default) shown apart as
+  "For your information"; **Floor right
+  now**, a row per running campaign (and per paused one with agents on it) from the stats'
+  `agents_by_state`, linking to its Agents tab; **Today so far**, one grouped read (`grouped-stats`,
+  `group_by=campaign`, the viewer's local midnight to now) summed into dials, conversations,
+  successes (with the success rate) and talk time. Reads (`hooks/useHomeBoard.ts`): one request,
+  `GET /proxy/agency/home` (`api/agencyHome.ts`; the server's `agency/home-board.ts`, served from
+  the insights route family), answering the active campaigns, at most 25 running first, each with
+  the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's
+  carrier failures and recording and the recording and calling-hours settings; every 10 s and on
+  return. The server reuses a still campaign's stats while its floor holds, and the allocation and
+  today's figures, for a minute. The
+  sidebar badge reads the same board (one per tenant and account, `useHomeBadgeCount`): its
+  readers share one read at the fastest period any of them asks for, so on Home the badge adds no
+  request and elsewhere the board is read once a minute, never while the tab is hidden.
 - **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
   `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
   receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;

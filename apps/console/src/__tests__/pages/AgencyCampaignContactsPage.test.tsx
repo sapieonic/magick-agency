@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 import type { AgencyCampaign, AgencyColumnAnalysis } from '../../types/agency-campaign';
 
 /**
@@ -72,9 +73,11 @@ import ContactsPage from '../../pages/agency/AgencyCampaignContactsPage';
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/agency/campaigns/camp-1/contacts/add']}>
-      <Routes>
-        <Route path="/agency/campaigns/:id/contacts/add" element={<ContactsPage />} />
-      </Routes>
+      <WithPageCrumbs>
+        <Routes>
+          <Route path="/agency/campaigns/:id/contacts/add" element={<ContactsPage />} />
+        </Routes>
+      </WithPageCrumbs>
     </MemoryRouter>,
   );
 }
@@ -117,6 +120,15 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe('add contacts — the breadcrumb', () => {
+  it('names the campaign and leads back to its contacts', async () => {
+    renderPage();
+    await waitFor(() => expect(suppliedCrumbs()).toBe(
+      'Collections→/agency/campaigns/camp-1 / Contacts→/agency/campaigns/camp-1/contacts / Add contacts',
+    ));
+  });
+});
 
 describe('add contacts — a campaign that can still dial', () => {
   it('never creates a new campaign — the roster targets the one in the URL', async () => {

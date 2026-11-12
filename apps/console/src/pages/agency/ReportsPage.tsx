@@ -14,12 +14,13 @@ import { ExportReportButton } from '../../components/agency/reports/ExportReport
 import styles from '../../components/agency/reports/Reports.module.css';
 
 /**
- * Reports (`docs/reports.md`): the History of runs and, for supervisors, the
+ * Exports (`docs/reports.md`), the list of exported reports under the Reports section (B28): one
+ * file is a report, the list is Exports. The History of runs and, for supervisors, the
  * Subscriptions that produce them on a schedule.
  *
- * Served twice, like customer history: at `/agency/reports` in the agency shell, and
+ * Served twice, like customer history: at `/agency/reports` in the console shell, and
  * at `/dialer/reports` in a dedicated agent's own frame (`AgentSurfaceShell`),
- * because an `agent` is below every entry of the agency shell. A dedicated agent who
+ * because an `agent` is below every entry of the console shell. A dedicated agent who
  * opens the agency path (a shared link) is sent to their own.
  *
  * Both routes sit inside the dialer gate and the `agency_reports_enabled` flag gate;
@@ -71,7 +72,7 @@ export default function ReportsPage({ surface = 'agency' }: { surface?: Surface 
     body = (
       <EmptyState
         icon={<FileText size={32} />}
-        title="Reports aren’t available to you"
+        title="Exports aren’t available to you"
         description="Ask an account admin if you need a report."
       />
     );
@@ -79,7 +80,7 @@ export default function ReportsPage({ surface = 'agency' }: { surface?: Surface 
     body = (
       <>
         {access.canSupervise ? (
-          <div className={styles.tabs} role="tablist" aria-label="Reports">
+          <div className={styles.tabs} role="tablist" aria-label="Exports">
             <button
               type="button"
               role="tab"
@@ -142,7 +143,7 @@ export default function ReportsPage({ surface = 'agency' }: { surface?: Surface 
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Reports"
+        title="Exports"
         subtitle={
           access.canSupervise
             ? 'Agent reviews, campaign reports and account reports as PDF and Excel, ad hoc or on a schedule.'

@@ -1,0 +1,150 @@
+.skipLink {
+  position: absolute;
+  top: -100%;
+  left: 16px;
+  z-index: 10000;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: white;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+
+.skipLink:focus {
+  top: 8px;
+  color: white;
+}
+
+.layout {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  /* clip, not just hidden: an overflow: hidden box can still be scrolled by
+     focus() or scrollIntoView, so a popover poking past the right edge would
+     slide the whole page under the fixed sidebar. clip cannot be scrolled. */
+  overflow: hidden;
+  overflow: clip;
+  background: var(--bg-primary);
+}
+
+.sidebar {
+  flex-shrink: 0;
+  width: var(--sidebar-width);
+  height: 100vh;
+  height: 100dvh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+}
+
+.main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden; /* clip: see .layout */
+  overflow: clip;
+}
+
+.topbar {
+  flex-shrink: 0;
+  height: var(--topbar-height);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+/* `--content-pad`: the pane's padding, which a page's sticky strip reaches back over. */
+.content {
+  --content-pad: 24px;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--content-pad) var(--content-pad) max(var(--content-pad), env(safe-area-inset-bottom));
+  scroll-padding-bottom: max(var(--content-pad), env(safe-area-inset-bottom));
+}
+
+.overlay {
+  display: none;
+}
+
+/* An agency page with no account to scope it to (`AgencyArea`). */
+.noAccount {
+  max-width: 520px;
+  margin: 64px auto;
+  text-align: center;
+}
+
+.noAccount h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.noAccount p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform var(--transition);
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+  }
+
+  .main {
+    margin-left: 0;
+  }
+
+  .content {
+    --content-pad: 16px;
+  }
+
+  .overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 90;
+    backdrop-filter: blur(2px);
+  }
+}
+
+/*
+  Print (the campaign Insights tab's Print button, or the browser's own): the
+  page without the shell. No sidebar, no top bar, and the fixed-height,
+  overflow-clipped frame released so the content runs onto as many pages as it
+  needs instead of being clipped to one screen.
+*/
+@media print {
+  .sidebar,
+  .topbar,
+  .overlay,
+  .skipLink {
+    display: none !important;
+  }
+
+  .layout,
+  .main,
+  .content {
+    display: block;
+    height: auto;
+    overflow: visible;
+    margin-left: 0;
+  }
+}

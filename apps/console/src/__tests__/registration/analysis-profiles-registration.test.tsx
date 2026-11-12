@@ -16,26 +16,25 @@ function source(relativePath: string): string {
  * flag.
  */
 describe('dialer call-analysis registration', () => {
-  it('protects the Call Summaries route with the analytics capability and feature flag', () => {
+  it('protects the Call Summaries route with its Settings entry’s gate (the capability and flag below)', () => {
     const app = source('../../App.tsx');
 
     expect(app).toMatch(
-      /path="call-summaries"\s+element=\{<RequireCapability\s+capability="agency\.analytics">\s*<RequireFlag\s+flag="agency_call_analysis">\s*<AnalysisProfilesPage\s*\/>\s*<\/RequireFlag>\s*<\/RequireCapability>\}/s,
+      /path="call-summaries"\s+element=\{<RequireGate\s+gate=\{settingsEntry\('call-summaries'\)\.gate\}>\s*<AnalysisProfilesPage\s*\/>\s*<\/RequireGate>\}/s,
     );
   });
 
-  it('requires both gates before Call Summaries appears in Sidebar and GlobalSearch', () => {
-    const sidebar = source('../../components/layout/Sidebar.tsx');
-    const search = source('../../components/common/GlobalSearch.tsx');
+  it('requires both gates before Call summaries appears in the Settings hub and GlobalSearch', () => {
+    const nav = source('../../utils/consoleNav.ts');
+    const search = source('../../utils/consoleSearch.ts');
 
-    expect(sidebar).toMatch(
-      /label:\s*'Call Summaries'[\s\S]*?flag:\s*'agency_call_analysis'[\s\S]*?capability:\s*'agency\.analytics'/,
+    expect(nav).toMatch(
+      /label:\s*'Call summaries'[\s\S]*?flags:\s*\[CALL_ANALYSIS_FLAG\][\s\S]*?capabilities:\s*\['agency\.analytics'\]/,
     );
-    expect(search).toMatch(
-      /label:\s*'Call Summaries'[\s\S]*?flag:\s*'agency_call_analysis'[\s\S]*?capability:\s*'agency\.analytics'/,
-    );
-    expect(sidebar).toContain('&& (!item.flag || isFlagEnabled(item.flag))\n          && (!item.capability || isCapabilityEnabled(item.capability))');
-    expect(search).toContain('(!page.flag || isEnabled(page.flag))\n      && (!page.capability || isCapabilityEnabled(page.capability))');
+    expect(nav).toContain("export const CALL_ANALYSIS_FLAG = 'agency_call_analysis';");
+    // Search keeps no gates of its own for Settings (B28): it offers the hub's entries under
+    // the hub's gates, so the two above are the ones ⌘K applies too.
+    expect(search).toMatch(/SETTINGS_ENTRIES\.filter\(\(entry\) => passesGate\(entry\.gate, gate\)\)/);
   });
 
   it('registers the analytics capability in the RequireCapability union and tracking gate set', () => {

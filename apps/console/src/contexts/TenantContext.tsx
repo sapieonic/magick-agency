@@ -313,7 +313,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
 
         setAccounts(fetchedAccounts);
         // An empty list is a real answer, not a failure: a tenant can genuinely
-        // have no accounts, and `AgencyLayout` already has copy for that. Marking
+        // have no accounts, and `AgencyArea` already has copy for that. Marking
         // it `'error'` would put a retry button in front of a state retrying
         // cannot change.
         //
@@ -529,7 +529,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
           // for `ScopeGate` to refuse, not quietly swapped for another account.
           // An unscoped URL needs nothing: the gate scopes it.
           if (replacement && scoped && scoped.accountId === activeAccountId) {
-            go({ tenantId: forTenant, accountId: replacement }, '/', { replace: true });
+            go({ tenantId: forTenant, accountId: replacement }, '/', { replace: true, force: true });
           }
         }
       })

@@ -1,25 +1,28 @@
 import type { ReactNode } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { isDedicatedAgent } from '../../utils/agencyPersona';
+import { DIALER_PATH, dialerOn, dialerTwinPath } from '../../utils/consoleNav';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
 
 /**
- * Keeps a DEDICATED agent out of `AppLayout`, and sends them to the dialer.
+ * Keeps a DEDICATED agent out of the console shell (`ConsoleLayout`) on every page it wraps
+ * (Settings, the legacy `/app` URLs and the `/agency` pages), and sends them to the dialer: to
+ * the page's own `/dialer/*` twin when it has one and its flag is on (`dialerTwinPath`: a report,
+ * the reports list, Missed calls, Customer history), otherwise to `/dialer`.
  *
  * ── The problem this is the whole answer to ─────────────────────────────────
  * An `agent` is hierarchy level 5 and holds four `agency.*` permissions and
- * nothing else. Every nav entry in `AppLayout` floors at `viewer` or higher, so an
- * agent who reaches `/app` gets a shell with an empty sidebar around a dashboard
- * of empty panels. An `agent` inherits nothing, and a shell with no navigation is
+ * nothing else. Every console nav entry floors at `viewer` or higher, so an
+ * agent who reaches Settings or `/app` gets a shell with a near-empty sidebar. An `agent` inherits nothing, and a shell with no navigation is
  * noise.
  *
- * So this wraps `/app`'s element rather than adding a nav link, which is what
- * makes it apply to every `/app/*` path an agent could reach — including the
- * catch-all redirect at the bottom of `App.tsx`, and `HomeRedirect` at `/`, which
- * is where a bare `/` now lands (it used to fall through to that catch-all). Both
+ * So this wraps the shell (`ConsoleShell`) rather than adding a nav
+ * link, which is what makes it apply to every `/settings/*`, `/app/*` and `/agency/*` path an agent could reach — including the
+ * shell's not-found page for an unknown path, and `HomeRedirect` at `/`, which
+ * is where a bare `/` lands. Both
  * ways in are covered because the wrapper is on the shell, not on a route.
  *
  * ── Two guards, and BOTH exist because of a regression this file shipped ────
@@ -29,7 +32,7 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  * `/dialer` is gated on the `agency` capability, which the API's frozen catalog
  * defaults to `false`, so in every tenant that had not bought the dialer those two
  * roles landed on a full-viewport "not available for your account" with no
- * sidebar, no link out, and (logout living only in `TopBar`, inside `AppLayout`)
+ * sidebar, no link out, and (logout living only in the shell's top bar)
  * no way to even sign out. Every route back re-entered this component. A `viewer`
  * holds around twenty read permissions; an `operator` runs calls and schedules.
  * Both lost the entire product.
@@ -44,15 +47,16 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  *
  * 2. **The dialer must actually be reachable before we send anyone to it.** Even
  *    for a dedicated agent, redirecting into a gate that will refuse produces a
- *    dead end rather than a landing page — and `AppLayout`, empty sidebar and all,
+ *    dead end rather than a landing page — and the console shell, empty sidebar and all,
  *    is strictly better than that: it has a top bar, so it has a sign-out. A
  *    redirect is only ever an improvement when there is something on the other
  *    side of it.
  *
- * Everyone else renders `AppLayout` untouched, and nothing here fetches for them.
+ * Everyone else renders the shell untouched, and nothing here fetches for them.
  */
 export function AgentLanding({ children }: { children: ReactNode }) {
   const { role } = useTenant();
+  const { pathname, search, hash } = useLocation();
   const [params] = useSearchParams();
   const { isEnabled: capabilityEnabled, loading: governanceLoading } = useGovernance();
   const { isEnabled: flagEnabled, status: flagStatus } = useFeatureFlags();
@@ -84,17 +88,17 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    * an empty sidebar around a dashboard of empty panels with no explanation
    * anywhere — which reads as a broken product rather than an unbought one, and is
    * indistinguishable, to the agent and to the supervisor who invited them, from a
-   * bug. `DashboardPage` now recognises this exact state and renders
-   * `DialerUnavailable` in the dashboard's place.
+   * bug. `AppHomeRedirect` (`/app`'s index) now recognises this exact state and renders
+   * `DialerUnavailable` in its place.
    *
    * The check is repeated there rather than the message being rendered from here,
-   * and that is deliberate: the notice has to appear INSIDE `AppLayout` to keep the
+   * and that is deliberate: the notice has to appear INSIDE the shell to keep the
    * top bar this branch exists to preserve, and this component sits above the
    * layout wrapping it rather than filling it. Both predicates read the same two
    * gates through the same two contexts, so they cannot disagree about whether the
    * dialer is on — only about where the answer is drawn.
    */
-  if (!capabilityEnabled('agency') || !flagEnabled('agency_dialer_enabled')) {
+  if (!dialerOn({ isFlagEnabled: flagEnabled, isCapabilityEnabled: capabilityEnabled })) {
     return <>{children}</>;
   }
 
@@ -106,9 +110,16 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    *
    * Validated through `agentLandingArrival` rather than passed through raw, so junk
    * in the URL cannot travel any further than this component.
+   *
+   * A twin is the same page, so everything after the path goes with it: the query and the hash.
+   * A twin whose flag is off is not one (`dialerTwinPath`): the agent goes to `/dialer` instead,
+   * since a refused twin is a full-viewport screen with no way out (guard 2).
    */
+  const twin = dialerTwinPath(pathname, flagEnabled);
+  if (twin) return <Navigate to={`${twin}${search}${hash}`} replace />;
+
   const arrival = agentLandingArrival(params.get(AGENT_LANDING_PARAM));
-  const to = arrival ? `/dialer?${AGENT_LANDING_PARAM}=${arrival}` : '/dialer';
+  const to = arrival ? `${DIALER_PATH}?${AGENT_LANDING_PARAM}=${arrival}` : DIALER_PATH;
 
   return <Navigate to={to} replace />;
 }

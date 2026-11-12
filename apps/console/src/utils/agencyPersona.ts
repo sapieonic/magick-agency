@@ -24,33 +24,32 @@ import type { Role } from '../types/auth';
  * and the one most likely to be forgotten when a floor moves. Deriving means a
  * change to a floor moves the personas with it, in the same direction, for free.
  *
- * ── `viewer` and `operator` resolve to `agent`, and that is NOT a licence to
- *    take their navigation away ─────────────────────────────────────────────
+ * ── `viewer` and `operator` resolve to `agent` ON THE DIALLER'S OWN PAGES, and
+ *    that is a licence for nothing else ──────────────────────────────────────
  * `viewer` (10) and `operator` (20) are above `agent` (5), so both inherit
  * `agency.station.connect` and both resolve to the `agent` persona. That is the
- * right answer to "which agency surface suits them" — neither holds
- * `agency.supervise`, so the supervisor surfaces would be controls they cannot
- * use.
+ * right answer to "which of the two jobs is this person doing on the agent
+ * surfaces" (`/station`, `/dialer/*`, where `AgentSurfaceShell` and the station
+ * join read it): neither holds `agency.supervise`, so on a station they are taking
+ * calls, not watching other people take them.
  *
- * It is the WRONG answer to "may this person be redirected out of the platform",
- * and an earlier revision of this file conflated the two with real consequences.
- * `AgentLanding` gated on this persona and so bounced every `viewer` and
- * `operator` out of `/app` to `/dialer` — where, the `agency` capability being
- * off by default, they met a full-viewport "not part of your plan" with no
- * navigation and no way back, in every tenant that had not bought the dialer.
- * A `viewer` holds around twenty read permissions across the platform; an
- * `operator` runs calls, schedules and bulk dispatch. Both had a fully populated
- * product before that change and neither could reach any of it after.
+ * It is the WRONG answer to two other questions, and each has its own predicate:
  *
- * That is what {@link isDedicatedAgent} is for, and why it is a separate
- * predicate rather than a tidier version of this one. The two questions are
- * genuinely different:
+ *   - `agencyPersona` — "on an agent surface, which of the two jobs is this?"
+ *   - `isDedicatedAgent` — "is the dialler the ONLY thing this person has?", the
+ *     one question that may take navigation away;
+ *   - `agencyLandingPath` (`consoleNav`) — "where does `/agency` send them?". Only a dedicated
+ *     agent lands on `/dialer`. A `viewer` or `operator` reads the campaign list
+ *     (`agency.campaigns.read` floors at `viewer`) and has the console around it,
+ *     so they land there; an earlier revision landed them on the agent home, whose
+ *     only way out opened Profile and appearance.
  *
- *   - `agencyPersona` — "inside the dialer, which of the two jobs is this?"
- *   - `isDedicatedAgent` — "is the dialer the ONLY thing this person has?"
- *
- * Only the second may take navigation away, and only `agent` (level 5) answers
- * yes to it.
+ * An earlier revision of this file used the persona for "may this person be
+ * redirected out of the platform", with real consequences: `AgentLanding` bounced
+ * every `viewer` and `operator` out of `/app` to `/dialer`, where, the `agency`
+ * capability being off by default, they met a full-viewport "not part of your
+ * plan" with no navigation and no way back. Only `agent` (level 5) answers yes to
+ * `isDedicatedAgent`.
  *
  * ── This is presentation, not enforcement ──────────────────────────────────
  * A persona decides which page someone LANDS on and which word describes them.
@@ -92,7 +91,7 @@ export function agencyPersona(role: Role | undefined): AgencyPersona | null {
  * instead of silently rendering an empty shell.
  *
  * ── The one thing this may be used for ────────────────────────────────────
- * Deciding whether it is safe to redirect somebody AWAY from `AppLayout`. For a
+ * Deciding whether it is safe to redirect somebody AWAY from the console shell. For a
  * dedicated agent the shell is an empty sidebar around an empty dashboard —
  * *"that is not navigation, it is noise"*. For everybody else it is their product.
  *
@@ -114,6 +113,9 @@ export function isDedicatedAgent(role: Role | undefined): boolean {
  */
 const PLATFORM_NAVIGATION_FLOOR: Role = 'viewer';
 
+/** The campaign list: where someone who reads campaigns but does not supervise lands. */
+export const CAMPAIGNS_LANDING_PATH = '/agency/campaigns';
+
 /** The word for each persona, in the product's voice. */
 export const AGENCY_PERSONA_LABELS: Record<AgencyPersona, string> = {
   supervisor: 'Supervisor',
@@ -124,15 +126,14 @@ export const AGENCY_PERSONA_LABELS: Record<AgencyPersona, string> = {
  * What to call this person on an agency screen.
  *
  * Agency surfaces show the PERSONA rather than the RBAC role: on a campaign's
- * staffing list "Operator" and "Account Admin" name platform concepts that say
- * nothing about the dialer, while "Agent" and "Supervisor" are the two words the
- * supervisor reading that list is actually sorting people by.
+ * staffing list "Operator" and "Viewer" name access levels that say nothing about
+ * the dialler, while "Agent" and "Supervisor" are the two words the supervisor
+ * reading that list is actually sorting people by.
  *
- * Deliberately NOT a rename of the platform's role labels. `account_admin` does a
- * great deal that has nothing to do with watching a campaign, and calling it
- * "Supervisor" in Team settings would mislead every tenant that does not use the
- * dialer. The role keeps its name where the role is the subject; the persona gets
- * the name where the dialer is.
+ * The role labels (`config.ts` `ROLES`, Team and the invite pickers) call
+ * `account_admin` "Supervisor" too, so the two agree for that role; the persona
+ * differs from the role label only for a tenant admin or owner (a Supervisor here,
+ * an Admin or Owner on Team) and for an operator or viewer (an Agent here).
  *
  * `null` for a role with no agency standing, so callers render nothing rather
  * than a misleading default.
@@ -140,14 +141,4 @@ export const AGENCY_PERSONA_LABELS: Record<AgencyPersona, string> = {
 export function agencyPersonaLabel(role: Role | undefined): string | null {
   const persona = agencyPersona(role);
   return persona ? AGENCY_PERSONA_LABELS[persona] : null;
-}
-
-/** Convenience for the common branch. */
-export function isAgencySupervisor(role: Role | undefined): boolean {
-  return agencyPersona(role) === 'supervisor';
-}
-
-/** Convenience for the common branch. */
-export function isAgencyAgent(role: Role | undefined): boolean {
-  return agencyPersona(role) === 'agent';
 }

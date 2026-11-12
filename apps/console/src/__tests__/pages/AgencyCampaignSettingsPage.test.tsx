@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
@@ -14,6 +14,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  */
 
 const mocks = vi.hoisted(() => ({
+  transitionAgencyCampaign: vi.fn(),
   useTenant: vi.fn(),
   getAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
@@ -73,6 +74,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  // The campaign header above the form: its lifecycle controls and lineage strip.
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
+  campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
 }));
 // The lifecycle and upload history under the form (IN13), and the tab bar's overdue-callbacks badge.
 vi.mock('../../api/agencyInsights', () => ({
@@ -103,18 +107,30 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   };
 }
 
-function renderPage() {
+/** Stands in for search: a push navigation from outside the page. */
+function JumpTo({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(to)}>Jump</button>;
+}
+
+function HashProbe() {
+  return <span data-testid="location-hash">{useLocation().hash}</span>;
+}
+
+function renderPage(path = '/agency/campaigns/camp-1/settings') {
   return render(
-    <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        <Route path="/agency/campaigns/:id/settings" element={<><SettingsPage /><HashProbe /></>} />
       </Routes>
     </MemoryRouter>,
   );
 }
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
+import { saveSettings } from '../helpers/settingsForm';
 import * as insightsSamples from '../helpers/insights';
+import { resetCampaignTabBadgesForTests } from '../../hooks/useCampaignTabBadges';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -129,6 +145,8 @@ beforeEach(() => {
   mocks.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
   mocks.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
   mocks.getInsightsAllocation.mockResolvedValue(insightsSamples.allocation());
+  // The bar's badge counts are shared for 30 s; each test reads its own.
+  resetCampaignTabBadgesForTests();
   // Governance fails OPEN, so the default posture here is every capability on —
   // matching a tenant whose map simply doesn't mention these keys.
   mocks.isCapabilityEnabled.mockReturnValue(true);
@@ -188,7 +206,7 @@ describe('campaign settings — saving', () => {
 
     const name = await screen.findByLabelText(/campaign name/i);
     fireEvent.change(name, { target: { value: 'Collections — September' } });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
 
@@ -212,7 +230,8 @@ describe('campaign settings — saving', () => {
 
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     await waitFor(() => expect(screen.getByDisplayValue('11:30')).toBeTruthy());
     expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe(
@@ -232,7 +251,7 @@ describe('campaign settings — saving', () => {
     await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByLabelText(/description/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect('description' in mocks.updateAgencyCampaign.mock.calls[0]![1]).toBe(false);
   });
@@ -248,7 +267,7 @@ describe('campaign settings — saving', () => {
     })) as HTMLInputElement;
     expect(box.checked).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].wrapup_auto_return).toBe(false);
 
@@ -275,7 +294,7 @@ describe('campaign settings — saving', () => {
     );
 
     fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(false);
 
@@ -307,7 +326,7 @@ describe('campaign settings — saving', () => {
 
     fireEvent.keyDown(slider, { key: 'PageDown' });
     fireEvent.keyDown(slider, { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(3.4);
 
@@ -331,7 +350,7 @@ describe('campaign settings — saving', () => {
 
       // Only the calling hours change.
       fireEvent.change(start, { target: { value: '11:00' } });
-      const save = screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement;
+      const save = screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement;
       expect(save.disabled).toBe(false);
       fireEvent.click(save);
       await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
@@ -340,14 +359,17 @@ describe('campaign settings — saving', () => {
       expect(body.abandonment_ceiling_pct).toBe(stored);
       expect('abandonmentCeilingStoredPct' in body).toBe(false);
 
-      // Re-seeded from the response, the stored value is still accepted: Save stays on.
+      // Re-seeded from the response: nothing is unsaved, and the stored value is still
+      // accepted, so the next edit can be saved.
       await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Campaign settings saved.', 'success'));
-      expect((screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.queryByRole('button', { name: /save changes/i })).toBeNull();
+      fireEvent.change(screen.getByDisplayValue('11:00'), { target: { value: '12:00' } });
+      expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(false);
 
       // A NEW out-of-range value is still refused.
       fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
       expect(screen.getByText('Set the limit between 0.5% and 10%.')).toBeTruthy();
-      expect((screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
     },
   );
 
@@ -356,7 +378,7 @@ describe('campaign settings — saving', () => {
 
     const name = await screen.findByLabelText(/campaign name/i);
     fireEvent.change(name, { target: { value: '   ' } });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(screen.getByText(/a campaign needs a name/i)).toBeTruthy());
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
@@ -377,9 +399,11 @@ describe('campaign settings — editing a live campaign', () => {
     renderPage();
 
     expect(await screen.findByText(/calls placed from now on/i)).toBeTruthy();
-    expect((await screen.findByLabelText(/campaign name/i)).hasAttribute('disabled')).toBe(false);
+    const name = await screen.findByLabelText(/campaign name/i);
+    expect(name.hasAttribute('disabled')).toBe(false);
+    fireEvent.change(name, { target: { value: 'Collections — September' } });
     expect(
-      screen.getByRole('button', { name: /save settings/i }).hasAttribute('disabled'),
+      screen.getByRole('button', { name: /save changes/i }).hasAttribute('disabled'),
     ).toBe(false);
   });
 
@@ -415,7 +439,7 @@ describe('campaign settings — lifecycle and uploads', () => {
     await screen.findByLabelText(/campaign name/i);
     // The fixture has 2 overdue: leaving the detail page must not make the warning look resolved.
     const badge = await screen.findByTestId('campaign-tab-callbacks-alert');
-    expect(badge.textContent).toBe('2, 2 overdue');
+    expect(badge.textContent).toBe('2');
     expect(mocks.getInsightsAllocation).toHaveBeenCalledTimes(1);
   });
 });
@@ -431,7 +455,7 @@ describe('campaign settings — permissions', () => {
     renderPage();
 
     await screen.findByLabelText(/campaign name/i);
-    expect(screen.queryByRole('button', { name: /save settings/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /save changes/i })).toBeNull();
   });
 
   it('shows a role that cannot write the abandonment limit read-only, not as a live slider', async () => {
@@ -469,7 +493,7 @@ describe('campaign settings — caller IDs', () => {
 
     // Deselect the only number.
     fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() =>
       expect(screen.getByText(/needs at least one caller id/i)).toBeTruthy(),
@@ -480,7 +504,8 @@ describe('campaign settings — caller IDs', () => {
   it('sends the pool AND pins a campaign that names no carrier to the service’s own account', async () => {
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
@@ -527,7 +552,7 @@ describe('campaign settings — recording opt-in', () => {
       .toBeNull();
     expect(recordBox().checked).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     // Omitting looks harmless because the column defaults to false — and would
     // mean an operator who turned recording on could never turn it back off.
@@ -538,7 +563,7 @@ describe('campaign settings — recording opt-in', () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole('checkbox', { name: RECORD_LABEL }));
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(true);
@@ -574,7 +599,7 @@ describe('campaign settings — `agency.recording` off', () => {
 
     const name = await screen.findByLabelText(/campaign name/i);
     fireEvent.change(name, { target: { value: 'Renamed' } });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
@@ -599,7 +624,7 @@ describe('campaign settings — `agency.recording` off', () => {
     fireEvent.click(recordBox());
     expect(recordBox().checked).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(false);
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith(
@@ -638,7 +663,7 @@ describe('campaign settings — call-summary profile', () => {
     const select = (await screen.findByLabelText(/call summary/i)) as HTMLSelectElement;
     expect(select.value).toBe('__none__');
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
   });
@@ -649,7 +674,7 @@ describe('campaign settings — call-summary profile', () => {
     fireEvent.change(await screen.findByLabelText(/call summary/i), {
       target: { value: 'prof-2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBe('prof-2');
@@ -661,7 +686,7 @@ describe('campaign settings — call-summary profile', () => {
 
     const select = (await screen.findByLabelText(/call summary/i)) as HTMLSelectElement;
     expect(select.value).toBe('prof-gone');
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBe('prof-gone');
   });
@@ -739,7 +764,7 @@ describe('campaign settings — call-summary profile', () => {
 
     expect(await screen.findByText(/agency\.analytics/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /remove summary profile/i }));
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
@@ -750,7 +775,8 @@ describe('campaign settings — call-summary profile', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ analysis_profile_id: 'prof-1' }));
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect('analysis_profile_id' in mocks.updateAgencyCampaign.mock.calls[0]![1]).toBe(false);
   });
@@ -764,7 +790,7 @@ describe('campaign settings — call-summary profile', () => {
     capabilitiesOff('calls.dialer.analytics');
     renderPage();
 
-    await screen.findByRole('button', { name: /save settings/i });
+    await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByText(/calls\.dialer\.analytics/)).toBeNull();
     expect(mocks.useCallAnalysisProfiles).toHaveBeenCalledWith({ enabled: true });
     expect(mocks.useCallAnalysisProfiles).not.toHaveBeenCalledWith({ enabled: false });
@@ -780,7 +806,8 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     );
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     const alert = await screen.findByText(/agency\.recording/);
     expect(alert.textContent).toContain('Ask an administrator');
@@ -799,7 +826,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     fireEvent.change(await screen.findByLabelText(/call summary/i), {
       target: { value: 'prof-2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     expect(
       await screen.findByText(/dialer call analysis is not enabled for this account/i),
@@ -824,7 +851,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     fireEvent.change(await screen.findByLabelText(/call summary/i), {
       target: { value: 'prof-2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     expect(await screen.findByText(/no longer available on this account/i)).toBeTruthy();
   });
@@ -840,7 +867,8 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     );
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     expect(
       await screen.findByText(/must be a call-analysis profile id, or null to clear it/i),
@@ -868,6 +896,347 @@ describe('the campaign section bar', () => {
   });
 });
 
+/**
+ * ── The campaign's header, as on its Monitor tabs ──────────────────────────
+ * Settings is where "who changed the caller ID?" is asked, so History is here; and the
+ * campaign's name and its lifecycle controls, which the assignment notice tells people to use.
+ */
+describe('the campaign header on Settings', () => {
+  it('names the campaign, shows its status, the lifecycle controls and History', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Collections — August' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /pause/i })).toBeTruthy();
+    expect(screen.getByTestId('campaign-history-link').getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
+  });
+
+  it('leaves out the controls and History below their gates', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+    expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
+    expect(screen.queryByTestId('campaign-history-link')).toBeNull();
+  });
+
+  it('pauses the campaign without touching edits in progress', async () => {
+    // Loaded running; read again (after the pause) as paused.
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }))
+      .mockResolvedValue(campaign({ status: 'paused' }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    renderPage();
+
+    const name = (await screen.findByLabelText(/campaign name/i)) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+
+    await waitFor(() => expect(mocks.transitionAgencyCampaign)
+      .toHaveBeenCalledWith('camp-1', 'pause', 'tenant-1', 'account-1'));
+    expect(await screen.findByRole('button', { name: /resume/i })).toBeTruthy();
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Collections — September');
+  });
+});
+
+/**
+ * ── Reads that land late ─────────────────────────────────────────────────────
+ * Refresh and the lifecycle controls re-read the campaign row and leave the form alone. A read
+ * sent before a write must not paint over it, a read for a campaign the URL has moved off must
+ * not paint at all, and a save after a Refresh sends only what was edited.
+ */
+describe('reads that land late, and saving after a Refresh', () => {
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it('a Refresh sent before Pause cannot put the old status back', async () => {
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }));
+    renderPage();
+    await screen.findByRole('button', { name: /pause/i });
+
+    const slow = deferred<AgencyCampaign>();
+    mocks.getAgencyCampaign.mockReturnValueOnce(slow.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+    expect(await screen.findByRole('button', { name: /resume/i })).toBeTruthy();
+
+    await act(async () => slow.resolve(campaign({ status: 'running' })));
+    expect(screen.getByRole('button', { name: /resume/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
+  });
+
+  it('a Refresh of one campaign that lands after moving to another paints nothing', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) =>
+      (id === 'camp-2' ? campaign({ id: 'camp-2', name: 'Renewals' }) : campaign()));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings" />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+
+    const slow = deferred<AgencyCampaign>();
+    mocks.getAgencyCampaign.mockImplementationOnce(() => slow.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+
+    await act(async () => slow.resolve(campaign()));
+    expect(screen.getByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Renewals');
+  });
+
+  it('a Pause of one campaign answered after moving to another paints nothing', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) =>
+      (id === 'camp-2' ? campaign({ id: 'camp-2', name: 'Renewals', status: 'running' }) : campaign({ status: 'running' })));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings" />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+
+    const slow = deferred<AgencyCampaign>();
+    mocks.transitionAgencyCampaign.mockReturnValueOnce(slow.promise);
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+
+    await act(async () => slow.resolve(campaign({ status: 'paused' })));
+    expect(screen.getByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /resume/i })).toBeNull();
+  });
+
+  it('a save after a Refresh does not send back the caller IDs, carrier or name someone else changed', async () => {
+    const stored = { telephony_provider: 'voicelink', telephony_credential_id: null };
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign(stored));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+
+    // Someone else renames the campaign and changes its pool; this person presses Refresh.
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({
+      ...stored, name: 'Collections — renamed elsewhere', caller_ids: ['+912200000009'],
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByRole('heading', { level: 1, name: 'Collections — renamed elsewhere' });
+    expect(screen.queryByTestId('unsaved-changes-bar')).toBeNull();
+
+    // Then changes only the calling window and saves.
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    expect(screen.getByTestId('unsaved-changes-bar').textContent).toContain('1 unsaved change');
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+    const body = mocks.updateAgencyCampaign.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.calling_window_start).toBe('11:00');
+    expect(body).not.toHaveProperty('caller_ids');
+    expect(body).not.toHaveProperty('telephony_provider');
+    expect(body).not.toHaveProperty('telephony_credential_id');
+    expect(body).not.toHaveProperty('name');
+  });
+});
+
+/**
+ * ── Unsaved changes ───────────────────────────────────────────────────────────
+ * Save is a bar stuck to the bottom of the view, there only while something is unsaved, with
+ * a count of the settings that differ; leaving with unsaved edits asks first.
+ */
+describe('unsaved changes', () => {
+  const bar = () => screen.queryByTestId('unsaved-changes-bar');
+  const nameField = () => screen.getByLabelText(/campaign name/i) as HTMLInputElement;
+
+  function renderWithExit() {
+    return render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+          <Route path="*" element={<p>Somewhere else</p>} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-1/overview" />
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows no bar until something is edited, then counts each changed setting', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    expect(bar()).toBeNull();
+    expect(screen.getByTestId('unsaved-changes-status').textContent).toBe('');
+
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect(bar()?.textContent).toContain('1 unsaved change');
+    expect(screen.getByTestId('unsaved-changes-status').textContent).toBe('1 unsaved change');
+
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    expect(bar()?.textContent).toContain('2 unsaved changes');
+
+    // Put back by hand: nothing unsaved any more.
+    fireEvent.change(nameField(), { target: { value: 'Collections — August' } });
+    fireEvent.change(screen.getByDisplayValue('11:00'), { target: { value: '10:00' } });
+    expect(bar()).toBeNull();
+  });
+
+  it('says why Save is held, and that a save failed, in the live region as well as the bar', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    const status = () => screen.getByTestId('unsaved-changes-status').textContent;
+
+    // An emptied name holds Save back; the reason is shown and announced.
+    fireEvent.change(nameField(), { target: { value: '' } });
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('unsaved-changes-note').textContent).toBe('Fix the highlighted fields before saving.');
+    expect(status()).toBe('1 unsaved change. Fix the highlighted fields before saving.');
+
+    // A save the server refuses is announced too, though the count does not change.
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect(status()).toBe('1 unsaved change');
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(apiError(500, { error: 'Internal' }));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(status()).toBe('1 unsaved change. Not saved. The reason is above the form.'));
+  });
+
+  it('Discard puts back what is saved, and the bar goes', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(nameField().value).toBe('Collections — August');
+    expect(screen.getByDisplayValue('10:00')).toBeTruthy();
+    expect(bar()).toBeNull();
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it('Discard remounts the sections, and the section highlight follows the new ones', async () => {
+    const observers: { watched: Element[]; live: boolean }[] = [];
+    vi.stubGlobal('IntersectionObserver', class {
+      private readonly record = { watched: [] as Element[], live: true };
+      constructor() { observers.push(this.record); }
+      observe(element: Element) { this.record.watched.push(element); }
+      disconnect() { this.record.live = false; }
+    });
+    try {
+      renderPage();
+      await screen.findByLabelText(/campaign name/i);
+      fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+      const before = document.getElementById('general');
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(document.getElementById('general')).not.toBe(before);
+
+      const live = observers.filter((o) => o.live);
+      expect(live).toHaveLength(1);
+      expect(live[0]!.watched.length).toBeGreaterThan(0);
+      expect(live[0]!.watched.every((section) => section.isConnected)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('Save sends the edits and clears the bar', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(nameField().value).toBe('Collections — September');
+  });
+
+  it('keeps Save back, saying why, while a field must be fixed', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(bar()?.textContent).toMatch(/fix/i);
+  });
+
+  it('holds Save while the name is empty, saying so on the field before Save is pressed', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: '  ' } });
+
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(bar()?.textContent).toMatch(/fix the highlighted fields/i);
+    expect(document.getElementById('general')?.textContent).toMatch(/a campaign needs a name/i);
+    expect(nameField().getAttribute('aria-invalid')).toBe('true');
+
+    // Named again: Save is back, and the note and the field's message go.
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/a campaign needs a name/i)).toBeNull();
+    expect(bar()?.textContent).not.toMatch(/fix/i);
+  });
+
+  it('holds Save while no caller ID is picked, saying so on the field', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById('caller-ids')?.textContent).toMatch(/needs at least one caller id/i);
+  });
+
+  it('asks before leaving with unsaved edits; Cancel stays with them', async () => {
+    renderWithExit();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
+    expect(screen.getByText(/1 unsaved change to this campaign’s settings/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(nameField().value).toBe('Collections — September');
+  });
+
+  it('leaves on "Leave without saving"', async () => {
+    renderWithExit();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(screen.getByText('Somewhere else')).toBeTruthy();
+  });
+
+  it('does not ask when nothing is unsaved, nor after Save or Discard', async () => {
+    renderWithExit();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Somewhere else')).toBeTruthy();
+  });
+
+  it('lets the section nav move about the page with unsaved edits', async () => {
+    Element.prototype.scrollIntoView = () => {};
+    try {
+      renderPage();
+      await screen.findByTestId('settings-section-nav');
+      fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+      fireEvent.click(screen.getByTestId('settings-section-link-recording'));
+      expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+      expect(screen.queryByRole('dialog')).toBeNull();
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+});
+
 describe('inbound calls (P2): “Put callers through to their agent”', () => {
   it('is offered with the inbound flag on, round-trips through save, and goes back off the response', async () => {
     mocks.flags = new Set(['agency_inbound_enabled']);
@@ -878,7 +1247,7 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
     expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/agent they last spoke to first/);
     fireEvent.click(box);
     expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/next free agent/);
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
   });
@@ -888,8 +1257,155 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
     renderPage();
     await screen.findByRole('checkbox', { name: /allow redial from wrap-up/i });
     expect(screen.queryByRole('checkbox', { name: /put callers through to their agent/i })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
+  });
+});
+
+/**
+ * ── The page's sections (decision IN14) ──────────────────────────────────────
+ * `CAMPAIGN_SETTINGS_SECTIONS` is the list a section nav, a link (`…/settings#id`) and search
+ * all name; the page must have a section for every entry it lists, list every section it has,
+ * and open at the one a link names.
+ */
+describe('the settings sections', () => {
+  const navIds = () => screen.getAllByTestId(/^settings-section-link-/)
+    .map((link) => link.getAttribute('href'));
+  const current = () => screen.getAllByTestId(/^settings-section-link-/)
+    .filter((link) => link.getAttribute('aria-current') === 'true')
+    .map((link) => link.textContent);
+
+  let scrolled: string[] = [];
+  beforeEach(() => {
+    scrolled = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+      scrolled.push(this.id);
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+    vi.unstubAllGlobals();
+  });
+
+  it('lists the sections the page has, in page order, each an anchor on the page', async () => {
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    expect(navIds()).toEqual([
+      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#roster-uploads',
+    ]);
+    for (const href of navIds()) {
+      expect(document.getElementById(href!.slice(1)), href!).toBeTruthy();
+    }
+    // Agents has nothing in it with contact assignment and inbound both off, so it is not offered.
+    expect(document.getElementById('agents')).toBeNull();
+    // The nav and the page agree on order: each anchor follows the one before it.
+    const anchors = navIds().map((href) => document.getElementById(href!.slice(1))!);
+    for (let i = 1; i < anchors.length; i += 1) {
+      expect(anchors[i - 1]!.compareDocumentPosition(anchors[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(current()).toEqual(['General']);
+  });
+
+  it('adds Agents with inbound on, holding its field', async () => {
+    mocks.flags = new Set(['agency_inbound_enabled']);
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    expect(navIds()).toContain('#agents');
+    expect(document.getElementById('agents')?.querySelector('[data-testid="inbound-sticky-enabled"]')).toBeTruthy();
+  });
+
+  it('puts each field in its section', async () => {
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    const inSection = (id: string, selector: string) => document.getElementById(id)?.querySelector(selector);
+    expect(inSection('general', '#campaign-name')).toBeTruthy();
+    expect(inSection('caller-ids', 'label[for="campaign-caller-ids"]')).toBeTruthy();
+    expect(inSection('roster-uploads', '[data-testid="campaign-history"]')).toBeTruthy();
+  });
+
+  it('leaves Lifecycle and uploads out below `agency.supervise`', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'operator' });
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    expect(navIds()).not.toContain('#roster-uploads');
+    expect(document.getElementById('roster-uploads')).toBeNull();
+  });
+
+  it('opens at the section a link names, and highlights it', async () => {
+    renderPage('/agency/campaigns/camp-1/settings#calling-hours');
+    await screen.findByTestId('settings-section-nav');
+
+    await waitFor(() => expect(scrolled).toEqual(['calling-hours']));
+    expect(current()).toEqual(['Calling hours']);
+  });
+
+  it('ignores a hash that names no section', async () => {
+    renderPage('/agency/campaigns/camp-1/settings#nonsense');
+    await screen.findByTestId('settings-section-nav');
+
+    expect(scrolled).toEqual([]);
+    expect(current()).toEqual(['General']);
+  });
+
+  it('scrolls to a picked section, highlights it and puts it in the URL', async () => {
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    fireEvent.click(screen.getByTestId('settings-section-link-recording'));
+
+    expect(scrolled).toEqual(['recording']);
+    expect(current()).toEqual(['Recording']);
+    expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+  });
+
+  it('opens at a section of another campaign only once that campaign is on the page', async () => {
+    let resolveSecond: (value: AgencyCampaign) => void = () => {};
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) => (id === 'camp-1'
+      ? campaign()
+      : new Promise<AgencyCampaign>((resolve) => { resolveSecond = resolve; })));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings#recording" />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId('settings-section-nav');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    // Still the first campaign (or a spinner): no scroll to its Recording.
+    expect(scrolled).toEqual([]);
+
+    await act(async () => resolveSecond(campaign({ id: 'camp-2', name: 'Renewals' })));
+    await waitFor(() => expect(scrolled).toEqual(['recording']));
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Renewals');
+    expect(current()).toEqual(['Recording']);
+  });
+
+  it('highlights the section scrolled into view', async () => {
+    let report: (entries: Array<{ target: Element; isIntersecting: boolean }>) => void = () => {};
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: typeof report) { report = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    act(() => report([
+      { target: document.getElementById('general')!, isIntersecting: false },
+      { target: document.getElementById('wrap-up')!, isIntersecting: true },
+    ]));
+    expect(current()).toEqual(['Wrap-up and outcomes']);
+
+    // Two in the band: the upper one is the one being read.
+    act(() => report([{ target: document.getElementById('dialling-retries')!, isIntersecting: true }]));
+    expect(current()).toEqual(['Dialling and retries']);
   });
 });

@@ -193,8 +193,8 @@ function UnrecognisedAccount({
       <p className={styles.tagline}>Agency Dialer</p>
       <h1 className={styles.noticeTitle}>We don’t recognise that account</h1>
       <p className={styles.noticeBody}>
-        {email ? <><strong>{email}</strong> isn’t</> : 'That address isn’t'} on an agency
-        workspace yet. Sign-in is matched on the exact address your supervisor invited,
+        {email ? <><strong>{email}</strong> isn’t</> : 'That address isn’t'} in an organisation
+        on the Agency Dialer yet. Sign-in is matched on the exact address your supervisor invited,
         so this usually means the invite went somewhere else — a work address rather
         than a personal one, or the other way round.
       </p>
@@ -231,8 +231,9 @@ export default function AgencyLoginPage() {
    * that suits it.
    *
    * ── The fallback is `/agency`, not `/dialer` and not `/` ───────────────────
-   * `/agency` is `AgencyHomeRedirect`, which resolves the persona from the RBAC
-   * role and sends a supervisor to `/agency/campaigns` and an agent to `/dialer`.
+   * `/agency` is `AgencyHomeRedirect`, which resolves the landing from the RBAC
+   * role (`agencyLandingPath`): a supervisor to Home, a dedicated agent to
+   * `/dialer`, a viewer or operator to the campaign list.
    * So the landing path lives in ONE place for every entrance into the product,
    * and this page does not become a second copy of a rule that has already moved
    * once.
@@ -572,7 +573,7 @@ export default function AgencyLoginPage() {
             <div className={styles.brandLogo}>{brand.name}</div>
             <p className={styles.brandProduct}>Agency Dialer</p>
             <p className={styles.brandTagline}>
-              The workspace your calling floor runs on.
+              Where your calling floor runs.
             </p>
           </div>
 
@@ -591,7 +592,7 @@ export default function AgencyLoginPage() {
           </div>
 
           <div className={styles.leftFooter}>
-            Signing in takes you to your own workspace — agents to their station,
+            Signing in takes you straight to your work — agents to their station,
             supervisors to their campaigns.
           </div>
         </div>

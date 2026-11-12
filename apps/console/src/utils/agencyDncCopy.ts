@@ -61,7 +61,7 @@ export const DNC_TENANT_ACTION_LABEL = 'Never call again (any campaign, forever)
  * than discovered afterwards.
  */
 export function dncCampaignConfirmMessage(phoneE164: string, campaignName: string): string {
-  return `${phoneE164} won’t be called again by ${campaignName}. Other campaigns in this workspace can still reach them. You can’t undo this from the console — an admin has to remove it.`;
+  return `${phoneE164} won’t be called again by ${campaignName}. Other campaigns in this organisation can still reach them. You can’t undo this from the console — an admin has to remove it.`;
 }
 
 /**
@@ -71,7 +71,7 @@ export function dncCampaignConfirmMessage(phoneE164: string, campaignName: strin
  * tenant-wide option itself is offered.
  */
 export function dncTenantConfirmHint(phoneE164: string): string {
-  return `Only choose this if the customer said never to contact them again: ${phoneE164} will not be called again by any campaign in this workspace, permanently. You can’t undo this from the console — only an admin can.`;
+  return `Only choose this if the customer said never to contact them again: ${phoneE164} will not be called again by any campaign in this organisation, permanently. You can’t undo this from the console — only an admin can.`;
 }
 
 /**
@@ -111,9 +111,9 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
       it has to be at most as wide as the page's. The rule is to not OVERSTATE,
       which naming the enforced scope satisfies.
     */
-    return `${response.phone_e164} is on your Do Not Call list. No agency campaign in this workspace will dial it again.`;
+    return `${response.phone_e164} is on your Do Not Call list. No agency campaign in this organisation will dial it again.`;
   }
-  return `${response.phone_e164} won’t be dialled again by this campaign. We’re still adding it to your workspace Do Not Call list — check the list if you need to be sure.`;
+  return `${response.phone_e164} won’t be dialled again by this campaign. We’re still adding it to your organisation’s Do Not Call list — check the list if you need to be sure.`;
 }
 
 /**

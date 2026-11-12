@@ -66,9 +66,9 @@ beforeEach(() => {
 describe('voicemail, once the server offers it', () => {
   it('offers both actions out of hours and when nobody can answer, and saves only the one changed', async () => {
     render(
-      <MemoryRouter initialEntries={['/app/inbound/r-1']}>
+      <MemoryRouter initialEntries={['/settings/inbound/r-1']}>
         <Routes>
-          <Route path="/app/inbound/:routeId" element={<InboundRouteEditorPage />} />
+          <Route path="/settings/inbound/:routeId" element={<InboundRouteEditorPage />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -93,9 +93,9 @@ describe('voicemail, once the server offers it', () => {
 describe('the route’s warnings, beside the field they are about', () => {
   const renderEditor = async () => {
     render(
-      <MemoryRouter initialEntries={['/app/inbound/r-1']}>
+      <MemoryRouter initialEntries={['/settings/inbound/r-1']}>
         <Routes>
-          <Route path="/app/inbound/:routeId" element={<InboundRouteEditorPage />} />
+          <Route path="/settings/inbound/:routeId" element={<InboundRouteEditorPage />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -142,9 +142,9 @@ describe('the route’s warnings, beside the field they are about', () => {
 describe('the editor’s words (the copy sweep)', () => {
   const renderEditor = async () => {
     render(
-      <MemoryRouter initialEntries={['/app/inbound/r-1']}>
+      <MemoryRouter initialEntries={['/settings/inbound/r-1']}>
         <Routes>
-          <Route path="/app/inbound/:routeId" element={<InboundRouteEditorPage />} />
+          <Route path="/settings/inbound/:routeId" element={<InboundRouteEditorPage />} />
         </Routes>
       </MemoryRouter>,
     );

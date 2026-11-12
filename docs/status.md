@@ -963,8 +963,8 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
   calls, a search (summary and first page) takes 15.1 ms median / 17.6 ms p95 for a tenant-level
   owner and 6.3 / 10.2 ms for an account-scoped supervisor; a later page 4–5 ms; no full scan in
   any plan (`customer-history.md` §4, `apps/server/scripts/bench-customer-history.ts`).
-- **Console**: a "Search a number" box in the agency top bar, and a "Search a number" entry in the
-  agent navigation; the page at `/agency/customers` and `/dialer/customers`.
+- **Console**: a phone number typed into the console's search (top bar field or ⌘K, B28), and a
+  "Search a number" entry in the agent navigation; the page at `/agency/customers` and `/dialer/customers`.
 - **Agent app**: the search and the page from My calls, with every console filter (the channel and
   connected-only on the page, the rest in a sheet) and a copy button; no CSV export (CH13). First
   run under Dart and Flutter by the mobile CI job on PR #50 (`flutter analyze`, `flutter test`,
@@ -1341,7 +1341,37 @@ its Swift have never been compiled.
 
 ## Test counts
 
-Latest run, 2026-11-12, integration files in parallel (one database and Redis db per worker,
+Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) with every round of
+fixes: the QA run 20261112-110644, the three-persona review, and the automated review of PR #76
+with its review comments (campaign Settings saves only what was changed and drops stale reads;
+"Got it" per person, by the browser's day, back on a new pause; DNC search's `+` floor by calling
+code and `00` numbers; Home's today figures keyed by the zone's day; invite scope; flag-gated agent
+twins), on `feat/console-nav-redesign`:
+
+Run on commit `ea9e894`, one package after another, integration with 2 workers per run
+(`TEST_WORKERS=2`: this machine's Postgres still has `max_connections` 100) on the branch's own
+test databases and Redis dbs. `pnpm lint` clean, `pnpm build` clean, `pnpm test:tooling` 16 and
+`pnpm test:release` 10 pass, `contracts-literals --check` up to date. Run before this round, which
+changed neither: `pnpm test:grafana` 33, `apps/mobile` `flutter analyze` no issues and `flutter
+test` 1786 passed, `agency_wire` `dart test` 605 passed. **Not green, so no counts recorded for
+them:** `apps/server` unit had 3 failures, all in `inbound-recordings.test.ts` (9727 passed + 1
+expected fail): this machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file
+fails the same way on a branch with no server code change. `apps/server` integration: the
+wall-clock lane is green (below); the rest lane had 16 failures (2705 passed + 9 expected fail + 2
+skipped), all in `agency-reports-e2e.test.ts` (the in-process renderer answers `render_failed`) and
+`inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`), the same 16 that fail on `main`
+on this machine. Not run (untouched): `apps/super-admin`, `packages/web-ui`,
+`apps/report-renderer`, `agent_audio`.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/console` | 6856 (367 files) | — |
+| `packages/domain` | 261 (13 files) | — |
+| `packages/contracts` | 481 (15 files) | — |
+| `packages/db` | 435 (26 files) | 746 (77 files) |
+| `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
+
+Previous run, 2026-11-12, on `main` (#74): integration files in parallel (one database and Redis db per worker,
 the database copied afresh before each file, `tooling/test-env.ts`):
 
 Run from inside each package, 4 workers on a 4-vCPU machine (Postgres 16 with `max_connections`
@@ -2027,7 +2057,7 @@ account their browser last had open. Every signed-in console page is now served 
   below).
   `components/routing/ScopeGate` re-points an unscoped URL (an old `/dialer` bookmark) at the
   active account and refuses a link to a tenant or account the viewer cannot open ("You can’t
-  open this workspace / account", with Go to my workspace and Sign out). Sign-in, invite and
+  open this organisation / account", with Go to my organisation and Sign out). Sign-in, invite and
   verification pages stay unscoped; a signed-out visitor keeps the scope through `?next=`.
 - PostHog receives the prefix as `/t/:tenant/a/:account`, in paths, URLs, autocapture hrefs and
   the sign-in page's encoded `next`. The campaign-completion email links under the campaign's own
@@ -2050,8 +2080,8 @@ account their browser last had open. Every signed-in console page is now served 
   each fix pinned by a test that fails on the code before it:
   - Retry no longer re-points a refused link at the first account. It re-points only a URL
     whose account was open and has since gone, and lands at the replacement's home, not on the old record's page.
-  - A link to a tenant or account the viewer cannot open falls back to the workspace this
-    browser last had, not the session's first tenant, and is never saved. "Go to my workspace" is a full load of `/`.
+  - A link to a tenant or account the viewer cannot open falls back to the organisation this
+    browser last had, not the session's first tenant, and is never saved. "Go to my organisation" is a full load of `/`.
   - A tenant switch resolves the new tenant's accounts first and loads its scope directly. It
     no longer writes `localStorage` before the browser commits the load, so cancelling the station's leave-page prompt changes nothing.
     A tenant with no account to open is switched to in place, at `/`.

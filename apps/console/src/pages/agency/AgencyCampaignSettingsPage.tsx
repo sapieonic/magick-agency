@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
@@ -62,12 +62,20 @@ import {
   type CarrierChoice,
 } from '../../utils/agencyCarriers';
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { SettingsSectionNav, useSectionInView } from '../../components/agency/SettingsSectionNav';
+import { ComposerSection } from '../campaigns/components/ComposerSection';
+import { campaignSettingsSectionsFor } from '../../utils/campaignSettingsSections';
+import { changedSettings, samePool, type CampaignSettingsForm } from '../../utils/campaignSettingsChanges';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
+import { LeaveUnsavedDialog, UnsavedChangesBar } from '../../components/agency/UnsavedChangesBar';
+import { plural } from '../../utils/format/number';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
+import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignSettingsPage.module.css';
 
@@ -87,10 +95,25 @@ import styles from './AgencyCampaignSettingsPage.module.css';
  * edit applies to future attempts; an attempt already dispatched keeps the
  * snapshot it was dialed with. The banner says so rather than leaving the
  * operator to guess whether the change took effect mid-run.
+ *
+ * The form is laid out as the sections of `CAMPAIGN_SETTINGS_SECTIONS`, each a card with its
+ * id as the anchor, with a section nav beside them (a strip above them on a phone).
+ * `…/settings#calling-hours` opens the page at that section. Grouping changed where a field
+ * sits on the page, never what it does: there is still one form and one Save.
+ *
+ * The Save is in a bar stuck to the bottom of the view that shows only while something is
+ * unsaved ("2 unsaved changes · Discard · Save changes", counted by `changedSettings`), and
+ * leaving the page with unsaved edits asks first (`useUnsavedChangesGuard`).
  */
-/** Whether two caller-ID pools hold the same numbers (the picker appends, so order is incidental). */
-function samePool(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((n) => b.includes(n));
+/** The form's fields as a stored campaign has them: what a load or a save seeds. */
+function formOfCampaign(record: AgencyCampaign): CampaignSettingsForm {
+  return {
+    name: record.name,
+    callerIds: record.caller_ids ?? [],
+    carrier: carrierOfCampaign(record),
+    recording: recordingStateFromCampaign(record),
+    config: configFromCampaign(record),
+  };
 }
 
 export function AgencyCampaignSettingsPage() {
@@ -99,12 +122,21 @@ export function AgencyCampaignSettingsPage() {
   const { showToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  /** When `campaign` was last read or written: the header's "Updated" stamp. */
+  const [campaignReadAt, setCampaignReadAt] = useState<Date | null>(null);
+  /** The campaign at click time, for the header's lifecycle controls (`useCampaignLifecycle`). */
+  const campaignRef = useRef<AgencyCampaign | null>(campaign);
+  campaignRef.current = campaign;
   const [config, setConfig] = useState<CampaignConfigState | null>(null);
   const [name, setName] = useState('');
   const [callerIds, setCallerIds] = useState<string[]>([]);
   /** The carrier account the form holds; seeded from the campaign on load and save. */
   const [carrier, setCarrier] = useState<CarrierChoice>(SERVICE_CARRIER);
   const [recording, setRecording] = useState<CampaignRecordingState | null>(null);
+  /** The form as last loaded or saved: what Discard puts back and the bar counts against. */
+  const [saved, setSaved] = useState<CampaignSettingsForm | null>(null);
+  /** Bumped by Discard, to remount the fields (the caller-ID picker prunes on a carrier change). */
+  const [formEpoch, setFormEpoch] = useState(0);
   /**
    * Analytics-only: the disposition order as of the last load/save, to detect
    * whether the row arrows moved anything before the next save. Re-seeded
@@ -126,6 +158,9 @@ export function AgencyCampaignSettingsPage() {
   const [assignmentResetPending, setAssignmentResetPending] = useState(false);
 
   const canEdit = hasPermission(role, 'agency.campaigns.write');
+  // The header's lifecycle controls and Join as agent, gated as on the Monitor tabs.
+  const canSupervise = hasPermission(role, 'agency.supervise');
+  const canJoinStation = hasPermission(role, 'agency.station.connect');
   // Contact assignment's settings and outcome overrides: shown and sent only while
   // the flag is on (the server refuses a non-default value with it off).
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
@@ -162,31 +197,96 @@ export function AgencyCampaignSettingsPage() {
     trackFeatureGateUnavailable({ gate_type: 'capability', gate: AGENCY_ANALYTICS_CAPABILITY });
   }, [analyticsEnabled]);
 
+  /** Fill every field from `form`, and make it what is saved (the bar's baseline). */
+  const seedForm = useCallback((form: CampaignSettingsForm) => {
+    setSaved(form);
+    setConfig(form.config);
+    dispositionOrderRef.current = form.config.dispositions.map((d) => d.code);
+    setName(form.name);
+    setCallerIds([...form.callerIds]);
+    setCarrier(form.carrier);
+    setRecording(form.recording);
+    setAssignmentResetPending(false);
+  }, []);
+
+  /*
+    Stale answers. The route has no `key`, so moving to another campaign's Settings keeps this
+    page mounted, and an answer can land after the move: `routeIdRef` is the campaign the URL
+    names now, and nothing for another one is painted. `readTokenRef` orders the campaign row's
+    reads and writes as `useAgencyCampaignDetail`'s `loadTokenRef` does: bumped when a read
+    starts and on every commit, so a Refresh (or a lifecycle re-read) sent before a Pause, a Stop
+    or a Save cannot land after it and paint the older row. `loadSeqRef` is the full load's own
+    order: only the newest one seeds the form and ends the spinner.
+  */
+  const routeIdRef = useRef(id);
+  routeIdRef.current = id;
+  const readTokenRef = useRef(0);
+  const loadSeqRef = useRef(0);
+
+  /**
+   * Hold `record` as the campaign: state, the ref the lifecycle controls read, and the "Updated"
+   * stamp. Fences off every older read. A record for a campaign the URL no longer names (a write
+   * that answered after the move) is dropped; false then.
+   */
+  const commitCampaign = useCallback((record: AgencyCampaign): boolean => {
+    if (record.id !== routeIdRef.current) return false;
+    readTokenRef.current += 1;
+    campaignRef.current = record;
+    setCampaign(record);
+    setCampaignReadAt(new Date());
+    return true;
+  }, []);
+
   const load = useCallback(async () => {
     if (!id || !tenantId || !accountId) return;
+    const seq = ++loadSeqRef.current;
+    readTokenRef.current += 1;
     setLoading(true);
     setLoadError(null);
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
-      setCampaign(record);
-      const loaded = configFromCampaign(record);
-      setConfig(loaded);
-      dispositionOrderRef.current = loaded.dispositions.map((d) => d.code);
-      setName(record.name);
-      setCallerIds(record.caller_ids ?? []);
-      setCarrier(carrierOfCampaign(record));
-      setRecording(recordingStateFromCampaign(record));
-      setAssignmentResetPending(false);
+      if (seq !== loadSeqRef.current) return;
+      if (commitCampaign(record)) seedForm(formOfCampaign(record));
     } catch (err: unknown) {
+      if (seq !== loadSeqRef.current) return;
       setLoadError(err instanceof Error ? err.message : 'Could not load this campaign.');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
-  }, [id, tenantId, accountId]);
+  }, [id, tenantId, accountId, seedForm, commitCampaign]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /*
+    The header's reads and writes: the campaign row only, never the form. A lifecycle
+    action or the header's Refresh must not throw away edits in progress, so they update
+    `campaign` (the status, and what a save compares against) and leave the fields alone.
+  */
+  const refreshCampaign = useCallback(async (): Promise<AgencyCampaign | null> => {
+    if (!id || !tenantId || !accountId) return null;
+    const token = ++readTokenRef.current;
+    try {
+      const record = await getAgencyCampaign(id, tenantId, accountId);
+      // A newer read or a write owns the paint, or the URL names another campaign now.
+      if (token !== readTokenRef.current || !commitCampaign(record)) return campaignRef.current;
+      return record;
+    } catch {
+      return campaignRef.current;
+    }
+  }, [id, tenantId, accountId, commitCampaign]);
+
+  const lifecycle = useCampaignLifecycle({
+    id,
+    tenantId,
+    accountId,
+    campaignRef,
+    refreshCampaign,
+    commitCampaign,
+    reload: () => void refreshCampaign(),
+    fromTab: 'settings',
+  });
 
   const onSave = useCallback(async () => {
     if (!id || !config || !recording) return;
@@ -209,15 +309,11 @@ export function AgencyCampaignSettingsPage() {
       });
       return;
     }
-    if (name.trim().length === 0) {
-      setFieldErrors({ name: 'A campaign needs a name.' });
-      return;
-    }
-    // The API rejects an empty pool and the pacing engine throws without one, so
-    // saving an empty selection would either 400 or — worse, on a running
-    // campaign — leave it unable to place its next call.
-    if (callerIds.length === 0) {
-      setFieldErrors({ caller_ids: 'A campaign needs at least one caller ID.' });
+    // Save is held while either is missing (`missingBasics`), so this is a keyboard or
+    // programmatic submit: say so on the field all the same.
+    const missing = missingBasics(name, callerIds);
+    if (Object.keys(missing).length > 0) {
+      setFieldErrors(missing);
       return;
     }
 
@@ -244,14 +340,25 @@ export function AgencyCampaignSettingsPage() {
       moved. Moving back to the service's account sends `telephony_credential_id: null`
       with the carrier, in the same PATCH.
     */
+    /*
+      "Moves" is against `saved`, the form as last loaded or saved (what the bar counts
+      against), never against `campaign`: Refresh and the lifecycle controls re-read
+      `campaign` and leave the form alone, so after someone else changes the carrier or the
+      pool, the untouched form differs from `campaign` and would send the older values back,
+      undoing their change while the bar said nothing was unsaved.
+    */
     const sendCarrier = !campaign?.telephony_provider
-      || !sameCarrier(carrier, carrierOfCampaign(campaign));
+      || !saved
+      || !sameCarrier(carrier, saved.carrier);
     /*
       The caller IDs likewise go only when they changed (or the carrier moves, which
       re-judges the pool). A stored number since retired or untagged would otherwise be
       resent with every rename; the server keeps it (PL13), but there is nothing to write.
     */
-    const sendCallerIds = sendCarrier || !samePool(callerIds, campaign?.caller_ids ?? []);
+    const sendCallerIds = sendCarrier || !saved || !samePool(callerIds, saved.callerIds);
+    // The name the same way: an untouched name is not sent back over a newer one.
+    const trimmedName = name.trim();
+    const sendName = !saved || trimmedName !== saved.name;
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -266,7 +373,7 @@ export function AgencyCampaignSettingsPage() {
         {
           ...buildConfigPayload(config, assignmentScope),
           ...recordingFields,
-          name: name.trim(),
+          ...(sendName ? { name: trimmedName } : {}),
           ...(sendCallerIds ? { caller_ids: callerIds } : {}),
           ...(sendCarrier
             ? {
@@ -278,7 +385,8 @@ export function AgencyCampaignSettingsPage() {
         tenantId ?? undefined,
         accountId ?? undefined,
       );
-      setCampaign(updated);
+      // Saved for a campaign the URL no longer names: nothing of it belongs on this form.
+      if (!commitCampaign(updated)) return;
       // Computed against what was ABOUT TO BE SAVED, before the re-seed below
       // replaces `config` with whatever the server normalised it to.
       const priorOrder = dispositionOrderRef.current;
@@ -293,14 +401,7 @@ export function AgencyCampaignSettingsPage() {
       // Re-seeding the config alone is the subtle version of the same bug: the
       // window would correct itself while the name silently kept the local
       // value.
-      const reseeded = configFromCampaign(updated);
-      setConfig(reseeded);
-      dispositionOrderRef.current = reseeded.dispositions.map((d) => d.code);
-      setName(updated.name);
-      setCallerIds(updated.caller_ids ?? []);
-      setCarrier(carrierOfCampaign(updated));
-      setRecording(recordingStateFromCampaign(updated));
-      setAssignmentResetPending(false);
+      seedForm(formOfCampaign(updated));
       showToast('Campaign settings saved.', 'success');
       trackAgencyCampaignConfigSaved({
         campaign_id: id,
@@ -321,6 +422,8 @@ export function AgencyCampaignSettingsPage() {
         reordered,
       });
     } catch (err: unknown) {
+      // Refused for a campaign the URL no longer names: not this form's error.
+      if (id !== routeIdRef.current) return;
       // Checked BEFORE the field-error map: a `capability_disabled` 403 carries
       // no `details`, so `fieldErrorsFromResponse` would return `{}` and the
       // banner would show the bare wire token `capability_disabled`.
@@ -362,21 +465,68 @@ export function AgencyCampaignSettingsPage() {
     }
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
-    tenantId, accountId, showToast, assignmentEnabled, campaign, assignmentResetPending,
+    tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
   ]);
+
+  /** Put back what is saved: every field, and no error left from the edits. */
+  const onDiscard = useCallback(() => {
+    if (!saved) return;
+    seedForm(saved);
+    setFieldErrors({});
+    setSaveError(null);
+    setFormEpoch((n) => n + 1);
+  }, [saved, seedForm]);
+
+  /*
+    The sections this campaign's page has, in page order, by the rule search reads too
+    (`campaignSettingsSectionsFor`). Agents only with something in it (contact-assignment
+    settings left from before the flag went off count: the reset notice lives there).
+  */
+  const assignmentLeftovers = campaign && !assignmentEnabled ? storedAssignmentLeftovers(campaign) : [];
+  const sections = campaignSettingsSectionsFor({
+    assignmentEnabled,
+    inboundEnabled,
+    assignmentLeftovers: assignmentLeftovers.length > 0,
+    canSupervise,
+  });
+  const agentsVisible = sections.some((section) => section.id === 'agents');
+  const historyVisible = sections.some((section) => section.id === 'roster-uploads');
+  /*
+    Ready once THIS campaign's sections are on the page: not while a jump from another
+    campaign's settings is still loading this one (the old campaign is in state until then).
+  */
+  const sectionNav = useSectionInView(
+    sections,
+    !loading && campaign?.id === id && Boolean(config && recording),
+    // Discard remounts every section: the highlight must follow the new ones.
+    formEpoch,
+  );
+  useCampaignCrumbs(id, campaign, 'settings');
+
+  /* What is unsaved, setting by setting; it drives the bar and the guard on leaving. */
+  const changes = useMemo(
+    () => (saved && config && recording ? changedSettings(saved, { name, callerIds, carrier, recording, config }) : []),
+    [saved, name, callerIds, carrier, recording, config],
+  );
+  const leaveGuard = useUnsavedChangesGuard(canEdit && changes.length > 0);
 
   if (loading) return <LoadingSpinner />;
   if (loadError && !campaign) return <ErrorAlert message={loadError} onRetry={() => void load()} />;
   if (!campaign || !config || !recording) return null;
 
   const block = configBlockReason(config);
+  // A name or caller ID taken away is said on its field as soon as it happens, and holds Save,
+  // as a calling-hours mistake does.
+  const missing = canEdit ? missingBasics(name, callerIds) : {};
+  const nameError = missing['name'] ?? fieldErrors['name'];
+  const callerIdsError = missing['caller_ids'] ?? fieldErrors['caller_ids'];
+  const saveBlock = block ?? (Object.keys(missing).length > 0 ? 'invalid_fields' : null);
   /*
     Contact assignment turned off after a campaign was set up with it: pacing still
     follows what the campaign stores (CA9 gates the surface, never the runtime), and
     with the settings hidden there was no way back. Keyed on the LOADED campaign,
-    so the notice stays until the reset is saved.
+    so the notice stays until the reset is saved (`assignmentLeftovers`, above).
   */
-  const assignmentLeftovers = assignmentEnabled ? [] : storedAssignmentLeftovers(campaign);
   const modeResetBlocked = assignmentModeLocked(campaign.status)
     && (campaign.assignment_mode ?? 'pool') !== 'pool';
   const isLive = campaign.status === 'running' || campaign.status === 'stopping';
@@ -411,32 +561,31 @@ export function AgencyCampaignSettingsPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: campaign.name, href: `/agency/campaigns/${campaign.id}` },
-          { label: 'Settings' },
-        ]}
-      />
 
       {/*
-        The campaign workspace's section bar, in the same slot on every one of
-        its screens. These four sections used to be reachable only
-        as secondary buttons on the detail page's header row — the same row
-        that carries Stop — so getting from Contacts to Call attempts meant
-        going back through the campaign first.
+        The campaign's own header, as on its Monitor tabs: its name and status, the
+        lifecycle controls (pausing before an assignment-mode change is said below, so
+        it belongs here) and History — "who changed the caller ID?" is asked here.
       */}
+      <CampaignDetailHeader
+        campaign={campaign}
+        lastUpdatedAt={campaignReadAt}
+        tenantId={tenantId}
+        accountId={accountId}
+        canControl={canSupervise}
+        busy={lifecycle.busy}
+        onAction={lifecycle.onAction}
+        canJoinStation={canJoinStation}
+        role={role}
+        onRefresh={() => void refreshCampaign()}
+      />
+
       <CampaignTabs
         campaignId={campaign.id}
         active="settings"
         role={role}
         campaignStatus={campaign.status}
       />
-
-      <div className={styles.header}>
-        <h1 className={styles.title}>Settings</h1>
-        <AgencyCampaignStatusBadge status={campaign.status} />
-      </div>
 
       {isLive && (
         <p className={styles.liveNote}>
@@ -447,210 +596,310 @@ export function AgencyCampaignSettingsPage() {
 
       {saveError && <ErrorAlert message={saveError} />}
 
-      <div className={styles.basics}>
-        <div className="form-group">
-          <label htmlFor="campaign-name">
-            Campaign name<span className="required-star">*</span>
-          </label>
-          <input
-            id="campaign-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            disabled={!canEdit}
-          />
-          {fieldErrors['name'] && <p className={styles.fieldError}>{fieldErrors['name']}</p>}
-        </div>
-      </div>
+      <div className={styles.layout}>
+        <SettingsSectionNav sections={sections} active={sectionNav.active} onSelect={sectionNav.select} />
 
-      <div className={styles.basics}>
-        {canEdit && carrierChoices.length > 1 && (
-          <CampaignCarrierField
-            options={carrierChoices}
-            value={carrier}
-            onChange={setCarrier}
-            error={fieldErrors['telephony_credential_id'] ?? fieldErrors['telephony_provider']}
-          />
-        )}
-        {/* A viewer who cannot edit still reads which carrier account it dials on. */}
-        {!canEdit && carrierChoices.length > 1 && (
-          <p className={styles.hint} data-testid="campaign-carrier-readonly">
-            {`Carrier: ${carrierChoices.find((o) => sameCarrier(o, carrier))?.name ?? carrierName(carrier)}`}
-          </p>
-        )}
-        <div className="form-group">
-          <label htmlFor="campaign-caller-ids">
-            Caller IDs<span className="required-star">*</span>
-          </label>
-          <CallerIdPicker
-            selected={callerIds}
-            onChange={setCallerIds}
-            carrier={carrier}
-            carrierLabel={carrierLabel}
-            carrierActive={carrierActive(carriers, carrier)}
-            disabled={!canEdit}
-          />
-          {fieldErrors['caller_ids'] && (
-            <p className={styles.fieldError}>{fieldErrors['caller_ids']}</p>
-          )}
-        </div>
-      </div>
+        <div className={styles.sections}>
+          {/* Remounted by Discard, so no field keeps state from the edits it threw away. */}
+          <Fragment key={formEpoch}>
+            <ComposerSection id="general" title="General" helper="What this campaign is called across the console and in reports.">
+              <div className="form-group">
+                <label htmlFor="campaign-name">
+                  Campaign name<span className="required-star">*</span>
+                </label>
+                <input
+                  id="campaign-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  disabled={!canEdit}
+                  aria-invalid={nameError ? true : undefined}
+                  aria-describedby={nameError ? 'campaign-name-error' : undefined}
+                />
+                {nameError && <p id="campaign-name-error" className={styles.fieldError}>{nameError}</p>}
+              </div>
+            </ComposerSection>
 
-      {/*
-        Recording + call summary. Both fields already existed on the
-        wire and could be set by nothing but curl; the two capabilities that
-        govern them guarded a surface that did not exist.
-      */}
-      <div className={styles.basics}>
-        <CampaignRecordingField
-          checked={recording.record}
-          onChange={(record) => setRecording({ ...recording, record })}
-          capabilityEnabled={recordingEnabled}
-          readOnly={!canEdit}
-          error={fieldErrors['record_calls']}
-        />
-
-        {summaryVisible && (
-          <div className="form-group">
-            <label htmlFor="campaign-analysis-profile">Call summary</label>
-            {canPickProfile ? (
-              <>
-                <select
-                  id="campaign-analysis-profile"
-                  value={recording.profileId}
-                  disabled={!canEdit || profilesLoading}
-                  onChange={(event) =>
-                    setRecording({ ...recording, profileId: event.target.value })
-                  }
-                >
-                  <option value={NO_ANALYSIS_PROFILE}>No summary</option>
-                  {profileStatus !== 'found' && storedProfileId !== null && (
-                    <option value={storedProfileId}>
-                      {profileStatus === 'unlisted'
-                        ? 'Current profile (no longer listed)'
-                        : 'Current profile'}
-                    </option>
-                  )}
-                  {analysisProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.is_default ? `${profile.name} (default)` : profile.name}
-                    </option>
-                  ))}
-                </select>
-                <p className={styles.hint}>
-                  {storedProfileId === null
-                    ? 'No summary is written for this campaign’s calls.'
-                    : 'Every connected call is summarised against this profile once it ends. ' +
-                      'A summary needs a recording, so leave recording on above.'}
-                </p>
-                {profilesError && (
-                  <p className={styles.gateNotice} role="note">
-                    Could not load your summary profiles ({profilesError}). Saving without
-                    changing this field leaves the campaign’s current profile alone.
-                  </p>
-                )}
-              </>
-            ) : (
-              <>
-                <p className={styles.hint}>
-                  {storedProfileId === null
-                    ? 'No summary profile is set for this campaign.'
-                    : 'A summary profile is set for this campaign.'}
-                </p>
-                {summaryGate.notice && (
-                  <p className={styles.gateNotice} role="note">
-                    {summaryGate.notice}
-                  </p>
-                )}
-                {storedProfileId !== null && canEdit && (
-                  <button
-                    type="button"
-                    className={styles.linkButton}
-                    onClick={() =>
-                      setRecording({ ...recording, profileId: NO_ANALYSIS_PROFILE })
-                    }
-                  >
-                    Remove summary profile
-                  </button>
-                )}
-              </>
-            )}
-            {fieldErrors['analysis_profile_id'] && (
-              <p className={styles.fieldError}>{fieldErrors['analysis_profile_id']}</p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {assignmentLeftovers.length > 0 && (
-        <div className={styles.liveNote} role="note" data-testid="assignment-off-notice">
-          <p>
-            {`Contact assignment is turned off for this account, but this campaign still uses ${joinAnd(assignmentLeftovers)}. Dialling keeps following them until they are reset.`}
-          </p>
-          {modeResetBlocked && (
-            <p data-testid="assignment-reset-pause">
-              Its assignment mode can change only while the campaign is paused or a draft: pause
-              it first to put the mode back to the shared pool. A reset now puts back everything else.
-            </p>
-          )}
-          {fieldErrors['assignment_mode'] && (
-            <p className={styles.fieldError}>{fieldErrors['assignment_mode']}</p>
-          )}
-          {canEdit && (assignmentResetPending ? (
-            <p data-testid="assignment-reset-pending">
-              Contact assignment goes back to the defaults, and every outcome override is removed,
-              when you save.
-            </p>
-          ) : (
-            <button
-              type="button"
-              className={styles.linkButton}
-              onClick={() => {
-                setConfig(resetAssignmentConfig(config));
-                setAssignmentResetPending(true);
-              }}
-              data-testid="assignment-reset"
+            <ComposerSection
+              id="caller-ids"
+              title="Caller IDs"
+              helper="The numbers customers see when this campaign calls them, and the carrier account it dials on."
             >
-              Reset to defaults
-            </button>
-          ))}
-        </div>
-      )}
+              <div className={styles.stack}>
+                {canEdit && carrierChoices.length > 1 && (
+                  <CampaignCarrierField
+                    options={carrierChoices}
+                    value={carrier}
+                    onChange={setCarrier}
+                    error={fieldErrors['telephony_credential_id'] ?? fieldErrors['telephony_provider']}
+                  />
+                )}
+                {/* A viewer who cannot edit still reads which carrier account it dials on. */}
+                {!canEdit && carrierChoices.length > 1 && (
+                  <p className={styles.hint} data-testid="campaign-carrier-readonly">
+                    {`Carrier: ${carrierChoices.find((o) => sameCarrier(o, carrier))?.name ?? carrierName(carrier)}`}
+                  </p>
+                )}
+                <div className="form-group">
+                  <label htmlFor="campaign-caller-ids">
+                    Caller IDs<span className="required-star">*</span>
+                  </label>
+                  <CallerIdPicker
+                    selected={callerIds}
+                    onChange={setCallerIds}
+                    carrier={carrier}
+                    carrierLabel={carrierLabel}
+                    carrierActive={carrierActive(carriers, carrier)}
+                    disabled={!canEdit}
+                  />
+                  {callerIdsError && (
+                    <p className={styles.fieldError}>{callerIdsError}</p>
+                  )}
+                </div>
+              </div>
+            </ComposerSection>
 
-      <CampaignBehaviourSection
-        state={config}
-        onChange={setConfig}
-        fieldErrors={fieldErrors}
-        assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
-        readOnly={!canEdit}
-        inbound={inboundEnabled}
+            <ComposerSection id="calling-hours" title="Calling hours" helper="When this campaign is allowed to dial.">
+              <CampaignBehaviourSection
+                state={config}
+                onChange={setConfig}
+                fieldErrors={fieldErrors}
+                layout="plain"
+                include={['hours']}
+              />
+            </ComposerSection>
+
+            <ComposerSection
+              id="dialling-retries"
+              title="Dialling and retries"
+              helper="When a contact is tried again after a call that did not connect, and when the campaign pauses itself."
+            >
+              <CampaignBehaviourSection
+                state={config}
+                onChange={setConfig}
+                fieldErrors={fieldErrors}
+                layout="plain"
+                include={['retries']}
+                readOnly={!canEdit}
+              />
+            </ComposerSection>
+
+            <ComposerSection
+              id="wrap-up"
+              title="Wrap-up and outcomes"
+              helper="The outcomes agents can pick, what an unanswered call is filed as, and the time agents get after each call."
+            >
+              <CampaignBehaviourSection
+                state={config}
+                onChange={setConfig}
+                fieldErrors={fieldErrors}
+                layout="plain"
+                include={['outcomes']}
+                assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
+              />
+            </ComposerSection>
+
+            {/*
+              Recording + call summary. Both fields already existed on the
+              wire and could be set by nothing but curl; the two capabilities that
+              govern them guarded a surface that did not exist.
+            */}
+            <ComposerSection
+              id="recording"
+              title="Recording"
+              helper={summaryVisible
+                ? 'Whether calls are recorded, and the summary written for each connected call.'
+                : 'Whether calls are recorded.'}
+            >
+              <div className={styles.stack}>
+                <CampaignRecordingField
+                  checked={recording.record}
+                  onChange={(record) => setRecording({ ...recording, record })}
+                  capabilityEnabled={recordingEnabled}
+                  readOnly={!canEdit}
+                  error={fieldErrors['record_calls']}
+                />
+
+                {summaryVisible && (
+                  <div className="form-group">
+                    <label htmlFor="campaign-analysis-profile">Call summary</label>
+                    {canPickProfile ? (
+                      <>
+                        <select
+                          id="campaign-analysis-profile"
+                          value={recording.profileId}
+                          disabled={!canEdit || profilesLoading}
+                          onChange={(event) =>
+                            setRecording({ ...recording, profileId: event.target.value })
+                          }
+                        >
+                          <option value={NO_ANALYSIS_PROFILE}>No summary</option>
+                          {profileStatus !== 'found' && storedProfileId !== null && (
+                            <option value={storedProfileId}>
+                              {profileStatus === 'unlisted'
+                                ? 'Current profile (no longer listed)'
+                                : 'Current profile'}
+                            </option>
+                          )}
+                          {analysisProfiles.map((profile) => (
+                            <option key={profile.id} value={profile.id}>
+                              {profile.is_default ? `${profile.name} (default)` : profile.name}
+                            </option>
+                          ))}
+                        </select>
+                        <p className={styles.hint}>
+                          {storedProfileId === null
+                            ? 'No summary is written for this campaign’s calls.'
+                            : 'Every connected call is summarised against this profile once it ends. ' +
+                              'A summary needs a recording, so leave recording on above.'}
+                        </p>
+                        {profilesError && (
+                          <p className={styles.gateNotice} role="note">
+                            Could not load your summary profiles ({profilesError}). Saving without
+                            changing this field leaves the campaign’s current profile alone.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className={styles.hint}>
+                          {storedProfileId === null
+                            ? 'No summary profile is set for this campaign.'
+                            : 'A summary profile is set for this campaign.'}
+                        </p>
+                        {summaryGate.notice && (
+                          <p className={styles.gateNotice} role="note">
+                            {summaryGate.notice}
+                          </p>
+                        )}
+                        {storedProfileId !== null && canEdit && (
+                          <button
+                            type="button"
+                            className={styles.linkButton}
+                            onClick={() =>
+                              setRecording({ ...recording, profileId: NO_ANALYSIS_PROFILE })
+                            }
+                          >
+                            Remove summary profile
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {fieldErrors['analysis_profile_id'] && (
+                      <p className={styles.fieldError}>{fieldErrors['analysis_profile_id']}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </ComposerSection>
+
+            {agentsVisible && (
+              <ComposerSection
+                id="agents"
+                title="Agents"
+                helper={assignmentEnabled
+                  ? `How contacts are assigned to agents${inboundEnabled ? ', and whether customers who ring in reach their agent first' : ''}.`
+                  : inboundEnabled
+                    ? 'Whether this campaign’s customers who ring in reach their agent first.'
+                    : 'Contact assignment settings this campaign still uses.'}
+              >
+                {assignmentLeftovers.length > 0 && (
+                  <div className={styles.liveNote} role="note" data-testid="assignment-off-notice">
+                    <p>
+                      {`Contact assignment is turned off for this account, but this campaign still uses ${joinAnd(assignmentLeftovers)}. Dialling keeps following them until they are reset.`}
+                    </p>
+                    {modeResetBlocked && (
+                      <p data-testid="assignment-reset-pause">
+                        Its assignment mode can change only while the campaign is paused or a draft: pause
+                        it first to put the mode back to the shared pool. A reset now puts back everything else.
+                      </p>
+                    )}
+                    {fieldErrors['assignment_mode'] && (
+                      <p className={styles.fieldError}>{fieldErrors['assignment_mode']}</p>
+                    )}
+                    {canEdit && (assignmentResetPending ? (
+                      <p data-testid="assignment-reset-pending">
+                        Contact assignment goes back to the defaults, and every outcome override is removed,
+                        when you save.
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.linkButton}
+                        onClick={() => {
+                          setConfig(resetAssignmentConfig(config));
+                          setAssignmentResetPending(true);
+                        }}
+                        data-testid="assignment-reset"
+                      >
+                        Reset to defaults
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <CampaignBehaviourSection
+                  state={config}
+                  onChange={setConfig}
+                  fieldErrors={fieldErrors}
+                  layout="plain"
+                  include={['agents']}
+                  assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
+                  inbound={inboundEnabled}
+                />
+              </ComposerSection>
+            )}
+          </Fragment>
+
+          {canEdit && (
+            <UnsavedChangesBar
+              count={changes.length}
+              saving={saving}
+              blockedReason={saveBlock !== null ? CONFIG_BLOCK_COPY[saveBlock] : null}
+              // The refusal itself is the alert above the form; the bar says where to look.
+              note={saveError ? 'Not saved. The reason is above the form.' : null}
+              onDiscard={onDiscard}
+              onSave={() => void onSave()}
+            />
+          )}
+
+          {/*
+            The lifecycle and the upload history (decision IN13), which used to sit
+            at the bottom of the Insights scroll: they are about how this campaign
+            was set up and run, so they live with its settings. Both reads are floored
+            at `agency.supervise`, so a role below it is not shown a pair of 403s.
+            Not a card of its own: its two panels carry their own titles.
+          */}
+          {historyVisible ? (
+            <div id="roster-uploads" className={styles.anchor}>
+              <CampaignHistory campaignId={campaign.id} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {lifecycle.confirmDialog}
+
+      <LeaveUnsavedDialog
+        guard={leaveGuard}
+        message={`You have ${plural(changes.length, 'unsaved change')} to this campaign’s settings. `
+          + 'Leave now and they are lost; Cancel keeps you here to save them.'}
       />
-
-      {canEdit && (
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => void onSave()}
-            disabled={saving || block !== null}
-          >
-            {saving ? 'Saving…' : 'Save settings'}
-          </button>
-          {block !== null && <p className={styles.blockCopy}>{CONFIG_BLOCK_COPY[block]}</p>}
-        </div>
-      )}
-
-      {/*
-        The lifecycle and the upload history (decision IN13), which used to sit
-        at the bottom of the Insights scroll: they are about how this campaign
-        was set up and run, so they live with its settings. Both reads are floored
-        at `agency.supervise`, so a role below it is not shown a pair of 403s.
-      */}
-      {hasPermission(role, 'agency.supervise') ? <CampaignHistory campaignId={campaign.id} /> : null}
     </div>
   );
 }
 
 export default AgencyCampaignSettingsPage;
+
+/**
+ * What a campaign cannot be saved without, keyed as the server keys it: a name, and at least
+ * one caller ID (the API rejects an empty pool, and the pacing engine cannot place a call
+ * without one, so on a running campaign an empty save would stop it dialling).
+ */
+function missingBasics(name: string, callerIds: readonly string[]): Record<string, string> {
+  const missing: Record<string, string> = {};
+  if (name.trim().length === 0) missing['name'] = 'A campaign needs a name.';
+  if (callerIds.length === 0) missing['caller_ids'] = 'A campaign needs at least one caller ID.';
+  return missing;
+}
 
 /** The assignment half of `agency_campaign_config_saved`: enum labels and counts only. */
 function assignmentAnalytics(config: CampaignConfigState) {

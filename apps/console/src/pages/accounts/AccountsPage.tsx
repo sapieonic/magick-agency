@@ -5,7 +5,6 @@ import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
-import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAccounts } from '../../hooks/useAccounts';
@@ -14,6 +13,7 @@ import { trackSetupEvent } from '../../analytics/events';
 import { PageDescription } from '../../components/common';
 import type { Account } from '../../types/auth';
 import { CreateAccountModal } from './CreateAccountModal';
+import { NewAccountInvite } from './NewAccountInvite';
 import styles from './AccountsPage.module.css';
 
 /**
@@ -35,8 +35,9 @@ export default function AccountsPage() {
   const { memberships, settings, refreshSession } = useAuth();
   const { tenantId, accountId, setActiveAccountId, reloadAccounts } = useTenant();
   const { accounts, loading, error, reload } = useAccounts();
-  const { showToast } = useToast();
   const [showCreate, setShowCreate] = useState(false);
+  /** The account just created, while its "invite the person who'll run it" panel is up. */
+  const [justCreated, setJustCreated] = useState<Account | null>(null);
 
   const access = accountCreateAccess(memberships, tenantId);
   const canCreate = access === 'allowed';
@@ -46,11 +47,14 @@ export default function AccountsPage() {
    * switcher's (`TenantContext`), and the session's per-account settings map, which is
    * built at sign-in and has no entry for an account made since. Without the session
    * refresh, the new account's governance map and call limit would read as missing.
+   *
+   * No toast: the panel that opens says the account is ready and offers the next step,
+   * inviting the person who will run it (`NewAccountInvite`).
    */
   const handleCreated = (account: Account) => {
     setShowCreate(false);
     trackSetupEvent('account_created', { account_count: accounts.length + 1 });
-    showToast(`Account "${account.name}" created`, 'success');
+    setJustCreated(account);
     reload();
     reloadAccounts();
     void refreshSession();
@@ -83,18 +87,27 @@ export default function AccountsPage() {
       <PageHeader title="Accounts" badge={accounts.length} actions={canCreate && !empty ? createButton : undefined} />
       <PageDescription
         pageKey="accounts"
-        description="Accounts divide your workspace into separate teams. Each account has its own campaigns, settings and call history, and the account switcher at the top moves between them."
+        description="Accounts divide your organisation into separate teams. Each account has its own campaigns, settings and call history, and the account switcher in the sidebar moves between them."
         tips={[
-          'Invite people to one account, or to the whole workspace, from the Team page.',
+          'Invite people to one account, or to the whole organisation, from the Team page.',
           'A new account can’t place calls until support sets its call limit. You can set up its campaigns and team in the meantime.',
         ]}
       />
 
       {access === 'account_scoped' && (
         <p className={styles.scopedNote} data-testid="accounts-scoped-note">
-          Your admin access covers one account rather than the whole workspace, so you
-          can’t create accounts. Ask an admin with access to the whole workspace.
+          Your admin access covers one account rather than the whole organisation, so you
+          can’t create accounts. Ask an admin with access to the whole organisation.
         </p>
+      )}
+
+      {justCreated && (
+        <NewAccountInvite
+          key={justCreated.id}
+          account={justCreated}
+          currentAccountName={accounts.find((a) => a.id === accountId)?.name ?? null}
+          onDismiss={() => setJustCreated(null)}
+        />
       )}
 
       {error && <ErrorAlert message={error} onRetry={reload} />}
@@ -106,7 +119,7 @@ export default function AccountsPage() {
             title="No accounts"
             description={canCreate
               ? 'Create an account to start running campaigns.'
-              : 'Ask an admin with access to the whole workspace to create one.'}
+              : 'Ask an admin with access to the whole organisation to create one.'}
             action={canCreate ? createButton : undefined}
           />
         )

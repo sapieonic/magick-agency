@@ -1,0 +1,14 @@
+/* The in-page tab bar of a section that groups pages (decision B28). Sits above the page's
+   own heading, at the size of the campaign tabs. */
+.tabs {
+  composes: tabs from '../common/TabBar.module.css';
+  margin: -8px 0 20px;
+}
+
+.tab {
+  composes: tab from '../common/TabBar.module.css';
+}
+
+.tabActive {
+  composes: tabActive from '../common/TabBar.module.css';
+}

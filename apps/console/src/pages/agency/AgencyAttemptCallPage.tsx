@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Info, MessageSquare, PhoneOff, PhoneMissed, SearchX } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import {
@@ -15,7 +16,6 @@ import {
   AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
 } from '../../utils/agencyCampaignRecording';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -47,7 +47,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * ─── THE AGENCY'S OWN CALL DETAIL ───────────────────────────────────────────
  *
  * The page that did not exist. Clicking a call inside the agency workspace used
- * to navigate to `/app/calls/dialer/history/:id` — out of `AgencyLayout`, into the
+ * to navigate to `/app/calls/dialer/history/:id` — out of the agency workspace, into the
  * `/app` zone, gated on a `calls.dialer` capability, with the campaign context and the list the reader was reading both
  * gone. The link pointed there because that was the only place the endpoint
  * existed.
@@ -381,27 +381,20 @@ export default function AgencyAttemptCallPage() {
   );
 
   /**
-   * The trail back to where the reader came from — which is the whole point of the
-   * page existing. `Call attempts` is the list they clicked out of.
-   *
-   * The campaign crumb is always PRESENT and only its label arrives late. The name
-   * comes from its own request, so inserting a third crumb once it landed reflowed
-   * the header on every load; a placeholder holds the slot instead.
-   *
-   * Every href is inside `/agency`. A `/app` link here would be the original bug.
+   * The trail back to where the reader came from, which is the whole point of the page
+   * existing: "Campaigns / <name> / Call log / Attempt 4" in the top bar. `Call log` (its
+   * Dialler calls view) is the list they clicked out of. The leaf says "Attempt" until this
+   * attempt's number has arrived; the campaign's slot holds "Campaign" until its name has.
    */
-  const breadcrumbs = [
-    { label: 'Campaigns', href: '/agency/campaigns' },
-    { label: campaign?.name ?? 'Campaign', href: `/agency/campaigns/${campaignId}` },
-    { label: 'Call attempts', href: `/agency/campaigns/${campaignId}/attempts` },
-  ];
+  const leaf = detail && detail.attempt.id === attemptId ? `Attempt ${detail.attempt.attempt_number}` : 'Attempt';
+  useCampaignCrumbs(campaignId, campaign, 'attempts', [{ label: leaf }]);
 
   /*
    * The campaign workspace's section bar, in the same slot as on every sibling
    * screen. It is rendered per PAGE rather than by the layout — the four
    * standalone campaign screens each mount it themselves — so a page that does
    * not render it simply has none, which is what happened here: the reader
-   * following a row out of Call attempts lost the Overview / Performance /
+   * following a row out of the call list lost the Overview / Performance /
    * Agents / Contacts / Call attempts / Activity / Settings bar that every other
    * campaign screen has.
    *
@@ -456,11 +449,9 @@ export default function AgencyAttemptCallPage() {
   if (loading) {
     return (
       <div>
-        {/* The trail and the bar render through every state: a reader who cannot
-            see the page they asked for still needs the way back to the one they
-            came from. The leaf is a placeholder because the attempt number is on
-            the response that has not arrived. */}
-        <Breadcrumbs items={[...breadcrumbs, { label: 'Attempt' }]} />
+        {/* The bar renders through every state (and the top bar's trail with it): a
+            reader who cannot see the page they asked for still needs the way back to
+            the one they came from. */}
         {tabs}
         <LoadingSpinner />
       </div>
@@ -470,19 +461,22 @@ export default function AgencyAttemptCallPage() {
   if (error) {
     return (
       <div>
-        <Breadcrumbs items={[...breadcrumbs, { label: 'Attempt' }]} />
         {tabs}
         {terminal ? (
           /*
             No Retry. The link is stale, or the floor refuses the read, and both
-            answer the same way every time; the trail above is the actual remedy,
-            which is why rendering it here is the fix rather than a nicety.
+            answer the same way every time; the way back is the actual remedy,
+            which is why it is offered here as well as in the trail and the bar.
           */
           <EmptyState
             icon={<SearchX size={28} />}
             title="We can’t show this call"
-            description={`${error} Use the trail above to go back to the campaign’s call `
-              + 'attempts — the row you followed may have been renumbered or removed.'}
+            description={`${error} The row you followed may have been renumbered or removed.`}
+            action={campaignId ? (
+              <Link to={`/agency/campaigns/${campaignId}/attempts`} className="btn-secondary">
+                Back to the call log
+              </Link>
+            ) : undefined}
           />
         ) : (
           <ErrorAlert message={error} onRetry={() => void load()} />
@@ -494,7 +488,6 @@ export default function AgencyAttemptCallPage() {
   if (!detail) return null;
 
   const { attempt, call, call_availability: availability } = detail;
-  const attemptLeaf = `Attempt ${attempt.attempt_number}`;
 
   /*
    * The call is gone (or was never placed). Say which — as an empty state rather
@@ -509,7 +502,6 @@ export default function AgencyAttemptCallPage() {
     const purged = availability === 'purged';
     return (
       <div>
-        <Breadcrumbs items={[...breadcrumbs, { label: attemptLeaf }]} />
         {tabs}
         <EmptyState
           icon={purged ? <PhoneOff size={28} /> : <PhoneMissed size={28} />}
@@ -546,8 +538,6 @@ export default function AgencyAttemptCallPage() {
       {tabs}
       <CallDetailView
         call={call}
-        breadcrumbs={breadcrumbs}
-        leafLabel={attemptLeaf}
         // The ATTEMPT's outcome, not the call row's. `webrtc_calls.outcome` on an
         // agency leg is the media leg's (`browser_hangup`); the attempt's is the
         // word the list uses.

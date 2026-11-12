@@ -66,7 +66,8 @@ const REFERENCE_STATS_SQL = `SELECT
      WHERE campaign_id = $1 AND attempt_number > 1 AND dialed_at IS NOT NULL AND redial_number = 0)::text AS attempts_retried,
   (SELECT COUNT(*) FROM agency_call_attempts
      WHERE campaign_id = $1 AND redial_number > 0 AND dialed_at IS NOT NULL)::text AS attempts_redialed,
-  (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
+  -- On shift: open sessions that are not offline (a signed-out station not reaped yet).
+  (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL AND state <> 'offline')::text AS agents_live,
   (SELECT COUNT(*) FROM agency_call_attempts
      WHERE campaign_id = $1 AND state = 'ended' AND answered_at IS NOT NULL
        AND answered_at > now() - ($2 || ' hours')::interval)::text AS answered_24h,
@@ -221,9 +222,11 @@ async function seedCampaign(catalog: unknown[], status = 'running'): Promise<str
     dialed_at: minutesAgo(24), ended_at: minutesAgo(24),
   });
 
-  // The floor: two live sessions (one on a break), one that left.
+  // The floor: two live sessions (one on a break), one signed out and not reaped yet (on the
+  // floor's rows, not on shift), one that left.
   await insertAgentSession(id, { state: 'available' });
   await insertAgentSession(id, { state: 'break', break_reason: 'lunch' });
+  await insertAgentSession(id, { state: 'offline' });
   await insertAgentSession(id, { state: 'offline', left_at: minutesAgo(10) });
   return id;
 }

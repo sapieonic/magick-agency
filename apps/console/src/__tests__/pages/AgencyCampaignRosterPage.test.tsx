@@ -491,3 +491,30 @@ describe('insights drill-downs: waiting, attempted and the total', () => {
     expect(count).toMatch(/^1[,.]?234 contacts/);
   });
 });
+
+/** The call log's phone rule and words, so the two pages agree (the server's rule is the same). */
+describe('a phone filter with no digits on the roster', () => {
+  it('is said in the form and never sent, and a first "+" waits for Apply', async () => {
+    renderPage();
+    await screen.findByTestId(`roster-row-${COMPLETED.id}`);
+    const calls = mocks.getCampaignContacts.mock.calls.length;
+    const field = screen.getByPlaceholderText('Number or last digits');
+    const apply = () => screen.getByText('Apply') as HTMLButtonElement;
+
+    fireEvent.change(field, { target: { value: 'abc' } });
+    expect(screen.getByTestId('roster-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(apply().disabled).toBe(true);
+
+    fireEvent.change(field, { target: { value: '+' } });
+    expect(screen.queryByTestId('roster-phone-unusable')).toBeNull();
+    fireEvent.click(apply());
+    expect(screen.getByTestId('roster-phone-unusable')).toBeTruthy();
+    expect(mocks.getCampaignContacts.mock.calls.length).toBe(calls);
+    expect(currentQuery().get('phone')).toBeNull();
+
+    fireEvent.change(field, { target: { value: '+98765' } });
+    fireEvent.click(apply());
+    await waitFor(() => expect(currentQuery().get('phone')).toBe('+98765'));
+  });
+});

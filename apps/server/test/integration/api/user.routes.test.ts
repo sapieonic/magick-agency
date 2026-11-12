@@ -477,7 +477,7 @@ describe('user routes (integration)', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().message).toBe('Cannot remove the last tenant owner');
+      expect(res.json().message).toBe('Cannot remove the last organisation owner');
     });
 
     it('returns 404 for non-existent membership', async () => {

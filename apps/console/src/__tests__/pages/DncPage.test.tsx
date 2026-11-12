@@ -137,7 +137,7 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     // The soft phone's untagged call honours it too (docs/softphone.md §4.1 step 2).
     expect(title).toContain('not logged to a campaign is stopped too');
     // OVER-claim guard: it must not imply the workspace-wide block.
-    expect(title).toMatch(/Every other campaign in this workspace can still call/i);
+    expect(title).toMatch(/Every other campaign in this organisation can still call/i);
   });
 
   it('shows an account-scoped entry as enforced for that account\'s dials and soft phone', async () => {
@@ -224,7 +224,7 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     // Exactly what the pre-dial reads (docs/softphone.md §4.1 step 2): a tagged call the
     // tag's scopes, an untagged one the account's and every one of its campaigns'.
     expect(document.body.textContent).toMatch(/a call logged to a campaign is stopped by the entries that campaign honours/);
-    expect(document.body.textContent).toMatch(/a call logged to no campaign by an entry for the workspace, its account or any of the account’s campaigns/);
+    expect(document.body.textContent).toMatch(/a call logged to no campaign by an entry for the organisation, its account or any of the account’s campaigns/);
     expect(document.body.textContent).toMatch(/writing down why — that reason is logged with their name/);
   });
 
@@ -457,5 +457,77 @@ describe('DNC — pagination after a mutation', () => {
     const after = mocks.listDncEntries.mock.calls.slice(before);
     expect(after).toHaveLength(1);
     expect(after[0]![0].offset).toBe(0);
+  });
+});
+
+describe('DNC — searching the list', () => {
+  /**
+   * The server reads the text (`dncPhoneSearch`): any common form of the whole number, or the
+   * digits a number ends in. The page sends what was typed and says which forms work, so a
+   * supervisor checking a customer's ten digits is not left believing they must type `+91`.
+   */
+  it('says which forms the search takes and sends the text as typed', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+    const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
+    expect(box.getAttribute('placeholder')).toBe('Whole number, or last 4+ digits');
+
+    mocks.listDncEntries.mockResolvedValue(page([]));
+    fireEvent.change(box, { target: { value: ' 98200 41772 ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(mocks.listDncEntries.mock.calls.at(-1)![0]).toMatchObject({ phone: '98200 41772', offset: 0 }));
+    expect(await screen.findByText(/Type the whole number, in any format, or at least its last 4 digits/)).toBeTruthy();
+  });
+
+  /**
+   * Too few digits is the server's 400 (`dncSearchShortfall`, the same rule). The page checks it
+   * first and says so under the box: nothing is sent, so no Retry resends text that cannot run,
+   * and the rows below stay the last search's, never read as this text's matches.
+   */
+  it('says under the box when a search has too few digits, and sends nothing', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+    const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
+    const sent = mocks.listDncEntries.mock.calls.length;
+
+    fireEvent.change(box, { target: { value: '060' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(screen.getByRole('alert').textContent).toBe('Type at least 4 digits of the number.');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+
+    // A + number short of its calling code and 4 more digits has its own words.
+    fireEvent.change(box, { target: { value: '+44 207' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Type at least 4 digits after +44, or leave off the + to search by the last digits.',
+    );
+
+    expect(mocks.listDncEntries.mock.calls.length).toBe(sent);
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(screen.getByText('+919820041772')).toBeTruthy();
+
+    // Enough digits: sent, and the message goes.
+    mocks.listDncEntries.mockResolvedValue(page([]));
+    fireEvent.change(box, { target: { value: '+44 2079' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(mocks.listDncEntries.mock.calls.at(-1)![0]).toMatchObject({ phone: '+44 2079', offset: 0 }));
+    expect(screen.queryByText(/leave off the \+/)).toBeNull();
+  });
+
+  it('a failed read shows the error and no rows, not the last answer’s rows', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+    const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
+
+    mocks.listDncEntries.mockRejectedValue(new Error('Could not reach the server.'));
+    fireEvent.change(box, { target: { value: '41772' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    expect(await screen.findByText('Could not reach the server.')).toBeTruthy();
+    expect(screen.queryByText('+919820041772')).toBeNull();
+    // Not "No match": the read failed, it did not come back empty.
+    expect(screen.queryByText('No match')).toBeNull();
   });
 });

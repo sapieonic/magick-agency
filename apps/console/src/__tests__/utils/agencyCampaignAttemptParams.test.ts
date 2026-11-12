@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
+  campaignAttemptAgentOptions,
   campaignAttemptFilterChips,
+  campaignAttemptFilterRefusal,
   campaignAttemptFiltersFromParams,
   campaignAttemptFiltersToParams,
   isCampaignAttemptFiltered,
+  phoneFilterDraftError,
+  phoneFilterUsable,
 } from '../../utils/agencyCampaignAttemptParams';
+import { ApiError } from '../../api/client';
 import {
   rosterFilterGroupCount,
   rosterFiltersFromParams,
@@ -133,5 +138,99 @@ describe('the roster reads waiting and attempted the same way', () => {
     expect(selector).toEqual({ state: ['pending'] });
     expect(dropped).toEqual(expect.arrayContaining(['waiting', 'attempted']));
     expect(droppedFilterNotice(dropped)).toMatch(/Waiting/);
+  });
+});
+
+describe('campaignAttemptAgentOptions', () => {
+  const assigned = [
+    { user_id: 'u-b', name: 'Priya', email: 'p@example.com' },
+    { user_id: 'u-c', name: null, email: 'nameless@example.com' },
+    { user_id: 'u-d', name: null, email: null },
+  ];
+
+  it('names each agent, falls back to the email, and leaves out one with neither', () => {
+    expect(campaignAttemptAgentOptions(assigned, [])).toEqual([
+      { id: 'u-c', name: 'nameless@example.com' },
+      { id: 'u-b', name: 'Priya' },
+    ]);
+  });
+
+  it('adds an agent named on a row who is no longer assigned, once', () => {
+    const rows = [
+      { agent_user_id: 'u-a', agent_name: 'Hari' },
+      { agent_user_id: 'u-a', agent_name: 'Hari' },
+      { agent_user_id: null, agent_name: null },
+    ];
+    expect(campaignAttemptAgentOptions(assigned, rows).map((o) => o.name)).toEqual(['Hari', 'nameless@example.com', 'Priya']);
+  });
+
+  it('keeps an applied id nobody knows, so the control shows what the URL applies', () => {
+    expect(campaignAttemptAgentOptions([], [], 'hari')).toEqual([{ id: 'hari', name: 'hari' }]);
+  });
+});
+
+describe('campaignAttemptFilterRefusal', () => {
+  const refused = (...params: string[]) => new ApiError(400, {
+    error: 'Validation failed', details: params.map((param) => ({ param, message: 'raw server text' })),
+  });
+
+  it('says which filter to change, in a sentence, never the server text', () => {
+    expect(campaignAttemptFilterRefusal(refused('agent_user_id'))).toBe(
+      'The agent filter does not match an agent. Pick one from the list. Change or remove it above to see the call log.',
+    );
+    expect(campaignAttemptFilterRefusal(refused('phone', 'from'))).toBe(
+      'The phone number filter needs at least one digit. The date filter is not a date this list can use. '
+        + 'Change or remove it above to see the call log.',
+    );
+    expect(campaignAttemptFilterRefusal(refused('something_new'))).toContain('One of the filters cannot be used.');
+  });
+
+  it('tells a range the wrong way round from a date it cannot read, by the server message', () => {
+    // The server's words (`spine-filters.ts`): the same `param` as a bad date, no code.
+    const issue = (param: string, message: string) => new ApiError(400, {
+      error: 'Validation failed', details: [{ param, message }],
+    });
+    expect(campaignAttemptFilterRefusal(issue('from', '`from` must not be later than `to`'))).toBe(
+      'The “From” date is after the “To” date, so nothing could match. Swap them to continue. '
+        + 'Change or remove it above to see the call log.',
+    );
+    expect(campaignAttemptFilterRefusal(
+      issue('dialed_from', '`dialed_from` must be earlier than `dialed_to` (the window is half-open)'),
+    )).toContain('The dialled “From” date is after the dialled “To” date, so nothing could match.');
+    // A date it cannot read keeps its own sentence.
+    expect(campaignAttemptFilterRefusal(issue('from', 'is not a real date'))).toContain(
+      'The date filter is not a date this list can use.',
+    );
+  });
+
+  it('is null for anything that is not a refused filter, so Retry stays', () => {
+    expect(campaignAttemptFilterRefusal(new ApiError(503, { message: 'down' }))).toBeNull();
+    expect(campaignAttemptFilterRefusal(new ApiError(400, { message: 'bad' }))).toBeNull();
+    expect(campaignAttemptFilterRefusal(new Error('network'))).toBeNull();
+  });
+});
+
+describe('phoneFilterUsable', () => {
+  it('needs a digit, as the server does; blank is no filter', () => {
+    expect(phoneFilterUsable('')).toBe(true);
+    expect(phoneFilterUsable('  ')).toBe(true);
+    expect(phoneFilterUsable('98765')).toBe(true);
+    expect(phoneFilterUsable('+91 (98)')).toBe(true);
+    expect(phoneFilterUsable('abc!!')).toBe(false);
+  });
+});
+
+describe('phoneFilterDraftError', () => {
+  it('says nothing while a number is still being begun, until Apply is pressed', () => {
+    for (const draft of ['+', ' + ', '(', '+ (', '-']) {
+      expect(phoneFilterDraftError(draft, false)).toBeNull();
+      expect(phoneFilterDraftError(draft, true)).toBe('Type at least one digit of the phone number.');
+    }
+  });
+
+  it('says at once when the draft cannot become a number, and nothing once it has a digit', () => {
+    expect(phoneFilterDraftError('abc', false)).toBe('Type at least one digit of the phone number.');
+    expect(phoneFilterDraftError('+9', true)).toBeNull();
+    expect(phoneFilterDraftError('', true)).toBeNull();
   });
 });

@@ -48,8 +48,12 @@ interface InsightsPanelProps {
   shellStatus: string;
   /** Which tab is on screen (decision IN13): each shows its own sections over the same reads. */
   view: CampaignPanelId;
-  /** The overdue callbacks as of now, for the Callbacks tab's badge; null until known. */
-  onCallbacksOverdue?: (count: number | null) => void;
+  /**
+   * The overdue callbacks as of now, for the Callbacks tab's badge; null until known. With the
+   * campaign the count was read for: a reload keeps the last answer on screen, so for a moment
+   * after the route moves to another campaign the allocation is still the previous one's.
+   */
+  onCallbacksOverdue?: (count: number | null, campaignId: string | null) => void;
 }
 
 /** The range reads each tab shows. */
@@ -182,9 +186,10 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
 
   // The Callbacks tab's badge, as of now (the allocation is polled).
   const overdueNow = allocation ? allocation.totals.callbacks_overdue : null;
+  const overdueFor = allocation ? allocation.campaign_id : null;
   useEffect(() => {
-    onCallbacksOverdue?.(overdueNow);
-  }, [overdueNow, onCallbacksOverdue]);
+    onCallbacksOverdue?.(overdueNow, overdueFor);
+  }, [overdueNow, overdueFor, onCallbacksOverdue]);
   const activity = rangeData.activity.data;
   const names = useMemo(() => {
     const map = new Map<string, string>();
@@ -303,8 +308,13 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
         <div className={styles.toolbarRight}>
           <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="insights-announcement">{announcement}</p>
           <p className={styles.stamp} data-testid="insights-updated">
-            {live.lastUpdatedAt ? `Updated ${formatClockTime(live.lastUpdatedAt)}` : 'Loading…'}
-            {live.polling ? ' · auto-refreshing' : ' · not refreshing'}
+            {/*
+              "Figures", so it is not read as the header's stamp, which covers the
+              campaign's status and floor and polls on its own rule. Only the "now"
+              figures ever poll; the range figures reload on Refresh.
+            */}
+            {live.lastUpdatedAt ? `Figures updated ${formatClockTime(live.lastUpdatedAt)}` : 'Loading…'}
+            {live.polling ? ' · “now” figures auto-refresh' : ' · not auto-refreshing'}
           </p>
           <button type="button" className={`btn-secondary ${styles.toolButton}`} onClick={refresh} aria-label="Refresh insights">
             <RefreshCw size={14} aria-hidden="true" />

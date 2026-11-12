@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Activity } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
-import { transitionAgencyCampaign } from '../../api/agencyCampaigns';
-import { withCarrierRefusalCopy } from '../../utils/agencyCarriers';
-import { ApiError } from '../../api/client';
 import { hasPermission } from '../../utils/permissions';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
-import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
@@ -21,42 +15,23 @@ import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
 import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
-import {
-  trackAgencyCampaignLifecycleAction,
-  trackAgencyCampaignLifecycleFailed,
-  trackAgencyCampaignTabViewed,
-} from '../../analytics/events';
-import {
-  agencyCampaignControls,
-  campaignEnding,
-  isKnownCampaignStatus,
-  isLifecycleActionEnabled,
-  PAUSE_IN_FLIGHT_NOTE,
-  showsPauseInFlightNote,
-  type AgencyCampaignAction as Action,
-} from '../../utils/agencyCampaignControls';
-import { campaignTimeline } from '../../utils/agency/overview/lifecycle';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
+import { publishCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
+import { agentsOnShift } from '../../utils/agencyAgentFloor';
+import { trackAgencyCampaignTabViewed } from '../../analytics/events';
+import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
 import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
+import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
 import styles from './AgencyCampaignDetailPage.module.css';
-
-/** Only `stop` is irreversible, so only `stop` interrupts with a confirm. */
-const CONFIRM_COPY: Partial<Record<Action, { title: string; message: string }>> = {
-  stop: {
-    title: 'Stop this campaign?',
-    message:
-      'No new calls will be placed. Calls already in progress will finish normally, and the '
-      + 'campaign moves to “Stopping” until they do. A stopped campaign cannot be restarted.',
-  },
-};
 
 export function AgencyCampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { tenantId, accountId, role } = useTenant();
-  const { showToast, showErrorToast } = useToast();
+  const { showToast } = useToast();
 
   /*
     Which of this page's panels is on screen, read from the URL rather than held
@@ -78,21 +53,19 @@ export function AgencyCampaignDetailPage() {
     refreshCampaign,
     commitCampaign,
   } = useAgencyCampaignDetail(id, tenantId, accountId);
-  const [busy, setBusy] = useState<Action | null>(null);
-  const [confirming, setConfirming] = useState<Action | null>(null);
   const [retryOpen, setRetryOpen] = useState(false);
   /** Bumped by the Refresh control so the analytic tabs' range reads re-read too. */
   const [insightsRefresh, setInsightsRefresh] = useState(0);
-  /** Overdue callbacks as of now, reported by the insights panel: the Callbacks tab's badge. */
-  const [callbacksOverdue, setCallbacksOverdue] = useState<number | null>(null);
-
   /**
-   * Synchronous with the click. `setBusy` is a render, so two Start clicks in
-   * the same frame both see `busy === null` and both POST — the 7× `/start`
-   * 409 seen in real use is that click, repeated, against a button that never
-   * disabled. The ref is the lock the state cannot be.
+   * Overdue callbacks as of now, reported by the insights panel: the Callbacks tab's badge. Kept
+   * with the campaign it was read for, because the route has no `key`: moving from one campaign
+   * to another keeps this page mounted, and the previous campaign's count must not be shown or
+   * published under the next one's id while its own allocation is on its way.
    */
-  const busyRef = useRef(false);
+  const [overdueReport, setOverdueReport] = useState<{ campaignId: string; count: number } | null>(null);
+  const reportCallbacksOverdue = useCallback((count: number | null, campaignId: string | null) => {
+    setOverdueReport(count === null || campaignId === null ? null : { campaignId, count });
+  }, []);
 
   /**
    * `agency.supervise`, floored at `account_admin`.
@@ -118,112 +91,16 @@ export function AgencyCampaignDetailPage() {
   */
   const canRetry = canControl && hasPermission(role, 'agency.campaigns.write');
 
-
-
-  /**
-   * Say why a lifecycle action was refused. A carrier refusal (start or resume on a
-   * carrier account that is no longer active, or gone) gets the console's own sentence,
-   * which says who can fix it; anything else shows the API's message.
-   */
-  const reportRefusal = useCallback(
-    (err: unknown) => showErrorToast(withCarrierRefusalCopy(err), 'Could not change the campaign state.'),
-    [showErrorToast],
-  );
-
-  const runAction = useCallback(
-    async (action: Action) => {
-      if (!id || !tenantId || !accountId) return;
-      if (busyRef.current) return;
-      busyRef.current = true;
-      setBusy(action);
-      // Captured before the request fires — `updated.status` below is the
-      // TO side, and neither may be read off `campaign` state directly (see
-      // the comment on `campaignRef`).
-      let fromStatus = campaignRef.current?.status;
-      try {
-        /**
-         * Start / Resume from a stale view is a known bug: the button would
-         * have been hidden if we held `running`. Re-read before
-         * POSTing so the click does not become the API's 409. Pause / Stop
-         * are still guarded against the status we hold — those buttons
-         * are not the ones that stayed enabled across a transition.
-         */
-        if (action === 'start' || action === 'resume') {
-          const latest = await refreshCampaign();
-          fromStatus = latest?.status ?? fromStatus;
-        }
-        if (fromStatus && !isLifecycleActionEnabled(fromStatus, action)) {
-          return;
-        }
-        const updated = await transitionAgencyCampaign(id, action, tenantId, accountId);
-        // Invalidate any GET that started before this write so it cannot
-        // paint the previous status over the one we just committed.
-        commitCampaign(updated);
-        // Report what came back, not what was asked for. `stop` answers with
-        // `stopping`, and a toast saying "Stopped" while calls are still up
-        // would contradict the badge rendered directly beneath it.
-        showToast(`Campaign is now ${updated.status}.`, 'success');
-        if (fromStatus && isKnownCampaignStatus(fromStatus) && isKnownCampaignStatus(updated.status)) {
-          trackAgencyCampaignLifecycleAction({
-            campaign_id: id,
-            action,
-            from_status: fromStatus,
-            to_status: updated.status,
-            // Only `stop` interrupts with a confirm dialog (`CONFIRM_COPY`).
-            confirmed: Boolean(CONFIRM_COPY[action]),
-            from_tab: panel,
-          });
-        }
-        void load();
-      } catch (err: unknown) {
-        const statusCode = err instanceof ApiError ? err.statusCode : 0;
-        /**
-         * A 409 is an answer, not a transport failure. Two kinds:
-         * the campaign moved underneath us (stale Start / Resume), or the
-         * transition is refused where the campaign stands. The first is repaired
-         * by refetching — the refreshed view then replaces the button, and a
-         * conflict toast on a control that has just disappeared is friction. The
-         * second is a real refusal (the roster gate, say) and still has to be
-         * said. Another running campaign on the account is not a refusal: several
-         * run at once and share the account's lines (decisions MC6).
-         */
-        let reportFailure = true;
-        if (statusCode === 409) {
-          const latest = await refreshCampaign();
-          const stillOffered = latest ? isLifecycleActionEnabled(latest.status, action) : true;
-          if (stillOffered) {
-            reportRefusal(err);
-          } else {
-            reportFailure = false;
-          }
-        } else {
-          reportRefusal(err);
-        }
-        if (reportFailure && fromStatus && isKnownCampaignStatus(fromStatus)) {
-          trackAgencyCampaignLifecycleFailed({
-            campaign_id: id,
-            action,
-            from_status: fromStatus,
-            // `0` is a non-`ApiError` failure (e.g. a network error) — there is
-            // no HTTP status to report, and `0` cannot collide with a real one.
-            status_code: statusCode,
-          });
-        }
-      } finally {
-        busyRef.current = false;
-        setBusy(null);
-      }
-    },
-    [id, tenantId, accountId, load, refreshCampaign, commitCampaign, campaignRef, showToast, reportRefusal, panel],
-  );
-
-  const onActionClick = useCallback(
-    (action: Action) => {
-      if (CONFIRM_COPY[action]) setConfirming(action);
-      else void runAction(action);
-    },
-    [runAction],
-  );
+  const lifecycle = useCampaignLifecycle({
+    id,
+    tenantId,
+    accountId,
+    campaignRef,
+    refreshCampaign,
+    commitCampaign,
+    reload: () => void load(),
+    fromTab: panel,
+  });
 
   /*
     `trackAgencyCampaignTabViewed` for the panel the URL landed on directly —
@@ -247,6 +124,28 @@ export function AgencyCampaignDetailPage() {
     });
   }, [campaign, panel]);
 
+  /*
+    The tab bar's counts, handed to the campaign's other screens so their bar
+    need not read them again: on shift at every stats poll, overdue when the
+    insights panel reports it. Under `campaign.id`, the campaign the bar shows
+    them for (the stats are read with it).
+  */
+  const onShift = agentsOnShift(stats?.agents);
+  const shownId = campaign?.id;
+  const callbacksOverdue = overdueReport && overdueReport.campaignId === shownId ? overdueReport.count : null;
+  useEffect(() => {
+    if (shownId && tenantId && accountId && onShift !== null) publishCampaignTabBadge('onShift', tenantId, accountId, shownId, onShift);
+    // On `stats` as well as the count: each poll's answer is fresh even when the count is unchanged.
+  }, [shownId, tenantId, accountId, stats, onShift]);
+  useEffect(() => {
+    if (shownId && tenantId && accountId && callbacksOverdue !== null) {
+      publishCampaignTabBadge('overdue', tenantId, accountId, shownId, callbacksOverdue);
+    }
+  }, [shownId, tenantId, accountId, callbacksOverdue]);
+
+  // "Campaigns / <name> / <tab>" in the top bar.
+  useCampaignCrumbs(id, campaign, panel);
+
   if (loading) return <LoadingSpinner />;
 
   if (error && !campaign) {
@@ -255,66 +154,22 @@ export function AgencyCampaignDetailPage() {
 
   if (!campaign) return null;
 
-  const controls = agencyCampaignControls(campaign.status);
-  const confirmCopy = confirming ? CONFIRM_COPY[confirming] : undefined;
-  /*
-    HOW it ended, not merely THAT it did. `stopped` and `completed` are different
-    events — a supervisor ended one, the other ran out of list — and the badge
-    beside the title already distinguishes them. Collapsing both into a boolean
-    is what had a completed campaign reporting "Stopped by: Automatically",
-    which reads as the dialer having killed it.
-  */
-  const ending = campaignEnding(campaign.status);
-  const terminal = ending !== null;
-
-
-  /*
-    ONE `now` for the whole render, read here and handed to both consumers.
-
-    A fresh `new Date()` inside each of them is fine for a duration that is
-    genuinely moving — this page re-renders every 10s from the poll, which is
-    what keeps "Running for 6 hours" honest — but two of them in one render can
-    straddle a tick, and the header saying "Running for 3 hours" above a rail
-    saying "Ran for 2 hours 59 minutes" is a page disagreeing with itself about
-    the same campaign.
-  */
-  const now = new Date();
-  const timeline = campaignTimeline(campaign, ending, now);
-  /*
-    The two header facts, in reading order, with the absent ones dropped rather
-    than dashed — `campaignTimeline` returns `null` for anything this server did
-    not carry, and "Started —" reads as a failed read (or, on a campaign that
-    genuinely never started, as a wrong one).
-  */
-  const timelineParts = [timeline.started, timeline.ran].filter(
-    (part): part is string => part !== null,
-  );
-
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: campaign.name },
-        ]}
-      />
 
       <CampaignDetailHeader
         campaign={campaign}
         lastUpdatedAt={lastUpdatedAt}
         autoRefreshing={shouldPoll}
-        timelineParts={timelineParts}
         concurrency={stats?.concurrency}
         tenantId={tenantId}
         accountId={accountId}
         canControl={canControl}
-        controls={controls}
-        busy={busy}
-        onAction={onActionClick}
-        terminal={terminal}
-        canRetry={canRetry}
-        onRetry={() => setRetryOpen(true)}
+        busy={lifecycle.busy}
+        onAction={lifecycle.onAction}
+        onRetry={canRetry ? () => setRetryOpen(true) : undefined}
         canJoinStation={canJoinStation}
+        role={role}
         onRefresh={() => {
           void load();
           /*
@@ -327,18 +182,6 @@ export function AgencyCampaignDetailPage() {
           setInsightsRefresh((n) => n + 1);
         }}
       />
-
-      {/*
-        Said out loud rather than left to be inferred from a counter that keeps
-        moving: pause stops NEW calls only. A supervisor who believes they cut
-        off live conversations may say so to a customer who is still on one.
-      */}
-      {canControl && showsPauseInFlightNote(campaign.status) && (
-        <p className={styles.pauseNote}>
-          <Activity size={15} aria-hidden="true" />
-          {PAUSE_IN_FLIGHT_NOTE}
-        </p>
-      )}
 
       {/* No description line: the API has no such column, so it was a paragraph
           that could only ever be empty. See the note on `AgencyCampaign`. */}
@@ -371,12 +214,12 @@ export function AgencyCampaignDetailPage() {
         active={panel}
         role={role}
         /*
-          The live floor count, so the tab says whether it is worth opening.
-          `stats.agents` absent is "not known", not "nobody" — `liveAgentCount`
-          renders no badge for either `null` or `0`, so an unread floor never
-          claims to be an empty one.
+          Agents on shift, so the tab says whether it is worth opening: the same
+          count the floor's "N on shift" and the stall banner read
+          (`agentsOnShift`), never `agents.length`, which counted signed-out rows.
+          `stats.agents` absent is "not known" (null), not "nobody".
         */
-        liveAgentCount={stats?.agents ? stats.agents.length : null}
+        agentsOnShift={onShift}
         campaignStatus={campaign.status}
         callbacksOverdue={callbacksOverdue}
       />
@@ -453,7 +296,7 @@ export function AgencyCampaignDetailPage() {
           refreshToken={insightsRefresh}
           shellStatus={campaign.status}
           view={panel}
-          onCallbacksOverdue={setCallbacksOverdue}
+          onCallbacksOverdue={reportCallbacksOverdue}
         />
       ) : panel === 'agents' ? null : role === undefined ? (
         <LoadingSpinner />
@@ -461,22 +304,7 @@ export function AgencyCampaignDetailPage() {
         <Navigate to={`/agency/campaigns/${campaign.id}/agents`} replace />
       )}
 
-      {confirming && confirmCopy && (
-        <ConfirmDialog
-          open
-          title={confirmCopy.title}
-          message={confirmCopy.message}
-          confirmLabel="Stop campaign"
-          danger
-          disabled={busy !== null}
-          onConfirm={() => {
-            const action = confirming;
-            setConfirming(null);
-            void runAction(action);
-          }}
-          onCancel={() => setConfirming(null)}
-        />
-      )}
+      {lifecycle.confirmDialog}
 
       {/* Mounted only while open: the preview is a count over the whole
           campaign and has no business running on every page view. */}

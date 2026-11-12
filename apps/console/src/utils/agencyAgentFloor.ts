@@ -472,6 +472,20 @@ export function floorZeroStates(
   return empty.map((state) => `${AGENCY_FLOOR_STATE_LABELS[state]} 0`).join(' · ');
 }
 
+/**
+ * The console's ONE count of agents on shift: the floor's rows in an `ON_SHIFT_STATES` state,
+ * so everyone but the `offline` (a station that dropped and has not been reaped yet).
+ * The floor's "N on shift", the Agents tab's badge and the stall banner's "N agents on
+ * shift" all read it, so the three cannot disagree. Counting `agents.length` put two
+ * signed-out agents on the badge and the banner above a floor that said "0 of 0 on shift".
+ *
+ * `null` when the payload carries no rows: that is "not known", never "nobody".
+ */
+export function agentsOnShift(agents: readonly Pick<AgencySupervisorAgent, 'state'>[] | null | undefined): number | null {
+  if (!agents) return null;
+  return agents.filter((agent) => ON_SHIFT_STATES.includes(agent.state)).length;
+}
+
 /** The summary card's right-hand readouts, plus the scale the row bars share. */
 export interface FloorTotals {
   /** Everyone at a station on this campaign — the readouts' denominator. */
@@ -496,42 +510,15 @@ export interface FloorTotals {
  */
 export function floorTotals(agents: readonly AgencySupervisorAgent[]): FloorTotals {
   /*
-    Everyone but the signed-out — `agents.length` counted an `offline` row still
-    sitting in the roster, so this readout's "N on shift" disagreed with the
-    server's shift for the same payload. See `ON_SHIFT_STATES`.
-
-    `handled` and `busiest` deliberately still range over EVERY agent: calls a
-    person took before they logged out are calls they took, and dropping them
-    would make the floor's total shrink as people go home.
+    `handled` and `busiest` deliberately range over EVERY agent, `onShift` does
+    not: calls a person took before they logged out are calls they took, and
+    dropping them would make the floor's total shrink as people go home.
   */
-  const onShift = agents.filter((agent) => agent.state !== 'offline').length;
+  const onShift = agentsOnShift(agents) ?? 0;
   const available = agents.filter((agent) => agent.state === 'available').length;
   const handled = agents.reduce((sum, agent) => sum + (agent.calls_handled || 0), 0);
   const busiest = agents.reduce((max, agent) => Math.max(max, agent.calls_handled || 0), 0);
   return { onShift, available, handled, perAgent: onShift > 0 ? handled / onShift : null, busiest };
-}
-
-/**
- * The initials on a row's avatar.
- *
- * First letter of the first and last word — so "Priya Raghavan" is `PR` and a
- * single-word name is one letter rather than a repeated one. Codepoint-safe
- * (`Array.from`), because `"Émile"[0]` is fine but a name starting outside the
- * BMP would otherwise be sliced through the middle of a surrogate pair and
- * render as a replacement glyph.
- *
- * An unresolved agent's fallback ("Agent usr_abcd") produces `AU`, which is
- * meaningless — deliberately so. The avatar is a visual anchor for scanning a
- * column of rows, never an identity claim; the name beside it already says, in
- * words and in its own styling, that this is an id rather than a person.
- */
-export function agentInitials(displayName: string): string {
-  const words = displayName.trim().split(/\s+/).filter(Boolean);
-  const first = words[0];
-  if (!first) return '?';
-  const last = words.length > 1 ? words[words.length - 1] : undefined;
-  const letters = [Array.from(first)[0], last ? Array.from(last)[0] : undefined];
-  return letters.filter(Boolean).join('').toUpperCase();
 }
 
 /**

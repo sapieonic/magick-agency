@@ -3,10 +3,15 @@ import { getMissedInboundCount } from '../api/inbound';
 import { useVisibleInterval } from './useVisibleInterval';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import type { AgencyInboundMissedCountResponse } from '../types/inbound';
+import { badgeText } from '../utils/badgeText';
 
 /** How often the badge re-reads while inbound is on (a follow-up list, not a live queue). */
 export const MISSED_COUNT_POLL_MS = 60_000;
-/** Two readers inside this window share one read (the sidebar and the page mount together). */
+/**
+ * Two readers inside this window share one read (the sidebar and the page mount together). While
+ * a reader polls the count, the window is the poll's: that reader keeps it fresh, so search,
+ * Home or a remounted page reuse its answer.
+ */
 export const MISSED_COUNT_FRESH_MS = 10_000;
 /**
  * A reader's poll tick is skipped while another reader's poll read of the same count started inside
@@ -36,6 +41,10 @@ let readAt = 0;
 let lastPoll: { key: string; at: number } | null = null;
 let inFlight: { key: string; promise: Promise<void> } | null = null;
 const listeners = new Set<() => void>();
+/** How many mounted readers poll each count. */
+const pollers = new Map<string, number>();
+/** What a reader with nothing to read subscribes to, so a new answer does not re-render it. */
+const IDLE: Snapshot = { key: null, value: null, failed: false };
 
 function publish(next: Snapshot): void {
   snapshot = next;
@@ -47,11 +56,24 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** `mount`: shares a read under {@link MISSED_COUNT_FRESH_MS}; `poll`: one per minute for the tab; `force`: always reads. */
-function read(tenantId: string, accountId: string, assignee: string | undefined, mode: 'mount' | 'poll' | 'force'): Promise<void> {
+/**
+ * `mount`: shares a read under {@link MISSED_COUNT_FRESH_MS} (the poll period while a reader polls);
+ * `return` (the reader came back to the tab): under {@link MISSED_COUNT_FRESH_MS} whoever polls,
+ * since the poll skips its ticks while the tab is hidden and cannot have kept the count fresh;
+ * `poll`: one per minute for the tab; `force`: always reads.
+ */
+function read(
+  tenantId: string,
+  accountId: string,
+  assignee: string | undefined,
+  mode: 'mount' | 'return' | 'poll' | 'force',
+): Promise<void> {
   const key = countKey(tenantId, accountId, assignee);
   if (inFlight?.key === key) return inFlight.promise;
-  if (mode === 'mount' && snapshot.key === key && snapshot.value && Date.now() - readAt < MISSED_COUNT_FRESH_MS) return Promise.resolve();
+  const freshFor = mode === 'mount' && pollers.has(key) ? MISSED_COUNT_POLL_MS : MISSED_COUNT_FRESH_MS;
+  if ((mode === 'mount' || mode === 'return') && snapshot.key === key && snapshot.value && Date.now() - readAt < freshFor) {
+    return Promise.resolve();
+  }
   if (mode === 'poll' && lastPoll?.key === key && Date.now() - lastPoll.at < MISSED_COUNT_POLL_FRESH_MS) return Promise.resolve();
   const startedAt = Date.now();
   const promise = getMissedInboundCount(tenantId, accountId, assignee ? { assignee } : {})
@@ -118,9 +140,9 @@ export function useMissedCallsCount({
   enabled: boolean;
   poll: boolean;
 }): MissedCallsCountState {
-  const current = useSyncExternalStore(subscribe, () => snapshot);
   const key = tenantId && accountId ? countKey(tenantId, accountId, assignee) : null;
   const active = enabled && key !== null;
+  const current = useSyncExternalStore(subscribe, () => (active ? snapshot : IDLE));
 
   const load = useCallback(() => {
     if (!active || !tenantId || !accountId) return undefined;
@@ -130,12 +152,22 @@ export function useMissedCallsCount({
   useEffect(() => {
     void load();
   }, [load]);
+  // After the read above, so a poller's own first read keeps the short window.
+  useEffect(() => {
+    if (!active || !poll || !key) return undefined;
+    pollers.set(key, (pollers.get(key) ?? 0) + 1);
+    return () => {
+      const left = (pollers.get(key) ?? 1) - 1;
+      if (left > 0) pollers.set(key, left);
+      else pollers.delete(key);
+    };
+  }, [active, poll, key]);
   useVisibleInterval(
     () => (active && tenantId && accountId ? read(tenantId, accountId, assignee, 'poll') : undefined),
     MISSED_COUNT_POLL_MS,
     active && poll,
   );
-  useRefetchOnReturn(() => load());
+  useRefetchOnReturn(() => (active && tenantId && accountId ? read(tenantId, accountId, assignee, 'return') : undefined));
 
   if (!active || current.key !== key) return { count: null, settled: !active };
   return { count: current.value, settled: current.value !== null || current.failed };
@@ -143,9 +175,7 @@ export function useMissedCallsCount({
 
 /** The badge's text: the number, "99+" past the cap, nothing for none. */
 export function missedBadgeText(count: AgencyInboundMissedCountResponse | null): string | null {
-  if (!count || count.open <= 0) return null;
-  if (count.open_capped || count.open > 99) return '99+';
-  return String(count.open);
+  return badgeText(count?.open, count?.open_capped);
 }
 
 /** What a screen reader hears beside the nav entry. */

@@ -10,8 +10,8 @@ String roleLabel(AgencyInvite invite) => switch (invite.role) {
       Role.viewer => 'Viewer',
       Role.operator => 'Operator',
       Role.accountAdmin => 'Account admin',
-      Role.tenantAdmin => 'Workspace admin',
-      Role.tenantOwner => 'Workspace owner',
+      Role.tenantAdmin => 'Organisation admin',
+      Role.tenantOwner => 'Organisation owner',
       // A role the server added after this build: show it as itself.
       Role.unknown => invite.roleRaw,
     };
@@ -104,7 +104,7 @@ UnavailableCopy unavailableCopy(InviteStatus status) => switch (status) {
         ),
       InviteStatus.claimed => const UnavailableCopy(
           title: 'This invitation has already been used',
-          body: 'The workspace is set up and waiting for you. Sign in with the account you created and your station '
+          body: 'The organisation is set up and waiting for you. Sign in with the account you created and your station '
               'will open.',
           offersSignIn: true,
         ),

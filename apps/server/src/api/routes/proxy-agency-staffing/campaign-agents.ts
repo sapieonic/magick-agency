@@ -206,7 +206,7 @@ export async function registerCampaignAgentRoutes(app: FastifyInstance): Promise
     if (memberships.length === 0) {
       return reply.code(404).send({
         error: 'Not Found',
-        message: 'That user is not a member of this workspace.',
+        message: 'That user is not a member of this organisation.',
       });
     }
 
@@ -251,7 +251,7 @@ export async function registerCampaignAgentRoutes(app: FastifyInstance): Promise
           error: 'Conflict',
           code: err.code,
           message:
-            'That agent is already assigned to another campaign, and this workspace has not ' +
+            'That agent is already assigned to another campaign, and the server has not ' +
             'finished upgrading to multiple assignments yet. Unassign them from the other ' +
             'campaign, or try again after the next deployment.',
         });

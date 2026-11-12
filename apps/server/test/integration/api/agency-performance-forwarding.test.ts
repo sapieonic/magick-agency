@@ -751,7 +751,7 @@ describe('agency agent surfaces through the in-process internal hop (integration
       expect(seen(res)).toMatchObject({ status: 404 });
       expect(res.json()).toEqual({
         error: 'Not Found',
-        message: 'That user is not a member of this workspace.',
+        message: 'That user is not a member of this organisation.',
       });
       expect(received()).toHaveLength(0);
     });

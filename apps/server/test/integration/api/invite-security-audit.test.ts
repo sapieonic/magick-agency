@@ -657,7 +657,7 @@ describe('(g) every authenticated invite/user route runs session → tenant cont
       expect(res.statusCode).toBe(403);
       // The tenant-context middleware's body, not RBAC's ("No active membership
       // found for this context" / "Insufficient permissions …").
-      expect(res.json()).toEqual({ error: 'Forbidden', message: 'You are not a member of this tenant' });
+      expect(res.json()).toEqual({ error: 'Forbidden', message: 'You are not a member of this organisation' });
       expect(membershipLookup).toHaveBeenCalledWith(outsider.id, ws.tenant.id);
     } finally {
       membershipLookup.mockRestore();

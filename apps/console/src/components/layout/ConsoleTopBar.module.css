@@ -1,0 +1,205 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--topbar-height);
+  padding: 0 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.menuBtn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-height: auto;
+  flex-shrink: 0;
+  transition: color var(--transition);
+}
+
+.menuBtn:hover {
+  color: var(--text-primary);
+}
+
+/* The Home badge, on a phone, where the sidebar is a closed drawer. */
+.menuBtn {
+  position: relative;
+}
+
+.menuDot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+/* The last good count while Home cannot refresh: kept, not shown as fresh. */
+.menuDotStale {
+  opacity: 0.55;
+}
+
+/* The phone's back arrow (rendered only at phone width): a 44px target, to the crumb above. */
+.back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+.back:hover {
+  color: var(--text-primary);
+}
+
+.back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.breadcrumb {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.crumb a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.crumb a:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.separator {
+  color: var(--text-muted);
+}
+
+.crumbCurrent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* The one search field: a button styled as a field, which opens GlobalSearch. */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 1 380px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition);
+}
+
+.search:hover {
+  border-color: var(--text-muted);
+  color: var(--text-secondary);
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.searchIcon {
+  flex-shrink: 0;
+}
+
+.searchText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchKey {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .menuBtn {
+    display: flex;
+  }
+
+  /* On a phone the breadcrumb collapses to the current page; the back arrow goes up one. */
+  .crumb,
+  .separator {
+    display: none;
+  }
+
+  /* On a phone the field is an icon button; its aria-label still says what it searches. */
+  .search {
+    flex: 0 0 auto;
+    min-height: 40px;
+    min-width: 40px;
+    justify-content: center;
+    padding: 0;
+    margin-left: auto;
+  }
+
+  .searchText,
+  .searchKey {
+    display: none;
+  }
+
+  .search + .right {
+    margin-left: 0;
+  }
+}

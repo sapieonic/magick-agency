@@ -158,7 +158,7 @@ export async function tenantContextMiddleware(request: FastifyRequest, reply: Fa
     }
   }
   if (memberships.length === 0) {
-    return reply.code(403).send({ error: 'Forbidden', message: 'You are not a member of this tenant' });
+    return reply.code(403).send({ error: 'Forbidden', message: 'You are not a member of this organisation' });
   }
 
   const membership = selectMembership(memberships, accountId);

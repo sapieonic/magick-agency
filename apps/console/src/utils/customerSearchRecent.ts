@@ -102,11 +102,3 @@ export function clearRecentCustomerSearches(storage: Pick<Storage, 'removeItem'>
   notifyRecentCustomerSearches();
 }
 
-/** `window.localStorage`, or `undefined` where reading it throws. */
-export function browserStorage(): Storage | undefined {
-  try {
-    return typeof window !== 'undefined' ? window.localStorage : undefined;
-  } catch {
-    return undefined;
-  }
-}

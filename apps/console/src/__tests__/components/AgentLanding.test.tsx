@@ -3,7 +3,9 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
- * `AgentLanding` — the guard that keeps a DEDICATED agent out of `AppLayout`.
+ * `AgentLanding` — the guard that keeps a DEDICATED agent out of the console shell on
+ * every page it wraps — Settings, the legacy `/app` URLs and `/agency` (`ConsoleShell`, decision
+ * B28) — sending them to the page's own `/dialer/*` twin when it has one, else to `/dialer`.
  *
  * ── What this file no longer tests, and where it went ──────────────────────
  * This component used to resolve `GET /my-assignment` and build the station
@@ -16,8 +18,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * (10) and `operator` (20) — and it redirected them out of `/app` into `/dialer`,
  * whose `agency` capability defaults to `false`. In every tenant without the
  * dialer, those two roles got a full-viewport "not available for your account"
- * with no sidebar, no link out, and no sign-out (logout lives in `TopBar`, inside
- * `AppLayout`). Every route back re-entered this component.
+ * with no sidebar, no link out, and no sign-out (logout lived in the top bar, inside
+ * the shell). Every route back re-entered this component.
  *
  * Two properties therefore have teeth here, and both are asserted per role:
  *
@@ -41,14 +43,14 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.us
 
 import { AgentLanding } from '../../components/agency/AgentLanding';
 
-/** Stands in for `AppLayout` — the shell that IS the product for most roles. */
+/** Stands in for `ConsoleLayout` — the shell that IS the product for most roles. */
 function Shell() {
   return <div data-testid="app-shell">the whole platform UI</div>;
 }
 
 function Where() {
   const location = useLocation();
-  return <div data-testid="where">{`${location.pathname}${location.search}`}</div>;
+  return <div data-testid="where">{`${location.pathname}${location.search}${location.hash}`}</div>;
 }
 
 function renderAt(entry = '/app') {
@@ -138,8 +140,8 @@ describe('AgentLanding — who may be redirected', () => {
 describe('AgentLanding — nobody is sent into a dialer that is off', () => {
   /**
    * The second half of the regression. Even for a dedicated agent, redirecting
-   * into a gate that will refuse produces a dead end — and `AppLayout`, empty
-   * sidebar and all, is strictly better: it has a top bar, so it has a sign-out.
+   * into a gate that will refuse produces a dead end — and the console shell,
+   * near-empty sidebar and all, is strictly better: it has a top bar, so it has a sign-out.
    */
   it('renders the shell when the agency capability is off', () => {
     mocks.useGovernance.mockReturnValue({ isEnabled: () => false, loading: false });
@@ -221,5 +223,65 @@ describe('AgentLanding — the arrival param', () => {
     renderAt('/app?left=banana');
 
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
+  });
+});
+
+describe('AgentLanding — a console page with its own /dialer twin', () => {
+  function renderAgency(entry: string) {
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route
+            path="/agency/*"
+            element={
+              <AgentLanding>
+                <Shell />
+              </AgentLanding>
+            }
+          />
+          <Route path="*" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it.each([
+    ['/agency/reports/run-1', '/dialer/reports/run-1'],
+    ['/agency/reports?tab=subscriptions', '/dialer/reports?tab=subscriptions'],
+    ['/agency/inbound/missed', '/dialer/missed'],
+    ['/agency/customers?number=%2B919800000000', '/dialer/customers?number=%2B919800000000'],
+    ['/agency/reports/run-1?tab=summary#agents', '/dialer/reports/run-1?tab=summary#agents'],
+    ['/agency/inbound/missed#overdue', '/dialer/missed#overdue'],
+  ])('sends a dedicated agent from %s to %s, query and hash and all', async (entry, expected) => {
+    renderAgency(entry);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe(expected));
+  });
+
+  it('sends a dedicated agent from an /agency page with no twin to /dialer', async () => {
+    renderAgency('/agency/campaigns/c-1/settings');
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
+  });
+
+  /**
+   * A twin behind a flag that is off would be a full-viewport refusal with no way out (the
+   * agent frame has no shell), so the agent goes to `/dialer`, which has one.
+   */
+  it.each([
+    ['/agency/reports', 'agency_reports_enabled'],
+    ['/agency/reports/run-1?tab=summary', 'agency_reports_enabled'],
+    ['/agency/inbound/missed', 'agency_inbound_enabled'],
+  ])('sends a dedicated agent from %s to /dialer when %s is off', async (entry, offFlag) => {
+    mocks.useFeatureFlags.mockReturnValue({ isEnabled: (flag: string) => flag !== offFlag, status: 'ready' });
+    renderAgency(entry);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
+  });
+
+  it('still sends a dedicated agent to their Customer history with the reports and inbound flags off', async () => {
+    mocks.useFeatureFlags.mockReturnValue({
+      isEnabled: (flag: string) => flag !== 'agency_reports_enabled' && flag !== 'agency_inbound_enabled',
+      status: 'ready',
+    });
+    renderAgency('/agency/customers');
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer/customers'));
   });
 });

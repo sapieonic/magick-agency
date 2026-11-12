@@ -373,7 +373,7 @@ describe('mark DNC', () => {
     expect(message.textContent).toContain('+919820041772');
     expect(message.textContent).toContain('Renewals');
     expect(message.textContent).toContain('undo');
-    expect(message.textContent).not.toContain('any campaign in this workspace');
+    expect(message.textContent).not.toContain('any campaign in this organisation');
   });
 
   it('states the ESCALATION’s scope and permanence with the number in it, unmistakably', async () => {
@@ -384,7 +384,7 @@ describe('mark DNC', () => {
     press('d');
     const hint = screen.getByTestId('confirm-secondary-hint');
     expect(hint.textContent).toContain('+919820041772');
-    expect(hint.textContent).toContain('any campaign in this workspace');
+    expect(hint.textContent).toContain('any campaign in this organisation');
     expect(hint.textContent).toContain('permanently');
     expect(hint.textContent).toContain('undo');
   });
@@ -498,7 +498,7 @@ describe('mark DNC', () => {
 
     const outcome = await screen.findByTestId('dnc-outcome');
     expect(outcome.textContent).toContain('this campaign');
-    expect(outcome.textContent).not.toContain('No campaign in this workspace');
+    expect(outcome.textContent).not.toContain('No campaign in this organisation');
   });
 
   it('the DEFAULT’s outcome never claims the wider scope, even once the list write landed', async () => {
@@ -526,7 +526,7 @@ describe('mark DNC', () => {
 
     const outcome = await screen.findByTestId('dnc-outcome');
     expect(outcome.textContent).toContain('this campaign');
-    expect(outcome.textContent).not.toContain('No campaign in this workspace');
+    expect(outcome.textContent).not.toContain('No campaign in this organisation');
   });
 
   it('reports a failure inline, in words, rather than as a support message', async () => {

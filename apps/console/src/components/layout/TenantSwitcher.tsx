@@ -4,9 +4,14 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { SwitcherDropdown } from './SwitcherDropdown';
 import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
-import styles from './TenantSwitcher.module.css';
+import styles from './ContextSwitcher.module.css';
 
+/**
+ * The tenant line of the sidebar's context block (decision B28): no box, small and muted above the account, the full
+ * width of the sidebar. A plain label with one to choose from, the switcher otherwise.
+ */
 export function TenantSwitcher() {
+  const triggerClass = `${styles.trigger} ${styles.tenant}`;
   const { tenants } = useAuth();
   const { activeTenant, setActiveTenantId } = useTenant();
   const [open, setOpen] = useState(false);
@@ -45,10 +50,10 @@ export function TenantSwitcher() {
 
   if (tenants.length <= 1) {
     return (
-      <div className={styles.trigger} style={{ cursor: 'default' }} title={activeTenant?.name ?? 'No tenant'}>
+      <div className={triggerClass} style={{ cursor: 'default' }} title={activeTenant?.name ?? 'No organisation'}>
         <Building2 className={styles.triggerIcon} />
         <span className={styles.triggerName}>
-          {activeTenant?.name ?? 'No tenant'}
+          {activeTenant?.name ?? 'No organisation'}
         </span>
       </div>
     );
@@ -58,15 +63,15 @@ export function TenantSwitcher() {
     <div className={styles.switcher} ref={ref} onBlur={handleBlur}>
       <button
         ref={triggerRef}
-        className={styles.trigger}
+        className={triggerClass}
         onClick={() => setOpen(prev => !prev)}
         type="button"
         aria-expanded={open}
         aria-haspopup="listbox"
       >
         <Building2 className={styles.triggerIcon} />
-        <span className={styles.triggerName} title={activeTenant?.name ?? 'Select tenant'}>
-          {activeTenant?.name ?? 'Select tenant'}
+        <span className={styles.triggerName} title={activeTenant?.name ?? 'Select organisation'}>
+          {activeTenant?.name ?? 'Select organisation'}
         </span>
         <ChevronDown
           className={`${styles.triggerChevron} ${open ? styles.triggerChevronOpen : ''}`}
@@ -75,7 +80,7 @@ export function TenantSwitcher() {
 
       {open && (
         <SwitcherDropdown
-          label="Switch tenant"
+          label="Switch organisation"
           items={tenants.map(tenant => ({
             id: tenant.id,
             name: tenant.name,
@@ -84,10 +89,10 @@ export function TenantSwitcher() {
           activeId={activeTenant?.id}
           onSelect={handleSelect}
           onClose={() => closeMenu(true)}
-          searchPlaceholder="Search tenants…"
-          searchAriaLabel="Search tenants"
-          listAriaLabel="Tenants"
-          emptyNoun="tenant"
+          searchPlaceholder="Search organisations…"
+          searchAriaLabel="Search organisations"
+          listAriaLabel="Organisations"
+          emptyNoun="organisation"
         />
       )}
     </div>

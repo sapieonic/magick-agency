@@ -6,6 +6,10 @@ import {
   type PlatformAuditActorType,
   type PlatformAuditResourceType,
 } from './catalog.js';
+import {
+  PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY,
+  type AuditResourceTypeOption,
+} from '@magick-agency/contracts/api/platform/audit';
 
 /**
  * The vocabulary of the tenant-wide audit log — served, not mirrored.
@@ -112,12 +116,7 @@ export interface AuditActionOption {
   product: AuditProduct;
 }
 
-export interface AuditResourceTypeOption {
-  /** The wire value, passed back unchanged as `?resource_type=`. */
-  value: string;
-  /** Operator-facing copy. Rendered as the control's label. */
-  label: string;
-}
+export type { AuditResourceTypeOption };
 
 /**
  * The served action vocabulary, in the order a filter should render it.
@@ -154,7 +153,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_campaign.roster_upload_failed', label: 'Campaign roster upload failed or cancelled', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.roster_cleared', label: 'Campaign roster cleared', group: 'Campaign', product: 'agency' },
 
-  { value: 'agency_disposition.created', label: 'Call disposition filed', group: 'Calls', product: 'agency' },
+  { value: 'agency_disposition.created', label: 'Call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_attempts.exported', label: 'Call attempts exported', group: 'Calls', product: 'agency' },
   { value: 'agency_contacts.exported', label: 'Contact roster exported', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls', product: 'agency' },
@@ -162,7 +161,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_contacts.agent_retry_reopened', label: 'Agent reopened their not-reached contacts', group: 'Calls', product: 'agency' },
   { value: 'agency_contact.agent_dialed', label: 'Agent called one of their contacts', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.created', label: 'Number marked do-not-call', group: 'Calls', product: 'agency' },
-  { value: 'dnc_entry.deleted', label: 'Do-not-call entry removed', group: 'Calls', product: 'agency' },
+  { value: 'dnc_entry.deleted', label: 'Do Not Call entry removed', group: 'Calls', product: 'agency' },
   // The soft phone (docs/softphone.md §6). "Soft-phone call" in every label: on this
   // tenant-wide screen a bare "Call placed" would read as a campaign dial.
   { value: 'agency_manual_call.placed', label: 'Soft-phone call placed', group: 'Calls', product: 'agency' },
@@ -230,35 +229,11 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
 ] as const satisfies readonly AuditActionOption[];
 
 /**
- * The served resource-type vocabulary, in the same order as the actions above.
- *
- * The labels answer "what kind of thing is this row about" for someone who has
- * never seen the schema — `agency_campaign_agent` is an assignment, not an
- * agent, and a filter labelled "Agent" would quietly select the wrong rows.
+ * The served resource-type vocabulary, in the same order as the actions above. Its labels are
+ * the contract's (`@magick-agency/contracts/api/platform/audit`), which the console's campaign
+ * Activity page reads too; the checks below hold it to the catalog.
  */
-export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
-  { value: 'agency_campaign', label: 'Campaign' },
-  { value: 'agency_session', label: 'Agent session' },
-  { value: 'agency_attempt', label: 'Call attempt' },
-  { value: 'agency_disposition', label: 'Call disposition' },
-  { value: 'agency_campaign_agent', label: 'Campaign agent assignment' },
-  { value: 'agency_contact', label: 'Contact' },
-  { value: 'agency_manual_call', label: 'Soft-phone call' },
-  { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
-  { value: 'customer_history', label: 'Customer history search' },
-  { value: 'agency_report', label: 'Report' },
-  { value: 'agency_report_subscription', label: 'Scheduled report' },
-  { value: 'agency_inbound_route', label: 'Inbound route' },
-  { value: 'agency_inbound_call', label: 'Inbound call' },
-  { value: 'agency_inbound_clip', label: 'Inbound recording' },
-  { value: 'dnc_entry', label: 'Do-not-call entry' },
-  // "Invitation", not "Membership": the rows filed under it are about the token
-  // and its life (sent, accepted), and on every refusal path there is no
-  // membership change to point at. Same reasoning as `agency_campaign_agent`
-  // being labelled an assignment rather than an agent.
-  { value: 'membership_invite', label: 'Invitation' },
-  { value: 'account', label: 'Account' },
-] as const satisfies readonly AuditResourceTypeOption[];
+export { PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY };
 
 /**
  * The product axis as a filter, in the same shape as the two above.
@@ -273,10 +248,10 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
  */
 export const PLATFORM_AUDIT_PRODUCT_VOCABULARY = [
   { value: 'agency', label: 'Agency dialer' },
-  // The shared zone: team and settings. "Workspace" rather than "Platform"
+  // The shared zone: team and settings. "Organisation" rather than "Platform"
   // because "platform" is our word for the service, not the operator's for the
   // thing they administer.
-  { value: 'platform', label: 'Workspace' },
+  { value: 'platform', label: 'Organisation' },
 ] as const satisfies readonly { value: AuditProduct; label: string }[];
 
 /**

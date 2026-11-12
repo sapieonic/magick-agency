@@ -24,6 +24,7 @@ import {
   type AgencyGroupRowRef,
 } from '../../../agency/agency-agent-identity.js';
 import { warnNameLookup } from './shared.js';
+import { accountOrRefuse } from '../helpers/account-scope.js';
 
 const log = createChildLogger({ component: 'proxy-agency-performance' });
 
@@ -256,14 +257,8 @@ export async function registerFloorPerformanceRoutes(app: FastifyInstance): Prom
     // and `callCore` are separated by `await`s, and a narrowing on
     // `request.accountId` that TypeScript keeps across them is a narrowing this
     // route's correctness should not rest on.
-    const accountId = request.accountId;
-    if (!accountId) {
-      return reply.code(400).send({
-        error: 'Bad Request',
-        code: 'account_scope_required',
-        message: 'This read is scoped to one account. Send X-Account-Id.',
-      });
-    }
+    const accountId = accountOrRefuse(request.accountId, reply);
+    if (!accountId) return reply;
 
     // Refused before `callCore`: an unknown param never reaches the handler.
     const forwarded = forwardAllowedQuery(
@@ -432,14 +427,8 @@ export async function registerFloorPerformanceRoutes(app: FastifyInstance): Prom
   }, async (request, reply) => {
     // Captured before the guard rather than re-read after it, for the roster's
     // reason: the checks and `callCore` are separated by `await`s.
-    const accountId = request.accountId;
-    if (!accountId) {
-      return reply.code(400).send({
-        error: 'Bad Request',
-        code: 'account_scope_required',
-        message: 'This read is scoped to one account. Send X-Account-Id.',
-      });
-    }
+    const accountId = accountOrRefuse(request.accountId, reply);
+    if (!accountId) return reply;
 
     // Refused before `callCore`: an unknown param never reaches the handler.
     const forwarded = forwardAllowedQuery(

@@ -102,7 +102,7 @@ const REPORT_ERROR_MESSAGES: Record<AgencyReportErrorCode, string> = {
   report_window_too_long: 'A report covers at most 30 days, or exactly one calendar month.',
   report_timezone_invalid: 'The time zone is missing or not recognised.',
   report_subject_not_found: 'Nothing to report on was found with that id in this account.',
-  report_queue_full: 'Too many reports are being prepared for this workspace. Try again when one is ready.',
+  report_queue_full: 'Too many reports are being prepared for this organisation. Try again when one is ready.',
   report_rate_limited: 'Too many reports requested in the last minute. Try again shortly.',
   report_not_found: 'Report not found.',
   report_not_ready: 'The report is not ready to download.',

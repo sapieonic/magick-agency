@@ -55,9 +55,8 @@ function winningOverflow(file: string, selector: string): string | undefined {
 
 describe('shell wrappers cannot be scrolled sideways by a popover', () => {
   it.each([
-    ['AgencyLayout.module.css', '.layout'],
-    ['AppLayout.module.css', '.layout'],
-    ['AppLayout.module.css', '.main'],
+    ['ConsoleLayout.module.css', '.layout'],
+    ['ConsoleLayout.module.css', '.main'],
   ])('%s %s ends on overflow: clip', (file, selector) => {
     expect(winningOverflow(file, selector)).toBe('clip');
   });
