@@ -23,9 +23,9 @@ import styles from './GlobalSearch.module.css';
 const CUSTOMER_RESULTS_PATH = '/agency/customers';
 
 export interface GlobalSearchProps {
-  /** Controlled: the shell opens it from the top bar's search field. Uncontrolled without it. */
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  /** The shell holds it, so the top bar's search field can open it too. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -35,20 +35,10 @@ export interface GlobalSearchProps {
  * where it was (the top bar's field, when that opened it); choosing a result leaves focus to the
  * page it opens.
  */
-export function GlobalSearch({ open: openProp, onOpenChange }: GlobalSearchProps = {}) {
-  const [openState, setOpenState] = useState(false);
-  const open = openProp ?? openState;
+export function GlobalSearch({ open, onOpenChange: setOpen }: GlobalSearchProps) {
   const openRef = useRef(open);
   openRef.current = open;
   const returnFocusRef = useRef<HTMLElement | null>(null);
-
-  const setOpen = useCallback(
-    (next: boolean) => {
-      if (openProp === undefined) setOpenState(next);
-      onOpenChange?.(next);
-    },
-    [openProp, onOpenChange],
-  );
 
   // Remember what had focus as it opens (the dialog's input takes it a moment later).
   useLayoutEffect(() => {
@@ -156,10 +146,6 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
     [query, gate.role, gate.isFlagEnabled, gate.isCapabilityEnabled, gate.missedAvailable, accountId, callingCode, campaigns],
   );
   const flat = useMemo(() => answer.groups.flatMap((g) => g.results), [answer]);
-
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
 
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 50);
@@ -270,6 +256,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
+              setSelectedIndex(0);
               clearNumberError();
             }}
           />

@@ -44,10 +44,9 @@ function openPalette() {
   });
   render(
     <MemoryRouter>
-      <GlobalSearch />
+      <GlobalSearch open onOpenChange={() => {}} />
     </MemoryRouter>,
   );
-  fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
   return screen.getByRole('dialog', { name: 'Search' });
 }
 
