@@ -33,9 +33,9 @@ interface Props {
  */
 export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearchClick, phone = false }: Props) {
   const { pathname } = useLocation();
-  const { role, accountId } = useTenant();
+  const { accountId } = useTenant();
   const gate = useNavGate();
-  const crumbs = breadcrumbFor(pathname, useSuppliedCrumbs(pathname), role);
+  const crumbs = breadcrumbFor(pathname, useSuppliedCrumbs(pathname), gate.role);
   const back = phone ? backCrumb(crumbs) : null;
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');
