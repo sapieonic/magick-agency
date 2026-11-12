@@ -10,6 +10,7 @@ import { ToastProvider } from '@magick-agency/web-ui/contexts/ToastContext';
 import RequireAuth from './components/auth/RequireAuth';
 import RequireCapability from './components/auth/RequireCapability';
 import RequireFlag from './components/auth/RequireFlag';
+import RequireGate from './components/auth/RequireGate';
 import HomeRedirect from './components/auth/HomeRedirect';
 import { ProductSurface } from './analytics/ProductSurface';
 import { ConsoleShell } from './components/layout/ConsoleShell';
@@ -17,6 +18,7 @@ import { AgencyArea } from './components/layout/AgencyArea';
 import { SectionLanding } from './components/layout/SectionLanding';
 import { ScopedRouter } from './components/routing/ScopedRouter';
 import { ScopeGate } from './components/routing/ScopeGate';
+import { settingsEntry } from './utils/consoleNav';
 
 /*
  * Route table. Contents: the agency doors (`/agency/login`,
@@ -716,7 +718,8 @@ export default function App() {
 
                 {/*
                   The Settings hub (decision B28), grouped by who a setting affects.
-                  Every entry keeps the guards its `/app` route had.
+                  Every entry keeps the guards its `/app` route had, read from its
+                  `SETTINGS_ENTRIES` gate (`RequireGate`: the capabilities and flags).
                 */}
                 <Route path="/settings" element={<SettingsLayout />}>
                   <Route index element={<SettingsIndexRedirect />} />
@@ -728,13 +731,13 @@ export default function App() {
                       Gating it would lock people out of their own unsubscribe. */}
                   <Route path="notifications" element={<NotificationSettingsPage />} />
                   {/* Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
-                  <Route path="softphone" element={<RequireCapability capability="agency"><RequireFlag flag="agency_softphone_enabled"><SoftphoneSettingsPage /></RequireFlag></RequireCapability>} />
+                  <Route path="softphone" element={<RequireGate gate={settingsEntry('softphone').gate}><SoftphoneSettingsPage /></RequireGate>} />
                   {/* Inbound routing (`docs/inbound.md` §8.1): the account's routes. Account
                       admins (`agency.inbound.write`, which the pages check) behind `agency_inbound_enabled`. */}
-                  <Route path="inbound" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRoutesPage /></RequireFlag></RequireCapability>} />
-                  <Route path="inbound/new" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRouteEditorPage /></RequireFlag></RequireCapability>} />
-                  <Route path="inbound/:routeId" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRouteEditorPage /></RequireFlag></RequireCapability>} />
-                  <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
+                  <Route path="inbound" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRoutesPage /></RequireGate>} />
+                  <Route path="inbound/new" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRouteEditorPage /></RequireGate>} />
+                  <Route path="inbound/:routeId" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRouteEditorPage /></RequireGate>} />
+                  <Route path="call-summaries" element={<RequireGate gate={settingsEntry('call-summaries').gate}><AnalysisProfilesPage /></RequireGate>} />
                   <Route path="team" element={<TeamPage />} />
                   {/* The tenant's accounts. Linked for `account.create` only; the route itself
                       is ungated (the list is `account.read`, which the server enforces), and

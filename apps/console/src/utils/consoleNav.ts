@@ -493,8 +493,8 @@ function settingsGate(gate: Gate): Gate {
 
 /**
  * The Settings hub's entries, in sub-nav order. Each gate is the one its old sidebar entry had
- * (the union, where both shells listed it) plus {@link SETTINGS_GATE}; the routes keep their own
- * guards.
+ * (the union, where both shells listed it) plus {@link SETTINGS_GATE}. A route's capability and
+ * flag guards are read from its entry's gate (`RequireGate`); the permission is the page's to check.
  */
 export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
   /* About the signed-in person, so nothing to gate beyond the hub's own. */
@@ -544,6 +544,13 @@ export function visibleSettingsGroups(input: GateInput): SettingsGroup[] {
     const entries = SETTINGS_ENTRIES.filter((e) => e.scope === scope && passesGate(e.gate, input));
     return entries.length > 0 ? [{ scope, entries }] : [];
   });
+}
+
+/** The Settings entry `id`; its route's guards are read from its gate (`RequireGate`). */
+export function settingsEntry(id: string): SettingsEntry {
+  const entry = SETTINGS_ENTRIES.find((e) => e.id === id);
+  if (!entry) throw new Error(`No Settings entry ${id}`);
+  return entry;
 }
 
 export function settingsEntryForPath(pathname: string): SettingsEntry | null {
