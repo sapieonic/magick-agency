@@ -5,6 +5,8 @@ import { redisCache } from '../cache/redis-cache.js';
 import { runAuditPartitionMaintenance } from '../audit/audit-partition-maintenance.js';
 import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { auditLogger } from '../audit/audit-logger.js';
+import { createPushSender } from '../notifications/push/push-sender.js';
+import { getPushSender, setPushSender } from '../seams/push-sender.js';
 
 /**
  * The platform's background work:
@@ -25,6 +27,10 @@ import { auditLogger } from '../audit/audit-logger.js';
  *     stops in reverse start order; platform starts first, so this stop runs last: every other
  *     area's background writes are in the buffer by then, and no request can buffer a row
  *     after the flush.
+ *  4. The push senders (Mode B; `seams/push-sender.ts`, `docs/seams.md` §3.6): registered when
+ *     `PUSH_*` configures FCM, APNs or both; with neither the seam stays unwired (every send
+ *     `unconfigured`, `away_ring` refused). Boot logs which platforms can be rung (no secrets).
+ *     Cleared and closed in this stop, after every other area has stopped ringing.
  *
  * Returns a stop function the process awaits on shutdown.
  */
@@ -33,6 +39,14 @@ export async function startPlatform(ctx: AppContext): Promise<() => Promise<void
   platformAuditLogger.start();
   auditLogger.start();
   let subscriber: Redis | null = null;
+
+  const push = createPushSender(config.push);
+  if (push) setPushSender(push);
+  logger.info({
+    android: push?.configured('android') ?? false,
+    ios: push?.configured('ios') ?? false,
+    ...(config.push.apns ? { apns_env: config.push.apns.env } : {}),
+  }, push ? 'Push senders configured' : 'Push senders not configured: no phone can be rung while away');
 
   if (config.localCache.enabled) {
     // A dedicated connection: once a client subscribes, ioredis puts it in
@@ -77,5 +91,9 @@ export async function startPlatform(ctx: AppContext): Promise<() => Promise<void
     await platformAuditLogger.shutdown().catch((err) => logger.error({ err }, 'platform audit flush failed'));
     await auditLogger.shutdown().catch((err) => logger.error({ err }, 'audit flush failed'));
     if (subscriber) await subscriber.quit().catch(() => {});
+    if (push) {
+      if (getPushSender() === push) setPushSender(null);
+      await push.close();
+    }
   };
 }

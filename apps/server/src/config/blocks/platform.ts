@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { envBoolean, type Env } from '../env.js';
 import { DEFAULT_RATE_LIMIT_USER_MAX } from '../../api/middleware/rate-limit-defaults.js';
+import { APNS_ENVIRONMENTS, parseApnsKey, parseFcmServiceAccount } from '../../notifications/push/credentials.js';
 
 /**
  * Platform config: identity, tenancy, invites, super-admin, notifications.
@@ -15,6 +16,9 @@ import { DEFAULT_RATE_LIMIT_USER_MAX } from '../../api/middleware/rate-limit-def
  *    the IP buckets (`rateLimit`, `RATE_LIMIT_MAX`, `RATE_LIMIT_IP_AUTH_MAX`, …) live in the
  *    voice block. Same window as those (`RATE_LIMIT_WINDOW`).
  *  - `mobile` (`MOBILE_*`): the mobile app's version gate, served by `GET /client-config`.
+ *  - `push` (`PUSH_*`): the carriers that ring an away agent's phone (Mode B; `docs/seams.md`
+ *    §3.6): `fcm` (Android) and `apns` (iOS VoIP), each present only when its keys are set and
+ *    parsed into keys at load, so a broken credential fails boot, not the first ring.
  *  - There are no peer-service, encryption, service-token, webhook, LLM, scheduler, SQS or
  *    credit blocks (no peer service, no API keys, no credits).
  */
@@ -138,6 +142,51 @@ const mobileSchema = z.object({
   }
 });
 
+/**
+ * `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64`: the base64 of a service account key file of the Firebase
+ * project the Android app is built for (it needs `cloudmessaging.messages.create`). Parsed to its
+ * project id, client email and RSA key; nothing else of the file is kept.
+ */
+const pushFcmSchema = z.object({ serviceAccountJsonB64: z.string() }).transform((v, ctx) => {
+  const parsed = parseFcmServiceAccount(v.serviceAccountJsonB64);
+  if (parsed.ok) return parsed.value;
+  ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['serviceAccountJsonB64'], message: parsed.message });
+  return z.NEVER;
+});
+
+/** Apple's key and team ids: ten upper-case letters and digits. */
+const APPLE_ID = /^[A-Z0-9]{10}$/;
+const apnsRequired = (name: string) => ({ required_error: `${name} is required when any PUSH_APNS_* key is set` });
+
+/**
+ * `PUSH_APNS_*`: all five or none. The key is the team's APNs auth key (`.p8`, base64), named by
+ * its key id; `PUSH_APNS_ENV` picks the APNs a token belongs to and has no default, because a
+ * debug build's token sent to production is refused `BadDeviceToken`, which revokes the device.
+ */
+const pushApnsSchema = z.object({
+  keyP8B64: z.string(apnsRequired('PUSH_APNS_KEY_P8_B64')).transform((raw, ctx) => {
+    const parsed = parseApnsKey(raw);
+    if (parsed.ok) return parsed.value;
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: parsed.message });
+    return z.NEVER;
+  }),
+  keyId: z.string(apnsRequired('PUSH_APNS_KEY_ID'))
+    .regex(APPLE_ID, 'PUSH_APNS_KEY_ID must be the 10-character key id of the .p8 key'),
+  teamId: z.string(apnsRequired('PUSH_APNS_TEAM_ID'))
+    .regex(APPLE_ID, 'PUSH_APNS_TEAM_ID must be the 10-character Apple team id'),
+  bundleId: z.string(apnsRequired('PUSH_APNS_BUNDLE_ID'))
+    .regex(/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/, 'PUSH_APNS_BUNDLE_ID must be the app\'s bundle id (reverse DNS)')
+    .refine((v) => !v.endsWith('.voip'), 'PUSH_APNS_BUNDLE_ID is the bundle id without .voip (the VoIP topic adds it)'),
+  env: z.enum(APNS_ENVIRONMENTS, {
+    errorMap: () => ({ message: 'PUSH_APNS_ENV must be sandbox or production (required when any PUSH_APNS_* key is set)' }),
+  }),
+}).transform(({ keyP8B64, ...rest }) => ({ key: keyP8B64, ...rest }));
+
+const pushSchema = z.object({
+  fcm: pushFcmSchema.optional(),
+  apns: pushApnsSchema.optional(),
+});
+
 export const platformConfigSchema = z.object({
   firebase: firebaseSchema.optional(),
   superAdmin: superAdminSchema,
@@ -150,6 +199,7 @@ export const platformConfigSchema = z.object({
   auditPartitions: auditPartitionsSchema.default({}),
   userRateLimit: userRateLimitSchema.default({}),
   mobile: mobileSchema.default({}),
+  push: pushSchema.default({}),
 });
 
 /** Drop unset values so `.default({})` blocks see an absent key, not `{ x: undefined }`. */
@@ -204,5 +254,18 @@ export function readPlatformEnv(env: Env): Record<string, unknown> {
       iosStoreUrl: env['MOBILE_IOS_STORE_URL'],
       androidStoreUrl: env['MOBILE_ANDROID_STORE_URL'],
     }),
+    push: {
+      fcm: env['PUSH_FCM_SERVICE_ACCOUNT_JSON_B64']
+        ? { serviceAccountJsonB64: env['PUSH_FCM_SERVICE_ACCOUNT_JSON_B64'] }
+        : undefined,
+      // Any one key set makes the block present, so a partial set fails naming each missing key.
+      apns: compact({
+        keyP8B64: env['PUSH_APNS_KEY_P8_B64'],
+        keyId: env['PUSH_APNS_KEY_ID'],
+        teamId: env['PUSH_APNS_TEAM_ID'],
+        bundleId: env['PUSH_APNS_BUNDLE_ID'],
+        env: env['PUSH_APNS_ENV'],
+      }),
+    },
   };
 }
