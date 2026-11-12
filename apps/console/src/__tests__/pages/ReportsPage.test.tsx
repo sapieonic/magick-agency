@@ -158,6 +158,14 @@ describe('History', () => {
 });
 
 describe('who sees what', () => {
+  it('names the list Exports, as its tab does; one file is still a report', async () => {
+    mocks.listReports.mockResolvedValue(page([]));
+    renderAt();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Exports');
+    expect(screen.getByRole('tablist', { name: 'Exports' })).toBeTruthy();
+    expect(screen.getByTestId('report-entry-reports_page').textContent).toBe('Export account report');
+  });
+
   it('gives a supervisor both tabs, the account export, and the subscriptions list', async () => {
     mocks.listReports.mockResolvedValue(page([]));
     renderAt();

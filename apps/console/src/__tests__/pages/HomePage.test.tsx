@@ -216,6 +216,13 @@ describe('the count it shares with the badge', () => {
 });
 
 describe('Today so far', () => {
+  it('links to Analytics by its name, which is where it goes', async () => {
+    mocks.getAgencyGroupedStats.mockResolvedValue({ rows: [], total_groups: 0 });
+    renderHome();
+    const link = await screen.findByRole('link', { name: 'Open Analytics' });
+    expect(link.getAttribute('href')).toBe('/agency/analytics');
+  });
+
   it('sums one grouped read from local midnight, by campaign', async () => {
     mocks.getAgencyGroupedStats.mockResolvedValue({
       rows: [
