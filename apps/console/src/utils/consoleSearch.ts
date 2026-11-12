@@ -98,7 +98,9 @@ export interface SearchGroup {
  * finds it.
  */
 const PAGE_KEYWORDS: Record<string, readonly string[]> = {
-  'home:home': ['attention', 'today', 'floor', 'stalled', 'paused', 'overdue'],
+  // What needs the supervisor is on Home, not in an email: these words find it before the
+  // Email notifications setting (pages are listed before settings).
+  'home:home': ['attention', 'needs attention', 'what needs me', 'alerts', 'notifications', 'today', 'floor', 'stalled', 'paused', 'overdue'],
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
   'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],
@@ -218,7 +220,8 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
     settings: [{ label: 'Theme', keywords: ['theme', 'dark mode', 'light mode', 'appearance', 'colour', 'color'] }],
   },
   notifications: {
-    keywords: ['notification', 'email', 'digest', 'summary emails', 'unsubscribe', 'alert', 'daily', 'weekly'],
+    // Only the emails the page lists, each sent as it happens: no digest words.
+    keywords: ['notification', 'email', 'unsubscribe', 'alert'],
     settings: [],
   },
   softphone: {
