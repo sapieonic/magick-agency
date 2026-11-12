@@ -225,4 +225,18 @@ describe('ProfileMenu — who, theme and sign out', () => {
     expect(initialsFor('Priya', 'p@x.com')).toBe('PR');
     expect(initialsFor(null, 'rahul@x.com')).toBe('RA');
   });
+
+  it('uses letters and digits only, in any script, skipping words without one', () => {
+    expect(initialsFor('Manas (Dev)', 'm@x.com')).toBe('MD');
+    expect(initialsFor('(Dev) Manas', 'm@x.com')).toBe('DM');
+    expect(initialsFor('Manas - Dev', 'm@x.com')).toBe('MD');
+    expect(initialsFor('"Priya"', 'p@x.com')).toBe('PR');
+    expect(initialsFor('Ölüm Şahin', 'o@x.com')).toBe('ÖŞ');
+    expect(initialsFor('मनस निलोरौत', 'm@x.com')).toBe('मनि');
+    expect(initialsFor('Team 7', 't@x.com')).toBe('T7');
+    // Nothing readable in the name: the email's local part, past its punctuation.
+    expect(initialsFor('(  ) --', '_r.ahul@x.com')).toBe('RA');
+    expect(initialsFor('', '.@x.com')).toBe('?');
+    expect(initialsFor(null, null)).toBe('?');
+  });
 });
