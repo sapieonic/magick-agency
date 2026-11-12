@@ -10,8 +10,11 @@ import { closeTestPool, getTestPool } from '../setup/test-utils.js';
 
 afterAll(closeTestPool);
 
+// No migration lock: nothing else migrates this file's own database copy, and after a refused
+// Down the runner's unlock fails on its aborted transaction, so the lock lingers until the session
+// ends, which a restore right after could race.
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
-  runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {} });
+  runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
 const FILE = '0033_inbound_answered_from_index.sql';
 const INDEX = 'idx_agency_inbound_calls_answered_from';
