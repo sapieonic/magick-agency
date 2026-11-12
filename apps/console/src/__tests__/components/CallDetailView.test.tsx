@@ -196,6 +196,17 @@ describe('a missing recording says which kind of missing', () => {
     expect(note.textContent).not.toContain('check back soon');
   });
 
+  it('says a call that was never answered has no recording, not that one is coming', async () => {
+    // A busy call: recording asked for, never answered, so nothing was ever recorded.
+    renderView({
+      call: { ...CALL, recording_url: null, recording_requested: true, answered_at: null, talk_time_seconds: 0 },
+      recordingEnabled: true,
+    });
+
+    const note = await screen.findByTestId('recording-note');
+    expect(note.textContent).toBe('No recording: the call was not answered.');
+  });
+
   it('still says "check back soon" when the recording really is finalising', async () => {
     renderView({
       call: { ...CALL, recording_url: null, recording_requested: true },
