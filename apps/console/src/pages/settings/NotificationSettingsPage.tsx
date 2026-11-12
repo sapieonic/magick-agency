@@ -91,6 +91,22 @@ function isAtDefault(
     && value.frequency === event.default_frequency;
 }
 
+/**
+ * The page guide's tips, from the events the server lists, never a fixed list: the catalogue is
+ * served (see above), and a tip about summary emails on a page that lists none (QA
+ * notifications:ux:204961fb8d) described emails nobody can receive.
+ */
+function guideTips(events: readonly NotificationEventPreference[]): string[] {
+  const tips: string[] = [];
+  if (events.some((event) => event.cadence !== 'digest')) {
+    tips.push('Each email goes out as soon as its event happens.');
+  }
+  if (events.some((event) => event.cadence === 'digest')) {
+    tips.push('A summary is only sent for periods with activity, so a quiet week means no email.');
+  }
+  return tips;
+}
+
 export default function NotificationSettingsPage() {
   const { tenantId, role } = useTenant();
   const readers = useGateReaders();
@@ -259,9 +275,7 @@ export default function NotificationSettingsPage() {
           + 'they do not affect your colleagues, and you have separate settings in every workspace '
           + 'you belong to.'
         }
-        tips={[
-          'A summary is only sent for periods with activity, so a quiet week means no email.',
-        ]}
+        tips={guideTips(events)}
       />
 
       {homeShown && (
