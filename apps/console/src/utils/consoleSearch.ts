@@ -25,7 +25,8 @@ import { hasPermission } from './permissions';
 /**
  * What ⌘K (`GlobalSearch`) finds, and what the Settings hub's "Find a setting" filters (B28):
  * a phone number's history, pages, Settings pages, campaigns, each campaign's own pages (its
- * tabs, History and Soft-phone calls) and campaign settings sections.
+ * tabs, History and Soft-phone calls) and campaign settings sections; with nothing typed, the
+ * pages, the reader's recent campaigns and the Settings pages.
  *
  * Pure on purpose, like `consoleNav.ts`, whose tables it reads: the pages are the sidebar's
  * sections and tabs, and the Settings pages are the hub's entries, each offered under the gate
@@ -55,11 +56,19 @@ function matchesAll(tokens: readonly string[], text: string): boolean {
 
 /* ── Results ─────────────────────────────────────────────────────────────── */
 
-export type SearchGroupId = 'number' | 'pages' | 'settings' | 'campaigns' | 'campaign-pages' | 'campaign-settings';
+export type SearchGroupId =
+  | 'number'
+  | 'pages'
+  | 'recent-campaigns'
+  | 'settings'
+  | 'campaigns'
+  | 'campaign-pages'
+  | 'campaign-settings';
 
 export const SEARCH_GROUP_TITLES: Record<SearchGroupId, string> = {
   number: 'Phone number',
   pages: 'Pages',
+  'recent-campaigns': 'Recent campaigns',
   settings: 'Settings',
   campaigns: 'Campaigns',
   'campaign-pages': 'Campaign pages',
@@ -443,6 +452,31 @@ function inEachCampaign<T>(
 }
 
 /**
+ * Before anything is typed, the campaigns this reader opened most recently
+ * (`utils/recentCampaigns.ts`), newest first. Once the account's list is read, under the names it
+ * has now, and without one it no longer has (deleted); until then, as remembered.
+ */
+export function recentCampaignResults(
+  recent: readonly SearchCampaign[],
+  campaigns: readonly SearchCampaign[] | null,
+): SearchResult[] {
+  const current = campaigns ? new Map(campaigns.map((c) => [c.id, c.name])) : null;
+  return recent.flatMap((c) => {
+    const name = current ? current.get(c.id) : c.name;
+    if (name === undefined) return [];
+    return [
+      {
+        key: `recent:${c.id}`,
+        group: 'recent-campaigns' as const,
+        title: name,
+        kind: 'Campaign',
+        target: { type: 'path' as const, to: `/agency/campaigns/${c.id}` },
+      },
+    ];
+  }).slice(0, MAX_CAMPAIGNS);
+}
+
+/**
  * A campaign's own page ("Diwali renewals › Call log") in each campaign the query names
  * ({@link inEachCampaign}): "diwali history" finds Diwali renewals' History. Only the screens
  * the reader may open (`gate`, each as its tab), in tab order.
@@ -532,6 +566,8 @@ export interface SearchInput {
   defaultCallingCode: string;
   /** The account's campaigns, or null while unread (or not readable). */
   campaigns: readonly SearchCampaign[] | null;
+  /** The campaigns this reader opened most recently, newest first: listed while nothing is typed. */
+  recentCampaigns?: readonly SearchCampaign[];
 }
 
 export interface SearchAnswer {
@@ -580,6 +616,9 @@ export function searchConsole(input: SearchInput): SearchAnswer {
   }
 
   groups.push(group('pages', pageResults(tokens, input.gate)));
+  if (tokens.length === 0 && input.recentCampaigns && canSearchCampaigns(input.gate, input.accountId)) {
+    groups.push(group('recent-campaigns', recentCampaignResults(input.recentCampaigns, input.campaigns)));
+  }
   groups.push(group('settings', settingsResults(tokens, input.gate)));
 
   if (input.campaigns && canSearchCampaigns(input.gate, input.accountId)) {

@@ -21,6 +21,7 @@ import { browserStorage, clearRecentCustomerSearches } from '../utils/customerSe
 import { clearCustomerSearchAnswers } from '../utils/customerHistoryStore';
 import { resetSearchCampaignsCache } from '../hooks/useSearchCampaigns';
 import { resetCampaignTabBadges } from '../hooks/useCampaignTabBadges';
+import { clearRecentCampaigns } from '../utils/recentCampaigns';
 import { isJoinInProgress, isThisTabsJoin } from '../utils/inviteJoin';
 import type { User, Tenant, Membership, SessionResponse, SessionRefusalCode } from '../types/auth';
 import { sessionRefusalCode } from '../utils/sessionRefusal';
@@ -38,13 +39,15 @@ import { useSessionWatchdog } from './useSessionWatchdog';
  *   device and the answers held in memory. A phone number is personal data, and on a shared
  *   machine the next person must not inherit the last one's;
  * - search's campaign list (`useSearchCampaigns`) and the campaign bar's badge counts
- *   (`useCampaignTabBadges`), each kept for up to a minute per account.
+ *   (`useCampaignTabBadges`), each kept for up to a minute per account;
+ * - search's recent campaigns on this device (`utils/recentCampaigns.ts`).
  */
 function clearSignedInStores(): void {
   clearRecentCustomerSearches(browserStorage());
   clearCustomerSearchAnswers();
   resetSearchCampaignsCache();
   resetCampaignTabBadges();
+  clearRecentCampaigns(browserStorage());
 }
 
 // The invite types are part of this context's API; they live with the flow.

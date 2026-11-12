@@ -1,6 +1,7 @@
 import { usePageCrumbs } from '../components/layout/PageCrumbs';
 import type { Crumb } from '../utils/consoleNav';
 import { CAMPAIGN_TABS, campaignTabHref, type CampaignTabId } from '../utils/agencyCampaignTabs';
+import { useRememberCampaignVisit } from './useRememberCampaignVisit';
 
 /** What the breadcrumb needs of a campaign: the id it was read for, and its name. */
 export interface CrumbCampaign {
@@ -27,6 +28,7 @@ export function useCampaignCrumbs(
   subTrail: Crumb[] = [],
 ): void {
   usePageCrumbs(campaignCrumbs(campaignId, campaign, tab, subTrail));
+  useRememberCampaignVisit(campaignId, campaign);
 }
 
 /** The crumbs {@link useCampaignCrumbs} supplies: the campaign's name (or "Campaign"), the tab, then `subTrail`. */

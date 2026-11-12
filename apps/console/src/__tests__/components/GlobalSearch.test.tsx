@@ -49,6 +49,7 @@ import { resetCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSe
 import { clearCustomerSearchAnswers, customerSearchAnswer } from '../../utils/customerHistoryStore';
 import { ApiError } from '../../api/client';
 import { SEARCH_CAMPAIGNS_FRESH_MS, resetSearchCampaignsCache } from '../../hooks/useSearchCampaigns';
+import { rememberCampaignVisit } from '../../utils/recentCampaigns';
 
 const fixture = customerHistoryFixture();
 
@@ -99,6 +100,7 @@ beforeEach(() => {
   mocks.dialerOn = true;
   mocks.phone = false;
   lastLocation = null;
+  localStorage.clear();
   resetSearchCampaignsCache();
   clearCustomerSearchAnswers();
   resetCustomerSearchDefaultCallingCode();
@@ -380,6 +382,23 @@ describe('campaigns', () => {
     type('2026');
     await waitFor(() => expect(options().map((o) => o.textContent)).toContain('2026Campaign'));
     expect(screen.queryByTestId('global-search-number-note')).toBeNull();
+  });
+
+  it('list the ones opened most recently in this account before anything is typed, under the pages', async () => {
+    rememberCampaignVisit('tenant-1', 'account-1', 'c-2', 'Q4 collections');
+    rememberCampaignVisit('tenant-1', 'account-1', 'c-1', 'Diwali renewals');
+    rememberCampaignVisit('tenant-1', 'account-2', 'c-9', 'Another account’s');
+    renderShell();
+    fireEvent.click(trigger());
+    const group = within(dialog()).getByRole('group', { name: 'Recent campaigns' });
+    expect(within(group).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Diwali renewalsCampaign',
+      'Q4 collectionsCampaign',
+    ]);
+    const headers = within(dialog()).getAllByRole('presentation').map((h) => h.textContent);
+    expect(headers.indexOf('Recent campaigns')).toBe(headers.indexOf('Pages') + 1);
+    fireEvent.click(within(group).getAllByRole('option')[1]!);
+    expect(where()).toBe('/agency/campaigns/c-2');
   });
 
   it('say so when they could not be read', async () => {

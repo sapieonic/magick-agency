@@ -373,6 +373,25 @@ describe('everything together', () => {
     }
   });
 
+  it('lists recent campaigns under the pages while nothing is typed, as the account has them now', () => {
+    const recentCampaigns = [
+      { id: 'c-1', name: 'Diwali (old name)' },
+      { id: 'c-gone', name: 'Deleted since' },
+    ];
+    expect(groups({ recentCampaigns })).toEqual(['pages', 'recent-campaigns', 'settings']);
+    const recent = searchConsole({ ...base, recentCampaigns }).groups.find((g) => g.id === 'recent-campaigns')!;
+    expect(recent.title).toBe('Recent campaigns');
+    expect(recent.results.map((r) => [r.title, r.target])).toEqual([
+      ['Diwali renewals', { type: 'path', to: '/agency/campaigns/c-1' }],
+    ]);
+    // Until the list is read, as remembered.
+    const unread = searchConsole({ ...base, campaigns: null, recentCampaigns }).groups.find((g) => g.id === 'recent-campaigns')!;
+    expect(unread.results.map((r) => r.title)).toEqual(['Diwali (old name)', 'Deleted since']);
+    // Not once something is typed, nor for a reader who may not read campaigns.
+    expect(groups({ recentCampaigns, query: 'diwali' })).not.toContain('recent-campaigns');
+    expect(groups({ recentCampaigns, gate: ALL_ON('agent') })).not.toContain('recent-campaigns');
+  });
+
   it('never shows campaigns to a reader who may not read them, whatever list it is given', () => {
     expect(groups({ query: 'diwali', gate: ALL_ON('agent') })).toEqual([]);
   });

@@ -48,6 +48,7 @@ import { signInWithPopup } from 'firebase/auth';
 import { createSession } from '../../api/auth';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { publishCampaignTabBadge, resetCampaignTabBadges, useCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
+import { readRecentCampaigns, rememberCampaignVisit } from '../../utils/recentCampaigns';
 
 function session(id: string): SessionResponse {
   return {
@@ -89,7 +90,7 @@ beforeEach(() => {
 });
 
 describe('sign-out', () => {
-  it('empties search’s campaign list and the badge counts before the next person signs in', async () => {
+  it('empties search’s campaign list, its recent campaigns and the badge counts before the next person signs in', async () => {
     const { result } = renderHook(() => useAuth(), { wrapper });
     await waitFor(() => expect(testState.authCallback).not.toBeNull());
     await act(async () => {
@@ -105,6 +106,8 @@ describe('sign-out', () => {
     const firstBadge = renderHook(() => useCampaignTabBadge('onShift', 'c-1', true));
     expect(firstBadge.result.current).toBe(7);
     firstBadge.unmount();
+    rememberCampaignVisit('t1', 'acc-1', 'c-1', 'Diwali renewals');
+    expect(readRecentCampaigns('t1', 'acc-1')).toHaveLength(1);
 
     await act(async () => {
       await result.current.logout();
@@ -117,6 +120,7 @@ describe('sign-out', () => {
     const secondBadge = renderHook(() => useCampaignTabBadge('onShift', 'c-1', true));
     expect(secondBadge.result.current).toBeNull();
     expect(api.getAgencyCampaignStats).toHaveBeenCalledTimes(1);
+    expect(readRecentCampaigns('t1', 'acc-1')).toEqual([]);
   });
 
   it('drops a badge read that was still on its way when the stores were cleared', async () => {
