@@ -122,7 +122,7 @@ String? softphoneFieldValue(CallField? field, Object? value) {
 }
 
 String _dncReach(DncEntry entry, ManualCall call) => switch (entry.scope) {
-      DncEntryScope.tenant => 'Every campaign and account in this workspace',
+      DncEntryScope.tenant => 'Every campaign and account in this organisation',
       DncEntryScope.account => 'This account',
       _ => entry.campaignId != null && call.tag?.campaignId == entry.campaignId
           ? 'The campaign ${call.tag!.campaignName}'

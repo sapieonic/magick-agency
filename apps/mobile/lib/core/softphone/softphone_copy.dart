@@ -94,7 +94,7 @@ const softphoneStillOpenCopy = 'Your soft phone is still open. Try again.';
 /// The soft phone open in another account (the flag on here).
 String softphoneElsewhereDetailCopy(String? account) => account != null
     ? 'Your soft-phone session is open in $account. You can only have one session at a time.'
-    : 'Your soft-phone session is open in another account of this workspace. You can only have one session at a time.';
+    : 'Your soft-phone session is open in another account of this organisation. You can only have one session at a time.';
 
 String softphoneElsewhereCallPendingCopy(String? account) =>
     'Your soft phone ${account != null ? 'in $account' : 'in the other account'} has a call that isn’t finished, so it’s still open. Hang up and save its outcome there first.';

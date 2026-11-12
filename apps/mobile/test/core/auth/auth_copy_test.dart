@@ -25,7 +25,7 @@ void main() {
     expect(msg('weak-password', AuthAction.invite), 'That password is too easy to guess. Make it longer.');
     expect(
       msg('email-already-in-use', AuthAction.invite),
-      'That address already has a password. Enter it and we will add this workspace to it.',
+      'That address already has a password. Enter it and we will add this organisation to it.',
     );
   });
 

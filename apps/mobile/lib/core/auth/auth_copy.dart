@@ -34,7 +34,7 @@ String authErrorMessage(AuthFailure failure, {AuthAction action = AuthAction.sig
     case 'weak-password':
       return 'That password is too easy to guess. Make it longer.';
     case 'email-already-in-use':
-      return 'That address already has a password. Enter it and we will add this workspace to it.';
+      return 'That address already has a password. Enter it and we will add this organisation to it.';
     case AuthFailure.cancelled:
       return 'The Google window closed before you finished. Try again.';
     case 'google-unavailable':
