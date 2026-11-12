@@ -105,7 +105,7 @@ afterEach(() => {
 describe('/dialer/phone', () => {
   it('opens a soft-phone session and connects its station socket', async () => {
     await mount();
-    expect(mocks.openSoftphoneSession).toHaveBeenCalledWith('t-1', 'a-1');
+    expect(mocks.openSoftphoneSession).toHaveBeenCalledWith('t-1', 'a-1', { takeOver: true });
     expect(latestSocket().url).toContain('/proxy/agency/station/sess-sp?token=t1');
     expect(screen.getByTestId('rail-label').textContent).toBe('Connecting your phone…');
     await act(async () => latestSocket().open());
@@ -435,7 +435,7 @@ describe('/dialer/phone', () => {
       expect(mocks.getSoftphoneBootstrap.mock.calls[0]).toEqual(['t-1', 'a-2']);
       expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-b', 't-1', 'a-2');
       expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(2);
-      expect(mocks.openSoftphoneSession.mock.calls[1]).toEqual(['t-1', 'a-1']);
+      expect(mocks.openSoftphoneSession.mock.calls[1]).toEqual(['t-1', 'a-1', { takeOver: true }]);
       expect(screen.queryByTestId('softphone-elsewhere')).toBeNull();
       expect(latestSocket().url).toContain('sess-sp');
     });

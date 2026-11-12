@@ -78,6 +78,7 @@ const ALL_MIGRATIONS = [
   '0027_inbound_connect', '0028_inbound_missed_follow_up', '0029_inbound_reach_settles', '0030_inbound_reached_on_outcome',
   '0031_ingest_dedupe_columns', '0032_inbound_route_wrapup',
   '0033_inbound_answered_from_index', '0034_dnc_phone_ending_index',
+  '0035_one_station_per_agent',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

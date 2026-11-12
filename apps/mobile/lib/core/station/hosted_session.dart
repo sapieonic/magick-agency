@@ -9,7 +9,7 @@ import 'station_signals.dart';
 /// join's [SessionBootstrap]) or a soft-phone session (from
 /// `POST /softphone/sessions`).
 ///
-/// The server allows one live session per agent per tenant, so the app holds
+/// The server allows one live session per agent, across tenants (OS1), so the app holds
 /// one of these at a time, on one socket, one audio engine and one on-duty
 /// service, whichever kind it is. Everything the socket needs is the same for
 /// both kinds; what only a campaign has (its catalog, break reasons, roster

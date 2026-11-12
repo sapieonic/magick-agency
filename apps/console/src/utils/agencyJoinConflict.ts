@@ -1,5 +1,6 @@
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentState, AgencySessionConflict } from '../types/agency';
+import { errorCode } from './agencyErrors';
 
 /**
  * The `409 session_on_other_campaign` refusal from `POST /proxy/agency/sessions`
@@ -209,6 +210,10 @@ export function switchFailureCopy(stage: SwitchStage, campaignName: string, err:
   const detail = err instanceof Error ? err.message : null;
   switch (stage) {
     case 'resume':
+      // OS3: that campaign's station is open on another device, which this window must not take.
+      if (errorCode(err) === 'station_on_other_device') {
+        return `${campaignName} is open on another device. Leave it there, then join here.`;
+      }
       return detail
         ? `Couldn’t reach ${campaignName} to leave it — ${detail}`
         : `Couldn’t reach ${campaignName} to leave it. Try again.`;

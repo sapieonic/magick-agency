@@ -25,7 +25,7 @@ const PROFILE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const LEG = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const repos = vi.hoisted(() => ({
-  session: { joinSoftphone: vi.fn(), findLiveForAgent: vi.fn(), findById: vi.fn() },
+  session: { joinSoftphone: vi.fn(), findLiveForAgent: vi.fn(), findById: vi.fn(), claimStationDevice: vi.fn(async (): Promise<Record<string, unknown>> => ({ ok: true })) },
   campaign: { findById: vi.fn(), list: vi.fn(), listSoftphoneTaggable: vi.fn() },
   manual: { findById: vi.fn(), listForAgent: vi.fn(), listForAccount: vi.fn() },
   settings: { get: vi.fn(), upsert: vi.fn() },
@@ -53,6 +53,8 @@ vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () =>
 vi.mock('@magick-agency/db/repositories/call-analysis-profile.repository', () => ({ callAnalysisProfileRepository: repos.profiles }));
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({ webrtcCallRepository: repos.calls }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: repos.accounts }));
+const { tenants } = vi.hoisted(() => ({ tenants: { findById: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({ tenantRepository: tenants }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -453,6 +455,50 @@ describe('POST /softphone/sessions', () => {
       error: 'Conflict', code: 'session_on_softphone', message: expect.stringMatching(/another account/i),
       session_id: SESSION, account_id: SIBLING, account_name: 'North Region',
     });
+    expect(runtime.rehydrateAgent).not.toHaveBeenCalled();
+    expect(runtime.tokens.mint).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /softphone/sessions — one station per agent (OS1, OS3)', () => {
+  const DEVICE = 'tab-0123456789abcdef';
+
+  it('409 session_in_other_tenant names the tenant only; nothing rehydrated or minted', async () => {
+    tenants.findById.mockResolvedValue({ id: 'tenant-2', name: 'Acme' });
+    repos.session.joinSoftphone.mockResolvedValue({ ok: false, reason: 'other_tenant', session: { id: 'elsewhere', tenant_id: 'tenant-2' } });
+    const res = await post('/softphone/sessions', { agent_user_id: AGENT });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict', code: 'session_in_other_tenant', message: expect.stringContaining('Acme'),
+      tenant_id: 'tenant-2', tenant_name: 'Acme',
+    });
+    expect(runtime.rehydrateAgent).not.toHaveBeenCalled();
+    expect(runtime.tokens.mint).not.toHaveBeenCalled();
+  });
+
+  it('a resume from another device is refused before the upsert; take_over is claimed', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue({
+      id: SESSION, tenant_id: TENANT, account_id: ACCOUNT, kind: 'softphone', campaign_id: null, left_at: null,
+      station_device_id: 'phone-fedcba9876543210', client_kind: 'mobile',
+    });
+    const refused = await post('/softphone/sessions', { agent_user_id: AGENT, device_id: DEVICE });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ code: 'station_on_other_device', session_id: SESSION, client_kind: 'mobile' });
+    expect(repos.session.joinSoftphone).not.toHaveBeenCalled();
+
+    repos.session.joinSoftphone.mockResolvedValue({ ok: true, created: false, session: { id: SESSION, kind: 'softphone' } });
+    const taken = await post('/softphone/sessions', { agent_user_id: AGENT, device_id: DEVICE, take_over: true });
+    expect(taken.statusCode).toBe(200);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith(SESSION, { deviceId: DEVICE, takeOver: true }, { reconnect: false });
+  });
+
+  it('a lost claim is station_on_other_device, with no rehydrate and no token', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(null);
+    repos.session.joinSoftphone.mockResolvedValue({ ok: true, created: false, session: { id: SESSION, kind: 'softphone' } });
+    repos.session.claimStationDevice.mockResolvedValueOnce({ ok: false, reason: 'held_elsewhere', client_kind: 'web' });
+    const res = await post('/softphone/sessions', { agent_user_id: AGENT, device_id: DEVICE });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'station_on_other_device', client_kind: 'web' });
     expect(runtime.rehydrateAgent).not.toHaveBeenCalled();
     expect(runtime.tokens.mint).not.toHaveBeenCalled();
   });

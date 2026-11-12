@@ -25,7 +25,7 @@ final _log = Log('station.softphone');
 /// the close.
 ///
 /// ── The session's own account ───────────────────────────────────────────────
-/// One live session per agent per TENANT, so the session may be in a sibling
+/// One live session per agent (across tenants, OS1), so the session may be in a sibling
 /// account. The bootstrap names the agent's session tenant-wide with its
 /// account, but reads its call only in the account asked, and `leave` is
 /// scoped to the session's account: both go with [sessionAccountId] (the

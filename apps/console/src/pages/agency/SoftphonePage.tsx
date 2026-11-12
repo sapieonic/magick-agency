@@ -56,7 +56,7 @@ export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
  * station's microphone and its playback.
  *
  * An agent already live on a campaign is refused (`session_on_campaign`): one
- * session per agent per tenant, one pair of ears. The answer is not a second
+ * session per agent across tenants (OS1), one pair of ears. The answer is not a second
  * session but the switch on that one (§4.2), which this page offers — the
  * station then shows the soft phone in place, on its own socket, and "Return to
  * campaign" takes them back. A soft-phone session open in a sibling account is
@@ -424,7 +424,7 @@ export const SOFTPHONE_ELSEWHERE_COPY = {
  * soft-phone session is open in a SIBLING account of the tenant. The server never
  * rehydrates it here — every route on it is scoped to its own account, so this
  * console could dial nothing from it — and cannot open a second one beside it (one
- * live session per agent per tenant).
+ * live session per agent, across tenants since OS1).
  *
  * The remedy is one click: close that session and open the soft phone here
  * (`closeSoftphoneSession`, the campaign join's close too). It reads and leaves the
@@ -530,7 +530,7 @@ export const SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY = (campaign: string, account: str
  * phone in place.
  *
  * ── A campaign session in a sibling account ──────────────────────────────────
- * One live session per agent per TENANT, so the session may be in another account
+ * One live session per agent (across tenants, OS1), so the session may be in another account
  * (`refusal.account_id`). Every route on it is scoped to that account, and so is the
  * station that shows the soft phone in place: switching it with this account's id
  * is a 404, and `/station` in this account cannot open that campaign. So the switch

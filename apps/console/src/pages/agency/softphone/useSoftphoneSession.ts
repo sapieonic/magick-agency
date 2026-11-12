@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { pageWasDiscarded } from '../../../utils/stationDevice';
 import { mintStationToken } from '../../../api/agency';
 import {
   getSoftphoneBootstrap,
@@ -26,7 +27,7 @@ export type SoftphoneSessionState =
   | { status: 'off' }
   /**
    * Off here, and the agent's soft-phone session is in ANOTHER account of the
-   * tenant (`sessionAccountId`): one live session per agent per tenant, so this
+   * tenant (`sessionAccountId`): one live session per agent (across tenants, OS1), so this
    * account cannot open one, and the server rehydrates only a session in the
    * account it is asked for. The page can only close it — `leave` with the
    * session's own account — and say who can save an outcome its call still owes
@@ -130,7 +131,13 @@ export function useSoftphoneSession({
         const here = await offHere();
         if (here.kind !== 'open') return { off: true as const, here };
       }
-      return { off: false as const, result: await retryOnStationTokenUnavailable(() => openSoftphoneSession(tenantId, accountId)) };
+      // OS4: the first open of a page the browser reloaded by itself (a discarded tab) does not take
+      // the station from another device; Retry (`attempt` > 0) is the agent's own choice, and does.
+      const takeOver = attempt > 0 || !pageWasDiscarded();
+      return {
+        off: false as const,
+        result: await retryOnStationTokenUnavailable(() => openSoftphoneSession(tenantId, accountId, { takeOver })),
+      };
     })
       .then(async (outcome) => {
         if (cancelled) return;

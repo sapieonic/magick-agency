@@ -84,6 +84,15 @@ enum AgencyErrorCode implements WireEnum {
 
   /// Any other reason the dial could not be placed; `message` says which.
   redialBlocked('redial_blocked'),
+
+  /// 409 (OS3) on join, the soft-phone open or a token mint: another device holds this
+  /// session's station and the request did not take it over. Nothing changed. See
+  /// [StationOnOtherDeviceRefusal].
+  stationOnOtherDevice('station_on_other_device'),
+
+  /// 409 (OS1) on join or the soft-phone open: the agent is live in another organisation (tenant).
+  /// Nothing here can end it. `message` names the workspace.
+  sessionInOtherTenant('session_in_other_tenant'),
   unknown('');
 
   const AgencyErrorCode(this.wire);
@@ -201,28 +210,25 @@ final class ErrorBody {
 
   /// The structured 409 for `session_on_other_campaign`, when this is one
   /// and its fields read.
-  SessionCampaignConflict? get campaignConflict {
-    if (code != AgencyErrorCode.sessionOnOtherCampaign) return null;
-    try {
-      return SessionCampaignConflict.fromJson(raw);
-    } on FormatException {
-      return null;
-    }
-  }
+  SessionCampaignConflict? get campaignConflict =>
+      _readAgency(AgencyErrorCode.sessionOnOtherCampaign, SessionCampaignConflict.fromJson);
 
   /// The structured 409 for `session_on_softphone`, when this is one and its
   /// fields read.
-  SessionOnSoftphoneRefusal? get softphoneConflict {
-    if (code != AgencyErrorCode.sessionOnSoftphone) return null;
-    try {
-      return SessionOnSoftphoneRefusal.fromJson(raw);
-    } on FormatException {
-      return null;
-    }
-  }
+  SessionOnSoftphoneRefusal? get softphoneConflict =>
+      _readAgency(AgencyErrorCode.sessionOnSoftphone, SessionOnSoftphoneRefusal.fromJson);
 
-  T? _read<T>(SoftphoneErrorCode want, T Function(Map<String, Object?>) decode) {
-    if (softphoneCode != want) return null;
+  /// The 409 `station_on_other_device` refusal (OS3), when this is one that reads.
+  StationOnOtherDeviceRefusal? get stationOnOtherDevice =>
+      _readAgency(AgencyErrorCode.stationOnOtherDevice, StationOnOtherDeviceRefusal.fromJson);
+
+  T? _readAgency<T>(AgencyErrorCode want, T Function(Map<String, Object?>) decode) =>
+      code == want ? _decode(decode) : null;
+
+  T? _read<T>(SoftphoneErrorCode want, T Function(Map<String, Object?>) decode) =>
+      softphoneCode == want ? _decode(decode) : null;
+
+  T? _decode<T>(T Function(Map<String, Object?>) decode) {
     try {
       return decode(raw);
     } on FormatException {
@@ -394,4 +400,37 @@ final class SessionOnSoftphoneRefusal {
 
   @override
   int get hashCode => Object.hash(sessionId, accountId, accountName, message);
+}
+
+/// 409 `station_on_other_device` (OS3): another device holds this session's station, and the
+/// request (the join, the soft-phone open or a token mint) did not take it over. Nothing changed.
+/// The remedy is the same request with `take_over: true`, on the agent's own "Use this phone".
+///
+/// Contract: `AgencyStationOnOtherDeviceRefusal` (`agency/station-device.ts`).
+@immutable
+final class StationOnOtherDeviceRefusal {
+  const StationOnOtherDeviceRefusal({required this.sessionId, required this.clientKind, this.message});
+
+  factory StationOnOtherDeviceRefusal.fromJson(Map<String, Object?> j) => StationOnOtherDeviceRefusal(
+    sessionId: j.str('session_id'),
+    clientKind: ClientKind.fromWire(j.strOrNull('client_kind')),
+    message: j.strOrNull('message'),
+  );
+
+  final String sessionId;
+
+  /// The app that last attached the station: `web` reads "in a browser", `mobile` "on another
+  /// phone". Display only.
+  final ClientKind clientKind;
+  final String? message;
+
+  @override
+  bool operator ==(Object other) =>
+      other is StationOnOtherDeviceRefusal &&
+      other.sessionId == sessionId &&
+      other.clientKind == clientKind &&
+      other.message == message;
+
+  @override
+  int get hashCode => Object.hash(sessionId, clientKind, message);
 }

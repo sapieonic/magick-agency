@@ -276,7 +276,7 @@ describe('agent occupancy is bounded by the window (integration)', () => {
   it('two OVERLAPPING sessions keep occupancy at or below 100%', async () => {
     // ── What the overlap predicate does NOT promise, and what must still hold ──
     //
-    // `uq_agency_agent_live_tenant` refuses two LIVE sessions for one person in one tenant, but two
+    // `uq_agency_agent_live_agent` refuses two LIVE sessions for one person (in any tenant), but two
     // CLOSED sessions may overlap in time — a crashed shift closed late by the
     // reaper while the agent has already rejoined is the ordinary way it happens.
     // Both then contribute intervals over the same wall-clock, so `shift_seconds`
@@ -395,9 +395,11 @@ describe('agent occupancy is bounded by the window (integration)', () => {
       ['offline', new Date('2026-08-18T10:00:00Z')],
     ]);
 
+    // Left: one person holds one live session across tenants (0035, OS1); a past shift is what
+    // this read sums anyway.
     const theirSession = await insertAgentSession(theirs.id as string, {
       agent_user_id: AGENT, tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT,
-      joined_at: new Date('2026-08-18T09:00:00Z'),
+      joined_at: new Date('2026-08-18T09:00:00Z'), state: 'offline', left_at: new Date('2026-08-18T18:00:00Z'),
     });
     await insertAgentShift(theirSession, [
       ['available', new Date('2026-08-18T09:00:00Z')],

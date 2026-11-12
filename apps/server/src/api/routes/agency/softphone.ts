@@ -52,7 +52,10 @@ import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.j
 import { UUID_RE } from '../../../utils/uuid.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
-import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, sendActionError, stationIntervalsFor } from './helpers.js';
+import {
+  accountNameInTenant, claimStationOrReply, joinEndingIdleElsewhere, mintStationTokenOr503, refuseIfHeldElsewhere,
+  requireOwnedSession, sendActionError, sendSessionInOtherTenant, stationDeviceFields, stationIntervalsFor,
+} from './helpers.js';
 import {
   sendSoftphoneRefusal,
   type SoftphoneHangupAudit,
@@ -323,9 +326,21 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
         return sendSoftphoneRefusal(reply, { code: 'softphone_disabled' });
       }
     }
-    const join = await agencyAgentSessionRepository.joinSoftphone({
+    // OS3, as on the campaign join: a resume of the soft-phone session in this account from
+    // another device than the one holding its station, without `take_over`, is refused before
+    // the upsert writes anything; the claim after it is the atomic check.
+    const device = stationDeviceFields(request.body);
+    if (await refuseIfHeldElsewhere(reply, actor.tenantId, actor.userId, device,
+      (live) => live.kind === 'softphone' && live.account_id === actor.accountId)) {
+      return reply;
+    }
+    const joinInput = {
       tenantId: actor.tenantId, accountId: actor.accountId, agentUserId: actor.userId, replicaId: runtime.replicaId,
-    });
+    };
+    // OS7, as on the campaign join: an idle session in another tenant is ended and the open retried.
+    const join = await joinEndingIdleElsewhere(runtime, () => agencyAgentSessionRepository.joinSoftphone(joinInput));
+    // OS1: live in another tenant (a campaign or the soft phone there). Named by tenant only.
+    if (!join.ok && join.reason === 'other_tenant') return sendSessionInOtherTenant(reply, join.session.tenant_id);
     if (!join.ok && join.reason === 'softphone_elsewhere') {
       // The agent's soft-phone session is in a sibling account: never rehydrated here
       // (every route on it is scoped to its account, so this console could dial nothing
@@ -360,6 +375,11 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       });
     }
     const session = join.session;
+    // OS3: this device holds the station now, or another does and the open is refused, before
+    // the rehydrate and the mint (as on the campaign join).
+    if (!await claimStationOrReply(reply, session, device, {
+      onGone: () => sendSoftphoneRefusal(reply, { code: 'session_not_found' }),
+    })) return reply;
     // Redis, or `break` — and for a soft-phone session always `break/soft_phone`, with
     // its unsettled call re-claimed (`rehydrateAgent`, docs/softphone.md §4.1 step 1).
     const state = await runtime.rehydrateAgent(session.id, session);

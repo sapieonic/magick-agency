@@ -168,8 +168,8 @@ export function describeSoftphoneRail(input: {
   if (connection === 'superseded') {
     return {
       tone: 'danger',
-      label: 'Your soft phone moved to another window',
-      detail: 'You opened it somewhere else. Only one window can make calls.',
+      label: 'Your soft phone moved to another device',
+      detail: 'You opened it on your phone or in another window. Only one can make calls.',
       timerFrom: null,
     };
   }

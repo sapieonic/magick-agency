@@ -424,6 +424,12 @@ export interface AgencyAgentSessionRecord {
    */
   client_kind: AgencyClientKind;
   /**
+   * The device that holds this session's station (0035, OS3): the `device_id` a client sent on
+   * the join, the soft-phone open or the token mint that last claimed it. NULL: none known, and
+   * any device may claim it. Opaque and client-declared; never sent on the wire.
+   */
+  station_device_id: string | null;
+  /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;
    * narrow with `isCampaignSession` rather than asserting non-null.

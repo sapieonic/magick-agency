@@ -63,6 +63,7 @@
 
 export * from './agency/enums';
 export * from './agency/session';
+export * from './agency/station-device';
 export * from './agency/station';
 export * from './agency/actions';
 export * from './agency/campaign-stats';

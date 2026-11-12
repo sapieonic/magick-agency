@@ -5,6 +5,7 @@ import '../../app/providers.dart';
 import '../api/api_client.dart';
 import '../api/api_error.dart';
 import '../station/station_deps.dart';
+import '../station/station_device.dart';
 
 /// The soft phone's routes (`/proxy/agency/softphone/*` and the SP7 switch on
 /// `/proxy/agency/sessions/:id/softphone`), over [ApiClient], decoded into
@@ -17,14 +18,17 @@ import '../station/station_deps.dart';
 ///
 /// Every method takes an optional `accountId`: the soft phone's session may be
 /// in a sibling account of the workspace the app is in (one live session per
-/// agent per TENANT), and every route about it is scoped to its own account,
+/// agent, across tenants since OS1), and every route about it is scoped to its own account,
 /// so such a request goes out on a client scoped to that account. Null, or the
 /// current account, uses the usual client. `leave` and the station token stay
 /// in `StationApi`.
 final class SoftphoneApi {
-  SoftphoneApi(this._client, {required this._scopedTo, this._onUnauthorized});
+  SoftphoneApi(this._client, {required this._scopedTo, this._onUnauthorized, this._device});
 
   final ApiClient _client;
+
+  /// This install's device fields (OS3), or null to send none (reads only; tests).
+  final StationDeviceFields? _device;
 
   /// A client scoped to another account of the same tenant.
   final ApiClient Function(String accountId) _scopedTo;
@@ -81,11 +85,14 @@ final class SoftphoneApi {
 
   // ── The session ──
 
-  /// `POST /softphone/sessions` (no body): 201 opened, 200 rehydrated. The
-  /// client kind (which picks the intervals served) travels in `X-Client`.
-  Future<SoftphoneSessionResponse> openSession({String? accountId}) async {
+  /// `POST /softphone/sessions`: 201 opened, 200 rehydrated. The client kind
+  /// (which picks the intervals served) travels in `X-Client`; the body is the
+  /// device fields (OS3): [takeOver] on the agent's own open, never on an
+  /// automatic resume.
+  Future<SoftphoneSessionResponse> openSession({String? accountId, bool takeOver = true}) async {
     const path = '$_base/softphone/sessions';
-    final body = await _guard(() => _via(accountId).post(path));
+    final device = await _device?.call(takeOver: takeOver);
+    final body = await _guard(() => _via(accountId).post(path, body: device?.toJson()));
     return _decode(path, body, SoftphoneSessionResponse.fromJson);
   }
 
@@ -186,5 +193,7 @@ final softphoneApiProvider = Provider<SoftphoneApi>((ref) {
         ..accountId = accountId,
     ),
     onUnauthorized: (error) => ref.read(stationUnauthorizedSinkProvider)(error),
+    // OS3: an open through this instance names this install too (it never sends a body without it).
+    device: ref.read(stationDeviceIdsProvider).fields,
   );
 });

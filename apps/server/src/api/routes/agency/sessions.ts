@@ -28,7 +28,11 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
-import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
+import {
+  accountNameInTenant, claimStationOrReply, joinEndingIdleElsewhere, mintStationTokenOr503, refuseIfHeldElsewhere,
+  requireOwnedSession, resolveRetryContext, sendActionError, sendSessionInOtherTenant, stationDeviceFields,
+  stationIntervalsFor,
+} from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
 import { isAppPauseBreakReason, runDeviceAway } from './device-away.js';
@@ -124,19 +128,39 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.code(403).send(refusal);
     }
 
-    const join = await agencyAgentSessionRepository.joinOrRehydrate({
+    // OS3: the device joining, and whether the agent chose to take the station here. A rehydrate
+    // of the agent's session on THIS campaign from another device than the one holding its
+    // station, without `take_over`, is refused before the upsert writes anything (a device that
+    // resumes on its own must not take the station back); the claim after it is the atomic check.
+    const device = stationDeviceFields(body);
+    if (await refuseIfHeldElsewhere(reply, tenantId, body.agent_user_id, device,
+      (live) => live.kind === 'campaign' && live.campaign_id === campaign.id && live.account_id === accountId)) {
+      return reply;
+    }
+
+    const joinInput = {
       tenantId, accountId,
       campaignId: campaign.id,
       agentUserId: body.agent_user_id,
       replicaId: runtime.replicaId,
-    });
+    };
+    // OS7: a session in another tenant with nothing in it (no station attached, nothing in flight)
+    // is ended, as its own Leave would, and the join tried once more.
+    const join = await joinEndingIdleElsewhere(runtime, () => agencyAgentSessionRepository.joinOrRehydrate(joinInput));
 
-    // One live session per agent per TENANT. The agent is
+    // One live session per agent, across tenants (OS1). The agent is
     // still joined somewhere else and must leave that station first — nothing
     // here yanks them off it, because that station may be a live conversation
     // (see `AgencySessionCampaignConflict` for the full
     // reasoning). Refused with the old campaign NAMED: an agent who is told
     // only "conflict" has no way to find the station they left open.
+    if (!join.ok && join.reason === 'other_tenant') {
+      // OS1: live in another tenant, and working there (OS7 ended it otherwise). Named by tenant
+      // only: nothing of that tenant's campaigns or accounts crosses the boundary.
+      log.warn({ agentUserId: body.agent_user_id, requestedCampaignId: campaign.id },
+        'Agency join refused — agent already live in another tenant');
+      return sendSessionInOtherTenant(reply, join.session.tenant_id);
+    }
     if (!join.ok) {
       // The agent's live session is a soft-phone session (docs/softphone.md): there
       // is no campaign to name in `session_on_other_campaign`, so it gets its own
@@ -244,6 +268,12 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       });
     }
 
+    // OS3: this device holds the station now (a fresh session, the holder itself, no holder, or a
+    // take-over), or another device does and this join is refused.
+    if (!await claimStationOrReply(reply, session, device, {
+      onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended. Join the campaign again.'),
+    })) return reply;
+
     // Redis, or `break` — the same rule as the station socket, and for the same
     // reason. Seeding Redis from `session.state` would be wrong: `joinOrRehydrate`
     // preserves it whenever it is not `offline`, so an agent re-bootstrapping
@@ -322,6 +352,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // this one.
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // OS3: a reconnect from a device that no longer holds the station is refused, never minted:
+    // the agent moved it to another device, and this one must not take it back on its own. Only
+    // `take_over` (the agent's "Use it here") moves it.
+    // A mint naming no device (a client from before OS3) is refused while a device holds the
+    // station: it is a reconnect, and must not take the station back either.
+    if (!await claimStationOrReply(reply, session, stationDeviceFields(request.body), {
+      reconnect: true,
+      onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended.'),
+    })) return reply;
     const minted = await mintStationTokenOr503(runtime, session.id, reply);
     if (!minted) return reply;
     const body: AgencyStationTokenResponse = {
@@ -854,7 +893,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   // With no guard, an `on_call` agent could leave and immediately join campaign
   // B — the row is left, so the upsert INSERTS rather than conflicting — and be
   // reserved and bridged while campaign A's attempt is still live on the wire.
-  // That is the exact double-bridge `uq_agency_agent_live_tenant` exists to make unreachable,
+  // That is the exact double-bridge `uq_agency_agent_live_agent` exists to make unreachable,
   // one click away instead of free, and the DB constraint cannot see it: both
   // rows satisfy the index because the first one left.
   //

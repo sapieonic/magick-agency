@@ -4,7 +4,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '../../hooks/usePermission';
 import { useAgencyConsole } from './useAgencyConsole';
-import { useStationJoin, useLiveSessionTouch } from './station/useStationJoin';
+import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch } from './station/useStationJoin';
 import { useStationExit } from './station/useStationExit';
 import { useStationShortcuts } from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
@@ -264,7 +264,7 @@ export default function AgentConsolePage() {
 
   /*
     The agent's live session is a SOFT-PHONE session (`session_on_softphone`):
-    one session per agent per tenant, and that one has no campaign to name, so the
+    one session per agent across tenants (OS1), and that one has no campaign to name, so the
     remedy is closing the soft phone — one click here, unless a call there is not
     finished.
   */
@@ -275,6 +275,21 @@ export default function AgentConsolePage() {
         failure={join.closeSoftphoneFailure}
         callPending={join.softphoneCallPending}
         onCloseAndJoin={join.closeSoftphoneAndJoin}
+      />
+    );
+  }
+
+  /*
+    OS3: this page's join did not take the station over (the browser reloaded the tab by itself)
+    and another device or window holds it. Nothing moves until the agent says so.
+  */
+  if (join.onOtherDevice) {
+    return (
+      <StationFatal
+        message={STATION_ON_OTHER_DEVICE_COPY}
+        toCampaign={exit.canExitToCampaign}
+        campaignId={exit.stationCampaignId}
+        action={{ label: 'Use this window instead', onClick: join.useThisWindow }}
       />
     );
   }

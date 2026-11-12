@@ -2,14 +2,18 @@ import 'package:agency_wire/agency_wire.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import 'station_device.dart';
 
 /// The agency routes the station uses, over [ApiClient], decoded into
 /// `agency_wire` types. Errors are the client's [ApiError]s; a body that does
 /// not decode is an [ApiDecodeError].
 final class StationApi {
-  StationApi(this._client, {required this._scopedTo, this._onUnauthorized});
+  StationApi(this._client, {required this._scopedTo, this._onUnauthorized, this._device});
 
   final ApiClient _client;
+
+  /// This install's device fields (OS3), or null to send none (an older body; tests).
+  final StationDeviceFields? _device;
 
   /// A client scoped to another account of the same tenant.
   final ApiClient Function(String accountId) _scopedTo;
@@ -37,19 +41,26 @@ final class StationApi {
   ApiClient _via(String? accountId) =>
       accountId == null || accountId.isEmpty || accountId == _client.scope.accountId ? _client : _scopedTo(accountId);
 
-  Future<SessionBootstrap> join(String campaignId, {String? accountId}) async {
+  /// [takeOver] (OS3): the agent chose this phone ("Go on duty", "Use this phone"). An automatic
+  /// resume passes false, and is refused `station_on_other_device` when another device holds the
+  /// station.
+  Future<SessionBootstrap> join(String campaignId, {String? accountId, bool takeOver = true}) async {
     const path = '$_base/sessions';
+    final device = await _device?.call(takeOver: takeOver);
     final body = await _post(
       _via(accountId),
       path,
-      body: CreateSessionRequest(campaignId: campaignId).toJson(),
+      body: CreateSessionRequest(campaignId: campaignId, device: device).toJson(),
     );
     return _decode(path, body, SessionBootstrap.fromJson);
   }
 
-  Future<StationTokenResponse> mintStationToken(String sessionId) async {
+  /// Every reconnect mints without [takeOver] (OS3), and is refused `station_on_other_device` once
+  /// the agent has moved the station to another device; "Use this phone instead" mints with it.
+  Future<StationTokenResponse> mintStationToken(String sessionId, {bool takeOver = false}) async {
     final path = '$_base/sessions/$sessionId/station-token';
-    final body = await _post(_client, path, timeout: const Duration(seconds: 8));
+    final device = await _device?.call(takeOver: takeOver);
+    final body = await _post(_client, path, body: device?.toJson(), timeout: const Duration(seconds: 8));
     return _decode(path, body, StationTokenResponse.fromJson);
   }
 

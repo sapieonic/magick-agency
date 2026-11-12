@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io' show SocketException;
 
-import 'package:agency_wire/agency_wire.dart' show AgentState;
+import 'package:agency_wire/agency_wire.dart' show AgentState, ClientKind;
 import 'package:agent_audio/agent_audio.dart' as audio;
 import 'package:fake_async/fake_async.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
@@ -23,7 +23,8 @@ void main() {
         final app = App(async);
         expect(app.start(), isA<StationStarted>());
         final join = app.requests('POST', '/proxy/agency/sessions').single;
-        expect(join.body, {'campaign_id': 'camp-1'});
+        // OS3: this phone, taking the station ("Go on duty" is the agent's own choice).
+        expect(join.body, {'campaign_id': 'camp-1', 'device_id': testDeviceId, 'take_over': true});
         expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=boot&client=mobile&media=alaw8&caps=inbound');
         expect(app.view!.link, StationLink.open);
         expect(app.view!.campaignName, 'Renewals');
@@ -33,6 +34,44 @@ void main() {
         expect(app.wakeLock.on, isTrue);
         expect(app.tokens.forced, 1, reason: 'the ID token is warmed at join');
         expect(app.container.read(stationSignalsProvider), const StationSignals(onDuty: true, campaignId: 'camp-1'));
+        app.dispose();
+      });
+    });
+
+    test('OS3: an automatic resume does not take over, and is refused in the station\'s words', () {
+      fakeAsync((async) {
+        final app = App(async);
+        app.routes['POST /proxy/agency/sessions'] = (_) => json(409, {
+              'error': 'Conflict',
+              'code': 'station_on_other_device',
+              'message': 'Your station is open on another device.',
+              'session_id': 'sess-1',
+              'client_kind': 'web',
+            });
+        final r = app.run(app.controller.start('camp-1', campaignName: 'Renewals', takeOver: false)) as StationRefused;
+        expect(app.requests('POST', '/proxy/agency/sessions').single.body,
+            {'campaign_id': 'camp-1', 'device_id': testDeviceId, 'take_over': false});
+        expect(r.code, 'station_on_other_device');
+        expect(r.message, stationOnOtherDeviceCopy(ClientKind.web));
+        expect(app.view, isNull);
+        app.dispose();
+      });
+    });
+
+    test('OS1: live in another organisation is refused with the server\'s sentence', () {
+      fakeAsync((async) {
+        final app = App(async);
+        app.routes['POST /proxy/agency/sessions'] = (_) => json(409, {
+              'error': 'Conflict',
+              'code': 'session_in_other_tenant',
+              'message': 'You are live in Acme. Leave your station there first.',
+              'tenant_id': 'ten-2',
+              'tenant_name': 'Acme',
+            });
+        final r = app.start() as StationRefused;
+        expect(r.code, 'session_in_other_tenant');
+        expect(r.message, 'You are live in Acme. Leave your station there first.');
+        expect(app.view, isNull);
         app.dispose();
       });
     });
@@ -370,6 +409,86 @@ void main() {
         app.run(app.controller.useThisDevice());
         async.flushMicrotasks();
         expect(app.mints, 1);
+        expect(app.view!.link, StationLink.open);
+        app.dispose();
+      });
+    });
+
+    test('OS3: a reconnect mints as this phone without taking over; Use this phone takes it, once', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.socket.serverClose(1006);
+        async.elapse(const Duration(milliseconds: 500));
+        final mints = app.requests('POST', '/proxy/agency/sessions/sess-1/station-token');
+        expect(mints.single.body, {'device_id': testDeviceId, 'take_over': false});
+
+        app.socket.serverClose(4409);
+        expect(app.view!.link, StationLink.superseded);
+        app.run(app.controller.useThisDevice());
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/station-token').last.body,
+            {'device_id': testDeviceId, 'take_over': true});
+
+        // Spent: the next drop's reconnect is this phone's own again, not a take-over.
+        app.socket.serverClose(1006);
+        async.elapse(const Duration(milliseconds: 500));
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/station-token').last.body,
+            {'device_id': testDeviceId, 'take_over': false});
+        app.dispose();
+      });
+    });
+
+    test('OS3: a take-over whose mint fails is spent: the ladder\'s next mint does not take over', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.socket.serverClose(4409);
+        var fail = true;
+        final mint = app.routes['POST /proxy/agency/sessions/sess-1/station-token']!;
+        app.routes['POST /proxy/agency/sessions/sess-1/station-token'] = (r) {
+          if (fail) {
+            fail = false;
+            return json(503, {'error': 'Service Unavailable', 'code': 'station_token_unavailable', 'message': 'Try again.'});
+          }
+          return mint(r);
+        };
+        app.run(app.controller.useThisDevice());
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        final bodies = app.requests('POST', '/proxy/agency/sessions/sess-1/station-token').map((r) => r.body).toList();
+        expect(bodies.first, {'device_id': testDeviceId, 'take_over': true});
+        expect(bodies.skip(1), everyElement({'device_id': testDeviceId, 'take_over': false}));
+        expect(bodies.length, greaterThan(1));
+        app.dispose();
+      });
+    });
+
+    test('OS3: a reconnect refused station_on_other_device stops as 4409 does: no retry, Use this phone takes it', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        var refuse = true;
+        final mint = app.routes['POST /proxy/agency/sessions/sess-1/station-token']!;
+        app.routes['POST /proxy/agency/sessions/sess-1/station-token'] = (r) => refuse
+            ? json(409, {
+                'error': 'Conflict',
+                'code': 'station_on_other_device',
+                'message': 'Your station is open on another device.',
+                'session_id': 'sess-1',
+                'client_kind': 'web',
+              })
+            : mint(r);
+        app.socket.serverClose(1006);
+        async.elapse(const Duration(milliseconds: 500));
+        expect(app.view!.link, StationLink.superseded);
+        final refused = app.requests('POST', '/proxy/agency/sessions/sess-1/station-token').length;
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/station-token'), hasLength(refused),
+            reason: 'the ladder never retries a station that moved');
+
+        refuse = false;
+        app.run(app.controller.useThisDevice());
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/station-token').last.body,
+            {'device_id': testDeviceId, 'take_over': true});
         expect(app.view!.link, StationLink.open);
         app.dispose();
       });

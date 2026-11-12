@@ -7,6 +7,7 @@ import {
   type AutosaveRefusal,
 } from '../utils/agencyNotes';
 import type { DncScope } from '../utils/agencyDncCopy';
+import { stationDeviceBody } from '../utils/stationDevice';
 import type {
   AgencySessionBootstrap,
   AgencyStationTokenResponse,
@@ -34,15 +35,25 @@ import type {
 
 const AGENCY_BASE = `${API_BASE}/proxy/agency`;
 
-/** Join a campaign. Returns everything the console renders with, in one call. */
+/**
+ * Join a campaign. Returns everything the console renders with, in one call.
+ *
+ * Names this window as the station's device and, by default, takes the station over (OS3): the
+ * console joins when the agent opens the station here, so the station moves to this window and any
+ * other device's socket is closed 4409 when this one attaches. `takeOver: false` for a join the
+ * agent did not ask for here: a page the browser reloaded by itself (a discarded tab), and the
+ * Switch remedy's look-up of the OTHER campaign's session. Reconnects never take over
+ * (`mintStationToken`).
+ */
 export async function createAgencySession(
   campaignId: string,
   tenantId?: string,
   accountId?: string,
+  { takeOver = true }: { takeOver?: boolean } = {},
 ): Promise<AgencySessionBootstrap> {
   return apiFetch<AgencySessionBootstrap>(
     `${AGENCY_BASE}/sessions`,
-    { method: 'POST', body: JSON.stringify({ campaign_id: campaignId }) },
+    { method: 'POST', body: JSON.stringify({ campaign_id: campaignId, ...stationDeviceBody(takeOver) }) },
     tenantId,
     accountId,
   );
@@ -55,15 +66,21 @@ export async function createAgencySession(
  * short-lived, so every reconnect needs a new one. Deliberately separate from
  * bootstrap — a reconnect needs a token, not the whole campaign config again —
  * and cheap enough to call before every connect attempt.
+ *
+ * Carries this window's device id (OS3). Without `takeOver` (every automatic reconnect) the server
+ * refuses it `409 station_on_other_device` once the agent has moved the station to another device
+ * or window, and this window stops rather than taking it back. `takeOver` is only the agent's
+ * "Use this window instead".
  */
 export async function mintStationToken(
   sessionId: string,
   tenantId?: string,
   accountId?: string,
+  { takeOver = false }: { takeOver?: boolean } = {},
 ): Promise<AgencyStationTokenResponse> {
   return apiFetch<AgencyStationTokenResponse>(
     `${AGENCY_BASE}/sessions/${sessionId}/station-token`,
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(stationDeviceBody(takeOver)) },
     tenantId,
     accountId,
   );

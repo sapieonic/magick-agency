@@ -36,6 +36,7 @@ import 'server_clock.dart';
 import 'station_api.dart';
 import 'station_copy.dart';
 import 'station_deps.dart';
+import 'station_device.dart';
 import 'station_signals.dart';
 import 'station_socket.dart';
 import 'station_state.dart';
@@ -75,6 +76,11 @@ final class _Session {
   late final CallAutosave<InboundCall, InboundCallUpdateRequest> inboundNotes;
   StreamSubscription<List<ConnectivityResult>>? network;
   AppLifecycleSource? lifecycle;
+
+  /// OS3: the next token mint takes the station over from another device. Armed only by the
+  /// agent's "Use this phone instead" ([StationController.useThisDevice]) and spent by the next
+  /// mint, whatever it answers; every automatic reconnect mints without it.
+  bool takeOverNextMint = false;
 
   String get id => hosted.sessionId;
 
@@ -260,6 +266,7 @@ class StationController extends Notifier<StationView?>
     ref.read(apiClientProvider),
     scopedTo: _scopedClient,
     onUnauthorized: _reportUnauthorized,
+    device: ref.read(stationDeviceIdsProvider).fields,
   );
 
 
@@ -267,6 +274,7 @@ class StationController extends Notifier<StationView?>
     ref.read(apiClientProvider),
     scopedTo: _scopedClient,
     onUnauthorized: _reportUnauthorized,
+    device: ref.read(stationDeviceIdsProvider).fields,
   );
 
   void _reportUnauthorized(ApiUnauthorized error) {
@@ -316,7 +324,7 @@ class StationController extends Notifier<StationView?>
   // ─── Launching ──────────────────────────────────────────────────────────
 
   @override
-  Future<StationStart> start(String campaignId, {required String campaignName}) async {
+  Future<StationStart> start(String campaignId, {required String campaignName, bool takeOver = true}) async {
     final current = _s;
     if (current != null &&
         !current.hosted.isSoftphone &&
@@ -327,7 +335,7 @@ class StationController extends Notifier<StationView?>
     final accountId = _api.accountId;
     final SessionBootstrap bootstrap;
     try {
-      bootstrap = await _api.join(campaignId);
+      bootstrap = await _api.join(campaignId, takeOver: takeOver);
     } on ApiError catch (e) {
       return _joinRefusal(e);
     }
@@ -416,6 +424,12 @@ class StationController extends Notifier<StationView?>
         return StationOnSoftphone(sessionId: sp.sessionId, accountId: sp.accountId, accountName: sp.accountName);
       case AgencyErrorCode.notStaffed:
         return StationRefused(message.isEmpty ? notStaffedCopy : message, code: body.codeRaw);
+      case AgencyErrorCode.stationOnOtherDevice:
+        // OS3: an automatic resume found the station on another device. Never taken back on
+        // the app's own initiative: the agent goes on duty here (which takes it) if they mean to.
+        return StationRefused(stationOnOtherDeviceCopy(body.stationOnOtherDevice?.clientKind), code: body.codeRaw);
+      case AgencyErrorCode.sessionInOtherTenant:
+        return StationRefused(message.isEmpty ? sessionInOtherTenantCopy : message, code: body.codeRaw);
       case AgencyErrorCode.featureDisabled:
         return StationRefused(message.isEmpty ? featureDisabledCopy : message, code: body.codeRaw);
       default:
@@ -471,7 +485,15 @@ class StationController extends Notifier<StationView?>
     s.socket = StationSocket(
       connector: ref.read(stationConnectorProvider),
       resolveUrl: ref.read(envProvider).resolveStationUrl,
-      mintToken: () async => (await _api.mintStationToken(hosted.sessionId)).stationWsUrl,
+      mintToken: () async {
+        // OS3: only "Use this phone instead" takes the station over, and only on the mint it
+        // armed: spent whatever that mint answers, so it never carries into a later automatic
+        // reconnect (one that fails is refused, and the agent is asked again).
+        final takeOver = s.takeOverNextMint;
+        s.takeOverNextMint = false;
+        final minted = await _api.mintStationToken(hosted.sessionId, takeOver: takeOver);
+        return minted.stationWsUrl;
+      },
       refreshIdToken: () async {
         await tokens.idToken(forceRefresh: true);
       },
@@ -2178,6 +2200,7 @@ class StationController extends Notifier<StationView?>
         SoftphoneOpenDisabled() => softphoneDisabledCopy,
         SoftphoneOpenOnCampaign() => softphoneOnCampaignCopy,
         SoftphoneOpenElsewhere() => softphoneElsewhereCopy,
+        SoftphoneOpenOnOtherDevice(:final refusal) => stationOnOtherDeviceCopy(refusal.clientKind),
       };
       _emit();
       return;
@@ -2556,19 +2579,19 @@ class StationController extends Notifier<StationView?>
   /// life), the audio pre-warm and the socket. One open at a time: a second
   /// call while one is in flight gets the same answer.
   @override
-  Future<SoftphoneOpenResult> openSoftphone() {
+  Future<SoftphoneOpenResult> openSoftphone({bool takeOver = true}) {
     final current = _s;
     if (current != null && current.hosted.isSoftphone && !_terminal && _fatal == null) {
       return Future.value(SoftphoneOpened(sessionId: current.id, created: false));
     }
-    return _openingSoftphone ??= _openSoftphone().whenComplete(() => _openingSoftphone = null);
+    return _openingSoftphone ??= _openSoftphone(takeOver: takeOver).whenComplete(() => _openingSoftphone = null);
   }
 
-  Future<SoftphoneOpenResult> _openSoftphone() async {
+  Future<SoftphoneOpenResult> _openSoftphone({required bool takeOver}) async {
     final accountId = _softphoneApi.accountId;
     final SoftphoneSessionResponse response;
     try {
-      response = await _softphoneApi.openSession();
+      response = await _softphoneApi.openSession(takeOver: takeOver);
     } on ApiError catch (e) {
       return _openRefusal(e);
     }
@@ -2586,6 +2609,8 @@ class StationController extends Notifier<StationView?>
     final elsewhere = body.softphoneConflict;
     if (elsewhere != null) return SoftphoneOpenElsewhere(elsewhere);
     if (body.softphoneCode == SoftphoneErrorCode.softphoneDisabled) return const SoftphoneOpenDisabled();
+    final otherDevice = body.stationOnOtherDevice;
+    if (otherDevice != null) return SoftphoneOpenOnOtherDevice(otherDevice);
     final message = body.message.trim();
     return SoftphoneOpenRefused(
       message.isEmpty ? e.userMessage : message,
@@ -2843,6 +2868,9 @@ class StationController extends Notifier<StationView?>
     // The audio and the on-duty service were let go at 4409; the agent's tap
     // has the app on screen, where Android allows the service to start.
     s.audio.open(_onDutyNotification());
+    // OS3: the agent's own choice, so this reconnect's mint takes the station over (the other
+    // device's socket is closed 4409 when this one attaches).
+    s.takeOverNextMint = true;
     s.socket.reconnect();
   }
 

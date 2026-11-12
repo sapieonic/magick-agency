@@ -4,7 +4,7 @@ import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js'
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factories.js';
 
 /**
- * ─── ONE LIVE SESSION PER AGENT PER TENANT ──────────────────
+ * ─── ONE LIVE SESSION PER AGENT (per tenant until 0035; across tenants since, OS1) ───
  *
  * The defect: `agency_agent_sessions` allowed one live session per (campaign,
  * agent), while the reservation CAS key in `src/agency/agent-state-machine.ts`
@@ -17,25 +17,13 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  *
  * Every claim here is a claim about **Postgres**: that a partial unique index
  * arbitrates an `ON CONFLICT`, that a `DO UPDATE … WHERE` returns zero rows
- * instead of writing, and that a window function picks the right survivor. A
+ * instead of writing, and that one statement claims the station for one device. A
  * mocked pool cannot have an opinion about any of them — it would only replay
  * whatever this file asserted, which is the shape of test that let the original
  * defect ship.
  *
- * ── What the dedupe cases actually run ─────────────────────────────────────
- *
- * The migration file itself, read off disk and split on `-- Down Migration`
- * exactly as node-pg-migrate splits it. Not a transcription: a copy of the SQL in
- * a test proves the copy correct and says nothing about what will run on
- * production data. The index is dropped first because the schema under test now
- * forbids the very rows the dedupe exists to clean up — which is the point, since
- * production has been free to create them for the whole life of the feature.
- *
- * The up half is run inside an explicit transaction on ONE connection, because it
- * opens with `LOCK TABLE … IN ACCESS EXCLUSIVE MODE` and that is only legal in a
- * transaction block. node-pg-migrate supplies one in production; a pooled
- * `pool.query` would not reliably be the same connection, so the harness below
- * mirrors what actually happens rather than what is convenient.
+ * The migration that ends duplicates (0035, an agent live in two tenants when it runs) is pinned
+ * in `packages/db/test/integration/db/one-station-per-agent-migration.test.ts`, which runs it.
  */
 
 vi.mock('@magick-agency/db', () => ({
@@ -61,7 +49,7 @@ const TENANT = DEFAULTS.tenantId;
 const ACCOUNT = DEFAULTS.accountId;
 const REPLICA = 'replica-1';
 
-describe('agency agent sessions — one live session per tenant (integration)', () => {
+describe('agency agent sessions — one live session per agent (integration)', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 
@@ -169,10 +157,9 @@ describe('agency agent sessions — one live session per tenant (integration)', 
     expect(moved.session.id).not.toBe(joined.session.id);
   });
 
-  it('a different TENANT reusing the same agent id is unaffected', async () => {
-    // The scope decision, pinned. Global uniqueness would also be "correct" for
-    // the public API layer's ids and would break a shared-services structure that reuses an
-    // operator id across tenants.
+  it('another TENANT is refused too (OS1): one live session per agent anywhere', async () => {
+    // Amended by 0035 (Manas, 2026-11-11): an agent who belongs to two tenants is one person, so a
+    // live session in one refuses a join in the other. Was: "a different tenant is unaffected".
     const ours = await insertAgencyCampaign();
     const theirs = await insertAgencyCampaign({ tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
 
@@ -180,14 +167,49 @@ describe('agency agent sessions — one live session per tenant (integration)', 
       tenantId: TENANT, accountId: ACCOUNT,
       campaignId: ours.id, agentUserId: uuidFor('agent-shared'), replicaId: REPLICA,
     });
+    await getTestPool().query(`UPDATE agency_agent_sessions SET state = 'on_call' WHERE id = $1`, [a.session.id]);
     const b = await agencyAgentSessionRepository.joinOrRehydrate({
       tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT,
-      campaignId: theirs.id, agentUserId: uuidFor('agent-shared'), replicaId: REPLICA,
+      campaignId: theirs.id, agentUserId: uuidFor('agent-shared'), replicaId: 'replica-2',
+    });
+    const phone = await agencyAgentSessionRepository.joinSoftphone({
+      tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT, agentUserId: uuidFor('agent-shared'), replicaId: 'replica-2',
     });
 
     expect(a.ok).toBe(true);
-    expect(b.ok).toBe(true);
-    expect(b.session.id).not.toBe(a.session.id);
+    expect(b).toMatchObject({ ok: false, reason: 'other_tenant', session: { id: a.session.id, tenant_id: TENANT } });
+    expect(phone).toMatchObject({ ok: false, reason: 'other_tenant', session: { id: a.session.id } });
+    // The live row in the first tenant is untouched: not hijacked by replica-2, not knocked off its call.
+    const { rows } = await getTestPool().query<{ state: string; owner_replica: string }>(
+      'SELECT state, owner_replica FROM agency_agent_sessions WHERE id = $1', [a.session.id]);
+    expect(rows[0]).toEqual({ state: 'on_call', owner_replica: REPLICA });
+
+    // Leaving there frees the agent here.
+    await agencyAgentSessionRepository.leave(a.session.id);
+    const c = await agencyAgentSessionRepository.joinOrRehydrate({
+      tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT,
+      campaignId: theirs.id, agentUserId: uuidFor('agent-shared'), replicaId: REPLICA,
+    });
+    expect(c.ok).toBe(true);
+  });
+
+  it('concurrent joins in two TENANTS settle to exactly one live session', async () => {
+    const ours = await insertAgencyCampaign();
+    const theirs = await insertAgencyCampaign({ tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
+    const agent = uuidFor('agent-tenant-race');
+    const results = await Promise.all([
+      agencyAgentSessionRepository.joinOrRehydrate({
+        tenantId: TENANT, accountId: ACCOUNT, campaignId: ours.id, agentUserId: agent, replicaId: REPLICA,
+      }),
+      agencyAgentSessionRepository.joinOrRehydrate({
+        tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT, campaignId: theirs.id, agentUserId: agent, replicaId: REPLICA,
+      }),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([expect.objectContaining({ reason: 'other_tenant' })]);
+    const { rows } = await getTestPool().query<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM agency_agent_sessions WHERE agent_user_id = $1 AND left_at IS NULL', [agent]);
+    expect(rows[0]!.n).toBe(1);
   });
 
   it('concurrent joins on two campaigns settle to exactly one live session', async () => {
@@ -226,9 +248,97 @@ describe('agency agent sessions — one live session per tenant (integration)', 
   });
 });
 
-/*
- * Not covered: a dedupe step, an up-marker check or a down-reversal check. The
- * baseline carries only the index (`uq_agency_agent_live_tenant`) and there is no
- * existing duplicate data to dedupe. The five
- * join-path cases (the index's BEHAVIOUR) are what this file covers.
- */
+// ── The device that holds the station (OS3, 0035) ─────────────────────────────
+
+describe('claimStationDevice — one device holds the station (integration)', () => {
+  beforeEach(truncateAll);
+
+  async function session() {
+    const campaign = await insertAgencyCampaign();
+    const joined = await agencyAgentSessionRepository.joinOrRehydrate({
+      tenantId: TENANT, accountId: ACCOUNT, campaignId: campaign.id, agentUserId: uuidFor('agent-device'), replicaId: REPLICA,
+    });
+    if (!joined.ok) throw new Error('join refused');
+    return joined.session;
+  }
+  const holder = async (id: string) => (await getTestPool().query<{ d: string | null }>(
+    'SELECT station_device_id AS d FROM agency_agent_sessions WHERE id = $1', [id])).rows[0]!.d;
+
+  it('the first device claims; the same device reclaims; another is refused and changes nothing', async () => {
+    const s = await session();
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false })).toEqual({ ok: true });
+    expect(await holder(s.id)).toBe('device-laptop-1');
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false })).toEqual({ ok: true });
+    await getTestPool().query(`UPDATE agency_agent_sessions SET client_kind = 'web' WHERE id = $1`, [s.id]);
+
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: false }))
+      .toEqual({ ok: false, reason: 'held_elsewhere', client_kind: 'web' });
+    expect(await holder(s.id)).toBe('device-laptop-1');
+  });
+
+  it('take_over moves it; the old holder is then the one refused (no silent take-back)', async () => {
+    const s = await session();
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: true })).toEqual({ ok: true });
+    expect(await holder(s.id)).toBe('device-phone-01');
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false }))
+      .toMatchObject({ ok: false, reason: 'held_elsewhere' });
+  });
+
+  it('no device id (an older client) is allowed and clears the holder, so the next device claims it', async () => {
+    const s = await session();
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false })).toEqual({ ok: true });
+    expect(await holder(s.id)).toBeNull();
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: false })).toEqual({ ok: true });
+  });
+
+  it('a mint naming no device (an older client) is refused while a device holds it; a join with none clears it', async () => {
+    const s = await session();
+    // No holder: an older client's mint is allowed, and leaves none.
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false }, { reconnect: true })).toEqual({ ok: true });
+    expect(await holder(s.id)).toBeNull();
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: true });
+    // Held: its reconnect cannot take it back, even asking to take over (take_over needs a device).
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false }, { reconnect: true }))
+      .toMatchObject({ ok: false, reason: 'held_elsewhere' });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: true }, { reconnect: true }))
+      .toMatchObject({ ok: false, reason: 'held_elsewhere' });
+    expect(await holder(s.id)).toBe('device-phone-01');
+    // Its join (the agent going on duty there) still clears it.
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false })).toEqual({ ok: true });
+    expect(await holder(s.id)).toBeNull();
+  });
+
+  it('a left session is session_gone, whatever the device', async () => {
+    const s = await session();
+    await agencyAgentSessionRepository.leave(s.id);
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: true }))
+      .toEqual({ ok: false, reason: 'session_gone' });
+  });
+
+  it('two devices racing without take_over: exactly one holds it', async () => {
+    const s = await session();
+    const results = await Promise.all([
+      agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false }),
+      agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: false }),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    const winner = results[0]!.ok ? 'device-laptop-1' : 'device-phone-01';
+    expect(await holder(s.id)).toBe(winner);
+  });
+
+  it('a rehydrating join keeps the holder; a new session after leaving starts with none', async () => {
+    const s = await session();
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false });
+    const again = await agencyAgentSessionRepository.joinOrRehydrate({
+      tenantId: TENANT, accountId: ACCOUNT, campaignId: s.campaign_id!, agentUserId: uuidFor('agent-device'), replicaId: REPLICA,
+    });
+    expect(again.ok && again.session.station_device_id).toBe('device-laptop-1');
+    await agencyAgentSessionRepository.leave(s.id);
+    const fresh = await agencyAgentSessionRepository.joinOrRehydrate({
+      tenantId: TENANT, accountId: ACCOUNT, campaignId: s.campaign_id!, agentUserId: uuidFor('agent-device'), replicaId: REPLICA,
+    });
+    expect(fresh.ok && fresh.session.station_device_id).toBeNull();
+  });
+});

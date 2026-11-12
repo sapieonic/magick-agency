@@ -116,7 +116,7 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
   }
 
   @override
-  Future<SoftphoneOpenResult> openSoftphone() => throw UnimplementedError();
+  Future<SoftphoneOpenResult> openSoftphone({bool takeOver = true}) => throw UnimplementedError();
   @override
   Future<SoftphoneCloseResult> closeSoftphone({String? sessionId, String? accountId}) => throw UnimplementedError();
   @override

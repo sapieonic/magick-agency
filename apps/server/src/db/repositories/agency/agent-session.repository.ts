@@ -1,5 +1,6 @@
 /** `AgencyAgentSessionRepository`: agent sessions and their transition event log. */
 import { getPool } from '@magick-agency/db';
+import { isUniqueViolation } from '@magick-agency/db/pg-errors';
 import { createChildLogger } from '@magick-agency/observability';
 import type {
   AgencyAgentSessionRecord,
@@ -37,12 +38,27 @@ type AgencyAgentJoinResult =
    * the route answers `session_on_softphone`. Before 0005 every blocker was a
    * campaign session, so the route still also narrows on `isCampaignSession`.
    */
-  | { ok: false; reason: 'on_softphone'; session: AgencyAgentSessionRecord };
+  | { ok: false; reason: 'on_softphone'; session: AgencyAgentSessionRecord }
+  /**
+   * Live (on a campaign or the soft phone) in ANOTHER tenant (OS1, `uq_agency_agent_live_agent`):
+   * the route answers `session_in_other_tenant`, naming only the tenant. Nothing in this tenant
+   * can end it.
+   */
+  | { ok: false; reason: 'other_tenant'; session: AgencyAgentSessionRecord };
+
+/**
+ * What a station-device claim learned (OS3, {@link AgencyAgentSessionRepository.claimStationDevice}).
+ * `held_elsewhere` carries the app that last attached the station, for the refusal's copy.
+ */
+export type AgencyStationDeviceClaim =
+  | { ok: true }
+  | { ok: false; reason: 'held_elsewhere'; client_kind: AgencyClientKind }
+  | { ok: false; reason: 'session_gone' };
 
 /**
  * What `joinSoftphone` learned. The mirror image of {@link AgencyAgentJoinResult}:
- * the soft-phone session is the agent's one live session in the tenant
- * (`uq_agency_agent_live_tenant`), so an agent live on a campaign is refused, with
+ * the soft-phone session is the agent's one live session anywhere
+ * (`uq_agency_agent_live_agent`, 0035), so an agent live on a campaign is refused, with
  * that session, and the remedy is the switch on it (`POST /sessions/:id/softphone`,
  * §4.2), never a second session.
  */
@@ -56,7 +72,9 @@ export type AgencySoftphoneJoinResult =
    * here: every soft-phone route is scoped to the session's account, so a console in
    * this account handed that session could dial nothing from it.
    */
-  | { ok: false; reason: 'softphone_elsewhere'; session: AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null } };
+  | { ok: false; reason: 'softphone_elsewhere'; session: AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null } }
+  /** Live in ANOTHER tenant (OS1): `session_in_other_tenant`, as on the campaign join. */
+  | { ok: false; reason: 'other_tenant'; session: AgencyAgentSessionRecord };
 
 /** The upsert's own answer, before either public method names the conflict. */
 type LiveSessionUpsertResult =
@@ -306,17 +324,17 @@ export class AgencyAgentSessionRepository {
    * Join, or REHYDRATE an existing live session.
    *
    * A returning agent must resume their row rather than get a new one — the unique
-   * index allows exactly one live session per (tenant, agent)
-   * (`uq_agency_agent_live_tenant`) — and must land in `break`, never `available`, so the engine cannot dial into a
+   * index allows exactly one live session per agent, across tenants
+   * (`uq_agency_agent_live_agent`, 0035, OS1) — and must land in `break`, never `available`, so the engine cannot dial into a
    * pool that has not demonstrably re-attached. The agent clicks once to go
    * available.
    *
-   * ── Why the uniqueness is per TENANT and what that makes reachable ───
-   * Were it unique per (campaign, agent), one human could hold
-   * two live sessions on two campaigns. The reservation CAS key is
+   * ── Why the uniqueness is per AGENT and what that makes reachable ───
+   * Were it unique per (campaign, agent), or per (tenant, agent) as it was before 0035, one
+   * human could hold two live sessions on two campaigns. The reservation CAS key is
    * `agency:agent:{sessionId}:state` — per session — so those two sessions are two
    * independently reservable agents attached to one pair of ears, and both pacing
-   * ticks can bridge a customer at once. `uq_agency_agent_live_tenant` makes the database refuse the second
+   * ticks can bridge a customer at once. `uq_agency_agent_live_agent` makes the database refuse the second
    * session, which is why this method can FAIL rather than always returning a
    * row.
    *
@@ -327,7 +345,7 @@ export class AgencyAgentSessionRepository {
    * "nothing live" and both insert. The arbiter index does the checking, inside
    * the same statement as the write.
    *
-   * ── Why `DO UPDATE … WHERE kind = … AND campaign_id IS NOT DISTINCT FROM … AND account_id = …` ─
+   * ── Why `DO UPDATE … WHERE tenant_id = … AND kind = … AND campaign_id IS NOT DISTINCT FROM … AND account_id = …` ─
    * The conflict has two meanings and they must not be collapsed:
    *   * same session (same kind, same campaign, same account) ⇒ this is a
    *     REHYDRATE. Update and return the row.
@@ -365,6 +383,7 @@ export class AgencyAgentSessionRepository {
     const result = await this.upsertLiveSession({ ...input, kind: 'campaign' });
     if (result.ok) return result;
     const blocker = result.blocker;
+    if (blocker.tenant_id !== input.tenantId) return { ok: false, reason: 'other_tenant', session: blocker };
     return blocker.campaign_id === null
       ? { ok: false, reason: 'on_softphone', session: blocker }
       : { ok: false, reason: 'other_campaign', session: blocker as AgencyCampaignSessionRecord };
@@ -377,7 +396,7 @@ export class AgencyAgentSessionRepository {
    * (`ck_agency_agent_session_softphone_state` allows only `break`/`offline`).
    *
    * The same single statement as {@link joinOrRehydrate}, on the same arbiter
-   * (`uq_agency_agent_live_tenant`): never check-then-insert, for the reason that
+   * (`uq_agency_agent_live_agent`): never check-then-insert, for the reason that
    * method's header gives. A rehydrate of an `offline` soft-phone session (the startup
    * reaper's `markAllOffline`) lands back in `break/soft_phone`, re-stamping the
    * reason, since `soft_phone` is the only break a soft-phone session can be on.
@@ -404,8 +423,9 @@ export class AgencyAgentSessionRepository {
     }
     // A soft-phone blocker is one in another account (in this account it would have
     // been the rehydrate arm); any other is a campaign session, whose non-null
-    // `campaign_id` is what the refusal carries.
+    // `campaign_id` is what the refusal carries. Either, in another tenant, is OS1's.
     const blocker = result.blocker;
+    if (blocker.tenant_id !== input.tenantId) return { ok: false, reason: 'other_tenant', session: blocker };
     return blocker.campaign_id === null
       ? {
         ok: false,
@@ -457,8 +477,8 @@ export class AgencyAgentSessionRepository {
       // no transition, which `recordTransitions` drops. (`load/session-join-races`.)
       //
       // `prev` is keyed on the same predicate as the arbiter index — the agent's
-      // one live session in the tenant (`uq_agency_agent_live_tenant`) — not on the proposed row, because
-      // the conflicting row may be on a different campaign.
+      // one live session anywhere (`uq_agency_agent_live_agent`, 0035) — not on the proposed row,
+      // because the conflicting row may be on a different campaign, or in a different tenant.
       const { rows } = await getPool().query<AgencyAgentSessionRecord & {
         from_state: AgencyAgentState | null;
         from_break_reason: string | null;
@@ -467,13 +487,13 @@ export class AgencyAgentSessionRepository {
       }>(
         `WITH prev AS (
            SELECT id, state, break_reason FROM agency_agent_sessions
-            WHERE tenant_id = $1 AND agent_user_id = $4 AND left_at IS NULL
+            WHERE agent_user_id = $4 AND left_at IS NULL
          ), upserted AS (
            INSERT INTO agency_agent_sessions
              (tenant_id, account_id, campaign_id, agent_user_id, state, owner_replica, last_heartbeat,
               kind, break_reason)
            VALUES ($1, $2, $3, $4, 'break', $5, now(), $6, $7)
-           ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL
+           ON CONFLICT (agent_user_id) WHERE left_at IS NULL
            DO UPDATE SET owner_replica = EXCLUDED.owner_replica,
                          last_heartbeat = now(),
                          state = CASE WHEN agency_agent_sessions.state = 'offline'
@@ -484,7 +504,8 @@ export class AgencyAgentSessionRepository {
                                              THEN EXCLUDED.break_reason
                                              ELSE agency_agent_sessions.break_reason END,
                          updated_at = now()
-             WHERE agency_agent_sessions.kind = EXCLUDED.kind
+             WHERE agency_agent_sessions.tenant_id = EXCLUDED.tenant_id
+               AND agency_agent_sessions.kind = EXCLUDED.kind
                AND agency_agent_sessions.campaign_id IS NOT DISTINCT FROM EXCLUDED.campaign_id
                AND agency_agent_sessions.account_id = EXCLUDED.account_id
            RETURNING *, (xmax = 0) AS inserted
@@ -500,7 +521,16 @@ export class AgencyAgentSessionRepository {
            FROM upserted LEFT JOIN prev ON prev.id = upserted.id`,
         [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId,
           input.kind, breakReason],
-      );
+      ).catch((err: unknown) => {
+        // ── A race on the KEPT per-tenant index (0035, OS8) ───────────────────
+        // `ON CONFLICT (agent_user_id)` absorbs a conflict on its own arbiter only. Two joins of
+        // one agent in one tenant racing both pass the arbiter's pre-check; the loser's insert can
+        // then trip `uq_agency_agent_live_tenant` (kept for rollback) before the arbiter, as a raw
+        // 23505. It means exactly what an empty upsert means, "something live exists for this
+        // agent", so it takes the same path: read the blocker and retry or refuse.
+        if (isUniqueViolation(err, 'uq_agency_agent_live_tenant')) return { rows: [] };
+        throw err;
+      });
       const row = rows[0];
       if (row) {
         // Destructured rather than passed through: the two log-only columns must
@@ -533,14 +563,18 @@ export class AgencyAgentSessionRepository {
       //
       // This read is NOT synchronised with the upsert, and both branches below
       // exist because of that gap rather than in spite of it.
-      const blocker = await this.findLiveForAgent(input.tenantId, input.agentUserId);
+      // Anywhere, not in this tenant: the arbiter spans tenants (OS1), so the row that refused
+      // the upsert may be in another one, and a tenant-scoped read would find nothing and retry
+      // until the bound throws.
+      const blocker = await this.findLiveForAgentAnyTenant(input.agentUserId);
 
-      // `campaign_id` and `account_id` decide "the same session", as the DO UPDATE's
-      // WHERE does: the CHECK ties `kind` to the campaign, and `!==` on
+      // `tenant_id`, `campaign_id` and `account_id` decide "the same session", as the DO
+      // UPDATE's WHERE does: the CHECK ties `kind` to the campaign, and `!==` on
       // `string | null` is NULL-safe (a soft-phone blocker of a soft-phone join in
       // the same account is the rehydrate race below, not a conflict; one in another
       // account is a conflict, and retrying it would only throw after three passes).
-      if (blocker && (blocker.campaign_id !== input.campaignId || blocker.account_id !== input.accountId)) {
+      if (blocker && (blocker.tenant_id !== input.tenantId
+        || blocker.campaign_id !== input.campaignId || blocker.account_id !== input.accountId)) {
         return { ok: false, blocker };
       }
 
@@ -575,10 +609,72 @@ export class AgencyAgentSessionRepository {
   }
 
   /**
+   * The agent's one live session in ANY tenant (`uq_agency_agent_live_agent`, OS1), if any. Only
+   * the join's conflict read uses it: everything else asks within its own tenant
+   * ({@link findLiveForAgent}), and must never act on a session in another.
+   */
+  async findLiveForAgentAnyTenant(agentUserId: string): Promise<AgencyAgentSessionRecord | null> {
+    const { rows } = await getPool().query<AgencyAgentSessionRecord>(
+      `SELECT * FROM agency_agent_sessions
+        WHERE agent_user_id = $1 AND left_at IS NULL
+        LIMIT 1`,
+      [agentUserId],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * OS3: claim this live session's station for `deviceId`, in one statement.
+   *
+   *  * the device already holds it, no device does, or `takeOver`: the device holds it now;
+   *  * another device holds it and `takeOver` is false: refused `held_elsewhere`, nothing written;
+   *  * no `deviceId` (an older client): on a join or soft-phone open, allowed, and the holder is
+   *    cleared, so the station is any device's to claim, as before 0035; on a token mint
+   *    (`reconnect`), refused while a device holds the station,
+   *    so a console tab still running the bundle from before this change cannot reconnect onto a
+   *    station the agent moved (it can still rejoin, which is the agent's own choice);
+   *  * the session has left: `session_gone`.
+   *
+   * Never check-then-write: two devices racing a claim (a reconnect against a take-over) must not
+   * both read "mine" and both win. A refused claim reads the row back for the copy's
+   * `client_kind`; the row may have left in between, which is `session_gone`.
+   */
+  async claimStationDevice(
+    sessionId: string,
+    { deviceId, takeOver }: { deviceId: string | null; takeOver: boolean },
+    { reconnect = false }: { reconnect?: boolean } = {},
+  ): Promise<AgencyStationDeviceClaim> {
+    // One statement: `cur` locks the live row, `upd` writes only when the holder changes (a
+    // reconnect from the holder writes nothing, so `updated_at` does not move on every mint),
+    // and the outer read decides from the same locked row.
+    const { rows } = await getPool().query<{ client_kind: AgencyClientKind; holder: string | null; moved: boolean }>(
+      `WITH cur AS (
+         SELECT id, station_device_id, client_kind FROM agency_agent_sessions
+          WHERE id = $1 AND left_at IS NULL
+          FOR UPDATE
+       ), upd AS (
+         UPDATE agency_agent_sessions s
+            SET station_device_id = $2::varchar
+           FROM cur
+          WHERE s.id = cur.id
+            AND cur.station_device_id IS DISTINCT FROM $2::varchar
+            AND (($2::varchar IS NULL AND NOT $4::boolean) OR $3::boolean OR cur.station_device_id IS NULL)
+          RETURNING s.id
+       )
+       SELECT cur.client_kind, cur.station_device_id AS holder, EXISTS (SELECT 1 FROM upd) AS moved FROM cur`,
+      [sessionId, deviceId, takeOver && deviceId !== null, reconnect],
+    );
+    const row = rows[0];
+    if (!row) return { ok: false, reason: 'session_gone' };
+    if (row.moved || row.holder === deviceId) return { ok: true };
+    return { ok: false, reason: 'held_elsewhere', client_kind: row.client_kind };
+  }
+
+  /**
    * The agent's one live session anywhere in the tenant, if any.
    *
-   * `LIMIT 1` is a formality, not a choice between candidates: `uq_agency_agent_live_tenant`
-   * (`uq_agency_agent_live_tenant`) permits at most one row to satisfy this predicate. It is written this
+   * `LIMIT 1` is a formality, not a choice between candidates: `uq_agency_agent_live_agent`
+   * permits at most one live row per agent, in any tenant. It is written this
    * way so a future reader does not have to reason about which row they get.
    */
   async findLiveForAgent(tenantId: string, agentUserId: string): Promise<AgencyAgentSessionRecord | null> {

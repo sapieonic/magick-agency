@@ -1339,9 +1339,73 @@ Every new guard was mutation-checked. **Not verified:** none of it has run on a 
 cellular-call detection's Android code (bar its pure tracker, compiled and run on a JVM) and all of
 its Swift have never been compiled.
 
+### One station per agent 2026-11-11 (OS1–OS8, [`decisions.md`](decisions.md) §4, "One station per agent")
+
+Manas: an agent stays online at one station only, one console window or the app, and across
+tenants. Before this, the server already allowed one live session per agent per tenant and closed
+an older socket of the same session with 4409; what was missing was the tenant boundary and a way
+to stop a device that had lost its socket (a laptop asleep, a phone out of signal) from
+re-minting a token and silently taking the station back from the device the agent had moved to.
+
+- **Across tenants (OS1, OS2, OS7, OS8).** `0035_one_station_per_agent.sql`:
+  `uq_agency_agent_live_agent` is the new arbiter (duplicates ended when it runs); the per-tenant
+  index is kept beside it so an image-only rollback still joins (OS8). The join and the soft-phone open
+  answer `409 session_in_other_tenant`, naming the tenant only; the console and the app show the
+  server's sentence. A session in another tenant with no station attached and nothing in flight is
+  ended by the join instead (OS7), so a forgotten session cannot lock the agent out everywhere.
+  This reverses the old pin that "the same agent id in another tenant is
+  dialled independently" (`agency-double-reservation`, `agency-duplicate-dial` T-M6,
+  `agency-session-tenant-unique`), each rewritten to the new rule.
+- **One device holds the station (OS3–OS6).** `station_device_id` on the session; `device_id` and
+  `take_over` on the join, the soft-phone open and the token mint (`AgencyStationDeviceFields`);
+  `409 station_on_other_device` for any other device that does not take over. The console is one
+  device per page load and takes over when its station or soft-phone page opens; its reconnects
+  never do, a refused re-mint stops as a 4409 does, and "Use this window instead" takes over. The
+  app is one device per install; "Go on duty", "Use this phone" and "Use it on this phone" take
+  over, its own resumes and its reconnect ladder never do.
+- **Review fixes (same day, a fresh-context review of the first commit).** The rollback index
+  (OS8); the idle session in another tenant (OS7); the console's Switch no longer takes the other
+  campaign's station to look it up; a page the browser reloaded by itself (a discarded tab) asks
+  before taking the station; a take-over is spent by its one mint on both clients; a mint naming
+  no device is refused while a device holds the station (OS6, stale console tabs); the app-wide
+  soft-phone API names the device too; `BASELINE.md` and stale comments repaired.
+- **Copy:** "Your station moved to another device" / "Moved to another device" (was "another
+  window"), and the app's "Your station is open in the console…".
+
+Every new guard was mutation-checked (the claim SQL, the arbiter, the migration's clean-up order,
+the console's mint refusal and take-over, the idle-session rule, the discarded-tab join).
+**Not verified:** none of it has run against a real browser, phone or carrier; `wasDiscarded` is
+Chromium's, so another browser's restored tab still takes over as a page load; an older app that
+sends no `device_id` can still take the station by going on duty until
+`MOBILE_MIN_SUPPORTED_VERSION` is raised (OS6).
+
 ## Test counts
 
-Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) with every round of
+Latest run, 2026-11-12, one station per agent (OS1–OS8, above), rebased on `main` after the
+console navigation redesign (#76): its migration is `0035_one_station_per_agent.sql` (`main` took
+0034), and its `session_in_other_tenant` copy says "organisation", as the console and the app now
+do:
+
+Run from inside each package on a local Postgres 16 (`max_connections` 300) and Redis 7 on the
+agency ports with no other run sharing them, integration with 4 workers. `pnpm lint` clean;
+`pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33 pass;
+`contracts-literals --check` up to date. `apps/mobile` (Flutter 3.47.9): `flutter analyze` no
+issues, `flutter test` 1797 passed; `agency_wire` `dart test` 609 passed. Not run (untouched):
+`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`, `packages/observability`,
+`agent_audio`. One console run is not counted: with three suites sharing four cores,
+`organisationWording.test.ts` (which parses every console source file) timed out at 5 s; it passes
+alone, and the console count is from a run on its own.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9805 passed + 1 expected fail (494 files) | rest lane 2729 passed + 9 expected fail + 2 skipped (253 files + 2 skipped); wall-clock lane 23 (5 files) |
+| `packages/db` | 435 (26 files) | 751 (78 files) |
+| `apps/console` | 6869 (368 files) | — |
+| `packages/contracts` | 481 (15 files) | — |
+| `packages/domain` | 261 (13 files) | — |
+| `apps/mobile` | 1797 (`flutter test`); `agency_wire` 609 (`dart test`) | — |
+
+Previous run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) with every round of
 fixes: the QA run 20261112-110644, the three-persona review, and the automated review of PR #76
 with its review comments (campaign Settings saves only what was changed and drops stale reads;
 "Got it" per person, by the browser's day, back on a new pause; DNC search's `+` floor by calling
@@ -1979,6 +2043,12 @@ calls; not yet run on a phone or a carrier). Remaining:
   exists); keeping a pending contact's original due time after a reach (the reached call settles
   its booked inbound callback); a console surface for tenant-default Missed rows (super-admins see
   them per number).
+
+**One station per agent** (OS1–OS8, above): `uq_agency_agent_live_tenant` stays beside
+`uq_agency_agent_live_agent` only so an image-only rollback still joins (OS8). Once no deployable
+image names it as its arbiter, a new migration drops it, and the same change deletes the upsert's
+23505 catch on that index (`upsertLiveSession` in
+`apps/server/src/db/repositories/agency/agent-session.repository.ts`).
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.

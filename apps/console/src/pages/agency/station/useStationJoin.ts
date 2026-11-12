@@ -21,6 +21,7 @@ import {
   LIVE_SESSION_TOUCH_MS,
 } from '../../../utils/agencyLiveSession';
 import { agencyPersona } from '../../../utils/agencyPersona';
+import { pageWasDiscarded } from '../../../utils/stationDevice';
 import {
   trackAgencyStationJoined,
   trackAgencyStationJoinFailed,
@@ -44,6 +45,12 @@ import type {
 export interface StationJoin {
   bootstrap: AgencySessionBootstrap | null;
   joinError: string | null;
+  /**
+   * OS3: the join did not take the station over (the browser reloaded this page by itself, a
+   * discarded tab) and another device or window holds it. `useThisWindow` joins again, taking it.
+   */
+  onOtherDevice: boolean;
+  useThisWindow: () => void;
   /**
    * 409 `session_on_softphone`: the agent's live session is a soft-phone session
    * (`docs/softphone.md` §2), which has no campaign to name the way
@@ -86,6 +93,16 @@ export function useStationJoin({
 }): StationJoin {
   const [bootstrap, setBootstrap] = useState<AgencySessionBootstrap | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [onOtherDevice, setOnOtherDevice] = useState(false);
+  /**
+   * OS3/OS4: whether this page's join takes the station over. Opening the station is the agent's
+   * own choice, so it does, except on a page the browser reloaded by itself (a tab it discarded
+   * and brought back): that is not a choice, and must not take the station from the agent's phone.
+   * "Use this window instead" joins again (`joinAttempt`), taking it over: as the soft phone's
+   * open (`useSoftphoneSession`).
+   */
+  const [joinAttempt, setJoinAttempt] = useState(0);
+  const joinTakesOver = joinAttempt > 0 || !pageWasDiscarded();
   const [onSoftphoneElsewhere, setOnSoftphoneElsewhere] = useState(false);
   /**
    * `session_on_softphone`'s `session_id` and `account_id`: the session Close the soft
@@ -181,9 +198,12 @@ export function useStationJoin({
     let cancelled = false;
     setJoinError(null);
     setJoinConflict(null);
-    const joinKey = `${tenantId}:${accountId}:${campaignId}`;
+    setOnOtherDevice(false);
+    const joinKey = `${tenantId}:${accountId}:${campaignId}:${joinAttempt}:${joinTakesOver ? 'take' : 'ask'}`;
     // A 503 `station_token_unavailable` (D9) is retried here, not shown: see the helper.
-    coalesceJoin(joinKey, () => retryOnStationTokenUnavailable(() => createAgencySession(campaignId, tenantId, accountId)))
+    coalesceJoin(joinKey, () => retryOnStationTokenUnavailable(
+      () => createAgencySession(campaignId, tenantId, accountId, { takeOver: joinTakesOver }),
+    ))
       .then((session) => {
         rememberLiveSessionFromBootstrap(tenantId, session);
         if (!cancelled) setBootstrap(session);
@@ -212,6 +232,22 @@ export function useStationJoin({
           trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
           return;
         }
+        /** 409 `station_on_other_device` (OS3): the other-device screen, with "Use this window". */
+        if (errorCode(err) === 'station_on_other_device') {
+          setOnOtherDevice(true);
+          trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
+          return;
+        }
+        /**
+         * 409 `session_in_other_tenant` (OS1): the agent is live in another organisation they belong
+         * to. Nothing here can end that session (every session route is scoped to its own
+         * tenant), so it is `StationFatal` with the API's sentence, which names the workspace.
+         */
+        if (errorCode(err) === 'session_in_other_tenant') {
+          setJoinError(apiSentence(err, OTHER_TENANT_COPY));
+          trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
+          return;
+        }
         /**
          * 403 `not_staffed`: nobody has assigned them to this campaign. No remedy on this
          * screen (a supervisor staffs them), so it is `StationFatal` with the API's own
@@ -219,7 +255,7 @@ export function useStationJoin({
          * not send them straight back.
          */
         if (errorCode(err) === 'not_staffed') {
-          setJoinError(notStaffedSentence(err));
+          setJoinError(apiSentence(err, NOT_STAFFED_COPY));
           trackAgencyStationJoinFailed({ reason: 'not_staffed', conflict_state: null });
           return;
         }
@@ -255,7 +291,12 @@ export function useStationJoin({
     return () => {
       cancelled = true;
     };
-  }, [campaignId, tenantId, accountId]);
+  }, [campaignId, tenantId, accountId, joinAttempt, joinTakesOver]);
+
+  /** "Use this window instead" on the other-device screen: join again, taking the station. */
+  const useThisWindow = useCallback(() => {
+    setJoinAttempt((n) => n + 1);
+  }, []);
 
   /**
    * `agency_station_joined`, decoupled from the join effect above.
@@ -360,10 +401,15 @@ export function useStationJoin({
       if (!progress.leftOther) {
         let otherSessionId = progress.otherSessionId;
         if (!otherSessionId) {
+          // OS3: a look-up, never a take-over. When another device holds that campaign's station
+          // (the agent's phone, say) it is refused `station_on_other_device` and nothing moves:
+          // the switch stops with "open on another device", instead of taking the station from
+          // a device that may be mid-call.
           const otherSession = await createAgencySession(
             conflict.campaign_id,
             tenantId ?? undefined,
             accountId ?? undefined,
+            { takeOver: false },
           );
           if (conflictIsMidCall(otherSession.state)) {
             // Not a request failure — the other campaign answered fine, and
@@ -555,6 +601,8 @@ export function useStationJoin({
   return {
     bootstrap,
     joinError,
+    onOtherDevice,
+    useThisWindow,
     onSoftphoneElsewhere,
     closeSoftphoneAndJoin: () => void closeSoftphoneAndJoin(),
     closingSoftphone,
@@ -581,10 +629,18 @@ export const SOFTPHONE_REOPENED_COPY =
 /** `not_staffed`'s copy when the refusal carries no usable sentence of its own. */
 export const NOT_STAFFED_COPY = 'You’re not assigned to this campaign. Ask your supervisor to add you.';
 
-/** The API's sentence on a `not_staffed` refusal, else {@link NOT_STAFFED_COPY}. */
-function notStaffedSentence(err: unknown): string {
+/** The fallback when a `session_in_other_tenant` refusal carries no sentence of its own. */
+export const OTHER_TENANT_COPY =
+  'You are live in another organisation. Leave your station there first: you can be on only one station at a time.';
+
+/** OS3: a join this window did not take over found the station on another device. */
+export const STATION_ON_OTHER_DEVICE_COPY =
+  'Your station is open on another device or window. Use it there, or use this window instead.';
+
+/** The API's own sentence on a refusal (`not_staffed`, `session_in_other_tenant`), else `fallback`. */
+function apiSentence(err: unknown, fallback: string): string {
   const message = errorBody(err)?.message;
-  return typeof message === 'string' && message.trim().length > 0 ? message : NOT_STAFFED_COPY;
+  return typeof message === 'string' && message.trim().length > 0 ? message : fallback;
 }
 
 /** The soft-phone session a `session_on_softphone` refusal named, and its account. */

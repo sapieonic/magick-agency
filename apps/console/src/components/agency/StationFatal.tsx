@@ -34,16 +34,24 @@ export function StationFatal({
   message,
   toCampaign,
   campaignId,
+  action,
 }: {
   message: string;
   toCampaign: boolean;
   campaignId: string;
+  /** One remedy this screen can perform (OS3: "Use this window instead"). */
+  action?: { label: string; onClick: () => void };
 }) {
   return (
     <div className={styles.shell}>
       <div className={styles.fatal} role="alert">
         <h1>Can’t open the station</h1>
         <p>{message}</p>
+        {action ? (
+          <button type="button" onClick={action.onClick} data-testid="station-fatal-action">
+            {action.label}
+          </button>
+        ) : null}
         {/*
           ── This screen used to be a trap, and it is the common one ─────────
           It returns before the header, so there is no `StationMenu`, no nav,

@@ -59,7 +59,11 @@ const FROM = new Date('2026-08-10T00:00:00.000Z');
 const TO = new Date('2026-08-20T00:00:00.000Z');
 const DIALED = new Date('2026-08-15T09:00:00Z');
 
-/** A campaign, a live session, one dialled+bridged attempt and one shift event. */
+/**
+ * A campaign, a session, one dialled+bridged attempt and one shift event. The session is LEFT at the
+ * shift's end: one person holds one live session across tenants (0035, OS1), and these are
+ * history reads, so a shift that is over is what they read.
+ */
 async function seedTenant(
   owner: { tenantId: string; accountId: string },
   agentUserId: string,
@@ -71,6 +75,7 @@ async function seedTenant(
   const session = await insertAgentSession(campaign.id as string, {
     tenant_id: owner.tenantId, account_id: owner.accountId,
     agent_user_id: agentUserId, joined_at: new Date('2026-08-15T08:00:00Z'),
+    state: 'offline', left_at: new Date('2026-08-15T10:00:00Z'),
   });
   const contact = await insertAgencyContact(campaign.id as string, {
     tenant_id: owner.tenantId, account_id: owner.accountId, state: 'completed',
@@ -254,6 +259,7 @@ describe('agent record tenant isolation (integration)', () => {
     const theirSession = await insertAgentSession(theirCampaign.id as string, {
       tenant_id: THEIRS.tenantId, account_id: THEIRS.accountId,
       agent_user_id: AGENT, joined_at: new Date('2026-08-15T00:00:00Z'),
+      state: 'offline', left_at: new Date('2026-08-15T20:00:00Z'),
     });
     await insertAgentShift(theirSession, [
       ['available', new Date('2026-08-15T00:00:00Z')],

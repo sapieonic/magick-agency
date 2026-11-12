@@ -69,7 +69,7 @@ const { repos } = vi.hoisted(() => ({
     attempt: { findById: vi.fn(), findPriorForContactLineage: vi.fn().mockResolvedValue([]) },
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn(), probeAgentQueues: vi.fn() },
-    session: { findById: vi.fn(), findLiveForAgent: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
+    session: { findById: vi.fn(), findLiveForAgent: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn(), claimStationDevice: vi.fn() },
     staffing: { isActiveOnCampaign: vi.fn() },
   },
 }));
@@ -78,6 +78,8 @@ vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () =>
 }));
 const { accounts } = vi.hoisted(() => ({ accounts: { findByIdInTenant: vi.fn() } }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: accounts }));
+const { tenants } = vi.hoisted(() => ({ tenants: { findById: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({ tenantRepository: tenants }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: repos.attempt,
   agencyCampaignRepository: repos.campaign,
@@ -120,20 +122,27 @@ function liveSession(patch: Record<string, unknown> = {}) {
 }
 
 const mint = vi.fn();
+/** OS7: whether the other tenant's session has a station attached (connected: it is working there). */
+const stationPresence = vi.fn(async (): Promise<'connected' | 'absent' | 'unknown'> => 'connected');
+const stationDetach = vi.fn();
 const agentsGet = vi.fn();
 const rehydrate = vi.fn();
 const agentsTransition = vi.fn();
+const agentsClear = vi.fn(async () => undefined);
 
 function makeRuntime() {
   return {
     replicaId: 'r1',
-    agents: { get: agentsGet, set: vi.fn(), clear: vi.fn(), transition: agentsTransition },
+    agents: { get: agentsGet, set: vi.fn(), clear: agentsClear, transition: agentsTransition },
     wrapup: { stateFor: vi.fn(() => null) },
-    stations: { send: vi.fn(() => true), attach: vi.fn(), detach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
+    stations: {
+      send: vi.fn(() => true), attach: vi.fn(), detach: stationDetach, isLocallyOwned: vi.fn(() => true),
+      stationPresence: stationPresence,
+    },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
-      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: vi.fn(() => false),
+      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: vi.fn(() => false), hasRedialInFlight: vi.fn(() => false),
       noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null),
     },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false), peek: vi.fn(() => null) },
@@ -173,6 +182,8 @@ beforeEach(async () => {
   // staffing (`not_staffed` has its own describe at the end).
   repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
   repos.session.findLiveForAgent.mockResolvedValue(null);
+  repos.session.claimStationDevice.mockResolvedValue({ ok: true });
+  stationPresence.mockResolvedValue('connected');
   accounts.findByIdInTenant.mockImplementation(async (id: string, tenantId: string) =>
     id === 'a2' && tenantId === 't1' ? { id: 'a2', tenant_id: 't1', name: 'North Region' } : null);
   app = await buildApp();
@@ -232,6 +243,150 @@ describe('POST /sessions — agent live on the soft phone', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: 'session_on_softphone', account_id: 'a2', account_name: null });
+  });
+});
+
+describe('POST /sessions — one station per agent (OS1, OS3)', () => {
+  const DEVICE = 'tab-0123456789abcdef';
+  const OTHER_DEVICE = 'phone-fedcba9876543210';
+
+  it('409s session_in_other_tenant naming only the tenant, and touches nothing', async () => {
+    tenants.findById.mockResolvedValue({ id: 't2', name: 'Acme Collections' });
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_tenant', session: liveSession({ tenant_id: 't2', account_id: 'a9', campaign_id: 'camp-there' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict',
+      code: 'session_in_other_tenant',
+      message: expect.stringContaining('Acme Collections'),
+      tenant_id: 't2',
+      tenant_name: 'Acme Collections',
+    });
+    // Nothing of the other tenant's campaigns or accounts is read or named.
+    expect(repos.campaign.findById).toHaveBeenCalledTimes(1);
+    expect(accounts.findByIdInTenant).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+    expect(rehydrate).not.toHaveBeenCalled();
+  });
+
+  it('OS7: an idle session in the other tenant is ended as its Leave would, and the join goes through', async () => {
+    stationPresence.mockResolvedValue('absent');
+    agentsGet.mockResolvedValue({ state: 'break' });
+    repos.session.joinOrRehydrate
+      .mockResolvedValueOnce({ ok: false, reason: 'other_tenant', session: liveSession({ id: 'sess-there', tenant_id: 't2' }) })
+      .mockResolvedValueOnce({ ok: true, created: true, session: liveSession({ id: 'sess-1', campaign_id: 'camp-new' }) });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(agentsClear).toHaveBeenCalledWith('sess-there');
+    expect(repos.session.leave).toHaveBeenCalledWith('sess-there');
+    expect(stationDetach).toHaveBeenCalledWith('sess-there');
+    expect(repos.session.joinOrRehydrate).toHaveBeenCalledTimes(2);
+  });
+
+  it('OS7: a working session in the other tenant (station attached) is left alone and the join refused', async () => {
+    stationPresence.mockResolvedValue('connected');
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_tenant', session: liveSession({ id: 'sess-there', tenant_id: 't2' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'session_in_other_tenant' });
+    expect(repos.session.leave).not.toHaveBeenCalled();
+    expect(repos.session.joinOrRehydrate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed tenant-name read still answers the 409', async () => {
+    tenants.findById.mockRejectedValue(new Error('db down'));
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_tenant', session: liveSession({ tenant_id: 't2' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'session_in_other_tenant', tenant_id: 't2', tenant_name: null });
+  });
+
+  it('a resume from another device than the holder is refused before the upsert writes anything', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(liveSession({
+      id: 'sess-1', kind: 'campaign', campaign_id: 'camp-new', station_device_id: OTHER_DEVICE, client_kind: 'mobile',
+    }));
+
+    const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', device_id: DEVICE });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict',
+      code: 'station_on_other_device',
+      message: expect.stringMatching(/phone/),
+      session_id: 'sess-1',
+      client_kind: 'mobile',
+    });
+    expect(repos.session.joinOrRehydrate).not.toHaveBeenCalled();
+    expect(repos.session.claimStationDevice).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+    expect(rehydrate).not.toHaveBeenCalled();
+  });
+
+  it('take_over joins from another device: the claim is asked to take it, then the token is minted', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(liveSession({
+      id: 'sess-1', campaign_id: 'camp-new', station_device_id: OTHER_DEVICE,
+    }));
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, created: false, session: liveSession({ id: 'sess-1', campaign_id: 'camp-new', station_device_id: OTHER_DEVICE }),
+    });
+
+    const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', device_id: DEVICE, take_over: true });
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: DEVICE, takeOver: true }, { reconnect: false });
+    expect(mint).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('a claim lost to a racing take-over is the same 409, with no rehydrate and no token', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, created: false, session: liveSession({ id: 'sess-1', campaign_id: 'camp-new' }),
+    });
+    repos.session.claimStationDevice.mockResolvedValue({ ok: false, reason: 'held_elsewhere', client_kind: 'web' });
+
+    const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', device_id: DEVICE });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'station_on_other_device', session_id: 'sess-1', client_kind: 'web' });
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: DEVICE, takeOver: false }, { reconnect: false });
+    expect(rehydrate).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it('a join with no device id (an older client) claims with none, and is not pre-checked', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, created: true, session: liveSession({ id: 'sess-1', campaign_id: 'camp-new' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.session.findLiveForAgent).not.toHaveBeenCalled();
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: null, takeOver: false }, { reconnect: false });
+  });
+
+  it('a malformed device id from an internal caller is treated as none, never stored', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, created: true, session: liveSession({ id: 'sess-1', campaign_id: 'camp-new' }),
+    });
+
+    const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', device_id: 'bad id!', take_over: true });
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: null, takeOver: false }, { reconnect: false });
   });
 });
 

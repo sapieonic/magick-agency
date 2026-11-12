@@ -8,7 +8,7 @@ import { DEFAULTS, uuidFor } from '../setup/factories.js';
  *
  * docs/softphone.md §2: a soft-phone session is `kind = 'softphone'`,
  * `campaign_id` NULL, created in `break/soft_phone`, and it is the agent's ONE
- * live session in the tenant (`uq_agency_agent_live_tenant`), exactly as a
+ * live session (`uq_agency_agent_live_agent`, across tenants since 0035), exactly as a
  * campaign session is. Everything here is a claim about the upsert's SQL on the
  * partial index, so it runs on the database:
  *

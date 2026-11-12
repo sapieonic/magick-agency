@@ -1,3 +1,4 @@
+import { stationDeviceBody } from '../utils/stationDevice';
 import { API_BASE } from '../config';
 import { apiFetch } from './client';
 import { buildAuthHeaders } from './authHeaders';
@@ -347,11 +348,13 @@ export async function fetchManualCallRecordingBlobUrl(
 export function openSoftphoneSession(
   tenantId?: string,
   accountId?: string,
+  { takeOver = true }: { takeOver?: boolean } = {},
 ): Promise<SoftphoneResult<AgencySoftphoneSessionResponse>> {
   return attempt(() =>
     apiFetch<AgencySoftphoneSessionResponse>(
       `${SOFTPHONE_BASE}/sessions`,
-      { method: 'POST', body: JSON.stringify({}) },
+      // OS3: this window, taking the station when the agent opened the soft phone here.
+      { method: 'POST', body: JSON.stringify(stationDeviceBody(takeOver)) },
       tenantId,
       accountId,
     ),

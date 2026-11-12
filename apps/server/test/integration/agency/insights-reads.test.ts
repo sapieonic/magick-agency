@@ -285,7 +285,7 @@ describe('the allocation per owner', () => {
   it('attempt counters from the rollup equal the old per-attempt read where owners dial their own contacts', async () => {
     const id = await campaign({ assignment_mode: 'strict' });
     const agents = [randomUUID(), randomUUID(), randomUUID()];
-    // Past shifts (one live session per agent per tenant), and a second shift of agent 0: its dials are agent 0's too.
+    // Past shifts (one live session per agent), and a second shift of agent 0: its dials are agent 0's too.
     const shift = (u: string | undefined) => insertAgentSession(id, { agent_user_id: u, state: 'offline', left_at: new Date() });
     const sessions = await Promise.all(agents.map((u) => shift(u)));
     sessions.push(await shift(agents[0]));

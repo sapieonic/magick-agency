@@ -28,7 +28,7 @@ export type SoftphoneCloseOutcome =
  * server still guards the live call, and an owed outcome is the documented lapse.
  *
  * ── The session's own account ────────────────────────────────────────────────
- * One live session per agent per TENANT, so the session may be in a sibling account
+ * One live session per agent (across tenants, OS1), so the session may be in a sibling account
  * of the one the console is in. The refusal that named it carries its `account_id`
  * (`sessionAccountId`); the bootstrap names the agent's live session tenant-wide with
  * its `account_id` too, but reads its call only in the account asked, and `leave` is

@@ -10,6 +10,7 @@ import type { AgencyActionErrorResponse } from './actions';
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
 import type { AgencyClientKind, AgencyQueueState } from './station';
 import type { AgencyAssignmentMode } from './assignment';
+import type { AgencyStationDeviceFields } from './station-device';
 import { SOFTPHONE_OVERRIDE_NOTE_MAX, SOFTPHONE_OVERRIDE_NOTE_MIN } from './softphone';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
@@ -137,7 +138,12 @@ export interface AgencyBreakReason {
 
 // ─── POST /api/v1/agency/sessions — session bootstrap ───────────────────────
 
-export interface AgencyCreateSessionRequest {
+/**
+ * `device_id` / `take_over` (OS3, `./station-device`): which device is joining, and whether the
+ * agent chose to take the station here. A join from another device than the one holding the
+ * session's station, without `take_over`, is refused `station_on_other_device`.
+ */
+export interface AgencyCreateSessionRequest extends AgencyStationDeviceFields {
   campaign_id: string;
   /**
    * **Which agent is joining.** The public API layer's user id, supplied by the public API layer from the
@@ -366,7 +372,7 @@ export interface AgencyRetryContext {
  *
  * Returned when the agent already holds a LIVE session on a **different**
  * campaign in the same tenant. The database permits one live
- * session per (tenant, agent) — the reservation CAS key is per session
+ * session per agent (per tenant until 0035, across tenants since, OS1) — the reservation CAS key is per session
  * (`agency:agent:{sessionId}:state`) while a human has one pair of ears, so two
  * live sessions mean two pacing engines bridging two customers into one headset.
  *
@@ -412,12 +418,12 @@ export interface AgencySessionCampaignConflict extends AgencyActionErrorResponse
    * The live session itself, so the client can leave it (`POST /sessions/:id/leave`)
    * without a second read. Always the CALLER's own session: the join names the agent
    * from the authenticated user, and the session that refused it is that agent's one live
-   * session in the tenant.
+   * session (across tenants since OS1; one in another tenant is `session_in_other_tenant`).
    */
   session_id: string;
   /**
    * The account that session is in. Often a SIBLING of the one the join was made in
-   * (the one-live-session rule spans the tenant), and `leave` is scoped to the session's
+   * (the one-live-session rule spans the tenant, and since OS1 every tenant), and `leave` is scoped to the session's
    * account, so the client sends this as its account scope to leave it. As on
    * `session_on_softphone`.
    */

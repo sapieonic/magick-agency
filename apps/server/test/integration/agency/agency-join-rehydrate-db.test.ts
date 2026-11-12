@@ -11,9 +11,10 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  * there can be wrong about SQL, because nothing there runs any. This file is the
  * other half — every claim the method makes about the DATABASE:
  *
- *   * the `ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL` arbiter
- *     really does match the PARTIAL index `uq_agency_agent_live_tenant`, and really does ignore left rows;
- *   * `DO UPDATE … WHERE campaign_id = EXCLUDED.campaign_id` returns zero rows on
+ *   * the `ON CONFLICT (agent_user_id) WHERE left_at IS NULL` arbiter (0035; was
+ *     `(tenant_id, agent_user_id)`) really does match the PARTIAL index
+ *     `uq_agency_agent_live_agent`, and really does ignore left rows;
+ *   * `DO UPDATE … WHERE tenant_id / campaign_id = EXCLUDED…` returns zero rows on
  *     a cross-campaign conflict AND leaves the other campaign's row byte-for-byte
  *     as it was;
  *   * the rehydrate preserves a live state and promotes only `offline`;
@@ -228,15 +229,20 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
     // agent to leave a station they left yesterday.
     const ours = await insertAgencyCampaign();
     const theirs = await insertAgencyCampaign({ tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
-    await insertAgentSession(theirs.id, {
+    const there = await insertAgentSession(theirs.id, {
       agent_user_id: uuidFor('agent-scoped'), tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT, state: 'on_call',
     });
     const closed = await insertAgentSession(ours.id, {
       agent_user_id: uuidFor('agent-scoped'), state: 'offline', left_at: new Date('2026-08-15T18:00:00Z'),
     });
 
+    // Live in the OTHER tenant: invisible here (the join's own conflict read is the agent-wide
+    // `findLiveForAgentAnyTenant`, OS1, and names only that tenant).
     expect(await agencyAgentSessionRepository.findLiveForAgent(TENANT, uuidFor('agent-scoped'))).toBeNull();
+    expect((await agencyAgentSessionRepository.findLiveForAgentAnyTenant(uuidFor('agent-scoped')))?.id).toBe(there.id);
 
+    // One live session per agent across tenants (0035): it leaves there before it is live here.
+    await getTestPool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE id = $1`, [there.id]);
     const live = await insertAgentSession(ours.id, { agent_user_id: uuidFor('agent-scoped'), state: 'available' });
     const found = await agencyAgentSessionRepository.findLiveForAgent(TENANT, uuidFor('agent-scoped'));
     expect(found?.id).toBe(live.id);
@@ -294,12 +300,10 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
     expect(await liveRows(uuidFor('agent-rejoin-8'))).toHaveLength(1);
   });
 
-  it('the same agent id in five TENANTS joins five times concurrently', async () => {
-    // The scoping decision, pinned as a POSITIVE: a shared-services operator id
-    // reused across tenants must keep working, and a global index — which would
-    // also have "fixed" the double bridge — would take four of these five off the
-    // floor. Concurrent rather than sequential so it is the INDEX being tested and
-    // not the order the rows happened to be written in.
+  it('the same agent in five TENANTS joining concurrently settles to exactly one live session (OS1)', async () => {
+    // Amended by 0035 (Manas, 2026-11-11): one person is one pair of ears in every tenant they
+    // belong to. Was: five tenants, five live sessions. Concurrent rather than sequential so it is
+    // the INDEX being tested and not the order the rows happened to be written in.
     const tenants = [uuidFor('t-a'), uuidFor('t-b'), uuidFor('t-c'), uuidFor('t-d'), uuidFor('t-e')];
     const campaigns = [];
     for (const t of tenants) {
@@ -309,9 +313,9 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
     const settled = await Promise.all(campaigns.map((c, i) =>
       join(c.id, uuidFor('agent-multi-tenant'), { tenantId: tenants[i], accountId: uuidFor(`${tenants[i]}-acct`) })));
 
-    expect(settled.every((r) => r.ok)).toBe(true);
-    expect(new Set(settled.map((r) => r.session.id)).size).toBe(5);
-    expect(await liveRows(uuidFor('agent-multi-tenant'))).toHaveLength(5);
+    expect(settled.filter((r) => r.ok)).toHaveLength(1);
+    expect(settled.filter((r) => !r.ok).every((r) => !r.ok && r.reason === 'other_tenant')).toBe(true);
+    expect(await liveRows(uuidFor('agent-multi-tenant'))).toHaveLength(1);
   });
 
   it('a genuinely concurrent join and leave leaves at most one live session', async () => {

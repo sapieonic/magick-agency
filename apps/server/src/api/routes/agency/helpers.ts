@@ -9,6 +9,7 @@ import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
+import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import {
   agencyAgentSessionRepository,
   agencyAttemptRepository,
@@ -16,16 +17,20 @@ import {
   agencyContactRepository,
 } from '../../../db/repositories/agency.repository.js';
 import { dispositionErrorMessage } from '../../../agency/disposition.js';
-import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
+import type { AgencyAgentSessionRecord, AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { StationTokenUnavailableError, type StationTokenStore } from '../../../agency/station-token.js';
 import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../../../agency/calling-hours.js';
-import type {
-  AgencyActionErrorCode,
-  AgencyActionErrorResponse,
-  AgencyRetryContext,
-  AgencyStationIntervals,
+import {
+  AGENCY_STATION_DEVICE_ID_PATTERN,
+  type AgencyActionErrorCode,
+  type AgencyActionErrorResponse,
+  type AgencyClientKind,
+  type AgencyRetryContext,
+  type AgencySessionInOtherTenantRefusal,
+  type AgencyStationIntervals,
+  type AgencyStationOnOtherDeviceRefusal,
 } from '@magick-agency/contracts/agency';
 // The banner copy is built server-side from the frozen selector, so the sentence the
 // agent reads and the query that produced their roster cannot disagree. A leaf
@@ -227,7 +232,7 @@ export async function resolveReservedAgentUserId(sessionId: string | null): Prom
  * would set the Redis lease and mirror `available` onto a row with `left_at` set,
  * so the console renders a ready agent and gets no error, while
  * `findLiveForCampaign` (which the pacing tick reads) excludes left rows and
- * never dials them. Nothing anywhere is red. `uq_agency_agent_live_tenant` makes that state
+ * never dials them. Nothing anywhere is red. `uq_agency_agent_live_agent` makes that state
  * routine rather than exotic — the dedupe
  * closes sessions out from under whoever is holding them — so the guard belongs
  * on the shared path where a new route inherits it instead of having to
@@ -345,4 +350,190 @@ export async function mintStationTokenOr503(
     });
     return null;
   }
+}
+
+// ─── One station per agent (OS1, OS3; contracts `agency/station-device.ts`) ─────────────
+
+/** The device of one join, soft-phone open or token mint, as {@link stationDeviceFields} reads it. */
+export interface StationDevice {
+  deviceId: string | null;
+  takeOver: boolean;
+}
+
+/**
+ * The device fields of a join, a soft-phone open or a token mint, read from the internal body.
+ * The public layer has already validated them (`stationDeviceSchema`); a malformed value here
+ * (an internal caller) is treated as absent, which is an older client's behaviour, never a 500.
+ * `take_over` without a device id means nothing.
+ */
+export function stationDeviceFields(body: unknown): StationDevice {
+  const b = (body ?? {}) as { device_id?: unknown; take_over?: unknown };
+  const deviceId = typeof b.device_id === 'string' && AGENCY_STATION_DEVICE_ID_PATTERN.test(b.device_id) ? b.device_id : null;
+  return { deviceId, takeOver: deviceId !== null && b.take_over === true };
+}
+
+/**
+ * The read-only pre-check of a join or a soft-phone open (OS3): when the agent's live session in
+ * this tenant is the one the request would rehydrate (`isSameSession`) and another device holds its
+ * station, and the request named a device without taking over, answer 409
+ * `station_on_other_device` BEFORE the upsert writes anything. True: refused (the reply is sent;
+ * a boolean, not the reply, which is a thenable an async return would unwrap). The claim after the
+ * upsert ({@link claimStationOrReply}) is the atomic check; this only spares a refused join its
+ * writes, and reads nothing when the request cannot be refused (no device, or a take-over).
+ */
+export async function refuseIfHeldElsewhere(
+  reply: FastifyReply,
+  tenantId: string,
+  agentUserId: string,
+  device: StationDevice,
+  isSameSession: (live: AgencyAgentSessionRecord) => boolean,
+): Promise<boolean> {
+  if (device.deviceId === null || device.takeOver) return false;
+  const live = await agencyAgentSessionRepository.findLiveForAgent(tenantId, agentUserId);
+  if (!live || !isSameSession(live)) return false;
+  if (live.station_device_id === null || live.station_device_id === device.deviceId) return false;
+  await sendStationOnOtherDevice(reply, live.id, live.client_kind);
+  return true;
+}
+
+/**
+ * OS3: claim `session`'s station for this device (`claimStationDevice`), or answer the refusal:
+ * 409 `station_on_other_device` when another device holds it, `onGone` when the session has left.
+ * True: this device holds it, go on. Every route that rehydrates a session or mints its station
+ * token claims first, before the rehydrate and the mint, so a refused request neither seeds Redis
+ * nor replaces the holder's token. `reconnect`: a token mint, where a request naming no device is
+ * refused while one holds the station.
+ *
+ * `session` is the row as the route just read or wrote it: when it already names this device (or
+ * names none and none was sent), the claim would write nothing, so no statement runs.
+ */
+export async function claimStationOrReply(
+  reply: FastifyReply,
+  session: Pick<AgencyAgentSessionRecord, 'id' | 'station_device_id'>,
+  device: StationDevice,
+  options: { reconnect?: boolean; onGone: () => FastifyReply | Promise<FastifyReply> },
+): Promise<boolean> {
+  if (session.station_device_id === device.deviceId) return true;
+  const claim = await agencyAgentSessionRepository.claimStationDevice(
+    session.id, device, { reconnect: options.reconnect ?? false });
+  if (claim.ok) return true;
+  if (claim.reason === 'held_elsewhere') await sendStationOnOtherDevice(reply, session.id, claim.client_kind);
+  else await options.onGone();
+  return false;
+}
+
+/** 409 `station_on_other_device` (OS3): another device holds the session's station. */
+export function sendStationOnOtherDevice(
+  reply: FastifyReply,
+  sessionId: string,
+  clientKind: AgencyClientKind,
+): FastifyReply {
+  const refusal: AgencyStationOnOtherDeviceRefusal = {
+    error: 'Conflict',
+    code: 'station_on_other_device',
+    message: clientKind === 'mobile'
+      ? 'Your station is open on your phone. Use it there, or take it over here.'
+      : 'Your station is open on another device. Use it there, or take it over here.',
+    session_id: sessionId,
+    client_kind: clientKind,
+  };
+  return reply.code(409).send(refusal);
+}
+
+/**
+ * 409 `session_in_other_tenant` (OS1): the agent is live in another tenant. Names only the tenant
+ * (the agent's own membership); the tenant name is best effort.
+ */
+export async function sendSessionInOtherTenant(reply: FastifyReply, tenantId: string): Promise<FastifyReply> {
+  const tenantName = await tenantRepository.findById(tenantId)
+    .then((t) => t?.name ?? null)
+    .catch((err: unknown) => {
+      log.warn({ err, tenantId }, 'Could not resolve the live session\'s tenant name');
+      return null;
+    });
+  const refusal: AgencySessionInOtherTenantRefusal = {
+    error: 'Conflict',
+    code: 'session_in_other_tenant',
+    message: tenantName
+      ? `You are live in ${tenantName}. Leave your station there first: an agent can hold only one live station at a time.`
+      : 'You are live in another organisation. Leave your station there first: an agent can hold only one live station at a time.',
+    tenant_id: tenantId,
+    tenant_name: tenantName,
+  };
+  return reply.code(409).send(refusal);
+}
+
+/**
+ * The part of the runtime {@link endIdleSessionElsewhere} reads: the same signals the agent's own
+ * `leave` checks, plus station presence across processes.
+ */
+interface IdleSessionRuntime {
+  stations: {
+    stationPresence(sessionId: string): Promise<'connected' | 'absent' | 'unknown'>;
+    detach(sessionId: string): Promise<unknown> | unknown;
+  };
+  agents: {
+    get(sessionId: string): Promise<{ state: string } | null>;
+    clear(sessionId: string): Promise<unknown>;
+  };
+  dialer: { hasLiveAttempt(sessionId: string): boolean; hasRedialInFlight(sessionId: string): boolean };
+  softphone: { hasLiveCall(sessionId: string): boolean };
+  inbound?: { findCallForSession(sessionId: string): unknown } | null;
+}
+
+/**
+ * OS7: end the agent's session in ANOTHER tenant when nothing is there: no station attached in any
+ * process (`stationPresence` says `absent`; `unknown` keeps it), no lease beyond `offline` /
+ * `break` (no reservation, call or wrap-up), and no live campaign attempt, redial being set up,
+ * soft-phone call or inbound call. Then it is left exactly as the agent's own `leave` leaves it
+ * (lease cleared, row left, station detached), and the caller retries its join.
+ *
+ * Why: one live session per agent across tenants (OS1) would otherwise let a session forgotten in a
+ * tenant (a laptop closed without Leave, a membership since revoked, the dialler since switched
+ * off there) lock the agent out of every other tenant, with nothing in this one able to end it.
+ * A session that is working (a station attached, or anything in flight) is never ended from
+ * here: the join is refused `session_in_other_tenant` as before.
+ *
+ * Total: any read or write that fails leaves the session alone (false).
+ */
+export async function endIdleSessionElsewhere(
+  runtime: IdleSessionRuntime,
+  session: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>,
+  leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
+): Promise<boolean> {
+  try {
+    const id = session.id;
+    if (runtime.dialer.hasLiveAttempt(id) || runtime.dialer.hasRedialInFlight(id)) return false;
+    if (runtime.softphone.hasLiveCall(id) || runtime.inbound?.findCallForSession(id)) return false;
+    if ((await runtime.stations.stationPresence(id)) !== 'absent') return false;
+    const lease = await runtime.agents.get(id);
+    if (lease && lease.state !== 'offline' && lease.state !== 'break') return false;
+    await runtime.agents.clear(id);
+    await leave(id);
+    await runtime.stations.detach(id);
+    log.info({ sessionId: id, tenantId: session.tenant_id },
+      'Ended an idle session in another tenant so the agent can join here (OS7)');
+    return true;
+  } catch (err) {
+    log.warn({ err, sessionId: session.id }, 'Could not end an idle session in another tenant — refusing the join');
+    return false;
+  }
+}
+
+/**
+ * A join or soft-phone open (`join`), retried once when the only thing in the way was an idle
+ * session in another tenant that {@link endIdleSessionElsewhere} ended (OS7). Any other result,
+ * an `other_tenant` refusal included, is returned as it came.
+ */
+export async function joinEndingIdleElsewhere<R extends { ok: boolean }>(
+  runtime: IdleSessionRuntime,
+  join: () => Promise<R>,
+): Promise<R> {
+  const first = await join();
+  const refused = first as { ok: boolean; reason?: string; session?: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'> };
+  if (!refused.ok && refused.reason === 'other_tenant' && refused.session
+    && await endIdleSessionElsewhere(runtime, refused.session)) {
+    return join();
+  }
+  return first;
 }
