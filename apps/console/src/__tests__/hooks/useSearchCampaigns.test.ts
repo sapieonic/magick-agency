@@ -78,7 +78,9 @@ describe('readAllCampaigns', () => {
 
   it('stops every worker at the first page that fails, and fails the read', async () => {
     account(2_000);
-    const read = vi.mocked(mocks.listAgencyCampaignsPage).getMockImplementation()!;
+    const read = mocks.listAgencyCampaignsPage.getMockImplementation() as (
+      t: string | undefined, a: string, offset: number, limit: number,
+    ) => Promise<unknown>;
     mocks.listAgencyCampaignsPage.mockImplementation(async (t: string | undefined, a: string, offset: number, limit: number) => {
       if (offset === 100) {
         await new Promise((resolve) => setTimeout(resolve, 0));
