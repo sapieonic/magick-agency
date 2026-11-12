@@ -1341,29 +1341,31 @@ its Swift have never been compiled.
 
 ## Test counts
 
-Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) and its review fixes,
-on `feat/console-nav-redesign`:
+Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14), its review fixes and
+the fixes for QA run 20261112-110644 (the branch walked against staging: back arrow, leave guard on
+Back and in New campaign, settings section nav, campaign header and tabs, Call log and History, DNC
+search by any form of a number, Accounts, Analytics, Team, notifications, not-found page), on
+`feat/console-nav-redesign`:
 
-Run on commit `ca003a2` (console, lint and build; contracts and the server unit run on `987bb84`, whose
-server and contracts code is the same), from inside each package. `pnpm lint` clean, `pnpm build` clean, `pnpm
-test:tooling` 16 pass. `agency_wire` `dart test` 605 passed for the new Home board contract (run on
-`fix/nav-home` before the merge). **Not green, so no counts recorded for them:** `apps/server` unit
-had 3 failures, all in `inbound-recordings.test.ts` (9662 passed): this machine has no audio
-decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails the same way on a branch with no
-server code change. `apps/server` integration, on `48dadb3` with its own test database and Redis db: the
-wall-clock lane is green (below); the rest lane had 16 failures (2669 passed + 9 expected fail +
-2 skipped, 253 files), all in `agency-reports-e2e.test.ts` (the in-process renderer answers
-`render_failed`) and `inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`, which it
-needs), and the same 16 fail on `main` (`47eb7e9`) on this machine. The new
-`agency-home-board.test.ts` passes, 13 tests; its account scope was mutation-checked against real
-Postgres (dropping the account from `listForHome` turns it red, a case added after the first run
-stayed green). `packages/db` was not run (unchanged). Not run (untouched):
-`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`, `packages/domain`, `apps/mobile`.
+Run on commit `19dea46`, one after another from inside each package. `pnpm lint` clean, `pnpm build`
+clean, `pnpm test:tooling` 16 pass. `agency_wire` `dart test` 605 passed after the British display
+labels (run on `fix/qa-data` before the merge; `literals.json` unchanged). **Not green, so no counts
+recorded for them:** `apps/server` unit had 3 failures, all in `inbound-recordings.test.ts` (9680
+passed): this machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails
+the same way on a branch with no server code change. `apps/server` integration, with its own test
+database and Redis db: the wall-clock lane is green (below); the rest lane had 16 failures (2685
+passed + 9 expected fail + 2 skipped, 254 files), all in `agency-reports-e2e.test.ts` (the
+in-process renderer answers `render_failed`) and `inbound-clips-routes.test.ts` (no `mpg123` /
+`sndfile-programs`), and the same 16 fail on `main` (`47eb7e9`) on this machine. The new
+`dnc-list-search.test.ts` (each typed form of a number, tenant isolation, both indexes used on 50k
+rows) and `agency-home-board.test.ts` pass in it. Not run (untouched): `apps/super-admin`,
+`packages/web-ui`, `apps/report-renderer`, `packages/domain`, `apps/mobile` (beyond `agency_wire`).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/console` | 6560 (339 files) | — |
-| `packages/contracts` | 476 (14 files) | — |
+| `apps/console` | 6681 (348 files) | — |
+| `packages/contracts` | 479 (15 files) | — |
+| `packages/db` | 428 (25 files) | 746 (77 files) |
 | `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
 
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
