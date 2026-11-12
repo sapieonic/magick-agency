@@ -51,7 +51,7 @@ function decode(jwt: string) {
 }
 
 /** Lets a GOAWAY or a close reach the client session. */
-const settleIo = () => new Promise((r) => setTimeout(r, 30));
+const settleIo = () => new Promise((r) => setTimeout(r, 100));
 
 beforeAll(async () => { carrier = await MockPushCarrier.start(); });
 afterAll(async () => { await carrier.stop(); });
@@ -159,18 +159,18 @@ describe('ApnsSender: the provider token', () => {
 
 describe('ApnsSender: errors', () => {
   it.each([
-    ['410 Unregistered', { kind: 'unregistered' }, 'unregistered'],
-    ['410 ExpiredToken', { kind: 'status', status: 410, body: { reason: 'ExpiredToken' } }, 'unregistered'],
-    ['400 BadDeviceToken', { kind: 'status', status: 400, body: { reason: 'BadDeviceToken' } }, 'unregistered'],
-    ['400 DeviceTokenNotForTopic', { kind: 'invalid' }, 'invalid'],
-    ['400 BadExpirationDate', { kind: 'status', status: 400, body: { reason: 'BadExpirationDate' } }, 'invalid'],
-    ['413 PayloadTooLarge', { kind: 'status', status: 413, body: { reason: 'PayloadTooLarge' } }, 'invalid'],
-    ['429 TooManyRequests', { kind: 'rate_limited' }, 'rate_limited'],
-    ['403 InvalidProviderToken', { kind: 'status', status: 403, body: { reason: 'InvalidProviderToken' } }, 'unavailable'],
-    ['500 InternalServerError', { kind: 'status', status: 500, body: { reason: 'InternalServerError' } }, 'unavailable'],
-    ['503 ServiceUnavailable', { kind: 'unavailable' }, 'unavailable'],
-    ['a stream reset after the request', { kind: 'network' }, 'unavailable'],
-  ] as const)('%s → %s', async (_label, answer, reason) => {
+    ['410 Unregistered', 'unregistered', { kind: 'unregistered' }],
+    ['410 ExpiredToken', 'unregistered', { kind: 'status', status: 410, body: { reason: 'ExpiredToken' } }],
+    ['400 BadDeviceToken', 'unregistered', { kind: 'status', status: 400, body: { reason: 'BadDeviceToken' } }],
+    ['400 DeviceTokenNotForTopic', 'invalid', { kind: 'invalid' }],
+    ['400 BadExpirationDate', 'invalid', { kind: 'status', status: 400, body: { reason: 'BadExpirationDate' } }],
+    ['413 PayloadTooLarge', 'invalid', { kind: 'status', status: 413, body: { reason: 'PayloadTooLarge' } }],
+    ['429 TooManyRequests', 'rate_limited', { kind: 'rate_limited' }],
+    ['403 InvalidProviderToken', 'unavailable', { kind: 'status', status: 403, body: { reason: 'InvalidProviderToken' } }],
+    ['500 InternalServerError', 'unavailable', { kind: 'status', status: 500, body: { reason: 'InternalServerError' } }],
+    ['503 ServiceUnavailable', 'unavailable', { kind: 'unavailable' }],
+    ['a stream reset after the request', 'unavailable', { kind: 'network' }],
+  ] as const)('%s → %s', async (_label, reason, answer) => {
     carrier.answer(device.voip_token!, answer);
     expect(await apns().send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason });
     // Nothing is sent twice: a reset after the request went out may have rung the phone.
@@ -213,7 +213,7 @@ describe('ApnsSender: errors', () => {
     try {
       const sender = apns({ timeoutMs: 100, connect });
       expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'unavailable' });
-      await new Promise((r) => setTimeout(r, 250)); // the PING probe's own timeout
+      await new Promise((r) => setTimeout(r, 500)); // the PING probe's own timeout (100 ms)
       expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: true });
       expect(carrier.apnsConnections).toBe(1);
     } finally {
