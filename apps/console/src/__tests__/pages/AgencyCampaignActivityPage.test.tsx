@@ -23,9 +23,15 @@ const mocks = vi.hoisted(() => ({
   getAgencyCampaign: vi.fn(),
   getCampaignActivity: vi.fn(),
   downloadCampaignActivityCsv: vi.fn(),
+  softphoneOn: true,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The soft phone's flag gates its call page, and so the link to it from a history row.
+vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
+  useFeatureFlagEnabled: (flag: string) => (flag === 'agency_softphone_enabled' ? mocks.softphoneOn : false),
+}));
 // The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
 vi.mock('../../api/agencyInsights', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
@@ -1091,6 +1097,20 @@ describe('rows say what they are about in words', () => {
     expect(placed.textContent).not.toContain(SESSION);
     // The id is still reachable: copyable, and named in full for a screen reader.
     expect(within(placed).getByRole('button', { name: new RegExp(`Agent session ID ${SESSION}`) })).toBeTruthy();
+  });
+
+  it('does not link a soft-phone call while the soft phone is off: its page is behind the flag', async () => {
+    mocks.softphoneOn = false;
+    try {
+      mocks.getCampaignActivity.mockResolvedValue(page({ rows: [PLACED] }));
+      renderPage();
+      const placed = await screen.findByTestId('activity-row-master:m-placed');
+      expect(within(placed).queryByRole('link', { name: 'Soft-phone call' })).toBeNull();
+      expect(placed.textContent).toContain('Soft-phone call');
+      expect(within(placed).getByRole('button', { name: new RegExp(`Soft-phone call ID ${MANUAL_CALL}`) })).toBeTruthy();
+    } finally {
+      mocks.softphoneOn = true;
+    }
   });
 
   it('names a record with no page of its own, its id short', async () => {

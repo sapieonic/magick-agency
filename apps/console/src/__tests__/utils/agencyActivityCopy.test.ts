@@ -441,12 +441,15 @@ describe('History row words', () => {
   });
 
   it('opens a call, a contact and a soft-phone call on their own pages; nothing else', () => {
-    expect(activityTargetPath({ type: 'agency_attempt', id: 'a1' }, 'c1')).toBe('/agency/campaigns/c1/attempts/a1');
-    expect(activityTargetPath({ type: 'agency_disposition', id: 'a1' }, 'c1')).toBe('/agency/campaigns/c1/attempts/a1');
-    expect(activityTargetPath({ type: 'agency_contact', id: 'k1' }, 'c1')).toBe('/agency/campaigns/c1/contacts/k1');
-    expect(activityTargetPath({ type: 'agency_manual_call', id: 'm1' }, 'c1')).toBe('/agency/softphone/calls/m1');
-    expect(activityTargetPath({ type: 'agency_session', id: 's1' }, 'c1')).toBeNull();
-    expect(activityTargetPath({ type: 'agency_attempt', id: null }, 'c1')).toBeNull();
+    expect(activityTargetPath({ type: 'agency_attempt', id: 'a1' }, 'c1', true)).toBe('/agency/campaigns/c1/attempts/a1');
+    expect(activityTargetPath({ type: 'agency_disposition', id: 'a1' }, 'c1', true)).toBe('/agency/campaigns/c1/attempts/a1');
+    expect(activityTargetPath({ type: 'agency_contact', id: 'k1' }, 'c1', true)).toBe('/agency/campaigns/c1/contacts/k1');
+    expect(activityTargetPath({ type: 'agency_manual_call', id: 'm1' }, 'c1', true)).toBe('/agency/softphone/calls/m1');
+    expect(activityTargetPath({ type: 'agency_session', id: 's1' }, 'c1', true)).toBeNull();
+    expect(activityTargetPath({ type: 'agency_attempt', id: null }, 'c1', true)).toBeNull();
+    // The soft-phone call page is behind its flag; off, the row is not linked to it.
+    expect(activityTargetPath({ type: 'agency_manual_call', id: 'm1' }, 'c1', false)).toBeNull();
+    expect(activityTargetPath({ type: 'agency_attempt', id: 'a1' }, 'c1', false)).toBe('/agency/campaigns/c1/attempts/a1');
   });
 
   it('names a detail key in words, a known one by name and any other in sentence case', () => {
