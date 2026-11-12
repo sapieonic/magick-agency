@@ -977,7 +977,7 @@ Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/no
 
 ### `apps/server/src/dnc/`
 
-DNC list service and repository (`dnc_entries`, E.164 input, fail-closed reads; decision B8). The list's search (`GET /dnc?phone=`, `dncPhoneSearch`) reads a whole number in any common form by the customer-history number rule and also matches the digits typed as the end of a number, both index-served (migration 0034).
+DNC list service and repository (`dnc_entries`, E.164 input, fail-closed reads; decision B8). The list's search (`GET /dnc?phone=`, `dncPhoneSearch`) reads a whole number in any common form by the customer-history number rule and also matches the digits typed as the end of a number, both index-served (`0034_dnc_phone_ending_index.sql`).
 
 Files: `dnc.repository.ts`, `dnc.service.ts`
 
