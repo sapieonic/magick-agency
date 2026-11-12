@@ -32,16 +32,17 @@
 
 import type { AgencyClientKind } from './station';
 
-/** Longest `device_id` the server keeps (`agency_agent_sessions.station_device_id` is VARCHAR(64)). */
-export const AGENCY_STATION_DEVICE_ID_MAX = 64;
-
 /**
- * What a `device_id` may be: 8–64 of letters, digits, `-` and `_` (a UUID fits). Anything else is
- * a 400 at the public layer, never stored.
+ * What a `device_id` may be: 8–64 of letters, digits, `-` and `_` (a UUID fits; 64 is the width of
+ * `agency_agent_sessions.station_device_id`). Anything else is a 400 at the public layer, never
+ * stored.
  */
 export const AGENCY_STATION_DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
-/** The device fields of the campaign join, the soft-phone open and the station-token mint. */
+/**
+ * The device fields of the campaign join, the soft-phone open and the station-token mint (the
+ * mint's whole body: empty, or absent, is an older client's mint).
+ */
 export interface AgencyStationDeviceFields {
   /** This device's id (see the module note). Absent: an older client; no device holds the station. */
   device_id?: string;
@@ -52,9 +53,6 @@ export interface AgencyStationDeviceFields {
    */
   take_over?: boolean;
 }
-
-/** `POST /sessions/:id/station-token` body. Empty (or absent) is an older client's mint. */
-export type AgencyStationTokenRequest = AgencyStationDeviceFields;
 
 /**
  * 409 `station_on_other_device`: another device holds this session's station, and the request did

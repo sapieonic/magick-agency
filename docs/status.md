@@ -1449,7 +1449,7 @@ upsert, OS8); fixed, and every count here is from the green run after.
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 9714 passed + 1 expected fail (489 files) | rest lane 2681 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
+| `apps/server` | 9715 passed + 1 expected fail (489 files) | rest lane 2681 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
 | `packages/db` | 428 (25 files) | 749 (77 files) |
 | `apps/console` | 6174 | — |
 | `packages/contracts` | 476 (14 files) | — |
@@ -2030,6 +2030,12 @@ calls; not yet run on a phone or a carrier). Remaining:
   exists); keeping a pending contact's original due time after a reach (the reached call settles
   its booked inbound callback); a console surface for tenant-default Missed rows (super-admins see
   them per number).
+
+**One station per agent** (OS1–OS8, above): `uq_agency_agent_live_tenant` stays beside
+`uq_agency_agent_live_agent` only so an image-only rollback still joins (OS8). Once no deployable
+image names it as its arbiter, a new migration drops it, and the same change deletes the upsert's
+23505 catch on that index (`upsertLiveSession` in
+`apps/server/src/db/repositories/agency/agent-session.repository.ts`).
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.

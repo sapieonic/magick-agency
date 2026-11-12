@@ -29,8 +29,9 @@ import type {
 import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import {
-  accountNameInTenant, endIdleSessionElsewhere, heldByOtherDevice, mintStationTokenOr503, requireOwnedSession,
-  resolveRetryContext, sendSessionInOtherTenant, sendStationOnOtherDevice, stationDeviceFields, stationIntervalsFor,
+  accountNameInTenant, claimStationOrReply, joinEndingIdleElsewhere, mintStationTokenOr503, refuseIfHeldElsewhere,
+  requireOwnedSession, resolveRetryContext, sendActionError, sendSessionInOtherTenant, stationDeviceFields,
+  stationIntervalsFor,
 } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
@@ -132,12 +133,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // station, without `take_over`, is refused before the upsert writes anything (a device that
     // resumes on its own must not take the station back); the claim after it is the atomic check.
     const device = stationDeviceFields(body);
-    if (device.deviceId !== null && !device.takeOver) {
-      const live = await agencyAgentSessionRepository.findLiveForAgent(tenantId, body.agent_user_id);
-      if (live && live.kind === 'campaign' && live.campaign_id === campaign.id && live.account_id === accountId
-        && heldByOtherDevice(live, device)) {
-        return sendStationOnOtherDevice(reply, live.id, live.client_kind);
-      }
+    if (await refuseIfHeldElsewhere(reply, tenantId, body.agent_user_id, device,
+      (live) => live.kind === 'campaign' && live.campaign_id === campaign.id && live.account_id === accountId)) {
+      return reply;
     }
 
     const joinInput = {
@@ -146,13 +144,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       agentUserId: body.agent_user_id,
       replicaId: runtime.replicaId,
     };
-    let join = await agencyAgentSessionRepository.joinOrRehydrate(joinInput);
     // OS7: a session in another tenant with nothing in it (no station attached, nothing in flight)
     // is ended, as its own Leave would, and the join tried once more.
-    if (!join.ok && join.reason === 'other_tenant'
-      && await endIdleSessionElsewhere(runtime, join.session, (id) => agencyAgentSessionRepository.leave(id))) {
-      join = await agencyAgentSessionRepository.joinOrRehydrate(joinInput);
-    }
+    const join = await joinEndingIdleElsewhere(runtime, () => agencyAgentSessionRepository.joinOrRehydrate(joinInput));
 
     // One live session per agent, across tenants (OS1). The agent is
     // still joined somewhere else and must leave that station first — nothing
@@ -275,16 +269,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     }
 
     // OS3: this device holds the station now (a fresh session, the holder itself, no holder, or a
-    // take-over), or another device does and this join is refused. Before the rehydrate and the
-    // mint, so a refused join neither seeds Redis nor replaces the holder's token.
-    const claim = await agencyAgentSessionRepository.claimStationDevice(session.id, device.deviceId, device.takeOver);
-    if (!claim.ok) {
-      if (claim.reason === 'held_elsewhere') return sendStationOnOtherDevice(reply, session.id, claim.client_kind);
-      const ended: AgencyActionErrorResponse = {
-        error: 'Conflict', code: 'session_ended', message: 'This session has ended. Join the campaign again.',
-      };
-      return reply.code(409).send(ended);
-    }
+    // take-over), or another device does and this join is refused.
+    if (!await claimStationOrReply(reply, session, device, {
+      onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended. Join the campaign again.'),
+    })) return reply;
 
     // Redis, or `break` — the same rule as the station socket, and for the same
     // reason. Seeding Redis from `session.state` would be wrong: `joinOrRehydrate`
@@ -369,15 +357,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // `take_over` (the agent's "Use it here") moves it.
     // A mint naming no device (a client from before OS3) is refused while a device holds the
     // station: it is a reconnect, and must not take the station back either.
-    const device = stationDeviceFields(request.body);
-    const claim = await agencyAgentSessionRepository.claimStationDevice(session.id, device.deviceId, device.takeOver, 'refused');
-    if (!claim.ok) {
-      if (claim.reason === 'held_elsewhere') return sendStationOnOtherDevice(reply, session.id, claim.client_kind);
-      const ended: AgencyActionErrorResponse = {
-        error: 'Conflict', code: 'session_ended', message: 'This session has ended.',
-      };
-      return reply.code(409).send(ended);
-    }
+    if (!await claimStationOrReply(reply, session, stationDeviceFields(request.body), {
+      reconnect: true,
+      onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended.'),
+    })) return reply;
     const minted = await mintStationTokenOr503(runtime, session.id, reply);
     if (!minted) return reply;
     const body: AgencyStationTokenResponse = {

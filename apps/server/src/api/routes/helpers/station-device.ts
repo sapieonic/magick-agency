@@ -11,5 +11,3 @@ export const stationDeviceSchema = z.object({
   device_id: z.string().regex(AGENCY_STATION_DEVICE_ID_PATTERN).optional(),
   take_over: z.boolean().optional(),
 });
-
-export type StationDeviceBody = z.infer<typeof stationDeviceSchema>;

@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import 'station_device.dart';
 
 /// The agency routes the station uses, over [ApiClient], decoded into
 /// `agency_wire` types. Errors are the client's [ApiError]s; a body that does
@@ -12,7 +13,7 @@ final class StationApi {
   final ApiClient _client;
 
   /// This install's device fields (OS3), or null to send none (an older body; tests).
-  final Future<StationDevice> Function({required bool takeOver})? _device;
+  final StationDeviceFields? _device;
 
   /// A client scoped to another account of the same tenant.
   final ApiClient Function(String accountId) _scopedTo;

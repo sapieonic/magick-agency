@@ -1157,7 +1157,6 @@ export function useAgencyStation(
         if (errorCode(err) === 'station_on_other_device') {
           logDiagnostic('token_mint_refused', 'station_on_other_device: the station is on another device');
           supersededRef.current = true;
-          takeOverNextMintRef.current = false;
           dispatch({ type: 'connection', connection: 'superseded' });
           reportConnection('superseded', null);
           return;

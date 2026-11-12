@@ -210,38 +210,25 @@ final class ErrorBody {
 
   /// The structured 409 for `session_on_other_campaign`, when this is one
   /// and its fields read.
-  SessionCampaignConflict? get campaignConflict {
-    if (code != AgencyErrorCode.sessionOnOtherCampaign) return null;
-    try {
-      return SessionCampaignConflict.fromJson(raw);
-    } on FormatException {
-      return null;
-    }
-  }
+  SessionCampaignConflict? get campaignConflict =>
+      _readAgency(AgencyErrorCode.sessionOnOtherCampaign, SessionCampaignConflict.fromJson);
 
   /// The structured 409 for `session_on_softphone`, when this is one and its
   /// fields read.
-  SessionOnSoftphoneRefusal? get softphoneConflict {
-    if (code != AgencyErrorCode.sessionOnSoftphone) return null;
-    try {
-      return SessionOnSoftphoneRefusal.fromJson(raw);
-    } on FormatException {
-      return null;
-    }
-  }
+  SessionOnSoftphoneRefusal? get softphoneConflict =>
+      _readAgency(AgencyErrorCode.sessionOnSoftphone, SessionOnSoftphoneRefusal.fromJson);
 
   /// The 409 `station_on_other_device` refusal (OS3), when this is one that reads.
-  StationOnOtherDeviceRefusal? get stationOnOtherDevice {
-    if (code != AgencyErrorCode.stationOnOtherDevice) return null;
-    try {
-      return StationOnOtherDeviceRefusal.fromJson(raw);
-    } on FormatException {
-      return null;
-    }
-  }
+  StationOnOtherDeviceRefusal? get stationOnOtherDevice =>
+      _readAgency(AgencyErrorCode.stationOnOtherDevice, StationOnOtherDeviceRefusal.fromJson);
 
-  T? _read<T>(SoftphoneErrorCode want, T Function(Map<String, Object?>) decode) {
-    if (softphoneCode != want) return null;
+  T? _readAgency<T>(AgencyErrorCode want, T Function(Map<String, Object?>) decode) =>
+      code == want ? _decode(decode) : null;
+
+  T? _read<T>(SoftphoneErrorCode want, T Function(Map<String, Object?>) decode) =>
+      softphoneCode == want ? _decode(decode) : null;
+
+  T? _decode<T>(T Function(Map<String, Object?>) decode) {
     try {
       return decode(raw);
     } on FormatException {

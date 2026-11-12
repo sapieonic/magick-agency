@@ -28,7 +28,7 @@ final class SoftphoneApi {
   final ApiClient _client;
 
   /// This install's device fields (OS3), or null to send none (reads only; tests).
-  final Future<StationDevice> Function({required bool takeOver})? _device;
+  final StationDeviceFields? _device;
 
   /// A client scoped to another account of the same tenant.
   final ApiClient Function(String accountId) _scopedTo;

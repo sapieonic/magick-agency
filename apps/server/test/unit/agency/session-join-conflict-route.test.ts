@@ -347,7 +347,7 @@ describe('POST /sessions — one station per agent (OS1, OS3)', () => {
     const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', device_id: DEVICE, take_over: true });
 
     expect(res.statusCode).toBe(201);
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', DEVICE, true);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: DEVICE, takeOver: true }, { reconnect: false });
     expect(mint).toHaveBeenCalledWith('sess-1');
   });
 
@@ -361,7 +361,7 @@ describe('POST /sessions — one station per agent (OS1, OS3)', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: 'station_on_other_device', session_id: 'sess-1', client_kind: 'web' });
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', DEVICE, false);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: DEVICE, takeOver: false }, { reconnect: false });
     expect(rehydrate).not.toHaveBeenCalled();
     expect(mint).not.toHaveBeenCalled();
   });
@@ -375,7 +375,7 @@ describe('POST /sessions — one station per agent (OS1, OS3)', () => {
 
     expect(res.statusCode).toBe(201);
     expect(repos.session.findLiveForAgent).not.toHaveBeenCalled();
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', null, false);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: null, takeOver: false }, { reconnect: false });
   });
 
   it('a malformed device id from an internal caller is treated as none, never stored', async () => {
@@ -386,7 +386,7 @@ describe('POST /sessions — one station per agent (OS1, OS3)', () => {
     const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', device_id: 'bad id!', take_over: true });
 
     expect(res.statusCode).toBe(201);
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', null, false);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: null, takeOver: false }, { reconnect: false });
   });
 });
 

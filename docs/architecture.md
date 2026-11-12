@@ -238,7 +238,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   from another device without `take_over` is `409 station_on_other_device` and changes nothing,
   so a device whose socket dropped (a laptop asleep, a phone out of signal) cannot reconnect onto a
   station the agent moved elsewhere. The claim is one statement that writes only on a change
-  (`claimStationDevice`), made after the join's upsert and before its rehydrate and mint (the join
+  (`claimStationDevice`, through `claimStationOrReply`, which skips it when the row just read
+  already names this device), made after the join's upsert and before its rehydrate and mint (the join
   and the soft-phone open also pre-check read-only, so a join refused by the pre-check writes
   nothing). A take-over moves the holder and mints a token that replaces the old one; the new
   socket supersedes the old (4409) on attach. A join with no `device_id` (an older client) is

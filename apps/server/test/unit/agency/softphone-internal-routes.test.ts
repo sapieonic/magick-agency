@@ -489,7 +489,7 @@ describe('POST /softphone/sessions — one station per agent (OS1, OS3)', () => 
     repos.session.joinSoftphone.mockResolvedValue({ ok: true, created: false, session: { id: SESSION, kind: 'softphone' } });
     const taken = await post('/softphone/sessions', { agent_user_id: AGENT, device_id: DEVICE, take_over: true });
     expect(taken.statusCode).toBe(200);
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith(SESSION, DEVICE, true);
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith(SESSION, { deviceId: DEVICE, takeOver: true }, { reconnect: false });
   });
 
   it('a lost claim is station_on_other_device, with no rehydrate and no token', async () => {

@@ -5,6 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../session/session_store.dart';
 
+/// The device fields of one request (`StationDeviceIds.fields`): what the station and soft-phone
+/// APIs are handed, so a test can give fixed ones.
+typedef StationDeviceFields = Future<StationDevice> Function({required bool takeOver});
+
 /// This install's station device id (OS3, `docs/mobile.md` "One station per agent").
 ///
 /// The server remembers which device holds a session's station and refuses a join, a soft-phone

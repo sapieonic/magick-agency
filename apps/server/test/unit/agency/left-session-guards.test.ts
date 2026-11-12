@@ -767,7 +767,15 @@ describe('Q8: a session route acts only for the session\'s own agent', () => {
   it('OS3: the mint claims the station for the device it names, take_over passed through', async () => {
     const res = await as('/station-token', { agent_user_id: LIVE.agent_user_id, device_id: 'tab-0123456789abcdef', take_over: true });
     expect(res.statusCode).toBe(200);
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', 'tab-0123456789abcdef', true, 'refused');
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: 'tab-0123456789abcdef', takeOver: true }, { reconnect: true });
+  });
+
+  it('OS3: a reconnect from the device the row already names mints with no claim statement', async () => {
+    repos.session.findById.mockResolvedValue({ ...LIVE, station_device_id: 'tab-0123456789abcdef' });
+    const res = await as('/station-token', { agent_user_id: LIVE.agent_user_id, device_id: 'tab-0123456789abcdef' });
+    expect(res.statusCode).toBe(200);
+    expect(repos.session.claimStationDevice).not.toHaveBeenCalled();
+    expect(h.runtime.tokens.mint).toHaveBeenCalledWith('sess-1');
   });
 
   it('OS3: a reconnect from a device that no longer holds the station is 409 and mints nothing', async () => {
@@ -778,14 +786,14 @@ describe('Q8: a session route acts only for the session\'s own agent', () => {
       error: 'Conflict', code: 'station_on_other_device', message: expect.stringMatching(/phone/),
       session_id: 'sess-1', client_kind: 'mobile',
     });
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', 'tab-0123456789abcdef', false, 'refused');
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: 'tab-0123456789abcdef', takeOver: false }, { reconnect: true });
     expect(h.runtime.tokens.mint).not.toHaveBeenCalled();
   });
 
   it('OS6: an older client (no device id) mints through a claim that refuses it while a device holds the station', async () => {
     const res = await as('/station-token', { agent_user_id: LIVE.agent_user_id });
     expect(res.statusCode).toBe(200);
-    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', null, false, 'refused');
+    expect(repos.session.claimStationDevice).toHaveBeenCalledWith('sess-1', { deviceId: null, takeOver: false }, { reconnect: true });
   });
 
   it("a supervisor (on_behalf) may NOT drive an agent's own presence routes", async () => {

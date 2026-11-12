@@ -266,62 +266,62 @@ describe('claimStationDevice — one device holds the station (integration)', ()
 
   it('the first device claims; the same device reclaims; another is refused and changes nothing', async () => {
     const s = await session();
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false)).toEqual({ ok: true });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false })).toEqual({ ok: true });
     expect(await holder(s.id)).toBe('device-laptop-1');
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false)).toEqual({ ok: true });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false })).toEqual({ ok: true });
     await getTestPool().query(`UPDATE agency_agent_sessions SET client_kind = 'web' WHERE id = $1`, [s.id]);
 
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', false))
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: false }))
       .toEqual({ ok: false, reason: 'held_elsewhere', client_kind: 'web' });
     expect(await holder(s.id)).toBe('device-laptop-1');
   });
 
   it('take_over moves it; the old holder is then the one refused (no silent take-back)', async () => {
     const s = await session();
-    await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false);
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', true)).toEqual({ ok: true });
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: true })).toEqual({ ok: true });
     expect(await holder(s.id)).toBe('device-phone-01');
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false))
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false }))
       .toMatchObject({ ok: false, reason: 'held_elsewhere' });
   });
 
   it('no device id (an older client) is allowed and clears the holder, so the next device claims it', async () => {
     const s = await session();
-    await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false);
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false)).toEqual({ ok: true });
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false })).toEqual({ ok: true });
     expect(await holder(s.id)).toBeNull();
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', false)).toEqual({ ok: true });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: false })).toEqual({ ok: true });
   });
 
   it('a mint naming no device (an older client) is refused while a device holds it; a join with none clears it', async () => {
     const s = await session();
     // No holder: an older client's mint is allowed, and leaves none.
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false, 'refused')).toEqual({ ok: true });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false }, { reconnect: true })).toEqual({ ok: true });
     expect(await holder(s.id)).toBeNull();
-    await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', true);
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: true });
     // Held: its reconnect cannot take it back, even asking to take over (take_over needs a device).
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false, 'refused'))
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false }, { reconnect: true }))
       .toMatchObject({ ok: false, reason: 'held_elsewhere' });
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, true, 'refused'))
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: true }, { reconnect: true }))
       .toMatchObject({ ok: false, reason: 'held_elsewhere' });
     expect(await holder(s.id)).toBe('device-phone-01');
     // Its join (the agent going on duty there) still clears it.
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false)).toEqual({ ok: true });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: null, takeOver: false })).toEqual({ ok: true });
     expect(await holder(s.id)).toBeNull();
   });
 
   it('a left session is session_gone, whatever the device', async () => {
     const s = await session();
     await agencyAgentSessionRepository.leave(s.id);
-    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', true))
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: true }))
       .toEqual({ ok: false, reason: 'session_gone' });
   });
 
   it('two devices racing without take_over: exactly one holds it', async () => {
     const s = await session();
     const results = await Promise.all([
-      agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false),
-      agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', false),
+      agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false }),
+      agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-phone-01', takeOver: false }),
     ]);
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     const winner = results[0]!.ok ? 'device-laptop-1' : 'device-phone-01';
@@ -330,7 +330,7 @@ describe('claimStationDevice — one device holds the station (integration)', ()
 
   it('a rehydrating join keeps the holder; a new session after leaving starts with none', async () => {
     const s = await session();
-    await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-laptop-1', false);
+    await agencyAgentSessionRepository.claimStationDevice(s.id, { deviceId: 'device-laptop-1', takeOver: false });
     const again = await agencyAgentSessionRepository.joinOrRehydrate({
       tenantId: TENANT, accountId: ACCOUNT, campaignId: s.campaign_id!, agentUserId: uuidFor('agent-device'), replicaId: REPLICA,
     });

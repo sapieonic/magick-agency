@@ -98,10 +98,11 @@ export function useStationJoin({
    * OS3/OS4: whether this page's join takes the station over. Opening the station is the agent's
    * own choice, so it does, except on a page the browser reloaded by itself (a tab it discarded
    * and brought back): that is not a choice, and must not take the station from the agent's phone.
-   * "Use this window instead" turns it on and joins again (`joinAttempt`).
+   * "Use this window instead" joins again (`joinAttempt`), taking it over: as the soft phone's
+   * open (`useSoftphoneSession`).
    */
-  const [joinTakesOver, setJoinTakesOver] = useState(() => !pageWasDiscarded());
   const [joinAttempt, setJoinAttempt] = useState(0);
+  const joinTakesOver = joinAttempt > 0 || !pageWasDiscarded();
   const [onSoftphoneElsewhere, setOnSoftphoneElsewhere] = useState(false);
   /**
    * `session_on_softphone`'s `session_id` and `account_id`: the session Close the soft
@@ -231,18 +232,19 @@ export function useStationJoin({
           trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
           return;
         }
-        /**
-         * 409 `session_in_other_tenant` (OS1): the agent is live in another workspace they belong
-         * to. Nothing here can end that session (every session route is scoped to its own
-         * tenant), so it is `StationFatal` with the API's sentence, which names the workspace.
-         */
+        /** 409 `station_on_other_device` (OS3): the other-device screen, with "Use this window". */
         if (errorCode(err) === 'station_on_other_device') {
           setOnOtherDevice(true);
           trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
           return;
         }
+        /**
+         * 409 `session_in_other_tenant` (OS1): the agent is live in another workspace they belong
+         * to. Nothing here can end that session (every session route is scoped to its own
+         * tenant), so it is `StationFatal` with the API's sentence, which names the workspace.
+         */
         if (errorCode(err) === 'session_in_other_tenant') {
-          setJoinError(otherTenantSentence(err));
+          setJoinError(apiSentence(err, OTHER_TENANT_COPY));
           trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
           return;
         }
@@ -253,7 +255,7 @@ export function useStationJoin({
          * not send them straight back.
          */
         if (errorCode(err) === 'not_staffed') {
-          setJoinError(notStaffedSentence(err));
+          setJoinError(apiSentence(err, NOT_STAFFED_COPY));
           trackAgencyStationJoinFailed({ reason: 'not_staffed', conflict_state: null });
           return;
         }
@@ -293,7 +295,6 @@ export function useStationJoin({
 
   /** "Use this window instead" on the other-device screen: join again, taking the station. */
   const useThisWindow = useCallback(() => {
-    setJoinTakesOver(true);
     setJoinAttempt((n) => n + 1);
   }, []);
 
@@ -632,20 +633,14 @@ export const NOT_STAFFED_COPY = 'You’re not assigned to this campaign. Ask you
 export const OTHER_TENANT_COPY =
   'You are live in another workspace. Leave your station there first: you can be on only one station at a time.';
 
-/** The API's sentence on a `session_in_other_tenant` refusal, else {@link OTHER_TENANT_COPY}. */
-function otherTenantSentence(err: unknown): string {
-  const message = errorBody(err)?.message;
-  return typeof message === 'string' && message.trim().length > 0 ? message : OTHER_TENANT_COPY;
-}
-
 /** OS3: a join this window did not take over found the station on another device. */
 export const STATION_ON_OTHER_DEVICE_COPY =
   'Your station is open on another device or window. Use it there, or use this window instead.';
 
-/** The API's sentence on a `not_staffed` refusal, else {@link NOT_STAFFED_COPY}. */
-function notStaffedSentence(err: unknown): string {
+/** The API's own sentence on a refusal (`not_staffed`, `session_in_other_tenant`), else `fallback`. */
+function apiSentence(err: unknown, fallback: string): string {
   const message = errorBody(err)?.message;
-  return typeof message === 'string' && message.trim().length > 0 ? message : NOT_STAFFED_COPY;
+  return typeof message === 'string' && message.trim().length > 0 ? message : fallback;
 }
 
 /** The soft-phone session a `session_on_softphone` refusal named, and its account. */

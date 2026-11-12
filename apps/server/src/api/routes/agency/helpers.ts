@@ -354,30 +354,72 @@ export async function mintStationTokenOr503(
 
 // ─── One station per agent (OS1, OS3; contracts `agency/station-device.ts`) ─────────────
 
+/** The device of one join, soft-phone open or token mint, as {@link stationDeviceFields} reads it. */
+export interface StationDevice {
+  deviceId: string | null;
+  takeOver: boolean;
+}
+
 /**
  * The device fields of a join, a soft-phone open or a token mint, read from the internal body.
  * The public layer has already validated them (`stationDeviceSchema`); a malformed value here
  * (an internal caller) is treated as absent, which is an older client's behaviour, never a 500.
  * `take_over` without a device id means nothing.
  */
-export function stationDeviceFields(body: unknown): { deviceId: string | null; takeOver: boolean } {
+export function stationDeviceFields(body: unknown): StationDevice {
   const b = (body ?? {}) as { device_id?: unknown; take_over?: unknown };
   const deviceId = typeof b.device_id === 'string' && AGENCY_STATION_DEVICE_ID_PATTERN.test(b.device_id) ? b.device_id : null;
   return { deviceId, takeOver: deviceId !== null && b.take_over === true };
 }
 
 /**
- * Whether `session` (the agent's live session, about to be rehydrated) is held by another device
- * than the caller's, which did not ask to take it over: the read-only pre-check that lets a join or
- * a soft-phone open refuse BEFORE its upsert writes anything. The claim after the upsert
- * (`claimStationDevice`) is the atomic one; this only spares a refused join its writes.
+ * The read-only pre-check of a join or a soft-phone open (OS3): when the agent's live session in
+ * this tenant is the one the request would rehydrate (`isSameSession`) and another device holds its
+ * station, and the request named a device without taking over, answer 409
+ * `station_on_other_device` BEFORE the upsert writes anything. True: refused (the reply is sent;
+ * a boolean, not the reply, which is a thenable an async return would unwrap). The claim after the
+ * upsert ({@link claimStationOrReply}) is the atomic check; this only spares a refused join its
+ * writes, and reads nothing when the request cannot be refused (no device, or a take-over).
  */
-export function heldByOtherDevice(
-  session: Pick<AgencyAgentSessionRecord, 'station_device_id'>,
-  device: { deviceId: string | null; takeOver: boolean },
-): boolean {
-  return device.deviceId !== null && !device.takeOver
-    && session.station_device_id !== null && session.station_device_id !== device.deviceId;
+export async function refuseIfHeldElsewhere(
+  reply: FastifyReply,
+  tenantId: string,
+  agentUserId: string,
+  device: StationDevice,
+  isSameSession: (live: AgencyAgentSessionRecord) => boolean,
+): Promise<boolean> {
+  if (device.deviceId === null || device.takeOver) return false;
+  const live = await agencyAgentSessionRepository.findLiveForAgent(tenantId, agentUserId);
+  if (!live || !isSameSession(live)) return false;
+  if (live.station_device_id === null || live.station_device_id === device.deviceId) return false;
+  await sendStationOnOtherDevice(reply, live.id, live.client_kind);
+  return true;
+}
+
+/**
+ * OS3: claim `session`'s station for this device (`claimStationDevice`), or answer the refusal:
+ * 409 `station_on_other_device` when another device holds it, `onGone` when the session has left.
+ * True: this device holds it, go on. Every route that rehydrates a session or mints its station
+ * token claims first, before the rehydrate and the mint, so a refused request neither seeds Redis
+ * nor replaces the holder's token. `reconnect`: a token mint, where a request naming no device is
+ * refused while one holds the station.
+ *
+ * `session` is the row as the route just read or wrote it: when it already names this device (or
+ * names none and none was sent), the claim would write nothing, so no statement runs.
+ */
+export async function claimStationOrReply(
+  reply: FastifyReply,
+  session: Pick<AgencyAgentSessionRecord, 'id' | 'station_device_id'>,
+  device: StationDevice,
+  options: { reconnect?: boolean; onGone: () => FastifyReply | Promise<FastifyReply> },
+): Promise<boolean> {
+  if (session.station_device_id === device.deviceId) return true;
+  const claim = await agencyAgentSessionRepository.claimStationDevice(
+    session.id, device, { reconnect: options.reconnect ?? false });
+  if (claim.ok) return true;
+  if (claim.reason === 'held_elsewhere') await sendStationOnOtherDevice(reply, session.id, claim.client_kind);
+  else await options.onGone();
+  return false;
 }
 
 /** 409 `station_on_other_device` (OS3): another device holds the session's station. */
@@ -457,7 +499,7 @@ interface IdleSessionRuntime {
 export async function endIdleSessionElsewhere(
   runtime: IdleSessionRuntime,
   session: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>,
-  leave: (sessionId: string) => Promise<void>,
+  leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
 ): Promise<boolean> {
   try {
     const id = session.id;
@@ -476,4 +518,22 @@ export async function endIdleSessionElsewhere(
     log.warn({ err, sessionId: session.id }, 'Could not end an idle session in another tenant — refusing the join');
     return false;
   }
+}
+
+/**
+ * A join or soft-phone open (`join`), retried once when the only thing in the way was an idle
+ * session in another tenant that {@link endIdleSessionElsewhere} ended (OS7). Any other result,
+ * an `other_tenant` refusal included, is returned as it came.
+ */
+export async function joinEndingIdleElsewhere<R extends { ok: boolean }>(
+  runtime: IdleSessionRuntime,
+  join: () => Promise<R>,
+): Promise<R> {
+  const first = await join();
+  const refused = first as { ok: boolean; reason?: string; session?: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'> };
+  if (!refused.ok && refused.reason === 'other_tenant' && refused.session
+    && await endIdleSessionElsewhere(runtime, refused.session)) {
+    return join();
+  }
+  return first;
 }
