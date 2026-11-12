@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
  *
  *  1. **No source file but `App.tsx` names an `/app/<page>` path.** A link to one is a link
  *     to a redirect, at best one extra hop and at worst (a path that was never a settings
- *     page) a bounce to the home decision. Settings pages are linked by their `/settings`
+ *     page) the not-found page. Settings pages are linked by their `/settings`
  *     URL.
  *  2. **Agency code names no `/app` at all**, not even the bare home: it links to the page it
  *     means, in the shell it is already in. (Bare `/app` is still the console's home

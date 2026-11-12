@@ -508,7 +508,7 @@ describe('the old /app URLs', () => {
     }
   });
 
-  it('sends anything that was never a page here to the home decision instead', () => {
+  it('returns null for anything that was never a page here, which then shows the not-found page', () => {
     expect(legacySettingsPath('calls/dialer/history/1')).toBeNull();
     expect(legacySettingsPath('dashboard')).toBeNull();
     expect(legacySettingsPath('')).toBeNull();
