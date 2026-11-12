@@ -89,7 +89,9 @@ The default VPC works. Create one security group:
 | `agency-app` (the VM) | TCP 443 and 80 from `0.0.0.0/0`; TCP 22 from your own IP only, or not at all (see below) | 80 is needed for Let's Encrypt and the http→https redirect. Do not open 8080, 8081 or 3021 |
 
 Outbound: allow all (the server calls Supabase on 5432, VoiceLink, Firebase's key endpoint,
-Mailjet, S3 and the AI APIs).
+Mailjet, S3 and the AI APIs; with ringing away phones, step 8.7, also `oauth2.googleapis.com` and
+`fcm.googleapis.com` on 443, and for iOS `api.push.apple.com` or `api.sandbox.push.apple.com` on
+443). If you restrict egress, allow those hosts.
 
 **Shell access without an open SSH port.** Two AWS console options work from the browser, under
 the instance's *Connect* button:
@@ -374,6 +376,7 @@ TRUST_PROXY_HOPS=2
 | `S3_AUDIO_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | The four lines from step 3.4 |
 | Analysis, PostHog, OpenTelemetry | Optional; see the comments in the file and `apps/server/.env.example` |
 | `MOBILE_*` | Optional, only with the mobile app; see 8.5 |
+| `PUSH_*` | Optional, only to ring away agents' phones for inbound calls; see 8.7 |
 
 `NODE_ENV`, `PORT` and `REDIS_URL` are set by the compose file. Do not set them here.
 
@@ -727,6 +730,57 @@ first credential gets inbound enabled:
 
 Then set inbound up per tenant with `docs/operations.md`, "Setting up inbound calls for a tenant".
 
+### 8.7 Ringing away agents' phones for inbound calls (optional)
+
+Mode B ([`docs/inbound.md`](docs/inbound.md) §6.1): an agent who opts in on the app has their phone
+rung for an inbound caller while they are away from the app. It needs inbound calls set up first
+(8.6, `MEDIA_WORKERS=0` included) and an Android build of the app with the Firebase defines
+(`apps/mobile/dev-setup.md`). iOS is not built yet; its keys are accepted but no iPhone registers.
+
+1. **The FCM credential** (Android). Firebase console › the app's project (the one whose
+   `FIREBASE_PROJECT_ID` the server and the app use) › Project settings › Service accounts ›
+   Generate new private key. In `docker/.env`, its base64 on one line:
+
+   ```ini
+   PUSH_FCM_SERVICE_ACCOUNT_JSON_B64=<base64 -w0 key.json>
+   ```
+
+   Keep the JSON file out of the repository and out of the host's shell history; rotate it by
+   generating a new key, replacing the value and recreating `server`, then deleting the old key in
+   the console.
+2. **The APNs key** (iOS, only once the app rings on iOS). An APNs auth key (`.p8`) from the Apple
+   Developer account (Keys), then all five:
+
+   ```ini
+   PUSH_APNS_KEY_P8_B64=<base64 -w0 AuthKey_XXXXXXXXXX.p8>
+   PUSH_APNS_KEY_ID=XXXXXXXXXX
+   PUSH_APNS_TEAM_ID=YYYYYYYYYY
+   PUSH_APNS_BUNDLE_ID=com.magickagency.agent
+   PUSH_APNS_ENV=production
+   ```
+
+   `PUSH_APNS_ENV` must match the builds that register: `production` for TestFlight and the App
+   Store, `sandbox` only for a deployment that serves debug builds. A mismatch is refused
+   `BadDeviceToken` by Apple, which revokes each device and ends its agent's ringing.
+3. **Egress** to `oauth2.googleapis.com` and `fcm.googleapis.com` (and for iOS
+   `api.push.apple.com`, or `api.sandbox.push.apple.com` with `sandbox`), all on 443 (3.1).
+4. **Recreate `server`** and check the boot log:
+
+   ```bash
+   docker compose -f docker/docker-compose.prod.yml logs server | grep -i "push senders"
+   ```
+
+   `Push senders configured` with `android: true` (and `ios: true` with the APNs keys). A key that
+   does not parse stops the server at boot, naming the variable, never its value.
+5. **The Play Console declaration.** The app uses `USE_FULL_SCREEN_INTENT` so a ring fills the
+   locked screen; on Android 14 and later Play grants it only to calling and alarm apps that
+   declare it (Play Console › App content › Full-screen intent). Without it a ring cannot fill the
+   locked screen (what the phone shows instead is untested), and the app's checklist reports
+   "Full-screen calls". Not filed yet.
+6. **Turn it on per account** with the flag `agency_inbound_ring_enabled` (beside
+   `agency_inbound_enabled`), then follow `docs/operations.md`, "Setting up inbound calls for a
+   tenant", step 6. `AGENCY_AWAY_RING_MAX_MS` (default 4 h) bounds one absence.
+
 ## 9. Verify the deployment
 
 Run through this once before letting agents in. With the API on its own host, step 7.3 says
@@ -887,6 +941,9 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 - Database password: reset it in Supabase (*Database settings → Reset database password*), update
   `DATABASE_URL`, recreate the server. The old password stops working at once, so do both
   together, outside calling hours.
+- `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64`: generate a new key for the service account, replace the
+  value, recreate the server, then delete the old key in the Firebase console (8.7). Nothing an agent
+  holds changes: their phones' tokens are the app's, not the key's.
 - `AGENCY_REPORTS_CALLBACK_SECRET`: `aws/README.md`, "Rotating the callback secret". Two applies
   with the server switched in between (it accepts the old secret as
   `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` meanwhile), so no callback is refused.

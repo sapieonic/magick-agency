@@ -18,6 +18,8 @@ locally: `apps/mobile/README.md`. As of 2026-11-10.
 - inbound calls on the station (customers who ring one of the account's numbers, put through to
   an agent on duty with the app on screen): the offer with its chime, the call and its outcome, as
   on the console (IQ46, IQ47). See "Inbound calls" below;
+- Mode B on Android: an agent who opts in has the phone rung for an inbound caller while they are
+  away from the app (IQ58–IQ74). See "Ringing while away (Mode B)" below; iOS is designed only;
 - the soft phone (manual dialling, decision M2): the Phone tab, and in place on the station after
   "Switch to soft phone" (SP7). See "The soft phone" below;
 - My performance and My calls (campaign calls and soft-phone calls);
@@ -140,6 +142,10 @@ customer to nobody. So:
 
 `device_away` is a reserved break code (`packages/contracts/src/agency/breaks.ts`), like
 `soft_phone`: no campaign may list it, and the console floor labels it "Away (app in background)".
+
+**The one exception (Mode B).** An agent who opted in on this phone, on an account with ringing on,
+leaves the app on `away_ring` ("Away · rings for inbound") instead: still paused and offered nothing
+on screen, but their phone is rung for an inbound caller. See "Ringing while away (Mode B)".
 
 ## Talking to the server
 
@@ -518,9 +524,9 @@ The console's inbound flow ([`inbound.md`](inbound.md) §6, "The console (built,
 phone, with the app on screen: an agent on duty on a campaign is offered a caller who rang one of
 the account's numbers, sees and hears them, talks, and saves the outcome. The server's side is
 IQ46, the app's defaults IQ47 (both decided, `decisions.md` §4, "Inbound calls on the mobile app");
-the server's paths for a phone are `inbound.md` §6 "Mobile stations". Ringing a phone whose app
-is in the background (push) is not built: the foreground rule above stands, so a phone that leaves
-the app while `available` is paused and offered nothing. The calls that reach nobody are the
+the server's paths for a phone are `inbound.md` §6 "Mobile stations". The foreground rule above
+stands: a phone that leaves the app while `available` is paused and offered nothing on its station,
+unless the agent opted in to having it rung ("Ringing while away (Mode B)" below). The calls that reach nobody are the
 agent's Missed calls (above).
 
 - **The gate.** The station socket declares `caps=inbound` on every upgrade
@@ -629,12 +635,132 @@ agent's Missed calls (above).
   after a requeue reports its own whole funnel. Ids, codes and flags only:
   never the number, a name or the notes.
 
+## Ringing while away (Mode B)
+
+Built 2026-11-12 for Android; iOS is designed only ("iOS: the design (Mode B)" below). An agent on
+duty in a campaign session who opted in on this phone, on an account with
+`agency_inbound_ring_enabled` on, is not just paused when they leave the app: the phone is rung like
+a phone call for an inbound caller, and Answer puts the caller through to the app's station. It is
+the one exception to the foreground rule above. The server's side is [`inbound.md`](inbound.md)
+§6.1; the rulings are IQ58–IQ74 and N1–N5 ([`decisions.md`](decisions.md) §4, "Mode B", all
+**default, pending Manas**); the channel between Dart and native code is the next section. Nothing
+of it has run on a phone ("Not verified yet").
+
+- **The card** (Me, "Inbound calls"; `features/settings/ring_settings_card.dart`), shown only when
+  the device status says `account_allows_ring`. A toggle, "Ring this phone for inbound calls" (off
+  by default; `PATCH /push-devices/:deviceId {ring_enabled}`), with "When you leave the app while
+  you're available, a customer who rings in can ring this phone like a phone call. Answer it to take
+  the call in the app."; the checklist "What this phone needs", six items each Ready or with a Fix
+  button that opens the system screen (native `openSettings`): Notifications (allowed, and the ring
+  channel not blocked), Full-screen calls (Android 14+'s `canUseFullScreenIntent`), Battery
+  optimisation (off for the app), Microphone, Calling account (the app's self-managed Telecom
+  account enabled) and Do Not Disturb (lets calls through, or the ring channel bypasses it); the
+  miss rule ("If you miss two calls in a row, this phone stops ringing until you open the app
+  again…"); and "Send a test ring" (below). It says so instead when the server has no push
+  credentials ("Ask your administrator"), the phone has no push token, or the phone is an iPhone.
+- **Registration** (`lib/core/ring/ring_registration.dart`): `PUT /push-devices/:deviceId` (the
+  station device id, the FCM token, the app build) once the gate is ready, on a new token and on
+  every return to the app, reading the checklist each time; `DELETE` at sign-out, before Firebase
+  signs out (bounded at 3 s), so the next person signed in on the phone is never rung for the last
+  one's callers.
+- **Leaving the app** asks `away_ring` instead of `device_away` when `ringAvailable` holds: the
+  account allows it and the server can push, opted in, a token, a live device row, and the three
+  essentials (notifications, the calling account, the microphone). A 409 away-ring refusal asks
+  `device_away` at once; a pause queued in wrap-up queues `away_ring` (IQ72). Once `away_ring`
+  applies with nothing on the line, the station socket is parked, the on-duty service stops (no
+  microphone service while away) and native shows the ongoing "Away · inbound calls ring this phone"
+  notification ("Open the app to take calls on screen again.", with "Back to calls" and "Stop
+  ringing"); "You're paused" is not shown for it. The station's away card reads "Away · this phone
+  rings for inbound calls".
+- **Coming back** reopens the socket and drops the notification. The server ends `away_ring` as
+  `device_away` at the attach (no `ring_off`), and IQ50's 30 s return applies as for `device_away`,
+  once the reopened socket is `ready`. If the server ended it while the agent was away, a banner
+  above the tab bar says why: "Your phone stopped ringing for inbound calls: you missed two in a
+  row." (or that the phone is no longer registered, ringing was turned off, switched off for the
+  account, they were away too long, or the station moved to another device). Dart never sees the
+  `ring_off` push, so it works the reason out (`inferRingOffReason`: two misses it heard of, else the
+  device status read on return).
+- **The ring** (Android, `android/app/src/main/kotlin/com/magickagency/agent/ring/`). FCM without a
+  Flutter plugin: `firebase-messaging` in the app module (Firebase BoM 34.19.0, the one
+  `firebase_core` 4.15.2 builds against), and Firebase's default app built natively at process start
+  from string resources Gradle writes from the build's dart-defines (`google_app_id`,
+  `google_api_key`, `project_id`, `gcm_defaultSenderId`; [`apps/mobile/dev-setup.md`](../apps/mobile/dev-setup.md)),
+  so a ring push wakes the app with no Flutter running. `RingMessagingService` hands each data push
+  to `RingCoordinator`, which feeds the pure `RingStateMachine` (`Idle → Ringing → Answering →
+  Answered`, or `→ Ended(reason)`; one ring at a time; a duplicate, late or expired ring, and a
+  cancel for another call, change nothing) and carries out its effects. A ring on a phone on a
+  cellular call (Telecom does not permit an incoming call, or the audio mode is ringtone, in call,
+  call screening or call redirect), or while the phone is answering or on a call from an earlier
+  ring, is declined at once `busy_on_phone` (IQ70). Otherwise the phone rings until
+  `ring_expires_at` (capped at 20 s plus 2 s of clock slack from arrival): a self-managed Telecom
+  call (`MANAGE_OWN_CALLS`, the account "Magick Agency"), whose `onShowIncomingCallUi` posts a
+  `CallStyle.forIncomingCall` notification, "Inbound call · Magick Agency" (never a name or a
+  number, IQ61), on the high-importance channel `magick_agency_ring` with the ringtone looped
+  (`FLAG_INSISTENT`), Answer and Decline, and a full-screen intent. Without Telecom (refused, or no
+  UI asked for in time) the notification rings alone. No foreground service while it rings, so no
+  `FOREGROUND_SERVICE_PHONE_CALL`.
+- **The lock-screen ring** (`RingActivity`) is the full-screen intent, shown over the lock screen
+  with the screen turned on. It is its own small native activity, not `MainActivity`, because it
+  must not start Flutter: opening the app attaches the station, and the server takes an attach with
+  `caps=inbound` during a ring as an answer (N5). Answer there starts `MainActivity` while the ring
+  activity is still in front (an activity start from the foreground), then answers; Decline posts
+  the decline. It closes itself when the ring ends. `MainActivity` shows over the lock screen
+  (`setShowWhenLocked`, `setTurnScreenOn`, `requestDismissKeyguard`) only while a ring the agent
+  answered is live, and a stale tap does not keep it there.
+- **Answer** (the notification's Answer is a `PendingIntent.getActivity` to `MainActivity`, never a
+  broadcast or a service): native posts `…/ring/answering` at once (`RingApi`: `HttpURLConnection` to
+  the build's `API_ORIGIN`, the offer token only), marks the Telecom call active, shows "Connecting
+  the call…" (an ongoing CallStyle with Hang up), saves the answer (`pendingAnswer`, in app-private
+  preferences) and tells Dart (`ringAnswered`); the grace timer is the server's 15 s plus a 3 s
+  margin. An answer from a headset or a car (Telecom's `onAnswer`) does the same and tries to bring
+  the app up; the answering notification's full-screen intent covers the rest (a field-test item).
+- **Cold start on Answer.** Flutter starts from `MainActivity`; once the gate is ready the coordinator
+  reads `pendingAnswer` (cleared on read; dropped once the grace has lapsed) and accepts
+  (`POST …/ring/accept` with the station device id). `StationController.resumeForRing` opens the
+  station on the accept's URL (a parked station reopened, or one opened from the accept alone,
+  `HostedSession.ring`), adopts the inbound frame and starts the on-duty service from the
+  foreground; the server binds, the app tells native (`reportBound`) and the call notification gives
+  way to the on-duty one. From there it is the "Inbound calls" flow above. A failure that says
+  nothing about the call is retried once after 1 s; then "This call stopped ringing or someone else
+  took it." and `reportEnded(accept_failed)`. Answers are deduped by call id.
+- **Decline** (the notification's Decline, the lock-screen Decline, or Telecom's reject) posts
+  `…/ring/decline {reason: declined}` natively, at once; not a miss. Hang up on the "Connecting the
+  call…" notification declines too, which the server accepts only until Dart's accept (N4); after
+  it the station's Hang up is the way out.
+- **A missed ring** (it rang out, or `ring_cancel` said `expired`) posts "Missed inbound call" ("Your
+  phone rang for an inbound caller and the call was not answered."; no name, no number): Dart asks
+  native for it (`showMissedRing`) on `ringEnded` `expired` or `accept_lapsed` for a call it did not
+  take, and native posts it itself when no Dart handler heard the `ringEnded`. Two in a row and the
+  server ends `away_ring` (IQ62).
+- **`ring_cancel`** stops the ring with the server's reason (an answered ring keeps going if the
+  reason is `answered`, the server having bound it first); **`ring_off`** drops the away
+  notification, ends a ring still ringing, and posts "Your phone stopped ringing for inbound calls"
+  with the reason ("You missed two in a row. Open the app to turn it back on.", and so on; nothing
+  for the agent's own "Stop ringing"). Native handles both; Dart hears only the `ringEnded` that
+  follows.
+- **"Stop ringing"** opens the app with an extra; native tells Dart (`stopRingingTapped`, kept until
+  Dart hears it), and Dart sends `PATCH ring_enabled=false`, which ends `away_ring` on the server.
+- **The test ring.** "Send a test ring" posts `POST /push-devices/:deviceId/test-ring` (202; one per
+  10 s, "You just sent one. Wait a few seconds, then try again."); the server sends a `test_ring`
+  push and the phone rings locally through Telecom ("Test ring · Magick Agency", "This is how an
+  inbound call rings while you are away."), with no call and no server round trip behind it; Answer
+  or Decline just dismisses it. Native tells Dart (`testRingReceived`): "Your phone rang. Ringing
+  works on this phone." Nothing within 30 s: "No test ring arrived. Check the list above, then try
+  again." A phone on a cellular call drops a test ring.
+- **Telemetry** (ids and codes only): `agency_inbound_ring_received`, `_answered` (`cold_start`),
+  `_declined`, `_expired` (with `accept_failed` and the refusal code), `agency_ring_optin_changed`.
+- **Tests:** `test/core/ring/` (the rules, registration, the answer coordinator, over a fake
+  channel), `test/core/station/station_away_ring_test.dart`, the card and the banner widgets;
+  Android's `src/test/kotlin/.../ring/` (the state machine, the push parser, the request builders,
+  the copy; JVM, run in CI as `./gradlew :app:testDevDebugUnitTest`).
+
 ## The ring channel (Mode B)
 
-**Frozen: the contract WP3 (Android native) and WP4 (Flutter) build against** (2026-11-12, Mode B,
-decisions IQ58–IQ74; the wire types are `agency_wire`'s `push_devices.dart` and the ring fields of
-`InboundCall`). Not built yet: nothing in the app opens this channel today. Change it only
-deliberately, on both sides at once, and update this section in the same commit.
+**Frozen: the contract the Android native code and Flutter are built against** (2026-11-12, Mode
+B, decisions IQ58–IQ74; the wire types are `agency_wire`'s `push_devices.dart` and the ring fields
+of `InboundCall`). Built on Android (both sides, "Ringing while away (Mode B)" above); iOS opens
+nothing on it yet. Change it only deliberately, on both sides at once, and update this section in
+the same commit.
 
 One `MethodChannel` named **`magick_agency/ring`**, standard codec, used in both directions. Every
 argument and result is a map with string keys (or `null`, a string, a bool); ids and tokens are
@@ -659,7 +785,7 @@ strings exactly as the server sent them. The offer token is never logged on eith
 |---|---|---|
 | `token` | `{token}` | FCM issued a new token (`onNewToken`); Dart registers it (`PUT /push-devices/:deviceId`) |
 | `ringAnswered` | `{call_id, offer_token, session_id}` | The agent answered with Flutter running; native has already posted `…/ring/answering`. Dart accepts (`…/ring/accept`) and attaches the station |
-| `ringEnded` | `{call_id, reason}`: an `InboundRingResult` wire value (`declined`, `busy_on_phone`, `expired`, or a `ring_cancel` push's reason) | A ring ended on the phone without being answered |
+| `ringEnded` | `{call_id, reason}`: an `InboundRingResult` wire value (`declined`, `busy_on_phone`, `expired`, `accept_lapsed`, `cancelled`, or a `ring_cancel` push's reason) | A ring ended on the phone without being bound |
 | `testRingReceived` | none | A `test_ring` push arrived and rang locally (the settings card's success) |
 | `stopRingingTapped` | none | The away notification's "Stop ringing"; Dart sends `PATCH ring_enabled=false` |
 
@@ -667,6 +793,28 @@ A push reaches native only (`RingMessagingService`, payload `AgencyRingPush`); D
 push itself. Native posts `…/ring/answering` and `…/ring/decline` (the offer token only, IQ71) at
 the tap without starting Flutter; `…/ring/accept` (Firebase Bearer and the station device id) is
 always Dart's.
+
+**Native's side, as built** (`android/app/src/main/kotlin/com/magickagency/agent/ring/`; WP3).
+`RingChannel` is registered on `MainActivity`'s Flutter engine. Where the build goes beyond the
+tables above:
+
+- **`ringEnded` reasons** are also `accept_lapsed` (Answer was tapped but `reportBound` did not come
+  within the grace: the server's 15 s plus a 3 s margin) and `cancelled` (a newer ring replaced this
+  one, or a `ring_off` arrived while it rang). A test ring never sends `ringEnded`.
+- **No `ring_off` event.** Native handles the `ring_off` push itself (drops the away notification,
+  ends a ringing ring, posts why); Dart infers it on return (above).
+- **Duplicates and order.** The state machine drops a ring for a call already ringing, one that
+  ended here (the last calls are remembered, so a ring that arrives after its cancel is dropped), one
+  past its expiry, and a cancel for another call. Answers reach Dart twice by design (`ringAnswered`,
+  and `pendingAnswer` on a cold start); Dart dedupes them by call id.
+- **What Dart has not heard is kept.** Each native → Dart call reports whether Dart's handler took
+  it: an answer stays in `pendingAnswer` (app-private preferences, across a process start; cleared on
+  read, on bind and on any end, and dropped once the grace has lapsed), a "Stop ringing" tap is kept
+  for Dart, and an unheard `expired` posts the missed notification natively.
+- **`reportBound` during a ring** (the agent opened the app by its icon and the attach answered it,
+  N5) marks the call answered and active without an answer post.
+- **The full-screen intent opens `RingActivity`**, not `MainActivity` with an extra, so the lock
+  screen never starts Flutter (above).
 
 **Dart's side** (`lib/core/ring/`, the station controller; WP4):
 
@@ -698,6 +846,33 @@ always Dart's.
   keeps it until 10 s past `accepted_at` + the accept grace (`inboundOfferStaleAt`).
 - `ringEnded` `expired` or `accept_lapsed` posts `showMissedRing`, except for a call the agent
   answered.
+
+## iOS: the design (Mode B)
+
+Not built (IQ64): the app has never compiled for iOS, and Swift that has never been compiled would
+be the first thing to break it. The server already has the APNs VoIP sender (`PUSH_APNS_*`,
+[`seams.md`](seams.md) §3.6) and the contract carries `platform: 'ios'` and `voip_token`; the app
+registers nothing on iOS (`ringPlatformProvider`) and the card says ringing is not available on the
+phone. When iOS compiles, the design is:
+
+- **PushKit** `.voIP` registration; the VoIP token goes in `PUT /push-devices/:deviceId`
+  (`platform: 'ios'`, `voip_token`).
+- **`reportNewIncomingCall` inside the push handler, every time.** iOS ends an app that receives a
+  VoIP push without reporting a call to CallKit, so even a ring whose offer is already gone is
+  reported, then ended at once (`.answeredElsewhere`). The server sends iOS `ring` and `test_ring`
+  only.
+- **CallKit incoming call.** `CallKitController` (in `agent_audio`, today the outgoing-call side of
+  campaign and soft-phone calls) gains the incoming answer and end actions, carried over the same
+  `magick_agency/ring` channel: Answer posts `…/ring/answering` and hands the call to Dart for
+  `…/ring/accept` and the station, as on Android; End before accept posts the decline.
+- **Capabilities:** the `voip` background mode beside today's `audio`, and the `aps-environment`
+  entitlement. `PUSH_APNS_ENV` on the server must match the build: `sandbox` for a debug build's
+  tokens, `production` for TestFlight and the App Store (a mismatch is refused `BadDeviceToken` and
+  revokes the device).
+- **No `ring_cancel` or `ring_off` over VoIP** (every VoIP push must be a call): the APNs sender
+  answers them `ok` unsent. The app checks the call instead (`GET /inbound/calls/:id`) when CallKit
+  answers or the app opens, and re-reads the device status on every open.
+- **Blocked on** the first iOS compile, an Apple developer account and an APNs auth key.
 
 ## Inside the app
 
@@ -829,12 +1004,13 @@ packages/
 - **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml`.
 - **CI:**
   - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart).
-  - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`).
+  - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`) and the app's own (Mode B's ring logic, `./gradlew :app:testDevDebugUnitTest`).
   - An unsigned iOS build on `main`.
 - **Android:**
   - minSdk 28, compileSdk 37 (`permission_handler_android` requires it), targetSdk Flutter's default.
   - Flavours `dev`, `staging` and `prod` install side by side (`com.magickagency.agent[.dev|.staging]`).
   - AGP 9.1 looks for platform 37 as `android-37` while the SDK installs `android-37.0`; CI links the two.
+  - Mode B: `firebase-messaging` from the Firebase BoM 34.19.0 in the app module only (the BoM `firebase_core` 4.15.2 builds against: bump them together), `androidx.core` 1.17.0 for `CallStyle`, and `USE_FULL_SCREEN_INTENT` and `MANAGE_OWN_CALLS` in the manifest. Gradle decodes the build's dart-defines (`-Pdart-defines`) and writes `API_ORIGIN` (`magick_api_origin`) and the Firebase client config (`google_app_id`, `google_api_key`, `project_id`, `gcm_defaultSenderId`) into string resources; without the Firebase ones push is unavailable (`getToken` answers `null`) and the build still works. A Play release needs the full-screen-intent declaration for a calling app (Play Console, App content).
 - **iOS:**
   - Deployment target 16.0, background mode `audio`, CallKit for the system call UI.
   - Google sign-in needs the reversed iOS client id as a URL scheme. It is in `ios/Runner/Info.plist`, hard-coded for this repo's Firebase project; another project replaces it (`apps/mobile/dev-setup.md`).
@@ -858,6 +1034,22 @@ packages/
   9.3.1 and Kotlin 2.4.0 when the step was added, outside AGP: the step's first CI run is its first
   run under the Android Gradle plugin). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
   changes) has never been compiled, like the rest of the iOS engine (iOS does not compile yet,
-  above). Ringing a phone whose app is in the background (push) is parked, not started.
+  above).
+- **Mode B (2026-11-12) has not run on a phone, and Android's native ring has never been
+  compiled.** No Gradle build or APK has run with it (the Android SDK's host was out of reach), so
+  the Telecom, notification, activity, channel and FCM adapters, the manifest and the Gradle
+  changes (the Firebase BoM and `firebase-messaging`, the dart-defines written into string
+  resources) are reviewed against the SDK only; CI's debug Android build is their first compile.
+  Their pure logic (`RingStateMachine`, the push parser, the request builders, the copy and
+  checklist rules: 80 tests) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
+  under the Android Gradle plugin (`./gradlew :app:testDevDebugUnitTest`) from its first run. The
+  Dart side ran under `flutter test` with a fake channel; the server's against a mock push carrier.
+  Not done at all: a real FCM push (no service account was used), the native Firebase app built from
+  the resources, a ring on a locked phone, the lock-screen `RingActivity`, an answer from a headset
+  or a car and whether Android 14/15 lets the app come up from it, battery killers and a force-stop
+  (which drops FCM), the full-screen-intent permission on Android 14+ (Play Console's declaration
+  for a calling app is not filed, so a Play build may get it withheld; the checklist reports it), and
+  the self-managed calling account (its `CAPABILITY_SELF_MANAGED` is deprecated as of API 37, the
+  compile SDK). iOS: designed only; never compiled, no APNs key or Apple account.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.

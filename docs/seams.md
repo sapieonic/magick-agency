@@ -5,7 +5,7 @@ each module area owns, which config keys each declares, where shared infrastruct
 cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4).
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B).
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -327,6 +327,15 @@ at load, so a broken credential fails boot naming the env key, never its value):
   `MockPushCarrier`: FCM as an in-process `fetch`, APNs as a loopback h2c server, both checking the
   signatures, with scripted answers per token or platform) through `createPushSender`'s transports
   or `setPushTransportsForTests`, never a configurable host.
+
+**The agency side** reaches the seam only through `getPushSender()`: `AwayRingService`
+(`agency/away-ring.ts`: `configured` in the `away_ring` refusals, `send` for `ring_off` and the test
+ring, recording a failure on the device row, which revokes it on `unregistered`), the inbound
+connector (`ring` and `ring_cancel`, `configured` before a ring) and the push-device routes
+(`push_configured` in the device status). What it sends is the contract's `AgencyRingPush`; the
+device rows are `agency_push_devices` (`0036_inbound_ring.sql`, read through
+`db/repositories/agency/push-device.repository.ts`, the model in `@magick-agency/db`).
+`AGENCY_AWAY_RING_MAX_MS` (§2) is the agency block's, not the push block's.
 
 Tests: `test/unit/seams/push-sender.test.ts` (the interface at type level, the unwired default, set
 and reset), `test/unit/notifications/push/*.test.ts` (the senders against the mock carrier, the
