@@ -39,8 +39,14 @@
   color: var(--text-primary);
 }
 
+/*
+  Wraps: the Contacts header holds up to four actions (Refresh, Add contacts, Export
+  CSV, Retry these contacts), and unwrapped at phone width the last one ran past the
+  screen and scrolled the whole page sideways. Each button keeps its label on one line.
+*/
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -49,6 +55,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 /* ── Filters card (see FiltersCard.tsx for the header/badge markup) ────────── */
