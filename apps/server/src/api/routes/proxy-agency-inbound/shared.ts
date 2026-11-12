@@ -8,6 +8,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import type { CoreCallResult } from '../../core-dispatch.js';
 import { inboundRefusalBody, isInboundCoreAnswer } from '../agency/inbound-answer.js';
+import { accountOrRefuse } from '../helpers/account-scope.js';
 import { sendRefusal } from '../helpers/refusal.js';
 import { resolveSoftphoneActor, type SoftphoneRequestActor } from '../proxy-agency-softphone/shared.js';
 
@@ -35,9 +36,7 @@ export function inboundActorOrRefuse(request: FastifyRequest, reply: FastifyRepl
  * or stored.
  */
 export function inboundAccountOrRefuse(request: FastifyRequest, reply: FastifyReply): string | null {
-  if (request.accountId) return request.accountId;
-  void sendRefusal(reply, 400, 'account_scope_required', 'This is one account’s work. Send X-Account-Id.');
-  return null;
+  return accountOrRefuse(request.accountId, reply, 'This is one account’s work. Send X-Account-Id.');
 }
 
 /**

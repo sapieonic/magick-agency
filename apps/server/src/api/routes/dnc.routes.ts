@@ -72,7 +72,10 @@ const addSchema = z.object({
  * campaign — is the single most useful filter here.
  */
 const listSchema = z.object({
-  /** Typed text: a whole number in any common form, or the digits a number ends in (`dncPhoneSearch`). */
+  /**
+   * Typed text: a whole number in any common form, its last digits (at least 4), or a `+` number
+   * cut short (`dncPhoneSearch`; too few digits is a 400 `search_too_short`).
+   */
   phone: z.string().min(1).max(40).optional(),
   account_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
   campaign_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
@@ -159,9 +162,15 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     }
     const effectiveAccountId = callerAccountId !== null ? callerAccountId : requestedAccountId;
 
+    // Too few digits is refused rather than run: one digit read a tenth of the list.
+    const phone = q.phone !== undefined ? dncPhoneSearch(q.phone) : undefined;
+    if (phone && !phone.ok) {
+      return reply.code(400).send({ error: 'Bad Request', code: phone.code, message: phone.message });
+    }
+
     const { entries, total } = await dncService.list({
       tenantId: request.tenantId!,
-      ...(q.phone !== undefined ? { phone: dncPhoneSearch(q.phone) } : {}),
+      ...(phone ? { phone: phone.search } : {}),
       ...(effectiveAccountId !== undefined ? { accountId: effectiveAccountId } : {}),
       ...(scopeFilter(q.campaign_id) !== undefined ? { campaignId: scopeFilter(q.campaign_id) } : {}),
       ...(q.source !== undefined ? { source: q.source } : {}),

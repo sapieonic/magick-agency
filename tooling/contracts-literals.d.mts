@@ -13,3 +13,15 @@ export const LITERALS_PATH: string;
 export function stripComments(text: string): string;
 export function buildLiterals(): LiteralsDocument;
 export function renderLiterals(doc?: LiteralsDocument): string;
+
+export interface LabelMap {
+  /** `packages/contracts/src/<file>#<declaration>`. */
+  source: string;
+  /** Each wire value's label. */
+  labels: Record<string, string>;
+}
+
+export type LabelsDocument = { _comment: string } & Record<string, LabelMap | string>;
+
+export const LABELS_PATH: string;
+export function buildLabels(): LabelsDocument;

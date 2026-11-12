@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { DNC_SOURCES, type DncSource } from '@magick-agency/contracts/api/agency/dnc';
-import { endsWithDigitsSql } from '../db/repositories/agency/query-builders.js';
+import { endsWithDigitsSql } from '../db/sql-utils.js';
 
 /**
  * `dnc_entries` access.
@@ -83,13 +83,16 @@ export interface DncLookupScope {
 
 /**
  * The list's number search (`dncPhoneSearch` in `dnc.service.ts` reads the typed text into it).
- * A row matches when its number is `e164`, or ends in `endsWith`; both `null` matches nothing.
+ * A row matches when its number is `e164`, ends in `endsWith` or starts with `startsWith`; all
+ * `null` matches nothing.
  */
 export interface DncPhoneSearch {
   /** One whole number, matched exactly (`idx_dnc_entries_tenant_phone`). */
   e164: string | null;
   /** Digits only: rows whose number ends in them (`idx_dnc_entries_tenant_phone_reversed`). */
   endsWith: string | null;
+  /** `+` and digits, a number cut short: rows whose number starts with it (`idx_dnc_entries_tenant_phone`). */
+  startsWith: string | null;
 }
 
 export interface DncListFilter {
@@ -456,21 +459,41 @@ export class DncRepository {
  * An ending is a PREFIX of the reversed number, which `idx_dnc_entries_tenant_phone_reversed`
  * (0034) indexes with `text_pattern_ops`, so both arms are index scans (a `BitmapOr` when both
  * are set) rather than a `LIKE '%…'` over every row of the tenant. Stored numbers are E.164
- * (`+` and digits, `toDncE164`), so no digits expression is needed. The ending is re-stripped to
- * digits here, the one place a `%` or `_` could become a wildcard; the `%` is added in SQL.
+ * (`+` and digits, `toDncE164`), so no digits expression is needed. `endsWithDigitsSql` keeps only
+ * the ending's digits, the one place a `%` or `_` could become a wildcard.
  */
 function phoneSearchCondition(search: DncPhoneSearch, params: unknown[]): string {
+  const bind = (value: unknown): string => `$${params.push(value)}`;
   const arms: string[] = [];
-  if (search.e164 !== null) {
-    params.push(search.e164);
-    arms.push(`phone_e164 = $${params.length}`);
-  }
-  const ending = search.endsWith?.replace(/\D/g, '') ?? '';
-  if (ending.length > 0) {
-    arms.push(endsWithDigitsSql('phone_e164', ending, (value) => `$${params.push(value)}`));
-  }
+  if (search.e164 !== null) arms.push(`phone_e164 = ${bind(search.e164)}`);
+  if (search.endsWith !== null) arms.push(endsWithDigitsSql('phone_e164', search.endsWith, bind));
+  if (search.startsWith !== null) arms.push(startsWithE164Sql(search.startsWith, bind));
   if (arms.length === 0) return 'FALSE';
   return arms.length === 1 ? arms[0]! : `(${arms.join(' OR ')})`;
+}
+
+/**
+ * `phone_e164` starts with `prefix` (`+` and the digits typed), as a RANGE on
+ * `idx_dnc_entries_tenant_phone` (`tenant_id, phone_e164`, the default operator class).
+ *
+ * A `LIKE 'x%'` on that index is a range scan only under the C collation, which a database is not
+ * promised to have; a range is one under any collation. The bounds are the prefix and the prefix
+ * with its last digit raised (`+9199088` to `+9199089`, trailing nines carried: `+9199` to `+92`),
+ * and since every stored value is `+` and digits, every number with the prefix lies between them.
+ * The `LIKE` is kept as the exact test on the rows the range reads, so a collation that orders
+ * `+` oddly can only make the range read more, never answer more. Re-stripped to digits here, so
+ * the `LIKE` carries no wildcard.
+ */
+export function startsWithE164Sql(prefix: string, bind: (value: unknown) => string): string {
+  const digits = prefix.replace(/\D/g, '');
+  if (digits.length === 0) return 'FALSE';
+  const low = bind(`+${digits}`);
+  const like = `phone_e164 LIKE ${low} || '%'`;
+  const kept = digits.replace(/9+$/, '');
+  // All nines (`+999`): nothing sorts after the prefix that does not start with it.
+  if (kept.length === 0) return `(phone_e164 >= ${low} AND ${like})`;
+  const high = bind(`+${kept.slice(0, -1)}${Number(kept.at(-1)) + 1}`);
+  return `(phone_e164 >= ${low} AND phone_e164 < ${high} AND ${like})`;
 }
 
 export const dncRepository = new DncRepository();

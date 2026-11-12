@@ -15,6 +15,7 @@ import {
   trackAgencyCampaignLifecycleFailed,
 } from '../../../analytics/events';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
+import { agencyCampaignStatusLabel } from '../AgencyCampaignStatusBadge';
 
 /** Only `stop` is irreversible, so only `stop` interrupts with a confirm. */
 const CONFIRM_COPY: Partial<Record<Action, { title: string; message: string }>> = {
@@ -119,8 +120,9 @@ export function useCampaignLifecycle({
         commitCampaign(updated);
         // Report what came back, not what was asked for. `stop` answers with
         // `stopping`, and a toast saying "Stopped" while calls are still up
-        // would contradict the badge rendered directly beneath it.
-        showToast(`Campaign is now ${updated.status}.`, 'success');
+        // would contradict the badge rendered directly beneath it. In the badge's words, never
+        // the wire code.
+        showToast(`Campaign status: ${agencyCampaignStatusLabel(updated.status)}.`, 'success');
         if (fromStatus && isKnownCampaignStatus(fromStatus) && isKnownCampaignStatus(updated.status)) {
           trackAgencyCampaignLifecycleAction({
             campaign_id: id,

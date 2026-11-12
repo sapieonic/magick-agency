@@ -388,8 +388,9 @@ export function DncPage() {
               }
             }}
             /* The server reads any common form of the whole number, or matches the digits typed
-               as the end of one (`dncPhoneSearch`), the soft phone's call log's rule and words. */
-            placeholder="Whole number, or the last few digits"
+               as the end of one (`dncPhoneSearch`); fewer than 4 digits it refuses with
+               "Type at least 4 digits of the number.", shown as the list's error. */
+            placeholder="Whole number, or last 4+ digits"
           />
         </div>
         <button
@@ -414,7 +415,7 @@ export function DncPage() {
           title={appliedFilter ? 'No match' : 'Nothing on the list'}
           description={
             appliedFilter
-              ? 'No number on the list matches. Type the whole number, in any format, or its last few digits.'
+              ? 'No number on the list matches. Type the whole number, in any format, or at least its last 4 digits.'
               : 'When an agent marks a customer as do-not-call, they appear here and agency '
                 + 'campaigns stop dialling them.'
           }

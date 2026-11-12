@@ -24,7 +24,7 @@ const attemptOutcomeLabels = <AttemptOutcome, String>{
 
 const attemptStateLabels = <AttemptState, String>{
   AttemptState.queued: 'Queued',
-  AttemptState.dialing: 'Dialing',
+  AttemptState.dialing: 'Dialling',
   AttemptState.ringing: 'Ringing',
   AttemptState.answered: 'Answered',
   AttemptState.bridged: 'On the call',

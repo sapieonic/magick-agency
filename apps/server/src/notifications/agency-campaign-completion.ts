@@ -37,8 +37,8 @@ export const AGENCY_UUID_RE =
  * {@link agencyCampaignUrl}).
  * Never an `/app/...` link: `/app` is no longer a page of its own. An old
  * `/app/<page>` URL only redirects to `/settings/<page>`, and anything else under
- * `/app` falls to the console's home decision, so a campaign link through it would
- * land somewhere else entirely — and an email is the worst place for one, because
+ * `/app/` is the console's not-found page (`LegacyAppRedirect`), so a campaign link
+ * through it would land nowhere — and an email is the worst place for one, because
  * a link in an inbox outlives every redirect we would later add to cover for it.
  *
  * Three further properties, none of them cosmetic:
@@ -381,8 +381,8 @@ export type AgencyCampaignLinkTarget = Pick<
  *
  * `/t/:tenantId/a/:accountId/agency/campaigns/:id` — inside the console shell,
  * which is where the campaign and its attempts live, and pinned to the campaign's
- * own tenant and account. **Not** `/app/...`, which only redirects (to Settings or
- * the console's home): see the module header.
+ * own tenant and account. **Not** `/app/...`, which only redirects to Settings
+ * (anything else there is not found): see the module header.
  *
  * ── Why the tenant and account are in it (B26) ─────────────────────────────
  * Every signed-in console URL carries its scope, and the console opens the

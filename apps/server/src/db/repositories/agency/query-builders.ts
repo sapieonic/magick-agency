@@ -2,7 +2,8 @@
  * The agency repository's WHERE-clause builders and keyset paging: the positional
  * parameter accumulator, the phone / contact / retry-selector / attempt filters, and
  * the keyset predicate and page. A leaf: it imports only `sql-fragments.ts` and the
- * drill-down predicates (`drilldown-sql.ts`, itself a leaf) from this folder.
+ * drill-down predicates (`drilldown-sql.ts`, itself a leaf) from this folder, and the
+ * shared `db/sql-utils.ts`.
  */
 import { encodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import {
@@ -15,6 +16,7 @@ import {
 import type { AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
 import { contactPhoneDigitsSql } from './sql-fragments.js';
+import { endsWithDigitsSql } from '../../sql-utils.js';
 import {
   agentManualAttemptSql,
   agentReopenedAttemptSql,
@@ -105,16 +107,6 @@ export function phoneCondition(
   // silently short result set. The literal `%` is appended in SQL, so the
   // parameter carries no wildcard and a `%` typed into the search box is data.
   return endsWithDigitsSql(digits, term, bind.add);
-}
-
-/**
- * `column` ends in `digits` (digits only, non-empty: the caller strips them, so no `%` or `_`
- * reaches the pattern), as a PREFIX match on the reversed column, which is what a
- * `reverse(…)` expression index with `text_pattern_ops` serves. The `%` is appended in SQL.
- * The contacts' suffix search and the DNC list's ending search both write it here.
- */
-export function endsWithDigitsSql(column: string, digits: string, add: (value: unknown) => string): string {
-  return `reverse(${column}) LIKE ${add(digits.split('').reverse().join(''))} || '%'`;
 }
 
 /**

@@ -32,6 +32,13 @@ vi.mock('@magick-agency/db', () => ({
 const { DncRepository } = await import('../../../src/dnc/dnc.repository.js');
 const { dncPhoneSearch } = await import('../../../src/dnc/dnc.service.js');
 
+/** The search `typed` reads as; a refusal fails the test that expected a search. */
+function read(typed: string) {
+  const result = dncPhoneSearch(typed, '91');
+  if (!result.ok) throw new Error(`${typed} was refused: ${result.message}`);
+  return result.search;
+}
+
 const repo = new DncRepository();
 
 const LISTED = '+919908815060';
@@ -53,7 +60,7 @@ async function insertDncRow(tenant: string, phone: string, accountId: string | n
 async function search(typed: string, tenant = tenantId): Promise<string[]> {
   const { entries, total } = await repo.list({
     tenantId: tenant,
-    phone: dncPhoneSearch(typed, '91'),
+    phone: read(typed),
     limit: 50,
     offset: 0,
   });
@@ -93,7 +100,35 @@ describe('what each typed form of a listed number finds', () => {
   });
 
   it('a shorter ending finds every entry that ends in it', async () => {
-    expect(await search('0')).toEqual([NEIGHBOUR, LISTED]);
+    expect(await search('5060')).toEqual([LISTED]);
+    expect(await search('0000')).toEqual([NEIGHBOUR]);
+  });
+
+  it('a number cut short after its + finds the numbers it starts, never one it only ends', async () => {
+    expect(await search('+91 99088')).toEqual([NEIGHBOUR, LISTED]);
+    expect(await search('+91 99088 15')).toEqual([LISTED]);
+    expect(await search('+1 555 123')).toEqual([US_LISTED]);
+    expect(await search('+44 (0)20 794')).toEqual([UK_LISTED]);
+    // `+91 99088` once became the ending 9199088, which no stored number has.
+    expect(await search('+59 15060')).toEqual([]);
+  });
+
+  it('trailing nines are carried into the range’s upper bound', async () => {
+    await insertDncRow(tenantId, '+919999999999');
+    await insertDncRow(tenantId, '+920000000001');
+    try {
+      expect(await search('+91 99999')).toEqual(['+919999999999']);
+    } finally {
+      await getTestPool().query(`DELETE FROM dnc_entries WHERE phone_e164 IN ('+919999999999', '+920000000001')`);
+    }
+  });
+
+  it('too few digits is refused, not run', () => {
+    for (const typed of ['0', '060', '+91 99', '+1 555']) {
+      expect(dncPhoneSearch(typed, '91'), typed).toEqual({
+        ok: false, code: 'search_too_short', message: 'Type at least 4 digits of the number.',
+      });
+    }
   });
 
   it('a national number of another country is found by its ending', async () => {
@@ -140,7 +175,7 @@ const SEEDED_TENANTS = 3;
 /** EXPLAIN the page query the repository sent for `typed`. */
 async function planFor(typed: string): Promise<{ indexNames: string[]; seqScans: number; json: string }> {
   sent.length = 0;
-  await repo.list({ tenantId, phone: dncPhoneSearch(typed, '91'), limit: 50, offset: 0 });
+  await repo.list({ tenantId, phone: read(typed), limit: 50, offset: 0 });
   const page = sent.find((s) => s.sql.includes('ORDER BY created_at DESC'))!;
   const { rows } = await getTestPool().query(`EXPLAIN (FORMAT JSON) ${page.sql}`, page.params);
   const plan = (rows[0]!['QUERY PLAN'] as Array<{ Plan: PlanNode }>)[0]!.Plan;
@@ -176,6 +211,13 @@ describe(`at ${SEEDED_ROWS.toLocaleString('en-US')} rows the search is index-ser
   it('a partial number uses the reversed-number index (0034)', async () => {
     const plan = await planFor('12345');
     expect(plan.indexNames, plan.json).toContain('idx_dnc_entries_tenant_phone_reversed');
+    expect(plan.seqScans, plan.json).toBe(0);
+  });
+
+  it('a number cut short after its + is a range on the exact index (idx_dnc_entries_tenant_phone)', async () => {
+    const plan = await planFor('+91 90000 12');
+    expect(plan.indexNames, plan.json).toContain('idx_dnc_entries_tenant_phone');
+    expect(plan.indexNames, plan.json).not.toContain('idx_dnc_entries_tenant_phone_reversed');
     expect(plan.seqScans, plan.json).toBe(0);
   });
 

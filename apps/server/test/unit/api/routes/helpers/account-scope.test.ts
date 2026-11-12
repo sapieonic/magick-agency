@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { accountOrRefuse } from '../../../../../src/api/routes/helpers/account-scope.js';
 
 function fakeReply() {
@@ -32,5 +32,21 @@ describe('accountOrRefuse', () => {
     expect(reply.send.mock.calls[0]![0]).toEqual({
       error: 'Bad Request', code: 'account_scope_required', message: 'Scoped. Send X-Account-Id.',
     });
+  });
+});
+
+describe('inboundAccountOrRefuse (the inbound routes’ upload and stream reads)', () => {
+  it('is accountOrRefuse with its own message: the request’s account, else the same 400 byte for byte', async () => {
+    const { inboundAccountOrRefuse } = await import('../../../../../src/api/routes/proxy-agency-inbound/shared.js');
+    const ok = fakeReply();
+    expect(inboundAccountOrRefuse({ accountId: 'a-1' } as unknown as FastifyRequest, ok as unknown as FastifyReply)).toBe('a-1');
+    expect(ok.send).not.toHaveBeenCalled();
+
+    const reply = fakeReply();
+    expect(inboundAccountOrRefuse({} as unknown as FastifyRequest, reply as unknown as FastifyReply)).toBeNull();
+    expect(reply.code).toHaveBeenCalledWith(400);
+    expect(JSON.stringify(reply.send.mock.calls[0]![0])).toBe(
+      '{"error":"Bad Request","code":"account_scope_required","message":"This is one account’s work. Send X-Account-Id."}',
+    );
   });
 });

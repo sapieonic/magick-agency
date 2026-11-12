@@ -14,8 +14,13 @@
 -- `reverse(phone_e164)` to match it (`phoneSearchCondition` in `dnc.repository.ts`).
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────
--- A plain CREATE INDEX: dnc_entries is small next to the roster tables, and migrations run at
--- container start, before the server listens.
+-- A plain CREATE INDEX, as every index here is: the server is one replica and migrations run at
+-- container start, before it listens, so nothing reads or writes dnc_entries meanwhile. The build
+-- holds a SHARE lock on the table, blocking its writes (a DNC mark, an import) but not its reads,
+-- for as long as it takes; that grows with the largest tenant's list, and a regulator import can
+-- make a list millions of rows long. Switch to CREATE INDEX CONCURRENTLY (outside a transaction,
+-- so a migration of its own) once migrations can run while a server is serving, or once a
+-- deployment's list is big enough that the build would hold a release up noticeably.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).

@@ -12,7 +12,7 @@ import '../../station/widgets/status_band.dart';
 import '../../station/widgets/ticking.dart';
 import '../softphone_copy.dart';
 
-/// The soft phone's rail: Ready, Dialing, Ringing, On call, Outcome needed, or
+/// The soft phone's rail: Ready, Dialling, Ringing, On call, Outcome needed, or
 /// what the connection is doing, in one tinted band pinned above the panel.
 ///
 /// The core words it (`describeSoftphoneRail`); this picks the colour, the

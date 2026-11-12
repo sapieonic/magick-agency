@@ -153,7 +153,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_campaign.roster_upload_failed', label: 'Campaign roster upload failed or cancelled', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.roster_cleared', label: 'Campaign roster cleared', group: 'Campaign', product: 'agency' },
 
-  { value: 'agency_disposition.created', label: 'Call disposition filed', group: 'Calls', product: 'agency' },
+  { value: 'agency_disposition.created', label: 'Call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_attempts.exported', label: 'Call attempts exported', group: 'Calls', product: 'agency' },
   { value: 'agency_contacts.exported', label: 'Contact roster exported', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls', product: 'agency' },
@@ -161,7 +161,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_contacts.agent_retry_reopened', label: 'Agent reopened their not-reached contacts', group: 'Calls', product: 'agency' },
   { value: 'agency_contact.agent_dialed', label: 'Agent called one of their contacts', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.created', label: 'Number marked do-not-call', group: 'Calls', product: 'agency' },
-  { value: 'dnc_entry.deleted', label: 'Do-not-call entry removed', group: 'Calls', product: 'agency' },
+  { value: 'dnc_entry.deleted', label: 'Do Not Call entry removed', group: 'Calls', product: 'agency' },
   // The soft phone (docs/softphone.md §6). "Soft-phone call" in every label: on this
   // tenant-wide screen a bare "Call placed" would read as a campaign dial.
   { value: 'agency_manual_call.placed', label: 'Soft-phone call placed', group: 'Calls', product: 'agency' },
