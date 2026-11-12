@@ -52,8 +52,14 @@ export const TEST_RING_PUSH_TTL_MS = 60 * 1000;
 /** The reconcile's period (IQ67): at boot, then every minute. */
 export const AWAY_RING_RECONCILE_MS = 60_000;
 
-/** The states a queued `away_ring` is applied from by the release at the end of a call or wrap-up. */
-const RELEASE_FROM_STATES: readonly AgencyAgentState[] = ['reserved', 'on_call', 'wrapup', 'available', 'break'];
+/**
+ * The states a queued `away_ring` is applied from by the release at the end of a call or wrap-up.
+ * `offline` too: the app parks its socket once it has asked to go away, so a station that closed
+ * during the wrap-up was written `offline` there, and the queued `away_ring` (the one break held
+ * with no socket) must still apply at the wrap-up's end. With no key at all (that `offline` lease
+ * lapsed during a long wrap-up) it is created ({@link AwayRingService.applyQueued}).
+ */
+const RELEASE_FROM_STATES: readonly AgencyAgentState[] = ['reserved', 'on_call', 'wrapup', 'available', 'break', 'offline'];
 
 /** English fallback copy for each refusal; the app words each code itself. */
 const REFUSAL_MESSAGES: Readonly<Record<AgencyAwayRingRefusalCode, string>> = {
@@ -191,12 +197,27 @@ export class AwayRingService {
   async enter(
     session: AgencyAgentSessionRecord,
     fromStates: readonly AgencyAgentState[],
-  ): Promise<{ ok: true; since: string } | { ok: false; reason: string }> {
+  ): Promise<{ ok: true; since: string } | { ok: false; reason: string; noKey?: boolean }> {
     const entered = await this.deps.agents.enterAwayRing(session.id, {
       ttlMs: this.ttlLeft(session.away_ring_since),
       fromStates,
     });
-    if (!entered.ok) return { ok: false, reason: entered.reason };
+    if (!entered.ok) {
+      return { ok: false, reason: entered.reason, ...(entered.reason === 'wrong_state' && entered.state === null ? { noKey: true } : {}) };
+    }
+    const since = new Date().toISOString();
+    await agencyAgentSessionRepository.setState(session.id, 'break', AWAY_RING_BREAK_REASON);
+    this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: AWAY_RING_BREAK_REASON });
+    return { ok: true, since };
+  }
+
+  /** {@link applyQueued}'s entry over no key at all: created only if still absent, then mirrored. */
+  private async enterWhereNoKey(session: AgencyAgentSessionRecord): Promise<{ ok: true; since: string } | { ok: false; reason: string; noKey?: boolean }> {
+    const created = await this.deps.agents.reseedAwayRing(session.id, {
+      sinceMs: Date.now(),
+      ttlMs: this.ttlLeft(session.away_ring_since),
+    });
+    if (!created) return { ok: false, reason: 'wrong_state' };
     const since = new Date().toISOString();
     await agencyAgentSessionRepository.setState(session.id, 'break', AWAY_RING_BREAK_REASON);
     this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: AWAY_RING_BREAK_REASON });
@@ -223,7 +244,12 @@ export class AwayRingService {
       log.info({ sessionId, refused }, 'Queued away-ring break no longer allowed; applying device_away instead');
       return null;
     }
-    const entered = await this.enter(session, RELEASE_FROM_STATES);
+    let entered = await this.enter(session, RELEASE_FROM_STATES);
+    if (!entered.ok && entered.noKey) {
+      // No key: the `offline` the station close wrote mid wrap-up lapsed before the wrap-up ended.
+      // Created only if still absent (the re-seed's create-if-absent), then mirrored as `enter` does.
+      entered = await this.enterWhereNoKey(session);
+    }
     if (!entered.ok) {
       log.info({ sessionId, reason: entered.reason }, 'Queued away-ring break could not apply; applying device_away instead');
       return null;

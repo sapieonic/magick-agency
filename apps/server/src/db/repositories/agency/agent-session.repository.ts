@@ -8,6 +8,7 @@ import type {
   AgencyStationAttachRecord,
 } from '../../models/agency.model.js';
 import {
+  AGENCY_INBOUND_RING_MAX_MISSES,
   AWAY_RING_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
@@ -62,7 +63,7 @@ export type AgencyStationDeviceClaim =
   /**
    * This device holds the station. `endedAwayRing`: the claim moved the station off the device
    * that held it while the session was on `away_ring` (or ringing from it), which ended it in the
-   * same statement (IQ67, M5): `away_ring_since` cleared, a `break/away_ring` row rewritten to
+   * same statement (IQ67, OS3): `away_ring_since` cleared, a `break/away_ring` row rewritten to
    * `device_away`. The caller clears Redis's `ring` and tells the old device (`ring_off`,
    * `taken_over`).
    */
@@ -712,7 +713,7 @@ export class AgencyAgentSessionRepository {
     // reconnect from the holder writes nothing, so `updated_at` does not move on every mint),
     // and the outer read decides from the same locked row.
     //
-    // Mode B (IQ67, M5): a move that takes the station off the device that holds it while the
+    // Mode B (IQ67, OS3): a move that takes the station off the device that holds it while the
     // session is on `away_ring` (or ringing from it: `away_ring_since` is set) ends `away_ring` in
     // the same statement, so no reader ever sees the station on the new device with the session
     // still ringable for the old one: `away_ring_since` is cleared, and a `break/away_ring` row is
@@ -894,9 +895,13 @@ export class AgencyAgentSessionRepository {
    * when there is none (something else ended it first). Returns what the push and the audit need.
    */
   async endAwayRing(id: string, state: 'break' | 'offline'): Promise<AgencyAwayRingEnded | null> {
+    // On its absence: `away_ring_since` set, OR the row still reads `break/away_ring`. The second
+    // arm covers the reconcile's `clearAwayRingSince` landing between the end's Redis write and
+    // this one (it read Redis already off `away_ring`): without it this matched nothing and the
+    // row stayed `break/away_ring` with no `ring_off` and no audit.
     const { rows } = await getPool().query<AgencySessionTransitionRow & { station_device_id: string | null }>(
       `${sessionTransitionSql({
-        prevWhere: 'id = $1 AND left_at IS NULL AND away_ring_since IS NOT NULL',
+        prevWhere: `id = $1 AND left_at IS NULL AND (away_ring_since IS NOT NULL OR (state = 'break' AND break_reason = '${AWAY_RING_BREAK_REASON}'))`,
         set: `state = $2::varchar, break_reason = $3::varchar, state_since = now(), updated_at = now(), away_ring_since = NULL`,
       })}, s.station_device_id`,
       [id, state, DEVICE_AWAY_BREAK_REASON],
@@ -948,7 +953,9 @@ export class AgencyAgentSessionRepository {
   /**
    * The account's sessions whose phone may be rung for an inbound caller (Mode B, docs/inbound.md
    * "Ringing an away phone"): live campaign sessions on an absence (`away_ring_since` set, N1)
-   * joined to the push device that holds their station, usable for a ring. One statement; whether
+   * joined to the push device that holds their station, usable for a ring, and short of
+   * {@link AGENCY_INBOUND_RING_MAX_MISSES} missed rings (IQ62: one that reached it is ending, and is
+   * never rung meanwhile). One statement, on `idx_agency_agent_sessions_away_ring` (0037); whether
    * Redis says `break, ring = 1` (or the ring in flight) is the caller's read.
    */
   async findRingableInAccount(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
@@ -959,9 +966,10 @@ export class AgencyAgentSessionRepository {
         WHERE s.tenant_id = $1 AND s.account_id = $2
           AND s.away_ring_since IS NOT NULL AND s.left_at IS NULL
           AND s.kind = 'campaign' AND s.campaign_id IS NOT NULL
+          AND s.ring_misses < $3
           AND d.revoked_at IS NULL AND d.ring_enabled
           AND (CASE WHEN d.platform = 'android' THEN d.fcm_token ELSE d.voip_token END) IS NOT NULL`,
-      [tenantId, accountId],
+      [tenantId, accountId, AGENCY_INBOUND_RING_MAX_MISSES],
     );
     return rows;
   }
@@ -979,10 +987,25 @@ export class AgencyAgentSessionRepository {
     return rows[0]?.ring_misses ?? 0;
   }
 
-  /** An answered ring resets the missed rings (IQ62). */
-  async resetRingMisses(id: string): Promise<void> {
+  /** The missed rings in a row now (IQ62); 0 when the session is gone or has left. */
+  async ringMisses(id: string): Promise<number> {
+    const { rows } = await getPool().query<{ ring_misses: number }>(
+      'SELECT ring_misses FROM agency_agent_sessions WHERE id = $1 AND left_at IS NULL',
+      [id],
+    );
+    return rows[0]?.ring_misses ?? 0;
+  }
+
+  /**
+   * An answered ring bound: the missed rings reset (IQ62), and the absence it was rung from is
+   * over (`away_ring_since` cleared: the agent is in the app, on the call). Otherwise a release
+   * that never writes `available` (a queued `away_ring` after the wrap-up) would start the next
+   * absence with this one's start, and the maximum age would end it early.
+   */
+  async ringAnswered(id: string): Promise<void> {
     await getPool().query(
-      'UPDATE agency_agent_sessions SET ring_misses = 0, updated_at = now() WHERE id = $1 AND ring_misses <> 0',
+      `UPDATE agency_agent_sessions SET ring_misses = 0, away_ring_since = NULL, updated_at = now()
+        WHERE id = $1 AND (ring_misses <> 0 OR away_ring_since IS NOT NULL)`,
       [id],
     );
   }

@@ -1386,6 +1386,16 @@ table (nothing an agent wrote: devices re-register). No repository yet (the row 
 list, the keys and partial indexes, the cascades and trigger, down then up), `baseline.test.ts` and
 the down → up inventory suite.
 
+### 0037 — `migrations/0037_away_ring_sessions_index.sql`
+
+Mode B: the sessions on an away break whose phone rings. **`idx_agency_agent_sessions_away_ring`**
+`(tenant_id, account_id) WHERE away_ring_since IS NOT NULL AND left_at IS NULL`: partial, so it
+holds only the agents away right now, for the inbound connector's search of an account
+(`findRingableInAccount`) and the away-ring reconcile (`findAwayRingCandidates`), which otherwise
+scanned every session row. **Down** drops it. **Tests**:
+`test/integration/db/away-ring-sessions-index-migration.test.ts` (the definition, the search's plan,
+down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

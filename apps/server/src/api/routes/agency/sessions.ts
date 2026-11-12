@@ -1012,9 +1012,16 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.code(409).send(err);
     }
 
+    // Mode B: a session left while on `away_ring` (its phone parked, so the leave came from
+    // another device: the app on screen would have ended the absence on its return) tells that
+    // phone, so its "rings this phone" notification does not outlive the session. A ring in flight
+    // refused the leave above.
+    const live = await runtime.agents.get(session.id);
+    const awayRinging = live?.ring === true || !!session.away_ring_since;
     await runtime.agents.clear(session.id);
     await agencyAgentSessionRepository.leave(session.id);
     await runtime.stations.detach(session.id);
+    if (awayRinging) runtime.awayRing.sendRingOff(session.agent_user_id, session.station_device_id, session.id, 'taken_over');
     return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'offline', since: new Date().toISOString() });
   });
 }

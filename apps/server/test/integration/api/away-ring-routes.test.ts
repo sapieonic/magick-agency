@@ -354,6 +354,20 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(avail.statusCode).toBe(200);
   });
 
+  it('the session left from another device while away ringing tells the parked phone (ring_off, taken_over)', async () => {
+    const { agent, sessionId, station } = await onDuty();
+    await goAwayRinging(agent, sessionId, station);
+    const leave = await app.inject({
+      method: 'POST', url: `/proxy/agency/sessions/${sessionId}/leave`, headers: headers(agent, { 'x-client': 'web' }), payload: '{}',
+    });
+    expect(leave.statusCode, leave.body).toBe(200);
+    expect(await row(sessionId)).toMatchObject({ state: 'offline', away_ring_since: null });
+    expect((await row(sessionId)).left_at).not.toBeNull();
+    await waitFor('ring_off', () => sent.find((s) => s.payload['type'] === 'ring_off'));
+    expect(sent.filter((s) => s.payload['type'] === 'ring_off').map((s) => s.payload))
+      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'taken_over' }]);
+  });
+
   it('another device taking the station over ends away_ring and tells the old device taken_over', async () => {
     const { agent, campaignId, sessionId, station } = await onDuty();
     await goAwayRinging(agent, sessionId, station);

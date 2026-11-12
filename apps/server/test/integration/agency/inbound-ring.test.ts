@@ -8,6 +8,24 @@ import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test
 import { FakeBridge, FakeStations, gate, sleep, until, type FakeStationEntry } from './inbound-connector-fakes.js';
 
 const audit = vi.hoisted(() => ({ log: vi.fn() }));
+/** Every `error` the connector logs (a step or a search that threw). */
+const logged = vi.hoisted(() => ({ errors: [] as unknown[][] }));
+
+vi.mock('@magick-agency/observability', async (orig) => {
+  const real = await orig<typeof import('@magick-agency/observability')>();
+  return {
+    ...real,
+    createChildLogger: (...args: Parameters<typeof real.createChildLogger>) => {
+      const child = real.createChildLogger(...args);
+      const spied = Object.create(child) as typeof child;
+      spied.error = ((...a: unknown[]) => {
+        logged.errors.push(a);
+        return (child.error as (...x: unknown[]) => void)(...a);
+      }) as typeof child.error;
+      return spied;
+    },
+  };
+});
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -71,7 +89,7 @@ interface SentPush { deviceRowId: string; payload: Record<string, unknown> }
 const sender = {
   sent: [] as SentPush[],
   /** The next answers, in order; then `{ ok: true }`. */
-  answers: [] as Array<{ ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' }>,
+  answers: [] as Array<{ ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' | 'rate_limited' | 'invalid' }>,
 };
 
 function awayRingFor(getConnector: () => Connector | null) {
@@ -88,7 +106,9 @@ function awayRingFor(getConnector: () => Connector | null) {
 let awayRing: InstanceType<typeof AwayRingService>;
 
 /** A connector over the shared Redis and Postgres, ringing through the real away break. */
-function connector(opts: { ringMs?: number; acceptGraceMs?: number; republishMs?: number } = {}): Connector {
+function connector(opts: {
+  ringMs?: number; acceptGraceMs?: number; republishMs?: number; pushRetryMs?: number; agents?: InstanceType<typeof AgentStateMachine>;
+} = {}): Connector {
   const exits = new AgencyInboundCallRouter({
     bridge: bridge as never,
     dnc: { check: async () => 'clear', checkEntry: async () => ({ result: 'clear' }) } as never,
@@ -98,7 +118,7 @@ function connector(opts: { ringMs?: number; acceptGraceMs?: number; republishMs?
   c = new InboundConnector({
     bridge: bridge as never,
     stations: stations as never,
-    agents,
+    agents: opts.agents ?? agents,
     releaseAgent: async (id) => {
       if (await c.takeOnRelease(id)) return;
       if (!stations.isLocallyOwned(id)) {
@@ -114,6 +134,7 @@ function connector(opts: { ringMs?: number; acceptGraceMs?: number; republishMs?
     ringMs: opts.ringMs ?? 5_000,
     acceptGraceMs: opts.acceptGraceMs ?? 5_000,
     ...(opts.republishMs ? { republishMs: opts.republishMs } : {}),
+    ...(opts.pushRetryMs ? { pushRetryMs: opts.pushRetryMs } : {}),
   });
   c.start();
   connectors.push(c);
@@ -205,6 +226,7 @@ beforeEach(async () => {
   await truncateAll();
   await flushTestRedis();
   audit.log.mockReset();
+  logged.errors = [];
   flagsOn = true;
   sender.sent = [];
   sender.answers = [];
@@ -244,7 +266,7 @@ afterAll(async () => {
 // ─── 1. The ring and its answer ─────────────────────────────────────────────
 
 describe('a ring and its answer', () => {
-  it('ring → answering → accept → attach → bind: the push carries ids only, the spine says push, the agent talks, misses reset', async () => {
+  it('ring → answering → accept → attach → bind: the push carries ids only, the spine says push, the agent talks, misses reset, the absence over', async () => {
     const c = connector();
     const away = await awayAgent();
     await pool().query('UPDATE agency_agent_sessions SET ring_misses = 1 WHERE id = $1', [away.sessionId]);
@@ -292,7 +314,9 @@ describe('a ring and its answer', () => {
     expect(await row(call.id)).toMatchObject({ state: 'connected', session_id: away.sessionId, ring_result: 'answered', answered_by_user_id: away.userId });
     expect(await agents.get(away.sessionId)).toMatchObject({ state: 'on_call', inboundCallId: call.id });
     expect(c.holdsPushOffer(away.sessionId)).toBe(false);
-    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0 });
+    // The answered ring ends the absence it was rung from: a later return to away_ring (a queued
+    // one after the wrap-up, with no `available` between) starts a new one, not this one's clock.
+    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0, away_ring_since: null });
     // Past accept: a repeated accept is `already_accepted`.
     expect(await c.ringAccept(call.id, token, { agentUserId: away.userId, deviceId: away.deviceId })).toEqual({ ok: false, code: 'already_accepted' });
     expect(pushes('ring_cancel')).toEqual([]);
@@ -484,7 +508,7 @@ describe('the ends of a ring', () => {
     expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0 });
   });
 
-  it('a push that fails is push_failed and a miss; the agent back on away_ring, no ring_cancel', async () => {
+  it('a push that fails is push_failed and not a miss (the carrier`s, not the agent`s); the agent back on away_ring, no ring_cancel', async () => {
     const c = connector();
     await deskAgent('on_call');
     const away = await awayAgent();
@@ -492,10 +516,32 @@ describe('the ends of a ring', () => {
     const { call } = await caller(c);
     await until('push_failed', async () => (await row(call.id)).ring_result === 'push_failed');
     await drain();
-    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 1 });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0 });
     await expectAwayRing(away.sessionId);
     expect(pushes('ring_cancel')).toEqual([]);
     expect(await row(call.id)).toMatchObject({ state: 'queued' });
+  });
+
+  it('a push service outage never walks a caller through the pool: no miss for anyone, no next phone until the pause ends, then the retry', async () => {
+    const c = connector({ pushRetryMs: 600, republishMs: 100 });
+    await deskAgent('on_call');
+    const phones = [await awayAgent(), await awayAgent(), await awayAgent()];
+    // Every push fails while the service is down.
+    for (let i = 0; i < 3; i++) sender.answers.push({ ok: false, reason: i === 1 ? 'rate_limited' : 'unavailable' });
+    const { call } = await caller(c);
+    await until('push_failed', async () => (await row(call.id)).ring_result === 'push_failed');
+    // Well inside the pause, with the republish searching every 100 ms: still one ring only.
+    await sleep(300);
+    await drain();
+    expect(pushes('ring')).toHaveLength(1);
+    expect(await row(call.id)).toMatchObject({ state: 'queued', ring_count: 1 });
+    for (const p of phones) {
+      expect(await sessionRow(p.sessionId)).toMatchObject({ ring_misses: 0 });
+      await expectAwayRing(p.sessionId);
+    }
+    // After the pause the republish rings again (the service is back after three failures).
+    await until('rung again', () => (pushes('ring').length >= 2 ? true : null));
+    for (const p of phones) expect(await sessionRow(p.sessionId)).toMatchObject({ ring_misses: 0 });
   });
 
   it('an unregistered token revokes the device and ends away_ring (revoked)', async () => {
@@ -509,6 +555,53 @@ describe('the ends of a ring', () => {
     expect((await devices.find(away.userId, away.deviceId))!.revoked_at).not.toBeNull();
     expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'agency_session.away_ring_ended', details: expect.objectContaining({ reason: 'revoked' }) }));
+  });
+});
+
+// ─── 2b. Robustness of a ring's end ─────────────────────────────────────────
+
+describe('a ring`s end, when things go wrong', () => {
+  it('a requeue that throws still releases the agent and requeues the caller in memory: no push offer left with no timer', async () => {
+    const c = connector();
+    await deskAgent('on_call');
+    const away = await awayAgent();
+    const { call } = await caller(c);
+    const token = String((await ringPush(away.deviceRowId))['offer_token']);
+    const requeue = vi.spyOn(calls, 'requeue').mockRejectedValueOnce(new Error('the database blinked'));
+    try {
+      await c.ringDecline(call.id, token, 'declined');
+      await drain();
+    } finally {
+      requeue.mockRestore();
+    }
+    expect(c.holdsPushOffer(away.sessionId)).toBe(false);
+    expect(c.findCallForSession(away.sessionId)).toBeNull();
+    await expectAwayRing(away.sessionId);
+    // Waiting in memory (the spine still reads offered, so it refuses later offers until they leave).
+    expect(c.heldCallIds()).toContain(call.id);
+    expect(await c.ringAnswering(call.id, token)).toEqual({ ok: false, code: 'ring_not_offered' });
+  });
+
+  it('IQ62: an agent with the maximum missed rings is never rung, and a ring that slipped in ends the absence when it ends', async () => {
+    const c = connector();
+    await deskAgent('on_call');
+    const spent = await awayAgent();
+    await pool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [spent.sessionId, AGENCY_INBOUND_RING_MAX_MISSES]);
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    await drain();
+    expect(pushes('ring')).toEqual([]);
+
+    // A ring rung before the second miss's end landed (another caller's search between that ring's
+    // release and its end): its end, whatever it is, ends the absence that was owed.
+    const late = await awayAgent();
+    (c as unknown as { searchInBackground: (k: string) => void }).searchInBackground(`${T}:${A}`);
+    const token = String((await ringPush(late.deviceRowId, call.id))['offer_token']);
+    await pool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [late.sessionId, AGENCY_INBOUND_RING_MAX_MISSES]);
+    expect(await c.ringDecline(call.id, token, 'declined')).toMatchObject({ ok: true });
+    await drain();
+    expect(await sessionRow(late.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
+    expect(await until('ring_off', () => pushes('ring_off', late.deviceRowId)[0] ?? null)).toMatchObject({ reason: 'ring_missed' });
   });
 });
 
@@ -671,6 +764,42 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
     expect((await row(call.id)).accepted_at).not.toBeNull();
     expect(await agents.get(desk)).toMatchObject({ state: 'available', inboundCallId: null });
     expect(c.holdsPushOffer(away.sessionId)).toBe(true);
+  });
+
+  it('a take-over whose ring ended during the search (its first candidate refused) offers the caller to the next as any queued caller: nothing throws', async () => {
+    // The first station candidate's reservation is held while the ring ends (declined), then refused.
+    const hold = gate();
+    const reached = gate();
+    let gated: string | null = null;
+    const gatedAgents = Object.create(agents) as InstanceType<typeof AgentStateMachine>;
+    gatedAgents.reserveForInbound = async (sid, callId, from) => {
+      if (gated === null && from.includes('available')) {
+        gated = sid;
+        reached.open();
+        await hold.wait;
+        return { ok: false, reason: 'wrong_state', state: 'available' };
+      }
+      return agents.reserveForInbound(sid, callId, from);
+    };
+    const c = connector({ agents: gatedAgents });
+    const deskA = await deskAgent('on_call');
+    const deskB = await deskAgent('on_call');
+    const away = await awayAgent();
+    const { call } = await caller(c);
+    const token = String((await ringPush(away.deviceRowId))['offer_token']);
+    await sleep(5);
+    await agents.set(deskA, 'available', { leaseMs: 60_000 });
+    await agents.set(deskB, 'available', { leaseMs: 60_000 });
+    c.onAgentAvailable(deskA);
+    await reached.wait;
+    expect(await c.ringDecline(call.id, token, 'declined')).toMatchObject({ ok: true });
+    hold.open();
+    await until('offered to the other desk', async () => (await row(call.id)).state === 'offered');
+    await drain();
+    // The search went on to the next candidate (before, it threw on the ring it read as still there).
+    expect(logged.errors).toEqual([]);
+    const other = gated === deskA ? deskB : deskA;
+    expect(await row(call.id)).toMatchObject({ session_id: other, offer_channel: 'station' });
   });
 
   it('a station agent already on screen when the sticky agent`s phone was rung does not take the ring over', async () => {

@@ -503,7 +503,7 @@ export class AgencyRuntime {
     // (docs/inbound.md §5.1). Synchronous: the cancel runs on the call's own chain, so nothing
     // is awaited between the supersede read above and the write below.
     this.inbound?.onStationClosed(sessionId);
-    // ── Mode B: the decision is ONE script, and it is still the first await (B2, IQ67) ──────
+    // ── Mode B: the decision is ONE script, and it is still the first await (IQ67) ──────
     // `offline`, unless the session is on `away_ring` (the app parked its socket on purpose: the
     // phone rings for inbound callers with no socket) or holds a push offer (an answered ring
     // keeps its accept grace across a socket drop). `holdsPushOffer` is the connector's

@@ -243,6 +243,21 @@ describe('the away_ring Lua (real Redis)', () => {
     expect(await sm().endAwayRing(gone, { offline: true })).toEqual({ outcome: 'no_key', state: 'offline' });
   });
 
+  it('a heartbeat renew never touches away_ring, even one that read break (device_away) before the switch', async () => {
+    const s = randomUUID();
+    await sm().set(s, 'break');
+    // The heartbeat read `break` here (`device_away`, renewed like any break)...
+    const read = (await sm().get(s))!.state;
+    // ...the app switched to away_ring meanwhile...
+    expect(await sm().enterAwayRing(s, { ttlMs: 3_600_000, fromStates: ['break'] })).toMatchObject({ ok: true });
+    // ...and the renew, state-matched on `break`, must not cut the absence's TTL to the break lease.
+    expect(await sm().renew(s, read, AGENT_LEASE_MS.break)).toBe(false);
+    expect(await getTestRedis().pttl(key(s))).toBeGreaterThan(AGENT_LEASE_MS.break);
+    // A plain break still renews.
+    await sm().endAwayRing(s, { offline: false });
+    expect(await sm().renew(s, 'break', AGENT_LEASE_MS.break)).toBe(true);
+  });
+
   it('the station close writes offline unless away_ring, or a push offer the connector holds', async () => {
     const away = randomUUID();
     await sm().set(away, 'available');
@@ -506,6 +521,18 @@ describe('AwayRingService', () => {
     expect((await pushes(1))[0]!.payload).toMatchObject({ type: 'ring_off', reason });
   });
 
+  it("an end whose Redis write the reconcile saw first (it cleared the key) still ends the mirror: device_away, not a row left on away_ring", async () => {
+    await device();
+    const s = await onAwayRing();
+    // `end`'s Redis write lands...
+    expect(await sm().endAwayRing(s.id, { offline: true })).toMatchObject({ outcome: 'ended' });
+    // ...a reconcile tick reads Redis off away_ring with nothing in flight, and clears the key...
+    expect(await service().svc.reconcile()).toMatchObject({ cleared: 1 });
+    // ...then `end`'s mirror write: it must still match the row.
+    expect(await sessions.endAwayRing(s.id, 'offline')).toMatchObject({ id: s.id, from_state: 'break' });
+    expect(await row(s.id)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
+  });
+
   it("reconcile clears a stale key when Redis is off away_ring with nothing in flight", async () => {
     await device();
     const s = await onAwayRing();
@@ -594,7 +621,10 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
       // the CAS has answered, after this close read `holdsPushOffer` (false). The `push` field the
       // reservation writes in the same script is what the close's decision reads.
       let reserved = false;
-      rt.inbound = { holdsPushOffer: () => reserved, onStationClosed: () => undefined, hasLiveCall: () => false } as never;
+      rt.inbound = {
+        holdsPushOffer: () => reserved, onStationClosed: () => undefined, hasLiveCall: () => false,
+        onAgentAvailable: () => undefined, findCallForSession: () => null,
+      } as never;
       const ring = rt.agents.reserveForInbound(s.id, 'ib-1', ['break']).then((r) => { reserved = r.ok; return r; });
       const close = rt.releaseStationOnClose(s.id);
       expect(reserved).toBe(false);
@@ -649,5 +679,30 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
     rt.breaks.queue(s.id, { ...AWAY_RING_BREAK });
     expect(await rt.dialer.releaseAgent(s.id)).toEqual({ state: 'offline', result: 'ok' });
     expect(await rt.agents.get(s.id)).toMatchObject({ state: 'offline', ring: false });
+  });
+
+  it('a queued away_ring still applies after the app parked its socket in the wrap-up (offline), and with that lease lapsed (no key)', async () => {
+    const rt = runtime();
+    await device();
+    const s = await session({ state: 'wrapup' });
+    await rt.agents.set(s.id, 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
+    rt.breaks.queue(s.id, { ...AWAY_RING_BREAK });
+    // The app hid, asked for away_ring (queued: wrap-up), and parked its socket: the close writes offline.
+    expect(await rt.releaseStationOnClose(s.id)).toBe(true);
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'offline' });
+    // The wrap-up ends: the queued away_ring applies, with no socket.
+    expect(await rt.dialer.releaseAgent(s.id)).toEqual({ state: 'break', result: 'ok' });
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: true });
+    expect(await getTestRedis().pttl(key(s.id))).toBeGreaterThan(AGENT_LEASE_MS.break);
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring' });
+
+    // A long wrap-up: the close's offline lease lapsed before it ended.
+    await sessions.setState(s.id, 'wrapup');
+    await getTestRedis().del(key(s.id));
+    rt.breaks.queue(s.id, { ...AWAY_RING_BREAK });
+    expect(await rt.dialer.releaseAgent(s.id)).toEqual({ state: 'break', result: 'ok' });
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: true });
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring' });
+    expect((await row(s.id)).away_ring_since).not.toBeNull();
   });
 });

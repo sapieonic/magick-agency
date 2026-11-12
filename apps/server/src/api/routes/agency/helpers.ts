@@ -5,7 +5,7 @@
  * `agency.routes.ts`.
  */
 import type { AwayRingService } from '../../../agency/away-ring.js';
-import { AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON, type AgencyRingOffReason } from '@magick-agency/contracts/agency';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
@@ -417,7 +417,7 @@ export async function claimStationOrReply(
     reconnect?: boolean;
     onGone: () => FastifyReply | Promise<FastifyReply>;
     /**
-     * Mode B (IQ67, M5): told when the claim moved the station off a device the session was ringing
+     * Mode B (IQ67, OS3): told when the claim moved the station off a device the session was ringing
      * (`claimStationDevice`'s `endedAwayRing`), so Redis's `ring` is cleared and the old device gets
      * `ring_off` (`taken_over`). The campaign join and the token mint pass the runtime's.
      */
@@ -493,13 +493,19 @@ interface IdleSessionRuntime {
     detach(sessionId: string): Promise<unknown> | unknown;
   };
   agents: {
-    get(sessionId: string): Promise<{ state: string } | null>;
+    get(sessionId: string): Promise<{ state: string; ring?: boolean } | null>;
     clear(sessionId: string): Promise<unknown>;
   };
   dialer: { hasLiveAttempt(sessionId: string): boolean; hasRedialInFlight(sessionId: string): boolean };
   softphone: { hasLiveCall(sessionId: string): boolean };
   inbound?: { findCallForSession(sessionId: string): unknown } | null;
+  /** Mode B: the `ring_off` push to a phone whose away break the end cut short. */
+  awayRing?: { sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason): void };
 }
+
+/** The session fields {@link endIdleSessionElsewhere} reads (the join's refusal carries the whole row). */
+type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
+  & Partial<Pick<AgencyAgentSessionRecord, 'agent_user_id' | 'station_device_id' | 'away_ring_since'>>;
 
 /**
  * OS7: end the agent's session in ANOTHER tenant when nothing is there: no station attached in any
@@ -514,11 +520,17 @@ interface IdleSessionRuntime {
  * A session that is working (a station attached, or anything in flight) is never ended from
  * here: the join is refused `session_in_other_tenant` as before.
  *
+ * A session on `away_ring` (Mode B: `break` with `ring = 1`, no socket by design) counts as idle
+ * here: the agent is at a station in this tenant now, and keeping the absence would lock them out
+ * for up to `AGENCY_AWAY_RING_MAX_MS`. Its phone is told (`ring_off`, `taken_over`: the station
+ * moved), so its "rings this phone" notification does not outlive the session. A ring in flight
+ * holds the session (`findCallForSession`, and the lease is `reserved`).
+ *
  * Total: any read or write that fails leaves the session alone (false).
  */
 export async function endIdleSessionElsewhere(
   runtime: IdleSessionRuntime,
-  session: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>,
+  session: IdleSession,
   leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
 ): Promise<boolean> {
   try {
@@ -528,9 +540,13 @@ export async function endIdleSessionElsewhere(
     if ((await runtime.stations.stationPresence(id)) !== 'absent') return false;
     const lease = await runtime.agents.get(id);
     if (lease && lease.state !== 'offline' && lease.state !== 'break') return false;
+    const awayRinging = lease?.ring === true || (session.away_ring_since !== undefined && session.away_ring_since !== null);
     await runtime.agents.clear(id);
     await leave(id);
     await runtime.stations.detach(id);
+    if (awayRinging && session.agent_user_id) {
+      runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, id, 'taken_over');
+    }
     log.info({ sessionId: id, tenantId: session.tenant_id },
       'Ended an idle session in another tenant so the agent can join here (OS7)');
     return true;
@@ -550,7 +566,7 @@ export async function joinEndingIdleElsewhere<R extends { ok: boolean }>(
   join: () => Promise<R>,
 ): Promise<R> {
   const first = await join();
-  const refused = first as { ok: boolean; reason?: string; session?: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'> };
+  const refused = first as { ok: boolean; reason?: string; session?: IdleSession };
   if (!refused.ok && refused.reason === 'other_tenant' && refused.session
     && await endIdleSessionElsewhere(runtime, refused.session)) {
     return join();

@@ -16,10 +16,11 @@ const SESSION = { id: 'sess-there', tenant_id: 't-2' };
 function runtime() {
   return {
     stations: { stationPresence: vi.fn(async (): Promise<'connected' | 'absent' | 'unknown'> => 'absent'), detach: vi.fn() },
-    agents: { get: vi.fn(async (): Promise<{ state: string } | null> => ({ state: 'break' })), clear: vi.fn(async () => undefined) },
+    agents: { get: vi.fn(async (): Promise<{ state: string; ring?: boolean } | null> => ({ state: 'break' })), clear: vi.fn(async () => undefined) },
     dialer: { hasLiveAttempt: vi.fn(() => false), hasRedialInFlight: vi.fn(() => false) },
     softphone: { hasLiveCall: vi.fn(() => false) },
     inbound: { findCallForSession: vi.fn((): unknown => null) },
+    awayRing: { sendRingOff: vi.fn() },
   };
 }
 
@@ -37,6 +38,24 @@ describe('endIdleSessionElsewhere (OS7)', () => {
     expect(rt.agents.clear).toHaveBeenCalledWith('sess-there');
     expect(leave).toHaveBeenCalledWith('sess-there');
     expect(rt.stations.detach).toHaveBeenCalledWith('sess-there');
+  });
+
+  it('Mode B: ends a session on away_ring (its phone parked) and tells that phone taken_over; a plain break sends nothing', async () => {
+    rt.agents.get.mockResolvedValueOnce({ state: 'break', ring: true });
+    const away = { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: new Date() };
+    expect(await endIdleSessionElsewhere(rt, away, leave)).toBe(true);
+    expect(leave).toHaveBeenCalledWith('sess-there');
+    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over');
+
+    rt.awayRing.sendRingOff.mockClear();
+    expect(await endIdleSessionElsewhere(rt, { ...away, away_ring_since: null }, leave)).toBe(true);
+    expect(rt.awayRing.sendRingOff).not.toHaveBeenCalled();
+  });
+
+  it('Mode B: the row on an absence whose key lapsed still tells the phone', async () => {
+    rt.agents.get.mockResolvedValueOnce(null);
+    expect(await endIdleSessionElsewhere(rt, { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: new Date() }, leave)).toBe(true);
+    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over');
   });
 
   it('ends one with no lease at all, or an offline one', async () => {

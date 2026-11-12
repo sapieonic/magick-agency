@@ -288,7 +288,7 @@ return {1, st}
 `;
 
 /**
- * A push offer that ended unanswered goes back to `away_ring` (IQ66, B3): only while THIS call
+ * A push offer that ended unanswered goes back to `away_ring` (IQ66, IQ67): only while THIS call
  * holds the session. Clears `inbound`, writes `break`, `ring = 1`, a fresh `since` (IQ63: the
  * break's `since` is the agent's idle clock, rewritten on every return) and the TTL.
  *
@@ -355,7 +355,7 @@ return {1, next}
  * `away_ring` (`break` with `ring = 1`: the app parked its socket on purpose, IQ67) or holds a push
  * offer (`inbound` set and either the `push` field, which the ring's reservation writes in the same
  * script, or ARGV[5] = '1', the connector's synchronous `holdsPushOffer`: the accept grace survives
- * a socket drop, B2). The field is what closes the race: a close whose `holdsPushOffer` read came
+ * a socket drop, IQ67). The field is what closes the race: a close whose `holdsPushOffer` read came
  * before the ring's compare-and-swap was answered still sees the push offer the CAS wrote.
  *
  * The ARGV are the plain set's (ARGV[1] = 'offline', ARGV[2] = '' attempt, ARGV[3] = lease ms,
@@ -379,10 +379,15 @@ return 1
  * whose replica died would silently come back to life in whatever state they were
  * last in — and the engine would dial into them. `EXISTS` first, and the state
  * must still match what the renewer believes.
+ *
+ * Never on `away_ring` (`ring = 1`, IQ67): its TTL is the time left to its maximum age, and nothing
+ * renews it. Matching the state alone let a heartbeat that read `break` (`device_away`) before a
+ * switch to `away_ring` cut that TTL to the break lease's 45 s.
  */
 const RENEW_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HGET', KEYS[1], 'state') ~= ARGV[1] then return 0 end
+if redis.call('HGET', KEYS[1], 'ring') == '1' then return 0 end
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return 1
 `;
