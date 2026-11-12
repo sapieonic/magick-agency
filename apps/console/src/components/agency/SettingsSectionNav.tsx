@@ -71,8 +71,16 @@ export function sectionIdOfHash(hash: string): string {
  *
  * `ready` must be false while the sections on screen are not the ones the URL is about (a
  * campaign still loading after a jump from another), or the jump would land on the old page.
+ *
+ * `mountKey` changes whenever the page remounts its sections under the same ids (campaign
+ * Settings' Discard): the observer watches elements, not ids, so it must be pointed at the new
+ * ones or the highlight stops following the scroll.
  */
-export function useSectionInView(sections: readonly SettingsNavSection[], ready: boolean) {
+export function useSectionInView(
+  sections: readonly SettingsNavSection[],
+  ready: boolean,
+  mountKey: string | number = 0,
+) {
   const location = useLocation();
   const { pathname, search, hash } = location;
   const navigate = useNavigate();
@@ -147,7 +155,7 @@ export function useSectionInView(sections: readonly SettingsNavSection[], ready:
       cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [ready, idsKey]);
+  }, [ready, idsKey, mountKey]);
 
   const select = useCallback(
     (id: string) => {

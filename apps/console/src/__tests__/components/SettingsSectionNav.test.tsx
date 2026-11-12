@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
 import { ScopedRouter } from '../../components/routing/ScopedRouter';
@@ -238,6 +238,63 @@ describe('useSectionInView — the band that decides the section being read', ()
       style.remove();
       pane.remove();
     }
+  });
+});
+
+/** A page that remounts its sections under the same ids, as campaign Settings' Discard does. */
+function RemountingPage() {
+  const [epoch, setEpoch] = useState(0);
+  const nav = useSectionInView(SECTIONS, true, epoch);
+  return (
+    <div>
+      <SettingsSectionNav sections={SECTIONS} active={nav.active} onSelect={nav.select} />
+      <button type="button" onClick={() => setEpoch((n) => n + 1)}>Discard</button>
+      <Fragment key={epoch}>
+        {SECTIONS.map((s) => <section key={s.id} id={s.id}>{s.label}</section>)}
+      </Fragment>
+    </div>
+  );
+}
+
+describe('useSectionInView — sections remounted by Discard', () => {
+  let observers: { callback: IntersectionObserverCallback; watched: Element[]; live: boolean }[] = [];
+  beforeEach(() => {
+    observers = [];
+    vi.stubGlobal('IntersectionObserver', class {
+      private readonly record: { callback: IntersectionObserverCallback; watched: Element[]; live: boolean };
+      constructor(callback: IntersectionObserverCallback) {
+        this.record = { callback, watched: [], live: true };
+        observers.push(this.record);
+      }
+      observe(element: Element) { this.record.watched.push(element); }
+      disconnect() { this.record.live = false; }
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('watches the new sections, so scrolling still moves the highlight', () => {
+    render(
+      <MemoryRouter initialEntries={['/c/c-1/settings']}>
+        <RemountingPage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByText('Discard'));
+
+    const live = observers.filter((o) => o.live);
+    expect(live).toHaveLength(1);
+    const [observer] = live;
+    expect(observer!.watched.map((e) => e.id)).toEqual(SECTIONS.map((s) => s.id));
+    expect(observer!.watched.every((e) => e.isConnected)).toBe(true);
+
+    act(() => {
+      observer!.callback(
+        [{ target: document.getElementById('recording')!, isIntersecting: true } as unknown as IntersectionObserverEntry],
+        observer as unknown as IntersectionObserver,
+      );
+    });
+    expect(current()).toEqual(['Recording']);
   });
 });
 

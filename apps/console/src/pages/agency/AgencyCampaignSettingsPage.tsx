@@ -459,6 +459,8 @@ export function AgencyCampaignSettingsPage() {
   const sectionNav = useSectionInView(
     sections,
     !loading && campaign?.id === id && Boolean(config && recording),
+    // Discard remounts every section: the highlight must follow the new ones.
+    formEpoch,
   );
   useCampaignCrumbs(id, campaign, 'settings');
 

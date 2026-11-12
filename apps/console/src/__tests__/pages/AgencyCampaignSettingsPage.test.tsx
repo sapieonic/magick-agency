@@ -992,6 +992,31 @@ describe('unsaved changes', () => {
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 
+  it('Discard remounts the sections, and the section highlight follows the new ones', async () => {
+    const observers: { watched: Element[]; live: boolean }[] = [];
+    vi.stubGlobal('IntersectionObserver', class {
+      private readonly record = { watched: [] as Element[], live: true };
+      constructor() { observers.push(this.record); }
+      observe(element: Element) { this.record.watched.push(element); }
+      disconnect() { this.record.live = false; }
+    });
+    try {
+      renderPage();
+      await screen.findByLabelText(/campaign name/i);
+      fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+      const before = document.getElementById('general');
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(document.getElementById('general')).not.toBe(before);
+
+      const live = observers.filter((o) => o.live);
+      expect(live).toHaveLength(1);
+      expect(live[0]!.watched.length).toBeGreaterThan(0);
+      expect(live[0]!.watched.every((section) => section.isConnected)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('Save sends the edits and clears the bar', async () => {
     renderPage();
     await screen.findByLabelText(/campaign name/i);
