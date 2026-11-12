@@ -137,16 +137,16 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          {/* "Create", not "Send". This button writes a membership; whether anything
-              is delivered is the server's answer, and the panel that follows says
-              who does the sending. */}
+          {/* "Send invite", the same words as the new-account invite on Accounts: the server
+              emails every invite it can, and the panel that follows says plainly when it
+              could not, with the link to pass on. */}
           <button
             type="submit"
             className="btn-primary"
             disabled={submitting || !email.trim() || !accountChosen}
           >
             <UserPlus size={14} />
-            {submitting ? 'Creating...' : 'Create invite'}
+            {submitting ? 'Sending...' : 'Send invite'}
           </button>
         </div>
       </form>

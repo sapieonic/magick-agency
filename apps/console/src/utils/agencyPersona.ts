@@ -142,6 +142,22 @@ export function agencyLandingPath(role: Role | undefined): string | null {
   return CAMPAIGNS_LANDING_PATH;
 }
 
+/**
+ * The agent's own page for a console page that has one (decision B28): where `AgentLanding`
+ * sends a dedicated agent who opens that console page, from an emailed report link, say.
+ * `null` when there is no such page; the agent then goes to {@link AGENT_LANDING_PATH}.
+ * The caller carries the query over (a report's `?tab=`, a customer search).
+ */
+export function dialerTwinPath(pathname: string): string | null {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  if (path === '/agency/reports') return '/dialer/reports';
+  const run = /^\/agency\/reports\/([^/]+)$/.exec(path);
+  if (run) return `/dialer/reports/${run[1]}`;
+  if (path === '/agency/inbound/missed') return '/dialer/missed';
+  if (path === '/agency/customers') return '/dialer/customers';
+  return null;
+}
+
 /** The word for each persona, in the product's voice. */
 export const AGENCY_PERSONA_LABELS: Record<AgencyPersona, string> = {
   supervisor: 'Supervisor',

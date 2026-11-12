@@ -64,7 +64,7 @@ describe('TeamPage analytics', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'user@example.com' } });
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'viewer' } });
     fireEvent.change(screen.getByLabelText('Account'), { target: { value: ALL_ACCOUNTS } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => {
       expect(mocks.trackSetupEvent).toHaveBeenCalledWith(
@@ -96,7 +96,7 @@ describe('TeamPage analytics', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'operator@example.com' } });
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'operator' } });
     fireEvent.change(screen.getByLabelText('Account'), { target: { value: 'account-2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => {
       expect(mocks.trackSetupEvent).toHaveBeenCalledWith(

@@ -27,9 +27,10 @@ export const CALL_ANALYSIS_FLAG = 'agency_call_analysis';
  * `withoutPermission` is a permission the reader must NOT hold (the dialler's own workspace is
  * not offered to a supervisor, who joins a campaign as an agent from the campaign instead).
  *
- * `agentLanding` marks a route outside `/agency` inside the shell (Settings, `/app`), which
- * `ConsoleShell` wraps in `AgentLanding`: a DEDICATED agent (`isDedicatedAgent`) is sent from it
- * to `/dialer` whenever the dialer is on, so it is never offered to them then.
+ * `agentLanding` marks a route inside the shell, which `ConsoleShell` wraps in `AgentLanding`:
+ * a DEDICATED agent (`isDedicatedAgent`) is sent from every shell page to the dialer whenever
+ * the dialer is on, so it is never offered to them then. Every shell page is wrapped; the field
+ * is set where the rest of the gate would otherwise let such an agent through.
  */
 export interface Gate {
   permission?: Permission;

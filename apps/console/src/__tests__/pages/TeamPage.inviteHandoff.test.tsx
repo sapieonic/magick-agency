@@ -88,7 +88,7 @@ async function invite(role: string, email: string) {
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } });
   fireEvent.change(screen.getByLabelText('Role'), { target: { value: role } });
   fireEvent.change(screen.getByLabelText('Account'), { target: { value: ALL_ACCOUNTS } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
   await waitFor(() => {
     expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy();
@@ -178,13 +178,13 @@ describe('inviteSignInUrl', () => {
   });
 });
 
-describe('the invite modal does not claim to send anything', () => {
-  it('labels the submit button as creating, not sending', () => {
+describe('the invite modal is honest about what was sent', () => {
+  it('says "Send invite", the new-account invite\'s words (AA7), and nothing else', () => {
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
     fireEvent.click(screen.getAllByText('Invite member')[0]!);
 
-    expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Send invite' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send invite' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create invite' })).toBeNull();
   });
 
   it('says outright that no email went out', async () => {
@@ -521,7 +521,7 @@ describe('a failed invite shows no hand-off at all', () => {
     fireEvent.click(screen.getAllByText('Invite member')[0]!);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dupe@example.com' } });
     fireEvent.change(screen.getByLabelText('Account'), { target: { value: ALL_ACCOUNTS } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => {
       expect(screen.getByText(/already a member/i)).toBeTruthy();

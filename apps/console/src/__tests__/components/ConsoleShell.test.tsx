@@ -4,8 +4,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
  * `ConsoleShell` (decision B28): the console layout behind `AgentLanding`, which keeps a
- * DEDICATED agent out of the shell on Settings and `/app` (as the old `/app` shell did) and is
- * switched off on `/agency`, whose pages send an agent to their own `/dialer/*` twin.
+ * DEDICATED agent out of the shell on every page it wraps (as the old `/app` shell did), sending
+ * them to the page's own `/dialer/*` twin when it has one, else to `/dialer`.
  */
 
 const mocks = vi.hoisted(() => ({ role: 'agent' as string }));
@@ -36,7 +36,7 @@ function renderAt(path: string) {
           <Route path="/agency/*" element={<div data-testid="page" />} />
           <Route path="/app/*" element={<div data-testid="page" />} />
         </Route>
-        <Route path="/dialer" element={<Where />} />
+        <Route path="/dialer/*" element={<Where />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -53,11 +53,14 @@ describe('ConsoleShell — a dedicated agent', () => {
     expect(screen.getByTestId('where').textContent).toBe('/dialer');
   });
 
-  it('is left on an /agency page, which knows its /dialer twin', () => {
-    renderAt('/agency/reports/run-1');
-    expect(screen.queryByTestId('where')).toBeNull();
-    expect(screen.getByTestId('shell')).toBeTruthy();
-    expect(screen.getByTestId('page')).toBeTruthy();
+  it.each([
+    ['/agency/reports/run-1', '/dialer/reports/run-1'],
+    ['/agency/campaigns', '/dialer'],
+    ['/agency/campaigns/c-1/overview', '/dialer'],
+  ])('is sent from %s to %s, not left in the console', (path, expected) => {
+    renderAt(path);
+    expect(screen.getByTestId('where').textContent).toBe(expected);
+    expect(screen.queryByTestId('shell')).toBeNull();
   });
 });
 

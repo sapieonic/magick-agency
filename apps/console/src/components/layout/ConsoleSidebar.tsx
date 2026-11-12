@@ -135,15 +135,15 @@ function HomeNavBadge({ onHome, missed }: { onHome: boolean; missed: HomeMissed 
  *
  * Every work entry is gated as the pages it groups are (`utils/consoleNav`), so an `agent`
  * (level 5) is offered none of the work pages. A DEDICATED agent (role `agent`) lands on
- * `/dialer` and is kept out of this shell on Settings (`AgentLanding`; `AgencyHomeRedirect`
- * sends them to `/dialer` from `/agency`); viewers and operators land in the shell and keep the
+ * `/dialer` and, while the dialer is on, is kept out of this shell on every page (`AgentLanding`
+ * sends them to the page's `/dialer/*` twin, or `/dialer`); viewers and operators land in the shell and keep the
  * dialler as "Take calls", a link out to `/dialer` for whoever takes calls but does not
  * supervise. There is no per-campaign station entry: a station is one campaign's, and the
  * campaign page carries the control.
  *
  * Settings sits at the foot of the main navigation landmark, and is left out for a dedicated
  * agent while the dialer is on (`SETTINGS_GATE`): `AgentLanding` would send them from it to
- * `/dialer`. Such an agent reaches the shell only on an `/agency` page that keeps them.
+ * `/dialer`. With the dialer on, such an agent never sees this shell at all.
  */
 export function ConsoleSidebar({ onClose }: { onClose?: () => void }) {
   const { pathname } = useLocation();

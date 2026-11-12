@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { isDedicatedAgent } from '../../utils/agencyPersona';
+import { AGENT_LANDING_PATH, dialerTwinPath, isDedicatedAgent } from '../../utils/agencyPersona';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
 
 /**
- * Keeps a DEDICATED agent out of the console shell (`ConsoleLayout`) on Settings and the
- * legacy `/app` URLs, and sends them to the dialer.
+ * Keeps a DEDICATED agent out of the console shell (`ConsoleLayout`) on every page it wraps
+ * (Settings, the legacy `/app` URLs and the `/agency` pages), and sends them to the dialer: to
+ * the page's own `/dialer/*` twin when it has one (`dialerTwinPath`: a report, the reports
+ * list, Missed calls, Customer history), otherwise to `/dialer`.
  *
  * ── The problem this is the whole answer to ─────────────────────────────────
  * An `agent` is hierarchy level 5 and holds four `agency.*` permissions and
@@ -16,8 +18,8 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  * agent who reaches Settings or `/app` gets a shell with a near-empty sidebar. An `agent` inherits nothing, and a shell with no navigation is
  * noise.
  *
- * So this wraps the shell (`ConsoleShell`, enabled off `/agency`) rather than adding a nav
- * link, which is what makes it apply to every `/settings/*` and `/app/*` path an agent could reach — including the
+ * So this wraps the shell (`ConsoleShell`) rather than adding a nav
+ * link, which is what makes it apply to every `/settings/*`, `/app/*` and `/agency/*` path an agent could reach — including the
  * catch-all redirect at the bottom of `App.tsx`, and `HomeRedirect` at `/`, which
  * is where a bare `/` now lands (it used to fall through to that catch-all). Both
  * ways in are covered because the wrapper is on the shell, not on a route.
@@ -51,8 +53,9 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  *
  * Everyone else renders the shell untouched, and nothing here fetches for them.
  */
-export function AgentLanding({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
+export function AgentLanding({ children }: { children: ReactNode }) {
   const { role } = useTenant();
+  const { pathname, search } = useLocation();
   const [params] = useSearchParams();
   const { isEnabled: capabilityEnabled, loading: governanceLoading } = useGovernance();
   const { isEnabled: flagEnabled, status: flagStatus } = useFeatureFlags();
@@ -63,14 +66,7 @@ export function AgentLanding({ children, enabled = true }: { children: ReactNode
    * Deliberately not gated on it: holding every user's first paint to spare an
    * agent a flash of an empty sidebar is the worse trade.
    */
-  /**
-   * `enabled` is false under `/agency`: those pages send a dedicated agent to their own
-   * `/dialer/*` twin themselves (a report link to `/dialer/reports/:runId`, and so on), which
-   * a blanket redirect to `/dialer` would throw away. The children render in the same place
-   * either way, so the console shell is not remounted when the reader crosses between
-   * `/agency` and `/settings`.
-   */
-  if (!enabled || !isDedicatedAgent(role)) return <>{children}</>;
+  if (!isDedicatedAgent(role)) return <>{children}</>;
 
   /**
    * Wait, rather than guess, while either gate is still resolving.
@@ -114,8 +110,11 @@ export function AgentLanding({ children, enabled = true }: { children: ReactNode
    * Validated through `agentLandingArrival` rather than passed through raw, so junk
    * in the URL cannot travel any further than this component.
    */
+  const twin = dialerTwinPath(pathname);
+  if (twin) return <Navigate to={`${twin}${search}`} replace />;
+
   const arrival = agentLandingArrival(params.get(AGENT_LANDING_PARAM));
-  const to = arrival ? `/dialer?${AGENT_LANDING_PARAM}=${arrival}` : '/dialer';
+  const to = arrival ? `${AGENT_LANDING_PATH}?${AGENT_LANDING_PARAM}=${arrival}` : AGENT_LANDING_PATH;
 
   return <Navigate to={to} replace />;
 }

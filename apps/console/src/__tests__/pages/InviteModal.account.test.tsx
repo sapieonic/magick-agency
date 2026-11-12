@@ -55,7 +55,7 @@ function setup({ memberships = [seat(null)], currentAccountId = 'acct-1' } = {})
   fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'account_admin' } });
 }
 
-const submitButton = () => screen.getByRole('button', { name: 'Create invite' }) as HTMLButtonElement;
+const submitButton = () => screen.getByRole('button', { name: 'Send invite' }) as HTMLButtonElement;
 
 beforeEach(() => {
   mocks.inviteUser.mockResolvedValue({ invite_email: { sent: true } });

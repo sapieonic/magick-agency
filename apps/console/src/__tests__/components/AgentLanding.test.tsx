@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
  * `AgentLanding` — the guard that keeps a DEDICATED agent out of the console shell on
- * Settings and the legacy `/app` URLs (`ConsoleShell`, decision B28).
+ * every page it wraps — Settings, the legacy `/app` URLs and `/agency` (`ConsoleShell`, decision
+ * B28) — sending them to the page's own `/dialer/*` twin when it has one, else to `/dialer`.
  *
  * ── What this file no longer tests, and where it went ──────────────────────
  * This component used to resolve `GET /my-assignment` and build the station
@@ -52,14 +53,14 @@ function Where() {
   return <div data-testid="where">{`${location.pathname}${location.search}`}</div>;
 }
 
-function renderAt(entry = '/app', enabled = true) {
+function renderAt(entry = '/app') {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route
           path="/app"
           element={
-            <AgentLanding enabled={enabled}>
+            <AgentLanding>
               <Shell />
             </AgentLanding>
           }
@@ -225,12 +226,37 @@ describe('AgentLanding — the arrival param', () => {
   });
 });
 
-describe('AgentLanding — switched off under /agency', () => {
-  it('leaves a dedicated agent on the page, whose own redirect knows the /dialer twin', () => {
-    // `ConsoleShell` passes `enabled={false}` on `/agency/*`: `/agency/reports/:runId` sends an
-    // agent to `/dialer/reports/:runId`, which a blanket `/dialer` would throw away.
-    renderAt('/app', false);
-    expect(screen.getByTestId('app-shell')).toBeTruthy();
-    expect(screen.queryByTestId('where')).toBeNull();
+describe('AgentLanding — a console page with its own /dialer twin', () => {
+  function renderAgency(entry: string) {
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route
+            path="/agency/*"
+            element={
+              <AgentLanding>
+                <Shell />
+              </AgentLanding>
+            }
+          />
+          <Route path="*" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it.each([
+    ['/agency/reports/run-1', '/dialer/reports/run-1'],
+    ['/agency/reports?tab=subscriptions', '/dialer/reports?tab=subscriptions'],
+    ['/agency/inbound/missed', '/dialer/missed'],
+    ['/agency/customers?number=%2B919800000000', '/dialer/customers?number=%2B919800000000'],
+  ])('sends a dedicated agent from %s to %s, query and all', async (entry, expected) => {
+    renderAgency(entry);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe(expected));
+  });
+
+  it('sends a dedicated agent from an /agency page with no twin to /dialer', async () => {
+    renderAgency('/agency/campaigns/c-1/settings');
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
   });
 });

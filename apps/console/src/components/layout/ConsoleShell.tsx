@@ -1,19 +1,16 @@
-import { useLocation } from 'react-router-dom';
 import { AgentLanding } from '../agency/AgentLanding';
-import { isAgencyPath } from '../../utils/consoleNav';
 import { ConsoleLayout } from './ConsoleLayout';
 
 /**
  * The shell as `App.tsx` mounts it: `ConsoleLayout` behind `AgentLanding`, which sends a
- * DEDICATED agent from Settings and the legacy `/app` URLs to `/dialer` (as it did for the old
- * `/app` shell). It is switched off under `/agency`, whose pages send an agent to their own
- * `/dialer/*` twin. The layout renders in the same place either way, so crossing between
- * `/agency` and `/settings` does not remount it.
+ * DEDICATED agent from every page in it to the dialer (a page's own `/dialer/*` twin when it
+ * has one, else `/dialer`), as the old `/app` shell did for its pages. The layout renders in
+ * the same place on every path, so crossing between `/agency` and `/settings` does not
+ * remount it.
  */
 export function ConsoleShell() {
-  const { pathname } = useLocation();
   return (
-    <AgentLanding enabled={!isAgencyPath(pathname)}>
+    <AgentLanding>
       <ConsoleLayout />
     </AgentLanding>
   );
