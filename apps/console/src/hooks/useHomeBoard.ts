@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { getAgencyHomeBoard } from '../api/agencyHome';
+import { ApiError } from '../api/client';
 import { REFRESH_MS } from '../pages/agency/campaigns-home/useCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
@@ -21,6 +22,11 @@ const SLACK_MS = 5_000;
 export interface HomeBoardOptions {
   tenantId: string | null | undefined;
   accountId: string | null | undefined;
+  /**
+   * The reader's role, part of the board's identity: a board refused (403) stops asking until the
+   * scope or the role changes, and a new role is a new board that asks at once.
+   */
+  role?: string | null;
   enabled: boolean;
   /** How often this reader wants the board read: {@link HOME_FAST_MS} or {@link HOME_SLOW_MS}. */
   intervalMs: number;
@@ -32,6 +38,15 @@ export interface HomeBoardOptions {
  */
 export const HOME_BOARD_ERROR = 'We couldn’t load what needs your attention. Try again in a moment.';
 
+/** What Home says when the server refuses the board (403: the role or the dialer changed). */
+export const HOME_BOARD_REFUSED = 'Home isn’t available to you in this account right now.';
+
+/**
+ * A board is stale once its reads have failed for more than this many of its periods since the
+ * last one that answered: Home then says it couldn't refresh, and never gives an all-clear.
+ */
+export const HOME_STALE_PERIODS = 2;
+
 export interface HomeBoard {
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
@@ -41,6 +56,17 @@ export interface HomeBoard {
   activeTotal: number;
   /** Whether the account has any campaign at all; null until the first read answers. */
   anyCampaign: boolean | null;
+  /** `Date.now()` when a read last answered; null before the first. */
+  lastUpdatedAt: number | null;
+  /** Reads in a row that failed since the last that answered. */
+  failures: number;
+  /**
+   * The reads have failed for more than {@link HOME_STALE_PERIODS} periods since the last that
+   * answered: what is shown is that read's, and the page says so.
+   */
+  stale: boolean;
+  /** The server refused the board (403): nothing is shown and nothing is asked until Retry or a new scope or role. */
+  refused: boolean;
   reload: () => void;
 }
 
@@ -53,6 +79,10 @@ const IDLE: BoardState = {
   reads: [],
   activeTotal: 0,
   anyCampaign: null,
+  lastUpdatedAt: null,
+  failures: 0,
+  stale: false,
+  refused: false,
 };
 
 /** One tenant and account's board, shared by every mounted reader of it. */
@@ -65,6 +95,8 @@ interface Board {
   inFlight: Promise<void> | null;
   /** Bumped by every read and when the board is dropped: a read that is no longer current never lands. */
   generation: number;
+  /** The server answered 403: no timer and no read until {@link HomeBoard.reload}. */
+  refused: boolean;
   /** `Date.now()` when the last read started; 0 before the first. */
   readAt: number;
   /** Each mounted reader's period; the board is read at the fastest. */
@@ -120,11 +152,32 @@ function read(board: Board, kind: Kind): Promise<void> {
         reads,
         activeTotal: answer.active_total,
         anyCampaign: answer.any_campaign,
+        lastUpdatedAt: Date.now(),
+        failures: 0,
+        stale: false,
+        refused: false,
       });
-    } catch {
-      // A failed read keeps what is on screen; only a board never read has nothing to show.
-      if (board.generation !== mine || board.state.status === 'ready') return;
-      setState(board, { ...board.state, status: 'error', error: HOME_BOARD_ERROR });
+    } catch (err) {
+      if (board.generation !== mine) return;
+      if (err instanceof ApiError && err.statusCode === 403) {
+        // The role or the dialer changed under this reader: asking again every few seconds only
+        // collects 403s. Stop until Retry, or a new scope or role (a new board).
+        board.refused = true;
+        stopTimer(board);
+        board.last = new Map();
+        setState(board, { ...IDLE, status: 'error', error: HOME_BOARD_REFUSED, refused: true });
+        return;
+      }
+      const failures = board.state.failures + 1;
+      const since = board.state.lastUpdatedAt;
+      if (since === null) {
+        // Never read: nothing to show but the error.
+        setState(board, { ...board.state, status: 'error', error: HOME_BOARD_ERROR, failures });
+        return;
+      }
+      // A failed read keeps what is on screen, and says so once it has failed long enough.
+      const stale = Date.now() - since > HOME_STALE_PERIODS * fastest(board);
+      setState(board, { ...board.state, failures, stale });
     }
   })();
   board.inFlight = run;
@@ -140,15 +193,21 @@ function read(board: Board, kind: Kind): Promise<void> {
  * a board that has answered is fresh: one never read, or whose reads failed, reads every time.
  */
 function readIfDue(board: Board): Promise<void> | undefined {
-  if (document.visibilityState !== 'visible') return undefined;
+  if (board.refused || document.visibilityState !== 'visible') return undefined;
   if (board.inFlight) return board.inFlight;
   const fresh = board.state.status === 'ready' && Date.now() - board.readAt < fastest(board) - SLACK_MS;
   if (fresh) return undefined;
   return read(board, 'tick');
 }
 
-/** One timer per board, at its fastest reader's period. */
+function stopTimer(board: Board): void {
+  if (board.timer !== null) clearInterval(board.timer);
+  board.timer = null;
+}
+
+/** One timer per board, at its fastest reader's period; none while the board is refused. */
 function schedule(board: Board): void {
+  if (board.refused) return;
   const ms = fastest(board);
   if (board.timer !== null && board.timerMs === ms) return;
   if (board.timer !== null) clearInterval(board.timer);
@@ -166,6 +225,7 @@ function join(key: string, tenantId: string, accountId: string, intervalMs: numb
       last: new Map(),
       inFlight: null,
       generation: 0,
+      refused: false,
       readAt: 0,
       periods: new Map(),
       timer: null,
@@ -194,8 +254,13 @@ function join(key: string, tenantId: string, accountId: string, intervalMs: numb
   };
 }
 
-function boardKey(tenantId: string | null | undefined, accountId: string | null | undefined, enabled: boolean): string | null {
-  return enabled && tenantId && accountId ? `${tenantId}/${accountId}` : null;
+function boardKey(
+  tenantId: string | null | undefined,
+  accountId: string | null | undefined,
+  role: string | null | undefined,
+  enabled: boolean,
+): string | null {
+  return enabled && tenantId && accountId ? `${tenantId}/${accountId}/${role ?? ''}` : null;
 }
 
 /**
@@ -213,13 +278,17 @@ function boardKey(tenantId: string | null | undefined, accountId: string | null 
  *
  *  - **Every read is complete**, so a tick that falls due while a read is in flight is answered by
  *    that read rather than dropped: no kind of refresh can be lost to another.
- *  - **A failed read keeps the last good numbers**, and so does a campaign whose stats or overdue
- *    count the server could not read this time (`null` on the board): it keeps what it had.
+ *  - **A failed read keeps the last good numbers**, and so does a campaign part the server could
+ *    not read this time (`null` on the board), marked `stale` on its read. Once the reads have
+ *    failed for more than {@link HOME_STALE_PERIODS} periods since the last that answered, the
+ *    board is `stale` and Home says "Couldn't refresh" with the time of that read.
+ *  - **A 403 stops the asking** (`refused`): the timer stops and nothing is shown, until Retry or
+ *    a new scope or role, which is a new board.
  *  - **A new scope starts clean**: the board goes with its last reader, and a read still in flight
  *    for it is discarded.
  */
-export function useHomeBoard({ tenantId, accountId, enabled, intervalMs }: HomeBoardOptions): HomeBoard {
-  const key = boardKey(tenantId, accountId, enabled);
+export function useHomeBoard({ tenantId, accountId, role, enabled, intervalMs }: HomeBoardOptions): HomeBoard {
+  const key = boardKey(tenantId, accountId, role, enabled);
   const subscribe = useCallback(
     (listener: () => void) => (key ? join(key, tenantId!, accountId!, intervalMs, listener) : () => {}),
     // `tenantId` and `accountId` are in `key`.
@@ -234,21 +303,38 @@ export function useHomeBoard({ tenantId, accountId, enabled, intervalMs }: HomeB
 
   const reload = useCallback(() => {
     const board = key ? boards.get(key) : undefined;
-    if (board) void read(board, 'full');
+    if (!board) return;
+    if (board.refused) {
+      board.refused = false;
+      schedule(board);
+    }
+    void read(board, 'full');
   }, [key]);
   return { ...state, reload };
 }
 
+/** The Home badge: its count, and whether it is the last good read's (the board is stale). */
+export interface HomeBadge {
+  /** Null until the board has answered, and while it is refused. */
+  count: number | null;
+  stale: boolean;
+}
+
 /**
- * The sidebar badge's count: the dangers and warnings on Home's list (`homeAttention`,
- * `homeBadgeCount`), read from the shared board at the badge's own period. Null until the board
- * has answered.
+ * The Home badge (the sidebar's, and the dot on the phone's menu button): the dangers and
+ * warnings on Home's list (`homeAttention`, `homeBadgeCount`), read from the shared board at the
+ * badge's own period. While the board is stale it keeps the last count, marked not fresh, rather
+ * than dropping to nothing (which would read as an all-clear).
  */
 export function useHomeBadgeCount(
   tenantId: string | null | undefined,
   accountId: string | null | undefined,
+  role: string | null | undefined,
   missed: HomeMissed,
-): number | null {
-  const board = useHomeBoard({ tenantId, accountId, enabled: true, intervalMs: HOME_SLOW_MS });
-  return board.status === 'ready' ? homeBadgeCount(homeAttention(board.reads, missed, () => '')) : null;
+): HomeBadge {
+  const board = useHomeBoard({ tenantId, accountId, role, enabled: true, intervalMs: HOME_SLOW_MS });
+  return {
+    count: board.status === 'ready' ? homeBadgeCount(homeAttention(board.reads, missed, () => '')) : null,
+    stale: board.status === 'ready' && board.stale,
+  };
 }

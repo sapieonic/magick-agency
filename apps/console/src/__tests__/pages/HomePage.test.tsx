@@ -37,7 +37,7 @@ function Badge() {
 }
 
 function BadgeCount() {
-  const count = useHomeBadgeCount('t-1', 'a-1', { available: mocks.missed.available, count: mocks.missed.count });
+  const { count } = useHomeBadgeCount('t-1', 'a-1', mocks.role, { available: mocks.missed.available, count: mocks.missed.count });
   return <div data-testid="shared-count">{String(count)}</div>;
 }
 
@@ -209,6 +209,54 @@ describe('the count it shares with the badge', () => {
       }
       expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(7);
       expect(screen.getByTestId('shared-count').textContent).toBe('1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('when Home cannot refresh', () => {
+  async function tick(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it('says so with the last time it could, offers Retry, and never says nothing needs you', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+      renderHome();
+      await tick(0);
+      expect(screen.getByTestId('home-attention-empty')).toBeTruthy();
+      mocks.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+      await tick(HOME_FAST_MS * 2);
+      expect(screen.queryByTestId('home-stale')).toBeNull();
+      await tick(HOME_FAST_MS);
+      expect(screen.getByTestId('home-stale').textContent).toMatch(/^Couldn’t refresh\. Last updated \d{1,2}:\d{2}/);
+      expect(screen.queryByTestId('home-attention-empty')).toBeNull();
+      expect(screen.getByTestId('home-attention-unknown').textContent).toContain('the last time Home could check');
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+      fireEvent.click(within(screen.getByTestId('home-stale')).getByRole('button', { name: /Retry/ }));
+      await tick(0);
+      expect(screen.queryByTestId('home-stale')).toBeNull();
+      expect(screen.getByTestId('home-attention-empty')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('marks a campaign whose figures the server could not read this time', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 2 })]));
+      renderHome();
+      await tick(0);
+      expect(screen.queryByTestId('home-floor-stale')).toBeNull();
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { stats: null, overdue: null })]));
+      await tick(HOME_FAST_MS);
+      expect(screen.getByTestId('home-floor-stale').textContent).toBe('Not refreshed');
+      expect(within(screen.getByTestId('home-attention-callbacks-overdue:c1')).getByText('Not refreshed')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

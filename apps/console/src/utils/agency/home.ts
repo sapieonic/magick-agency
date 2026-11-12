@@ -68,6 +68,8 @@ export interface HomeAttentionItem {
    * own badge already counts.
    */
   badge: boolean;
+  /** Its campaign's figures are the last good read's: this read could not refresh them. */
+  stale: boolean;
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -225,6 +227,7 @@ export function homeAttention(
         action: route.action,
         to: campaignTabHref(route.tab, campaign.id),
         badge: route.tone !== 'info',
+        stale: read.stale,
       });
     }
 
@@ -242,6 +245,7 @@ export function homeAttention(
         action: OPEN_TAB[rule.tab],
         to: campaignTabHref(rule.tab, campaign.id, RANGE_RULES.has(rule.id) ? '?range=today' : ''),
         badge: rule.tone !== 'info',
+        stale: read.stale,
       });
     }
   }
@@ -263,6 +267,7 @@ export function homeAttention(
       // The Inbound entry's badge counts these already; counting them here too would show the
       // same calls twice in the sidebar.
       badge: false,
+      stale: false,
     });
   }
 
@@ -291,12 +296,14 @@ export function homeBadgeCount(items: readonly HomeAttentionItem[]): number {
   return items.filter((item) => item.badge).length;
 }
 
-/** What a screen reader hears beside the Home entry. */
-export function attentionBadgeLabel(count: number | null): string | null {
+/** What a screen reader hears beside the Home entry; `stale` when Home couldn't refresh it. */
+export function attentionBadgeLabel(count: number | null, stale = false): string | null {
   const text = badgeText(count);
   if (!text) return null;
-  if (text === '99+') return 'more than 99 need your attention';
-  return count === 1 ? '1 needs your attention' : `${text} need your attention`;
+  const said = text === '99+'
+    ? 'more than 99 need your attention'
+    : count === 1 ? '1 needs your attention' : `${text} need your attention`;
+  return stale ? `${said} (not up to date)` : said;
 }
 
 // ── The floor ─────────────────────────────────────────────────────────────────
@@ -312,6 +319,8 @@ export interface HomeFloorRow {
   /** The rolling 24-hour rate, or why there is none. */
   abandonment: { text: string; level: 'near' | 'over' | null };
   to: string;
+  /** The figures are the last good read's: this read could not refresh them. */
+  stale: boolean;
 }
 
 /**
@@ -320,7 +329,7 @@ export interface HomeFloorRow {
  * `agents_by_state`; `reserved` (a call being connected to them) counts as on a call.
  */
 export function homeFloor(reads: readonly HomeCampaignRead[]): HomeFloorRow[] {
-  return reads.flatMap(({ campaign, stats }) => {
+  return reads.flatMap(({ campaign, stats, stale }) => {
     if (!stats) return [];
     const agentsLive = stats.agents_live ?? 0;
     if (campaign.status !== 'running' && agentsLive <= 0) return [];
@@ -334,6 +343,7 @@ export function homeFloor(reads: readonly HomeCampaignRead[]): HomeFloorRow[] {
       agentsLive,
       abandonment: { text: rateText(statsAbandonmentRate(stats)), level: abandonmentAttention(stats) },
       to: campaignTabHref('agents', campaign.id),
+      stale,
     }];
   });
 }

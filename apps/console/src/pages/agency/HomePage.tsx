@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { ChevronRight, CircleCheck, Plus } from 'lucide-react';
+import { ChevronRight, CircleCheck, Plus, RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
@@ -44,7 +44,7 @@ export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
   // `HOME_GATE`'s permission; its capability and flag are `/agency`'s route gates, passed here.
   const supervise = holdsHomePermission(role);
-  const board = useHomeBoard({ tenantId, accountId, enabled: supervise, intervalMs: HOME_FAST_MS });
+  const board = useHomeBoard({ tenantId, accountId, role, enabled: supervise, intervalMs: HOME_FAST_MS });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
 
@@ -65,6 +65,7 @@ export default function HomePage() {
   const onFloor = board.reads.reduce((n, r) => n + (r.stats?.agents_live ?? 0), 0);
   const noCampaigns = board.status === 'ready' && board.anyCampaign === false;
   const now = new Date();
+  const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
 
   return (
     <div className={styles.page}>
@@ -91,6 +92,16 @@ export default function HomePage() {
       {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={board.reload} />}
       {(board.status === 'loading' || board.status === 'idle') && <LoadingSpinner />}
 
+      {board.status === 'ready' && board.stale && (
+        <div className={styles.staleNote} role="status" data-testid="home-stale">
+          <span>{`Couldn’t refresh. Last updated ${lastUpdated ?? ''}`}</span>
+          <button type="button" className={`btn-secondary ${styles.action}`} onClick={board.reload}>
+            <RefreshCw size={14} aria-hidden="true" />
+            Retry
+          </button>
+        </div>
+      )}
+
       {board.status === 'ready' && (
         <>
           <section className={styles.card} aria-labelledby="home-attention-heading">
@@ -107,6 +118,11 @@ export default function HomePage() {
                   <AttentionRow key={item.id} item={item} now={now} />
                 ))}
               </ul>
+            ) : board.stale ? (
+              // Never an all-clear from a read Home could not refresh.
+              <p className={styles.quiet} data-testid="home-attention-unknown">
+                {`Nothing needed you at ${lastUpdated ?? 'the last refresh'}, the last time Home could check.`}
+              </p>
             ) : (
               <p className={styles.allClear} data-testid="home-attention-empty">
                 <CircleCheck size={18} aria-hidden="true" />
@@ -210,6 +226,7 @@ function AttentionRow({ item, now }: { item: HomeAttentionItem; now: Date }) {
       <span className={`${styles.dot} ${styles[item.tone]}`} aria-hidden="true" />
       <div className={styles.attentionText}>
         {item.campaign && <span className={styles.campaignName}>{item.campaign.name}</span>}
+        {item.stale && <span className={styles.staleTag}>Not refreshed</span>}
         <span className={styles.attentionTitle}>{item.title}</span>
         <span className={styles.attentionDetail}>{item.detail}</span>
       </div>
@@ -232,6 +249,7 @@ function FloorRow({ row }: { row: HomeFloorRow }) {
       <th scope="row">
         <Link to={row.to} className={styles.floorName}>{row.campaign.name}</Link>
         <AgencyCampaignStatusBadge status={row.campaign.status} />
+        {row.stale && <span className={styles.staleTag} data-testid="home-floor-stale">Not refreshed</span>}
         {row.onCall === null && <span className={styles.quiet}>{` ${plural(row.agentsLive, 'agent')} live`}</span>}
       </th>
       <td className={styles.num}>{figure(row.onCall)}</td>

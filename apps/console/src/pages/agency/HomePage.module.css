@@ -101,6 +101,32 @@
   color: var(--text-muted);
 }
 
+/* Home could not refresh: said plainly above everything it shows. */
+.staleNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 14px;
+}
+
+/* A campaign whose figures this read could not refresh. */
+.staleTag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
 /* ── Needs your attention ────────────────────────────────────────────────── */
 
 .attentionList {
@@ -194,7 +220,7 @@
   color: var(--success);
 }
 
-/* Waiting, nothing wrong: a quieter group under the list, never counted by the badge. */
+/* For your information: a quieter group under the list, never counted by the badge. */
 .waiting {
   margin-top: 14px;
   padding-top: 12px;
