@@ -228,7 +228,24 @@ describe('on a phone', () => {
     expect(css).toMatch(/\.compact \{\s*display: none;/);
     const phone = css.slice(css.indexOf('@media (max-width: 768px)'));
     expect(phone).toMatch(/\.compact \{\s*display: flex;/);
-    expect(phone).toMatch(/\.full \{\s*display: none;/);
+    expect(phone).toMatch(/\.nav:not\(\[data-filtering\]\) \{\s*display: none;/);
+  });
+
+  it('keeps "Find a setting" and the campaign pointer at phone width, the list showing what it matched', () => {
+    const css = readFileSync(resolve(__dirname, '../../pages/settings/SettingsLayout.module.css'), 'utf-8');
+    const phone = css.slice(css.indexOf('@media (max-width: 768px)'));
+    // Nothing that holds the filter or the pointer is hidden on a phone.
+    for (const name of ['full', 'filter', 'hint', 'side']) {
+      expect(phone).not.toMatch(new RegExp(`\\.${name} \\{[^}]*display: none`));
+    }
+
+    renderAt('/settings/team');
+    const nav = screen.getByTestId('settings-nav');
+    expect(nav.hasAttribute('data-filtering')).toBe(false);
+    fireEvent.change(screen.getByTestId('settings-filter'), { target: { value: 'inbound' } });
+    expect(nav.hasAttribute('data-filtering')).toBe(true);
+    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Inbound routing']);
+    expect(screen.getByTestId('settings-campaign-hint')).toBeTruthy();
   });
 });
 

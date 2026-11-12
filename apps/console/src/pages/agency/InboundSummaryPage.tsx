@@ -10,6 +10,7 @@ import { hasPermission } from '../../utils/permissions';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { PageDescription } from '../../components/common/PageDescription';
+import { SettingsEntryLink } from '../../components/common/SettingsEntryLink';
 import { getInboundSummary } from '../../api/inbound';
 import { formatCount, pct } from '../../utils/format/number';
 import { durationWords, statClock } from '../../utils/format/duration';
@@ -101,7 +102,11 @@ export default function InboundSummaryPage() {
 
   return (
     <div className={styles.page}>
-      <PageHeader title="Inbound summary" subtitle="How this account’s inbound calls went, and who answered them." />
+      <PageHeader
+        title="Inbound summary"
+        subtitle="How this account’s inbound calls went, and who answered them."
+        actions={<SettingsEntryLink entry="inbound" />}
+      />
       <PageDescription
         pageKey="agency-inbound-summary"
         description={

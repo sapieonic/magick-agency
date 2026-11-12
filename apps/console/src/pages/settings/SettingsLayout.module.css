@@ -188,12 +188,20 @@
     position: static;
   }
 
-  /* On a phone the sub-nav would stack above every page: one picker instead. */
+  /*
+    On a phone the sub-nav would stack above every page: one picker instead. "Find a setting"
+    and the campaign-settings pointer stay; the list comes back only to show what a search
+    matched.
+  */
   .compact {
     display: flex;
   }
 
-  .full {
+  .nav:not([data-filtering]) {
     display: none;
+  }
+
+  .filter {
+    min-height: 44px;
   }
 }

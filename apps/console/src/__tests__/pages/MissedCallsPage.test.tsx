@@ -38,6 +38,10 @@ vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
   SOFTPHONE_FLAG: 'agency_softphone_enabled',
   useFeatureFlagEnabled: (flag: string) => mocks.flags[flag] === true,
 }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags[flag] !== false }),
+}));
+vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: () => ({ isEnabled: () => true }) }));
 vi.mock('../../hooks/useReportsAccess', () => ({ useReportsAccess: () => ({ enabled: false, canSelf: false, canSupervise: false, userId: null }) }));
 vi.mock('../../components/common/CapabilityUnavailable', () => ({
   CapabilityUnavailable: () => <div data-testid="capability-unavailable" />,
@@ -121,6 +125,15 @@ beforeEach(() => {
 });
 
 describe('who sees what', () => {
+  it('links a supervisor to Inbound routing, and nobody who cannot open it', async () => {
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    expect(screen.getByTestId('settings-entry-link-inbound').getAttribute('href')).toBe('/settings/inbound');
+    cleanup();
+    await renderAt('/agency/inbound/missed', 'operator');
+    expect(screen.getByTestId('missed-row-m-1')).toBeTruthy();
+    expect(screen.queryByTestId('settings-entry-link-inbound')).toBeNull();
+  });
+
   it('a supervisor reads the account’s, filters by assignee, and sees who each is assigned to', async () => {
     mocks.listMissedInboundCalls.mockResolvedValue({
       rows: [missed(), missed({ id: 'm-2', assignee_user_id: null, assignee_name: null }), missed({ id: 'm-3', assignee_user_id: 'u-2', assignee_name: 'Ravi' })],

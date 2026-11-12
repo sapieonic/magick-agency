@@ -105,6 +105,18 @@ async function renderList() {
 }
 
 describe('Soft-phone calls (the account list)', () => {
+  it('links to the soft phone’s settings', async () => {
+    await renderList();
+    const link = screen.getByRole('link', { name: 'Soft phone settings' });
+    expect(link.getAttribute('href')).toBe('/settings/softphone');
+  });
+
+  it('does not offer the soft phone’s settings without the `agency` capability', async () => {
+    mocks.isEnabled.mockImplementation((c: string) => c !== 'agency');
+    await renderList();
+    expect(screen.queryByRole('link', { name: 'Soft phone settings' })).toBeNull();
+  });
+
   it('opens on today, account-wide, newest first', async () => {
     await renderList();
     const query = mocks.listManualCalls.mock.calls[0]![0];

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, within, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
@@ -9,6 +10,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../hooks/useFeatureFlagEnabled', () => ({ useFeatureFlagEnabled: () => mocks.flagOn }));
 vi.mock('../../api/inbound', () => ({ getInboundQueue: mocks.getInboundQueue }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: () => ({ isEnabled: () => mocks.flagOn }) }));
+vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: () => ({ isEnabled: () => true }) }));
 
 import { InboundQueueTiles, tileNeedsAttention, tileOpenWithNobody } from '../../components/agency/inbound/InboundQueueTiles';
 import { INBOUND_QUEUE_POLL_MS } from '../../hooks/useInboundQueue';
@@ -22,7 +25,7 @@ import { queueTile } from '../helpers/inbound';
 
 async function mount(role = 'account_admin') {
   mocks.useTenant.mockReturnValue({ tenantId: 't-1', accountId: 'a-1', role });
-  render(<InboundQueueTiles />);
+  render(<MemoryRouter><InboundQueueTiles /></MemoryRouter>);
   await act(async () => {});
 }
 
@@ -111,10 +114,12 @@ describe('InboundQueueTiles', () => {
     expect(tileOpenWithNobody(queueTile({ no_agents_available: false }))).toBe(false);
   });
 
-  it('says when no route is answering', async () => {
+  it('says when no route is answering, and links to where a route is set up', async () => {
     mocks.getInboundQueue.mockResolvedValue({ tiles: [] });
     await mount();
-    expect(screen.getByTestId('inbound-queue-empty')).toBeTruthy();
+    const empty = screen.getByTestId('inbound-queue-empty');
+    const link = within(empty).getByRole('link', { name: 'Inbound routing settings' });
+    expect(link.getAttribute('href')).toBe('/settings/inbound');
   });
 
   it('renders nothing and reads nothing without agency.supervise or the flag', async () => {
