@@ -977,7 +977,7 @@ Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/no
 
 ### `apps/server/src/dnc/`
 
-DNC list service and repository (`dnc_entries`, E.164 input, fail-closed reads; decision B8). The list's search (`GET /dnc?phone=`, `dncPhoneSearch`) reads a whole number in any common form by the customer-history number rule and also matches the digits typed as the end of a number (at least 4), a `+` number cut short as the start of one (a range on `idx_dnc_entries_tenant_phone`, `startsWithE164Sql`), and refuses fewer digits with a 400 `search_too_short`; every arm is index-served (`0034_dnc_phone_ending_index.sql`). The ending's SQL is `endsWithDigitsSql` in `apps/server/src/db/sql-utils.ts`, shared with the contacts' phone suffix search.
+DNC list service and repository (`dnc_entries`, E.164 input, fail-closed reads; decision B8). The list's search (`GET /dnc?phone=`, `dncPhoneSearch`) reads a whole number in any common form by the customer-history number rule and also matches the digits typed as the end of a number (at least 4), a `+` number cut short as the start of one (its calling code and 4 more digits, 7 in all for a code the rule does not list; a range on `idx_dnc_entries_tenant_phone`, `startsWithE164Sql`), and text typed with `00` as an ending and, once what follows the `00` clears the `+` floor, the start of a number too. Fewer digits are refused with a 400 `search_too_short` (an ending) or `search_prefix_too_short` (a `+` number), by the rule the console's DNC page checks before it sends (`dncSearchShortfall`, `packages/domain/src/dnc-search.ts`); every arm is index-served (`0034_dnc_phone_ending_index.sql`). The ending's SQL is `endsWithDigitsSql` in `apps/server/src/db/sql-utils.ts`, shared with the contacts' phone suffix search.
 
 Files: `dnc.repository.ts`, `dnc.service.ts`
 
@@ -985,11 +985,11 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 |---|---|
 | `apps/server/test/integration/dnc/dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/dnc/dnc-index-usage.test.ts` | ~5 |
-| `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 15 |
+| `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 22 |
 | `apps/server/test/integration/dnc/dnc-scope-sentinel.test.ts` | ~6 |
 | `apps/server/test/unit/dnc/dnc.repository.test.ts` | 28 |
 | `apps/server/test/unit/dnc/dnc.routes.test.ts` | 46 |
-| `apps/server/test/unit/dnc/dnc.service.test.ts` | 32 |
+| `apps/server/test/unit/dnc/dnc.service.test.ts` | 37 |
 
 ### `apps/server/src/feature-flags/`
 
@@ -1571,9 +1571,9 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 
 ### `packages/domain/src/`
 
-Pure dialer rules: abandonment predicate, automatic outcomes for unanswered calls (`auto-disposition.ts`, OD2, OD3: `isAutoDispositionOutcome` and `autoDispositionRefusal`, whether a code may be one, read by the server's validator and stamp and by the console's editor and validation), break manager, the customer-history search box's number rule (`customer-search-number.ts`: the raw text and the picked country to one E.164 or a refusal with its message; the console's preview and the server's search both run it, and the agent app's Dart port runs the same table, `packages/contracts/fixtures/agent/customer-search-numbers.json`), a roster row's hero fields (`context-hero.ts`: `heroColumnsFor`, the contact panel's rule, used by the customer-history summary: the campaign's configured hero columns, else the name / amount / identifier / place guess, else the first four columns with a value in the import's order, never a hidden column), keyset cursor, the inbound route schedule (`inbound-schedule.ts`, docs/inbound.md: `inboundScheduleState`, open / closed / unresolvable at an instant in the route's zone with weekly hours (overnight stretches belong to their opening day), holidays (local date ranges, closed all day, a stretch opening on one does not run) and DST on the wall clock; `nextInboundOpening`, the exact first open instant at or after one, across gaps and repeated hours, bounded at a year and a week; the clock and date parsers the route validator uses), Plivo's number rule (`plivo-number.ts`: `plivoNumberToE164`, the number sync's and the inbound webhooks' one rule, a withheld caller null), the wall clock in a zone (`zone-clock.ts`: `isUsableTimezone`, `localParts`, `instantForLocalTime`; the repo's one reader, also read by `apps/server/src/agency/calling-hours.ts`), rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement; the station liveness numbers, per client kind: `stationHeartbeatGraceMs`, `MOBILE_STATION_*`).
+Pure dialer rules: abandonment predicate, automatic outcomes for unanswered calls (`auto-disposition.ts`, OD2, OD3: `isAutoDispositionOutcome` and `autoDispositionRefusal`, whether a code may be one, read by the server's validator and stamp and by the console's editor and validation), break manager, the customer-history search box's number rule (`customer-search-number.ts`: the raw text and the picked country to one E.164 or a refusal with its message; the console's preview and the server's search both run it, and the agent app's Dart port runs the same table, `packages/contracts/fixtures/agent/customer-search-numbers.json`), the Do Not Call list search's digit floors (`dnc-search.ts`: `dncSearchShortfall`, when typed text is too short to search and the words that say so; the server refuses by it and the console's DNC page checks it before it sends), a roster row's hero fields (`context-hero.ts`: `heroColumnsFor`, the contact panel's rule, used by the customer-history summary: the campaign's configured hero columns, else the name / amount / identifier / place guess, else the first four columns with a value in the import's order, never a hidden column), keyset cursor, the inbound route schedule (`inbound-schedule.ts`, docs/inbound.md: `inboundScheduleState`, open / closed / unresolvable at an instant in the route's zone with weekly hours (overnight stretches belong to their opening day), holidays (local date ranges, closed all day, a stretch opening on one does not run) and DST on the wall clock; `nextInboundOpening`, the exact first open instant at or after one, across gaps and repeated hours, bounded at a year and a week; the clock and date parsers the route validator uses), Plivo's number rule (`plivo-number.ts`: `plivoNumberToE164`, the number sync's and the inbound webhooks' one rule, a withheld caller null), the wall clock in a zone (`zone-clock.ts`: `isUsableTimezone`, `localParts`, `instantForLocalTime`; the repo's one reader, also read by `apps/server/src/agency/calling-hours.ts`), rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement; the station liveness numbers, per client kind: `stationHeartbeatGraceMs`, `MOBILE_STATION_*`).
 
-Files: `abandonment-predicate.ts`, `auto-disposition.ts`, `break-manager.ts`, `context-hero.ts`, `customer-search-number.ts`, `inbound-schedule.ts`, `index.ts`, `keyset-cursor.ts`, `plivo-number.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`, `zone-clock.ts`
+Files: `abandonment-predicate.ts`, `auto-disposition.ts`, `break-manager.ts`, `context-hero.ts`, `customer-search-number.ts`, `dnc-search.ts`, `inbound-schedule.ts`, `index.ts`, `keyset-cursor.ts`, `plivo-number.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`, `zone-clock.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1581,6 +1581,7 @@ Files: `abandonment-predicate.ts`, `auto-disposition.ts`, `break-manager.ts`, `c
 | `packages/domain/test/unit/agency/break-manager.test.ts` | 23 |
 | `packages/domain/test/unit/agency/context-hero.test.ts` | 5 |
 | `packages/domain/test/unit/agency/customer-search-number.test.ts` | 48 |
+| `packages/domain/test/unit/agency/dnc-search.test.ts` | 7 |
 | `packages/domain/test/unit/agency/elapsed-seconds.test.ts` | 3 |
 | `packages/domain/test/unit/agency/inbound-schedule.test.ts` | 62 |
 | `packages/domain/test/unit/agency/keyset-cursor.test.ts` | 9 |
@@ -2048,7 +2049,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
-| `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
+| `apps/console/src/__tests__/pages/DncPage.test.tsx` | 25 |
 | `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 20 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
