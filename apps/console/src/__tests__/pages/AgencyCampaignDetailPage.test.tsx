@@ -371,9 +371,10 @@ describe('campaign detail — stopping', () => {
     fireEvent.click(await screen.findByRole('button', { name: /stop campaign/i }));
 
     // `stop` answers `stopping`. A toast reading "Stopped" would contradict the
-    // badge rendered directly beneath it while calls are still connected.
+    // badge rendered directly beneath it while calls are still connected. In the
+    // badge's words, never the wire code.
     await waitFor(() =>
-      expect(mocks.showToast).toHaveBeenCalledWith('Campaign is now stopping.', 'success'),
+      expect(mocks.showToast).toHaveBeenCalledWith('Campaign status: Stopping.', 'success'),
     );
   });
 
