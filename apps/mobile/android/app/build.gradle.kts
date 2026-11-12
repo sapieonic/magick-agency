@@ -18,6 +18,29 @@ val signingKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword"
 val missingSigningKeys = signingKeys.filter { keyProperties.getProperty(it).isNullOrBlank() }
 val allowDebugSigning = providers.gradleProperty("allowDebugSigning").orNull == "true"
 
+// The build's --dart-define(-from-file) values, which Flutter hands to Gradle as -Pdart-defines:
+// comma-separated, each base64("KEY=VALUE"). Native code needs some of what Dart reads from them
+// (lib/core/env.dart): the API origin, for the ring's token-only routes, and the Firebase client
+// config, for FCM (Mode B, docs/mobile.md "The ring channel (Mode B)").
+val dartDefines: Map<String, String> = providers.gradleProperty("dart-defines").orNull.orEmpty()
+    .split(',')
+    .filter { it.isNotBlank() }
+    .mapNotNull { runCatching { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull() }
+    .mapNotNull { pair -> pair.indexOf('=').takeIf { it > 0 }?.let { pair.substring(0, it) to pair.substring(it + 1) } }
+    .toMap()
+
+// resValue writes a value into a string resource as it is: take only plain values (origins,
+// Firebase ids and keys), never one that XML or the resource compiler would read differently.
+fun plainDefine(key: String): String? =
+    dartDefines[key]?.trim()?.takeIf { it.isNotEmpty() && Regex("^[A-Za-z0-9:/._+-]+$").matches(it) }
+
+// lib/core/env.dart's default when the define is missing.
+val apiOrigin = plainDefine("API_ORIGIN") ?: "http://10.0.2.2:3021"
+val firebaseAppId = plainDefine("FIREBASE_APP_ID_ANDROID")
+val firebaseApiKey = plainDefine("FIREBASE_API_KEY")
+val firebaseProjectId = plainDefine("FIREBASE_PROJECT_ID")
+val firebaseSenderId = plainDefine("FIREBASE_MESSAGING_SENDER_ID")
+
 android {
     namespace = "com.magickagency.agent"
     // permission_handler_android's AAR requires apps that use it to compile against API 37.
@@ -45,6 +68,37 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        resValue("string", "magick_api_origin", apiOrigin)
+        // Firebase's own resource names: FirebaseInitProvider builds the default app from them at
+        // process start, so a ring push wakes FCM with no Flutter running. The values are the
+        // FirebaseOptions Dart passes (lib/main.dart), so Dart's initializeApp finds the same
+        // default app (firebase_core compares the API key). Without them push is unavailable
+        // (getToken answers null) and the build still works.
+        if (firebaseAppId != null && firebaseApiKey != null && firebaseProjectId != null) {
+            resValue("string", "google_app_id", firebaseAppId)
+            resValue("string", "google_api_key", firebaseApiKey)
+            resValue("string", "project_id", firebaseProjectId)
+            if (firebaseSenderId != null) resValue("string", "gcm_defaultSenderId", firebaseSenderId)
+        }
+    }
+
+    sourceSets {
+        getByName("test") {
+            java.srcDirs("src/test/kotlin")
+        }
+    }
+
+    testOptions {
+        unitTests {
+            all {
+                it.useJUnitPlatform()
+                it.outputs.upToDateWhen { false }
+                it.testLogging {
+                    events("passed", "skipped", "failed")
+                }
+            }
+        }
     }
 
     // One flavour per environment so dev, staging and production install side by side.
@@ -99,6 +153,17 @@ kotlin {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    // Mode B's ring: FCM natively, in the app module only (iOS's pins are untouched). The BoM is
+    // the one firebase_core 4.15.2's Android plugin builds against (its FirebaseSDKVersion), so
+    // the app has one Firebase: bump it with firebase_core.
+    implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
+    implementation("com.google.firebase:firebase-messaging")
+    // NotificationCompat.CallStyle (1.9+) and Person.
+    implementation("androidx.core:core:1.17.0")
+    // The ring's pure-JVM parts (the state machine, the push parser, the request builders;
+    // src/test/kotlin). JUnit 5 named explicitly, as agent_audio's; no version: it follows the
+    // build's Kotlin.
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 }
 
 flutter {
