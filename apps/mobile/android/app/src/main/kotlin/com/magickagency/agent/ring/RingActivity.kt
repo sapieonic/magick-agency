@@ -80,8 +80,8 @@ class RingActivity : Activity() {
     private fun onAnswer() {
         val id = callId ?: return finish()
         val test = (RingCoordinator.state as? RingState.Ringing)?.call?.test == true
-        RingCoordinator.answer(this, id, AnswerSource.LOCK_SCREEN)
-        // A test ring's Answer only dismisses it.
+        // A test ring's Answer only dismisses it. The app is started first, while this activity is
+        // still in front (answering finishes it through the listener).
         if (!test) {
             startActivity(
                 RingIntents.mainActivity(this, RingIntents.ACTION_SHOW)
@@ -89,6 +89,7 @@ class RingActivity : Activity() {
                     .putExtra(RingIntents.EXTRA_CALL_ID, id),
             )
         }
+        RingCoordinator.answer(this, id, AnswerSource.LOCK_SCREEN)
         finish()
     }
 

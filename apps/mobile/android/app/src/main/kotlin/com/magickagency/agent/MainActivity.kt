@@ -64,6 +64,8 @@ class MainActivity : FlutterActivity() {
         }
         intent.removeExtra(RingIntents.EXTRA_RING)
         intent.action = Intent.ACTION_MAIN
+        // A stale tap (the ring already over) does not keep the window over the lock screen.
+        followRing(RingCoordinator.state)
     }
 
     private fun showOverLockScreen(on: Boolean) {
