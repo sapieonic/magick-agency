@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useLayoutEffect, type CSSProperties } from 'react';
+import { useState, useCallback, useEffect, useRef, useLayoutEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, MoreVertical, Send, Shield, Trash2 } from 'lucide-react';
 import { canManageRole } from '@magick-agency/contracts/rbac';
@@ -103,6 +103,34 @@ export function MemberActionsMenu({
     };
   }, [open, roleMenuOpen, reposition]);
 
+  /*
+    Dismissal, as the station's menu does it (QA team:ux:31465a4f9b). Escape closes the menu and
+    gives focus back to the ⋮ button. A press outside closes it and is NOT swallowed: there is no
+    full-screen backdrop any more (the one there was ate the first click, so Invite member needed
+    two), only a document listener that lets the press go on to whatever it landed on.
+  */
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if (buttonRef.current?.contains(target)) return;
+      closeMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      closeMenu();
+      buttonRef.current?.focus();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, closeMenu]);
+
   const handleRoleChange = async (newRole: Role) => {
     if (!tenantId) return;
     setUpdating(true);
@@ -146,7 +174,6 @@ export function MemberActionsMenu({
       </button>
       {open && createPortal(
         <>
-          <div className={styles.actionsBackdrop} onClick={closeMenu} />
           <div
             className={styles.actionsMenu}
             ref={menuRef}
