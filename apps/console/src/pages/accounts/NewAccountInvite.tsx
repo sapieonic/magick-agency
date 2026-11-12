@@ -105,7 +105,9 @@ export function NewAccountInvite({ account, currentAccountName, onDismiss }: New
           </p>
           {error && <p className="error-text" role="alert">{error}</p>}
           <div className={styles.readyActions}>
-            <button type="button" className="btn-secondary" onClick={onDismiss}>
+            {/* Not while the invite is being sent: if the server could not email it, the
+                hand-off that follows is the only place the link is shown. */}
+            <button type="button" className="btn-secondary" onClick={onDismiss} disabled={submitting}>
               Later
             </button>
             <button type="submit" className="btn-primary" disabled={submitting || !email.trim()}>

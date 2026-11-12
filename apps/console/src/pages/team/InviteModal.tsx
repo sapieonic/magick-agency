@@ -69,6 +69,14 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
    * carries the address and the link — would lose the whole point.
    */
   const { submitting, error, created, submit } = useInviteSubmission(tenantId, onCreated);
+  /**
+   * Not while the request is in flight: if the server could not email the invitee, the
+   * hand-off that follows is the only place the link is shown, and closing first loses it
+   * while the invite is still created. Covers Cancel, the overlay, Escape and the close button.
+   */
+  const close = () => {
+    if (!submitting) onClose();
+  };
 
   const chosenAccountId = inviteAccountId(accountChoice);
   const accountChosen = chosenAccountId !== null;
@@ -95,7 +103,7 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
   }
 
   return (
-    <Modal open size="sm" onClose={onClose} title="Invite team member">
+    <Modal open size="sm" onClose={close} title="Invite team member">
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="invite-email">Email</label>
@@ -145,7 +153,7 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
         </div>
         {error && <p className="error-text">{error}</p>}
         <div className={styles.modalFooter}>
-          <button type="button" className="btn-secondary" onClick={onClose}>
+          <button type="button" className="btn-secondary" onClick={close} disabled={submitting}>
             Cancel
           </button>
           {/* "Send invite", the same words as the new-account invite on Accounts: the server

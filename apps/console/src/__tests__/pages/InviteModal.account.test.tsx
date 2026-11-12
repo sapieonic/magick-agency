@@ -172,6 +172,41 @@ describe('InviteModal — the account is always an explicit choice', () => {
   });
 });
 
+describe('InviteModal — while the invite is being sent', () => {
+  it('cannot be closed until the request settles, so the link hand-off is not lost', async () => {
+    /* When the server could not email the invitee, the hand-off is the only place the link
+       is shown; closing mid-request still created the invite. */
+    let settle!: (value: unknown) => void;
+    mocks.inviteUser.mockReturnValue(new Promise((resolve) => { settle = resolve; }));
+    const onClose = vi.fn();
+    mockScope([seat('acct-1')], 'acct-1');
+    mocks.useAccounts.mockReturnValue({ accounts: [{ id: 'acct-1', name: 'Default' }] });
+    render(<InviteModal onClose={onClose} onInvited={vi.fn()} onCreated={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'sup@example.com' } });
+    fireEvent.click(submitButton());
+
+    const cancel = screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+    await waitFor(() => expect(cancel.disabled).toBe(true));
+    fireEvent.click(cancel);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('dialog'));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+
+    settle({ invite_email: { sent: false } });
+    expect(await screen.findByTestId('invite-handoff')).toBeTruthy();
+  });
+
+  it('closes on Cancel when nothing is being sent', () => {
+    const onClose = vi.fn();
+    mockScope([seat(null)], 'acct-1');
+    mocks.useAccounts.mockReturnValue({ accounts: [] });
+    render(<InviteModal onClose={onClose} onInvited={vi.fn()} onCreated={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('inviteScope', () => {
   it('maps a choice to the account_id to send, and nothing picked to null', () => {
     expect(inviteAccountId('')).toBeNull();
