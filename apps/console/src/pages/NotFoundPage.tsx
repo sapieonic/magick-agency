@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useTenant } from '../contexts/TenantContext';
-import { useGateReaders } from '../hooks/useGateReaders';
+import { useNavGate } from '../hooks/useNavGate';
 import { usePageCrumbs } from '../components/layout/PageCrumbs';
 import { HOME_PATH, canSeeHome } from '../utils/consoleNav';
 import styles from './NotFoundPage.module.css';
@@ -18,10 +17,8 @@ export const NOT_FOUND_CRUMBS = [{ label: 'Page not found' }];
  * them from every shell page to the dialer.
  */
 export default function NotFoundPage() {
-  const { role } = useTenant();
-  const readers = useGateReaders();
+  const home = canSeeHome(useNavGate());
   usePageCrumbs(NOT_FOUND_CRUMBS);
-  const home = canSeeHome({ role, ...readers });
 
   return (
     <div className={styles.notFound} data-testid="not-found">

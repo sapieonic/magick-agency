@@ -2,8 +2,8 @@ import { Fragment } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Menu, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useGateReaders } from '../../hooks/useGateReaders';
-import { backCrumb, breadcrumbFor, type GateInput } from '../../utils/consoleNav';
+import { useNavGate } from '../../hooks/useNavGate';
+import { backCrumb, breadcrumbFor } from '../../utils/consoleNav';
 import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
 import { useSuppliedCrumbs } from './PageCrumbs';
@@ -34,8 +34,7 @@ interface Props {
 export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearchClick, phone = false }: Props) {
   const { pathname } = useLocation();
   const { role, accountId } = useTenant();
-  const readers = useGateReaders();
-  const gate: GateInput = { role, ...readers };
+  const gate = useNavGate();
   const crumbs = breadcrumbFor(pathname, useSuppliedCrumbs(pathname), role);
   const back = phone ? backCrumb(crumbs) : null;
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));

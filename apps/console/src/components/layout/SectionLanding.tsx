@@ -1,7 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom';
-import { useTenant } from '../../contexts/TenantContext';
-import { useGateReaders } from '../../hooks/useGateReaders';
-import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
+import { useNavGate } from '../../hooks/useNavGate';
 import { sectionLandingPath, sectionRootFor } from '../../utils/consoleNav';
 import NotFoundPage from '../../pages/NotFoundPage';
 
@@ -12,11 +10,9 @@ import NotFoundPage from '../../pages/NotFoundPage';
  */
 export function SectionLanding() {
   const { pathname, search, hash } = useLocation();
-  const { role } = useTenant();
-  const readers = useGateReaders();
-  const missed = useMissedCallsAccess();
+  const gate = useNavGate({ missed: true });
   const section = sectionRootFor(pathname);
   if (!section) return <NotFoundPage />;
-  const to = sectionLandingPath(section, { role, ...readers, missedAvailable: missed.available });
+  const to = sectionLandingPath(section, gate);
   return <Navigate to={{ pathname: to, search, hash }} replace />;
 }

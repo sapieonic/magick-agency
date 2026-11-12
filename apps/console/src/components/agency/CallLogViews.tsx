@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { campaignTabHref, visibleCallLogViews, type CallLogViewId } from '../../utils/agencyCampaignTabs';
-import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { useGateReaders } from '../../hooks/useGateReaders';
 import type { Role } from '../../types/auth';
 import styles from './CallLogViews.module.css';
 
@@ -20,8 +20,7 @@ interface CallLogViewsProps {
  * phone's flag. With one view left there is nothing to choose, so nothing renders.
  */
 export function CallLogViews({ campaignId, active, role }: CallLogViewsProps) {
-  const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
-  const views = visibleCallLogViews(role, (flag) => flag === SOFTPHONE_FLAG && softphone);
+  const views = visibleCallLogViews(role, useGateReaders().isFlagEnabled);
   if (views.length < 2) return null;
 
   return (
