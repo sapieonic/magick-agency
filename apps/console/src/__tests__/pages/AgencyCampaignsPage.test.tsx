@@ -594,6 +594,8 @@ describe('AgencyCampaignsPage — the list', () => {
       offset === 0 ? listing([RUNNING, ...first.slice(1)], 101) : listing([older], 101),
     );
     mocks.listAgencyCampaigns.mockResolvedValue([RUNNING, older]);
+    // The board carries the active set the list shows, as the server's does.
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING, older]));
     renderPage();
     await vi.waitFor(() => expect(screen.getByRole('article', { name: 'Old pilot' })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Show older campaigns' }));
@@ -605,6 +607,7 @@ describe('AgencyCampaignsPage — the list', () => {
 
     // It is stopped elsewhere: the active read no longer has it.
     mocks.listAgencyCampaigns.mockResolvedValue([RUNNING]);
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING]));
     mocks.getAgencyCampaign.mockResolvedValue({ ...older, status: 'stopped', ended_at: '2026-10-10T00:00:00Z' });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);

@@ -11,6 +11,8 @@ import { board, onBoard, stats } from '../helpers/home';
  */
 
 const api = vi.hoisted(() => ({ getAgencyHomeBoard: vi.fn() }));
+// Home's acknowledgements are the signed-in reader's (`useHomeAcks`).
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-1' } }) }));
 vi.mock('../../api/agencyHome', () => api);
 
 import {

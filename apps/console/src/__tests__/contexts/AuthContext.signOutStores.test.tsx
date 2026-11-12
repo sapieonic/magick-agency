@@ -49,6 +49,8 @@ import { createSession } from '../../api/auth';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { publishCampaignTabBadge, resetCampaignTabBadges, useCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
 import { readRecentCampaigns, rememberCampaignVisit } from '../../utils/recentCampaigns';
+import { homeAcksKey, resetHomeAcksForTests, useHomeAcks } from '../../hooks/useHomeAcks';
+import type { HomeAttentionItem } from '../../utils/agency/home';
 
 function session(id: string): SessionResponse {
   return {
@@ -82,6 +84,7 @@ async function signIn(result: { current: ReturnType<typeof useAuth> }, id: strin
 beforeEach(() => {
   vi.clearAllMocks();
   resetCampaignTabBadges();
+  resetHomeAcksForTests();
   testState.authCallback = null;
   localStorage.clear();
   vi.mocked(signInWithPopup).mockResolvedValue({ user: fbUser } as never);
@@ -123,14 +126,39 @@ describe('sign-out', () => {
     expect(readRecentCampaigns('t1', 'acc-1')).toEqual([]);
   });
 
+  it('forgets Home’s "Got it" rows held in the tab, even for the same person signing back in', async () => {
+    const { result } = renderHook(() => ({ auth: useAuth(), home: useHomeAcks('t1', 'acc-1') }), { wrapper });
+    const auth = { get current() { return result.current.auth; } };
+    await waitFor(() => expect(testState.authCallback).not.toBeNull());
+    await act(async () => {
+      await testState.authCallback?.(null);
+    });
+    await signIn(auth, 'u-first');
+    act(() => result.current.home.acknowledge({
+      id: 'callbacks-overdue:c-1', kind: 'callbacks-overdue', tone: 'danger', count: 2, ackable: true,
+    } as HomeAttentionItem));
+    expect(Object.keys(result.current.home.acks)).toEqual(['callbacks-overdue:c-1']);
+    // Kept under this person's id, and nobody else's.
+    expect(localStorage.getItem(homeAcksKey('u-first', 't1', 'acc-1'))).not.toBeNull();
+    // As a private window would have: nothing in storage, so only the in-tab copy holds the row.
+    localStorage.removeItem(homeAcksKey('u-first', 't1', 'acc-1'));
+    expect(Object.keys(result.current.home.acks)).toEqual(['callbacks-overdue:c-1']);
+
+    await act(async () => {
+      await result.current.auth.logout();
+    });
+    await signIn(auth, 'u-first');
+    expect(result.current.home.acks).toEqual({});
+  });
+
   it('drops a badge read that was still on its way when the stores were cleared', async () => {
-    let answer: (value: { agents: never[] }) => void = () => {};
+    let answer: (value: { agents_live: number }) => void = () => {};
     api.getAgencyCampaignStats.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     const badge = renderHook(() => useCampaignTabBadge('onShift', 'c-1', true));
     expect(api.getAgencyCampaignStats).toHaveBeenCalledTimes(1);
     act(() => resetCampaignTabBadges());
     await act(async () => {
-      answer({ agents: [] });
+      answer({ agents_live: 0 });
     });
     expect(badge.result.current).toBeNull();
   });

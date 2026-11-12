@@ -16,6 +16,7 @@ import {
   type HomeMissed,
 } from '../../utils/agency/home';
 import { AGENCY_STALL_LABELS, AGENCY_STALL_PRIORITY } from '../../utils/agencyHealthStrip';
+import { ackOf, stillAcknowledged } from '../../utils/agency/homeAcks';
 import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
 import type { AgencyGroupPage, AgencyGroupRow } from '../../types/agency-stats';
 import type { AgencyHomeActiveStatus } from '@magick-agency/contracts/api/agency/home';
@@ -98,6 +99,23 @@ describe('a stalled campaign', () => {
     const [floor] = homeAttention([read('c1', { stats: stats({ stall: STALLS.no_agents_available }) })], NO_MISSED, fmt);
     expect(floor!.at).toBeNull();
     expect(floor!.action).toBe('Open the floor');
+  });
+
+  it('makes each automatic pause its own kind, so a "Got it" on one does not hide the next (B28a)', () => {
+    const pausedAt = (at: string) => homeAttention(
+      [read('c1', { stats: stats({ stall: { ...STALLS.auto_paused_abandonment, paused_at: at } as AgencyStall }) })],
+      NO_MISSED,
+      fmt,
+    )[0]!;
+    const first = pausedAt('2026-11-11T09:12:00Z');
+    const again = pausedAt('2026-11-11T14:40:00Z');
+    expect(first.id).toBe(again.id);
+    expect(first.kind).not.toBe(again.kind);
+    expect(stillAcknowledged(again, ackOf(first))).toBe(false);
+    expect(stillAcknowledged(pausedAt('2026-11-11T09:12:00Z'), ackOf(first))).toBe(true);
+    // A stall with no instant holds on its code alone.
+    const [floor] = homeAttention([read('c1', { stats: stats({ stall: STALLS.no_carrier_capacity }) })], NO_MISSED, fmt);
+    expect(floor!.kind).toBe('stall:no_carrier_capacity');
   });
 
   it('shows the top stall only, as the strip does', () => {
@@ -257,6 +275,13 @@ describe('missed inbound calls', () => {
     expect(homeAttention([], { available: true, count: count(150, true) }, fmt)[0]!.title).toBe(
       'More than 99 missed inbound calls to follow up',
     );
+  });
+
+  it('offers "Got it" until the count is capped, which can no longer grow to bring it back', () => {
+    expect(homeAttention([], { available: true, count: count(99) }, fmt)[0]!.ackable).toBe(true);
+    const capped = homeAttention([], { available: true, count: count(99, true) }, fmt)[0]!;
+    expect(capped.ackable).toBe(false);
+    expect(stillAcknowledged(capped, ackOf(capped))).toBe(false);
   });
 
   it('is no row without access, with none open, or before the count answers', () => {

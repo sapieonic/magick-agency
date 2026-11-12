@@ -11,7 +11,8 @@ import type { HomeTone } from '../../utils/agency/home';
 
 /**
  * Home's "Got it" rules (B28a): a row put aside stays aside until it gets worse (its count grows,
- * or its kind or tone changes) or until the next day in Asia/Kolkata.
+ * or its kind or tone changes) or until the reader's next local midnight (the zones are in
+ * `agencyHome.timezone.test.ts`; this project runs in UTC).
  */
 
 const row = (id: string, kind: string, tone: HomeTone, count: number | null) => ({ id, kind, tone, count });
@@ -40,10 +41,19 @@ describe('stillAcknowledged', () => {
   });
 });
 
+describe('rows that may not be put aside', () => {
+  it('a row whose count cannot grow is never still acknowledged', () => {
+    const capped = { ...row('missed', 'missed', 'warning', 100), ackable: false };
+    expect(stillAcknowledged(capped, ackOf(capped))).toBe(false);
+    expect(splitAcknowledged([capped], { missed: ackOf(capped) }).open).toEqual([capped]);
+    expect(stillAcknowledged({ ...capped, ackable: true }, ackOf(capped))).toBe(true);
+  });
+});
+
 describe('the day', () => {
-  it('is the calendar day in Asia/Kolkata', () => {
-    expect(homeAckDay(new Date('2026-11-12T18:29:00Z'))).toBe('2026-11-12');
-    expect(homeAckDay(new Date('2026-11-12T18:31:00Z'))).toBe('2026-11-13');
+  it('is the reader’s calendar day (UTC here)', () => {
+    expect(homeAckDay(new Date('2026-11-12T23:59:00Z'))).toBe('2026-11-12');
+    expect(homeAckDay(new Date('2026-11-13T00:01:00Z'))).toBe('2026-11-13');
   });
 
   it('drops another day’s acknowledgements and anything unreadable', () => {

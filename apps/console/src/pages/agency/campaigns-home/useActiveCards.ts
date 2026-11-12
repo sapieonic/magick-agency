@@ -39,6 +39,9 @@ export interface ActiveCards {
  * It also keeps the list current while a campaign moves (`needsPolling`, the campaign detail
  * page's rule, over the board's floor): a campaign that finishes leaves the cards on the next tick.
  * A campaign entering the active set or changing status is read at once rather than at the tick.
+ * A campaign the list still shows that a board read after it was shown no longer carries has left
+ * the active set (stopped in another tab, say, while paused and still, so nothing polls the list):
+ * the list is read again, once per such board read, so its card goes rather than loading forever.
  */
 export function useActiveCards(
   tenantId: string | null,
@@ -74,6 +77,26 @@ export function useActiveCards(
     if (seenKey.current !== null && seenKey.current !== activeKey) reload();
     seenKey.current = activeKey;
   }, [activeKey, reload]);
+
+  // A shown campaign a ready board has dropped: read the list again, once per board read.
+  const seenAt = useRef(new Map<string, number>());
+  const askedFor = useRef<string | null>(null);
+  useEffect(() => {
+    const now = Date.now();
+    const ids = new Set(shown.map((c) => c.id));
+    for (const id of seenAt.current.keys()) if (!ids.has(id)) seenAt.current.delete(id);
+    for (const id of ids) if (!seenAt.current.has(id)) seenAt.current.set(id, now);
+    const answeredAt = board.lastUpdatedAt;
+    if (board.status !== 'ready' || answeredAt === null) return;
+    const onBoard = new Set(board.reads.map((r) => r.campaign.id));
+    // Only a board read that answered after the campaign was shown can say it has gone.
+    const dropped = shown.filter((c) => !onBoard.has(c.id) && (seenAt.current.get(c.id) ?? Infinity) <= answeredAt);
+    if (dropped.length === 0) return;
+    const ask = `${answeredAt}:${dropped.map((c) => c.id).join(',')}`;
+    if (askedFor.current === ask) return;
+    askedFor.current = ask;
+    void reloadList().catch(() => undefined);
+  }, [shown, board.status, board.reads, board.lastUpdatedAt, reloadList]);
 
   const moving = shown.some((c) => needsPolling(c.status, readyStats(states[c.id])));
   const busy = useRef(false);

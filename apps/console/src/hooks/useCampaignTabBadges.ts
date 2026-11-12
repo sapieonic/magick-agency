@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { getAgencyCampaignStats } from '../api/agencyCampaigns';
 import { getInsightsAllocation } from '../api/agencyInsights';
-import { agentsOnShift } from '../utils/agencyAgentFloor';
 import { useTenant } from '../contexts/TenantContext';
 
 /** A badge count this recent is shown as it is, not read again (list → call → back → next call). */
@@ -53,7 +52,9 @@ export function publishCampaignTabBadge(
 }
 
 async function fetchBadge(kind: CampaignTabBadgeKind, tenantId: string, accountId: string, campaignId: string): Promise<number | null> {
-  if (kind === 'onShift') return agentsOnShift((await getAgencyCampaignStats(campaignId, tenantId, accountId)).agents);
+  // `agents_live` is the server's on-shift count, the floor's rows that are not offline: the rule
+  // `agentsOnShift` applies to the same payload, so no roster is walked here. Absent: not known.
+  if (kind === 'onShift') return (await getAgencyCampaignStats(campaignId, tenantId, accountId)).agents_live ?? null;
   return (await getInsightsAllocation(campaignId, tenantId, accountId)).totals.callbacks_overdue ?? null;
 }
 
@@ -63,9 +64,14 @@ function readBadge(kind: CampaignTabBadgeKind, tenantId: string, accountId: stri
   const held = entries.get(key);
   if (inFlight.has(key) || (held && Date.now() - held.at < TAB_BADGE_FRESH_MS)) return;
   const asked = generation;
+  const startedAt = Date.now();
   const promise = fetchBadge(kind, tenantId, accountId, campaignId)
     .then((value) => {
-      if (asked === generation) store(key, value);
+      if (asked !== generation) return;
+      // A count published while this read was on its way (the detail page's poll) is newer.
+      const now = entries.get(key);
+      if (now && now.at >= startedAt) return;
+      store(key, value);
     })
     // A failed read keeps what was held; the next screen tries again.
     .catch(() => undefined)

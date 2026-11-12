@@ -58,13 +58,22 @@ function subscribe(listener: () => void): () => void {
 
 /**
  * `mount`: shares a read under {@link MISSED_COUNT_FRESH_MS} (the poll period while a reader polls);
+ * `return` (the reader came back to the tab): under {@link MISSED_COUNT_FRESH_MS} whoever polls,
+ * since the poll skips its ticks while the tab is hidden and cannot have kept the count fresh;
  * `poll`: one per minute for the tab; `force`: always reads.
  */
-function read(tenantId: string, accountId: string, assignee: string | undefined, mode: 'mount' | 'poll' | 'force'): Promise<void> {
+function read(
+  tenantId: string,
+  accountId: string,
+  assignee: string | undefined,
+  mode: 'mount' | 'return' | 'poll' | 'force',
+): Promise<void> {
   const key = countKey(tenantId, accountId, assignee);
   if (inFlight?.key === key) return inFlight.promise;
-  const freshFor = pollers.has(key) ? MISSED_COUNT_POLL_MS : MISSED_COUNT_FRESH_MS;
-  if (mode === 'mount' && snapshot.key === key && snapshot.value && Date.now() - readAt < freshFor) return Promise.resolve();
+  const freshFor = mode === 'mount' && pollers.has(key) ? MISSED_COUNT_POLL_MS : MISSED_COUNT_FRESH_MS;
+  if ((mode === 'mount' || mode === 'return') && snapshot.key === key && snapshot.value && Date.now() - readAt < freshFor) {
+    return Promise.resolve();
+  }
   if (mode === 'poll' && lastPoll?.key === key && Date.now() - lastPoll.at < MISSED_COUNT_POLL_FRESH_MS) return Promise.resolve();
   const startedAt = Date.now();
   const promise = getMissedInboundCount(tenantId, accountId, assignee ? { assignee } : {})
@@ -158,7 +167,7 @@ export function useMissedCallsCount({
     MISSED_COUNT_POLL_MS,
     active && poll,
   );
-  useRefetchOnReturn(() => load());
+  useRefetchOnReturn(() => (active && tenantId && accountId ? read(tenantId, accountId, assignee, 'return') : undefined));
 
   if (!active || current.key !== key) return { count: null, settled: !active };
   return { count: current.value, settled: current.value !== null || current.failed };

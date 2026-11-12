@@ -29,7 +29,13 @@ export function ProfileMenu() {
   const [copiedId, setCopiedId] = useState<'tenant' | 'account' | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  /** The copy tick's timer: one at a time, so an earlier copy cannot clear a later one's tick. */
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelId = `${useId()}-profile`;
+
+  useEffect(() => () => {
+    if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -61,7 +67,11 @@ export function ProfileMenu() {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedId(which);
-      setTimeout(() => setCopiedId((prev) => (prev === which ? null : prev)), 2000);
+      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => {
+        copiedTimer.current = null;
+        setCopiedId(null);
+      }, 2000);
     } catch {
       // The Clipboard API may not be available.
     }

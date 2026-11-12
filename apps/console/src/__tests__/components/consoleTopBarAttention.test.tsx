@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   getAgencyHomeBoard: vi.fn(),
 }));
 
+// Home's acknowledgements are the signed-in reader's (`useHomeAcks`).
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-1' } }) }));
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({ tenantId: 't-1', accountId: 'a-1', role: mocks.role }),
 }));

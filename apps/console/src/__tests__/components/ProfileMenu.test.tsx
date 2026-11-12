@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
@@ -96,6 +96,45 @@ describe('ProfileMenu — tenant/account IDs', () => {
     // The dropdown (and therefore the IDs) should still be present.
     await waitFor(() => expect(mocks.writeText).toHaveBeenCalled());
     expect(screen.getByText('Organisation ID')).toBeTruthy();
+  });
+
+  it('keeps a second copy’s tick its full 2 s, and leaves no timer behind after unmounting', async () => {
+    vi.useFakeTimers();
+    try {
+      const view = renderTopBar();
+      openMenu();
+      const button = screen.getByTitle('Copy organisation ID');
+      const ticked = () => button.querySelector('.lucide-check') !== null;
+
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(ticked()).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(1500);
+      });
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      // The first copy's 2 s are up; the second's are not.
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(ticked()).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(ticked()).toBe(false);
+
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(vi.getTimerCount()).toBe(1);
+      view.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders only the tenant ID when no account is selected', () => {

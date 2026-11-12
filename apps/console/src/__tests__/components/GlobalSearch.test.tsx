@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { customerHistoryFixture } from '../helpers/customerHistory';
 
@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   getCustomerSearchOptions: vi.fn(),
 }));
 
+// Home's acknowledgements are the signed-in reader's (`useHomeAcks`).
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-1' } }) }));
 vi.mock('../../hooks/usePostHogIdentify', () => ({ usePostHogIdentify: () => {} }));
 vi.mock('../../analytics/useProductSurface', () => ({ useProductSurface: () => {} }));
 vi.mock('../../contexts/TenantContext', () => ({
@@ -154,6 +156,22 @@ describe('opening and closing', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('ignores a keydown with no key (autofill sends them) rather than throwing', () => {
+    renderShell();
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => errors.push(e.error);
+    window.addEventListener('error', onError);
+    const event = new KeyboardEvent('keydown', { ctrlKey: true, bubbles: true });
+    Object.defineProperty(event, 'key', { value: undefined });
+    try {
+      document.dispatchEvent(event);
+    } finally {
+      window.removeEventListener('error', onError);
+    }
+    expect(errors).toEqual([]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('a click outside closes it', () => {
     renderShell();
     fireEvent.click(trigger());
@@ -221,6 +239,29 @@ describe('the keyboard', () => {
     key('Enter');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(where()).toBe('/agency/inbound/summary');
+  });
+
+  it('keeps the highlight on its result when the list changes under it without typing', async () => {
+    // A recent campaign since deleted: listed as remembered until the account's list answers.
+    rememberCampaignVisit('tenant-1', 'account-1', 'c-gone', 'Old drive');
+    rememberCampaignVisit('tenant-1', 'account-1', 'c-1', 'Diwali renewals');
+    let answer: (value: ReturnType<typeof onePage>) => void = () => {};
+    mocks.listAgencyCampaignsPage.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderShell();
+    fireEvent.click(trigger());
+    const before = options().length;
+    key('ArrowUp');
+    key('ArrowUp');
+    const chosen = options()[before - 2]!.textContent;
+    expect(options()[before - 2]!.getAttribute('aria-selected')).toBe('true');
+
+    await act(async () => {
+      answer(onePage([{ id: 'c-1', name: 'Diwali renewals', status: 'running' }]));
+    });
+    await waitFor(() => expect(options()).toHaveLength(before - 1));
+    const selected = options().filter((o) => o.getAttribute('aria-selected') === 'true');
+    expect(selected.map((o) => o.textContent)).toEqual([chosen]);
+    expect(input().getAttribute('aria-activedescendant')).toBe(selected[0]!.id);
   });
 
   it('does not open a result with the Enter that ends an IME composition', () => {

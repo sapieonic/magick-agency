@@ -102,5 +102,3 @@ export function clearRecentCustomerSearches(storage: Pick<Storage, 'removeItem'>
   notifyRecentCustomerSearches();
 }
 
-/** Callers still import it from here; it lives in `browserStorage.ts`. */
-export { browserStorage } from './browserStorage';
