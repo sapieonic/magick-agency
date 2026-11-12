@@ -272,6 +272,28 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     expect(stallCodes(body)).not.toContain('dnc_unavailable');
   });
 
+  it('counts on shift only the floor rows that are not offline: agents_live and the stall’s agents_on_shift', async () => {
+    // A signed-out station (`offline`, not reaped: `left_at` still null) is on the floor's rows,
+    // and is nobody on shift. The Agents tab says "1 of 1 on shift"; agents_live and the stall's
+    // banner used to say 2.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    await insertAgentSession(campaign.id, { agent_user_id: uuidFor('on-break'), state: 'break', break_reason: 'lunch' });
+    await insertAgentSession(campaign.id, { agent_user_id: uuidFor('signed-out'), state: 'offline' });
+
+    const body = (await getStats(campaign.id)).json();
+    expect(body.agents).toHaveLength(2);
+    expect(body.agents_live).toBe(1);
+    expect(body.stall).toMatchObject({ code: 'no_agents_available', agents_on_shift: 1 });
+
+    // Only a signed-out station: nobody on shift, so nobody to be "not available".
+    const empty = await insertAgencyCampaign({ status: 'running' });
+    await insertAgentSession(empty.id, { agent_user_id: uuidFor('signed-out-2'), state: 'offline' });
+    const emptyBody = (await getStats(empty.id)).json();
+    expect(emptyBody.agents).toHaveLength(1);
+    expect(emptyBody.agents_live).toBe(0);
+    expect(stallCodes(emptyBody)).not.toContain('no_agents_available');
+  });
+
   it('degrades the strip to a 200 when a dependency throws synchronously', async () => {
     // The failure the route's best-effort comment claims to cover and did not:
     // `.catch()` only handles a REJECTED promise, so a dependency that throws

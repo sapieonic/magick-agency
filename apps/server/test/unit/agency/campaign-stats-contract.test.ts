@@ -79,7 +79,6 @@ const ROW = {
   attempts_total: '18',
   attempts_connected: '19',
   attempts_retried: '9',
-  agents_live: '20',
   answered_24h: '200',
   abandoned_24h: '6',
 };
@@ -158,7 +157,9 @@ describe('the stats payload produces every field the contract declares', () => {
       // already PLACED that were not the contact's first — so the two carry
       // distinct fixture values and reading one off the other's key fails.
       attempts_retried: 9,
-      agents_live: 20,
+      // Not a column: tallied from the floor's rows (every state but `offline`), and the floor
+      // served here is empty.
+      agents_live: 0,
       answered_24h: 200,
       abandoned_24h: 6,
     });
