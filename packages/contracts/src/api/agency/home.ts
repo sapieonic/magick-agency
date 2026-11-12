@@ -13,10 +13,12 @@
  * - **Which campaigns:** the active ones ({@link AGENCY_HOME_ACTIVE_STATUSES}), in the Campaigns
  *   page's order (running, then stopping, then paused; newest first within a status), the first
  *   {@link AGENCY_HOME_CAMPAIGN_CAP} of them. `active_total` is the count before the cap.
- * - **Per campaign:** what the campaign Overview's "Needs your attention" rules read, so Home's
- *   list is the Overview's (B28a: Home never disagrees with the page it links to):
- *   - `stats`: the fields of `/stats` Home reads ({@link AgencyHomeCampaignStats}, the internal
- *     stats handler's own payload, so the stall and the floor are the health strip's);
+ * - **Per campaign:** the `/stats` figures the Campaigns page's Active cards show and, for a
+ *   supervisor, what the campaign Overview's "Needs your attention" rules read, so Home's list is
+ *   the Overview's (B28a: Home never disagrees with the page it links to):
+ *   - `stats`: the fields of `/stats` Home and the Active cards read
+ *     ({@link AGENCY_HOME_STATS_FIELDS}, from the internal stats handler's own payload, so the
+ *     stall and the floor are the health strip's);
  *   - `staffing`: assigned agents and how many are on the floor ({@link attentionStaffing} over
  *     the insights allocation's own staffing and state reads), read with the stats;
  *   - `allocation`: the insights allocation's overdue callbacks and the due contacts held by agents

@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { AGENCY_HOME_CAMPAIGN_CAP, type AgencyHomeCampaignStats } from '@magick-agency/contracts/api/agency/home';
 import { HOME_FAST_MS, useHomeBoard } from '../../../hooks/useHomeBoard';
 import { useVisibleInterval } from '../../../hooks/useVisibleInterval';
-import { needsPolling } from '../../../utils/agencyCampaignsHome';
+import { REFRESH_MS, needsPolling } from '../../../utils/agencyCampaignsHome';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
-import { REFRESH_MS } from './useCampaignsHome';
 
 /** What an Active card shows: its numbers, still loading, or why it has none. */
 export type CardState =

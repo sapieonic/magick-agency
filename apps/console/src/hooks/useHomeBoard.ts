@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { getAgencyHomeBoard } from '../api/agencyHome';
 import { ApiError } from '../api/client';
-import { REFRESH_MS } from '../pages/agency/campaigns-home/useCampaignsHome';
+import { REFRESH_MS } from '../utils/agencyCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
 import { splitAcknowledged } from '../utils/agency/homeAcks';
 import { useHomeAcks } from './useHomeAcks';

@@ -41,6 +41,13 @@ export function campaignGroup(status: string): CampaignGroup {
 }
 
 /**
+ * The campaigns home's refresh while a campaign moves (its list and Home's board for its Active
+ * cards), and Home's own: the campaign detail page's poll. Here, in the pure layer, so the board
+ * hook (`hooks/useHomeBoard`) and the page's hooks share it without importing one another.
+ */
+export const REFRESH_MS = 10_000;
+
+/**
  * Whether a campaign's live numbers should keep refreshing.
  *
  * Used by the campaign detail page, by this page's list poll (over Home's board,

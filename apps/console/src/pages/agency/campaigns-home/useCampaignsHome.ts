@@ -11,9 +11,6 @@ import { campaignGroup, sortCampaigns } from '../../../utils/agencyCampaignsHome
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 
-/** The page's refresh while a campaign moves, matching the campaign detail page's own poll. */
-export const REFRESH_MS = 10_000;
-
 /** Rows per request; the server caps `limit` at 100. */
 export const PAGE_SIZE = 100;
 

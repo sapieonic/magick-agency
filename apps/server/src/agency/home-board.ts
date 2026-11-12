@@ -7,8 +7,9 @@
  *  - the campaigns: `agencyCampaignRepository.listForHome` (the Campaigns page's order, capped);
  *  - per campaign, the internal stats handler's payload (`liveStats`, the route's hop through
  *    `callCore`, so the stall, the guardrail's 24 hours and the floor are the health strip's
- *    own), projected to the fields Home reads, and the allocation's staffing (`campaignStaffing`:
- *    assigned agents and how many are on the floor);
+ *    own), projected to the fields Home and the Campaigns page's Active cards read
+ *    (`homeStats`), and the allocation's staffing (`campaignStaffing`: assigned agents and how
+ *    many are on the floor);
  *  - per campaign, the insights allocation (`cachedAllocation`, the Insights tab's own cache)
  *    projected by `attentionAllocation`: overdue callbacks and due contacts held by away agents;
  *  - per campaign, today's carrier failures and recording (`rangeAttentionFigures` over
@@ -20,8 +21,9 @@
  * serves them null and reads none of them, and is cached apart from a supervisor's.
  *
  * ── What it costs, and why it reuses ─────────────────────────────────────────
- * The console asks for the board every 10 s while Home is open and every 60 s for each other
- * tab's sidebar badge. Memos keep that bounded:
+ * The console asks for the board every 10 s while Home is open, every 10 s while the Campaigns
+ * page shows an active campaign, and every 60 s for each other tab's sidebar badge. Memos keep
+ * that bounded:
  *
  *  - **The account's board** is reused for {@link HOME_BOARD_MS}, and requests that arrive while
  *    it is computed share that computation (single flight). Only the per-campaign reads are
