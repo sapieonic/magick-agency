@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { todayWindow } from '../../utils/agency/home';
+import { localDay, todayWindow } from '../../utils/agency/home';
+import { homeAckDay } from '../../utils/agency/homeAcks';
 
 /**
  * Home's "Today so far" window (`todayWindow`), read from somewhere other than Greenwich.
@@ -57,5 +58,25 @@ describe('todayWindow: from the reader’s local midnight', () => {
       from: '2026-09-06T04:00:00.000Z',
       to: '2026-09-06T15:00:00.000Z',
     });
+  });
+});
+
+describe('the reader’s day: what Today so far counts and how long “Got it” lasts (B28a)', () => {
+  it('turns over at the reader’s own midnight, in Kolkata and in London alike', () => {
+    // 18:29Z is 23:59 in Kolkata, 18:31Z is 00:01 on the 12th; London is still on the 11th either way.
+    expect(inZone('Asia/Kolkata', () => homeAckDay(new Date('2026-11-11T18:29:00Z')))).toBe('2026-11-11');
+    expect(inZone('Asia/Kolkata', () => homeAckDay(new Date('2026-11-11T18:31:00Z')))).toBe('2026-11-12');
+    expect(inZone('Europe/London', () => homeAckDay(new Date('2026-11-11T18:31:00Z')))).toBe('2026-11-11');
+    expect(inZone('Europe/London', () => homeAckDay(new Date('2026-11-12T00:01:00Z')))).toBe('2026-11-12');
+  });
+
+  it('is the day Today so far’s window starts on', () => {
+    const now = new Date('2026-11-11T20:00:00.000Z');
+    for (const zone of ['Asia/Kolkata', 'Europe/London', 'America/New_York']) {
+      inZone(zone, () => {
+        expect(localDay(now)).toBe(homeAckDay(now));
+        expect(localDay(new Date(todayWindow(now).from))).toBe(localDay(now));
+      });
+    }
   });
 });

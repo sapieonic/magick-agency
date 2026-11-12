@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   getCustomerSearchOptions: vi.fn(),
 }));
 
+// Home's acknowledgements are the signed-in reader's (`useHomeAcks`).
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-1' } }) }));
 vi.mock('../../hooks/usePostHogIdentify', () => ({ usePostHogIdentify: () => {} }));
 vi.mock('../../analytics/useProductSurface', () => ({ useProductSurface: () => {} }));
 vi.mock('../../contexts/TenantContext', () => ({

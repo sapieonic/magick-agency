@@ -1,22 +1,21 @@
-import type { HomeAttentionItem, HomeTone } from './home';
-import { zoneDay } from './insights/range';
+import { localDay, type HomeAttentionItem, type HomeTone } from './home';
 
 /**
  * Home's "Got it" (decision B28a, acknowledgements): a reader can put an attention row aside, so
  * one overdue callback does not keep the badge lit all day and teach people to ignore it. Pure;
  * the store is `hooks/useHomeAcks.ts`.
  *
- *  - **Per viewer**, per tenant and account, in this browser only. Nobody else's Home changes.
+ *  - **Per viewer**: per signed-in user, tenant and account, in this browser only. Nobody
+ *    else's Home changes, and the next person to sign in on this browser starts with none.
  *  - **Until it gets worse**: a row stays aside while its kind (the stall's code, the rule) and
  *    its tone are the same and its count has not grown. A count that falls stays aside; a new
- *    kind, another tone or a higher count brings the row back, and back onto the badge.
- *  - **Until tomorrow**: every acknowledgement is dropped at the next calendar day in
- *    {@link HOME_ACK_ZONE}, the zone the console's day-based reads use.
+ *    kind, another tone or a higher count brings the row back, and back onto the badge. An
+ *    automatic pause's kind carries its instant, so a campaign resumed and paused again is back.
+ *    A row whose count cannot grow (`ackable` false: missed calls past 99) is never put aside.
+ *  - **Until tomorrow**: every acknowledgement is dropped at the viewer's next local midnight,
+ *    the same day boundary as Today so far (`localDay` in `home.ts`).
  *  - **Nothing is lost**: acknowledged rows are listed behind a "N acknowledged · Show" toggle.
  */
-
-/** The calendar the acknowledgements' day is kept in. */
-export const HOME_ACK_ZONE = 'Asia/Kolkata';
 
 /** What a "Got it" remembers of the row. */
 export interface HomeAck {
@@ -28,15 +27,15 @@ export interface HomeAck {
 
 /** One tenant and account's acknowledgements, as stored. */
 export interface HomeAckRecord {
-  /** `YYYY-MM-DD` in {@link HOME_ACK_ZONE}: the day they were made. */
+  /** `YYYY-MM-DD` in the viewer's zone: the day they were made. */
   day: string;
   /** By the row's id (stable across refreshes: the condition and its campaign). */
   acks: Record<string, HomeAck>;
 }
 
-/** Today, for the acknowledgements. */
+/** Today, for the acknowledgements: the viewer's local day. */
 export function homeAckDay(now: Date): string {
-  return zoneDay(HOME_ACK_ZONE, now);
+  return localDay(now);
 }
 
 /** What to remember of a row when it is put aside. */
@@ -44,11 +43,12 @@ export function ackOf(item: Pick<HomeAttentionItem, 'kind' | 'tone' | 'count'>):
   return { kind: item.kind, tone: item.tone, count: item.count };
 }
 
-/** Whether a row is still aside under `ack`: same kind and tone, and no more of it. */
-export function stillAcknowledged(
-  item: Pick<HomeAttentionItem, 'kind' | 'tone' | 'count'>,
-  ack: HomeAck | undefined,
-): boolean {
+/** What the rules read of a row; `ackable` absent counts as offered. */
+type AckedRow = Pick<HomeAttentionItem, 'kind' | 'tone' | 'count'> & { ackable?: boolean };
+
+/** Whether a row is still aside under `ack`: one that may be, same kind and tone, and no more of it. */
+export function stillAcknowledged(item: AckedRow, ack: HomeAck | undefined): boolean {
+  if (item.ackable === false) return false;
   if (!ack || ack.kind !== item.kind || ack.tone !== item.tone) return false;
   if (ack.count === null || item.count === null) return ack.count === item.count;
   return item.count <= ack.count;
@@ -71,7 +71,7 @@ export function todaysAcks(stored: unknown, today: string): Record<string, HomeA
 }
 
 /** The rows still to show, and the ones the reader put aside, each in the list's order. */
-export function splitAcknowledged<T extends Pick<HomeAttentionItem, 'id' | 'kind' | 'tone' | 'count'>>(
+export function splitAcknowledged<T extends AckedRow & Pick<HomeAttentionItem, 'id'>>(
   items: readonly T[],
   acks: Readonly<Record<string, HomeAck>>,
 ): { open: T[]; acknowledged: T[] } {

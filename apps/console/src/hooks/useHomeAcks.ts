@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import type { HomeAttentionItem } from '../utils/agency/home';
 import { ackOf, homeAckDay, todaysAcks, type HomeAck, type HomeAckRecord } from '../utils/agency/homeAcks';
 
 /**
- * The reader's Home acknowledgements ("Got it", `utils/agency/homeAcks.ts`) for one tenant and
- * account, kept in this browser's storage and shared by every reader in the tab (the Home page,
- * the sidebar badge, the menu button's dot), so a "Got it" takes the row off the badge at once.
+ * The signed-in reader's Home acknowledgements ("Got it", `utils/agency/homeAcks.ts`) for one
+ * tenant and account, kept in this browser's storage under their user id and shared by every
+ * reader in the tab (the Home page, the sidebar badge, the menu button's dot), so a "Got it" takes
+ * the row off the badge at once. Sign-out is in place, so it forgets the in-tab copies
+ * ({@link resetHomeAcks}, from `AuthContext`); another person's are under another key.
  *
  * Storage is a convenience: every access is guarded, and without it (a private window, blocked
- * site data) acknowledgements simply last until the page is reloaded.
+ * site data) acknowledgements simply last until the page is reloaded or the reader signs out.
  */
 
 const PREFIX = 'magick.home.acks.v1';
 
-/** The storage key for a tenant and account. */
-export function homeAcksKey(tenantId: string, accountId: string): string {
-  return `${PREFIX}:${tenantId}:${accountId}`;
+/** The storage key for a user, tenant and account. */
+export function homeAcksKey(userId: string, tenantId: string, accountId: string): string {
+  return `${PREFIX}:${userId}:${tenantId}:${accountId}`;
 }
 
 const NONE: Readonly<Record<string, HomeAck>> = Object.freeze({});
@@ -70,11 +73,15 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** Tests only: forget the in-tab copies. */
-export function resetHomeAcksForTests(): void {
+/** Forget the in-tab copies (sign-out: the next person in this tab must not inherit them). */
+export function resetHomeAcks(): void {
   memory.clear();
   snapshots.clear();
+  notify();
 }
+
+/** The name the tests know it by. */
+export const resetHomeAcksForTests = resetHomeAcks;
 
 export interface HomeAcks {
   /** Today's acknowledgements, by row id. */
@@ -84,7 +91,8 @@ export interface HomeAcks {
 }
 
 export function useHomeAcks(tenantId: string | null | undefined, accountId: string | null | undefined): HomeAcks {
-  const key = tenantId && accountId ? homeAcksKey(tenantId, accountId) : null;
+  const userId = useAuth().user?.id;
+  const key = userId && tenantId && accountId ? homeAcksKey(userId, tenantId, accountId) : null;
   const acks = useSyncExternalStore(subscribe, () => snapshot(key));
 
   // Another tab's "Got it" (or its new day) reaches this one.

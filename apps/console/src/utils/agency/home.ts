@@ -71,11 +71,17 @@ export interface HomeAttentionItem {
   /** Its campaign's figures are the last good read's: this read could not refresh them. */
   stale: boolean;
   /**
-   * What a "Got it" holds against (`homeAcks.ts`): the condition's kind (the stall's code, or the
-   * Overview rule's id) and how much of it there is, where it counts something.
+   * What a "Got it" holds against (`homeAcks.ts`): the condition's kind (the stall's code, with
+   * the pause's instant for an automatic pause, so a new pause is a new kind; or the Overview
+   * rule's id) and how much of it there is, where it counts something.
    */
   kind: string;
   count: number | null;
+  /**
+   * Whether "Got it" is offered. Not on a count that cannot grow (missed calls past 99, where
+   * the server stops counting): "until it gets worse" could never bring it back.
+   */
+  ackable: boolean;
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -234,8 +240,10 @@ export function homeAttention(
         to: campaignTabHref(route.tab, campaign.id),
         badge: route.tone !== 'info',
         stale: read.stale,
-        kind: `stall:${stall.code}`,
+        // An automatic pause is one occurrence: resumed and paused again, it is a new row to see.
+        kind: 'paused_at' in stall ? `stall:${stall.code}@${stall.paused_at}` : `stall:${stall.code}`,
         count: null,
+        ackable: true,
       });
     }
 
@@ -256,6 +264,7 @@ export function homeAttention(
         stale: read.stale,
         kind: rule.id,
         count: rule.count ?? null,
+        ackable: true,
       });
     }
   }
@@ -279,7 +288,9 @@ export function homeAttention(
       badge: false,
       stale: false,
       kind: 'missed',
-      count: many ? Math.max(open.open, 100) : open.open,
+      count: open.open,
+      // Past 99 the count is capped and can no longer grow, so a "Got it" would hold all day.
+      ackable: !many,
     });
   }
 
@@ -371,6 +382,15 @@ export function homeFloor(reads: readonly HomeCampaignRead[]): HomeFloorRow[] {
 }
 
 // ── Today so far ──────────────────────────────────────────────────────────────
+
+/**
+ * The viewer's calendar day, `YYYY-MM-DD` in the browser's zone: the day Today so far counts
+ * ({@link todayWindow}) and the one "Got it" lasts for (`homeAcks.ts`).
+ */
+export function localDay(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 /** The window "today so far" asks for: the viewer's local midnight up to now. */
 export function todayWindow(now: Date): { from: string; to: string } {

@@ -22,6 +22,7 @@ import { browserStorage } from '../utils/browserStorage';
 import { clearCustomerSearchAnswers } from '../utils/customerHistoryStore';
 import { resetSearchCampaignsCache } from '../hooks/useSearchCampaigns';
 import { resetCampaignTabBadges } from '../hooks/useCampaignTabBadges';
+import { resetHomeAcks } from '../hooks/useHomeAcks';
 import { clearRecentCampaigns } from '../utils/recentCampaigns';
 import { isJoinInProgress, isThisTabsJoin } from '../utils/inviteJoin';
 import type { User, Tenant, Membership, SessionResponse, SessionRefusalCode } from '../types/auth';
@@ -49,6 +50,7 @@ function clearSignedInStores(): void {
   resetSearchCampaignsCache();
   resetCampaignTabBadges();
   clearRecentCampaigns(browserStorage());
+  resetHomeAcks();
 }
 
 // The invite types are part of this context's API; they live with the flow.

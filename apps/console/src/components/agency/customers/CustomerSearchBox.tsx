@@ -10,8 +10,8 @@ import {
 import { CUSTOMER_SEARCH_VALUE_MAX } from '@magick-agency/contracts/api/agency/customer-history';
 import { usePermission } from '../../../hooks/usePermission';
 import { useCustomerSearchDefaultCallingCode } from '../../../hooks/useCustomerSearchDefaultCallingCode';
+import { browserStorage } from '../../../utils/browserStorage';
 import {
-  browserStorage,
   clearRecentCustomerSearches,
   readRecentCustomerSearches,
   subscribeRecentCustomerSearches,

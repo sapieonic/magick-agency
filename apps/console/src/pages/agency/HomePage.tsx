@@ -121,7 +121,7 @@ export default function HomePage() {
             {needs.length > 0 ? (
               <ul className={styles.attentionList} data-testid="home-attention">
                 {needs.map((item) => (
-                  <AttentionRow key={item.id} item={item} now={now} onAcknowledge={acknowledge} />
+                  <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} />
                 ))}
               </ul>
             ) : board.stale ? (
@@ -140,7 +140,7 @@ export default function HomePage() {
                 <h3 className={styles.waitingTitle}>For your information</h3>
                 <ul className={styles.attentionList}>
                   {waiting.map((item) => (
-                    <AttentionRow key={item.id} item={item} now={now} onAcknowledge={acknowledge} />
+                    <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} />
                   ))}
                 </ul>
               </div>

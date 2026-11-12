@@ -13,11 +13,13 @@ const mocks = vi.hoisted(() => ({
   getAgencyHomeBoard: vi.fn(),
   getAgencyGroupedStats: vi.fn(),
   missed: { available: false, count: null as null | { open: number; open_capped: boolean; has_rows: boolean } },
+  userId: 'u-1',
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({ role: mocks.role, tenantId: 't-1', accountId: 'a-1', accounts: [{ id: 'a-1', name: 'Pune Collections' }] }),
 }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: mocks.userId } }) }));
 vi.mock('../../api/agencyHome', () => ({ getAgencyHomeBoard: mocks.getAgencyHomeBoard }));
 vi.mock('../../api/agencyStats', () => ({ getAgencyGroupedStats: mocks.getAgencyGroupedStats }));
 vi.mock('../../hooks/useMissedCallsAccess', () => ({
@@ -58,6 +60,7 @@ beforeEach(() => {
   window.localStorage.clear();
   resetHomeAcksForTests();
   mocks.role = 'account_admin';
+  mocks.userId = 'u-1';
   mocks.missed = { available: false, count: null };
   mocks.getAgencyHomeBoard.mockResolvedValue(board([], { any_campaign: true }));
   mocks.getAgencyGroupedStats.mockResolvedValue({ rows: [], total_groups: 0 });
@@ -288,7 +291,7 @@ describe('Got it (acknowledged rows)', () => {
     expect(within(list).getByText('1 callback overdue')).toBeTruthy();
     expect(within(list).queryByRole('button', { name: /Got it/ })).toBeNull();
     expect(toggle.textContent).toBe('1 acknowledged · Hide');
-    const stored = JSON.parse(window.localStorage.getItem(homeAcksKey('t-1', 'a-1'))!);
+    const stored = JSON.parse(window.localStorage.getItem(homeAcksKey('u-1', 't-1', 'a-1'))!);
     expect(stored.acks['callbacks-overdue:c1']).toEqual({ kind: 'callbacks-overdue', tone: 'danger', count: 1 });
   });
 
@@ -325,6 +328,32 @@ describe('Got it (acknowledged rows)', () => {
     renderHome();
     fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
     expect(screen.getByTestId('home-attention-empty').textContent).toContain('Nothing new needs you right now');
+  });
+
+  it('is the signed-in reader’s own: another person on this browser still sees the row', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 1 })]));
+    const first = renderHome();
+    fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
+    expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
+    first.unmount();
+
+    mocks.userId = 'u-2';
+    const second = renderHome();
+    expect(await screen.findByTestId('home-attention-callbacks-overdue:c1')).toBeTruthy();
+    second.unmount();
+
+    mocks.userId = 'u-1';
+    renderHome();
+    await waitFor(() => expect(screen.getByTestId('home-acknowledged')).toBeTruthy());
+    expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
+  });
+
+  it('offers no "Got it" on more than 99 missed calls: a capped count cannot grow to bring it back', async () => {
+    mocks.missed = { available: true, count: { open: 99, open_capped: true, has_rows: true } };
+    renderHome();
+    const row = await screen.findByTestId('home-attention-missed');
+    expect(within(row).queryByRole('button', { name: /Got it/ })).toBeNull();
+    expect(within(row).getByRole('link', { name: /Open missed calls/ })).toBeTruthy();
   });
 
   it('works without storage (a private window): the row is put aside for this page', async () => {
