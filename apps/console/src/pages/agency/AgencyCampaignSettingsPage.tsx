@@ -68,9 +68,8 @@ import { ComposerSection } from '../campaigns/components/ComposerSection';
 import { CAMPAIGN_SETTINGS_SECTIONS, campaignHasAgentsSection } from '../../utils/campaignSettingsSections';
 import { changedSettings, samePool, type CampaignSettingsForm } from '../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { UnsavedChangesBar } from '../../components/agency/UnsavedChangesBar';
+import { LeaveUnsavedDialog, UnsavedChangesBar } from '../../components/agency/UnsavedChangesBar';
 import { plural } from '../../utils/format/number';
-import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -844,18 +843,11 @@ export function AgencyCampaignSettingsPage() {
 
       {lifecycle.confirmDialog}
 
-      {leaveGuard.asking && (
-        <ConfirmDialog
-          open
-          title="Leave without saving?"
-          message={`You have ${plural(changes.length, 'unsaved change')} to this campaign’s settings. `
-            + 'Leave now and they are lost; Cancel keeps you here to save them.'}
-          confirmLabel="Leave without saving"
-          danger
-          onConfirm={leaveGuard.leave}
-          onCancel={leaveGuard.stay}
-        />
-      )}
+      <LeaveUnsavedDialog
+        guard={leaveGuard}
+        message={`You have ${plural(changes.length, 'unsaved change')} to this campaign’s settings. `
+          + 'Leave now and they are lost; Cancel keeps you here to save them.'}
+      />
     </div>
   );
 }
