@@ -1,14 +1,15 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react';
-import { StrictMode, useLayoutEffect, useState } from 'react';
+import { StrictMode, useLayoutEffect, useState, type ReactNode } from 'react';
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
+import { UrlScopeProvider, useUrlScope } from '../../contexts/UrlScopeContext';
 import { ScopedRouter } from '../../components/routing/ScopedRouter';
 
 /**
  * Leaving a page with unsaved edits asks first: in-app navigation (held by the navigator),
- * Back and Forward (a capture-phase `popstate`), and a full page load (`beforeunload`).
+ * Back and Forward (held in `UrlScopeProvider`'s history listener), and a full page load
+ * (`beforeunload`).
  */
 
 function Editor() {
@@ -274,5 +275,275 @@ describe('useUnsavedChangesGuard — Back and Forward in the browser', () => {
     await waitFor(() => expect(where()).toBe('/agency/campaigns/c1/settings'));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByTestId('dirty').textContent).toBe('unsaved');
+  });
+});
+
+/* ── One stack of blockers, forced redirects and steps within the page ─────── */
+
+/** A form with its own guard; `name` tells two apart. */
+function Guarded({ name }: { name: string }) {
+  const [dirty, setDirty] = useState(false);
+  const guard = useUnsavedChangesGuard(dirty);
+  return (
+    <div>
+      <button type="button" onClick={() => setDirty(true)}>{`Edit ${name}`}</button>
+      {guard.asking && (
+        <div role="dialog" aria-label={`Leave ${name}?`}>
+          <button type="button" onClick={guard.leave}>{`Leave ${name}`}</button>
+          <button type="button" onClick={guard.stay}>{`Stay ${name}`}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Two guards on one page, each of which can be taken away. */
+function TwoForms() {
+  const [outer, setOuter] = useState(true);
+  const [inner, setInner] = useState(true);
+  return (
+    <div>
+      {outer && <Guarded name="outer" />}
+      {inner && <Guarded name="inner" />}
+      <button type="button" onClick={() => setOuter(false)}>Close outer</button>
+      <button type="button" onClick={() => setInner(false)}>Close inner</button>
+      <Link to="/elsewhere">Elsewhere</Link>
+    </div>
+  );
+}
+
+/** The page's other ways to move: a hash pushed, a trailing slash, a forward step, a forced redirect. */
+function MoreWays() {
+  const navigate = useNavigate();
+  const { go } = useUrlScope();
+  return (
+    <div>
+      <button type="button" onClick={() => navigate({ hash: '#recording' })}>Push section</button>
+      <button type="button" onClick={() => navigate('/agency/campaigns/c1/settings/')}>Trailing slash</button>
+      <button type="button" onClick={() => navigate(1)}>Go forward</button>
+      <button type="button" onClick={() => go({ tenantId: 'tenant-1', accountId: 'account-2' }, '/', { replace: true, force: true })}>
+        Account taken away
+      </button>
+      <button type="button" onClick={() => go({ tenantId: 'tenant-1', accountId: 'account-2' }, '/')}>Other account</button>
+      <Link to="/agency/campaigns/c1/calls">Calls</Link>
+    </div>
+  );
+}
+
+function renderWith(path: string, settings: ReactNode) {
+  window.history.replaceState(null, '', '/before');
+  window.history.pushState(null, '', `${SCOPE}${path}`);
+  return render(
+    <StrictMode>
+      <UrlScopeProvider>
+        <ScopedRouter>
+          <Routes>
+            <Route path="/agency/campaigns/:id/overview" element={<Link to="/agency/campaigns/c1/calls">Calls</Link>} />
+            <Route path="/agency/campaigns/:id/calls" element={<Link to="/agency/campaigns/c1/settings">Settings</Link>} />
+            <Route path="/agency/campaigns/:id/settings" element={settings} />
+            <Route path="*" element={<p>Another page</p>} />
+          </Routes>
+          <Where />
+          <Heard />
+        </ScopedRouter>
+      </UrlScopeProvider>
+    </StrictMode>,
+  );
+}
+
+const asked = (name: string) => screen.queryByRole('dialog', { name: `Leave ${name}?` });
+
+describe('useUnsavedChangesGuard — two guards on one page', () => {
+  function bothDirty() {
+    renderWith('/agency/campaigns/c1/settings', <TwoForms />);
+    fireEvent.click(screen.getByText('Edit outer'));
+    fireEvent.click(screen.getByText('Edit inner'));
+  }
+
+  it('asks the newest first, then the other, and goes only when both let it', () => {
+    bothDirty();
+    fireEvent.click(screen.getByText('Elsewhere'));
+    expect(asked('inner')).toBeTruthy();
+    expect(asked('outer')).toBeNull();
+    fireEvent.click(screen.getByText('Leave inner'));
+    expect(asked('outer')).toBeTruthy();
+    expect(where()).toBe('/agency/campaigns/c1/settings');
+    fireEvent.click(screen.getByText('Leave outer'));
+    expect(where()).toBe('/elsewhere');
+  });
+
+  it('the inner one closed first: the outer one still holds, and once it closes nothing does', () => {
+    bothDirty();
+    fireEvent.click(screen.getByText('Close inner'));
+    fireEvent.click(screen.getByText('Elsewhere'));
+    expect(asked('outer')).toBeTruthy();
+    fireEvent.click(screen.getByText('Stay outer'));
+    fireEvent.click(screen.getByText('Close outer'));
+    fireEvent.click(screen.getByText('Elsewhere'));
+    expect(where()).toBe('/elsewhere');
+  });
+
+  it('the inner one closed last: it still holds after the outer one went, and nothing holds after it', () => {
+    bothDirty();
+    fireEvent.click(screen.getByText('Close outer'));
+    fireEvent.click(screen.getByText('Elsewhere'));
+    expect(asked('inner')).toBeTruthy();
+    expect(where()).toBe('/agency/campaigns/c1/settings');
+    fireEvent.click(screen.getByText('Stay inner'));
+    fireEvent.click(screen.getByText('Close inner'));
+    fireEvent.click(screen.getByText('Elsewhere'));
+    expect(where()).toBe('/elsewhere');
+  });
+});
+
+describe('useUnsavedChangesGuard — what it lets through', () => {
+  let restore: () => void = () => {};
+  beforeEach(() => {
+    restore = runPopStateListenersInAddedOrder();
+  });
+  afterEach(() => {
+    restore();
+  });
+
+  /** Calls, then Settings (an entry the router numbered behind it), then an edit. */
+  function dirtyWithMore() {
+    renderWith(
+      '/agency/campaigns/c1/calls',
+      <>
+        <Editor />
+        <MoreWays />
+      </>,
+    );
+    fireEvent.click(screen.getByText('Settings'));
+    fireEvent.click(screen.getByText('Edit'));
+  }
+
+  it('never holds a forced redirect (the open account taken away), though it holds a plain move between accounts', () => {
+    dirtyWithMore();
+    fireEvent.click(screen.getByText('Other account'));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByText('Stay'));
+    fireEvent.click(screen.getByText('Account taken away'));
+    expect(window.location.pathname).toBe('/t/tenant-1/a/account-2');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('lets the same page with a trailing slash through', () => {
+    dirtyWithMore();
+    fireEvent.click(screen.getByText('Trailing slash'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(window.location.pathname).toBe(`${SCOPE}/agency/campaigns/c1/settings/`);
+  });
+
+  it('lets Back through between two entries of the same page that the router numbered', async () => {
+    dirtyWithMore();
+    fireEvent.click(screen.getByText('Push section'));
+    expect(where()).toBe('/agency/campaigns/c1/settings#recording');
+    heard = [];
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() => expect(where()).toBe('/agency/campaigns/c1/settings'));
+    expect(heard).toEqual(['/agency/campaigns/c1/settings']);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('dirty').textContent).toBe('unsaved');
+  });
+
+  it('after a Leave whose step went nowhere (no entry ahead), still holds the next Back', async () => {
+    dirtyWithMore();
+    fireEvent.click(screen.getByText('Go forward'));
+    fireEvent.click(screen.getByText('Leave'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(where()).toBe('/agency/campaigns/c1/settings');
+    heard = [];
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    expect(heard).toEqual([]);
+    expect(window.location.pathname).toBe(`${SCOPE}/agency/campaigns/c1/settings`);
+  });
+});
+
+/**
+ * Chromium takes history steps one after another, each popstate a task of its own: a step asked
+ * for in a popstate listener waits behind one the person already took. happy-dom takes each at
+ * once, inside the call; this queues them as Chromium does.
+ */
+function takeStepsOneAtATime() {
+  const original = { go: window.history.go, back: window.history.back, forward: window.history.forward };
+  const go = original.go.bind(window.history);
+  const queue: number[] = [];
+  let busy = false;
+  const next = () => {
+    const delta = queue.shift();
+    if (delta === undefined) {
+      busy = false;
+      return;
+    }
+    go(delta);
+    setTimeout(next, 0);
+  };
+  const take = (delta: number) => {
+    queue.push(delta);
+    if (!busy) {
+      busy = true;
+      setTimeout(next, 0);
+    }
+  };
+  window.history.go = (delta?: number) => take(delta ?? 0);
+  window.history.back = () => take(-1);
+  window.history.forward = () => take(1);
+  return () => Object.assign(window.history, original);
+}
+
+describe('useUnsavedChangesGuard — Back twice before the page is put back', () => {
+  let restore: () => void = () => {};
+  beforeEach(() => {
+    const listeners = runPopStateListenersInAddedOrder();
+    const steps = takeStepsOneAtATime();
+    restore = () => {
+      steps();
+      listeners();
+    };
+  });
+  afterEach(() => {
+    restore();
+  });
+
+  const settle = () => act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  it('puts the browser back on the page, asks once, and never tells the router', async () => {
+    // Overview, Calls, Settings, then a page ahead and Back to Settings: an entry on each side.
+    renderWith('/agency/campaigns/c1/overview', <Editor />);
+    fireEvent.click(screen.getByText('Calls'));
+    fireEvent.click(screen.getByText('Settings'));
+    fireEvent.click(screen.getByText('Elsewhere'));
+    await act(async () => {
+      window.history.back();
+    });
+    await settle();
+    expect(where()).toBe('/agency/campaigns/c1/settings');
+    fireEvent.click(screen.getByText('Edit'));
+    heard = [];
+
+    await act(async () => {
+      window.history.back();
+      window.history.back();
+    });
+    await settle();
+
+    expect(window.location.pathname).toBe(`${SCOPE}/agency/campaigns/c1/settings`);
+    expect(heard).toEqual([]);
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByTestId('dirty').textContent).toBe('unsaved');
+
+    fireEvent.click(screen.getByText('Leave'));
+    await settle();
+    expect(where()).toBe('/agency/campaigns/c1/calls');
   });
 });
