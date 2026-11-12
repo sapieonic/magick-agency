@@ -1,12 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { ChevronRight, CircleCheck, Plus } from 'lucide-react';
+import { Check, ChevronRight, CircleCheck, Plus, RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { HOME_FAST_MS, useHomeBoard } from '../../hooks/useHomeBoard';
+import { useHomeAcks } from '../../hooks/useHomeAcks';
+import { splitAcknowledged } from '../../utils/agency/homeAcks';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { hasPermission } from '../../utils/permissions';
 import { holdsHomePermission } from '../../utils/consoleNav';
@@ -44,7 +46,7 @@ export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
   // `HOME_GATE`'s permission; its capability and flag are `/agency`'s route gates, passed here.
   const supervise = holdsHomePermission(role);
-  const board = useHomeBoard({ tenantId, accountId, enabled: supervise, intervalMs: HOME_FAST_MS });
+  const board = useHomeBoard({ tenantId, accountId, role, enabled: supervise, intervalMs: HOME_FAST_MS });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
 
@@ -52,8 +54,12 @@ export default function HomePage() {
     () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
     [board.reads, missed.available, missed.count],
   );
-  const needs = homeNeeds(items);
-  const waiting = homeWaiting(items);
+  // "Got it" (B28a): rows the reader put aside, until they get worse or tomorrow.
+  const { acks, acknowledge } = useHomeAcks(tenantId, accountId);
+  const { open, acknowledged } = splitAcknowledged(items, acks);
+  const [showAcknowledged, setShowAcknowledged] = useState(false);
+  const needs = homeNeeds(open);
+  const waiting = homeWaiting(open);
   const floor = useMemo(() => homeFloor(board.reads), [board.reads]);
 
   if (role === undefined) return <LoadingSpinner />;
@@ -65,6 +71,7 @@ export default function HomePage() {
   const onFloor = board.reads.reduce((n, r) => n + (r.stats?.agents_live ?? 0), 0);
   const noCampaigns = board.status === 'ready' && board.anyCampaign === false;
   const now = new Date();
+  const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
 
   return (
     <div className={styles.page}>
@@ -91,6 +98,16 @@ export default function HomePage() {
       {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={board.reload} />}
       {(board.status === 'loading' || board.status === 'idle') && <LoadingSpinner />}
 
+      {board.status === 'ready' && board.stale && (
+        <div className={styles.staleNote} role="status" data-testid="home-stale">
+          <span>{`Couldn’t refresh. Last updated ${lastUpdated ?? ''}`}</span>
+          <button type="button" className={`btn-secondary ${styles.action}`} onClick={board.reload}>
+            <RefreshCw size={14} aria-hidden="true" />
+            Retry
+          </button>
+        </div>
+      )}
+
       {board.status === 'ready' && (
         <>
           <section className={styles.card} aria-labelledby="home-attention-heading">
@@ -99,28 +116,52 @@ export default function HomePage() {
                 Needs your attention
                 {needs.length > 0 && <span className={styles.count}>{` · ${formatCount(needs.length)}`}</span>}
               </h2>
-              <p className={styles.cardNote}>Each item clears itself once it’s fixed</p>
+              <p className={styles.cardNote}>Each item clears itself once it’s fixed. “Got it” hides one until it gets worse, or until tomorrow</p>
             </div>
             {needs.length > 0 ? (
               <ul className={styles.attentionList} data-testid="home-attention">
                 {needs.map((item) => (
-                  <AttentionRow key={item.id} item={item} now={now} />
+                  <AttentionRow key={item.id} item={item} now={now} onAcknowledge={acknowledge} />
                 ))}
               </ul>
+            ) : board.stale ? (
+              // Never an all-clear from a read Home could not refresh.
+              <p className={styles.quiet} data-testid="home-attention-unknown">
+                {`Nothing needed you at ${lastUpdated ?? 'the last refresh'}, the last time Home could check.`}
+              </p>
             ) : (
               <p className={styles.allClear} data-testid="home-attention-empty">
                 <CircleCheck size={18} aria-hidden="true" />
-                Nothing needs you right now
+                {homeNeeds(acknowledged).length > 0 ? 'Nothing new needs you right now' : 'Nothing needs you right now'}
               </p>
             )}
             {waiting.length > 0 && (
               <div className={styles.waiting} data-testid="home-waiting">
-                <h3 className={styles.waitingTitle}>Waiting, nothing wrong</h3>
+                <h3 className={styles.waitingTitle}>For your information</h3>
                 <ul className={styles.attentionList}>
                   {waiting.map((item) => (
-                    <AttentionRow key={item.id} item={item} now={now} />
+                    <AttentionRow key={item.id} item={item} now={now} onAcknowledge={acknowledge} />
                   ))}
                 </ul>
+              </div>
+            )}
+            {acknowledged.length > 0 && (
+              <div className={styles.waiting} data-testid="home-acknowledged">
+                <button
+                  type="button"
+                  className={styles.ackToggle}
+                  aria-expanded={showAcknowledged}
+                  onClick={() => setShowAcknowledged((shown) => !shown)}
+                >
+                  {`${formatCount(acknowledged.length)} acknowledged · ${showAcknowledged ? 'Hide' : 'Show'}`}
+                </button>
+                {showAcknowledged && (
+                  <ul className={styles.attentionList} data-testid="home-acknowledged-list">
+                    {acknowledged.map((item) => (
+                      <AttentionRow key={item.id} item={item} now={now} />
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
           </section>
@@ -204,20 +245,40 @@ function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
   );
 }
 
-function AttentionRow({ item, now }: { item: HomeAttentionItem; now: Date }) {
+/** One row; `onAcknowledge` offers "Got it" (left out on a row already put aside). */
+function AttentionRow({ item, now, onAcknowledge }: {
+  item: HomeAttentionItem;
+  now: Date;
+  onAcknowledge?: (item: HomeAttentionItem) => void;
+}) {
   return (
     <li className={styles.attentionRow} data-tone={item.tone} data-testid={`home-attention-${item.id}`}>
       <span className={`${styles.dot} ${styles[item.tone]}`} aria-hidden="true" />
       <div className={styles.attentionText}>
         {item.campaign && <span className={styles.campaignName}>{item.campaign.name}</span>}
+        {item.stale && <span className={styles.staleTag}>Not refreshed</span>}
         <span className={styles.attentionTitle}>{item.title}</span>
         <span className={styles.attentionDetail}>{item.detail}</span>
       </div>
       {item.at && <time className={styles.when} dateTime={item.at}>{when(item.at, now)}</time>}
-      <Link to={item.to} className={`btn-secondary ${styles.action}`}>
-        {item.action}
-        <ChevronRight size={15} aria-hidden="true" />
-      </Link>
+      <div className={styles.rowActions}>
+        {onAcknowledge && (
+          <button
+            type="button"
+            className={`btn-secondary ${styles.ack}`}
+            onClick={() => onAcknowledge(item)}
+            aria-label={`Got it: ${item.campaign ? `${item.campaign.name}, ` : ''}${item.title}`}
+            title="Hide this until it gets worse, or until tomorrow"
+          >
+            <Check size={14} aria-hidden="true" />
+            Got it
+          </button>
+        )}
+        <Link to={item.to} className={`btn-secondary ${styles.action}`}>
+          {item.action}
+          <ChevronRight size={15} aria-hidden="true" />
+        </Link>
+      </div>
     </li>
   );
 }
@@ -232,6 +293,7 @@ function FloorRow({ row }: { row: HomeFloorRow }) {
       <th scope="row">
         <Link to={row.to} className={styles.floorName}>{row.campaign.name}</Link>
         <AgencyCampaignStatusBadge status={row.campaign.status} />
+        {row.stale && <span className={styles.staleTag} data-testid="home-floor-stale">Not refreshed</span>}
         {row.onCall === null && <span className={styles.quiet}>{` ${plural(row.agentsLive, 'agent')} live`}</span>}
       </th>
       <td className={styles.num}>{figure(row.onCall)}</td>

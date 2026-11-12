@@ -3,7 +3,9 @@ import { Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Menu, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useNavGate } from '../../hooks/useNavGate';
-import { backCrumb, breadcrumbFor } from '../../utils/consoleNav';
+import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
+import { HOME_GATE, backCrumb, breadcrumbFor, dialerOn, passesGate } from '../../utils/consoleNav';
+import { menuAttentionLabel } from '../../utils/agency/home';
 import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
 import { useSuppliedCrumbs } from './PageCrumbs';
@@ -40,18 +42,13 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');
 
+  // The sidebar offers Home (and its badge) only with the dialer on and past Home's gate.
+  const offersHome = dialerOn(gate) && passesGate(HOME_GATE, gate);
+  const menu = { onMenuClick, menuExpanded, menuControls };
+
   return (
     <div className={styles.topbar}>
-      <button
-        className={styles.menuBtn}
-        onClick={onMenuClick}
-        type="button"
-        aria-label="Toggle menu"
-        aria-expanded={menuExpanded}
-        aria-controls={menuControls}
-      >
-        <Menu size={20} />
-      </button>
+      {offersHome ? <AttentionMenuButton {...menu} /> : <MenuButton {...menu} attention={null} />}
 
       {back && (
         <Link
@@ -112,3 +109,49 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
     </div>
   );
 }
+
+interface MenuButtonProps {
+  onMenuClick?: () => void;
+  menuExpanded?: boolean;
+  menuControls?: string;
+}
+
+/**
+ * The phone's menu button. `attention` is the Home badge's count and freshness: above zero, the
+ * button carries a dot and says "N things need you", because on a phone the sidebar, and the badge
+ * on its Home entry, is a closed drawer.
+ */
+function MenuButton({ onMenuClick, menuExpanded, menuControls, attention }: MenuButtonProps & {
+  attention: { count: number | null; stale: boolean } | null;
+}) {
+  const said = attention ? menuAttentionLabel(attention.count, attention.stale) : null;
+  return (
+    <button
+      className={styles.menuBtn}
+      onClick={onMenuClick}
+      type="button"
+      aria-label={said ? `Toggle menu, ${said}` : 'Toggle menu'}
+      aria-expanded={menuExpanded}
+      aria-controls={menuControls}
+    >
+      <Menu size={20} />
+      {said && (
+        <span
+          className={`${styles.menuDot} ${attention?.stale ? styles.menuDotStale : ''}`}
+          data-testid="menu-attention-dot"
+          aria-hidden="true"
+        />
+      )}
+    </button>
+  );
+}
+
+/** The menu button for a reader the sidebar offers Home: the Home badge's board, no request of its own. */
+function AttentionMenuButton(props: MenuButtonProps) {
+  const { tenantId, accountId, role } = useTenant();
+  const attention = useHomeBadgeCount(tenantId, accountId, role, NO_MISSED);
+  return <MenuButton {...props} attention={attention} />;
+}
+
+/** The badge never counts the missed calls (the Inbound badge has them), so the dot needs no missed read. */
+const NO_MISSED = { available: false, count: null } as const;

@@ -322,6 +322,7 @@ export type AgencyStall =
     }
   | {
       code: 'no_agents_available';
+      /** `agents_live`: the floor's rows that are not `offline`. */
       agents_on_shift: number;
       /** Break codes to counts, so the console can render "5 on break (Lunch)". */
       on_break_by_reason: Record<string, number>;
@@ -477,6 +478,11 @@ export interface AgencyCampaignStats {
    * Optional on the wire, as `attempts_retried`: the dialer runtime always produces it.
    */
   attempts_redialed?: number;
+  /**
+   * Agents on shift: the floor's rows (`agents`) in any state but `offline` (a signed-out station
+   * not reaped yet). The console's `agentsOnShift` counts the same rows, and the stall's
+   * `no_agents_available.agents_on_shift` is this number.
+   */
   agents_live: number;
   /**
    * **P2.** Attempts that answered with no agent to bridge to, over a rolling 24
@@ -502,7 +508,7 @@ export interface AgencyCampaignStats {
 
   // ── the supervisor dashboard ──────────────────────────────────
 
-  /** Live agents by state. Replaces nothing — `agents_live` stays as the total. */
+  /** Live agents by state, `offline` included. `agents_live` is every state but `offline`. */
   agents_by_state: AgencyAgentsByState;
   /** The floor, unsorted. Risk ordering is the console's. */
   agents: AgencySupervisorAgent[];

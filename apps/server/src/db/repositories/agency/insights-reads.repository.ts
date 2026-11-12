@@ -185,30 +185,6 @@ export function allocationStatement(input: AllocationCountsInput): InsightsState
   return { text, values: bind.values };
 }
 
-/** One campaign of {@link callbacksOverdueStatement}: its id and `callbackCodes(its catalog)`. */
-export interface CallbacksOverdueInput {
-  campaignId: string;
-  callbackCodes: string[];
-}
-
-/**
- * The allocation's `callbacks_overdue` total ({@link callbackOverdueSql}) for several campaigns
- * in one statement, one row per campaign (0 included): Home's overdue count. Each campaign's
- * callback codes ride in one jsonb parameter (`{ id: codes }`), and each count is one
- * campaign-prefixed scan of `idx_agency_contacts_insights`, as the allocation's.
- */
-export function callbacksOverdueStatement(campaigns: readonly CallbacksOverdueInput[]): InsightsStatement {
-  const bind = params();
-  const byCampaign = bind.add(JSON.stringify(Object.fromEntries(campaigns.map((c) => [c.campaignId, c.callbackCodes]))));
-  const text = `
-    SELECT k.campaign_id::text AS campaign_id,
-           (SELECT count(*)::int FROM agency_contacts c
-             WHERE c.campaign_id = k.campaign_id AND ${callbackOverdueSql('c', 'k.codes')}) AS n
-      FROM (SELECT key::uuid AS campaign_id, ARRAY(SELECT jsonb_array_elements_text(value)) AS codes
-              FROM jsonb_each(${byCampaign}::jsonb)) k`;
-  return { text, values: bind.values };
-}
-
 /** Per agent who dialled (null: dials with no reserved session): the allocation's dial counters. */
 export interface OwnerAttemptCounters {
   redials: number;
@@ -508,14 +484,6 @@ export class AgencyInsightsReadRepository {
       open: num(r['open']),
       partition_sum: num(r['partition_sum']),
     }));
-  }
-
-  /** {@link callbacksOverdueStatement}'s counts, by campaign id. */
-  async callbacksOverdue(campaigns: readonly CallbacksOverdueInput[]): Promise<Map<string, number>> {
-    if (campaigns.length === 0) return new Map();
-    const { text, values } = callbacksOverdueStatement(campaigns);
-    const { rows } = await getPool().query<{ campaign_id: string; n: number }>(text, values);
-    return new Map(rows.map((r) => [r.campaign_id, num(r.n)]));
   }
 
   /**

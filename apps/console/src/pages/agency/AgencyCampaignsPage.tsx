@@ -89,7 +89,7 @@ export function AgencyCampaignsPage() {
     load,
     loadMore,
   } = useCampaignsHome(tenantId, accountId);
-  const cards = useActiveCards(tenantId, accountId, active, () => load(true));
+  const cards = useActiveCards(tenantId, accountId, role, active, () => load(true));
   const canTakeCalls = passesGate(TAKE_CALLS_GATE, useNavGate());
   const [searchParams, setSearchParams] = useSearchParams();
   // In the URL, so a reload and Back keep it (`campaignFilterFromParams`). Replaced, not pushed:

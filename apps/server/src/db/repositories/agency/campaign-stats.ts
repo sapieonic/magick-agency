@@ -328,7 +328,6 @@ export async function campaignStats(
               att.attempts_retried::text AS attempts_retried,
               att.attempts_redialed::text AS attempts_redialed,
               att.first_dials_placed::text AS first_dials_placed,
-              (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
               att.answered_24h::text AS answered_24h,
               att.abandoned_24h::text AS abandoned_24h,
               att.human_connects::text AS human_connects,
@@ -420,7 +419,12 @@ export async function campaignStats(
     attempts_retried: num('attempts_retried'),
     // Always emitted, as `attempts_retried` is.
     attempts_redialed: num('attempts_redialed'),
-    agents_live: num('agents_live'),
+    // On shift: the floor's rows that are not `offline` (a station that dropped and has not been
+    // reaped yet), tallied from the roster below as `agents_by_state` is. The console's one count
+    // (`agentsOnShift`, `utils/agencyAgentFloor.ts`) is the same rule, so the Agents tab's
+    // "N on shift", Home, the Campaigns page's card and the stall's `agents_on_shift` (read from
+    // here) cannot disagree. It used to count every open session, signed-out ones included.
+    agents_live: agentsOnShift(agents),
     abandoned_24h: abandoned24h,
     answered_24h: answered24h,
     // `null`, never `0`, when nothing has been answered — the single definition,
@@ -483,6 +487,34 @@ export async function campaignStats(
       ? DEFAULT_ABANDONMENT_CEILING_PCT
       : Number(row['abandonment_ceiling_pct']),
   };
+}
+
+/**
+ * What makes each campaign's floor change, in one read (Home's board): per campaign with any open
+ * session, how many there are, the newest `state_since` and the newest `joined_at`. A join, a leave
+ * (`left_at` set), a state change or a swap of one agent for another each changes it. Heartbeats do
+ * not, so a still campaign's memo is not broken every few seconds. One probe of
+ * `idx_agency_agent_sessions_live` per campaign. A campaign with nobody open is absent.
+ */
+export async function floorSignatures(campaignIds: readonly string[]): Promise<Map<string, string>> {
+  if (campaignIds.length === 0) return new Map();
+  const { rows } = await getPool().query<{ campaign_id: string; signature: string }>(
+    `SELECT s.campaign_id::text AS campaign_id,
+            count(*)::text || '/' || max(s.state_since)::text || '/' || max(s.joined_at)::text AS signature
+       FROM agency_agent_sessions s
+      WHERE s.campaign_id = ANY($1::uuid[]) AND s.left_at IS NULL
+      GROUP BY s.campaign_id`,
+    [campaignIds],
+  );
+  return new Map(rows.map((r) => [r.campaign_id, r.signature]));
+}
+
+/**
+ * Agents on shift: the floor's rows in any state but `offline`. `agents_live` on the wire, and so
+ * the stall's `agents_on_shift`; the console's `agentsOnShift` counts the same rows.
+ */
+export function agentsOnShift(agents: readonly Pick<AgencySupervisorAgentRow, 'state'>[]): number {
+  return agents.filter((agent) => agent.state !== 'offline').length;
 }
 
 /**

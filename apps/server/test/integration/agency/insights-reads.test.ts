@@ -205,49 +205,6 @@ describe('the roster partition (insights-sql.ts)', () => {
   });
 });
 
-describe('the overdue callbacks of several campaigns (Home)', () => {
-  it('is each campaign’s allocation total, by its own callback codes, 0 for a campaign with none', async () => {
-    const a = await campaign();
-    const b = await campaign({
-      disposition_catalog: JSON.stringify([{ code: 'ring_back', label: 'Ring back', requires_datetime: true }]),
-    });
-    const none = await campaign();
-    await seedEveryBucket(a, randomUUID());
-    await seedEveryBucket(a, null);
-    // Overdue on b: two under its own callback code; one under a's, which is not a callback on b.
-    const cb = { last_outcome: 'connected', attempt_count: 1, dials_placed: 1, next_attempt_at: at(-HOUR) };
-    await contact(b, { ...cb, last_disposition: 'ring_back' });
-    await contact(b, { ...cb, last_disposition: 'ring_back' });
-    await contact(b, { ...cb, last_disposition: 'callback' });
-
-    const allocated = async (id: string, codes: string[]) =>
-      (await repo.agencyInsightsReadRepository.allocation({ campaignId: id, callbackCodes: codes, successCodes: SUCCESS, dayEndAt: new Date() }))
-        .reduce((sum, r) => sum + r.callbacks_overdue, 0);
-    const counts = await repo.agencyInsightsReadRepository.callbacksOverdue([
-      { campaignId: a, callbackCodes: CALLBACK },
-      { campaignId: b, callbackCodes: ['ring_back'] },
-      { campaignId: none, callbackCodes: CALLBACK },
-    ]);
-    expect(counts).toEqual(new Map([[a, 2], [b, 2], [none, 0]]));
-    expect(counts.get(a)).toBe(await allocated(a, CALLBACK));
-    expect(counts.get(b)).toBe(await allocated(b, ['ring_back']));
-    expect(await repo.agencyInsightsReadRepository.callbacksOverdue([])).toEqual(new Map());
-  });
-
-  // Which campaign-prefixed index the planner takes depends on statistics earlier files left
-  // (the insights index, or the dialable one); the claim is one indexed scan per campaign.
-  it('counts each campaign by an index scan of its campaign prefix, never the whole table', async () => {
-    const { text, values } = repo.callbacksOverdueStatement([
-      { campaignId: randomUUID(), callbackCodes: CALLBACK },
-      { campaignId: randomUUID(), callbackCodes: [] },
-    ]);
-    const p = await plan(text, values);
-    expect(p).toMatch(/Index (Only )?Scan using idx_agency_contacts_\w+ on agency_contacts c/);
-    expect(p).toMatch(/Index Cond: \(\(campaign_id = \(jsonb_each\.key\)::uuid\)/);
-    expect(p).not.toMatch(/Seq Scan on agency_contacts|Bitmap Heap Scan/);
-  });
-});
-
 describe('the allocation per owner', () => {
   it('groups by owner; the partition per owner sums to the allocation; callbacks due today end at local midnight', async () => {
     const id = await campaign({ default_timezone: 'Asia/Kolkata' });

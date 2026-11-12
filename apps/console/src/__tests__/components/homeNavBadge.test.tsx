@@ -45,11 +45,12 @@ vi.mock('../../brand', () => ({ brand: { name: 'TestBrand' } }));
 
 import { ConsoleSidebar } from '../../components/layout/ConsoleSidebar';
 import { resetMissedCallsCountForTests } from '../../hooks/useMissedCallsCount';
+import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
 import { HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 
 /** The Home page's reader of the board, without the page. */
 function HomeReader() {
-  useHomeBoard({ tenantId: 't-1', accountId: 'a-1', enabled: true, intervalMs: HOME_FAST_MS });
+  useHomeBoard({ tenantId: 't-1', accountId: 'a-1', role: mocks.role, enabled: true, intervalMs: HOME_FAST_MS });
   return null;
 }
 
@@ -66,6 +67,8 @@ async function renderAt(path: string, withHome = false) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetMissedCallsCountForTests();
+  window.localStorage.clear();
+  resetHomeAcksForTests();
   mocks.role = 'account_admin';
   mocks.getMissedInboundCount.mockResolvedValue({ open: 2, open_capped: false, has_rows: true });
   mocks.getAgencyHomeBoard.mockResolvedValue(board([
@@ -139,6 +142,27 @@ describe('the Home entry and its badge', () => {
         await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
       });
       expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps its last count while Home cannot refresh, muted and said to be out of date', async () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      await renderAt('/agency/campaigns');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByTestId('sidebar-attention-badge').getAttribute('data-stale')).toBeNull();
+      mocks.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HOME_SLOW_MS * 3);
+      });
+      const badge = screen.getByTestId('sidebar-attention-badge');
+      expect(badge.getAttribute('data-stale')).toBe('true');
+      expect(badge.textContent).toBe('3, 3 need your attention (not up to date)');
     } finally {
       vi.useRealTimers();
     }

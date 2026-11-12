@@ -94,21 +94,27 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
 
 /**
  * The Home entry's badge: how many dangers and warnings need the supervisor, counted from the
- * list the Home page shows (`homeAttention`, `homeBadgeCount`): never a "waiting, nothing wrong"
- * row, and never the missed calls, which the Inbound entry's badge already counts. Rendered only
+ * list the Home page shows (`homeAttention`, `homeBadgeCount`): never an information row, never a
+ * row the reader acknowledged ("Got it"), and never the missed calls, which the Inbound entry's badge already counts. Rendered only
  * beside the Home entry, so only for a reader who passes Home's gate. It reads the board Home
  * reads (`useHomeBoard`, one per tenant and account): once a minute on its own, and on Home the
  * page's 10 s reads, with no request of its own. In the attention tone, apart from the
  * missed-calls count.
  */
 function HomeNavBadge({ missed }: { missed: HomeMissed }) {
-  const { tenantId, accountId } = useTenant();
-  const count = useHomeBadgeCount(tenantId, accountId, missed);
+  const { tenantId, accountId, role } = useTenant();
+  const { count, stale } = useHomeBadgeCount(tenantId, accountId, role, missed);
   const text = badgeText(count);
-  const label = attentionBadgeLabel(count);
+  const label = attentionBadgeLabel(count, stale);
   if (!text) return null;
+  // A stale count stays (dropping it would read as an all-clear), muted and said to be old.
   return (
-    <span className={`${styles.navBadge} ${styles.navBadgeAttention}`} data-testid="sidebar-attention-badge">
+    <span
+      className={`${styles.navBadge} ${styles.navBadgeAttention} ${stale ? styles.navBadgeStale : ''}`}
+      data-testid="sidebar-attention-badge"
+      data-stale={stale ? 'true' : undefined}
+      title={stale ? 'Not up to date: Home couldn’t refresh' : undefined}
+    >
       <span aria-hidden="true">{text}</span>
       <span className={styles.srOnly}>{`, ${label}`}</span>
     </span>

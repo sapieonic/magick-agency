@@ -30,8 +30,11 @@ export interface ActiveCards {
  * `hooks/useHomeBoard`, B28a), in place of a `/stats` read per active campaign. The board answers
  * the first 25 active campaigns in this page's own order (running, stopping, paused; newest first
  * within each) with their stall, floor and 24-hour abandonment; the campaigns past it get no card.
- * Read every 10 s and on return while any campaign is active, and not at all otherwise. Shared with
- * the sidebar's Home badge when the reader supervises, so the page adds no request to it.
+ * Read every 10 s and on return while any campaign is active, and not at all otherwise. One board
+ * per tenant, account and role, so for a supervisor it is the sidebar's Home badge's and the page
+ * adds no request to it. Below `agency.supervise` the board carries no insights parts (null:
+ * staffing, allocation, today, settings), which the cards never read; the route is
+ * `agency.campaigns.read`, the page's own floor, so a viewer or operator is never refused it.
  *
  * It also keeps the list current while a campaign moves (`needsPolling`, the campaign detail
  * page's rule, over the board's floor): a campaign that finishes leaves the cards on the next tick.
@@ -40,10 +43,11 @@ export interface ActiveCards {
 export function useActiveCards(
   tenantId: string | null,
   accountId: string | null,
+  role: string | null | undefined,
   active: AgencyCampaign[],
   reloadList: () => Promise<void>,
 ): ActiveCards {
-  const board = useHomeBoard({ tenantId, accountId, enabled: active.length > 0, intervalMs: HOME_FAST_MS });
+  const board = useHomeBoard({ tenantId, accountId, role, enabled: active.length > 0, intervalMs: HOME_FAST_MS });
   const shown = useMemo(() => active.slice(0, AGENCY_HOME_CAMPAIGN_CAP), [active]);
 
   const states = useMemo(() => {

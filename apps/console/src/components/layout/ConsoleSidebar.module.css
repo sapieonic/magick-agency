@@ -172,3 +172,9 @@
   color: var(--warning);
   box-shadow: inset 0 0 0 1px var(--warning);
 }
+
+/* The last good count while Home cannot refresh: kept, but not shown as fresh. */
+.navBadgeStale {
+  opacity: 0.55;
+}
+

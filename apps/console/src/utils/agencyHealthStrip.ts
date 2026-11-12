@@ -180,9 +180,9 @@ const CARRIER_PAUSE_FALLBACK: Pick<CarrierPauseCopy, 'cause' | 'action'> = {
  *
  * `agentsOnShift` is the console's own count (`agentsOnShift` over the same payload's
  * floor rows), when the caller has the rows. It replaces the stall's
- * `agents_on_shift`, which the server takes from `agents_live`: every open session,
- * signed-out (`offline`) ones included. Without it the banner said "2 agents on
- * shift" above a floor that said "0 of 0 on shift" and a tab badge that said 2.
+ * `agents_on_shift`, which the server takes from `agents_live`. The server now counts
+ * the same rows (every state but `offline`), so the two agree; the override stays so
+ * the banner and the floor beside it are one observation of one payload.
  */
 export function stallCopy(
   stall: AgencyStall,

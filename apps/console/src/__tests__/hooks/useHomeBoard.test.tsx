@@ -13,7 +13,16 @@ import { board, onBoard, stats } from '../helpers/home';
 const api = vi.hoisted(() => ({ getAgencyHomeBoard: vi.fn() }));
 vi.mock('../../api/agencyHome', () => api);
 
-import { HOME_BOARD_ERROR, HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard, type HomeBoardOptions } from '../../hooks/useHomeBoard';
+import {
+  HOME_BOARD_ERROR,
+  HOME_BOARD_REFUSED,
+  HOME_FAST_MS,
+  HOME_SLOW_MS,
+  useHomeBadgeCount,
+  useHomeBoard,
+  type HomeBoardOptions,
+} from '../../hooks/useHomeBoard';
+import { ApiError } from '../../api/client';
 
 /** The Home page's reader, and the sidebar badge's. */
 const live: HomeBoardOptions = { tenantId: 't-1', accountId: 'a-1', enabled: true, intervalMs: HOME_FAST_MS };
@@ -46,7 +55,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const overdueOf = (result: { current: ReturnType<typeof useHomeBoard> }) => result.current.reads[0]?.overdue;
+const overdueOf = (result: { current: ReturnType<typeof useHomeBoard> }) => result.current.reads[0]?.allocation?.callbacks_overdue;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -204,6 +213,84 @@ describe('one board for Home and the badge', () => {
   });
 });
 
+describe('when it cannot refresh (it says so, and never an all-clear from old numbers)', () => {
+  it('stays fresh for up to two periods of failed reads, then is stale with the last good time; one answer clears it', async () => {
+    const { result } = renderHook(() => useHomeBoard(live));
+    await flush();
+    const answeredAt = result.current.lastUpdatedAt;
+    expect(answeredAt).not.toBeNull();
+    api.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+    await advance(HOME_FAST_MS);
+    await advance(HOME_FAST_MS);
+    expect(result.current.failures).toBe(2);
+    expect(result.current.stale).toBe(false);
+    await advance(HOME_FAST_MS);
+    expect(result.current.failures).toBe(3);
+    expect(result.current.stale).toBe(true);
+    expect(result.current.status).toBe('ready');
+    expect(result.current.lastUpdatedAt).toBe(answeredAt);
+    api.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+    await advance(HOME_FAST_MS);
+    expect(result.current.stale).toBe(false);
+    expect(result.current.failures).toBe(0);
+    expect(result.current.lastUpdatedAt).toBeGreaterThan(answeredAt!);
+  });
+
+  it('the badge keeps its last count while stale, marked not fresh (on its own minute)', async () => {
+    api.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 2 })]));
+    const { result } = renderHook(() => useHomeBadgeCount('t-1', 'a-1', 'account_admin', { available: false, count: null }));
+    await flush();
+    expect(result.current).toEqual({ count: 1, stale: false });
+    api.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+    await advance(HOME_SLOW_MS * 2);
+    expect(result.current).toEqual({ count: 1, stale: false });
+    await advance(HOME_SLOW_MS);
+    expect(result.current).toEqual({ count: 1, stale: true });
+  });
+});
+
+describe('a 403 (the role or the dialer changed mid-session)', () => {
+  const refused = () => new ApiError(403, { code: 'feature_disabled', message: 'Forbidden' });
+
+  it('stops asking: no request for five minutes, nothing shown, the refusal in its own words', async () => {
+    const { result } = renderHook(() => useHomeBoard(live));
+    await flush();
+    expect(result.current.reads).toHaveLength(1);
+    api.getAgencyHomeBoard.mockRejectedValue(refused());
+    await advance(HOME_FAST_MS);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    expect(result.current).toMatchObject({ status: 'error', error: HOME_BOARD_REFUSED, refused: true, reads: [] });
+    await advance(300_000);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again on Retry, and again every period once it answers', async () => {
+    api.getAgencyHomeBoard.mockRejectedValueOnce(refused());
+    const { result } = renderHook(() => useHomeBoard(live));
+    await flush();
+    expect(result.current.refused).toBe(true);
+    act(() => result.current.reload());
+    await flush();
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    expect(result.current).toMatchObject({ status: 'ready', refused: false });
+    await advance(HOME_FAST_MS);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(3);
+  });
+
+  it('a new role is a new board, asked at once', async () => {
+    api.getAgencyHomeBoard.mockRejectedValueOnce(refused());
+    const { result, rerender } = renderHook((opts: HomeBoardOptions) => useHomeBoard(opts), {
+      initialProps: { ...live, role: 'operator' },
+    });
+    await flush();
+    expect(result.current.refused).toBe(true);
+    rerender({ ...live, role: 'account_admin' });
+    await flush();
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe('ready');
+  });
+});
+
 describe('what a read keeps', () => {
   it('keeps the last good numbers when a read fails', async () => {
     api.getAgencyHomeBoard.mockResolvedValueOnce(board([onBoard('c1', { overdue: 3 })]));
@@ -225,6 +312,11 @@ describe('what a read keeps', () => {
     await advance(HOME_FAST_MS);
     expect(result.current.reads[0]!.stats).toEqual(before);
     expect(overdueOf(result)).toBe(5);
+    // Served from the last read, and marked so.
+    expect(result.current.reads[0]!.stale).toBe(true);
+    api.getAgencyHomeBoard.mockResolvedValueOnce(board([onBoard('c1', { stats: before, overdue: 5 })]));
+    await advance(HOME_FAST_MS);
+    expect(result.current.reads[0]!.stale).toBe(false);
   });
 
   it('shows the error when the first read fails, in its own words, and the board once a later one answers', async () => {

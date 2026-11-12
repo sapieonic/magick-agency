@@ -5,39 +5,36 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
  * `GET /proxy/agency/home`'s guard chain and wiring (`api/routes/proxy-agency-insights/home.ts`,
  * decision B28a), by execution: the role floor is `agency.campaigns.read`, the list's and `/stats`'
  * (a viewer or operator lands on the Campaigns page, whose Active cards read the board), with the
- * overdue counts (the insights allocation's, `agency.supervise`) withheld below that; then the
- * account scope, then the dialer flag, then the board with the allocation's overdue counts.
+ * insights reads (`agency.supervise`) not handed to the board below that; then the account scope,
+ * then the dialer flag, then the board with the insights reads' staffing, allocation and today's
+ * figures for a supervisor.
  */
 
 const mocks = vi.hoisted(() => ({
   computeHomeBoard: vi.fn(),
   dialerEnabled: vi.fn(),
-  callbacksOverdueByCampaign: vi.fn(),
+  campaignStaffing: vi.fn(),
+  cachedAllocation: vi.fn(),
+  rangeAttentionFigures: vi.fn(),
+  todayRange: vi.fn(),
   liveStats: vi.fn(),
 }));
 vi.mock('../../../src/agency/home-board.js', () => ({ computeHomeBoard: mocks.computeHomeBoard }));
 vi.mock('../../../src/api/routes/helpers/dialer-gate.js', () => ({ dialerEnabled: mocks.dialerEnabled }));
-vi.mock('../../../src/agency/insights/allocation.js', () => ({ callbacksOverdueByCampaign: mocks.callbacksOverdueByCampaign }));
+vi.mock('../../../src/agency/insights/allocation.js', () => ({ campaignStaffing: mocks.campaignStaffing, cachedAllocation: mocks.cachedAllocation }));
+vi.mock('../../../src/agency/insights/health.js', () => ({ rangeAttentionFigures: mocks.rangeAttentionFigures, todayRange: mocks.todayRange }));
 vi.mock('../../../src/api/routes/helpers/live-stats.js', () => ({ liveStats: mocks.liveStats }));
 
 import { registerHomeBoardRoutes } from '../../../src/api/routes/proxy-agency-insights/home.js';
+import type { HomeBoardDeps } from '../../../src/agency/home-board.js';
+import type { AgencyCampaignRecord } from '../../../src/db/models/agency.model.js';
 
-const BOARD = {
-  campaigns: [
-    {
-      id: 'c-1',
-      name: 'Monsoon offers',
-      status: 'running',
-      stats: {
-        stall: null, abandoned_24h: 1, answered_24h: 40, abandonment_ceiling_pct: 3, agents_live: 2,
-        agents_by_state: { offline: 0, available: 1, reserved: 0, on_call: 1, wrapup: 0, break: 0 },
-      },
-      callbacks_overdue: 4,
-    },
-  ],
-  active_total: 1,
-  any_campaign: true,
-};
+const BOARD = { campaigns: [], active_total: 0, any_campaign: false };
+
+/** The deps the route handed the board on its last call. */
+function lastDeps(): HomeBoardDeps {
+  return mocks.computeHomeBoard.mock.calls.at(-1)![1] as HomeBoardDeps;
+}
 
 async function appFor(): Promise<FastifyInstance> {
   const app = Fastify();
@@ -82,15 +79,14 @@ describe('GET /proxy/agency/home', () => {
     expect(mocks.computeHomeBoard).not.toHaveBeenCalled();
   });
 
-  it.each(['viewer', 'operator'])('serves a %s the board without the overdue counts (they floor at agency.supervise)', async (role) => {
+  it.each(['viewer', 'operator'])('serves a %s the board built without the insights reads (they floor at agency.supervise)', async (role) => {
     const app = await appFor();
     const res = await get(app, { 'x-role': role, 'x-account-id': 'a-1' });
     expect(res.statusCode, res.body).toBe(200);
-    expect(res.json()).toEqual({
-      ...BOARD,
-      campaigns: [{ ...BOARD.campaigns[0], callbacks_overdue: null }],
-    });
+    expect(res.json()).toEqual(BOARD);
     expect(mocks.computeHomeBoard).toHaveBeenCalledWith({ tenantId: 't-1', accountId: 'a-1' }, expect.anything());
+    expect(lastDeps().liveStats).toBe(mocks.liveStats);
+    expect(lastDeps().insights).toBeNull();
   });
 
   it.each(['account_admin', 'tenant_admin', 'tenant_owner'])('serves a %s the whole board for the request’s account', async (role) => {
@@ -99,6 +95,7 @@ describe('GET /proxy/agency/home', () => {
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual(BOARD);
     expect(mocks.computeHomeBoard).toHaveBeenCalledWith({ tenantId: 't-1', accountId: 'a-1' }, expect.anything());
+    expect(lastDeps().insights).not.toBeNull();
   });
 
   it('refuses a request with no account before the flag is read: 400 account_scope_required', async () => {
@@ -122,11 +119,32 @@ describe('GET /proxy/agency/home', () => {
     expect(mocks.computeHomeBoard).not.toHaveBeenCalled();
   });
 
-  it('reads stats through the live-stats hop and overdue callbacks through the allocation’s count', async () => {
+  it('reads stats through the live-stats hop, staffing and the allocation through the insights reads, today over the Health tab’s Today', async () => {
     const app = await appFor();
     await get(app, { 'x-role': 'account_admin', 'x-account-id': 'a-1' });
-    const deps = mocks.computeHomeBoard.mock.calls[0]![1] as { liveStats: unknown; callbacksOverdue: unknown };
+    const deps = mocks.computeHomeBoard.mock.calls[0]![1] as HomeBoardDeps;
     expect(deps.liveStats).toBe(mocks.liveStats);
-    expect(deps.callbacksOverdue).toBe(mocks.callbacksOverdueByCampaign);
+    const insights = deps.insights!;
+    expect(insights.staffing).toBe(mocks.campaignStaffing);
+
+    const campaign = { id: 'c-1' } as AgencyCampaignRecord;
+    mocks.cachedAllocation.mockResolvedValue({
+      totals: { callbacks_overdue: 3 },
+      unassigned: { callbacks_overdue: 1 },
+      at_risk: { held_by_absent: [{ due: 2 }, { due: 5 }], overdue_callbacks_absent_owner: 2 },
+      absent_after_minutes: 15,
+    });
+    expect(await insights.allocation(campaign)).toEqual({
+      callbacks_overdue: 3, callbacks_overdue_unassigned: 1, callbacks_overdue_absent_owner: 2,
+      held_by_absent: 7, absent_after_minutes: 15,
+    });
+    expect(mocks.cachedAllocation).toHaveBeenCalledWith(campaign);
+
+    const range = { from: new Date(0), to: new Date(1) };
+    mocks.todayRange.mockReturnValue(range);
+    mocks.rangeAttentionFigures.mockResolvedValue({ carrier_failures: 4, recording: { connected: 2, recorded: 1 } });
+    expect(await insights.today(campaign)).toEqual({ carrier_failures: 4, recording: { connected: 2, recorded: 1 } });
+    expect(mocks.todayRange).toHaveBeenCalledWith(campaign, expect.any(Date));
+    expect(mocks.rangeAttentionFigures).toHaveBeenCalledWith(campaign, range);
   });
 });

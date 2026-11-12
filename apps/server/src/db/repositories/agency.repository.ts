@@ -93,7 +93,6 @@ export {
   abandonmentWindowStatement,
   allocationCountersStatement,
   allocationStatement,
-  callbacksOverdueStatement,
   contactsOnDncStatement,
   dialPaceStatement,
   dncMarkedStatement,
@@ -103,7 +102,6 @@ export {
 } from './agency/insights-reads.repository.js';
 export type {
   AllocationCountsInput,
-  CallbacksOverdueInput,
   DialPace,
   InsightsStatement,
   InsightsUploadRow,

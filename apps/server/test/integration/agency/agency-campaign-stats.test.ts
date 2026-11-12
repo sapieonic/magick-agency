@@ -419,6 +419,18 @@ describe('agency supervisor stats — the agent floor (integration)', () => {
     expect(tallied).toBe(stats.agents_live);
   });
 
+  it('a signed-out station not reaped yet is on the floor’s rows and not on shift (agents_live)', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'paused' });
+    await insertAgentSession(campaign.id as string, { agent_user_id: uuidFor('here'), state: 'available' });
+    await insertAgentSession(campaign.id as string, { agent_user_id: uuidFor('dropped'), state: 'offline' });
+
+    const stats = await agencyCampaignRepository.stats(campaign.id as string);
+
+    expect(stats.agents.map((a) => a.agent_user_id).sort()).toEqual([uuidFor('here'), uuidFor('dropped')].sort());
+    expect(stats.agents_by_state).toMatchObject({ available: 1, offline: 1 });
+    expect(stats.agents_live).toBe(1);
+  });
+
   it('serves state_since as an ISO instant the console can subtract', async () => {
     // Served raw rather than as a computed duration: a tile ticks live, so a
     // server-rendered "8m 41s" is wrong the moment it arrives. `isoOrEpoch` is what
