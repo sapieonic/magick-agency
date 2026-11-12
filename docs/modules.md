@@ -1075,11 +1075,13 @@ Files: `rbac.middleware.ts`
 
 ### `apps/server/src/seams/`
 
-The two cross-module seams: bridge → analysis hooks, super-admin → concurrency control (see `docs/seams.md`).
+The cross-module seams: bridge → analysis hooks, super-admin → concurrency control, inbound carrier callbacks → the agency inbound router, and (Mode B) agency → the push senders that ring an away agent's phone (see `docs/seams.md` §3).
 
-Files: `bridge-analysis-hooks.ts`, `concurrency-control.ts`
+Files: `bridge-analysis-hooks.ts`, `concurrency-control.ts`, `inbound-call-router.ts`, `push-sender.ts`
 
-_No dedicated test files._
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/seams/push-sender.test.ts` | 3 |
 
 ### `apps/server/src/services/`
 

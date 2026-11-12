@@ -2,7 +2,7 @@
 
 The module boundaries inside `apps/server` and the fixed interfaces between them: which files
 each module area owns, which config keys each declares, where shared infrastructure lives, and the
-two cross-module seams. Read it before moving a file, adding a config key, route plugin or
+cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
 (Plivo steps 3 and 4).
@@ -264,6 +264,28 @@ is answered with the fixed fallback message and nothing is written. Tests:
 default included, each spoken message, the signal), `test/integration/agency/inbound-call-router.test.ts`
 (the router on real Postgres with a fake bridge) and `test/integration/telephony/plivo-inbound-e2e.test.ts`
 (through `buildApp` and the bootstraps).
+
+### 3.6 Agency (ringing an away phone) → platform (push senders)
+
+`apps/server/src/seams/push-sender.ts` (Mode B, IQ58–IQ74; `docs/mobile.md` "The ring channel
+(Mode B)"). The platform area owns the carriers of a push (FCM HTTP v1 for Android, APNs VoIP for
+iOS: credentials, signing, the HTTP calls, the error mapping, the metrics; `notifications/push/`);
+what a push means (which device, when a phone rings, why it stops) is the agency area's, reached
+only through `PushSender`:
+
+- `send(device, payload, { ttlMs })`: `device` is a `PushSenderDevice` (the push device row's `id`,
+  `platform`, `fcm_token`, `voip_token`; `pushTokenOf` in `@magick-agency/db/models/push-device.model`
+  picks the token), `payload` the contract's `AgencyRingPush` (IQ61: never a name or a number),
+  `ttlMs` how long the carrier may hold it. It answers `{ ok: true }` or `{ ok: false, reason }`, the
+  reason one of the contract's `AGENCY_PUSH_FAILURE_REASONS` (`unregistered`, `invalid`,
+  `rate_limited`, `unavailable`, `unconfigured`), and never throws.
+- `configured(platform)`: whether the deployment has that platform's credentials.
+
+`setPushSender` / `getPushSender` / `resetPushSender` (tests), as §3.5's router. Until an
+implementation is registered (the platform bootstrap, WP1), the unwired default answers every send
+`unconfigured` and no platform is configured, so `away_ring` is refused `push_unavailable` and
+nobody is rung. Tests: `test/unit/seams/push-sender.test.ts` (the interface at type level, the
+unwired default, set and reset).
 
 ## 4. Shared infrastructure
 
