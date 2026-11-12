@@ -33,15 +33,13 @@ import styles from './CampaignTabs.module.css';
  *
  * ── Where it sits ──────────────────────────────────────────────────────────
  * Directly below whatever identifies the PAGE, and above the section's own
- * content — which is not the same pixel offset on every screen, and the
- * comment here used to claim it was. On the detail page the campaign's name
- * and its lifecycle controls are that identity, so the bar follows them (and
- * follows a stall diagnosis, which is worth reading before choosing a
- * section). On the four standalone screens the breadcrumb is the only campaign
- * identity, so the bar follows that and their own `<h1>` belongs to the
- * section below it. Switching between the two groups therefore moves the bar
- * vertically; making it truly fixed would mean giving those four a
- * campaign-level header of their own, which is a larger change than this one.
+ * content — which is not the same pixel offset on every screen. On the detail
+ * page and on Settings the campaign's header (its name and lifecycle controls)
+ * is that identity, so the bar follows it (and, on the detail page, a stall
+ * diagnosis, which is worth reading before choosing a section). The other
+ * standalone screens name the campaign only in the top bar's breadcrumb, so
+ * the bar opens the page and their own `<h1>` belongs to the section below it.
+ * Switching between the two therefore moves the bar vertically.
  */
 export interface CampaignTabsProps {
   campaignId: string;
