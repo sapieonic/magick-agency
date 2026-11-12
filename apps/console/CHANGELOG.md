@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/sapieonic/magick-agency/compare/console-v0.21.0...console-v0.22.0) (2026-11-12)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** one station per agent, on one device, across tenants ([#75](https://github.com/sapieonic/magick-agency/issues/75)) ([35a7608](https://github.com/sapieonic/magick-agency/commit/35a7608ff98bd938c2a2387daf51e711679d4bc7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.20.0
+    * @magick-agency/domain bumped to 0.10.1
+
 ## [0.21.0](https://github.com/sapieonic/magick-agency/compare/console-v0.20.0...console-v0.21.0) (2026-11-12)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.10.0...mobile-v0.11.0) (2026-11-12)
+
+
+### Features
+
+* **server,console,mobile,contracts,db:** one station per agent, on one device, across tenants ([#75](https://github.com/sapieonic/magick-agency/issues/75)) ([35a7608](https://github.com/sapieonic/magick-agency/commit/35a7608ff98bd938c2a2387daf51e711679d4bc7))
+
 ## [0.10.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.9.1...mobile-v0.10.0) (2026-11-12)
 
 
