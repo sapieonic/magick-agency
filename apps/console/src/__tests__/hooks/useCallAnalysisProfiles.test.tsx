@@ -147,7 +147,7 @@ describe('useCallAnalysisProfiles', () => {
     const { result } = renderHook(() => useCallAnalysisProfiles());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    await expect(result.current.remove('profile-1')).rejects.toThrow(/no workspace/i);
+    await expect(result.current.remove('profile-1')).rejects.toThrow(/no organisation/i);
     // And it did not quietly pretend to delete anything on the way.
     expect(mocks.deleteCallAnalysisProfile).not.toHaveBeenCalled();
   });

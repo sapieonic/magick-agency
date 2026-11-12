@@ -79,7 +79,7 @@ export function CredentialForm({
         {existing ? (
           <p id="join-password-note" className={styles.fieldNote}>
             This address already has a password on {brand.name}. Enter it and we will
-            add this workspace to it.
+            add this organisation to it.
           </p>
         ) : (
           <div id="join-password-note" className={styles.strength}>

@@ -681,7 +681,7 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
         events.claimFailed({ method, reason: 'email_in_use' });
         setExisting(true);
         setPassword('');
-        setError('That address already has a password. Enter it and we will add this workspace to it.');
+        setError('That address already has a password. Enter it and we will add this organisation to it.');
       } else {
         handleFailure(err, method);
       }

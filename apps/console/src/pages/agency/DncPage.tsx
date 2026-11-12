@@ -104,17 +104,17 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // the workspace.
   tenant:
     'Enforced for all agency dialling: this number is in the dialler’s block list, so no agency '
-    + 'campaign in this workspace will call it, and it is dropped from every roster import. It '
+    + 'campaign in this organisation will call it, and it is dropped from every roster import. It '
     + 'does not stop AI calls or broadcasts.',
   campaign:
     'Enforced for one campaign only: that campaign won’t dial this number and drops it from its '
     + 'roster imports, and an agent’s mid-call mark also suppresses the contacts already on it. '
-    + 'Every other campaign in this workspace can still call this number. Add a workspace-wide '
-    + 'entry if the customer asked never to be called.',
+    + 'Every other campaign in this organisation can still call this number. Add an '
+    + 'organisation-wide entry if the customer asked never to be called.',
   account:
     'Enforced for one account: none of that account’s campaigns will dial this number, and it is '
     + 'dropped from that account’s roster imports. Campaigns in other accounts are unaffected. Add '
-    + 'a workspace-wide entry if the customer asked never to be called.',
+    + 'an organisation-wide entry if the customer asked never to be called.',
 };
 
 /**
@@ -288,13 +288,13 @@ export function DncPage() {
       <PageDescription
         pageKey="agency-dnc"
         description={
-          'Agency campaigns don’t dial the numbers on this list — every campaign for a '
-          + 'workspace-wide entry, or only the campaign or account the Scope column names. '
+          'Agency campaigns don’t dial the numbers on this list — every campaign for an '
+          + 'organisation-wide entry, or only the campaign or account the Scope column names. '
           // The soft phone's sentence only where it is on (SP4): elsewhere it describes a
           // surface the account does not have.
           + (softphoneOn
             ? 'The soft phone checks it too: a call logged to a campaign is stopped by the entries that '
-              + 'campaign honours, and a call logged to no campaign by an entry for the workspace, its '
+              + 'campaign honours, and a call logged to no campaign by an entry for the organisation, its '
               + 'account or any of the account’s campaigns. An agent who is stopped can call only by '
               + 'writing down why — that reason is logged with their name. '
             : '')
@@ -303,7 +303,7 @@ export function DncPage() {
           + 'when a customer asks; you can also add them in bulk here.'
         }
         tips={[
-          'A workspace-wide entry blocks the number in every agency campaign and account.',
+          'An organisation-wide entry blocks the number in every agency campaign and account.',
           'Adding a number that is already listed is harmless — it stays listed once.',
           'Removing a number lets agency campaigns dial it again — if the customer asked not to '
           + 'be called, leave it listed.',

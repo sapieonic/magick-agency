@@ -243,7 +243,7 @@ export function stallCopy(
         facts: [
           {
             text: stall.tenant_wide
-              ? 'The Do Not Call list is shared across this whole workspace, so every campaign in it is stopped by the same fault.'
+              ? 'The Do Not Call list is shared across this whole organisation, so every campaign in it is stopped by the same fault.'
               : 'The Do Not Call list could not be read.',
           },
         ],
@@ -285,7 +285,7 @@ export function stallCopy(
       return diagnosis({
         headline: `All your lines are in use: ${stall.in_use} of ${stall.limit}.`,
         facts: [
-          { text: 'The limit is account-wide, so other calls in this workspace count against it too.' },
+          { text: 'The limit is account-wide, so other calls in this account count against it too.' },
         ],
         // `shift_seconds`: there is no tenant-facing setter, so the honest advice names who
         // can change it rather than implying the supervisor can.

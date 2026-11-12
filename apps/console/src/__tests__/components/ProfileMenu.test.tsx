@@ -59,11 +59,11 @@ describe('ProfileMenu — tenant/account IDs', () => {
   it('shows tenant and account IDs once the menu is open', () => {
     renderTopBar();
     // IDs are not in the DOM until the dropdown opens.
-    expect(screen.queryByText('Tenant ID')).toBeNull();
+    expect(screen.queryByText('Organisation ID')).toBeNull();
 
     openMenu();
 
-    expect(screen.getByText('Tenant ID')).toBeTruthy();
+    expect(screen.getByText('Organisation ID')).toBeTruthy();
     expect(screen.getByText(TENANT_ID)).toBeTruthy();
     expect(screen.getByText('Account ID')).toBeTruthy();
     expect(screen.getByText(ACCOUNT_ID)).toBeTruthy();
@@ -73,7 +73,7 @@ describe('ProfileMenu — tenant/account IDs', () => {
     renderTopBar();
     openMenu();
 
-    fireEvent.click(screen.getByTitle('Copy Tenant ID'));
+    fireEvent.click(screen.getByTitle('Copy organisation ID'));
 
     await waitFor(() => expect(mocks.writeText).toHaveBeenCalledWith(TENANT_ID));
   });
@@ -91,18 +91,18 @@ describe('ProfileMenu — tenant/account IDs', () => {
     renderTopBar();
     openMenu();
 
-    fireEvent.click(screen.getByTitle('Copy Tenant ID'));
+    fireEvent.click(screen.getByTitle('Copy organisation ID'));
 
     // The dropdown (and therefore the IDs) should still be present.
     await waitFor(() => expect(mocks.writeText).toHaveBeenCalled());
-    expect(screen.getByText('Tenant ID')).toBeTruthy();
+    expect(screen.getByText('Organisation ID')).toBeTruthy();
   });
 
   it('renders only the tenant ID when no account is selected', () => {
     renderTopBar({ accountId: null });
     openMenu();
 
-    expect(screen.getByText('Tenant ID')).toBeTruthy();
+    expect(screen.getByText('Organisation ID')).toBeTruthy();
     expect(screen.queryByText('Account ID')).toBeNull();
   });
 
@@ -110,7 +110,7 @@ describe('ProfileMenu — tenant/account IDs', () => {
     renderTopBar({ tenantId: null, accountId: null });
     openMenu();
 
-    expect(screen.queryByText('Tenant ID')).toBeNull();
+    expect(screen.queryByText('Organisation ID')).toBeNull();
     expect(screen.queryByText('Account ID')).toBeNull();
     // The rest of the menu still renders.
     // There is no `Settings` item; the theme and `Sign out` are left.
@@ -123,17 +123,17 @@ describe('ProfileMenu — tenant/account IDs', () => {
 
     // Clicking the ID value (not a button) is a click inside the menu.
     fireEvent.mouseDown(screen.getByText(TENANT_ID));
-    expect(screen.getByText('Tenant ID')).toBeTruthy();
+    expect(screen.getByText('Organisation ID')).toBeTruthy();
   });
 
   it('closes the menu on an outside click', () => {
     renderTopBar();
     openMenu();
-    expect(screen.getByText('Tenant ID')).toBeTruthy();
+    expect(screen.getByText('Organisation ID')).toBeTruthy();
 
     fireEvent.mouseDown(document.body);
 
-    expect(screen.queryByText('Tenant ID')).toBeNull();
+    expect(screen.queryByText('Organisation ID')).toBeNull();
   });
 });
 

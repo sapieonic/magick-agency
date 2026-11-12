@@ -162,7 +162,7 @@ describe('reading a workspace invitation', () => {
     expect(screen.getByText('Dana Lee')).toBeTruthy();
     expect(screen.getByText('Acme Collections')).toBeTruthy();
     expect(screen.getByText('omar@acme.com')).toBeTruthy();
-    expect(screen.getByText('Workspace invitation')).toBeTruthy();
+    expect(screen.getByText('Organisation invitation')).toBeTruthy();
   });
 
   it('labels an account admin as a supervisor, the console\'s word for the role', async () => {
@@ -171,7 +171,7 @@ describe('reading a workspace invitation', () => {
     expect(screen.getByText(/you have been set up as supervisor at/i)).toBeTruthy();
   });
 
-  it('labels a new workspace owner as one, and reports the role as itself', async () => {
+  it('labels a new organisation owner as one, and reports the role as itself', async () => {
     /*
       A super admin's tenant create invites the owner, with no inviter (a super
       admin is not a user). The funnel used to report `role: null` here, on the
@@ -179,7 +179,7 @@ describe('reading a workspace invitation', () => {
     */
     await renderInvitation({ ...INVITE, role: 'tenant_owner', inviter_name: null });
 
-    expect(screen.getByText(/you have been set up as workspace owner at/i)).toBeTruthy();
+    expect(screen.getByText(/you have been set up as organisation owner at/i)).toBeTruthy();
     expect(mocks.trackWorkspaceInviteViewed).toHaveBeenCalledWith({
       status: 'pending',
       role: 'tenant_owner',
@@ -197,7 +197,7 @@ describe('reading a workspace invitation', () => {
     await renderInvitation();
 
     const steps = screen.getByRole('complementary', { name: /what happens next/i });
-    expect(steps.textContent).toMatch(/the workspace you were invited to opens/i);
+    expect(steps.textContent).toMatch(/the organisation you were invited to opens/i);
     expect(document.body.textContent).not.toMatch(/station|dialer|supervisor|campaign/i);
   });
 
@@ -212,7 +212,7 @@ describe('reading a workspace invitation', () => {
     renderAt();
 
     expect(screen.getByText(/opening your invitation/i)).toBeTruthy();
-    expect(screen.getByText('Workspace invitation')).toBeTruthy();
+    expect(screen.getByText('Organisation invitation')).toBeTruthy();
     expect(screen.queryByText('Agency Dialer')).toBeNull();
   });
 });
@@ -601,7 +601,7 @@ describe('each terminal status gets its own workspace screen', () => {
 
     expect(await screen.findByText(/could not open your invitation/i)).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toMatch(/failed to fetch/i);
-    expect(screen.getByText('Workspace invitation')).toBeTruthy();
+    expect(screen.getByText('Organisation invitation')).toBeTruthy();
     expect(mocks.trackWorkspaceInviteViewed).toHaveBeenCalledWith({
       status: 'unreachable',
       role: null,

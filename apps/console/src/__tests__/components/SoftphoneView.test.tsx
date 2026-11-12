@@ -457,7 +457,7 @@ describe('refusals and overrides (SP1, SP2)', () => {
 
     const dialog = screen.getByTestId('override-dialog-dnc');
     expect(screen.getByRole('dialog').textContent).toMatch(/This number is on the Do Not Call list/);
-    expect(dialog.textContent).toMatch(/Every campaign and account in this workspace/);
+    expect(dialog.textContent).toMatch(/Every campaign and account in this organisation/);
     // Typed without a country code, the number is named as dialled: with the account's.
     expect(dialog.textContent).toMatch(/Number\+91 98204 61733/);
     expect(dialog.textContent).toMatch(/Asked not to be called/);

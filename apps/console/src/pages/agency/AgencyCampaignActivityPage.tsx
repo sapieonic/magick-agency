@@ -493,7 +493,7 @@ export function AgencyCampaignActivityPage() {
         */}
         {actionFilterUnavailable && (
           <p className={styles.retention} data-testid="activity-action-filter-unavailable">
-            Filtering by what happened is unavailable — this workspace’s server did not send the
+            Filtering by what happened is unavailable — the server did not send the
             list of actions it records, and a guessed list would offer filters that match nothing.
             The date range below still works, and every entry is shown.
           </p>

@@ -50,10 +50,10 @@ export function TenantSwitcher() {
 
   if (tenants.length <= 1) {
     return (
-      <div className={triggerClass} style={{ cursor: 'default' }} title={activeTenant?.name ?? 'No tenant'}>
+      <div className={triggerClass} style={{ cursor: 'default' }} title={activeTenant?.name ?? 'No organisation'}>
         <Building2 className={styles.triggerIcon} />
         <span className={styles.triggerName}>
-          {activeTenant?.name ?? 'No tenant'}
+          {activeTenant?.name ?? 'No organisation'}
         </span>
       </div>
     );
@@ -70,8 +70,8 @@ export function TenantSwitcher() {
         aria-haspopup="listbox"
       >
         <Building2 className={styles.triggerIcon} />
-        <span className={styles.triggerName} title={activeTenant?.name ?? 'Select tenant'}>
-          {activeTenant?.name ?? 'Select tenant'}
+        <span className={styles.triggerName} title={activeTenant?.name ?? 'Select organisation'}>
+          {activeTenant?.name ?? 'Select organisation'}
         </span>
         <ChevronDown
           className={`${styles.triggerChevron} ${open ? styles.triggerChevronOpen : ''}`}
@@ -80,7 +80,7 @@ export function TenantSwitcher() {
 
       {open && (
         <SwitcherDropdown
-          label="Switch tenant"
+          label="Switch organisation"
           items={tenants.map(tenant => ({
             id: tenant.id,
             name: tenant.name,
@@ -89,10 +89,10 @@ export function TenantSwitcher() {
           activeId={activeTenant?.id}
           onSelect={handleSelect}
           onClose={() => closeMenu(true)}
-          searchPlaceholder="Search tenants…"
-          searchAriaLabel="Search tenants"
-          listAriaLabel="Tenants"
-          emptyNoun="tenant"
+          searchPlaceholder="Search organisations…"
+          searchAriaLabel="Search organisations"
+          listAriaLabel="Organisations"
+          emptyNoun="organisation"
         />
       )}
     </div>

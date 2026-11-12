@@ -66,7 +66,7 @@ export function useCallAnalysisProfiles(options: { enabled?: boolean } = {}) {
       it must not be is a silent no-op.
     */
     if (!tenantId || !accountId) {
-      throw new Error('No workspace is selected. Reload the page and try again.');
+      throw new Error('No organisation is selected. Reload the page and try again.');
     }
     await deleteCallAnalysisProfile(tenantId, id, accountId);
     load();
