@@ -318,6 +318,16 @@ export function attentionBadgeLabel(count: number | null, stale = false): string
   return stale ? `${said} (not up to date)` : said;
 }
 
+/** The phone's menu button's words for the Home badge: "3 things need you"; null at zero. */
+export function menuAttentionLabel(count: number | null, stale = false): string | null {
+  const text = badgeText(count);
+  if (!text) return null;
+  const said = text === '99+'
+    ? 'more than 99 things need you'
+    : count === 1 ? '1 thing needs you' : `${text} things need you`;
+  return stale ? `${said} (not up to date)` : said;
+}
+
 // ── The floor ─────────────────────────────────────────────────────────────────
 
 export interface HomeFloorRow {

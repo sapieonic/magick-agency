@@ -3,6 +3,7 @@ import {
   HOME_CAMPAIGN_CAP,
   abandonmentAttention,
   attentionBadgeLabel,
+  menuAttentionLabel,
   homeAttention,
   homeBadgeCount,
   homeFloor,
@@ -329,6 +330,18 @@ describe('what the Home badge counts', () => {
     const items = homeAttention([read('a', { stats: stats({ stall: STALLS.outside_calling_hours }) })], missed, fmt);
     expect(items).toHaveLength(2);
     expect(homeBadgeCount(items)).toBe(0);
+  });
+});
+
+describe('the phone’s menu button', () => {
+  it('says how many things need the reader, and when the count is not up to date', () => {
+    expect(menuAttentionLabel(0)).toBeNull();
+    expect(menuAttentionLabel(null)).toBeNull();
+    expect(menuAttentionLabel(1)).toBe('1 thing needs you');
+    expect(menuAttentionLabel(3)).toBe('3 things need you');
+    expect(menuAttentionLabel(150)).toBe('more than 99 things need you');
+    expect(menuAttentionLabel(3, true)).toBe('3 things need you (not up to date)');
+    expect(attentionBadgeLabel(3, true)).toBe('3 need your attention (not up to date)');
   });
 });
 

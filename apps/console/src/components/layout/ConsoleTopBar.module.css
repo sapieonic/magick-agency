@@ -25,6 +25,27 @@
   color: var(--text-primary);
 }
 
+/* The Home badge, on a phone, where the sidebar is a closed drawer. */
+.menuBtn {
+  position: relative;
+}
+
+.menuDot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+/* The last good count while Home cannot refresh: kept, not shown as fresh. */
+.menuDotStale {
+  opacity: 0.55;
+}
+
 /* The phone's back arrow (rendered only at phone width): a 44px target, to the crumb above. */
 .back {
   display: flex;
