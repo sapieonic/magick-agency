@@ -1,32 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMountedRef } from '../../../hooks/useMountedRef';
 import { useRefetchOnReturn } from '../../../hooks/useRefetchOnReturn';
-import { useVisibleInterval } from '../../../hooks/useVisibleInterval';
 import {
   getAgencyCampaign,
   listAgencyCampaigns,
   listAgencyCampaignsPage,
-  getAgencyCampaignStats,
 } from '../../../api/agencyCampaigns';
 import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
-import { campaignGroup, needsPolling, sortCampaigns } from '../../../utils/agencyCampaignsHome';
+import { campaignGroup, sortCampaigns } from '../../../utils/agencyCampaignsHome';
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
-import type { AgencyCampaign, AgencyCampaignStats } from '../../../types/agency-campaign';
+import type { AgencyCampaign } from '../../../types/agency-campaign';
 
-/** The cards' refresh, matching the campaign detail page's own poll. */
+/** The page's refresh while a campaign moves, matching the campaign detail page's own poll. */
 export const REFRESH_MS = 10_000;
 
 /** Rows per request; the server caps `limit` at 100. */
 export const PAGE_SIZE = 100;
-
-export type StatsState =
-  | { status: 'loading' }
-  | { status: 'ready'; stats: AgencyCampaignStats }
-  | { status: 'error' };
-
-export function readyStats(state: StatsState | undefined): AgencyCampaignStats | null {
-  return state?.status === 'ready' ? state.stats : null;
-}
 
 /**
  * A poll's first page laid over the history already on screen.
@@ -65,13 +54,11 @@ export function isActive(c: AgencyCampaign): boolean {
 }
 
 /**
- * The campaigns home's data: the paged history, every active campaign read in
- * full, the active cards' `/stats`, the visible-only poll while anything is
- * moving and the re-read on return. Out of `AgencyCampaignsPage`, which keeps the
- * filter, the search and the layout.
- *
- * ⚠️ One `/stats` request per active campaign per tick (`fetchStats`). Folding
- * them into one call needs a batch read the contract does not have yet.
+ * The campaigns home's list: the paged history, every active campaign read in
+ * full, and the re-read on return. `load(true)` is the quiet re-read the Active
+ * cards' poll calls while a campaign moves (`useActiveCards`, which reads the
+ * cards' numbers from Home's board). Out of `AgencyCampaignsPage`, which keeps
+ * the filter, the search and the layout.
  */
 export function useCampaignsHome(tenantId: string | null, accountId: string | null) {
   /** The paged history, newest first. Its length is the next page's offset. */
@@ -83,15 +70,10 @@ export function useCampaignsHome(tenantId: string | null, accountId: string | nu
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
-  const [stats, setStats] = useState<Record<string, StatsState>>({});
 
   const historyRef = useRef(history);
   historyRef.current = history;
   const generation = useRef(0);
-  /** Per campaign, the newest stats request. An older answer arriving later is dropped. */
-  const statsSeq = useRef(new Map<string, number>());
-  const statsRef = useRef(stats);
-  statsRef.current = stats;
   const mounted = useMountedRef();
 
   /** `quiet` is the poll: it refreshes in place, without the spinner or a cleared error. */
@@ -178,99 +160,14 @@ export function useCampaignsHome(tenantId: string | null, accountId: string | nu
   const campaigns = useMemo(() => (history ? withActive(history, live) : null), [history, live]);
   const sorted = useMemo(() => (campaigns ? sortCampaigns(campaigns) : []), [campaigns]);
   const active = useMemo(() => sorted.filter(isActive), [sorted]);
-  const activeIds = useRef<Set<string>>(new Set());
-  activeIds.current = new Set(active.map((c) => c.id));
-
-  /**
-   * Read `/stats` for the given campaigns and merge the answers in.
-   *
-   * Merged per campaign rather than rebuilt, and guarded per campaign by
-   * `statsSeq`, so a slow answer can neither overwrite a newer one nor wipe the
-   * entries of campaigns it was not asked about. A failed refresh keeps the last
-   * good numbers rather than blanking a card the supervisor is reading.
-   */
-  const fetchStats = useCallback(
-    async (ids: string[]) => {
-      if (!tenantId || !accountId || ids.length === 0) return;
-      const tickets = ids.map((id) => {
-        const next = (statsSeq.current.get(id) ?? 0) + 1;
-        statsSeq.current.set(id, next);
-        return next;
-      });
-      const settled = await mapWithConcurrency(ids, (id) =>
-        getAgencyCampaignStats(id, tenantId, accountId),
-      );
-      if (!mounted.current) return;
-      setStats((prev) => {
-        const next: Record<string, StatsState> = {};
-        // Campaigns that have left the active set have no card; drop their entries.
-        for (const [id, state] of Object.entries(prev)) {
-          if (activeIds.current.has(id)) next[id] = state;
-        }
-        ids.forEach((id, i) => {
-          if (!activeIds.current.has(id) || statsSeq.current.get(id) !== tickets[i]) return;
-          const outcome = settled[i]!;
-          if (outcome.status === 'fulfilled') {
-            next[id] = { status: 'ready', stats: outcome.value };
-          } else if (prev[id]?.status !== 'ready') {
-            next[id] = { status: 'error' };
-          }
-        });
-        return next;
-      });
-    },
-    [tenantId, accountId],
-  );
 
   /*
-    A campaign entering the active set, or changing status within it (paused in
-    another tab, say), gets read straight away rather than at the next tick. The
-    key carries status for exactly that reason.
-  */
-  const activeKey = active.map((c) => `${c.id}:${c.status}`).join(',');
-  const seenKey = useRef<Map<string, string>>(new Map());
-  useEffect(() => {
-    const changed = active
-      .filter((c) => seenKey.current.get(c.id) !== c.status)
-      .map((c) => c.id);
-    seenKey.current = new Map(active.map((c) => [c.id, c.status]));
-    void fetchStats(changed);
-    // `activeKey` stands in for `active`: a re-sorted list with the same
-    // campaigns in the same states must not refetch.
-  }, [activeKey, fetchStats]);
-
-  const polling = active.some((c) => needsPolling(c.status, readyStats(stats[c.id])));
-  // Read through a ref so `refresh` stays stable: every poll replaces the list,
-  // and a callback that changed with it would restart the interval each time.
-  const sortedRef = useRef(sorted);
-  sortedRef.current = sorted;
-  const tickBusy = useRef(false);
-  const refresh = useCallback(
-    async (only: 'polling' | 'all') => {
-      // One refresh at a time: a slow backend must not stack ticks on top of each other.
-      if (tickBusy.current) return;
-      tickBusy.current = true;
-      try {
-        const ids = sortedRef.current
-          .filter(isActive)
-          .filter((c) => only === 'all' || needsPolling(c.status, readyStats(statsRef.current[c.id])))
-          .map((c) => c.id);
-        await Promise.all([load(true), fetchStats(ids)]);
-      } finally {
-        tickBusy.current = false;
-      }
-    },
-    [load, fetchStats],
-  );
-
-  useVisibleInterval(() => refresh('polling'), REFRESH_MS, polling);
-
-  /*
-    Coming back to the tab re-reads everything once, polling or not: that is the
+    Coming back to the tab re-reads the list once, moving or not: that is the
     only way to notice a campaign resumed or started from another window when
-    nothing here was moving (the detail page does the same).
+    nothing here was moving (the detail page does the same). The cards' board
+    re-reads itself on return.
   */
-  useRefetchOnReturn(() => refresh('all'));
+  useRefetchOnReturn(() => load(true));
 
   return {
     history,
@@ -279,7 +176,6 @@ export function useCampaignsHome(tenantId: string | null, accountId: string | nu
     loading,
     loadingMore,
     moreError,
-    stats,
     campaigns,
     sorted,
     active,

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ListChecks, Phone, Plus, Upload, UserPlus, type LucideIcon } from 'lucide-react';
-import { Rules } from './Shortcuts';
+import { Rules } from './Rules';
 import styles from '../AgencyCampaignsPage.module.css';
 
 const STEPS: Array<{ title: string; text: string; icon: LucideIcon }> = [

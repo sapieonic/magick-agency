@@ -1,0 +1,88 @@
+import { useEffect, useMemo, useRef } from 'react';
+import { AGENCY_HOME_CAMPAIGN_CAP, type AgencyHomeCampaignStats } from '@magick-agency/contracts/api/agency/home';
+import { HOME_FAST_MS, useHomeBoard } from '../../../hooks/useHomeBoard';
+import { useVisibleInterval } from '../../../hooks/useVisibleInterval';
+import { needsPolling } from '../../../utils/agencyCampaignsHome';
+import type { AgencyCampaign } from '../../../types/agency-campaign';
+import { REFRESH_MS } from './useCampaignsHome';
+
+/** What an Active card shows: its numbers, still loading, or why it has none. */
+export type CardState =
+  | { status: 'loading' }
+  | { status: 'ready'; stats: AgencyHomeCampaignStats }
+  | { status: 'error' };
+
+export function readyStats(state: CardState | undefined): AgencyHomeCampaignStats | null {
+  return state?.status === 'ready' ? state.stats : null;
+}
+
+export interface ActiveCards {
+  /** The campaigns with a card: the first {@link AGENCY_HOME_CAMPAIGN_CAP} active ones, in the list's order. */
+  shown: AgencyCampaign[];
+  /** Each shown campaign's numbers, by id. */
+  states: Record<string, CardState>;
+  /** Active campaigns past the cap, which have no card (the page links to the Active tab). */
+  more: number;
+}
+
+/**
+ * The Active cards' numbers: ONE request per refresh, Home's board (`GET /proxy/agency/home`,
+ * `hooks/useHomeBoard`, B28a), in place of a `/stats` read per active campaign. The board answers
+ * the first 25 active campaigns in this page's own order (running, stopping, paused; newest first
+ * within each) with their stall, floor and 24-hour abandonment; the campaigns past it get no card.
+ * Read every 10 s and on return while any campaign is active, and not at all otherwise. Shared with
+ * the sidebar's Home badge when the reader supervises, so the page adds no request to it.
+ *
+ * It also keeps the list current while a campaign moves (`needsPolling`, the campaign detail
+ * page's rule, over the board's floor): a campaign that finishes leaves the cards on the next tick.
+ * A campaign entering the active set or changing status is read at once rather than at the tick.
+ */
+export function useActiveCards(
+  tenantId: string | null,
+  accountId: string | null,
+  active: AgencyCampaign[],
+  reloadList: () => Promise<void>,
+): ActiveCards {
+  const board = useHomeBoard({ tenantId, accountId, enabled: active.length > 0, intervalMs: HOME_FAST_MS });
+  const shown = useMemo(() => active.slice(0, AGENCY_HOME_CAMPAIGN_CAP), [active]);
+
+  const states = useMemo(() => {
+    const byId = new Map(board.reads.map((r) => [r.campaign.id, r]));
+    const out: Record<string, CardState> = {};
+    for (const c of shown) {
+      const read = byId.get(c.id);
+      if (read?.stats) out[c.id] = { status: 'ready', stats: read.stats };
+      // On the board with nothing ever read for it, or no board at all: there are no numbers.
+      else if ((read && board.status === 'ready') || board.status === 'error') out[c.id] = { status: 'error' };
+      // Not read yet, or started since the board was read: the next read brings it.
+      else out[c.id] = { status: 'loading' };
+    }
+    return out;
+  }, [board.reads, board.status, shown]);
+
+  // A campaign entering the active set, or changing status within it, is read at once. Not on the
+  // first set: the board reads as it is joined.
+  const { reload } = board;
+  const activeKey = shown.map((c) => `${c.id}:${c.status}`).join(',');
+  const seenKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeKey === '') return;
+    if (seenKey.current !== null && seenKey.current !== activeKey) reload();
+    seenKey.current = activeKey;
+  }, [activeKey, reload]);
+
+  const moving = shown.some((c) => needsPolling(c.status, readyStats(states[c.id])));
+  const busy = useRef(false);
+  useVisibleInterval(async () => {
+    // One list read at a time: a slow backend must not stack ticks on top of each other.
+    if (busy.current) return;
+    busy.current = true;
+    try {
+      await reloadList();
+    } finally {
+      busy.current = false;
+    }
+  }, REFRESH_MS, moving);
+
+  return { shown, states, more: active.length - shown.length };
+}

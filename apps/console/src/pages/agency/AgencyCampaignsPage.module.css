@@ -186,14 +186,6 @@ a.liveOpen {
   color: var(--text-muted);
 }
 
-/* The campaign's place in the account's line limit (decisions MC7). One line, and
-   it changes on every poll, so it is quiet text rather than another tile. */
-.lines {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -237,45 +229,16 @@ a.liveOpen {
   color: var(--text-muted);
 }
 
-.progress {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* Abandonment in the meter's warning band, or over the ceiling: Home's floor's tones. */
+.metric_near {
+  color: var(--warning);
 }
 
-.progressHead {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: var(--text-secondary);
+.metric_over {
+  color: var(--danger);
 }
 
-.progressValue {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
-}
-
-.progressTrack {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  overflow: hidden;
-}
-
-.progressFill {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-  transition: width 400ms ease;
-}
-
-/* Ember only while the campaign is dialing: the palette keeps it for things in motion. */
-.progressFillLive {
-  background: var(--gradient-ember);
-}
-
-.progressCaption {
+.liveNote {
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -556,63 +519,6 @@ a.liveOpen {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.shortcuts {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 -8px -8px;
-}
-
-.shortcut {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px;
-  border-radius: var(--radius);
-  text-decoration: none;
-  transition: background var(--transition);
-}
-
-.shortcut:hover {
-  background: var(--bg-tertiary);
-}
-
-.shortcutIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius);
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
-}
-
-.shortcutText {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.shortcutLabel {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.shortcutHint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.shortcutChevron {
-  flex-shrink: 0;
   color: var(--text-muted);
 }
 

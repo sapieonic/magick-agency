@@ -1,24 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
+import type { AgencyHomeCampaignStats } from '@magick-agency/contracts/api/agency/home';
+import { board, onBoard, stats as homeStats } from '../helpers/home';
 
 /**
- * The campaigns home, the page a supervisor lands on in `/agency`.
+ * The Campaigns page: the list, and the landing of a viewer or an operator (B28a).
  *
  * Pinned here:
  *  - with no campaigns, the getting-started guide replaces the list, and only a
  *    role that can create is given the create action and the steps;
- *  - `/stats` is read for active campaigns only, never once per row, and one
- *    card's failed read stays on that card;
- *  - the cards refresh on the detail page's predicate (status, OR live attempts,
- *    OR anyone on the floor), so a paused campaign's drain is followed and a
- *    settled one is left alone; a failed refresh keeps the last good numbers; a
- *    hidden tab skips the tick; unmounting stops it;
+ *  - the Active cards read ONE board (`GET /proxy/agency/home`) per refresh and
+ *    never `/stats`: with 19 running campaigns that is 2 requests at first paint
+ *    and 14 a minute (list and board), where the per-campaign reads made 20 and
+ *    140; past the board's 25 the section links to the Active tab;
+ *  - a campaign the board could not read keeps its card and says so; the board
+ *    failing says so on every card; the list is unaffected;
+ *  - the list follows a moving campaign (status, OR anyone on the floor), and a
+ *    still one is left alone; a hidden tab skips the tick; unmounting stops it;
+ *    a campaign starting or pausing is read at once;
  *  - the list is paginated server-side, so the header counts the account's real
  *    total and older campaigns load on request; active campaigns are read in
  *    full on their own, so an old paused one still gets its card, and the next
  *    page's offset counts only the paged history;
- *  - the filter tabs, the search box and the rail's permission gates.
+ *  - the filter tabs and the search box;
+ *  - per role: no rail repeating the sidebar for anyone; New campaign for a role
+ *    that can create; Take calls for a viewer or operator (the sidebar's gate),
+ *    never for a supervisor; a viewer's and an operator's cards are links only.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -27,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   listAgencyCampaigns: vi.fn(),
   getAgencyCampaign: vi.fn(),
   getAgencyCampaignStats: vi.fn(),
+  getAgencyHomeBoard: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -36,9 +45,19 @@ vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   getAgencyCampaignStats: mocks.getAgencyCampaignStats,
 }));
+vi.mock('../../api/agencyHome', () => ({ getAgencyHomeBoard: mocks.getAgencyHomeBoard }));
+// The dialer's flag and capability on, as they are wherever `/agency` renders.
+vi.mock('../../hooks/useNavGate', () => ({
+  useNavGate: () => ({
+    role: mocks.useTenant().role,
+    isFlagEnabled: () => true,
+    isCapabilityEnabled: () => true,
+    missedAvailable: false,
+  }),
+}));
 
 import { AgencyCampaignsPage } from '../../pages/agency/AgencyCampaignsPage';
-import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
+import type { AgencyCampaign } from '../../types/agency-campaign';
 
 function renderPage() {
   return render(
@@ -58,22 +77,20 @@ function tenant(over: Record<string, unknown> = {}) {
   };
 }
 
-function stats(over: Partial<AgencyCampaignStats> = {}): AgencyCampaignStats {
-  return {
-    stall: null,
-    attempts_live: 3,
+/** A card's stats on the board: five on the floor (three on a call, one being connected, one free). */
+function floor(over: Partial<AgencyHomeCampaignStats> = {}): AgencyHomeCampaignStats {
+  return homeStats({
     agents_live: 5,
-    attempts_connected: 40,
-    attempts_total: 120,
-    contacts_pending: 60,
-    contacts_total: 100,
-    contacts_completed: 30,
-    contacts_suppressed: 5,
-    contacts_exhausted: 5,
+    agents_by_state: { offline: 0, available: 1, reserved: 1, on_call: 3, wrapup: 0, break: 0 },
+    abandoned_24h: 1,
+    answered_24h: 40,
+    abandonment_ceiling_pct: 3,
     ...over,
-    // The page reads only these fields; the rest of the payload is irrelevant here.
-  } as AgencyCampaignStats;
+  });
 }
+
+/** A still campaign's stats on the board: nobody on its floor. */
+const STILL = homeStats();
 
 /** The list endpoint's answer: one page and the account's total. */
 function listing(campaigns: AgencyCampaign[], total = campaigns.length) {
@@ -97,15 +114,32 @@ const DONE: AgencyCampaign = {
   ended_at: '2026-05-01T00:00:00Z',
 };
 
+/** The board for these campaigns, each with `floor()` unless `by` names its stats. */
+function boardOf(campaigns: AgencyCampaign[], by: Record<string, AgencyHomeCampaignStats | null> = {}) {
+  return board(campaigns.map((c) =>
+    onBoard(c.id, {
+      name: c.name,
+      status: c.status as 'running' | 'stopping' | 'paused',
+      stats: c.id in by ? by[c.id]! : floor(),
+    }),
+  ));
+}
+
 function card(name: string): HTMLElement {
   return screen.getByRole('article', { name });
+}
+
+/** A card's metric by its label. */
+function metric(name: string, label: string): string {
+  const term = within(card(name)).getByText(label);
+  return term.nextElementSibling?.textContent ?? '';
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.useTenant.mockReturnValue(tenant());
-  mocks.getAgencyCampaignStats.mockResolvedValue(stats());
   mocks.listAgencyCampaigns.mockResolvedValue([]);
+  mocks.getAgencyHomeBoard.mockResolvedValue(board([]));
 });
 
 afterEach(() => {
@@ -126,7 +160,7 @@ describe('AgencyCampaignsPage — no campaigns yet', () => {
     expect(create.getAttribute('href')).toBe('/agency/campaigns/new');
     expect(screen.getByRole('heading', { name: 'Start dialling' })).toBeTruthy();
     expect(screen.getByText('Several campaigns can run at once. They share your account’s lines.')).toBeTruthy();
-    expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
+    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
   });
 
   it('offers a viewer neither the create action nor steps they cannot follow', async () => {
@@ -142,232 +176,208 @@ describe('AgencyCampaignsPage — no campaigns yet', () => {
 describe('AgencyCampaignsPage — active campaigns', () => {
   beforeEach(() => {
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DONE, DRAFT, RUNNING, PAUSED]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING, PAUSED], { 'c-paused': STILL }));
   });
 
-  it('reads /stats for active campaigns only and shows their numbers', async () => {
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      id === 'c-paused' ? stats({ attempts_live: 0, agents_live: 0 }) : stats(),
-    );
+  it('reads the board once, never /stats, and shows each card’s floor and abandonment', async () => {
     renderPage();
 
-    await waitFor(() => expect(within(card('Monsoon offers')).getByText('5')).toBeTruthy());
-    const live = card('Monsoon offers');
-    expect(within(live).getByText('40%')).toBeTruthy();
-    expect(within(live).getByText('Reached someone')).toBeTruthy();
+    await waitFor(() => expect(metric('Monsoon offers', 'Agents on the floor')).toBe('5'));
+    // Someone being connected counts as on a call, as on Home's floor.
+    expect(metric('Monsoon offers', 'On a call')).toBe('4');
+    expect(metric('Monsoon offers', 'Available')).toBe('1');
+    expect(metric('Monsoon offers', 'Abandoned (24h)')).toBe('2.5%ceiling 3%');
+    expect(metric('Gold loan pilot', 'Agents on the floor')).toBe('0');
 
-    const ids = mocks.getAgencyCampaignStats.mock.calls.map((c) => c[0]).sort();
-    expect(ids).toEqual(['c-live', 'c-paused']);
-    expect(mocks.getAgencyCampaignStats).toHaveBeenCalledWith('c-live', 'tenant-1', 'account-1');
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledWith('tenant-1', 'account-1');
+    expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
+    // Only the active campaigns have cards.
+    expect(screen.getAllByTestId('active-campaign')).toHaveLength(2);
+  });
+
+  it('withholds a rate under 25 answered calls, and marks one over the ceiling', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING, PAUSED], {
+      'c-live': floor({ abandoned_24h: 3, answered_24h: 50 }),
+      'c-paused': floor({ abandoned_24h: 1, answered_24h: 10 }),
+    }));
+    renderPage();
+
+    await waitFor(() => expect(metric('Monsoon offers', 'Abandoned (24h)')).toBe('6%ceiling 3%'));
+    const over = within(card('Monsoon offers')).getByText('Abandoned (24h)').nextElementSibling as HTMLElement;
+    expect(over.dataset['tone']).toBe('over');
+    expect(metric('Gold loan pilot', 'Abandoned (24h)')).toBe('—Not enough calls yet');
   });
 
   it('keeps one card’s failed read on that card, with its sibling’s numbers intact', async () => {
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) => {
-      if (id === 'c-live') throw new Error('boom');
-      return stats({ attempts_live: 0, agents_live: 7 });
-    });
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING, PAUSED], { 'c-live': null, 'c-paused': floor({ agents_live: 7 }) }));
     renderPage();
 
     await waitFor(() =>
       expect(within(card('Monsoon offers')).getByText(/Live numbers didn’t load/)).toBeTruthy(),
     );
-    await waitFor(() => expect(within(card('Gold loan pilot')).getByText('7')).toBeTruthy());
+    expect(metric('Gold loan pilot', 'Agents on the floor')).toBe('7');
     expect(within(card('Gold loan pilot')).queryByText(/didn’t load/)).toBeNull();
     // The list is still there.
     expect(screen.getByRole('link', { name: /Diwali leads/ })).toBeTruthy();
   });
 
-  it('shows each running campaign’s live calls against its share of the account’s lines', async () => {
-    // Two running at once on one account (decisions MC6).
-    const second: AgencyCampaign = { id: 'c-two', name: 'Gold loan pilot', status: 'running' };
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING, second]));
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      stats({
-        concurrency: {
-          campaign_live: id === 'c-live' ? 4 : 1,
-          fair_share: 5,
-          account_limit: 10,
-          account_live: 5,
-          running_campaigns: 2,
-        },
-      }),
-    );
+  it('says so on every card when the board cannot be read, and keeps the list', async () => {
+    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('boom'));
     renderPage();
 
-    await waitFor(() =>
-      expect(within(card('Monsoon offers')).getByTestId('campaign-lines').textContent)
-        .toBe('4 live calls · share 5 of 10 lines · 2 campaigns running'),
-    );
-    expect(within(card('Gold loan pilot')).getByTestId('campaign-lines').textContent)
-      .toBe('1 live call · share 5 of 10 lines · 2 campaigns running');
-  });
-
-  it('shows the lines in use for a campaign running alone, and nothing without the block', async () => {
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      id === 'c-live'
-        ? stats({
-          concurrency: {
-            campaign_live: 4, fair_share: null, account_limit: 10, account_live: 4, running_campaigns: 1,
-          },
-        })
-        : stats({ attempts_live: 0, agents_live: 7 }),
-    );
-    renderPage();
-
-    await waitFor(() =>
-      expect(within(card('Monsoon offers')).getByTestId('campaign-lines').textContent).toBe('4 of 10 lines in use'),
-    );
-    await waitFor(() => expect(within(card('Gold loan pilot')).getByText('7')).toBeTruthy());
-    // An older server sends no `concurrency`: the card says nothing rather than a guess.
-    expect(within(card('Gold loan pilot')).queryByTestId('campaign-lines')).toBeNull();
+    await waitFor(() => expect(screen.getAllByText(/Live numbers didn’t load/)).toHaveLength(2));
+    expect(screen.getByRole('link', { name: /Diwali leads/ })).toBeTruthy();
   });
 
   it('shows the top diagnosis when the campaign is stalled', async () => {
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING]));
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ stall: { code: 'concurrency_saturated', limit: 10, in_use: 10 } }),
-    );
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING], {
+      'c-live': floor({ stall: { code: 'concurrency_saturated', limit: 10, in_use: 10 } }),
+    }));
     renderPage();
     await waitFor(() =>
       expect(within(card('Monsoon offers')).getByText(/lines/i)).toBeTruthy(),
     );
   });
+
+  it('gives the board’s 25 a card each, and links the rest to the Active tab', async () => {
+    const many: AgencyCampaign[] = Array.from({ length: 27 }, (_, i) => ({ id: `r-${i}`, name: `Run ${i}`, status: 'running' }));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing(many));
+    mocks.getAgencyHomeBoard.mockResolvedValue({ ...boardOf(many.slice(0, 25)), active_total: 27 });
+    renderPage();
+
+    await waitFor(() => expect(metric('Run 24', 'Agents on the floor')).toBe('5'));
+    expect(screen.getAllByTestId('active-campaign')).toHaveLength(25);
+    expect(screen.queryByRole('article', { name: 'Run 25' })).toBeNull();
+    const more = screen.getByTestId('active-more');
+    expect(more.textContent).toContain('And 2 more active campaigns.');
+    fireEvent.click(within(more).getByRole('link', { name: 'See every active campaign' }));
+    expect(screen.getByRole('button', { name: /^Active/ }).getAttribute('aria-pressed')).toBe('true');
+  });
 });
 
-describe('AgencyCampaignsPage — refreshing the cards', () => {
+describe('AgencyCampaignsPage — refreshing', () => {
   /** Wait for a card's numbers to be RENDERED: the poll predicate reads them. */
-  async function settle(name: string, text: string) {
-    await vi.waitFor(() => expect(within(card(name)).getByText(text)).toBeTruthy());
+  async function settle(name: string, value: string) {
+    await vi.waitFor(() => expect(metric(name, 'Agents on the floor')).toBe(value));
   }
 
-  function statsCallsFor(id: string): number {
-    return mocks.getAgencyCampaignStats.mock.calls.filter((c) => c[0] === id).length;
+  async function tick(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
   }
 
-  it('re-reads a running campaign and the list every ten seconds', async () => {
+  it('makes 2 requests at first paint and 14 a minute with 19 running campaigns (it was 20 and 140)', async () => {
     vi.useFakeTimers();
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING, DRAFT]));
+    const many: AgencyCampaign[] = Array.from({ length: 19 }, (_, i) => ({ id: `r-${i}`, name: `Run ${i}`, status: 'running' }));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing(many));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf(many));
     renderPage();
-    await settle('Monsoon offers', '5');
-    const lists = mocks.listAgencyCampaignsPage.mock.calls.length;
+    await settle('Run 18', '5');
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
 
-    expect(statsCallsFor('c-live')).toBe(2);
-    expect(mocks.listAgencyCampaignsPage.mock.calls.length).toBe(lists + 1);
+    await tick(60_000);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(7);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(7);
+    expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
+    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.getAgencyCampaign).not.toHaveBeenCalled();
   });
 
-  it('follows a paused campaign while its calls drain, and leaves a settled one alone', async () => {
+  it('follows a paused campaign while agents are on it, and leaves the list alone once nobody is', async () => {
     vi.useFakeTimers();
-    const draining: AgencyCampaign = { id: 'c-drain', name: 'Draining', status: 'paused' };
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([draining, PAUSED]));
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      id === 'c-drain'
-        ? stats({ attempts_live: 2, agents_live: 9 })
-        : stats({ attempts_live: 0, agents_live: 0, attempts_connected: 17 }),
-    );
-    renderPage();
-    await settle('Draining', '9');
-    await settle('Gold loan pilot', '17');
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
-
-    expect(statsCallsFor('c-drain')).toBe(2);
-    expect(statsCallsFor('c-paused')).toBe(1);
-  });
-
-  it('keeps following a drained paused campaign when a payload without the roster says agents are on it', async () => {
-    vi.useFakeTimers();
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([PAUSED]));
-    // `agents` is optional on the wire; `agents_live` is still the total.
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 0, agents: undefined, agents_live: 2 }));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([PAUSED, DRAFT]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([PAUSED], { 'c-paused': floor({ agents_live: 2 }) }));
     renderPage();
     await settle('Gold loan pilot', '2');
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
+    await tick(10_000);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2);
 
-    expect(statsCallsFor('c-paused')).toBe(2);
+    // Everyone has left: the board still answers every 10 s, the list is not read again.
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([PAUSED], { 'c-paused': STILL }));
+    await tick(10_000);
+    await settle('Gold loan pilot', '0');
+    const lists = mocks.listAgencyCampaignsPage.mock.calls.length;
+    await tick(30_000);
+    expect(mocks.listAgencyCampaignsPage.mock.calls.length).toBe(lists);
   });
 
-  it('does not poll at all when nothing is moving', async () => {
+  it('reads nothing on a timer when no campaign is active', async () => {
     vi.useFakeTimers();
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([PAUSED, DRAFT]));
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 0, agents_live: 0 }));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT, DONE]));
     renderPage();
-    await settle('Gold loan pilot', 'Agents on the floor');
-    await vi.waitFor(() => expect(statsCallsFor('c-paused')).toBe(1));
-    const lists = mocks.listAgencyCampaignsPage.mock.calls.length;
+    await vi.waitFor(() => expect(screen.getByText('Nothing is dialling right now')).toBeTruthy());
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
-    });
-
-    expect(statsCallsFor('c-paused')).toBe(1);
-    expect(mocks.listAgencyCampaignsPage.mock.calls.length).toBe(lists);
+    await tick(30_000);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(1);
+    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
   });
 
   it('keeps the last good numbers when a refresh fails', async () => {
     vi.useFakeTimers();
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING]));
     renderPage();
     await settle('Monsoon offers', '5');
 
-    mocks.getAgencyCampaignStats.mockRejectedValue(new Error('blip'));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
+    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('blip'));
+    await tick(10_000);
 
-    expect(statsCallsFor('c-live')).toBe(2);
-    expect(within(card('Monsoon offers')).getByText('5')).toBeTruthy();
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    expect(metric('Monsoon offers', 'Agents on the floor')).toBe('5');
     expect(within(card('Monsoon offers')).queryByText(/didn’t load/)).toBeNull();
   });
 
   it('skips the tick while the tab is hidden', async () => {
     vi.useFakeTimers();
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING]));
     renderPage();
     await settle('Monsoon offers', '5');
 
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
-    });
+    await tick(30_000);
 
-    expect(statsCallsFor('c-live')).toBe(1);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(1);
   });
 
   it('stops polling once the page unmounts', async () => {
     vi.useFakeTimers();
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING]));
     const { unmount } = renderPage();
     await settle('Monsoon offers', '5');
 
     unmount();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
-    });
+    await tick(30_000);
 
-    expect(statsCallsFor('c-live')).toBe(1);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(1);
   });
 
-  it('re-reads everything when the window regains focus, even with nothing moving', async () => {
+  it('re-reads the list when the window regains focus, and the board at once when a campaign starts', async () => {
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([PAUSED]));
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 0, agents_live: 0 }));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([PAUSED], { 'c-paused': STILL }));
     renderPage();
-    await waitFor(() => expect(statsCallsFor('c-paused')).toBe(1));
+    await waitFor(() => expect(metric('Gold loan pilot', 'Agents on the floor')).toBe('0'));
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
 
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([{ ...PAUSED, status: 'running' }]));
+    const started = { ...PAUSED, status: 'running' };
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([started]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([started], { 'c-paused': floor({ agents_live: 3 }) }));
     await act(async () => {
       window.dispatchEvent(new Event('focus'));
     });
 
     await waitFor(() => expect(within(card('Gold loan pilot')).getByText('Running')).toBeTruthy());
-    await waitFor(() => expect(statsCallsFor('c-paused')).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(metric('Gold loan pilot', 'Agents on the floor')).toBe('3'));
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -538,24 +548,48 @@ describe('AgencyCampaignsPage — the list', () => {
   });
 });
 
-describe('AgencyCampaignsPage — the rail', () => {
+describe('AgencyCampaignsPage — per role', () => {
   beforeEach(() => {
-    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT]));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT, RUNNING]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING]));
   });
 
-  it('gives an account admin the Team door, in Settings', async () => {
+  it('gives a supervisor New campaign and the rules, and no rail of sidebar entries or Take calls', async () => {
     renderPage();
-    const team = await screen.findByRole('link', { name: /Team/ });
-    // Team is in the Settings hub, inside the same shell (decision B28).
-    expect(team.getAttribute('href')).toBe('/settings/team');
-    expect(screen.getByRole('link', { name: /Analytics/ }).getAttribute('href')).toBe('/agency/analytics');
+    await waitFor(() => expect(metric('Monsoon offers', 'Agents on the floor')).toBe('5'));
+    expect(screen.getByRole('link', { name: /New campaign/ }).getAttribute('href')).toBe('/agency/campaigns/new');
+    expect(screen.queryByRole('link', { name: /Take calls/ })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Shortcuts' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Analytics|Do Not Call|Team/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Good to know' })).toBeTruthy();
   });
 
-  it('gives a viewer no Team door, since they cannot invite', async () => {
-    mocks.useTenant.mockReturnValue(tenant({ role: 'viewer' }));
+  it.each(['viewer', 'operator'])('gives a %s their cards, read-only, and Take calls instead of New campaign', async (role) => {
+    mocks.useTenant.mockReturnValue(tenant({ role }));
     renderPage();
-    await screen.findByRole('link', { name: /Analytics/ });
-    expect(screen.queryByRole('link', { name: /Team/ })).toBeNull();
+    await waitFor(() => expect(metric('Monsoon offers', 'Agents on the floor')).toBe('5'));
+
+    expect(screen.getByRole('link', { name: /Take calls/ }).getAttribute('href')).toBe('/dialer');
     expect(screen.queryByRole('link', { name: /New campaign/ })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Shortcuts' })).toBeNull();
+    // A card is links to the campaign and nothing that acts on it.
+    const live = card('Monsoon offers');
+    expect(within(live).queryAllByRole('button')).toHaveLength(0);
+    expect(within(live).getAllByRole('link').map((a) => a.getAttribute('href')))
+      .toEqual(['/agency/campaigns/c-live', '/agency/campaigns/c-live']);
+    // The board is the only live read: no per-campaign stats, no supervisor-only read.
+    expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
+  });
+
+  it.each(['viewer', 'operator'])('gives a %s with no campaigns yet a plain empty state and Take calls', async (role) => {
+    mocks.useTenant.mockReturnValue(tenant({ role }));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([]));
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: 'No campaigns yet' })).toBeTruthy();
+    expect(screen.getByText('Campaigns are set up by a supervisor. They will show here as soon as one exists.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Take calls/ }).getAttribute('href')).toBe('/dialer');
+    expect(screen.queryByRole('link', { name: /New campaign|Invite agents/ })).toBeNull();
+    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
   });
 });

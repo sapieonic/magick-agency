@@ -1,6 +1,10 @@
 import type { AgencyCampaign, AgencyCampaignConcurrency, AgencyCampaignStats } from '../types/agency-campaign';
+import type { AgencyHomeCampaignStats } from '@magick-agency/contracts/api/agency/home';
 import { describeIsoDays, hhmm } from './format/weekdays';
 import { formatCount, plural } from './format/number';
+import { abandonmentAttention, statsAbandonmentRate } from './agency/home';
+import { ceilingPctText } from './agency/abandonmentCeiling';
+import { rateText } from './agency/insights/rates';
 
 /**
  * Pure helpers for the campaigns home (`AgencyCampaignsPage`): which group a
@@ -39,8 +43,9 @@ export function campaignGroup(status: string): CampaignGroup {
 /**
  * Whether a campaign's live numbers should keep refreshing.
  *
- * Used by this page's cards and by the campaign detail page, so the two cannot
- * disagree. Status alone is wrong: a paused campaign still has calls draining
+ * Used by the campaign detail page, by this page's list poll (over Home's board,
+ * which carries the floor but not live attempts) and, server-side, by the board's
+ * own memo (`campaignMoving`), so they cannot disagree. Status alone is wrong: a paused campaign still has calls draining
  * and agents whose state changes, and a card keyed on status froze the moment
  * Pause was pressed. So it is the status, OR live attempts, OR anyone on the
  * floor. A paused campaign with none of those is read once and left alone,
@@ -62,9 +67,8 @@ export function needsPolling(
 
 /**
  * One line on where a campaign sits in its account's line limit, from the stats'
- * `concurrency` block (decisions MC7), shared by the campaigns home's cards and the
- * campaign detail header. The share is a guide, not a cap, so the campaign's own calls
- * come first; a share that rounds down to 0 is left out. `null` with no block or limit.
+ * `concurrency` block (decisions MC7), for the campaign detail header. The share
+ * is a guide, not a cap, so the campaign's own calls come first; a share that rounds down to 0 is left out. `null` with no block or limit.
  */
 export function concurrencyLine(
   status: string,
@@ -87,29 +91,40 @@ export function concurrencyLine(
   return status !== 'running' && running_campaigns > 0 ? `${inUse} · ${running}` : inUse;
 }
 
+/** What an Active card prints, from the board's stats; `—` for a number not known. */
+export interface ActiveCardFigures {
+  agentsLive: string;
+  onCall: string;
+  available: string;
+  /**
+   * The guardrail's rolling 24-hour rate with Home's floor's rule and level
+   * (`statsAbandonmentRate`: withheld under IN5's 25 answered calls); `sub` is the ceiling, or
+   * why there is no rate yet.
+   */
+  abandonment: { text: string; sub: string | null; level: 'near' | 'over' | null };
+}
+
+export function activeCardFigures(stats: AgencyHomeCampaignStats | null): ActiveCardFigures {
+  const figure = (n: number | undefined) => (typeof n === 'number' ? formatCount(n) : '—');
+  const by = stats?.agents_by_state;
+  const rate = stats ? statsAbandonmentRate(stats) : null;
+  const ceiling = typeof stats?.abandonment_ceiling_pct === 'number'
+    ? `ceiling ${ceilingPctText(stats.abandonment_ceiling_pct)}`
+    : null;
+  return {
+    agentsLive: figure(stats?.agents_live),
+    // A call being connected to the agent (`reserved`) counts as on a call, as on Home's floor.
+    onCall: figure(by ? (by.on_call ?? 0) + (by.reserved ?? 0) : undefined),
+    available: figure(by?.available),
+    abandonment: {
+      text: rate?.kind === 'value' ? rateText(rate) : '—',
+      sub: rate?.kind === 'withheld' ? rateText(rate) : ceiling,
+      level: stats ? abandonmentAttention(stats) : null,
+    },
+  };
+}
+
 export type CampaignFilter = 'all' | 'active' | 'draft' | 'finished';
-
-/**
- * The campaigns home keeps its filter in the URL (`?status=draft`, absent for All), so a reload
- * and Back from a campaign keep the group the supervisor was looking at. Here rather than on the
- * page, whose source the stats-consumer guard reads for quoted payload keys.
- */
-const CAMPAIGN_FILTER_PARAM = 'status';
-const NARROWING_FILTERS: readonly CampaignFilter[] = ['active', 'draft', 'finished'];
-
-/** The filter the URL names; anything else, or nothing, is All. */
-export function campaignFilterFromParams(params: URLSearchParams): CampaignFilter {
-  const value = params.get(CAMPAIGN_FILTER_PARAM);
-  return NARROWING_FILTERS.find((f) => f === value) ?? 'all';
-}
-
-/** `params` with the filter set to `next`, every other key kept. */
-export function withCampaignFilter(params: URLSearchParams, next: CampaignFilter): URLSearchParams {
-  const updated = new URLSearchParams(params);
-  if (next === 'all') updated.delete(CAMPAIGN_FILTER_PARAM);
-  else updated.set(CAMPAIGN_FILTER_PARAM, next);
-  return updated;
-}
 
 export type CampaignCounts = Record<CampaignFilter, number>;
 
