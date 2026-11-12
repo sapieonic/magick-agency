@@ -93,7 +93,7 @@ export interface CustomerSearchBoxProps {
 export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, storage }: CustomerSearchBoxProps) {
   const allowed = usePermission('agency.customer_history.read');
   const store = useMemo(() => storage ?? browserStorage(), [storage]);
-  const defaultCallingCode = useCustomerSearchDefaultCallingCode();
+  const defaultCallingCode = useCustomerSearchDefaultCallingCode(allowed);
 
   const [raw, setRaw] = useState('');
   /** `null` until the person picks: the picker follows the platform default until then. */

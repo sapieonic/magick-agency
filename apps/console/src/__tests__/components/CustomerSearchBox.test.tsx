@@ -506,10 +506,13 @@ describe('searching', () => {
     expect(customerSearchAnswer(fixture.search_response.search_id)).toBeNull();
   });
 
-  it('renders nothing for a role without agency.customer_history.read', () => {
+  it('renders nothing for a role without agency.customer_history.read, and reads nothing for it', async () => {
     mocks.useTenant.mockReturnValue({ tenantId: 't', accountId: 'a', role: undefined });
     renderBox();
     expect(screen.queryByLabelText('Phone number')).toBeNull();
+    // The default calling code is the box's; a box that never shows never asks for it.
+    await act(async () => {});
+    expect(mocks.getCustomerSearchOptions).not.toHaveBeenCalled();
   });
 });
 
