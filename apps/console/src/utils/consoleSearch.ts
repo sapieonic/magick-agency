@@ -6,13 +6,16 @@ import {
   CONSOLE_SECTIONS,
   SETTINGS_ENTRIES,
   agencyGate,
+  dialerOn,
   passesGate,
   settingsGroupTitle,
+  type ConsoleSection,
   type Gate,
   type GateInput,
+  type SectionTab,
   type SettingsEntry,
 } from './consoleNav';
-import { CAMPAIGN_TABS, type CampaignTabDefinition, type CampaignTabId } from './agencyCampaignTabs';
+import { CAMPAIGN_TABS, canOpenCampaignScreen, type CampaignTabId } from './agencyCampaignTabs';
 import { campaignSettingsSectionsFor } from './campaignSettingsSections';
 import { CONTACT_ASSIGNMENT_FLAG } from './agencyAssignmentCopy';
 import { INBOUND_FLAG } from './inbound/inboundFlag';
@@ -128,58 +131,63 @@ export const NUMBER_SEARCH_GATE: Gate = agencyGate({ permission: 'agency.custome
  * the Campaigns page's button, shown with `agency.campaigns.write` (`AgencyCampaignsPage`).
  * Customer history is where a number's search lands; opened on its own it is the search box.
  */
-const EXTRA_PAGES: readonly PageEntry[] = [
-  {
-    key: 'campaigns:new',
-    title: 'New campaign',
-    detail: 'Campaigns',
-    to: '/agency/campaigns/new',
-    gate: agencyGate({ permission: 'agency.campaigns.write' }),
-    keywords: ['create campaign', 'add campaign', 'upload', 'roster'],
-  },
-  {
-    key: 'customers:history',
-    title: 'Customer history',
-    to: '/agency/customers',
-    gate: NUMBER_SEARCH_GATE,
-    keywords: ['history', 'customer', 'phone number', 'search a number', 'look up', 'lookup', 'calls to a number'],
-  },
+const NEW_CAMPAIGN: PageEntry = {
+  key: 'campaigns:new',
+  title: 'New campaign',
+  detail: 'Campaigns',
+  to: '/agency/campaigns/new',
+  gate: agencyGate({ permission: 'agency.campaigns.write' }),
+  keywords: ['create campaign', 'add campaign', 'upload', 'roster'],
+};
+
+const CUSTOMER_HISTORY: PageEntry = {
+  key: 'customers:history',
+  title: 'Customer history',
+  to: '/agency/customers',
+  gate: NUMBER_SEARCH_GATE,
+  keywords: ['history', 'customer', 'phone number', 'search a number', 'look up', 'lookup', 'calls to a number'],
+};
+
+function sidebarPage(section: ConsoleSection, tab: SectionTab): PageEntry {
+  const key = `${section.id}:${tab.id}`;
+  const title = PAGE_TITLES[key] ?? tab.label;
+  return {
+    key,
+    title,
+    ...(title === section.label ? {} : { detail: section.label }),
+    to: tab.to,
+    gate: tab.gate,
+    keywords: [section.label, ...(PAGE_KEYWORDS[key] ?? [])],
+  };
+}
+
+/** Every page ⌘K can open: the sidebar's tabs in sidebar order, New campaign right after Campaigns, then Customer history. */
+const SEARCH_PAGES: readonly PageEntry[] = [
+  ...CONSOLE_SECTIONS.flatMap((section) =>
+    section.tabs.flatMap((tab) => {
+      const page = sidebarPage(section, tab);
+      return page.key === 'campaigns:campaigns' ? [page, NEW_CAMPAIGN] : [page];
+    }),
+  ),
+  CUSTOMER_HISTORY,
 ];
 
-/** Every page ⌘K can open: the sidebar's tabs, in sidebar order, then {@link EXTRA_PAGES}. */
-export function searchPages(): PageEntry[] {
-  const fromNav = CONSOLE_SECTIONS.flatMap((section) =>
-    section.tabs.map((tab): PageEntry => {
-      const key = `${section.id}:${tab.id}`;
-      const title = PAGE_TITLES[key] ?? tab.label;
-      return {
-        key,
-        title,
-        ...(title === section.label ? {} : { detail: section.label }),
-        to: tab.to,
-        gate: tab.gate,
-        keywords: [section.label, ...(PAGE_KEYWORDS[key] ?? [])],
-      };
-    }),
-  );
-  const campaignsAt = fromNav.findIndex((p) => p.key === 'campaigns:campaigns');
-  const pages = [...fromNav];
-  pages.splice(campaignsAt + 1, 0, ...EXTRA_PAGES.filter((p) => p.key.startsWith('campaigns:')));
-  return [...pages, ...EXTRA_PAGES.filter((p) => !p.key.startsWith('campaigns:'))];
+/** Each page with what it is known by, worked out once. */
+const PAGE_TEXTS = SEARCH_PAGES.map((page) => ({ page, text: haystack([page.title, page.detail ?? '', ...page.keywords]) }));
+
+export function searchPages(): readonly PageEntry[] {
+  return SEARCH_PAGES;
 }
 
 export function pageResults(tokens: readonly string[], gate: GateInput): SearchResult[] {
-  return searchPages()
-    .filter((page) => passesGate(page.gate, gate))
-    .filter((page) => matchesAll(tokens, haystack([page.title, page.detail ?? '', ...page.keywords])))
-    .map((page) => ({
-      key: `page:${page.key}`,
-      group: 'pages' as const,
-      title: page.title,
-      ...(page.detail ? { detail: page.detail } : {}),
-      kind: 'Page',
-      target: { type: 'path' as const, to: page.to },
-    }));
+  return PAGE_TEXTS.filter(({ page, text }) => passesGate(page.gate, gate) && matchesAll(tokens, text)).map(({ page }) => ({
+    key: `page:${page.key}`,
+    group: 'pages' as const,
+    title: page.title,
+    ...(page.detail ? { detail: page.detail } : {}),
+    kind: 'Page',
+    target: { type: 'path' as const, to: page.to },
+  }));
 }
 
 /* ── Settings ────────────────────────────────────────────────────────────── */
@@ -257,23 +265,36 @@ export interface SettingsMatch {
   detail: string;
 }
 
+/** What a Settings page is known by: the page, and each of its named settings. */
+interface SettingsText {
+  group: string;
+  page: string;
+  settings: readonly { setting: NamedSetting; text: string }[];
+}
+
+function settingsText(entry: SettingsEntry): SettingsText {
+  const group = settingsGroupTitle(entry.scope, {});
+  const terms = SETTINGS_SEARCH[entry.id] ?? { keywords: [], settings: [] };
+  return {
+    group,
+    page: haystack([entry.label, group, ...terms.keywords]),
+    settings: terms.settings.map((setting) => ({ setting, text: haystack([setting.label, entry.label, ...setting.keywords]) })),
+  };
+}
+
+/** The hub's entries' texts, worked out once. */
+const SETTINGS_TEXTS = new Map(SETTINGS_ENTRIES.map((entry) => [entry, settingsText(entry)]));
+
 /**
  * How a Settings page matches the query, or null. The page itself first (its label, its group's
  * title and its words); failing that its first named setting whose words, with the page's label,
  * hold every word of the query, so "soft phone caller" finds the default caller ID.
  */
 export function matchSettingsEntry(entry: SettingsEntry, tokens: readonly string[]): SettingsMatch | null {
-  const group = settingsGroupTitle(entry.scope, {});
-  const terms = SETTINGS_SEARCH[entry.id] ?? { keywords: [], settings: [] };
-  if (matchesAll(tokens, haystack([entry.label, group, ...terms.keywords]))) {
-    return { entry, title: entry.label, detail: `Settings › ${group}` };
-  }
-  for (const setting of terms.settings) {
-    if (matchesAll(tokens, haystack([setting.label, entry.label, ...setting.keywords]))) {
-      return { entry, title: setting.label, detail: `Settings › ${group} › ${entry.label}` };
-    }
-  }
-  return null;
+  const { group, page, settings } = SETTINGS_TEXTS.get(entry) ?? settingsText(entry);
+  if (matchesAll(tokens, page)) return { entry, title: entry.label, detail: `Settings › ${group}` };
+  const named = settings.find(({ text }) => matchesAll(tokens, text));
+  return named ? { entry, title: named.setting.label, detail: `Settings › ${group} › ${entry.label}` } : null;
 }
 
 /** The hub's sub-nav filter: does this entry stay? */
@@ -312,32 +333,23 @@ export interface CampaignSettingsSection {
   keywords: string[];
 }
 
-/** The campaign list's gate: the Campaigns page's, whose list read it is. */
-export function campaignsGate(): Gate {
-  const tab = CONSOLE_SECTIONS.find((s) => s.id === 'campaigns')?.tabs.find((t) => t.id === 'campaigns');
-  return tab ? tab.gate : agencyGate({ permission: 'agency.campaigns.read' });
-}
-
 /**
- * A campaign screen's gate, as the tab bar gates it (`CAMPAIGN_TABS`: its permission and its
- * flag), under the dialer. The campaign list's own gate comes on top: no campaign is offered
- * without it.
+ * The campaign list's gate: the Campaigns page's, whose list read it is. (Read off its sidebar tab
+ * here; consoleNav.ts names no constant for it.)
  */
-export function campaignTabGate(tab: Pick<CampaignTabDefinition, 'permission' | 'flag'>): Gate {
-  return agencyGate({
-    ...(tab.permission ? { permission: tab.permission } : {}),
-    ...(tab.flag ? { flags: [tab.flag] } : {}),
-  });
-}
+export const CAMPAIGNS_GATE: Gate = CONSOLE_SECTIONS.find((s) => s.id === 'campaigns')!.tabs.find((t) => t.id === 'campaigns')!.gate;
 
-/** A campaign's Settings tab, gated as the tab bar gates it (`CAMPAIGN_TABS`). */
-export function campaignSettingsGate(): Gate {
-  const tab = CAMPAIGN_TABS.find((t) => t.id === 'settings');
-  return tab ? campaignTabGate(tab) : agencyGate({ permission: 'agency.supervise' });
+/**
+ * Whether the reader may open a campaign screen: under the dialer, gated as the tab bar gates it
+ * (`canOpenCampaignScreen`: its permission and its flag). The campaign list's own gate comes on
+ * top: no campaign is offered without it.
+ */
+function canOpenScreen(id: CampaignTabId, gate: GateInput): boolean {
+  return dialerOn(gate) && canOpenCampaignScreen(id, gate.role, gate.isFlagEnabled);
 }
 
 /**
- * The words that find each campaign screen, beside its title. Every screen needs a row
+ * The words that find each campaign screen, beside its label. Every screen needs a row
  * (`consoleSearch.test.ts`). Old names stay: Call log was "Call attempts", and History was
  * called Activity.
  */
@@ -354,9 +366,24 @@ export const CAMPAIGN_TAB_KEYWORDS: Record<CampaignTabId, readonly string[]> = {
   settings: ['settings', 'configure', 'set up'],
 };
 
+/** Each campaign screen with what it is known by, worked out once. */
+const CAMPAIGN_SCREENS = CAMPAIGN_TABS.map((tab) => ({ item: tab, text: haystack([tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]) }));
+
 const MAX_CAMPAIGNS = 5;
 const MAX_CAMPAIGN_PAGES = 6;
 const MAX_CAMPAIGN_SECTIONS = 6;
+
+const CAMPAIGN_NAMES = new WeakMap<readonly SearchCampaign[], readonly string[]>();
+
+/** The campaigns' names as matched, worked out once per list (a list read again is a new array). */
+function campaignNames(campaigns: readonly SearchCampaign[]): readonly string[] {
+  let names = CAMPAIGN_NAMES.get(campaigns);
+  if (!names) {
+    names = campaigns.map((c) => normalise(c.name));
+    CAMPAIGN_NAMES.set(campaigns, names);
+  }
+  return names;
+}
 
 /** Campaigns whose name holds every word of the query, each with "<name> › Settings" when allowed. */
 export function campaignResults(
@@ -365,8 +392,9 @@ export function campaignResults(
   withSettings: boolean,
 ): SearchResult[] {
   if (tokens.length === 0) return [];
+  const names = campaignNames(campaigns);
   return campaigns
-    .filter((c) => matchesAll(tokens, normalise(c.name)))
+    .filter((_, i) => matchesAll(tokens, names[i]!))
     .slice(0, MAX_CAMPAIGNS)
     .flatMap((c) => {
       const open: SearchResult = {
@@ -389,71 +417,71 @@ export function campaignResults(
 }
 
 /**
- * A campaign's own page ("Diwali renewals › Call log") in each campaign the query names: every
- * word must be in the campaign's name or the page's words, and at least one in the page's, so
- * "call log" lists the newest campaigns' Call log and "diwali history" Diwali renewals' History.
- * Only the screens the reader may open (`gate`, each as its tab), in tab order.
+ * Each item (a campaign screen, a settings section) in each campaign the query names: every word
+ * must be in the campaign's name or the item's words, and at least one in the item's, so "call
+ * log" lists the newest campaigns' Call log and "diwali call log" Diwali renewals' alone. In item
+ * order, then campaign order, at most `max`.
  */
-export function campaignPageResults(
+function inEachCampaign<T>(
   campaigns: readonly SearchCampaign[],
-  query: string,
-  gate: GateInput,
+  tokens: readonly string[],
+  items: readonly { item: T; text: string }[],
+  max: number,
+  result: (item: T, campaign: SearchCampaign) => SearchResult,
 ): SearchResult[] {
-  const tokens = searchTokens(query);
   if (tokens.length === 0) return [];
+  const names = campaignNames(campaigns);
   const results: SearchResult[] = [];
-  for (const tab of CAMPAIGN_TABS) {
-    if (!passesGate(campaignTabGate(tab), gate)) continue;
-    const tabText = haystack([tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]);
-    if (!tokens.some((t) => tabText.includes(t))) continue;
-    for (const c of campaigns) {
-      const name = normalise(c.name);
-      if (!tokens.every((t) => tabText.includes(t) || name.includes(t))) continue;
-      results.push({
-        // The Settings tab's key is the campaign row's own "› Settings", so the two never both show.
-        key: tab.id === 'settings' ? `campaign:${c.id}:settings` : `campaign-page:${c.id}:${tab.id}`,
-        group: 'campaign-pages',
-        title: `${c.name} › ${tab.label}`,
-        kind: 'Campaign',
-        target: { type: 'path', to: tab.path(c.id) },
-      });
-      if (results.length >= MAX_CAMPAIGN_PAGES) return results;
+  for (const { item, text } of items) {
+    if (!tokens.some((t) => text.includes(t))) continue;
+    for (const [i, campaign] of campaigns.entries()) {
+      if (!tokens.every((t) => text.includes(t) || names[i]!.includes(t))) continue;
+      results.push(result(item, campaign));
+      if (results.length >= max) return results;
     }
   }
   return results;
 }
 
 /**
- * A campaign settings section in each campaign the query names: every word must be in the
- * campaign's name or the section's words, and at least one in the section's, so "caller" lists
- * Caller IDs in the newest campaigns and "diwali caller" in Diwali renewals alone.
+ * A campaign's own page ("Diwali renewals › Call log") in each campaign the query names
+ * ({@link inEachCampaign}): "diwali history" finds Diwali renewals' History. Only the screens
+ * the reader may open (`gate`, each as its tab), in tab order.
+ */
+export function campaignPageResults(
+  campaigns: readonly SearchCampaign[],
+  query: string,
+  gate: GateInput,
+): SearchResult[] {
+  const screens = CAMPAIGN_SCREENS.filter(({ item }) => canOpenScreen(item.id, gate));
+  return inEachCampaign(campaigns, searchTokens(query), screens, MAX_CAMPAIGN_PAGES, (tab, c) => ({
+    // The Settings tab's key is the campaign row's own "› Settings", so the two never both show.
+    key: tab.id === 'settings' ? `campaign:${c.id}:settings` : `campaign-page:${c.id}:${tab.id}`,
+    group: 'campaign-pages',
+    title: `${c.name} › ${tab.label}`,
+    kind: 'Campaign',
+    target: { type: 'path', to: tab.path(c.id) },
+  }));
+}
+
+/**
+ * A campaign settings section in each campaign the query names ({@link inEachCampaign}), so
+ * "caller" lists Caller IDs in the newest campaigns and "diwali caller" in Diwali renewals alone.
  */
 export function campaignSettingsResults(
   campaigns: readonly SearchCampaign[],
   sections: readonly CampaignSettingsSection[],
   query: string,
 ): SearchResult[] {
-  const tokens = searchTokens(query);
-  if (tokens.length === 0 || sections.length === 0) return [];
-  const results: SearchResult[] = [];
-  for (const section of sections) {
-    const sectionText = haystack([section.label, ...section.keywords]);
-    if (!tokens.some((t) => sectionText.includes(t))) continue;
-    for (const c of campaigns) {
-      const name = normalise(c.name);
-      if (!tokens.every((t) => sectionText.includes(t) || name.includes(t))) continue;
-      results.push({
-        key: `campaign-section:${c.id}:${section.id}`,
-        group: 'campaign-settings',
-        title: section.label,
-        detail: `${c.name} › Settings`,
-        kind: 'Campaign',
-        target: { type: 'path', to: `/agency/campaigns/${c.id}/settings#${section.id}` },
-      });
-      if (results.length >= MAX_CAMPAIGN_SECTIONS) return results;
-    }
-  }
-  return results;
+  const items = sections.map((section) => ({ item: section, text: haystack([section.label, ...section.keywords]) }));
+  return inEachCampaign(campaigns, searchTokens(query), items, MAX_CAMPAIGN_SECTIONS, (section, c) => ({
+    key: `campaign-section:${c.id}:${section.id}`,
+    group: 'campaign-settings',
+    title: section.label,
+    detail: `${c.name} › Settings`,
+    kind: 'Campaign',
+    target: { type: 'path', to: `/agency/campaigns/${c.id}/settings#${section.id}` },
+  }));
 }
 
 /* ── A phone number ──────────────────────────────────────────────────────── */
@@ -538,7 +566,7 @@ export function canSearchNumbers(gate: GateInput, accountId: string | null): boo
 
 /** Whether this reader's campaign list may be read for search. */
 export function canSearchCampaigns(gate: GateInput, accountId: string | null): boolean {
-  return accountId !== null && passesGate(campaignsGate(), gate);
+  return accountId !== null && passesGate(CAMPAIGNS_GATE, gate);
 }
 
 export function searchConsole(input: SearchInput): SearchAnswer {
@@ -556,7 +584,7 @@ export function searchConsole(input: SearchInput): SearchAnswer {
   groups.push(group('settings', settingsResults(tokens, input.gate)));
 
   if (input.campaigns && canSearchCampaigns(input.gate, input.accountId)) {
-    const withSettings = passesGate(campaignSettingsGate(), input.gate);
+    const withSettings = canOpenScreen('settings', input.gate);
     const campaigns = campaignResults(input.campaigns, tokens, withSettings);
     const shown = new Set(campaigns.map((r) => r.key));
     groups.push(group('campaigns', campaigns));
