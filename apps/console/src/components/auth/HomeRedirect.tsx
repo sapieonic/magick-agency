@@ -51,7 +51,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
  * must keep doing so; the API's 403 is the real enforcement.
  *
  * ── Why the root and not `/app`'s index route ──────────────────────────────
- * `/app` is where the workspace invite and the catch-all land, and its index
+ * `/app` is where the workspace invite lands, and its index
  * keeps the dedicated agent's dialer-off notice. Deciding here, once, on arrival,
  * keeps the two from contradicting each other.
  */

@@ -438,7 +438,7 @@ export function sessionExpiredLoginUrl(): string {
   /**
    * Omitted rather than sent empty when there is nothing useful to return to:
    * the current URL is `/login` itself, the guard rejected it, or it is the bare
-   * root — which the router's catch-all sends to `/app` anyway, so `next=/` would
+   * root — which `HomeRedirect` resolves on arrival anyway, so `next=/` would
    * be a parameter that changes nothing.
    */
   if (next && next !== '/') params.set(RETURN_PATH_PARAM, next);

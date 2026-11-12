@@ -20,8 +20,8 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  *
  * So this wraps the shell (`ConsoleShell`) rather than adding a nav
  * link, which is what makes it apply to every `/settings/*`, `/app/*` and `/agency/*` path an agent could reach — including the
- * catch-all redirect at the bottom of `App.tsx`, and `HomeRedirect` at `/`, which
- * is where a bare `/` now lands (it used to fall through to that catch-all). Both
+ * shell's not-found page for an unknown path, and `HomeRedirect` at `/`, which
+ * is where a bare `/` lands. Both
  * ways in are covered because the wrapper is on the shell, not on a route.
  *
  * ── Two guards, and BOTH exist because of a regression this file shipped ────

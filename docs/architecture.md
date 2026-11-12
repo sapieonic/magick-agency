@@ -846,9 +846,9 @@ a rate-limit key and never an auth input.
   existing switchers), Home, the work sections Campaigns, Inbound, Reports and Do Not Call, Take
   calls (a link out to `/dialer` for whoever takes calls without supervising), then Settings at
   the foot of the same Main landmark, and the version; the top bar has a breadcrumb (on a phone
-  the current page with a back arrow to the crumb above it), one search field and the profile
+  the current page with a back arrow to the nearest crumb above it that is not this page), one search field and the profile
   menu (a disclosure: name, email, ids, theme, sign out). The field and ⌘K open `GlobalSearch` on
-  every page: pages, Settings, campaigns, each campaign's own pages (its tabs, Activity, Soft-phone
+  every page: pages, Settings, campaigns, each campaign's own pages (its tabs, History, Soft-phone
   calls), the campaign Settings sections its page has and a phone number's customer history, each
   offered under its destination's gate (`utils/consoleSearch.ts`, which reads `consoleNav.ts`;
   the campaign list is kept per tenant and account for the session, `hooks/useSearchCampaigns.ts`).
