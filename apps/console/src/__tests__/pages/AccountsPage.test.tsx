@@ -331,6 +331,24 @@ describe('AccountsPage — after creating, invite the person who will run it', (
     expect(within(panel).getByRole('button', { name: 'Send invite' })).toBeTruthy();
   });
 
+  it('holds "Later" while the invite is being sent, so the link hand-off is not lost', async () => {
+    /* When the server could not email the invitee, the hand-off is the only place the link
+       is shown; putting the panel away mid-request still created the invite. */
+    let settle!: (value: unknown) => void;
+    mocks.inviteUser.mockReturnValue(new Promise((resolve) => { settle = resolve; }));
+    const panel = await createCollections();
+
+    fireEvent.change(within(panel).getByLabelText('Email'), { target: { value: 'lead@example.com' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Send invite' }));
+    const later = within(panel).getByRole('button', { name: 'Later' }) as HTMLButtonElement;
+    await waitFor(() => expect(later.disabled).toBe(true));
+    fireEvent.click(later);
+    expect(screen.getByTestId('new-account-ready')).toBeTruthy();
+
+    settle({ invite_email: { sent: false } });
+    expect(await within(panel).findByTestId('invite-handoff')).toBeTruthy();
+  });
+
   it('"Later" puts the panel away and sends nothing', async () => {
     const panel = await createCollections();
 

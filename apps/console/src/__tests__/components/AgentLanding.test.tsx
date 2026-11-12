@@ -261,4 +261,27 @@ describe('AgentLanding — a console page with its own /dialer twin', () => {
     renderAgency('/agency/campaigns/c-1/settings');
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
   });
+
+  /**
+   * A twin behind a flag that is off would be a full-viewport refusal with no way out (the
+   * agent frame has no shell), so the agent goes to `/dialer`, which has one.
+   */
+  it.each([
+    ['/agency/reports', 'agency_reports_enabled'],
+    ['/agency/reports/run-1?tab=summary', 'agency_reports_enabled'],
+    ['/agency/inbound/missed', 'agency_inbound_enabled'],
+  ])('sends a dedicated agent from %s to /dialer when %s is off', async (entry, offFlag) => {
+    mocks.useFeatureFlags.mockReturnValue({ isEnabled: (flag: string) => flag !== offFlag, status: 'ready' });
+    renderAgency(entry);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
+  });
+
+  it('still sends a dedicated agent to their Customer history with the reports and inbound flags off', async () => {
+    mocks.useFeatureFlags.mockReturnValue({
+      isEnabled: (flag: string) => flag !== 'agency_reports_enabled' && flag !== 'agency_inbound_enabled',
+      status: 'ready',
+    });
+    renderAgency('/agency/customers');
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer/customers'));
+  });
 });
