@@ -45,9 +45,20 @@ function payload(over: Partial<AgencyCampaignStats> = {}): Partial<AgencyCampaig
     abandonment_ceiling_pct: 3,
     agents_live: 0,
     attempts_live: 0,
+    attempts_connected: 120,
+    attempts_total: 300,
+    contacts_total: 500,
+    contacts_pending: 200,
+    contacts_in_flight: 0,
+    contacts_completed: 250,
+    contacts_suppressed: 20,
+    contacts_exhausted: 30,
+    retries_pending: 4,
+    human_connects: 90,
     agents_by_state: { offline: 0, available: 0, reserved: 0, on_call: 0, wrapup: 0, break: 0 },
     agents: [],
     concurrency_limit: 10,
+    concurrency: { campaign_live: 0, fair_share: null, account_limit: 10, account_live: 3, running_campaigns: 1 },
     ...over,
   } as Partial<AgencyCampaignStats>;
 }
@@ -114,6 +125,9 @@ describe('the board', () => {
         stats: {
           stall: null, abandoned_24h: 1, answered_24h: 40, abandonment_ceiling_pct: 3, agents_live: 0,
           agents_by_state: { offline: 0, available: 0, reserved: 0, on_call: 0, wrapup: 0, break: 0 },
+          attempts_live: 0, attempts_connected: 120, attempts_total: 300,
+          contacts_total: 500, contacts_pending: 200, contacts_completed: 250, contacts_suppressed: 20, contacts_exhausted: 30,
+          concurrency: { campaign_live: 0, fair_share: null, account_limit: 10, account_live: 3, running_campaigns: 1 },
         },
         staffing: STAFFING,
         allocation: ALLOCATION,
@@ -132,12 +146,23 @@ describe('the board', () => {
     expect(board.campaigns[0]!.settings).toMatchObject({ record_calls: true, calling_window_end: '20:00', calling_days: [1, 2, 3, 4, 5, 6] });
   });
 
-  it('serves only the fields Home reads: no floor roster, no counters', async () => {
+  it('serves only the fields Home and the Active cards read: no floor roster, no other counters', async () => {
     list([row('r1', 'running')]);
     const board = await computeHomeBoard(SCOPE, deps);
-    expect(Object.keys(board.campaigns[0]!.stats!).sort()).toEqual(
-      ['abandoned_24h', 'abandonment_ceiling_pct', 'agents_by_state', 'agents_live', 'answered_24h', 'stall'],
-    );
+    expect(Object.keys(board.campaigns[0]!.stats!).sort()).toEqual([
+      'abandoned_24h', 'abandonment_ceiling_pct', 'agents_by_state', 'agents_live', 'answered_24h',
+      'attempts_connected', 'attempts_live', 'attempts_total', 'concurrency', 'contacts_completed',
+      'contacts_exhausted', 'contacts_pending', 'contacts_suppressed', 'contacts_total', 'stall',
+    ]);
+  });
+
+  it('a viewer’s board carries the same stats, the Active cards’ figures included (all `/stats`’ own)', async () => {
+    list([row('r1', 'running')]);
+    const full = await computeHomeBoard(SCOPE, deps);
+    advance();
+    const theirs = await computeHomeBoard(SCOPE, viewer);
+    expect(theirs.campaigns[0]!.stats).toEqual(full.campaigns[0]!.stats);
+    expect(theirs.campaigns[0]!.stats).toMatchObject({ attempts_total: 300, contacts_pending: 200, concurrency: { account_live: 3 } });
   });
 
   it('is empty, and says whether the account has any campaign, with none active', async () => {
@@ -232,6 +257,23 @@ describe('what is read again on the next board', () => {
     advance();
     await computeHomeBoard(SCOPE, deps);
     expect(deps.liveStats).toHaveBeenCalledTimes(8);
+  });
+
+  it('a moving campaign’s card figures are the latest read’s, never a kept one', async () => {
+    list([row('r1', 'running'), row('p-live', 'paused')]);
+    let dials = 300;
+    deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) => payload({
+      attempts_total: dials, contacts_pending: 500 - dials,
+      ...(c.id === 'p-live' ? { attempts_live: 1 } : {}),
+      concurrency: { campaign_live: 1, fair_share: null, account_limit: 10, account_live: dials / 100, running_campaigns: 1 },
+    }));
+    await computeHomeBoard(SCOPE, deps);
+    dials = 400;
+    advance();
+    const board = await computeHomeBoard(SCOPE, deps);
+    for (const c of board.campaigns) {
+      expect(c.stats).toMatchObject({ attempts_total: 400, contacts_pending: 100, concurrency: { account_live: 4 } });
+    }
   });
 
   it('a still campaign’s stats, once a minute', async () => {

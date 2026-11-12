@@ -44,7 +44,7 @@ export function campaignGroup(status: string): CampaignGroup {
  * Whether a campaign's live numbers should keep refreshing.
  *
  * Used by the campaign detail page, by this page's list poll (over Home's board,
- * which carries the floor but not live attempts) and, server-side, by the board's
+ * which carries the floor and the live attempts) and, server-side, by the board's
  * own memo (`campaignMoving`), so they cannot disagree. Status alone is wrong: a paused campaign still has calls draining
  * and agents whose state changes, and a card keyed on status froze the moment
  * Pause was pressed. So it is the status, OR live attempts, OR anyone on the
@@ -67,8 +67,10 @@ export function needsPolling(
 
 /**
  * One line on where a campaign sits in its account's line limit, from the stats'
- * `concurrency` block (decisions MC7), for the campaign detail header. The share
- * is a guide, not a cap, so the campaign's own calls come first; a share that rounds down to 0 is left out. `null` with no block or limit.
+ * `concurrency` block (decisions MC7), shared by the campaigns home's Active cards (from
+ * Home's board) and the campaign detail header. The share is a guide, not a cap, so the
+ * campaign's own calls come first; a share that rounds down to 0 is left out. `null`
+ * with no block or limit.
  */
 export function concurrencyLine(
   status: string,
@@ -93,9 +95,19 @@ export function concurrencyLine(
 
 /** What an Active card prints, from the board's stats; `—` for a number not known. */
 export interface ActiveCardFigures {
+  /** Calls placed and not yet ended (`attempts_live`). */
+  callsLive: string;
   agentsLive: string;
   onCall: string;
   available: string;
+  /**
+   * "Reached someone", as on the detail page: `attempts_connected`, which counts answering
+   * machines too (a person is `human_connects`), out of `dials` (`attempts_total`).
+   */
+  reached: string;
+  dials: string;
+  /** Contacts still ahead of the dialer (`contacts_pending`). */
+  waiting: string;
   /**
    * The guardrail's rolling 24-hour rate with Home's floor's rule and level
    * (`statsAbandonmentRate`: withheld under IN5's 25 answered calls); `sub` is the ceiling, or
@@ -112,10 +124,14 @@ export function activeCardFigures(stats: AgencyHomeCampaignStats | null): Active
     ? `ceiling ${ceilingPctText(stats.abandonment_ceiling_pct)}`
     : null;
   return {
+    callsLive: figure(stats?.attempts_live),
     agentsLive: figure(stats?.agents_live),
     // A call being connected to the agent (`reserved`) counts as on a call, as on Home's floor.
     onCall: figure(by ? (by.on_call ?? 0) + (by.reserved ?? 0) : undefined),
     available: figure(by?.available),
+    reached: figure(stats?.attempts_connected),
+    dials: figure(stats?.attempts_total),
+    waiting: figure(stats?.contacts_pending),
     abandonment: {
       text: rate?.kind === 'value' ? rateText(rate) : '—',
       sub: rate?.kind === 'withheld' ? rateText(rate) : ceiling,

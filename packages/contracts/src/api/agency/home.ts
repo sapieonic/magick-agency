@@ -47,13 +47,32 @@ export const AGENCY_HOME_ACTIVE_STATUSES = ['running', 'stopping', 'paused'] as 
 export type AgencyHomeActiveStatus = (typeof AGENCY_HOME_ACTIVE_STATUSES)[number];
 
 /**
- * The fields of `/stats` (`AgencyCampaignStats`) Home reads: the top stall (the health strip's
- * diagnosis), the guardrail's 24-hour abandonment pair and its ceiling, and the floor.
+ * The fields of `/stats` (`AgencyCampaignStats`) the board's readers use: for Home, the top stall
+ * (the health strip's diagnosis), the guardrail's 24-hour abandonment pair and its ceiling, and
+ * the floor; for the Campaigns page's Active cards also the calls in progress, the dials and who
+ * was reached, the contact counts behind "Waiting to dial" and the list-worked bar, and the
+ * campaign's place in the account's line limit (`concurrency`, decisions MC7). All of them are
+ * `/stats`' own, `agency.campaigns.read`: none is withheld below `agency.supervise`.
  */
-export type AgencyHomeCampaignStats = Pick<
-  AgencyCampaignStats,
-  'stall' | 'abandoned_24h' | 'answered_24h' | 'abandonment_ceiling_pct' | 'agents_live' | 'agents_by_state'
->;
+export const AGENCY_HOME_STATS_FIELDS = [
+  'stall',
+  'abandoned_24h',
+  'answered_24h',
+  'abandonment_ceiling_pct',
+  'agents_live',
+  'agents_by_state',
+  'attempts_live',
+  'attempts_connected',
+  'attempts_total',
+  'contacts_total',
+  'contacts_pending',
+  'contacts_completed',
+  'contacts_suppressed',
+  'contacts_exhausted',
+  'concurrency',
+] as const satisfies ReadonlyArray<keyof AgencyCampaignStats>;
+
+export type AgencyHomeCampaignStats = Pick<AgencyCampaignStats, (typeof AGENCY_HOME_STATS_FIELDS)[number]>;
 
 // ── What the attention rules read (the Overview's and Home's) ────────────────────
 

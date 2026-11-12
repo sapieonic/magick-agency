@@ -186,6 +186,14 @@ a.liveOpen {
   color: var(--text-muted);
 }
 
+/* The campaign's place in the account's line limit (decisions MC7). One line, and
+   it changes on every poll, so it is quiet text rather than another tile. */
+.lines {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -202,6 +210,11 @@ a.liveOpen {
   gap: 6px;
   padding: 14px 16px;
   background: var(--bg-secondary);
+}
+
+/* An odd tile out (seven figures) spans the row rather than leaving a hole in the grid. */
+.metric:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 
 .metricLabel {
@@ -238,7 +251,45 @@ a.liveOpen {
   color: var(--danger);
 }
 
-.liveNote {
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progressHead {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.progressValue {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.progressTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 400ms ease;
+}
+
+/* Ember only while the campaign is dialing: the palette keeps it for things in motion. */
+.progressFillLive {
+  background: var(--gradient-ember);
+}
+
+.progressCaption {
   font-size: 12px;
   color: var(--text-muted);
 }

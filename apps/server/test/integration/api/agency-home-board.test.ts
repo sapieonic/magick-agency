@@ -194,7 +194,7 @@ describe('which campaigns, in what order', () => {
 });
 
 describe('the numbers are the per-campaign routes’ own', () => {
-  it('serves each campaign the stats route’s stall, abandonment and floor, and nothing else of it', async () => {
+  it('serves each campaign the stats route’s stall, abandonment, floor and the Active cards’ figures, and nothing else of it', async () => {
     const board = await boardOf();
     for (const i of [13, 10, 0]) {
       const onBoard = board.campaigns.find((c) => c.id === C(i))!;
@@ -208,8 +208,19 @@ describe('the numbers are the per-campaign routes’ own', () => {
         abandonment_ceiling_pct: stats['abandonment_ceiling_pct'],
         agents_live: stats['agents_live'],
         agents_by_state: stats['agents_by_state'],
+        attempts_live: stats['attempts_live'],
+        attempts_connected: stats['attempts_connected'],
+        attempts_total: stats['attempts_total'],
+        contacts_total: stats['contacts_total'],
+        contacts_pending: stats['contacts_pending'],
+        contacts_completed: stats['contacts_completed'],
+        contacts_suppressed: stats['contacts_suppressed'],
+        contacts_exhausted: stats['contacts_exhausted'],
+        concurrency: stats['concurrency'],
       });
     }
+    // Campaign 13's four contacts (three overdue callbacks, one due later) are on its card.
+    expect(board.campaigns.find((c) => c.id === C(13))!.stats).toMatchObject({ contacts_total: 4, contacts_pending: 4 });
   });
 
   it('serves the insights allocation’s attention figures and staffing', async () => {

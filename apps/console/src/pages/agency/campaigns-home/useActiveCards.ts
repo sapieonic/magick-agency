@@ -29,7 +29,8 @@ export interface ActiveCards {
  * The Active cards' numbers: ONE request per refresh, Home's board (`GET /proxy/agency/home`,
  * `hooks/useHomeBoard`, B28a), in place of a `/stats` read per active campaign. The board answers
  * the first 25 active campaigns in this page's own order (running, stopping, paused; newest first
- * within each) with their stall, floor and 24-hour abandonment; the campaigns past it get no card.
+ * within each) with their stall, floor, 24-hour abandonment, calls, dials, contact counts and line
+ * share; the campaigns past it get no card.
  * Read every 10 s and on return while any campaign is active, and not at all otherwise. One board
  * per tenant, account and role, so for a supervisor it is the sidebar's Home badge's and the page
  * adds no request to it. Below `agency.supervise` the board carries no insights parts (null:

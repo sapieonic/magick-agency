@@ -14,6 +14,10 @@ import { board, onBoard, stats as homeStats } from '../helpers/home';
  *    never `/stats`: with 19 running campaigns that is 2 requests at first paint
  *    and 14 a minute (list and board), where the per-campaign reads made 20 and
  *    140; past the board's 25 the section links to the Active tab;
+ *  - a card shows what it showed before it read the board (calls in progress,
+ *    reached of dials, waiting to dial, the line share, the list worked) beside
+ *    the floor and abandonment, for a viewer too, whose board has no insights
+ *    parts (null);
  *  - a campaign the board could not read keeps its card and says so; the board
  *    failing says so on every card; the list is unaffected;
  *  - the list follows a moving campaign (status, OR anyone on the floor), and a
@@ -196,6 +200,59 @@ describe('AgencyCampaignsPage — active campaigns', () => {
     expect(screen.getAllByTestId('active-campaign')).toHaveLength(2);
   });
 
+  it('shows calls in progress, who was reached of the dials, what waits, the line share and the list worked', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING, PAUSED], {
+      'c-live': floor({
+        attempts_live: 3,
+        attempts_connected: 610,
+        attempts_total: 1400,
+        contacts_total: 1000,
+        contacts_pending: 400,
+        contacts_completed: 550,
+        contacts_suppressed: 20,
+        contacts_exhausted: 27,
+        concurrency: { campaign_live: 3, fair_share: 5, account_limit: 10, account_live: 6, running_campaigns: 2 },
+      }),
+      'c-paused': STILL,
+    }));
+    renderPage();
+
+    await waitFor(() => expect(metric('Monsoon offers', 'Calls in progress')).toBe('3'));
+    expect(metric('Monsoon offers', 'Reached someone')).toBe('610of 1,400 dials');
+    expect(metric('Monsoon offers', 'Waiting to dial')).toBe('400');
+    const live = card('Monsoon offers');
+    expect(within(live).getByTestId('campaign-lines').textContent).toBe('3 live calls · share 5 of 10 lines · 2 campaigns running');
+    // 550 + 20 + 27 of 1,000: the states nothing dials again.
+    const bar = within(live).getByRole('progressbar', { name: 'List worked' });
+    expect(bar.getAttribute('aria-valuenow')).toBe('60');
+    expect(within(live).getByText('60%')).toBeTruthy();
+    expect(within(live).getByText('597 of 1,000 contacts')).toBeTruthy();
+
+    // A payload without the counts says so rather than printing a confident 0.
+    expect(metric('Gold loan pilot', 'Reached someone')).toBe('—of — dials');
+    expect(metric('Gold loan pilot', 'Waiting to dial')).toBe('—');
+    const still = card('Gold loan pilot');
+    expect(within(still).queryByTestId('campaign-lines')).toBeNull();
+    expect(within(still).getByRole('progressbar', { name: 'List worked' }).getAttribute('aria-valuetext')).toBe('Not known yet');
+    expect(within(still).getByText('The contact counts didn’t load.')).toBeTruthy();
+  });
+
+  it('gives a viewer the same cards from a board without the insights parts, read with their role', async () => {
+    mocks.useTenant.mockReturnValue(tenant({ role: 'viewer' }));
+    const withheld = { staffing: null, overdue: null, today: null, settings: null } as const;
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([
+      onBoard('c-live', { name: RUNNING.name, stats: floor({ attempts_live: 2, contacts_pending: 9 }), ...withheld }),
+      onBoard('c-paused', { name: PAUSED.name, status: 'paused', stats: STILL, ...withheld }),
+    ]));
+    renderPage();
+
+    await waitFor(() => expect(metric('Monsoon offers', 'Calls in progress')).toBe('2'));
+    expect(metric('Monsoon offers', 'Agents on the floor')).toBe('5');
+    expect(metric('Monsoon offers', 'Waiting to dial')).toBe('9');
+    expect(screen.queryByText(/Live numbers didn’t load/)).toBeNull();
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+  });
+
   it('withholds a rate under 25 answered calls, and marks one over the ceiling', async () => {
     mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([RUNNING, PAUSED], {
       'c-live': floor({ abandoned_24h: 3, answered_24h: 50 }),
@@ -217,7 +274,7 @@ describe('AgencyCampaignsPage — active campaigns', () => {
       expect(within(card('Monsoon offers')).getByText(/Live numbers didn’t load/)).toBeTruthy(),
     );
     expect(metric('Gold loan pilot', 'Agents on the floor')).toBe('7');
-    expect(within(card('Gold loan pilot')).queryByText(/didn’t load/)).toBeNull();
+    expect(within(card('Gold loan pilot')).queryByText(/Live numbers didn’t load/)).toBeNull();
     // The list is still there.
     expect(screen.getByRole('link', { name: /Diwali leads/ })).toBeTruthy();
   });
@@ -307,6 +364,18 @@ describe('AgencyCampaignsPage — refreshing', () => {
     expect(mocks.listAgencyCampaignsPage.mock.calls.length).toBe(lists);
   });
 
+  it('follows a paused campaign while its calls drain with nobody on the floor (the board carries attempts_live)', async () => {
+    vi.useFakeTimers();
+    const draining = floor({ attempts_live: 2, agents_live: 0, agents_by_state: { offline: 0, available: 0, reserved: 0, on_call: 0, wrapup: 0, break: 0 } });
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([PAUSED, DRAFT]));
+    mocks.getAgencyHomeBoard.mockResolvedValue(boardOf([PAUSED], { 'c-paused': draining }));
+    renderPage();
+    await vi.waitFor(() => expect(metric('Gold loan pilot', 'Calls in progress')).toBe('2'));
+
+    await tick(10_000);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2);
+  });
+
   it('reads nothing on a timer when no campaign is active', async () => {
     vi.useFakeTimers();
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT, DONE]));
@@ -330,7 +399,7 @@ describe('AgencyCampaignsPage — refreshing', () => {
 
     expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
     expect(metric('Monsoon offers', 'Agents on the floor')).toBe('5');
-    expect(within(card('Monsoon offers')).queryByText(/didn’t load/)).toBeNull();
+    expect(within(card('Monsoon offers')).queryByText(/Live numbers didn’t load/)).toBeNull();
   });
 
   it('skips the tick while the tab is hidden', async () => {

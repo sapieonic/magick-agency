@@ -72,7 +72,8 @@ export function onBoard(
     overdue?: number | null;
     staffing?: AgencyAttentionStaffing | null;
     today?: AgencyAttentionRangeFigures | null;
-    settings?: AgencyAttentionSettings;
+    /** Null: the board of a reader below `agency.supervise` (with the other insights parts null). */
+    settings?: AgencyAttentionSettings | null;
   } = {},
 ): AgencyHomeCampaign {
   return {
@@ -81,7 +82,7 @@ export function onBoard(
     staffing: over.staffing === undefined ? STAFFED : over.staffing,
     allocation: over.overdue === null ? null : allocationFacts({ callbacks_overdue: over.overdue ?? 0 }),
     today: over.today === undefined ? todayFacts() : over.today,
-    settings: over.settings ?? settingsFacts(),
+    settings: over.settings === undefined ? settingsFacts() : over.settings,
   };
 }
 

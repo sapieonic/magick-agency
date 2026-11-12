@@ -2,23 +2,28 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, TriangleAlert } from 'lucide-react';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { formatDate } from '@magick-agency/web-ui/format';
+import { listWorkedRing } from '../../../utils/agency/overview/pulse';
 import { stallCopy } from '../../../utils/agencyHealthStrip';
-import { activeCardFigures } from '../../../utils/agencyCampaignsHome';
+import { activeCardFigures, concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import { readyStats, type CardState } from './useActiveCards';
 import styles from '../AgencyCampaignsPage.module.css';
 
 /**
- * One active campaign: its status, the health strip's top diagnosis, who is on its floor and its
- * abandonment over the guardrail's 24 hours against its ceiling. The numbers are Home's board's
- * (`useActiveCards`); a campaign's calls, dials and progress are on its own page, one click away.
+ * One active campaign: its status, the health strip's top diagnosis, its calls in progress, who is
+ * on its floor, who was reached of the dials placed, what is still waiting to dial, its
+ * abandonment over the guardrail's 24 hours against its ceiling, its place in the account's line
+ * limit and how much of its list is worked. The numbers are Home's board's (`useActiveCards`).
  */
 export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampaign; state: CardState }) {
   const stats = readyStats(state);
   const dialing = campaign.status === 'running';
   const stall = stats?.stall ? stallCopy(stats.stall, formatDate) : null;
   const figures = activeCardFigures(stats);
+  const worked = listWorkedRing(stats);
+  // Its live calls against its share of the account's lines, when other campaigns run too.
+  const lines = concurrencyLine(campaign.status, stats?.concurrency);
   const href = `/agency/campaigns/${campaign.id}`;
 
   return (
@@ -56,10 +61,15 @@ export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampai
       ) : (
         <>
           <dl className={styles.metrics}>
+            <Metric label="Calls in progress" value={figures.callsLive} />
             <Metric label="Agents on the floor" value={figures.agentsLive} />
             {/* A call being connected to an agent counts as on a call, as on Home's floor. */}
             <Metric label="On a call" value={figures.onCall} />
             <Metric label="Available" value={figures.available} />
+            {/* "Reached someone", as on the detail page: `attempts_connected`
+                counts answering machines too. A person is `human_connects`. */}
+            <Metric label="Reached someone" value={figures.reached} sub={`of ${figures.dials} dials`} />
+            <Metric label="Waiting to dial" value={figures.waiting} />
             <Metric
               label="Abandoned (24h)"
               value={figures.abandonment.text}
@@ -67,7 +77,37 @@ export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampai
               tone={figures.abandonment.level}
             />
           </dl>
-          {state.status === 'loading' && <p className={styles.liveNote}>Loading live numbers…</p>}
+
+          {/* Not a live region either, for the headline's reason above. */}
+          {lines && (
+            <p className={styles.lines} data-testid="campaign-lines">
+              {lines}
+            </p>
+          )}
+
+          <div className={styles.progress}>
+            <div className={styles.progressHead}>
+              <span>List worked</span>
+              <span className={styles.progressValue}>{worked.label}</span>
+            </div>
+            <div
+              className={styles.progressTrack}
+              role="progressbar"
+              aria-label="List worked"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={worked.percent === null ? undefined : Math.round(worked.percent)}
+              aria-valuetext={worked.known ? undefined : 'Not known yet'}
+            >
+              <div
+                className={`${styles.progressFill} ${dialing ? styles.progressFillLive : ''}`}
+                style={{ width: `${Math.min(Math.max(worked.percent ?? 0, 0), 100)}%` }}
+              />
+            </div>
+            <p className={styles.progressCaption}>
+              {state.status === 'loading' ? 'Loading live numbers…' : worked.caption}
+            </p>
+          </div>
         </>
       )}
     </article>

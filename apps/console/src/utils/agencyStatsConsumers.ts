@@ -66,6 +66,7 @@ export const SUPERVISOR_SOURCES = [
   'src/components/agency/AgentFloor.tsx',
   'src/components/agency/AgentFloorDrawer.tsx',
   'src/utils/agencyHealthStrip.ts',
+  'src/utils/agency/overview/pulse.ts',
   'src/utils/agencyCampaignPerformance.ts',
   'src/utils/agencyAgentFloor.ts',
   'src/pages/agency/AgencyAnalyticsPage.tsx',
@@ -82,9 +83,16 @@ export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
   above it does the reading. Naming the renderer would make the guard
   pass on a file that has no idea the field exists.
 */
-/** The polling rule the campaign detail page and the campaigns home's list share (`needsPolling`). */
-const POLLING = 'src/utils/agencyCampaignsHome.ts';
-const DETAIL = 'src/pages/agency/AgencyCampaignDetailPage.tsx';
+/**
+ * The campaigns home's pure layer: the polling rule the campaign detail page and the campaigns
+ * home's list share (`needsPolling`), and the Active card's figures (`activeCardFigures`, over
+ * Home's board, B28a).
+ */
+const CAMPAIGNS_HOME = 'src/utils/agencyCampaignsHome.ts';
+/** The campaigns home's list-worked bar (`listWorkedRing`, over Home's board). */
+const RING = 'src/utils/agency/overview/pulse.ts';
+/** The campaigns home's live card. */
+const CARD = 'src/pages/agency/campaigns-home/ActiveCampaignCard.tsx';
 const STRIP = 'src/components/agency/CampaignHealthStrip.tsx';
 const PERFORMANCE = 'src/utils/agencyCampaignPerformance.ts';
 const FLOOR = 'src/components/agency/AgentFloor.tsx';
@@ -113,19 +121,11 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   //
   // The Overview panel's derivations (the contact funnel, the pulse strip) were the
   // readers of most of these. The Insights tab replaced that panel (IN1) and they were
-  // deleted, so each entry now names a live reader — the Analytics page's Performance
-  // card — or says it is unread. The campaigns home's live card and list-worked ring read
-  // several until its cards moved to Home's board (B28a).
-  contacts_total: {
-    unconsumed:
-      'Read only by the campaigns home\'s list-worked ring, which went when its Active cards moved to '
-      + 'Home\'s board (B28a), which does not carry the contact counts. The campaign\'s own pages show its progress.',
-  },
-  contacts_pending: {
-    unconsumed:
-      'Read only by the campaigns home\'s live card ("Waiting to dial"), which went when its Active '
-      + 'cards moved to Home\'s board (B28a), which does not carry it.',
-  },
+  // deleted, so each entry now names a live reader — the campaigns home's list-worked
+  // bar and live card (both over Home's board, B28a), the Analytics page's Performance
+  // card — or says it is unread.
+  contacts_total: { consumedIn: RING },
+  contacts_pending: { consumedIn: CAMPAIGNS_HOME },
   contacts_in_flight: {
     unconsumed:
       'Read only by the Overview contact funnel, deleted with the panel. The Insights tab '
@@ -136,21 +136,9 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
       'Read only by the Overview contact funnel, deleted with the panel. The Insights tab '
       + 'shows contacts in wrap-up from its own summary read (`summary.roster.in_wrapup`).',
   },
-  contacts_completed: {
-    unconsumed:
-      'Read only by the campaigns home\'s list-worked ring, which went when its Active cards moved to '
-      + 'Home\'s board (B28a), which does not carry the contact counts. The campaign\'s own pages show its progress.',
-  },
-  contacts_suppressed: {
-    unconsumed:
-      'Read only by the campaigns home\'s list-worked ring, which went when its Active cards moved to '
-      + 'Home\'s board (B28a), which does not carry the contact counts. The campaign\'s own pages show its progress.',
-  },
-  contacts_exhausted: {
-    unconsumed:
-      'Read only by the campaigns home\'s list-worked ring, which went when its Active cards moved to '
-      + 'Home\'s board (B28a), which does not carry the contact counts. The campaign\'s own pages show its progress.',
-  },
+  contacts_completed: { consumedIn: RING },
+  contacts_suppressed: { consumedIn: RING },
+  contacts_exhausted: { consumedIn: RING },
   retries_pending: {
     unconsumed:
       'Read only by the Overview funnel\'s retries note, deleted with the panel. The Insights '
@@ -158,10 +146,10 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   },
   attempts_total: { consumedIn: PERFORMANCE },
   attempts_connected: { consumedIn: PERFORMANCE },
-  // Whether a paused campaign's calls are still draining: the detail page's poll
-  // (`needsPolling`). Nothing renders it since the campaigns home's live card moved to
-  // Home's board (B28a).
-  attempts_live: { consumedIn: POLLING },
+  // Two readers, and the guard needs only one: the live card's "Calls in progress"
+  // (`activeCardFigures`), and `needsPolling`, which reads it to decide whether a
+  // paused campaign's calls are still draining. Both in the campaigns home's pure layer.
+  attempts_live: { consumedIn: CAMPAIGNS_HOME },
   // Two readers, and the guard needs only one: the floor uses it to distinguish
   // “the roster did not load” from “nobody is on this campaign”, and Home's floor
   // (and through Home's board the campaigns home's live cards) shows it.
@@ -185,9 +173,10 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
       'Read only by the health strip\'s concurrency read-out, deleted with the Overview panel. The '
       + 'Insights headline shows lines in use from its own read (`headline.running.concurrency_in_use`).',
   },
-  // The campaign's place in the account's line limit (decisions MC7): the detail page's
-  // header, through `concurrencyLine`.
-  concurrency: { consumedIn: DETAIL },
+  // The campaign's place in the account's line limit (decisions MC7). Two readers, and
+  // the guard needs only one: the live card on the campaigns home and the detail page's
+  // header both render it through `concurrencyLine`.
+  concurrency: { consumedIn: CARD },
   abandonment_rate_24h_pct: {
     unconsumed:
       'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '

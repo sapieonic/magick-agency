@@ -49,6 +49,7 @@ import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
 import {
   AGENCY_HOME_ACTIVE_STATUSES,
   AGENCY_HOME_CAMPAIGN_CAP,
+  AGENCY_HOME_STATS_FIELDS,
   attentionSettings,
   type AgencyAttentionAllocation,
   type AgencyAttentionRangeFigures,
@@ -107,19 +108,17 @@ export function campaignMoving(status: string, stats: Partial<AgencyCampaignStat
 }
 
 /**
- * The fields of `/stats` Home reads. Null for a payload without the ceiling, which the internal
- * stats handler always sends: that is not its payload, and nothing on it is trusted.
+ * The fields of `/stats` the board's readers use ({@link AGENCY_HOME_STATS_FIELDS}: Home's and the
+ * Campaigns page's Active cards'), each as the payload has it (`stall` null when absent). Null for
+ * a payload without the ceiling, which the internal stats handler always sends: that is not its
+ * payload, and nothing on it is trusted.
  */
 export function homeStats(stats: Partial<AgencyCampaignStats>): AgencyHomeCampaignStats | null {
   if (typeof stats.abandonment_ceiling_pct !== 'number') return null;
-  return {
-    stall: stats.stall ?? null,
-    abandoned_24h: stats.abandoned_24h,
-    answered_24h: stats.answered_24h,
-    abandonment_ceiling_pct: stats.abandonment_ceiling_pct,
-    agents_live: stats.agents_live,
-    agents_by_state: stats.agents_by_state,
-  };
+  const out: Record<string, unknown> = {};
+  for (const field of AGENCY_HOME_STATS_FIELDS) out[field] = stats[field];
+  out['stall'] = stats.stall ?? null;
+  return out as AgencyHomeCampaignStats;
 }
 
 /** The most campaigns each per-campaign memo remembers (oldest first out). */
