@@ -25,18 +25,24 @@
   overflow-x: auto;
 }
 
+/*
+  The name wraps between words only, and the Current badge drops below it when the column is
+  narrow. `overflow-wrap: anywhere` let the column shrink to one letter (a word's letters became
+  break points), so a phone stacked "Default" a letter per line; a single long word now widens the
+  table instead, and `.tableWrap` scrolls it sideways.
+*/
 .nameCell {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
+  gap: 4px 10px;
 }
 
 .name {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .currentBadge {

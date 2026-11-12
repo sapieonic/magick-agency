@@ -27,6 +27,7 @@ vi.mock('@magick-agency/observability', () => ({
 import {
   DncService,
   DncUnavailableError,
+  dncPhoneSearch,
   toDncE164,
 } from '../../../src/dnc/dnc.service.js';
 
@@ -107,6 +108,51 @@ describe('toDncE164 — strict on purpose, because the alternative fails open', 
     expect(toDncE164('+1234567890123456')).toBeNull(); // too long
     expect(toDncE164('+1555abc0001')).toBeNull();
     expect(toDncE164('')).toBeNull();
+  });
+});
+
+describe('dncPhoneSearch — what the list search box finds (India the default)', () => {
+  const LISTED = '+919908815060';
+
+  it.each([
+    ['+919908815060'],
+    ['9908815060'],
+    ['919908815060'],
+    ['+91 99088 15060'],
+    ['099088-15060'],
+    ['0091 99088 15060'],
+  ])('reads %s as the whole number', (typed) => {
+    expect(dncPhoneSearch(typed, '91').e164).toBe(LISTED);
+  });
+
+  it('keeps a whole number\'s digits as an ending, its trunk or international zeros dropped', () => {
+    expect(dncPhoneSearch('+91 99088 15060', '91')).toEqual({ e164: LISTED, endsWith: '919908815060' });
+    expect(dncPhoneSearch('099088-15060', '91')).toEqual({ e164: LISTED, endsWith: '9908815060' });
+  });
+
+  it('a partial number is an ending only', () => {
+    expect(dncPhoneSearch('15060', '91')).toEqual({ e164: null, endsWith: '15060' });
+    expect(dncPhoneSearch('150 60', '91')).toEqual({ e164: null, endsWith: '15060' });
+    // A partial number's zeros are part of the ending.
+    expect(dncPhoneSearch('060', '91')).toEqual({ e164: null, endsWith: '060' });
+    expect(dncPhoneSearch('0', '91')).toEqual({ e164: null, endsWith: '0' });
+  });
+
+  it('a national number of another country is still found by its ending', () => {
+    // The default reads it as +91…, which is not the US entry; the ending is.
+    expect(dncPhoneSearch('5551234567', '91')).toEqual({ e164: '+915551234567', endsWith: '5551234567' });
+  });
+
+  it('follows the platform default country', () => {
+    expect(dncPhoneSearch('(555) 123-4567', '1').e164).toBe('+15551234567');
+  });
+
+  it('letters, a spreadsheet number or nothing usable match nothing', () => {
+    const none = { e164: null, endsWith: null };
+    expect(dncPhoneSearch('abc', '91')).toEqual(none);
+    expect(dncPhoneSearch('99088abc', '91')).toEqual(none);
+    expect(dncPhoneSearch('9.19908E+11', '91')).toEqual(none);
+    expect(dncPhoneSearch('   ', '91')).toEqual(none);
   });
 });
 

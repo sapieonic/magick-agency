@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent, within, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
 /**
  * The campaigns home, the page a supervisor lands on in `/agency`.
@@ -383,6 +383,49 @@ describe('AgencyCampaignsPage — the list', () => {
     expect(within(list).queryByText('Spring renewals')).toBeNull();
     expect(within(list).getByText('09:00–18:00 · Mon–Fri')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Drafts/ }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  /** The filter is `?status=` (QA note: a reload went back to All). */
+  describe('the status filter in the URL', () => {
+    function LocationProbe() {
+      return <output data-testid="location">{useLocation().search}</output>;
+    }
+
+    function renderAt(entry: string) {
+      return render(
+        <MemoryRouter initialEntries={[entry]}>
+          <AgencyCampaignsPage />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+    }
+
+    it('opens on the filter the URL names, as a reload or Back does', async () => {
+      mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DONE, DRAFT, RUNNING]));
+      renderAt('/agency/campaigns?status=draft');
+      const list = await screen.findByRole('list', { name: 'All campaigns' });
+      expect(within(list).getByText('Diwali leads')).toBeTruthy();
+      expect(within(list).queryByText('Spring renewals')).toBeNull();
+      expect(screen.getByRole('button', { name: /Drafts/ }).getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('writes the chosen filter into the URL, and All takes it out', async () => {
+      mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DONE, DRAFT, RUNNING]));
+      renderAt('/agency/campaigns');
+      await screen.findByRole('list', { name: 'All campaigns' });
+
+      fireEvent.click(screen.getByRole('button', { name: /Finished/ }));
+      expect(screen.getByTestId('location').textContent).toBe('?status=finished');
+      fireEvent.click(screen.getByRole('button', { name: /^All/ }));
+      expect(screen.getByTestId('location').textContent).toBe('');
+    });
+
+    it('reads an unknown value as All', async () => {
+      mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DONE, DRAFT, RUNNING]));
+      renderAt('/agency/campaigns?status=bogus');
+      await screen.findByRole('list', { name: 'All campaigns' });
+      expect(screen.getByRole('button', { name: /^All/ }).getAttribute('aria-pressed')).toBe('true');
+    });
   });
 
   it('says nothing is dialing when no campaign is active', async () => {

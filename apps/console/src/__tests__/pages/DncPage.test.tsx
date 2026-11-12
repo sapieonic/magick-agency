@@ -459,3 +459,24 @@ describe('DNC — pagination after a mutation', () => {
     expect(after[0]![0].offset).toBe(0);
   });
 });
+
+describe('DNC — searching the list', () => {
+  /**
+   * The server reads the text (`dncPhoneSearch`): any common form of the whole number, or the
+   * digits a number ends in. The page sends what was typed and says which forms work, so a
+   * supervisor checking a customer's ten digits is not left believing they must type `+91`.
+   */
+  it('says which forms the search takes and sends the text as typed', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+    const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
+    expect(box.getAttribute('placeholder')).toBe('Whole number, or the last few digits');
+
+    mocks.listDncEntries.mockResolvedValue(page([]));
+    fireEvent.change(box, { target: { value: ' 98200 41772 ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(mocks.listDncEntries.mock.calls.at(-1)![0]).toMatchObject({ phone: '98200 41772', offset: 0 }));
+    expect(await screen.findByText(/Type the whole number, in any format, or its last few digits/)).toBeTruthy();
+  });
+});

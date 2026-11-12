@@ -398,3 +398,28 @@ describe('NotificationSettingsPage', () => {
     });
   });
 });
+
+/**
+ * The page guide describes the events listed (QA notifications:ux:204961fb8d): it said summaries
+ * are sent only for periods with activity while the page offered no summary at all.
+ */
+describe('NotificationSettingsPage — the page guide', () => {
+  const SUMMARY_TIP = /A summary is only sent for periods with activity/;
+  const IMMEDIATE_TIP = 'Each email goes out as soon as its event happens.';
+
+  it('says nothing about summaries when only immediate events are listed', async () => {
+    mocks.getNotificationPreferences.mockResolvedValue({ events: [CAMPAIGN_EVENT] });
+    renderPage();
+    await screen.findByText('Campaign finished');
+    expect(document.body.textContent).not.toMatch(SUMMARY_TIP);
+    expect(document.body.textContent).toContain(IMMEDIATE_TIP);
+  });
+
+  it('explains summaries once a digest event is listed', async () => {
+    mocks.getNotificationPreferences.mockResolvedValue({ events: [event()] });
+    renderPage();
+    await screen.findByText('Usage digest');
+    expect(document.body.textContent).toMatch(SUMMARY_TIP);
+    expect(document.body.textContent).not.toContain(IMMEDIATE_TIP);
+  });
+});

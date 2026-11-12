@@ -11,7 +11,7 @@ import {
   type PerformanceReadout,
 } from '../../utils/agencyCampaignPerformance';
 import type { AgencyCampaignStats } from '../../types/agency-campaign';
-import { formatCount } from '../../utils/format/number';
+import { formatCount, plural } from '../../utils/format/number';
 import styles from './CampaignPerformance.module.css';
 
 /**
@@ -263,7 +263,7 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
               <div className={styles.cardHead}>
                 <div>
                   <h3 className={styles.cardTitle}>
-                    Where the {formatCount(breakdown.total)} connected calls went
+                    Where the {plural(breakdown.total, 'connected call')} went
                   </h3>
                   <p className={styles.cardDesc}>
                     Only the first bucket feeds the conversion rate above.

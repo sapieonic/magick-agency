@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Phone, Plus, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import {
+  campaignFilterFromParams,
   countCampaigns,
   filterCampaigns,
+  withCampaignFilter,
   type CampaignCounts,
   type CampaignFilter,
 } from '../../utils/agencyCampaignsHome';
@@ -78,7 +80,13 @@ export function AgencyCampaignsPage() {
     load,
     loadMore,
   } = useCampaignsHome(tenantId, accountId);
-  const [filter, setFilter] = useState<CampaignFilter>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // In the URL, so a reload and Back keep it (`campaignFilterFromParams`). Replaced, not pushed:
+  // a filter change is not a page for Back to step through.
+  const filter = campaignFilterFromParams(searchParams);
+  const setFilter = (next: CampaignFilter) => {
+    setSearchParams((prev) => withCampaignFilter(prev, next), { replace: true });
+  };
   const [query, setQuery] = useState('');
   const canCreate = hasPermission(role, 'agency.campaigns.write');
   const accountName = accounts?.find((a) => a.id === accountId)?.name;

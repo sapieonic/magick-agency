@@ -1,10 +1,12 @@
-import { E164_REGEX } from '../utils/phone-normalizer.js';
+import { defaultPhoneCountryCode, E164_REGEX } from '../utils/phone-normalizer.js';
 import { createChildLogger } from '@magick-agency/observability';
+import { parseSearchNumber, resolveSearchCountry } from '@magick-agency/domain/customer-search-number';
 import {
   dncRepository,
   type DncEntryRecord,
   type DncListFilter,
   type DncLookupScope,
+  type DncPhoneSearch,
   type DncSource,
 } from './dnc.repository.js';
 
@@ -114,6 +116,34 @@ export function toDncE164(raw: string): string | null {
   const cleaned = raw.replace(/[\s\-().]/g, '');
   if (!cleaned.startsWith('+')) return null;
   return E164_REGEX.test(cleaned) ? cleaned : null;
+}
+
+/**
+ * The list search box's text as a {@link DncPhoneSearch}.
+ *
+ * Searching is not adding, so the add path's strictness above does not apply: a search that
+ * reads too much finds a row the operator can see, never one the dialler skips. The whole number
+ * is read by the customer-history search's rule (`parseSearchNumber`, the platform default
+ * country), so `9908815060`, `919908815060`, `099088-15060` and `+91 99088 15060` all find
+ * `+919908815060`. The digits typed also match as an ENDING, as the soft
+ * phone's call log does: `15060` finds it, and so does a national number of another country
+ * (`5551234567` finds `+15551234567` where the default would read it as `+915551234567`).
+ * Text with letters or other characters matches nothing.
+ */
+export function dncPhoneSearch(raw: string, defaultCallingCode = defaultPhoneCountryCode()): DncPhoneSearch {
+  const none: DncPhoneSearch = { e164: null, endsWith: null };
+  const parsed = parseSearchNumber(raw, resolveSearchCountry(null, defaultCallingCode));
+  if (!parsed.ok && (parsed.code === 'empty' || parsed.code === 'invalid_characters' || parsed.code === 'spreadsheet_number')) {
+    return none;
+  }
+  // A whole number's leading zeros are a trunk or an international prefix (`0…`, `00…`), never
+  // the number's; a partial number's digits are an ending as typed (`060`).
+  const typed = raw.replace(/\D/g, '');
+  const digits = parsed.ok ? typed.replace(/^0+/, '') : typed;
+  return {
+    e164: parsed.ok ? parsed.e164 : null,
+    endsWith: digits.length > 0 ? digits : null,
+  };
 }
 
 export class DncService {

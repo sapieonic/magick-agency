@@ -300,3 +300,61 @@ describe('TeamPage — invite column', () => {
     expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull();
   });
 });
+
+/**
+ * Dismissal (QA team:ux:31465a4f9b): Escape did nothing, and the only way out was a click whose
+ * first press a full-screen backdrop swallowed, so Invite member needed two clicks.
+ */
+describe('TeamPage — closing the member actions menu', () => {
+  function openMenu() {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Member actions' });
+    fireEvent.click(trigger);
+    expect(screen.getByRole('menu', { name: 'Member actions' })).toBeTruthy();
+    return trigger;
+  }
+
+  it('closes on Escape and gives focus back to the ⋮ button', () => {
+    const trigger = openMenu();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Member actions' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('closes on Escape with Change role open too', () => {
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Member actions' })).toBeNull();
+  });
+
+  it('puts nothing over the page but the menu, so a click outside reaches its target', () => {
+    // The old backdrop was a second portaled element covering the viewport. happy-dom does no
+    // hit testing, so the click below would pass with it; this is what pins that it is gone.
+    const trigger = openMenu();
+    const menu = screen.getByRole('menu', { name: 'Member actions' });
+    // Everything in <body> except the page's own render root.
+    const portaled = Array.from(document.body.children).filter((el) => !el.contains(trigger));
+    expect(portaled).toEqual([menu]);
+  });
+
+  it('a press on Invite member closes the menu, and the same click opens the invite', () => {
+    openMenu();
+    const invite = screen.getAllByRole('button', { name: /Invite member/i })[0]!;
+    fireEvent.mouseDown(invite);
+    expect(screen.queryByRole('menu', { name: 'Member actions' })).toBeNull();
+    fireEvent.click(invite);
+    expect(screen.getByRole('dialog', { name: 'Invite team member' })).toBeTruthy();
+  });
+
+  it('stays open for a press inside it', () => {
+    openMenu();
+    fireEvent.mouseDown(screen.getByRole('menuitem', { name: /Change role/i }));
+    expect(screen.getByRole('menu', { name: 'Member actions' })).toBeTruthy();
+  });
+});

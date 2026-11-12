@@ -80,10 +80,20 @@ export interface DncLookupScope {
   campaignId?: string | null;
 }
 
+/**
+ * The list's number search (`dncPhoneSearch` in `dnc.service.ts` reads the typed text into it).
+ * A row matches when its number is `e164`, or ends in `endsWith`; both `null` matches nothing.
+ */
+export interface DncPhoneSearch {
+  /** One whole number, matched exactly (`idx_dnc_entries_tenant_phone`). */
+  e164: string | null;
+  /** Digits only: rows whose number ends in them (`idx_dnc_entries_tenant_phone_reversed`). */
+  endsWith: string | null;
+}
+
 export interface DncListFilter {
   tenantId: string;
-  /** Exact E.164 match. */
-  phone?: string;
+  phone?: DncPhoneSearch;
   /** `'tenant'` selects rows with `account_id IS NULL`. */
   accountId?: string | null;
   campaignId?: string | null;
@@ -396,8 +406,7 @@ export class DncRepository {
     const params: unknown[] = [filter.tenantId];
 
     if (filter.phone !== undefined) {
-      params.push(filter.phone);
-      conditions.push(`phone_e164 = $${params.length}`);
+      conditions.push(phoneSearchCondition(filter.phone, params));
     }
     // `null` and "not supplied" are different filters: `accountId: null` means
     // "tenant-wide rows only", absent means "any scope". A single optional
@@ -440,6 +449,30 @@ export class DncRepository {
 
     return { entries: rows.rows, total: Number(total.rows[0]!.count) };
   }
+}
+
+/**
+ * The list search's predicate, its values pushed onto `params`.
+ *
+ * An ending is a PREFIX of the reversed number, which `idx_dnc_entries_tenant_phone_reversed`
+ * (0034) indexes with `text_pattern_ops`, so both arms are index scans (a `BitmapOr` when both
+ * are set) rather than a `LIKE '%…'` over every row of the tenant. Stored numbers are E.164
+ * (`+` and digits, `toDncE164`), so no digits expression is needed. The ending is re-stripped to
+ * digits here, the one place a `%` or `_` could become a wildcard; the `%` is added in SQL.
+ */
+function phoneSearchCondition(search: DncPhoneSearch, params: unknown[]): string {
+  const arms: string[] = [];
+  if (search.e164 !== null) {
+    params.push(search.e164);
+    arms.push(`phone_e164 = $${params.length}`);
+  }
+  const ending = search.endsWith?.replace(/\D/g, '') ?? '';
+  if (ending.length > 0) {
+    params.push(ending.split('').reverse().join(''));
+    arms.push(`reverse(phone_e164) LIKE $${params.length} || '%'`);
+  }
+  if (arms.length === 0) return 'FALSE';
+  return arms.length === 1 ? arms[0]! : `(${arms.join(' OR ')})`;
 }
 
 export const dncRepository = new DncRepository();

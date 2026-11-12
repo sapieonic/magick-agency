@@ -387,7 +387,9 @@ export function DncPage() {
                 setAppliedFilter(phoneFilter.trim());
               }
             }}
-            placeholder="Search a number…"
+            /* The server reads any common form of the whole number, or matches the digits typed
+               as the end of one (`dncPhoneSearch`), the soft phone's call log's rule and words. */
+            placeholder="Whole number, or the last few digits"
           />
         </div>
         <button
@@ -412,7 +414,7 @@ export function DncPage() {
           title={appliedFilter ? 'No match' : 'Nothing on the list'}
           description={
             appliedFilter
-              ? 'No suppressed number matches that search.'
+              ? 'No number on the list matches. Type the whole number, in any format, or its last few digits.'
               : 'When an agent marks a customer as do-not-call, they appear here and agency '
                 + 'campaigns stop dialling them.'
           }

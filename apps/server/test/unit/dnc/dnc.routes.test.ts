@@ -27,7 +27,9 @@ const mocks = vi.hoisted(() => ({
   findAccountByIdInTenant: vi.fn(),
 }));
 
-vi.mock('../../../src/dnc/dnc.service.js', () => ({
+vi.mock('../../../src/dnc/dnc.service.js', async (importOriginal) => ({
+  // The real search reader: the route must hand the service what it makes of the text.
+  dncPhoneSearch: (await importOriginal<typeof import('../../../src/dnc/dnc.service.js')>()).dncPhoneSearch,
   dncService: { list: mocks.list, add: mocks.add, remove: mocks.remove },
   DNC_ADD_MAX_NUMBERS: 1_000,
 }));
@@ -536,7 +538,8 @@ describe('GET /dnc — filters', () => {
 
     const arg = mocks.list.mock.calls[0]![0] as Record<string, unknown>;
     expect(arg['tenantId']).toBe(TENANT);
-    expect(arg['phone']).toBe('+15551230001');
+    // Read by the search rule: the whole number, and its digits as an ending.
+    expect(arg['phone']).toEqual({ e164: '+15551230001', endsWith: '15551230001' });
     await app.close();
   });
 
