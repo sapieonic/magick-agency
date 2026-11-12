@@ -31,7 +31,8 @@ const agent = (session_id: string, state: string) => ({ session_id, agent_user_i
 beforeEach(() => {
   vi.clearAllMocks();
   resetCampaignTabBadgesForTests();
-  mocks.getAgencyCampaignStats.mockResolvedValue({ agents: [agent('a', 'available'), agent('b', 'on_call'), agent('c', 'offline')] });
+  // The server's on-shift count: a and b, not c, who is offline.
+  mocks.getAgencyCampaignStats.mockResolvedValue({ agents_live: 2, agents: [agent('a', 'available'), agent('b', 'on_call'), agent('c', 'offline')] });
   mocks.getInsightsAllocation.mockResolvedValue({ totals: { callbacks_overdue: 14 } });
 });
 afterEach(() => {

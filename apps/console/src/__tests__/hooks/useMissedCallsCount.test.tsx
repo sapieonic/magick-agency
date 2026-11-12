@@ -115,6 +115,24 @@ describe('the shared count', () => {
     expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(2);
   });
 
+  it('a return to the tab reads once the count is 10 s old, even while a reader polls (the poll skips hidden ticks)', async () => {
+    let visibility = 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+    render(<Reader id="poller" />);
+    await act(async () => {});
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(1);
+    // Back within 10 s: the answer is fresh.
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(1);
+    // Hidden at 6 s, back at 50 s: no tick ran, and the count is 50 s old, so the return reads.
+    visibility = 'hidden';
+    await act(async () => { vi.advanceTimersByTime(44_000); });
+    visibility = 'visible';
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(2);
+  });
+
   it('re-reads on demand, and every reader follows', async () => {
     render(<><Reader id="a" /><Reader id="b" poll={false} /></>);
     await act(async () => {});

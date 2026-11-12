@@ -152,13 +152,13 @@ describe('sign-out', () => {
   });
 
   it('drops a badge read that was still on its way when the stores were cleared', async () => {
-    let answer: (value: { agents: never[] }) => void = () => {};
+    let answer: (value: { agents_live: number }) => void = () => {};
     api.getAgencyCampaignStats.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     const badge = renderHook(() => useCampaignTabBadge('onShift', 'c-1', true));
     expect(api.getAgencyCampaignStats).toHaveBeenCalledTimes(1);
     act(() => resetCampaignTabBadges());
     await act(async () => {
-      answer({ agents: [] });
+      answer({ agents_live: 0 });
     });
     expect(badge.result.current).toBeNull();
   });
