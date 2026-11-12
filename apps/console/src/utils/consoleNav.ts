@@ -611,8 +611,8 @@ export const LEGACY_SETTINGS_SEGMENTS: readonly string[] = [
 
 /**
  * Where an old `/app/<rest>` URL now lives: `/settings/<rest>` (so `/app/inbound/:routeId`
- * keeps its id), or null for anything that was never a page here (the caller sends it to the
- * console's home instead).
+ * keeps its id), or null for anything that was never a page here (`LegacyAppRedirect` then
+ * renders the not-found page).
  */
 export function legacySettingsPath(rest: string): string | null {
   const clean = rest.replace(/^\/+|\/+$/g, '');
