@@ -6,7 +6,7 @@ import '../station/station_view.dart' show AgentPhase, AudioRouteOption, AudioVi
 
 /// The seam between the session host and the soft-phone controller.
 ///
-/// The server allows one live session per agent per tenant, so the app keeps
+/// The server allows one live session per agent, across tenants (OS1), so the app keeps
 /// ONE host (the station controller) holding one session, of kind `campaign` or
 /// `softphone`, with one socket, one audio engine and one on-duty service. The
 /// soft-phone controller never touches the socket or the microphone (as the

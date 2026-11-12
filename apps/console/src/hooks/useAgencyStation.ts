@@ -267,7 +267,7 @@ export function useAgencyStation(
    * and is refused, so this window never takes the station back on its own.
    */
   const supersededRef = useRef(false);
-  /** The next mint asks to take the station over: armed only by `reconnect()` after a supersede. */
+  /** The next mint asks to take the station over: armed only by `reconnect()` after a supersede, spent by that mint. */
   const takeOverNextMintRef = useRef(false);
   /** The bootstrap `tokenSpentRef` is about, so a new one re-arms it. */
   const tokenBootstrapRef = useRef<StationSocketBootstrap | null>(null);
@@ -1131,7 +1131,11 @@ export function useAgencyStation(
         // Bounded — see `TOKEN_MINT_TIMEOUT_MS`. A rejection lands in the catch
         // below and walks the ordinary retry ladder; without the bound a hung
         // request left the hook with no socket, no timer and no way back.
+        // Spent by this attempt whatever it answers: a take-over the agent asked for is never
+        // carried into a later, automatic reconnect (one that fails is refused, and the agent
+        // is asked again).
         const takeOver = takeOverNextMintRef.current;
+        takeOverNextMintRef.current = false;
         const minted = await withDeadline(
           mintStationToken(bootstrap.session_id, options.tenantId, options.accountId, { takeOver }),
           TOKEN_MINT_TIMEOUT_MS,
@@ -1143,8 +1147,6 @@ export function useAgencyStation(
         // second socket that made the API supersede the first.
         if (gen !== generationRef.current) return;
         url = minted.station_ws_url;
-        // A take-over is spent once granted; later reconnects are this window's own again.
-        if (takeOver) takeOverNextMintRef.current = false;
       } catch (err) {
         if (gen !== generationRef.current) return;
         /**

@@ -276,7 +276,7 @@ describe('agent occupancy is bounded by the window (integration)', () => {
   it('two OVERLAPPING sessions keep occupancy at or below 100%', async () => {
     // ── What the overlap predicate does NOT promise, and what must still hold ──
     //
-    // `uq_agency_agent_live_tenant` refuses two LIVE sessions for one person in one tenant, but two
+    // `uq_agency_agent_live_agent` refuses two LIVE sessions for one person (in any tenant), but two
     // CLOSED sessions may overlap in time — a crashed shift closed late by the
     // reaper while the agent has already rejoined is the ordinary way it happens.
     // Both then contribute intervals over the same wall-clock, so `shift_seconds`

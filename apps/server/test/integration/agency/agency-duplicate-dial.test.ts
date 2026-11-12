@@ -353,7 +353,7 @@ describe('agency duplicate-dial backstop (integration)', () => {
 
     await expect(
       insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1') }),
-    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_agent_live_agent' });
+    ).rejects.toMatchObject({ code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/) });
 
     // A SECOND campaign — and a second account of the same tenant, which a per-campaign
     // index would allow. `account_id` is deliberately not in the key:
@@ -363,7 +363,7 @@ describe('agency duplicate-dial backstop (integration)', () => {
     const other = await insertAgencyCampaign({ account_id: OTHER_ACCOUNT });
     await expect(
       insertAgentSession(other.id, { agent_user_id: uuidFor('agent-1'), account_id: OTHER_ACCOUNT }),
-    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_agent_live_agent' });
+    ).rejects.toMatchObject({ code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/) });
 
     // ...and so is a different TENANT since 0034 (Manas, 2026-11-11): one person is one pair
     // of ears in every tenant they belong to. Was: "a different tenant is untouched".

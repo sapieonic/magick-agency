@@ -9,7 +9,7 @@ import type {
  * be refused locally instead of charging the server with a 409 it will only warn on.
  *
  * ── Why this exists ──────────────────────────────────────────────────────────
- * The server enforces one live session per agent per tenant. The console already
+ * The server enforces one live session per agent, across tenants (OS1). The console already
  * renders that refusal (`session_on_other_campaign`) — *after* `POST /sessions`
  * has gone out and the server has logged "Agency join refused — agent already live
  * on another campaign". In real use that was two warnings from one tester

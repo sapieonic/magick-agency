@@ -174,8 +174,8 @@ export async function registerCampaignAgentRoutes(app: FastifyInstance): Promise
    * runtime's business, not this table's.
    *
    * ── One LIVE campaign at a time is the dialer runtime's to enforce ─────────
-   * The live-session index is `(tenant_id, agent_user_id)`
-   * (`uq_agency_agent_live_agent`), so a second concurrent join is refused with
+   * The live-session index is `(agent_user_id)` across tenants
+   * (`uq_agency_agent_live_agent`, 0034), so a second concurrent join is refused with
    * a typed 409 naming the campaign they are on, and the console tells them to
    * leave that station first. Nothing here touches a live session: yanking
    * somebody off a call to satisfy a staffing edit is worse than the 409.

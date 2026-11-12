@@ -438,6 +438,30 @@ void main() {
       });
     });
 
+    test('OS3: a take-over whose mint fails is spent: the ladder\'s next mint does not take over', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.socket.serverClose(4409);
+        var fail = true;
+        final mint = app.routes['POST /proxy/agency/sessions/sess-1/station-token']!;
+        app.routes['POST /proxy/agency/sessions/sess-1/station-token'] = (r) {
+          if (fail) {
+            fail = false;
+            return json(503, {'error': 'Service Unavailable', 'code': 'station_token_unavailable', 'message': 'Try again.'});
+          }
+          return mint(r);
+        };
+        app.run(app.controller.useThisDevice());
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        final bodies = app.requests('POST', '/proxy/agency/sessions/sess-1/station-token').map((r) => r.body).toList();
+        expect(bodies.first, {'device_id': testDeviceId, 'take_over': true});
+        expect(bodies.skip(1), everyElement({'device_id': testDeviceId, 'take_over': false}));
+        expect(bodies.length, greaterThan(1));
+        app.dispose();
+      });
+    });
+
     test('OS3: a reconnect refused station_on_other_device stops as 4409 does: no retry, Use this phone takes it', () {
       fakeAsync((async) {
         final app = App(async)..start();

@@ -78,8 +78,8 @@ final class _Session {
   AppLifecycleSource? lifecycle;
 
   /// OS3: the next token mint takes the station over from another device. Armed only by the
-  /// agent's "Use this phone instead" ([StationController.useThisDevice]) and spent by the mint
-  /// it granted; every automatic reconnect mints without it.
+  /// agent's "Use this phone instead" ([StationController.useThisDevice]) and spent by the next
+  /// mint, whatever it answers; every automatic reconnect mints without it.
   bool takeOverNextMint = false;
 
   String get id => hosted.sessionId;
@@ -486,10 +486,12 @@ class StationController extends Notifier<StationView?>
       connector: ref.read(stationConnectorProvider),
       resolveUrl: ref.read(envProvider).resolveStationUrl,
       mintToken: () async {
-        // OS3: only "Use this phone instead" takes the station over; it is spent once granted.
+        // OS3: only "Use this phone instead" takes the station over, and only on the mint it
+        // armed: spent whatever that mint answers, so it never carries into a later automatic
+        // reconnect (one that fails is refused, and the agent is asked again).
         final takeOver = s.takeOverNextMint;
+        s.takeOverNextMint = false;
         final minted = await _api.mintStationToken(hosted.sessionId, takeOver: takeOver);
-        if (takeOver) s.takeOverNextMint = false;
         return minted.stationWsUrl;
       },
       refreshIdToken: () async {

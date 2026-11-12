@@ -103,15 +103,19 @@ async function restore092(): Promise<void> {
   const pool = getTestPool();
   await pool.query('DROP INDEX IF EXISTS uq_agency_agent_live');
   await pool.query(`UPDATE agency_agent_sessions SET left_at = now() WHERE left_at IS NULL`);
-  // The agent-wide index since 0034 (OS1); was the tenant-wide one.
+  // The agent-wide index since 0034 (OS1), with the tenant-wide one 0034 keeps for rollback (OS8).
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live_agent
                       ON agency_agent_sessions (agent_user_id)
+                      WHERE left_at IS NULL`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live_tenant
+                      ON agency_agent_sessions (tenant_id, agent_user_id)
                       WHERE left_at IS NULL`);
 }
 
 /** The per-campaign world: a per-campaign index, which permits the second session. */
 const RESTORE_074 = `
   DROP INDEX IF EXISTS uq_agency_agent_live_agent;
+  DROP INDEX IF EXISTS uq_agency_agent_live_tenant;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live
     ON agency_agent_sessions (campaign_id, agent_user_id)
     WHERE left_at IS NULL`;

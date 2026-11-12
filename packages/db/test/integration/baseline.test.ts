@@ -334,9 +334,9 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  it('the live-session uniqueness is per AGENT across tenants (0034) — neither older index exists', async () => {
+  it('the live-session uniqueness is per AGENT across tenants (0034); the per-tenant index is kept for rollback', async () => {
     expect(await indexDef('uq_agency_agent_live')).toBeUndefined();
-    expect(await indexDef('uq_agency_agent_live_tenant')).toBeUndefined();
+    expect(await indexDef('uq_agency_agent_live_tenant')).toBeDefined();
     expect(await indexDef('uq_agency_agent_live_agent')).toBe(
       'CREATE UNIQUE INDEX uq_agency_agent_live_agent ON public.agency_agent_sessions ' +
       'USING btree (agent_user_id) WHERE (left_at IS NULL)',
@@ -494,14 +494,15 @@ describe('the uniqueness constraints that carry the design (docs/architecture.md
     const campaign = await insertCampaign();
     const first = await insertSession(campaign.id, { agent_user_id: agent });
     await expect(insertSession(campaign.id, { agent_user_id: agent })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_agent_live_agent',
+      code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/),
     });
     const otherAccount = randomUUID();
     const other = await insertCampaign({ account_id: otherAccount });
     await expect(insertSession(other.id, { agent_user_id: agent, account_id: otherAccount })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_agent_live_agent',
+      code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/),
     });
-    // Another tenant is refused too (0034, OS1): one pair of ears.
+    // Same tenant: either index refuses it (0034 keeps the per-tenant one for rollback).
+    // Another tenant is refused too, and only the agent-wide index can (0034, OS1).
     await expect(insertSession(campaign.id, { agent_user_id: agent, tenant_id: randomUUID() })).rejects.toMatchObject({
       code: '23505', constraint: 'uq_agency_agent_live_agent',
     });

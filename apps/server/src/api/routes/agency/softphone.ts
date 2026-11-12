@@ -53,8 +53,8 @@ import { UUID_RE } from '../../../utils/uuid.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
 import {
-  accountNameInTenant, heldByOtherDevice, mintStationTokenOr503, requireOwnedSession, sendActionError,
-  sendSessionInOtherTenant, sendStationOnOtherDevice, stationDeviceFields, stationIntervalsFor,
+  accountNameInTenant, endIdleSessionElsewhere, heldByOtherDevice, mintStationTokenOr503, requireOwnedSession,
+  sendActionError, sendSessionInOtherTenant, sendStationOnOtherDevice, stationDeviceFields, stationIntervalsFor,
 } from './helpers.js';
 import {
   sendSoftphoneRefusal,
@@ -337,9 +337,15 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
         return sendStationOnOtherDevice(reply, live.id, live.client_kind);
       }
     }
-    const join = await agencyAgentSessionRepository.joinSoftphone({
+    const joinInput = {
       tenantId: actor.tenantId, accountId: actor.accountId, agentUserId: actor.userId, replicaId: runtime.replicaId,
-    });
+    };
+    let join = await agencyAgentSessionRepository.joinSoftphone(joinInput);
+    // OS7, as on the campaign join: an idle session in another tenant is ended and the open retried.
+    if (!join.ok && join.reason === 'other_tenant'
+      && await endIdleSessionElsewhere(runtime, join.session, (id) => agencyAgentSessionRepository.leave(id))) {
+      join = await agencyAgentSessionRepository.joinSoftphone(joinInput);
+    }
     // OS1: live in another tenant (a campaign or the soft phone there). Named by tenant only.
     if (!join.ok && join.reason === 'other_tenant') return sendSessionInOtherTenant(reply, join.session.tenant_id);
     if (!join.ok && join.reason === 'softphone_elsewhere') {

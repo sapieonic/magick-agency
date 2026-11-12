@@ -348,12 +348,13 @@ export async function fetchManualCallRecordingBlobUrl(
 export function openSoftphoneSession(
   tenantId?: string,
   accountId?: string,
+  { takeOver = true }: { takeOver?: boolean } = {},
 ): Promise<SoftphoneResult<AgencySoftphoneSessionResponse>> {
   return attempt(() =>
     apiFetch<AgencySoftphoneSessionResponse>(
       `${SOFTPHONE_BASE}/sessions`,
-      // OS3: this window, taking the station: the soft phone opens only when the agent opens it here.
-      { method: 'POST', body: JSON.stringify(stationDeviceBody(true)) },
+      // OS3: this window, taking the station when the agent opened the soft phone here.
+      { method: 'POST', body: JSON.stringify(stationDeviceBody(takeOver)) },
       tenantId,
       accountId,
     ),

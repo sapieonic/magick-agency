@@ -420,3 +420,60 @@ export async function sendSessionInOtherTenant(reply: FastifyReply, tenantId: st
   };
   return reply.code(409).send(refusal);
 }
+
+/**
+ * The part of the runtime {@link endIdleSessionElsewhere} reads: the same signals the agent's own
+ * `leave` checks, plus station presence across processes.
+ */
+interface IdleSessionRuntime {
+  stations: {
+    stationPresence(sessionId: string): Promise<'connected' | 'absent' | 'unknown'>;
+    detach(sessionId: string): Promise<unknown> | unknown;
+  };
+  agents: {
+    get(sessionId: string): Promise<{ state: string } | null>;
+    clear(sessionId: string): Promise<unknown>;
+  };
+  dialer: { hasLiveAttempt(sessionId: string): boolean; hasRedialInFlight(sessionId: string): boolean };
+  softphone: { hasLiveCall(sessionId: string): boolean };
+  inbound?: { findCallForSession(sessionId: string): unknown } | null;
+}
+
+/**
+ * OS7: end the agent's session in ANOTHER tenant when nothing is there: no station attached in any
+ * process (`stationPresence` says `absent`; `unknown` keeps it), no lease beyond `offline` /
+ * `break` (no reservation, call or wrap-up), and no live campaign attempt, redial being set up,
+ * soft-phone call or inbound call. Then it is left exactly as the agent's own `leave` leaves it
+ * (lease cleared, row left, station detached), and the caller retries its join.
+ *
+ * Why: one live session per agent across tenants (OS1) would otherwise let a session forgotten in a
+ * tenant (a laptop closed without Leave, a membership since revoked, the dialler since switched
+ * off there) lock the agent out of every other tenant, with nothing in this one able to end it.
+ * A session that is working (a station attached, or anything in flight) is never ended from
+ * here: the join is refused `session_in_other_tenant` as before.
+ *
+ * Total: any read or write that fails leaves the session alone (false).
+ */
+export async function endIdleSessionElsewhere(
+  runtime: IdleSessionRuntime,
+  session: Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>,
+  leave: (sessionId: string) => Promise<void>,
+): Promise<boolean> {
+  try {
+    const id = session.id;
+    if (runtime.dialer.hasLiveAttempt(id) || runtime.dialer.hasRedialInFlight(id)) return false;
+    if (runtime.softphone.hasLiveCall(id) || runtime.inbound?.findCallForSession(id)) return false;
+    if ((await runtime.stations.stationPresence(id)) !== 'absent') return false;
+    const lease = await runtime.agents.get(id);
+    if (lease && lease.state !== 'offline' && lease.state !== 'break') return false;
+    await runtime.agents.clear(id);
+    await leave(id);
+    await runtime.stations.detach(id);
+    log.info({ sessionId: id, tenantId: session.tenant_id },
+      'Ended an idle session in another tenant so the agent can join here (OS7)');
+    return true;
+  } catch (err) {
+    log.warn({ err, sessionId: session.id }, 'Could not end an idle session in another tenant — refusing the join');
+    return false;
+  }
+}

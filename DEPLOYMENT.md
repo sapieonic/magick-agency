@@ -828,7 +828,10 @@ the renderer from the checkout), then deploy the server: the live renderer must 
 Migrations run on start. There is one server, so a deploy is a short outage: shutdown hangs up
 live calls, and agents come back in `break` and have to go available again. Deploy outside calling
 hours. Rolling back to an older commit does not undo a migration; check what a release adds to
-`packages/db/migrations` before going back past it.
+`packages/db/migrations` before going back past it. `0034_one_station_per_agent.sql` keeps the index the
+previous image joins on, so going back past it needs no `migrate:down`; the one difference is that
+an agent live in another tenant is then refused with a 500 rather than the named 409 until they
+leave there (the database still holds them to one live session).
 
 ### Changing configuration
 

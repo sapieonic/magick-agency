@@ -1877,7 +1877,7 @@ export class PacingEngine {
     mode: AgencyOwnerClaimMode,
     candidates: AgentCandidate[],
   ): Promise<{ picked: AgentCandidate[]; openPendingSeen: boolean }> {
-    // One live session per agent per tenant (`uq` on the session table) makes this a 1:1 map;
+    // One live session per agent across tenants (`uq_agency_agent_live_agent`, OS1) makes this a 1:1 map;
     // a repeat, or a row with no agent, is dropped rather than paired by guesswork.
     const seen = new Set<string>();
     const agents = candidates.filter((c) => {

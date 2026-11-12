@@ -122,20 +122,27 @@ function liveSession(patch: Record<string, unknown> = {}) {
 }
 
 const mint = vi.fn();
+/** OS7: whether the other tenant's session has a station attached (connected: it is working there). */
+const stationPresence = vi.fn(async (): Promise<'connected' | 'absent' | 'unknown'> => 'connected');
+const stationDetach = vi.fn();
 const agentsGet = vi.fn();
 const rehydrate = vi.fn();
 const agentsTransition = vi.fn();
+const agentsClear = vi.fn(async () => undefined);
 
 function makeRuntime() {
   return {
     replicaId: 'r1',
-    agents: { get: agentsGet, set: vi.fn(), clear: vi.fn(), transition: agentsTransition },
+    agents: { get: agentsGet, set: vi.fn(), clear: agentsClear, transition: agentsTransition },
     wrapup: { stateFor: vi.fn(() => null) },
-    stations: { send: vi.fn(() => true), attach: vi.fn(), detach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
+    stations: {
+      send: vi.fn(() => true), attach: vi.fn(), detach: stationDetach, isLocallyOwned: vi.fn(() => true),
+      stationPresence: stationPresence,
+    },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
-      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: vi.fn(() => false),
+      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: vi.fn(() => false), hasRedialInFlight: vi.fn(() => false),
       noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null),
     },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false), peek: vi.fn(() => null) },
@@ -176,6 +183,7 @@ beforeEach(async () => {
   repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
   repos.session.findLiveForAgent.mockResolvedValue(null);
   repos.session.claimStationDevice.mockResolvedValue({ ok: true });
+  stationPresence.mockResolvedValue('connected');
   accounts.findByIdInTenant.mockImplementation(async (id: string, tenantId: string) =>
     id === 'a2' && tenantId === 't1' ? { id: 'a2', tenant_id: 't1', name: 'North Region' } : null);
   app = await buildApp();
@@ -263,6 +271,36 @@ describe('POST /sessions — one station per agent (OS1, OS3)', () => {
     expect(accounts.findByIdInTenant).not.toHaveBeenCalled();
     expect(mint).not.toHaveBeenCalled();
     expect(rehydrate).not.toHaveBeenCalled();
+  });
+
+  it('OS7: an idle session in the other tenant is ended as its Leave would, and the join goes through', async () => {
+    stationPresence.mockResolvedValue('absent');
+    agentsGet.mockResolvedValue({ state: 'break' });
+    repos.session.joinOrRehydrate
+      .mockResolvedValueOnce({ ok: false, reason: 'other_tenant', session: liveSession({ id: 'sess-there', tenant_id: 't2' }) })
+      .mockResolvedValueOnce({ ok: true, created: true, session: liveSession({ id: 'sess-1', campaign_id: 'camp-new' }) });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(agentsClear).toHaveBeenCalledWith('sess-there');
+    expect(repos.session.leave).toHaveBeenCalledWith('sess-there');
+    expect(stationDetach).toHaveBeenCalledWith('sess-there');
+    expect(repos.session.joinOrRehydrate).toHaveBeenCalledTimes(2);
+  });
+
+  it('OS7: a working session in the other tenant (station attached) is left alone and the join refused', async () => {
+    stationPresence.mockResolvedValue('connected');
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_tenant', session: liveSession({ id: 'sess-there', tenant_id: 't2' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'session_in_other_tenant' });
+    expect(repos.session.leave).not.toHaveBeenCalled();
+    expect(repos.session.joinOrRehydrate).toHaveBeenCalledTimes(1);
   });
 
   it('a failed tenant-name read still answers the 409', async () => {

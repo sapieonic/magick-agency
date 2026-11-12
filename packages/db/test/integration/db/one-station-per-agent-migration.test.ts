@@ -51,7 +51,26 @@ describe('0034 — one station per agent', () => {
     expect(await indexDef('uq_agency_agent_live_agent')).toBe(
       'CREATE UNIQUE INDEX uq_agency_agent_live_agent ON public.agency_agent_sessions '
       + 'USING btree (agent_user_id) WHERE (left_at IS NULL)');
-    expect(await indexDef('uq_agency_agent_live_tenant')).toBeUndefined();
+  });
+
+  it('keeps the per-tenant index, so the image before 0034 still finds its ON CONFLICT arbiter (rollback)', async () => {
+    expect(await indexDef('uq_agency_agent_live_tenant')).toBe(
+      'CREATE UNIQUE INDEX uq_agency_agent_live_tenant ON public.agency_agent_sessions '
+      + 'USING btree (tenant_id, agent_user_id) WHERE (left_at IS NULL)');
+    // The previous image's upsert, verbatim in its conflict target: it must plan and run.
+    const campaign = await insertCampaign();
+    const agent = randomUUID();
+    const upsert = () => pool().query(
+      `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state)
+       VALUES ($1, $2, $3, $4, 'break')
+       ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL
+       DO UPDATE SET last_heartbeat = now()
+       RETURNING id`,
+      [campaign['tenant_id'], campaign['account_id'], campaign['id'], agent],
+    );
+    const first = await upsert();
+    const again = await upsert();
+    expect(again.rows[0].id).toBe(first.rows[0].id);
   });
 
   it('station_device_id is VARCHAR(64), nullable, no default: every older session holds no device', async () => {
@@ -106,7 +125,7 @@ describe('0034 — one station per agent', () => {
     expect(events.rows).toEqual([{ session_id: older['id'], from_state: 'on_call', to_state: 'offline' }]);
   });
 
-  it('down restores the per-tenant index and drops the column; up restores both', async () => {
+  it('down drops the agent index and the column, keeping the per-tenant index; up restores both', async () => {
     const restore = await downBefore0034();
     try {
       expect(await indexDef('uq_agency_agent_live_agent')).toBeUndefined();

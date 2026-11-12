@@ -4,10 +4,15 @@
 -- ── One live session per agent, not per (tenant, agent) ───────────────────────
 -- uq_agency_agent_live_tenant allowed an agent who belongs to two tenants one live session in
 -- each: two independently reservable agents attached to one pair of ears, the case the per-tenant
--- index already refused within one tenant. uq_agency_agent_live_agent replaces it, keyed on the agent
--- alone (WHERE left_at IS NULL), and is the join upsert's new arbiter
--- (`upsertLiveSession`). A join refused by a live session in ANOTHER tenant answers
--- `session_in_other_tenant` (OS2).
+-- index already refused within one tenant. uq_agency_agent_live_agent, keyed on the agent alone
+-- (WHERE left_at IS NULL), is the join upsert's new arbiter (`upsertLiveSession`). A join refused
+-- by a live session in ANOTHER tenant answers `session_in_other_tenant` (OS2).
+--
+-- uq_agency_agent_live_tenant is KEPT, redundant but harmless (every row it admits the new index
+-- also judges): the server image before this migration names it as its ON CONFLICT arbiter, and
+-- Postgres refuses an arbiter no index matches, so dropping it would make an image-only rollback
+-- answer 500 on every join until `migrate down` ran. A later migration drops it once no image
+-- that names it can be deployed.
 --
 -- Rows that would break the new index (an agent live in two tenants when this runs) are ended
 -- before it is built: every live session of such an agent except the one with the newest
@@ -15,8 +20,10 @@
 -- `leave` would, with the transition logged for one that was not already offline, so occupancy
 -- does not run on. Migrations run at container start, before the server listens and after the
 -- previous process has gone, so no station is attached to any session then and the startup reaper
--- would mark every one offline anyway; ending the duplicate costs the agent a rejoin on that
--- tenant, never a live call.
+-- would mark every one offline anyway: the media of any call on such a session is already gone.
+-- Unlike `leave`, nothing here checks for an unsettled soft-phone or inbound call on the ended
+-- session; its outcome is then closed by the lapse sweeps, as for any session that left with one
+-- owed. Only an agent live in two tenants at that moment is affected.
 --
 -- ── The device that holds the station ─────────────────────────────────────────
 -- `station_device_id` (OS3): the id of the device (one console tab, one phone install) the
@@ -56,8 +63,6 @@ SELECT id, tenant_id, account_id, campaign_id, agent_user_id, from_state, 'offli
   FROM ended
  WHERE from_state IS DISTINCT FROM 'offline';
 
-DROP INDEX uq_agency_agent_live_tenant;
-
 CREATE UNIQUE INDEX uq_agency_agent_live_agent
   ON agency_agent_sessions (agent_user_id)
   WHERE left_at IS NULL;
@@ -78,10 +83,8 @@ ALTER TABLE agency_agent_sessions
 
 DROP INDEX IF EXISTS uq_agency_agent_live_agent;
 
--- Always buildable: one live row per agent implies one per (tenant, agent).
-CREATE UNIQUE INDEX uq_agency_agent_live_tenant
+-- uq_agency_agent_live_tenant was kept by the up; created only if something dropped it since
+-- (always buildable: one live row per agent implies one per (tenant, agent)).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live_tenant
   ON agency_agent_sessions (tenant_id, agent_user_id)
   WHERE left_at IS NULL;
-
-COMMENT ON INDEX uq_agency_agent_live_tenant IS
-  'One live session per agent per tenant, rather than per campaign: the reservation CAS key in agent-state-machine.ts is per SESSION, so two live sessions for one human are two independently reservable agents and one pair of ears.';

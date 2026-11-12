@@ -60,7 +60,7 @@ export const SOFTPHONE_BREAK_REASON_LABEL = 'Soft phone';
  *   floor) ever sees it.
  *
  * Both kinds count against `uq_agency_agent_live_agent`: one live session per
- * agent per tenant, one pair of ears.
+ * agent across tenants (OS1), one pair of ears.
  */
 export type AgencySessionKind = 'campaign' | 'softphone';
 
@@ -499,8 +499,8 @@ export interface AgencySoftphoneUntagged {
 export interface AgencySoftphoneSessionSummary {
   session_id: string;
   /**
-   * The account the session is in. The live session is the agent's one in the TENANT
-   * (`uq_agency_agent_live_agent`), so it may be in a sibling account of the one the
+   * The account the session is in. The live session is the agent's only one (across tenants,
+   * `uq_agency_agent_live_agent`; the bootstrap reads it in this tenant), so it may be in a sibling account of the one the
    * bootstrap was read for: then `call` is not read, and the session routes (`leave`,
    * scoped to the session's account) must be sent with this account, not the caller's.
    */

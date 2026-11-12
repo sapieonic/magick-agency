@@ -17,25 +17,13 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  *
  * Every claim here is a claim about **Postgres**: that a partial unique index
  * arbitrates an `ON CONFLICT`, that a `DO UPDATE … WHERE` returns zero rows
- * instead of writing, and that a window function picks the right survivor. A
+ * instead of writing, and that one statement claims the station for one device. A
  * mocked pool cannot have an opinion about any of them — it would only replay
  * whatever this file asserted, which is the shape of test that let the original
  * defect ship.
  *
- * ── What the dedupe cases actually run ─────────────────────────────────────
- *
- * The migration file itself, read off disk and split on `-- Down Migration`
- * exactly as node-pg-migrate splits it. Not a transcription: a copy of the SQL in
- * a test proves the copy correct and says nothing about what will run on
- * production data. The index is dropped first because the schema under test now
- * forbids the very rows the dedupe exists to clean up — which is the point, since
- * production has been free to create them for the whole life of the feature.
- *
- * The up half is run inside an explicit transaction on ONE connection, because it
- * opens with `LOCK TABLE … IN ACCESS EXCLUSIVE MODE` and that is only legal in a
- * transaction block. node-pg-migrate supplies one in production; a pooled
- * `pool.query` would not reliably be the same connection, so the harness below
- * mirrors what actually happens rather than what is convenient.
+ * The migration that ends duplicates (0034, an agent live in two tenants when it runs) is pinned
+ * in `packages/db/test/integration/db/one-station-per-agent-migration.test.ts`, which runs it.
  */
 
 vi.mock('@magick-agency/db', () => ({
@@ -303,6 +291,23 @@ describe('claimStationDevice — one device holds the station (integration)', ()
     expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false)).toEqual({ ok: true });
     expect(await holder(s.id)).toBeNull();
     expect(await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', false)).toEqual({ ok: true });
+  });
+
+  it('a mint naming no device (an older client) is refused while a device holds it; a join with none clears it', async () => {
+    const s = await session();
+    // No holder: an older client's mint is allowed, and leaves none.
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false, 'refused')).toEqual({ ok: true });
+    expect(await holder(s.id)).toBeNull();
+    await agencyAgentSessionRepository.claimStationDevice(s.id, 'device-phone-01', true);
+    // Held: its reconnect cannot take it back, even asking to take over (take_over needs a device).
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false, 'refused'))
+      .toMatchObject({ ok: false, reason: 'held_elsewhere' });
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, true, 'refused'))
+      .toMatchObject({ ok: false, reason: 'held_elsewhere' });
+    expect(await holder(s.id)).toBe('device-phone-01');
+    // Its join (the agent going on duty there) still clears it.
+    expect(await agencyAgentSessionRepository.claimStationDevice(s.id, null, false)).toEqual({ ok: true });
+    expect(await holder(s.id)).toBeNull();
   });
 
   it('a left session is session_gone, whatever the device', async () => {

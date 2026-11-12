@@ -86,6 +86,12 @@ type LiveSessionUpsertResult =
  */
 const JOIN_UPSERT_ATTEMPTS = 3;
 
+/** A unique violation on the per-tenant live-session index 0034 keeps for rollback (OS8). */
+function isLiveTenantRace(err: unknown): boolean {
+  const e = err as { code?: unknown; constraint?: unknown } | null;
+  return e !== null && typeof e === 'object' && e.code === '23505' && e.constraint === 'uq_agency_agent_live_tenant';
+}
+
 /**
  * One state transition, as the UPDATE that performed it saw both sides.
  *
@@ -478,12 +484,13 @@ export class AgencyAgentSessionRepository {
       // `prev` is keyed on the same predicate as the arbiter index — the agent's
       // one live session anywhere (`uq_agency_agent_live_agent`, 0034) — not on the proposed row,
       // because the conflicting row may be on a different campaign, or in a different tenant.
-      const { rows } = await getPool().query<AgencyAgentSessionRecord & {
+      type UpsertRow = AgencyAgentSessionRecord & {
         from_state: AgencyAgentState | null;
         from_break_reason: string | null;
         at: string;
         inserted: boolean;
-      }>(
+      };
+      const { rows } = await getPool().query<UpsertRow>(
         `WITH prev AS (
            SELECT id, state, break_reason FROM agency_agent_sessions
             WHERE agent_user_id = $4 AND left_at IS NULL
@@ -520,7 +527,16 @@ export class AgencyAgentSessionRepository {
            FROM upserted LEFT JOIN prev ON prev.id = upserted.id`,
         [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId,
           input.kind, breakReason],
-      );
+      ).catch((err: unknown): { rows: UpsertRow[] } => {
+        // ── A race on the KEPT per-tenant index (0034, OS8) ───────────────────
+        // `ON CONFLICT (agent_user_id)` absorbs a conflict on its own arbiter only. Two joins of
+        // one agent in one tenant racing both pass the arbiter's pre-check; the loser's insert can
+        // then trip `uq_agency_agent_live_tenant` (kept for rollback) before the arbiter, as a raw
+        // 23505. It means exactly what an empty upsert means, "something live exists for this
+        // agent", so it takes the same path: read the blocker and retry or refuse.
+        if (isLiveTenantRace(err)) return { rows: [] };
+        throw err;
+      });
       const row = rows[0];
       if (row) {
         // Destructured rather than passed through: the two log-only columns must
@@ -618,15 +634,23 @@ export class AgencyAgentSessionRepository {
    *
    *  * the device already holds it, no device does, or `takeOver`: the device holds it now;
    *  * another device holds it and `takeOver` is false: refused `held_elsewhere`, nothing written;
-   *  * no `deviceId` (an older client): allowed, and the holder is cleared, so the station is any
-   *    device's to claim, as it was before 0034;
+   *  * no `deviceId` (an older client): on a join or soft-phone open (`unnamed: 'clears'`), allowed,
+   *    and the holder is cleared, so the station is any device's to claim, as before 0034; on a
+   *    token mint (`unnamed: 'refused'`, a reconnect), refused while a device holds the station,
+   *    so a console tab still running the bundle from before this change cannot reconnect onto a
+   *    station the agent moved (it can still rejoin, which is the agent's own choice);
    *  * the session has left: `session_gone`.
    *
    * Never check-then-write: two devices racing a claim (a reconnect against a take-over) must not
    * both read "mine" and both win. A refused claim reads the row back for the copy's
    * `client_kind`; the row may have left in between, which is `session_gone`.
    */
-  async claimStationDevice(sessionId: string, deviceId: string | null, takeOver: boolean): Promise<AgencyStationDeviceClaim> {
+  async claimStationDevice(
+    sessionId: string,
+    deviceId: string | null,
+    takeOver: boolean,
+    unnamed: 'clears' | 'refused' = 'clears',
+  ): Promise<AgencyStationDeviceClaim> {
     // One statement: `cur` locks the live row, `upd` writes only when the holder changes (a
     // reconnect from the holder writes nothing, so `updated_at` does not move on every mint),
     // and the outer read decides from the same locked row.
@@ -641,11 +665,11 @@ export class AgencyAgentSessionRepository {
            FROM cur
           WHERE s.id = cur.id
             AND cur.station_device_id IS DISTINCT FROM $2::varchar
-            AND ($2::varchar IS NULL OR $3::boolean OR cur.station_device_id IS NULL)
+            AND (($2::varchar IS NULL AND NOT $4::boolean) OR $3::boolean OR cur.station_device_id IS NULL)
           RETURNING s.id
        )
        SELECT cur.client_kind, cur.station_device_id AS holder, EXISTS (SELECT 1 FROM upd) AS moved FROM cur`,
-      [sessionId, deviceId, takeOver],
+      [sessionId, deviceId, takeOver && deviceId !== null, unnamed === 'refused'],
     );
     const row = rows[0];
     if (!row) return { ok: false, reason: 'session_gone' };

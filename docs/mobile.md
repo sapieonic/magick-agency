@@ -156,7 +156,7 @@ customer to nobody. So:
 
 ## One station per agent
 
-An agent is live in one place at a time (decisions OS1–OS6): one live session across every
+An agent is live in one place at a time (decisions OS1–OS8): one live session across every
 tenant, and its station on one device. This install is one device: it sends a `device_id` (32 hex
 characters, made once and kept in the preferences store, `lib/core/station/station_device.dart`)
 on the join, the soft-phone open and every station-token mint. The server keeps which device holds
@@ -169,7 +169,10 @@ the station and refuses the others `409 station_on_other_device` unless they ask
   on its own, and the campaign station on the soft phone it resumes on its own. A refused resume
   shows "open on another device" with "Use it on this phone"; a refused mint stops as 4409 does.
 - **Live in another workspace** (`409 session_in_other_tenant`): the join is refused with the
-  server's sentence, which names the workspace; nothing here can end that session.
+  server's sentence, which names the workspace. The server ends that session by itself first when
+  nothing is there (no station attached, nothing in flight, OS7); a working one is left alone.
+- **A take-over is spent** by the one mint it arms, whatever that mint answers: a "Use this phone"
+  whose mint fails does not carry into a later automatic reconnect.
 
 ## The station socket
 
@@ -296,7 +299,7 @@ The console's soft phone ([`softphone.md`](softphone.md)) on the phone: dial a t
 outside pacing, optionally logged to a campaign, and save its outcome. It uses the console's
 routes and the `manual_call` station frame; the app adds no server route. Agent-only (M2).
 
-- **One session host.** The server allows one live session per agent (across tenants since 0034), so the station
+- **One session host.** The server allows one live session per agent, across tenants (OS1), so the station
   core (`StationController`) hosts either kind as a `HostedSession`
   (`lib/core/station/hosted_session.dart`): a campaign station from the join, or a soft-phone
   session from `POST /softphone/sessions`. One socket, one audio engine, one on-duty service,

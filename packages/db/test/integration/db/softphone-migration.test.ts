@@ -172,7 +172,7 @@ describe('0005 — agency_agent_sessions.kind', () => {
     const campaign = await insertCampaign();
     await insertSession(campaign.id, { agent_user_id: agent });
     await expect(insertSoftphoneSession({ agent_user_id: agent })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_agent_live_agent',
+      code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/),
     });
     await pool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE agent_user_id = $1`, [agent]);
     await expect(insertSoftphoneSession({ agent_user_id: agent })).resolves.toBeTruthy();

@@ -5,6 +5,7 @@ import '../../app/providers.dart';
 import '../api/api_client.dart';
 import '../api/api_error.dart';
 import '../station/station_deps.dart';
+import '../station/station_device.dart';
 
 /// The soft phone's routes (`/proxy/agency/softphone/*` and the SP7 switch on
 /// `/proxy/agency/sessions/:id/softphone`), over [ApiClient], decoded into
@@ -17,7 +18,7 @@ import '../station/station_deps.dart';
 ///
 /// Every method takes an optional `accountId`: the soft phone's session may be
 /// in a sibling account of the workspace the app is in (one live session per
-/// agent per TENANT), and every route about it is scoped to its own account,
+/// agent, across tenants since OS1), and every route about it is scoped to its own account,
 /// so such a request goes out on a client scoped to that account. Null, or the
 /// current account, uses the usual client. `leave` and the station token stay
 /// in `StationApi`.
@@ -192,5 +193,7 @@ final softphoneApiProvider = Provider<SoftphoneApi>((ref) {
         ..accountId = accountId,
     ),
     onUnauthorized: (error) => ref.read(stationUnauthorizedSinkProvider)(error),
+    // OS3: an open through this instance names this install too (it never sends a body without it).
+    device: ref.read(stationDeviceIdsProvider).fields,
   );
 });

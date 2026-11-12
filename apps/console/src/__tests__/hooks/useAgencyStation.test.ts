@@ -1169,6 +1169,20 @@ describe('useAgencyStation', () => {
       expect(mocks.mintStationToken).toHaveBeenLastCalledWith('sess-1', undefined, undefined, { takeOver: false });
     });
 
+    it('OS3: a take-over whose mint fails is spent: the next automatic mint does not take over', async () => {
+      const view = await mounted();
+      act(() => latest().serverClose(4409, 'superseded'));
+      await waitFor(() => expect(view.result.current.connection).toBe('superseded'));
+      mocks.mintStationToken
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue({ session_id: 'sess-1', station_ws_url: '/proxy/agency/station/sess-1?token=LATER', expires_at: 'x' });
+
+      act(() => view.result.current.reconnect());
+      await waitFor(() => expect(mocks.mintStationToken).toHaveBeenCalledTimes(2), { timeout: 3000 });
+      expect(mocks.mintStationToken.mock.calls[0]![3]).toEqual({ takeOver: true });
+      expect(mocks.mintStationToken.mock.calls[1]![3]).toEqual({ takeOver: false });
+    });
+
     it('OS3: an ordinary Reconnect (not after a supersede) never takes over', async () => {
       mocks.mintStationToken.mockResolvedValue({
         session_id: 'sess-1', station_ws_url: '/proxy/agency/station/sess-1?token=AGAIN', expires_at: 'x',

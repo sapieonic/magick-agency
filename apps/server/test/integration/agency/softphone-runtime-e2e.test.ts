@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  * The HTTP routes are the API layer's (not built here): each step calls the
  * `runtime.softphone` method the route will call.
  *
- * Every test uses its own agent (one live session per agent per tenant) and its
+ * Every test uses its own agent (one live session per agent) and its
  * own campaign; campaigns that only tag manual calls stay `draft`, so the pacing
  * engine never dials their rosters.
  */

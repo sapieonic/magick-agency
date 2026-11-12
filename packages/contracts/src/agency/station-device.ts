@@ -1,11 +1,11 @@
 /**
- * One station per agent (decisions OS1–OS6, docs/decisions.md "One station per agent").
+ * One station per agent (decisions OS1–OS8, docs/decisions.md "One station per agent").
  *
  * An agent is live in one place at a time: one live session across every tenant (OS1, refused
  * `session_in_other_tenant` when it is in another tenant), and that session's station on one
- * device (OS3). A **device** is one console tab or one install of the agent app; it names itself
- * with a `device_id` it generates and keeps (a tab: `sessionStorage`, so a reload is the same
- * device and a second tab is another; the app: its install).
+ * device (OS3). A **device** is one console page load or one install of the agent app; it names
+ * itself with a `device_id` it generates (the console: in memory, so a reload or a second tab is
+ * another device; the app: kept with its install, so a restart is the same device).
  *
  * The session remembers the device that holds its station (`station_device_id`, 0034). A join, a
  * soft-phone open or a station-token mint that carries a `device_id`:
@@ -17,8 +17,13 @@
  *   * from another device WITH `take_over: true` (the agent pressed "Use it here" / "Use this
  *     phone", or chose to go on duty here): allowed; the device holds it, and its socket
  *     supersedes the other device's with 4409 when it attaches.
- * A request with no `device_id` (an older client) is allowed and leaves no holder (the station is
- * then any device's to claim), which is how every client behaved before.
+ * A request with no `device_id` (an older client): a join or soft-phone open is allowed and leaves no
+ * holder (the station is then any device's to claim, as before); a token mint (a reconnect) is
+ * refused while a device holds the station, so an older client never takes it back on its own.
+ * `take_over` without a `device_id` means nothing.
+ *
+ * Not every refusal is a dead end (OS7): a live session in ANOTHER tenant with no station attached
+ * and nothing in flight is ended by the join or soft-phone open, which then proceeds.
  *
  * The device id is client-declared and opaque: never an identity or a security input. The session
  * is still the authenticated agent's own (Q8); the holder only decides which of the agent's own

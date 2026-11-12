@@ -839,6 +839,40 @@ describe('AgentConsolePage — live in another workspace', () => {
   });
 });
 
+/**
+ * OS4: a page the browser reloaded by itself (a discarded tab) joins WITHOUT taking the station;
+ * refused because another device holds it, it says so and offers "Use this window instead", which
+ * joins again taking it.
+ */
+describe('AgentConsolePage — a discarded tab does not take the station', () => {
+  beforeEach(() => {
+    clearAllLiveSessions();
+    Object.defineProperty(document, 'wasDiscarded', { value: true, configurable: true });
+  });
+  afterEach(() => {
+    delete (document as Document & { wasDiscarded?: boolean }).wasDiscarded;
+  });
+
+  it('asks before taking it, and Use this window instead takes it', async () => {
+    mocks.createAgencySession
+      .mockRejectedValueOnce(new ApiError(409, {
+        error: 'Conflict', code: 'station_on_other_device', message: 'open on your phone',
+        session_id: 'sess-1', client_kind: 'mobile',
+      }))
+      .mockResolvedValue(BOOTSTRAP);
+
+    await mounted();
+
+    const fatal = await screen.findByRole('alert');
+    expect(fatal.textContent).toContain('Your station is open on another device or window.');
+    expect(mocks.createAgencySession.mock.calls[0]![3]).toEqual({ takeOver: false });
+
+    fireEvent.click(screen.getByTestId('station-fatal-action'));
+    await waitFor(() => expect(mocks.createAgencySession).toHaveBeenCalledTimes(2));
+    expect(mocks.createAgencySession.mock.calls[1]![3]).toEqual({ takeOver: true });
+  });
+});
+
 describe('AgentConsolePage — the join conflict’s one-click switch', () => {
   const conflict = (state: string) =>
     new ApiError(409, {
@@ -905,6 +939,30 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     );
     await waitFor(() => expect(screen.queryByTestId('join-conflict')).toBeNull());
     expect(camp1Calls).toBe(2);
+    // OS3: the look-up of the other campaign's session never takes its station; the rejoin
+    // here (the agent's choice) does.
+    const otherCalls = mocks.createAgencySession.mock.calls.filter((c) => c[0] === 'camp-other');
+    expect(otherCalls.map((c) => c[3])).toEqual([{ takeOver: false }]);
+  });
+
+  it('OS3: the other campaign open on another device stops the switch there, taking nothing', async () => {
+    mocks.createAgencySession.mockImplementation((campaignId: string) => {
+      if (campaignId === 'camp-other') {
+        return Promise.reject(new ApiError(409, {
+          error: 'Conflict', code: 'station_on_other_device', message: 'open on your phone',
+          session_id: 'sess-other', client_kind: 'mobile',
+        }));
+      }
+      return Promise.reject(conflict('available'));
+    });
+
+    await mounted();
+    await screen.findByTestId('join-conflict');
+    fireEvent.click(screen.getByTestId('switch-station'));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave & join here' }));
+
+    await screen.findByText('Collections is open on another device. Leave it there, then join here.');
+    expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
   });
 
   it('names which request failed, and leaves the dialog open to retry', async () => {
@@ -1004,7 +1062,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
     // The resume happened — that alone is always safe, it only reads state —
     // but the live call it revealed must never be touched.
     await waitFor(() =>
-      expect(mocks.createAgencySession).toHaveBeenCalledWith('camp-other', 'tenant-1', 'account-1'),
+      expect(mocks.createAgencySession).toHaveBeenCalledWith('camp-other', 'tenant-1', 'account-1', { takeOver: false }),
     );
     expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
     // The screen catches up to the fresher truth: mid-call now, so the button
@@ -1136,7 +1194,7 @@ describe('AgentConsolePage — the join conflict’s one-click switch', () => {
 
     await mounted();
 
-    expect(mocks.createAgencySession).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+    expect(mocks.createAgencySession).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1', { takeOver: true });
     expect(screen.queryByTestId('join-conflict')).toBeNull();
   });
 

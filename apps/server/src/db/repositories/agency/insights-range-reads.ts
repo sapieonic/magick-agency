@@ -73,7 +73,7 @@ export async function insightsAgentStateSeconds(q: InsightsRangeQuery): Promise<
  * as two agents) into a running total: the number online from that instant to the next. A
  * bucket's peak is the largest total at any instant in it, its own start included (which
  * carries the level across the boundary), so every bucket is present and nothing is expanded
- * per interval. One live session per agent (across tenants since 0034) (`uq_agency_agent_live_agent`), so
+ * per interval. One live session per agent across tenants (`uq_agency_agent_live_agent`), so
  * concurrent intervals are distinct agents.
  */
 export async function insightsAgentsOnlinePeak(

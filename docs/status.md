@@ -1339,7 +1339,7 @@ Every new guard was mutation-checked. **Not verified:** none of it has run on a 
 cellular-call detection's Android code (bar its pure tracker, compiled and run on a JVM) and all of
 its Swift have never been compiled.
 
-### One station per agent 2026-11-11 (OS1–OS6, [`decisions.md`](decisions.md) §4, "One station per agent")
+### One station per agent 2026-11-11 (OS1–OS8, [`decisions.md`](decisions.md) §4, "One station per agent")
 
 Manas: an agent stays online at one station only, one console window or the app, and across
 tenants. Before this, the server already allowed one live session per agent per tenant and closed
@@ -1347,10 +1347,13 @@ an older socket of the same session with 4409; what was missing was the tenant b
 to stop a device that had lost its socket (a laptop asleep, a phone out of signal) from
 re-minting a token and silently taking the station back from the device the agent had moved to.
 
-- **Across tenants (OS1, OS2).** `0034_one_station_per_agent.sql`: `uq_agency_agent_live_agent`
-  replaces the per-tenant index (duplicates ended when it runs). The join and the soft-phone open
+- **Across tenants (OS1, OS2, OS7, OS8).** `0034_one_station_per_agent.sql`:
+  `uq_agency_agent_live_agent` is the new arbiter (duplicates ended when it runs); the per-tenant
+  index is kept beside it so an image-only rollback still joins (OS8). The join and the soft-phone open
   answer `409 session_in_other_tenant`, naming the tenant only; the console and the app show the
-  server's sentence. This reverses the old pin that "the same agent id in another tenant is
+  server's sentence. A session in another tenant with no station attached and nothing in flight is
+  ended by the join instead (OS7), so a forgotten session cannot lock the agent out everywhere.
+  This reverses the old pin that "the same agent id in another tenant is
   dialled independently" (`agency-double-reservation`, `agency-duplicate-dial` T-M6,
   `agency-session-tenant-unique`), each rewritten to the new rule.
 - **One device holds the station (OS3–OS6).** `station_device_id` on the session; `device_id` and
@@ -1360,13 +1363,21 @@ re-minting a token and silently taking the station back from the device the agen
   never do, a refused re-mint stops as a 4409 does, and "Use this window instead" takes over. The
   app is one device per install; "Go on duty", "Use this phone" and "Use it on this phone" take
   over, its own resumes and its reconnect ladder never do.
+- **Review fixes (same day, a fresh-context review of the first commit).** The rollback index
+  (OS8); the idle session in another tenant (OS7); the console's Switch no longer takes the other
+  campaign's station to look it up; a page the browser reloaded by itself (a discarded tab) asks
+  before taking the station; a take-over is spent by its one mint on both clients; a mint naming
+  no device is refused while a device holds the station (OS6, stale console tabs); the app-wide
+  soft-phone API names the device too; `BASELINE.md` and stale comments repaired.
 - **Copy:** "Your station moved to another device" / "Moved to another device" (was "another
   window"), and the app's "Your station is open in the console…".
 
 Every new guard was mutation-checked (the claim SQL, the arbiter, the migration's clean-up order,
-the console's mint refusal and take-over). **Not verified:** none of it has run against a real
-browser, phone or carrier; older clients that send no `device_id` keep the newest-socket-wins
-behaviour until `MOBILE_MIN_SUPPORTED_VERSION` is raised (OS6).
+the console's mint refusal and take-over, the idle-session rule, the discarded-tab join).
+**Not verified:** none of it has run against a real browser, phone or carrier; `wasDiscarded` is
+Chromium's, so another browser's restored tab still takes over as a page load; an older app that
+sends no `device_id` can still take the station by going on duty until
+`MOBILE_MIN_SUPPORTED_VERSION` is raised (OS6).
 
 ## Test counts
 
@@ -1425,23 +1436,26 @@ Run on the working tree of the commit that adds it, one after another from insid
 local Postgres 16 test database and Redis db 1 with no other run sharing them. `pnpm lint` clean;
 `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33 pass;
 `contracts-literals --check` up to date (62 vocabularies). `apps/mobile` (Flutter 3.47.9, one patch
-above CI's pin): `flutter analyze` no issues, `flutter test` 1795 passed; `agency_wire` `dart test`
+above CI's pin): `flutter analyze` no issues, `flutter test` 1796 passed; `agency_wire` `dart test`
 609 passed; `agent_audio` `flutter test` 139 passed (Dart; the Kotlin tests were not run). Not run
 (untouched): `apps/super-admin`, `packages/web-ui`, `apps/report-renderer`. Two first runs were not
 green and are not counted: a `packages/db` Plivo number-link test failed once and passed on the
 re-run (unrelated to this change), and the server's first rest lane ran before `mpg123` /
 `sndfile-programs` were installed and while fixtures still seeded one agent live in two tenants
-(fixed, above).
+(those fixtures now leave the other tenant's session, or expect the refusal). After the review
+fixes, a rest lane failed five tests that the kept per-tenant index broke (a counterfactual that
+must drop it too, and concurrent same-tenant joins raising its 23505 as a 500, now absorbed by the
+upsert, OS8); fixed, and every count here is from the green run after.
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 9699 passed + 1 expected fail (488 files) | rest lane 2680 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
-| `packages/db` | 428 (25 files) | 748 (77 files) |
-| `apps/console` | 6170 | — |
+| `apps/server` | 9714 passed + 1 expected fail (489 files) | rest lane 2681 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
+| `packages/db` | 428 (25 files) | 749 (77 files) |
+| `apps/console` | 6174 | — |
 | `packages/contracts` | 476 (14 files) | — |
 | `packages/domain` | 254 (12 files) | — |
 | `packages/observability` | 18 (4 files; not re-run, untouched) | — |
-| `apps/mobile` | 1795 (`flutter test`); `agency_wire` 609 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
+| `apps/mobile` | 1796 (`flutter test`); `agency_wire` 609 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
 
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57), on commit `c41091e`: server 9682
 unit + 1 expected fail, rest lane 2673 + 9 expected fail + 2 skipped, wall-clock 23; db 428 / 744;

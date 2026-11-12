@@ -120,12 +120,14 @@ void main() {
   });
 
   group('the session', () {
-    test('openSession: POST with no body', () async {
+    test('openSession: POST with this install\'s device fields (OS3), taking over unless told not to', () async {
       h.server.json('POST', '/proxy/agency/softphone/sessions', sessionResponse, status: 201);
       final s = await api.openSession();
       expect(s.sessionId, 'sess-sp');
       expect(s.kind, SessionKind.softphone);
-      expect(bodyOf(only('POST', '/proxy/agency/softphone/sessions')), isNull);
+      final body = bodyOf(only('POST', '/proxy/agency/softphone/sessions'))! as Map<String, Object?>;
+      expect(body['take_over'], true);
+      expect(StationDevice.pattern.hasMatch(body['device_id']! as String), isTrue);
     });
 
     test('switchToSoftphone and returnToCampaign: POST on the session, in its account', () async {

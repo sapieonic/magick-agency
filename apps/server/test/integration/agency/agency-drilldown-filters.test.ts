@@ -81,7 +81,7 @@ async function seed() {
   const s2 = await insertAgentSession(campaign.id, { agent_user_id: U2 });
   // A second session of U1 on ANOTHER campaign: its attempts must not count as U1's here.
   const other = await insertAgencyCampaign({ name: 'other' });
-  // Left (one live session per agent per tenant, `uq_agency_agent_live_tenant`).
+  // Left (one live session per agent, `uq_agency_agent_live_agent`).
   const sOther = await insertAgentSession(other.id, { agent_user_id: U1, state: 'offline', left_at: at(-1) });
 
   const contact = (o: Record<string, unknown>) => insertAgencyContact(campaign.id, o);

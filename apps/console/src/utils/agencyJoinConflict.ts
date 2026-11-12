@@ -205,10 +205,22 @@ export type SwitchStage = 'resume' | 'leave' | 'rejoin';
  * in particular, `rejoin` has to say the other station is already closed,
  * because that is the one outcome an agent must not be left to guess at.
  */
+function errorCodeOf(err: unknown): string | null {
+  if (err === null || typeof err !== 'object') return null;
+  const details = (err as { details?: unknown }).details;
+  if (details === null || typeof details !== 'object') return null;
+  const code = (details as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
 export function switchFailureCopy(stage: SwitchStage, campaignName: string, err: unknown): string {
   const detail = err instanceof Error ? err.message : null;
   switch (stage) {
     case 'resume':
+      // OS3: that campaign's station is open on another device, which this window must not take.
+      if (errorCodeOf(err) === 'station_on_other_device') {
+        return `${campaignName} is open on another device. Leave it there, then join here.`;
+      }
       return detail
         ? `Couldn’t reach ${campaignName} to leave it — ${detail}`
         : `Couldn’t reach ${campaignName} to leave it. Try again.`;

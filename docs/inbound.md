@@ -343,7 +343,7 @@ and says so.
 ### 4.3 Sticky agent's state → what happens
 
 Eligible means the agent's live session is in the route's account (or the matched contact's
-account): one live session per agent (across tenants since 0034), so an agent working another account is offline
+account): one live session per agent across tenants (OS1), so an agent working another account is offline
 for this call.
 
 | State | P2 | P3 |

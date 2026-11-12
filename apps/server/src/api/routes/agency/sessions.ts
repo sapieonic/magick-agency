@@ -29,8 +29,8 @@ import type {
 import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import {
-  accountNameInTenant, heldByOtherDevice, mintStationTokenOr503, requireOwnedSession, resolveRetryContext,
-  sendSessionInOtherTenant, sendStationOnOtherDevice, stationDeviceFields, stationIntervalsFor,
+  accountNameInTenant, endIdleSessionElsewhere, heldByOtherDevice, mintStationTokenOr503, requireOwnedSession,
+  resolveRetryContext, sendSessionInOtherTenant, sendStationOnOtherDevice, stationDeviceFields, stationIntervalsFor,
 } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
@@ -140,22 +140,29 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       }
     }
 
-    const join = await agencyAgentSessionRepository.joinOrRehydrate({
+    const joinInput = {
       tenantId, accountId,
       campaignId: campaign.id,
       agentUserId: body.agent_user_id,
       replicaId: runtime.replicaId,
-    });
+    };
+    let join = await agencyAgentSessionRepository.joinOrRehydrate(joinInput);
+    // OS7: a session in another tenant with nothing in it (no station attached, nothing in flight)
+    // is ended, as its own Leave would, and the join tried once more.
+    if (!join.ok && join.reason === 'other_tenant'
+      && await endIdleSessionElsewhere(runtime, join.session, (id) => agencyAgentSessionRepository.leave(id))) {
+      join = await agencyAgentSessionRepository.joinOrRehydrate(joinInput);
+    }
 
-    // One live session per agent per TENANT. The agent is
+    // One live session per agent, across tenants (OS1). The agent is
     // still joined somewhere else and must leave that station first — nothing
     // here yanks them off it, because that station may be a live conversation
     // (see `AgencySessionCampaignConflict` for the full
     // reasoning). Refused with the old campaign NAMED: an agent who is told
     // only "conflict" has no way to find the station they left open.
     if (!join.ok && join.reason === 'other_tenant') {
-      // OS1: live in another tenant. Named by tenant only: nothing of that tenant's campaigns
-      // or accounts crosses the boundary, and nothing here can end that session.
+      // OS1: live in another tenant, and working there (OS7 ended it otherwise). Named by tenant
+      // only: nothing of that tenant's campaigns or accounts crosses the boundary.
       log.warn({ agentUserId: body.agent_user_id, requestedCampaignId: campaign.id },
         'Agency join refused — agent already live in another tenant');
       return sendSessionInOtherTenant(reply, join.session.tenant_id);
@@ -359,10 +366,11 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     if (!session) return reply;
     // OS3: a reconnect from a device that no longer holds the station is refused, never minted:
     // the agent moved it to another device, and this one must not take it back on its own. Only
-    // `take_over` (the agent's "Use it here") moves it. A mint with no device id (an older
-    // client) is allowed and leaves no holder, as every mint did before.
+    // `take_over` (the agent's "Use it here") moves it.
+    // A mint naming no device (a client from before OS3) is refused while a device holds the
+    // station: it is a reconnect, and must not take the station back either.
     const device = stationDeviceFields(request.body);
-    const claim = await agencyAgentSessionRepository.claimStationDevice(session.id, device.deviceId, device.takeOver);
+    const claim = await agencyAgentSessionRepository.claimStationDevice(session.id, device.deviceId, device.takeOver, 'refused');
     if (!claim.ok) {
       if (claim.reason === 'held_elsewhere') return sendStationOnOtherDevice(reply, session.id, claim.client_kind);
       const ended: AgencyActionErrorResponse = {

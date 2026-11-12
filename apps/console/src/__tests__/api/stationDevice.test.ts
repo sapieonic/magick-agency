@@ -16,7 +16,7 @@ vi.mock('../../analytics/posthog', () => ({ captureError: vi.fn() }));
 
 import { createAgencySession, mintStationToken } from '../../api/agency';
 import { openSoftphoneSession } from '../../api/softphone';
-import { resetStationDeviceIdForTests, stationDeviceId } from '../../utils/stationDevice';
+import { pageWasDiscarded, resetStationDeviceIdForTests, stationDeviceId } from '../../utils/stationDevice';
 
 function lastBody(): Record<string, unknown> {
   const init = mocks.fetch.mock.calls.at(-1)?.[1] as RequestInit | undefined;
@@ -41,14 +41,18 @@ describe('the station device id', () => {
 });
 
 describe('what each request says about the device', () => {
-  it('the campaign join names this window and takes the station over', async () => {
+  it('the campaign join names this window and takes the station over unless told not to', async () => {
     await createAgencySession('camp-1', 't1', 'a1');
     expect(lastBody()).toEqual({ campaign_id: 'camp-1', device_id: stationDeviceId(), take_over: true });
+    await createAgencySession('camp-1', 't1', 'a1', { takeOver: false });
+    expect(lastBody()).toEqual({ campaign_id: 'camp-1', device_id: stationDeviceId(), take_over: false });
   });
 
-  it('the soft-phone open names this window and takes the station over', async () => {
+  it('the soft-phone open names this window and takes the station over unless told not to', async () => {
     await openSoftphoneSession('t1', 'a1');
     expect(lastBody()).toEqual({ device_id: stationDeviceId(), take_over: true });
+    await openSoftphoneSession('t1', 'a1', { takeOver: false });
+    expect(lastBody()).toEqual({ device_id: stationDeviceId(), take_over: false });
   });
 
   it('a reconnect mint names this window and never takes over unless asked', async () => {
@@ -56,5 +60,17 @@ describe('what each request says about the device', () => {
     expect(lastBody()).toEqual({ device_id: stationDeviceId(), take_over: false });
     await mintStationToken('sess-1', 't1', 'a1', { takeOver: true });
     expect(lastBody()).toEqual({ device_id: stationDeviceId(), take_over: true });
+  });
+});
+
+describe('pageWasDiscarded', () => {
+  it('reads document.wasDiscarded, false where the browser does not say', () => {
+    expect(pageWasDiscarded()).toBe(false);
+    Object.defineProperty(document, 'wasDiscarded', { value: true, configurable: true });
+    try {
+      expect(pageWasDiscarded()).toBe(true);
+    } finally {
+      delete (document as Document & { wasDiscarded?: boolean }).wasDiscarded;
+    }
   });
 });

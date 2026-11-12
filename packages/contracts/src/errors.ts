@@ -88,7 +88,7 @@ export type AgencyActionErrorCode =
   /**
    * `POST /sessions` refused: the agent already holds a LIVE session on a
    * DIFFERENT campaign in the same tenant. There is one live
-   * session per (tenant, agent), because the reservation CAS key is per SESSION
+   * session per agent (across tenants since 0034; a live session in another tenant is `session_in_other_tenant`), because the reservation CAS key is per SESSION
    * (`agency:agent:{sessionId}:state`) while a human has one pair of ears — two
    * live sessions are two independently reservable agents and two customers
    * bridged into one headset.

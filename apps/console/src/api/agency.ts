@@ -38,19 +38,22 @@ const AGENCY_BASE = `${API_BASE}/proxy/agency`;
 /**
  * Join a campaign. Returns everything the console renders with, in one call.
  *
- * Names this window as the station's device and takes the station over (OS3): the console joins
- * only when the agent opens the station here (a page load, Switch, Close the soft phone and join),
- * so the station moves to this window and any other device's socket is closed 4409 when this one
- * attaches. Reconnects never take over (`mintStationToken`).
+ * Names this window as the station's device and, by default, takes the station over (OS3): the
+ * console joins when the agent opens the station here, so the station moves to this window and any
+ * other device's socket is closed 4409 when this one attaches. `takeOver: false` for a join the
+ * agent did not ask for here: a page the browser reloaded by itself (a discarded tab), and the
+ * Switch remedy's look-up of the OTHER campaign's session. Reconnects never take over
+ * (`mintStationToken`).
  */
 export async function createAgencySession(
   campaignId: string,
   tenantId?: string,
   accountId?: string,
+  { takeOver = true }: { takeOver?: boolean } = {},
 ): Promise<AgencySessionBootstrap> {
   return apiFetch<AgencySessionBootstrap>(
     `${AGENCY_BASE}/sessions`,
-    { method: 'POST', body: JSON.stringify({ campaign_id: campaignId, ...stationDeviceBody(true) }) },
+    { method: 'POST', body: JSON.stringify({ campaign_id: campaignId, ...stationDeviceBody(takeOver) }) },
     tenantId,
     accountId,
   );

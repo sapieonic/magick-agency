@@ -34,6 +34,19 @@ export function stationDeviceBody(takeOver: boolean): Required<AgencyStationDevi
   return { device_id: stationDeviceId(), take_over: takeOver };
 }
 
+/**
+ * Whether the browser reloaded this page by itself: a tab it discarded to save memory and brought
+ * back (`document.wasDiscarded`, Chromium). Such a load is not the agent's choice, so its join does
+ * not take the station over (OS4). False where the browser does not say.
+ */
+export function pageWasDiscarded(): boolean {
+  try {
+    return typeof document !== 'undefined' && (document as Document & { wasDiscarded?: boolean }).wasDiscarded === true;
+  } catch {
+    return false;
+  }
+}
+
 /** For tests: forget the id, so the next read makes a new one (a new page load). */
 export function resetStationDeviceIdForTests(): void {
   deviceId = null;

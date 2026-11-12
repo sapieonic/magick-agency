@@ -11,9 +11,10 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  * there can be wrong about SQL, because nothing there runs any. This file is the
  * other half — every claim the method makes about the DATABASE:
  *
- *   * the `ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL` arbiter
- *     really does match the PARTIAL index `uq_agency_agent_live_tenant`, and really does ignore left rows;
- *   * `DO UPDATE … WHERE campaign_id = EXCLUDED.campaign_id` returns zero rows on
+ *   * the `ON CONFLICT (agent_user_id) WHERE left_at IS NULL` arbiter (0034; was
+ *     `(tenant_id, agent_user_id)`) really does match the PARTIAL index
+ *     `uq_agency_agent_live_agent`, and really does ignore left rows;
+ *   * `DO UPDATE … WHERE tenant_id / campaign_id = EXCLUDED…` returns zero rows on
  *     a cross-campaign conflict AND leaves the other campaign's row byte-for-byte
  *     as it was;
  *   * the rehydrate preserves a live state and promotes only `offline`;

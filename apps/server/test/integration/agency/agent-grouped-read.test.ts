@@ -308,7 +308,7 @@ describe('the grouped read against Postgres (integration)', () => {
     const DIAL = new Date('2026-08-18T12:30:00Z');
 
     /**
-     * `agentUserId` is a parameter because `uq_agency_agent_live_tenant` makes one LIVE session per (tenant, agent) — so the two-campaign case
+     * `agentUserId` is a parameter because `uq_agency_agent_live_agent` makes one LIVE session per agent (across tenants) — so the two-campaign case
      * below needs two people, not one person twice.
      */
     async function zonedCampaign(zone: string, agentUserId = AGENT) {
