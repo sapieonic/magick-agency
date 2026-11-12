@@ -3,8 +3,6 @@ import {
   agencyLandingPath,
   agencyPersona,
   agencyPersonaLabel,
-  isAgencyAgent,
-  isAgencySupervisor,
   isDedicatedAgent,
 } from '../../utils/agencyPersona';
 import { PERMISSION_MIN_ROLE, hasPermission } from '../../utils/permissions';
@@ -51,8 +49,6 @@ describe('agencyPersona', () => {
    */
   it('does not treat an operator as a supervisor', () => {
     expect(agencyPersona('operator')).not.toBe('supervisor');
-    expect(isAgencySupervisor('operator')).toBe(false);
-    expect(isAgencyAgent('operator')).toBe(true);
   });
 
   /**
@@ -64,7 +60,6 @@ describe('agencyPersona', () => {
    */
   it('resolves a supervisor to supervisor even though they hold the agent permissions', () => {
     expect(agencyPersona('account_admin')).toBe('supervisor');
-    expect(isAgencyAgent('account_admin')).toBe(false);
   });
 
   it('is null for an unresolved role, so callers can wait rather than guess', () => {

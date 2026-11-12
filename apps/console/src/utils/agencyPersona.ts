@@ -184,13 +184,3 @@ export function agencyPersonaLabel(role: Role | undefined): string | null {
   const persona = agencyPersona(role);
   return persona ? AGENCY_PERSONA_LABELS[persona] : null;
 }
-
-/** Convenience for the common branch. */
-export function isAgencySupervisor(role: Role | undefined): boolean {
-  return agencyPersona(role) === 'supervisor';
-}
-
-/** Convenience for the common branch. */
-export function isAgencyAgent(role: Role | undefined): boolean {
-  return agencyPersona(role) === 'agent';
-}
