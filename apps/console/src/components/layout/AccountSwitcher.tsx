@@ -3,14 +3,14 @@ import { Briefcase, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { SwitcherDropdown } from './SwitcherDropdown';
 import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
-import styles from './AccountSwitcher.module.css';
+import styles from './ContextSwitcher.module.css';
 
 /**
  * The account line of the sidebar's context block (decision B28): no box, in bold under the tenant, the full
  * width of the sidebar. A plain label with one to choose from, the switcher otherwise.
  */
 export function AccountSwitcher() {
-  const triggerClass = styles.trigger;
+  const triggerClass = `${styles.trigger} ${styles.account}`;
   const { accounts, accountId, setActiveAccountId, accountResolution, reloadAccounts } =
     useTenant();
   const [open, setOpen] = useState(false);

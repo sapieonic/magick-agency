@@ -4,14 +4,14 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { SwitcherDropdown } from './SwitcherDropdown';
 import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
-import styles from './TenantSwitcher.module.css';
+import styles from './ContextSwitcher.module.css';
 
 /**
  * The tenant line of the sidebar's context block (decision B28): no box, small and muted above the account, the full
  * width of the sidebar. A plain label with one to choose from, the switcher otherwise.
  */
 export function TenantSwitcher() {
-  const triggerClass = styles.trigger;
+  const triggerClass = `${styles.trigger} ${styles.tenant}`;
   const { tenants } = useAuth();
   const { activeTenant, setActiveTenantId } = useTenant();
   const [open, setOpen] = useState(false);
