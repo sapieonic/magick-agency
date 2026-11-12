@@ -10,6 +10,7 @@ import {
 } from '../../../api/agencyCampaigns';
 import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
 import { campaignGroup, needsPolling, sortCampaigns } from '../../../utils/agencyCampaignsHome';
+import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../../types/agency-campaign';
 
 /** The cards' refresh, matching the campaign detail page's own poll. */
@@ -17,9 +18,6 @@ export const REFRESH_MS = 10_000;
 
 /** Rows per request; the server caps `limit` at 100. */
 export const PAGE_SIZE = 100;
-
-/** Every started-and-not-finished status: the ones read in full, however old. */
-export const ACTIVE_STATUSES = ['running', 'stopping', 'paused'];
 
 export type StatsState =
   | { status: 'loading' }
@@ -114,7 +112,7 @@ export function useCampaignsHome(tenantId: string | null, accountId: string | nu
         // server that ignored `status` could not put a draft on a card.
         const liveRows = (
           page.total > page.campaigns.length
-            ? await listAgencyCampaigns(tenantId, accountId, ACTIVE_STATUSES)
+            ? await listAgencyCampaigns(tenantId, accountId, AGENCY_HOME_ACTIVE_STATUSES)
             : page.campaigns
         ).filter(isActive);
         // Only page one is re-read on a poll. A row on an older loaded page that
