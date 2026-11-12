@@ -853,11 +853,9 @@ export function AgencyCampaignSettingsPage() {
             <UnsavedChangesBar
               count={changes.length}
               saving={saving}
+              blockedReason={saveBlock !== null ? CONFIG_BLOCK_COPY[saveBlock] : null}
               // The refusal itself is the alert above the form; the bar says where to look.
-              note={saveBlock !== null
-                ? CONFIG_BLOCK_COPY[saveBlock]
-                : saveError ? 'Not saved. The reason is above the form.' : null}
-              blocked={saveBlock !== null}
+              note={saveError ? 'Not saved. The reason is above the form.' : null}
               onDiscard={onDiscard}
               onSave={() => void onSave()}
             />

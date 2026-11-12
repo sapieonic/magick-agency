@@ -1086,6 +1086,25 @@ describe('unsaved changes', () => {
     expect(bar()).toBeNull();
   });
 
+  it('says why Save is held, and that a save failed, in the live region as well as the bar', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    const status = () => screen.getByTestId('unsaved-changes-status').textContent;
+
+    // An emptied name holds Save back; the reason is shown and announced.
+    fireEvent.change(nameField(), { target: { value: '' } });
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('unsaved-changes-note').textContent).toBe('Fix the highlighted fields before saving.');
+    expect(status()).toBe('1 unsaved change. Fix the highlighted fields before saving.');
+
+    // A save the server refuses is announced too, though the count does not change.
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect(status()).toBe('1 unsaved change');
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(apiError(500, { error: 'Internal' }));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(status()).toBe('1 unsaved change. Not saved. The reason is above the form.'));
+  });
+
   it('Discard puts back what is saved, and the bar goes', async () => {
     renderPage();
     await screen.findByLabelText(/campaign name/i);
