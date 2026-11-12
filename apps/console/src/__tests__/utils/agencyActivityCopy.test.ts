@@ -125,6 +125,12 @@ describe('formatActivityTimestamp', () => {
     expect(rendered).toMatch(/[A-Z]{2,5}|GMT|UTC/);
   });
 
+  // The run's locale is en-US (vite.config.ts), so a formatter that follows the browser
+  // prints `Aug 1, 2026, 11:00:07 AM UTC` here and fails.
+  it('uses the console display locale, not the browser one', () => {
+    expect(formatActivityTimestamp('2026-08-01T11:00:07.000Z')).toBe('1 Aug 2026, 11:00:07 am UTC');
+  });
+
   it('falls back to the raw value rather than rendering "Invalid Date"', () => {
     expect(formatActivityTimestamp('not-a-date')).toBe('not-a-date');
   });

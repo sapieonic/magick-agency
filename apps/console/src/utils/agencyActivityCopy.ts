@@ -3,6 +3,7 @@ import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { carrierAccountPauseCopy } from './agencyCarriers';
 import { dedupeKeyName } from '../types/agency-campaign';
+import { dateFormatter } from './format/date';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -54,19 +55,24 @@ export function retentionNotice(retention: ActivityRetention | null): string | n
  * for "updated 5 minutes ago" and useless here — a whole audit flush shares one
  * displayed minute with no ordering cue, and a reviewer comparing the screen
  * against the CSV (which is ISO-8601 UTC) has nothing to reconcile them by.
+ *
+ * In the console's display locale (`utils/format/date`), like every other date it
+ * shows: `11 Nov 2026, 06:10:00 pm GMT+5:30`. It used to follow the browser's.
  */
+const ACTIVITY_TIMESTAMP: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  timeZoneName: 'short',
+};
+
 export function formatActivityTimestamp(at: string): string {
   const date = new Date(at);
   if (Number.isNaN(date.getTime())) return at;
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZoneName: 'short',
-  });
+  return dateFormatter(ACTIVITY_TIMESTAMP).format(date);
 }
 
 /**

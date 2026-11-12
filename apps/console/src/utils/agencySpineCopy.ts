@@ -9,6 +9,7 @@
 import type { AgencyAttempt, AgencyRosterContact } from '../types/agency-spine';
 import { suppressedReasonLabel } from '../types/agency-spine';
 import { systemDispositionLabel } from './agency/systemDisposition';
+import { dateFormatter } from './format/date';
 import type { AgencyCampaign, AgencyDispositionEntry } from '../types/agency-campaign';
 
 /**
@@ -116,20 +117,26 @@ export function recordingDisabledNote(campaign: AgencyCampaign | null): string |
     + 'per campaign, on the Settings tab.';
 }
 
+const SPINE_TIMESTAMP: Intl.DateTimeFormatOptions = {
+  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+};
+
 /**
- * Local time, to the minute.
+ * Local time, to the minute: `11 Nov 2026, 04:54 pm`.
  *
- * `Intl` in the viewer's own zone, not the campaign's: a supervisor reading a
+ * In the viewer's own zone, not the campaign's: a supervisor reading a
  * compliance question is reading it where they are. The campaign's calling
  * window is a separate concept and has its own display elsewhere.
+ *
+ * In the console's display locale (`utils/format/date`), not the browser's. It
+ * used to follow the browser, so an en-US reader saw `Nov 11, 2026, 04:54 PM` in
+ * the call log and `11 Nov 2026, 04:54 pm` one click away on the call's timeline.
  */
 export function formatSpineTimestamp(iso: string | null): string {
   if (!iso) return '—';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  }).format(date);
+  return dateFormatter(SPINE_TIMESTAMP).format(date);
 }
 
 /** `m:ss`, or an em dash. `0` is a real value and renders as `0:00`. */

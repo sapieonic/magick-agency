@@ -4,6 +4,7 @@ import {
   ROSTER_DESCRIPTION,
   autoDispositionLabel,
   dispositionLabel,
+  formatSpineTimestamp,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
 import type { AgencyCampaign, AgencyDispositionEntry } from '../../types/agency-campaign';
@@ -181,5 +182,19 @@ describe('autoDispositionLabel — an automatic outcome, tagged as one', () => {
     );
     // It also sits under a person's write-up, where "no one wrote it up" would be false.
     expect(AUTO_DISPOSITION_HINT).not.toMatch(/wrote|written/i);
+  });
+});
+
+describe('formatSpineTimestamp', () => {
+  // The run's locale is en-US (vite.config.ts): a formatter that follows the browser
+  // prints `Nov 11, 2026, 04:54 PM` here, which is what the call log showed beside the
+  // call timeline's `11 Nov 2026, 04:54 pm`.
+  it('uses the console display locale, not the browser one', () => {
+    expect(formatSpineTimestamp('2026-11-11T16:54:00.000Z')).toBe('11 Nov 2026, 04:54 pm');
+  });
+
+  it('a dash for no time, and the raw value for one that does not parse', () => {
+    expect(formatSpineTimestamp(null)).toBe('—');
+    expect(formatSpineTimestamp('not-a-date')).toBe('not-a-date');
   });
 });
