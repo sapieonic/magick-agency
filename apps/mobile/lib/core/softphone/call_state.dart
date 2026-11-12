@@ -160,7 +160,7 @@ SoftphoneRail describeSoftphoneRail({
     case SoftphonePhase.dialing:
       return SoftphoneRail(
         tone: SoftphoneRailTone.warning,
-        label: 'Dialing $number',
+        label: 'Dialling $number',
         detail: '${_capitalise(from)} · connecting your line first',
         timerFrom: device(call?.dialedAt),
       );

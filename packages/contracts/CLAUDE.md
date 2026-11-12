@@ -26,11 +26,13 @@ the test.
   to the dialer contract at type level.
 - **Mobile drift:** the Dart app cannot import this package. `fixtures/agent/*.json` are wire
   samples its `agency_wire` package decodes, and `fixtures/agent/literals.json` holds every closed
-  string vocabulary it switches on. After changing a literal union, const list or a fixture-backed
-  shape, regenerate and commit:
+  string vocabulary it switches on; `fixtures/agent/labels.json` holds the label maps the app shows
+  as they are (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`; its `attempt_copy_test.dart` holds
+  its own copy to them). After changing a literal union, const list, one of those label maps or a
+  fixture-backed shape, regenerate and commit:
 
   ```bash
-  node ../../tooling/contracts-literals.mjs          # rewrite literals.json
+  node ../../tooling/contracts-literals.mjs          # rewrite literals.json and labels.json
   node ../../tooling/contracts-literals.mjs --check  # what CI runs
   ```
 

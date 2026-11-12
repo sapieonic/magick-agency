@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type * as Core from '../src/agency';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
-import { buildLiterals } from '../../../tooling/contracts-literals.mjs';
+import { buildLabels, buildLiterals, type LabelMap } from '../../../tooling/contracts-literals.mjs';
 import actions from '../fixtures/agent/actions.json';
 import customerHistory from '../fixtures/agent/customer-history.json';
 import inbound from '../fixtures/agent/inbound.json';
+import labels from '../fixtures/agent/labels.json';
 import literals from '../fixtures/agent/literals.json';
 import platform from '../fixtures/agent/platform.json';
 import reads from '../fixtures/agent/reads.json';
@@ -624,6 +625,17 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
 
   it('keeps the client frames the server reads to ping and media', () => {
     expect(new Set(Object.values(STATION_CLIENT).map((f) => f.event))).toEqual(new Set(['ping', 'media']));
+  });
+});
+
+describe('fixtures/agent/labels.json', () => {
+  it('matches the label maps extracted from the sources (run `node tooling/contracts-literals.mjs`)', () => {
+    expect(labels).toEqual(buildLabels());
+  });
+
+  it('reads each map whole, in British English', () => {
+    expect(buildLabels()['attempt_state_labels']).toMatchObject({ labels: { dialing: 'Dialling', bridged: 'On the call' } });
+    expect(Object.keys((buildLabels()['attempt_outcome_labels'] as LabelMap).labels)).toHaveLength(10);
   });
 });
 

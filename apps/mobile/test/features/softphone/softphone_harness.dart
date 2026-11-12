@@ -588,7 +588,7 @@ SoftphoneView callView(
   final live = phase == SoftphonePhase.dialing || phase == SoftphonePhase.ringing || phase == SoftphonePhase.onCall;
   final answered = phase == SoftphonePhase.onCall || phase == SoftphonePhase.outcome;
   final rail = switch (phase) {
-    SoftphonePhase.dialing => const SoftphoneRail(tone: SoftphoneRailTone.info, label: 'Dialing +91 98123 45678'),
+    SoftphonePhase.dialing => const SoftphoneRail(tone: SoftphoneRailTone.info, label: 'Dialling +91 98123 45678'),
     SoftphonePhase.ringing => const SoftphoneRail(tone: SoftphoneRailTone.info, label: 'Ringing +91 98123 45678'),
     SoftphonePhase.onCall => SoftphoneRail(tone: SoftphoneRailTone.success, label: 'On call with Rahul Verma', timerFrom: t0),
     SoftphonePhase.outcome => const SoftphoneRail(tone: SoftphoneRailTone.warning, label: 'Outcome needed'),

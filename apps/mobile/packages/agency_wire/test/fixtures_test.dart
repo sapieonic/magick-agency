@@ -252,9 +252,10 @@ final Map<String, Map<String, Decoder>> decoders = {
 };
 
 /// The fixture files that are not wire samples: the vocabularies (their own
-/// suite, `literals_test.dart`) and the search box's number table (its own
+/// suite, `literals_test.dart`), the contract's label maps (the app's
+/// `attempt_copy_test.dart`) and the search box's number table (its own
 /// suite, `customer_search_number_test.dart`).
-const notSamples = {'literals.json', 'customer-search-numbers.json'};
+const notSamples = {'literals.json', 'labels.json', 'customer-search-numbers.json'};
 
 /// `timeline_request` rebuilt through the Dart request type, so its
 /// `toJson()` is checked against the fixture.

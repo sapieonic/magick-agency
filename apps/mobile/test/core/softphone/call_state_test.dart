@@ -108,13 +108,13 @@ void main() {
       );
     });
 
-    test('Dialing and Ringing name the number and time from dialed_at', () {
+    test('Dialling and Ringing name the number and time from dialed_at', () {
       final ringing = manualCall({'state': 'ringing'});
       final r = rail(call: ringing);
       expect(r.label, 'Ringing +91 98204 61733');
       expect(r.detail, contains('ringback tone plays on your phone'));
       expect(r.timerFrom, ringing.dialedAt);
-      expect(rail(call: manualCall()).label, 'Dialing +91 98204 61733');
+      expect(rail(call: manualCall()).label, 'Dialling +91 98204 61733');
     });
 
     test('On call names the contact and times from bridged_at alone', () {

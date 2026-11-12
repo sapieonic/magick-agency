@@ -55,7 +55,7 @@ abstract final class SoftphoneCopy {
 
   // ── The call on screen ──
   static String from(String callerId) => 'From $callerId';
-  static const statusDialing = 'Dialing';
+  static const statusDialing = 'Dialling';
   static const statusRinging = 'Ringing';
   static const statusConnected = 'Connected';
   static const statusEnded = 'Ended';
@@ -125,7 +125,7 @@ abstract final class SoftphoneCopy {
   static String outcomeFrom(String? campaign) => campaign == null ? 'From the soft phone’s outcome list' : 'From $campaign’s outcome list';
   static const saveOutcome = 'Save outcome';
   static const saving = 'Saving…';
-  static const dialBlockedOwed = 'Dialing is blocked until this call has an outcome.';
+  static const dialBlockedOwed = 'Dialling is blocked until this call has an outcome.';
   static String closesIn(String clock) => 'Without one, it closes in $clock.';
   static const closingNoOutcome = 'Closing with no outcome…';
 

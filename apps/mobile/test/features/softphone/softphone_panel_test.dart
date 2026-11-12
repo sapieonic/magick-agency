@@ -240,10 +240,10 @@ void main() {
   group('the call phases', () {
     testWidgets('dialing: who, from where, Hold to hang up; no outcome yet', (tester) async {
       await pumpSoftphone(tester, callView(SoftphonePhase.dialing));
-      expect(find.text('Dialing +91 98123 45678'), findsOneWidget);
+      expect(find.text('Dialling +91 98123 45678'), findsOneWidget);
       expect(find.text('Rahul Verma'), findsWidgets);
       expect(find.text('From +91 20712 34567'), findsOneWidget);
-      expect(find.text('Dialing'), findsOneWidget);
+      expect(find.text('Dialling'), findsOneWidget);
       expect(find.byKey(const Key('softphone-hang-up')), findsOneWidget);
       expect(find.byKey(const Key('softphone-save')), findsOneWidget);
       expect(find.byKey(const Key('ringing-warning')), findsNothing);
@@ -291,11 +291,11 @@ void main() {
       expect(find.text('Outcome needed'), findsOneWidget);
       expect(find.byKey(const Key('softphone-hang-up')), findsNothing);
       expect(find.byKey(const Key('softphone-save')), findsOneWidget);
-      expect(find.text('Dialing is blocked until this call has an outcome. Without one, it closes in 1:42.'), findsOneWidget);
+      expect(find.text('Dialling is blocked until this call has an outcome. Without one, it closes in 1:42.'), findsOneWidget);
       await h.advance(const Duration(seconds: 2));
-      expect(find.text('Dialing is blocked until this call has an outcome. Without one, it closes in 1:40.'), findsOneWidget);
+      expect(find.text('Dialling is blocked until this call has an outcome. Without one, it closes in 1:40.'), findsOneWidget);
       await h.advance(const Duration(seconds: 100));
-      expect(find.text('Dialing is blocked until this call has an outcome. Closing with no outcome…'), findsOneWidget);
+      expect(find.text('Dialling is blocked until this call has an outcome. Closing with no outcome…'), findsOneWidget);
     });
 
     testWidgets('Log to and Call from are locked once a call is placed', (tester) async {
