@@ -124,7 +124,6 @@ describe('the settings', () => {
     ['greeting', 'inbound', 'What callers hear'],
     ['email', 'notifications', 'Email notifications'],
     ['unsubscribe', 'notifications', 'Email notifications'],
-    ['digest', 'notifications'],
     ['invite', 'team', 'Team'],
     ['member', 'team'],
     ['role', 'team'],
@@ -140,6 +139,12 @@ describe('the settings', () => {
     const hit = results.find((r) => r.key === `setting:${id}`);
     expect(hit, `${query} → ${id}`).toBeTruthy();
     if (title) expect(hit!.title).toBe(title);
+  });
+
+  it('offers no digest words: the page lists two emails, each sent as it happens', () => {
+    for (const q of ['digest', 'daily', 'weekly', 'summary emails']) {
+      expect(settingsResults(searchTokens(q), ALL_ON('tenant_owner')).map((r) => r.key), q).not.toContain('setting:notifications');
+    }
   });
 
   it('names where a matched setting lives', () => {
@@ -354,6 +359,37 @@ describe('everything together', () => {
     expect(groups({})).toEqual(['pages', 'settings']);
     expect(groups({ query: 'diwali' })).toEqual(['campaigns']);
     expect(groups({ query: 'caller' })).toEqual(['settings', 'campaign-settings']);
+  });
+
+  it('sends “notifications” and “alerts” to Home first, then the email setting', () => {
+    for (const query of ['notifications', 'alerts', 'needs attention', 'what needs me']) {
+      const results = searchConsole({ ...base, query }).groups.flatMap((g) => g.results);
+      expect(results[0]?.key, query).toBe('page:home:home');
+    }
+    for (const query of ['notifications', 'alert']) {
+      const keys = searchConsole({ ...base, query }).groups.flatMap((g) => g.results).map((r) => r.key);
+      expect(keys.indexOf('page:home:home'), query).toBe(0);
+      expect(keys, query).toContain('setting:notifications');
+    }
+  });
+
+  it('lists recent campaigns under the pages while nothing is typed, as the account has them now', () => {
+    const recentCampaigns = [
+      { id: 'c-1', name: 'Diwali (old name)' },
+      { id: 'c-gone', name: 'Deleted since' },
+    ];
+    expect(groups({ recentCampaigns })).toEqual(['pages', 'recent-campaigns', 'settings']);
+    const recent = searchConsole({ ...base, recentCampaigns }).groups.find((g) => g.id === 'recent-campaigns')!;
+    expect(recent.title).toBe('Recent campaigns');
+    expect(recent.results.map((r) => [r.title, r.target])).toEqual([
+      ['Diwali renewals', { type: 'path', to: '/agency/campaigns/c-1' }],
+    ]);
+    // Until the list is read, as remembered.
+    const unread = searchConsole({ ...base, campaigns: null, recentCampaigns }).groups.find((g) => g.id === 'recent-campaigns')!;
+    expect(unread.results.map((r) => r.title)).toEqual(['Diwali (old name)', 'Deleted since']);
+    // Not once something is typed, nor for a reader who may not read campaigns.
+    expect(groups({ recentCampaigns, query: 'diwali' })).not.toContain('recent-campaigns');
+    expect(groups({ recentCampaigns, gate: ALL_ON('agent') })).not.toContain('recent-campaigns');
   });
 
   it('never shows campaigns to a reader who may not read them, whatever list it is given', () => {

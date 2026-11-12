@@ -7,6 +7,7 @@ import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
 import { useCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { browserStorage } from '../../utils/customerSearchRecent';
+import { readRecentCampaigns } from '../../utils/recentCampaigns';
 import { plural } from '../../utils/format/number';
 import {
   canSearchCampaigns,
@@ -29,9 +30,10 @@ export interface GlobalSearchProps {
 /**
  * ⌘K / Ctrl+K, and the top bar's search field (decision B28): one search for pages, Settings,
  * campaigns and a phone number's history, each result offered under its destination's gate
- * (`utils/consoleSearch.ts`). Escape, a click outside or ⌘K again closes it and puts focus back
- * where it was (the top bar's field, when that opened it); choosing a result leaves focus to the
- * page it opens.
+ * (`utils/consoleSearch.ts`). With nothing typed it lists the pages, the reader's recently
+ * opened campaigns (`utils/recentCampaigns.ts`) and the Settings pages. Escape, a click outside
+ * or ⌘K again closes it and puts focus back where it was (the top bar's field, when that opened
+ * it); choosing a result leaves focus to the page it opens.
  */
 export function GlobalSearch({ open, onOpenChange: setOpen }: GlobalSearchProps) {
   const openRef = useRef(open);
@@ -93,6 +95,10 @@ function Palette({ onClose }: DialogProps) {
   const campaignsAllowed = canSearchCampaigns(gate, accountId ?? null);
   const callingCode = useCustomerSearchDefaultCallingCode(numbersAllowed);
   const campaigns = useSearchCampaigns(campaignsAllowed, tenantId ?? null, accountId ?? null);
+  const recentCampaigns = useMemo(
+    () => readRecentCampaigns(tenantId ?? null, accountId ?? null, store),
+    [tenantId, accountId, store],
+  );
   const { run: runNumberSearch, busy: numberBusy, error: numberError, clearError: clearNumberError } =
     useCustomerSearchRun(CUSTOMER_RESULTS_PATH, store);
   const placeholder = searchPlaceholder(numbersAllowed, campaignsAllowed);
@@ -105,8 +111,9 @@ function Palette({ onClose }: DialogProps) {
         accountId: accountId ?? null,
         defaultCallingCode: callingCode,
         campaigns: campaigns.campaigns,
+        recentCampaigns,
       }),
-    [query, gate, accountId, callingCode, campaigns],
+    [query, gate, accountId, callingCode, campaigns, recentCampaigns],
   );
   const flat = useMemo(() => answer.groups.flatMap((g) => g.results), [answer]);
 
@@ -157,6 +164,9 @@ function Palette({ onClose }: DialogProps) {
         return;
       }
       if (e.key === 'Enter') {
+        // An Enter that ends an IME composition (Hindi, Japanese…) commits the word typed; it
+        // is not a choice. Safari reports it as keyCode 229 without `isComposing`.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         choose(flat[selectedIndex]);
         return;

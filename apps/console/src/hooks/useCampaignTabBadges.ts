@@ -24,6 +24,8 @@ interface Entry {
 const entries = new Map<string, Entry>();
 const inFlight = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
+/** Bumped by {@link resetCampaignTabBadges}, so a read begun before a sign-out stores nothing after it. */
+let generation = 0;
 
 function badgeKey(kind: CampaignTabBadgeKind, tenantId: string, accountId: string, campaignId: string): string {
   return `${kind}|${tenantId}/${accountId}/${campaignId}`;
@@ -60,8 +62,11 @@ function readBadge(kind: CampaignTabBadgeKind, tenantId: string, accountId: stri
   const key = badgeKey(kind, tenantId, accountId, campaignId);
   const held = entries.get(key);
   if (inFlight.has(key) || (held && Date.now() - held.at < TAB_BADGE_FRESH_MS)) return;
+  const asked = generation;
   const promise = fetchBadge(kind, tenantId, accountId, campaignId)
-    .then((value) => store(key, value))
+    .then((value) => {
+      if (asked === generation) store(key, value);
+    })
     // A failed read keeps what was held; the next screen tries again.
     .catch(() => undefined)
     .finally(() => {
@@ -70,11 +75,20 @@ function readBadge(kind: CampaignTabBadgeKind, tenantId: string, accountId: stri
   inFlight.set(key, promise);
 }
 
-/** Tests only: forget every held count. */
-export function resetCampaignTabBadgesForTests(): void {
+/**
+ * Forget every held count, and any read still on its way. Sign-out is in place, not a page load
+ * (`AuthContext`), so the next person to sign in to the same account in this tab would otherwise
+ * be shown the last one's counts.
+ */
+export function resetCampaignTabBadges(): void {
+  generation += 1;
   entries.clear();
   inFlight.clear();
+  for (const listener of listeners) listener();
 }
+
+/** The name the tests know it by. */
+export const resetCampaignTabBadgesForTests = resetCampaignTabBadges;
 
 /**
  * One badge count for the campaign, read once on mount when nothing fresh is held (not polled: a

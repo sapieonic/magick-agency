@@ -529,7 +529,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
           // for `ScopeGate` to refuse, not quietly swapped for another account.
           // An unscoped URL needs nothing: the gate scopes it.
           if (replacement && scoped && scoped.accountId === activeAccountId) {
-            go({ tenantId: forTenant, accountId: replacement }, '/', { replace: true });
+            go({ tenantId: forTenant, accountId: replacement }, '/', { replace: true, force: true });
           }
         }
       })

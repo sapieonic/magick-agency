@@ -36,9 +36,12 @@ profiles, team, invites and settings. Detail: `docs/architecture.md` "UIs", `doc
   only breadcrumb: a page does not render web-ui's `<Breadcrumbs>` as well.
 - The router is a plain `<Router>`, not a data router, so react-router's `useBlocker` does not
   work. A form that must not be left with unsaved edits uses `hooks/useUnsavedChangesGuard`
-  (campaign Settings and New campaign, with `UnsavedChangesBar` and its `LeaveUnsavedDialog`). Back
-  and Forward are held in `UrlScopeContext`'s one history listener (`useHoldHistorySteps`): in
-  Chromium a window `popstate` listener added later runs later, capture phase or not.
+  (campaign Settings and New campaign, with `UnsavedChangesBar` and its `LeaveUnsavedDialog`). It
+  adds a blocker to the navigator's one stack (`utils/navigationBlockers.ts`, wrapped once by
+  `UrlScopeProvider`); never patch the history's `push`/`replace`/`go` from a page. Back and
+  Forward are held in `UrlScopeContext`'s one history listener, which asks the same stack: in
+  Chromium a window `popstate` listener added later runs later, capture phase or not. A redirect
+  that must happen whatever is unsaved goes through `useUrlScope().go(…, { force: true })`.
 - One search (B28): the top bar's field and ⌘K open `components/common/GlobalSearch`, whose results
   come from `utils/consoleSearch.ts`. Pages are read from `consoleNav.ts`, so a new tab is found by
   its label with no extra step (add words to `PAGE_KEYWORDS` if people would type others, and keep

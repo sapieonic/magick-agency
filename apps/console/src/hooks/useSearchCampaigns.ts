@@ -28,7 +28,11 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-/** Forget every list (tests; a sign-out is a full page load). */
+/**
+ * Forget every list: sign-out (`AuthContext`), which is in place and not a page load, so the
+ * next person to sign in to the same account in this tab must not be shown the last one's list.
+ * A read still on its way stores nothing (`read` checks its entry is still the cache's).
+ */
 export function resetSearchCampaignsCache(): void {
   cache.clear();
 }
@@ -47,6 +51,11 @@ const PARALLEL_PAGES = 4;
  * Every campaign's id and name, newest first: the first page says how many there are, and the
  * rest are read {@link PARALLEL_PAGES} at a time. Only the id and name of each row are kept. An
  * empty page ends the read (a server whose `total` overstates what it returns).
+ *
+ * The first page that fails fails the whole read, and no worker starts another page after it
+ * (a request already on its way is left to finish; nothing reads its answer). Offset pages of a
+ * newest-first list shift while campaigns are created, so a campaign can come back on two
+ * pages: each id is kept once, where it was first seen.
  */
 export async function readAllCampaigns(tenantId: string | null, accountId: string): Promise<SearchCampaign[]> {
   const readPage = async (page: number) => {
@@ -58,16 +67,27 @@ export async function readAllCampaigns(tenantId: string | null, accountId: strin
   const pages: SearchCampaign[][] = [first.names];
   let next = 1;
   let ended = first.names.length === 0;
+  const stop = new AbortController();
   const worker = async () => {
-    while (!ended && next < pageCount) {
+    while (!ended && !stop.signal.aborted && next < pageCount) {
       const page = next++;
-      const { names } = await readPage(page);
-      if (names.length === 0) ended = true;
-      pages[page] = names;
+      try {
+        const { names } = await readPage(page);
+        if (names.length === 0) ended = true;
+        pages[page] = names;
+      } catch (err) {
+        stop.abort(err);
+        throw err;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(PARALLEL_PAGES, Math.max(pageCount - 1, 0)) }, worker));
-  return pages.flat();
+  const seen = new Set<string>();
+  return pages.flat().filter((c) => {
+    if (seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
 }
 
 function read(key: string, tenantId: string | null, accountId: string): Promise<SearchCampaign[]> {
