@@ -44,7 +44,7 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 | Block | Top-level keys |
 |---|---|
 | `base.ts` | `server`, `db`, `redis`, `otel`, `processes` |
-| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile` |
+| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile`, `push` |
 | `agency.ts` | `agency` |
 | `voice.ts` | `concurrency`, `telephony`, `telephonyCredentials`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
 | `analysis.ts` | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`, `retention` |
@@ -282,10 +282,50 @@ only through `PushSender`:
 - `configured(platform)`: whether the deployment has that platform's credentials.
 
 `setPushSender` / `getPushSender` / `resetPushSender` (tests), as §3.5's router. Until an
-implementation is registered (the platform bootstrap, WP1), the unwired default answers every send
-`unconfigured` and no platform is configured, so `away_ring` is refused `push_unavailable` and
-nobody is rung. Tests: `test/unit/seams/push-sender.test.ts` (the interface at type level, the
-unwired default, set and reset).
+implementation is registered, the unwired default answers every send `unconfigured` and no platform
+is configured, so `away_ring` is refused `push_unavailable` and nobody is rung.
+
+The implementation is `notifications/push/push-sender.ts` (`RoutingPushSender`, one sender per
+configured platform), registered by `bootstrap/platform.ts` when the `push` config block configures
+at least one platform and cleared and closed at its stop (platform stops last, after every area that
+rings); boot logs which platforms can be rung. Config (`config/blocks/platform.ts`, parsed into keys
+at load, so a broken credential fails boot naming the env key, never its value):
+
+| Key | Meaning |
+|---|---|
+| `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64` | Android. The base64 of a service account key file of the app's Firebase project (`project_id`, `client_email`, an RSA `private_key`). |
+| `PUSH_APNS_KEY_P8_B64` | iOS, all five or none. The base64 of the team's APNs auth key (`.p8`, EC P-256). |
+| `PUSH_APNS_KEY_ID`, `PUSH_APNS_TEAM_ID` | The key's id and the Apple team id (10 characters each). |
+| `PUSH_APNS_BUNDLE_ID` | The app's bundle id, without `.voip` (the topic is `{bundle}.voip`). |
+| `PUSH_APNS_ENV` | `sandbox` or `production`, no default: a debug build's token sent to production is refused `BadDeviceToken`, which revokes the device. |
+
+- **FCM HTTP v1** (`fcm-sender.ts`): an RS256 assertion traded at `oauth2.googleapis.com` for an
+  access token cached 55 minutes (single flight; a 401 drops it and sends once more); a data-only
+  message (`android.priority: HIGH`, `android.ttl` the ring window). 404/`UNREGISTERED` →
+  `unregistered`; 429/`QUOTA_EXCEEDED` → `rate_limited`; `SENDER_ID_MISMATCH` and other 4xx →
+  `invalid`; 401/403, 5xx, network, a failed token exchange and the 5 s timeout → `unavailable`.
+- **APNs VoIP** (`apns-sender.ts`): one reused HTTP/2 session to `api.push.apple.com` or
+  `api.sandbox.push.apple.com`, dropped and reopened after a GOAWAY, an error, a close or a peer that
+  answers neither the send nor a PING; an ES256 provider token minted every 50 minutes (and again
+  on `ExpiredProviderToken`). Only `ring` and `test_ring` are sent (every VoIP push must report a
+  call to CallKit); `ring_cancel` and `ring_off` answer `{ ok: true }` unsent. 410,
+  `BadDeviceToken`, `Unregistered` → `unregistered`; 429 → `rate_limited`; other 4xx but 403 →
+  `invalid`; 403, 5xx, network and the timeout → `unavailable`. A stream refused unprocessed is
+  sent once more; nothing that may have reached the phone is.
+- A 429 holds the device back (`rate_limited`, unsent) until its `Retry-After` (10 s without one):
+  nothing is retried inside a ring. Logs name the device row id, the push type and the call id,
+  never a token. Metrics (`packages/observability/src/metrics/platform.ts`):
+  `agency_push_sends_total{platform,result}` (`result`: `ok`, `skipped`, or the failure reason) and
+  `agency_push_send_seconds{platform}`.
+- The carriers' hosts are fixed. Tests reach the mock carrier (`test/mocks/push/`,
+  `MockPushCarrier`: FCM as an in-process `fetch`, APNs as a loopback h2c server, both checking the
+  signatures, with scripted answers per token or platform) through `createPushSender`'s transports
+  or `setPushTransportsForTests`, never a configurable host.
+
+Tests: `test/unit/seams/push-sender.test.ts` (the interface at type level, the unwired default, set
+and reset), `test/unit/notifications/push/*.test.ts` (the senders against the mock carrier, the
+routing, the JWTs), `test/unit/config/push-config.test.ts`, `test/unit/bootstrap/platform.test.ts`
+(the wiring).
 
 ## 4. Shared infrastructure
 

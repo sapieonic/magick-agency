@@ -798,7 +798,7 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `voice.ts`
 |---|---|
 | `apps/server/test/unit/bootstrap/agency-reaper-wiring.test.ts` | 4 |
 | `apps/server/test/unit/bootstrap/agency-reports-wiring.test.ts` | 3 |
-| `apps/server/test/unit/bootstrap/platform.test.ts` | 4 |
+| `apps/server/test/unit/bootstrap/platform.test.ts` (and the push senders: unwired when unconfigured, registered and cleared when configured) | 8 |
 | `apps/server/test/unit/bootstrap/voice-credential-housekeeping.test.ts` | 6 |
 
 ### `apps/server/src/cache/`
@@ -877,6 +877,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/config.test.ts` | 19 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
+| `apps/server/test/unit/config/push-config.test.ts` (`PUSH_*`: parsed keys, every refusal by env key, no key material in a dump) | 24 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
 
 ### `apps/server/src/config/blocks/`
@@ -1033,7 +1034,9 @@ Files: `retention-purge.ts`
 
 Mailjet client, notification engine (audience, catalog, delivery, period), invite mailer and token, campaign-completion mail, the report-ready mail (`agency.report.ready`: the requester with `email_me`, or a subscription's recipients re-checked against RBAC at send time; per-user preference; one claim per run and recipient; a link to the run page), HTML escaping.
 
-Files: `agency-campaign-completion.ts`, `agency-report-ready.ts`, `engine/audience.ts`, `engine/catalog.ts`, `engine/deliver.ts`, `engine/period.ts`, `escape-html.ts`, `invite-mailer.ts`, `invite-token.ts`, `mailjet.client.ts`, `templates/agency-report-ready.template.ts`, `templates/agent-invite.template.ts`, `templates/invite-email.layout.ts`, `templates/invite-email.ts`, `templates/workspace-invite.template.ts`
+`push/` is the push senders behind the agency → platform push seam (Mode B, `docs/seams.md` §3.6): `credentials.ts` parses the `PUSH_*` keys (the config block calls it), `jwt.ts` signs RS256 and ES256 with `node:crypto`, `fcm-sender.ts` is FCM HTTP v1 (the OAuth assertion and its 55-minute cache, a data-only HIGH message, the error mapping), `apns-sender.ts` APNs VoIP over one reused HTTP/2 session (`ring` and `test_ring` only, the 50-minute provider token, reconnect after a GOAWAY or a dead peer), `common.ts` the `Retry-After` hold and the one place a send is counted and logged, `push-sender.ts` the routing sender `bootstrap/platform.ts` registers and `setPushTransportsForTests`. The mock carrier for tests is `apps/server/test/mocks/push/`.
+
+Files: `agency-campaign-completion.ts`, `agency-report-ready.ts`, `engine/audience.ts`, `engine/catalog.ts`, `engine/deliver.ts`, `engine/period.ts`, `escape-html.ts`, `invite-mailer.ts`, `invite-token.ts`, `mailjet.client.ts`, `templates/agency-report-ready.template.ts`, `templates/agent-invite.template.ts`, `templates/invite-email.layout.ts`, `templates/invite-email.ts`, `templates/workspace-invite.template.ts`, `push/apns-sender.ts`, `push/common.ts`, `push/credentials.ts`, `push/fcm-sender.ts`, `push/jwt.ts`, `push/push-sender.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1049,6 +1052,10 @@ Files: `agency-campaign-completion.ts`, `agency-report-ready.ts`, `engine/audien
 | `apps/server/test/unit/notifications/invite-mailer.test.ts` | 77 |
 | `apps/server/test/unit/notifications/invite-token.test.ts` | 14 |
 | `apps/server/test/unit/notifications/mailjet.client.test.ts` | 8 |
+| `apps/server/test/unit/notifications/push/apns-sender.test.ts` (against the mock carrier's HTTP/2 server: headers, ES256 token and its cache, skipped types, every error, timeout, session reuse, GOAWAY, cut connection, dead peer, refused stream) | 32 |
+| `apps/server/test/unit/notifications/push/fcm-sender.test.ts` (the assertion, token cache and single flight, 401 retry, the message, every error, Retry-After hold, timeout, logs) | 32 |
+| `apps/server/test/unit/notifications/push/jwt.test.ts` | 3 |
+| `apps/server/test/unit/notifications/push/push-sender.test.ts` (routing by platform, unconfigured, the test transports, end to end on the mock carrier) | 9 |
 | `apps/server/test/unit/notifications/workspace-invite.template.test.ts` | 19 |
 
 ### `apps/server/src/proxy/`
@@ -1608,6 +1615,7 @@ Files: `crypto.ts`, `index.ts`, `log-context.ts`, `logger.ts`, `meter.ts`, `metr
 | `packages/observability/test/logger.test.ts` | 4 |
 | `packages/observability/test/metric-instruments.test.ts` (the settable gauge: every label set observed; `retire` reports once and goes) | 3 |
 | `packages/observability/test/metrics-agency.test.ts` | 9 |
+| `packages/observability/test/metrics-platform.test.ts` (the push senders' instruments and `trackPushSend`) | 3 |
 | `packages/observability/test/tracing.test.ts` | 2 |
 
 ### `packages/observability/src/metrics/`
