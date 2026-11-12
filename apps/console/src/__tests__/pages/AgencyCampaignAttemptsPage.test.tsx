@@ -871,7 +871,9 @@ describe('a link whose dates are the wrong way round', () => {
     mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('from', '`from` must not be later than `to`'));
     renderWithLocation('?from=2026-08-20T00:00:00.000Z&to=2026-08-10T00:00:00.000Z');
 
-    const alert = await screen.findByText(/The “From” date is after the “To” date/);
-    expect(alert.textContent).not.toContain('not a date this list can use');
+    // The refusal itself, not the form's own check of the drafts the link filled in.
+    const said = await screen.findByText(/Change or remove it above to see the call log/);
+    expect(said.textContent).toContain('The “From” date is after the “To” date');
+    expect(said.textContent).not.toContain('not a date this list can use');
   });
 });
