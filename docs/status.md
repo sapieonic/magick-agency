@@ -1349,25 +1349,27 @@ the supervise-only insights fields; ⌘K recent campaigns and sign-out clearing;
 blocker stack; DNC search needs 4 digits; History labels; "Exports", "organisation" and the role
 descriptions; the mobile app's "Dialling"), on `feat/console-nav-redesign`:
 
-Run on commit `9173756`, one after another from inside each package on the branch's own test
-database and Redis db. `pnpm lint` clean, `pnpm build` clean, `pnpm test:tooling` 16, `pnpm
-test:release` 10 and `pnpm test:grafana` 33 pass; `contracts-literals --check` up to date (62
-vocabularies, 2 label maps). `apps/mobile`: `flutter analyze` no issues, `flutter test` 1786 passed;
-`agency_wire` `dart test` 605 passed. **Not green, so no counts recorded for them:** `apps/server`
-unit had 3 failures, all in `inbound-recordings.test.ts` (9724 passed + 1 expected fail): this
-machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails the same way on
-a branch with no server code change. `apps/server` integration: the wall-clock lane is green
-(below); the rest lane had 16 failures (2697 passed + 9 expected fail + 2 skipped, 254 files), all
-in `agency-reports-e2e.test.ts` (the in-process renderer answers `render_failed`) and
-`inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`), the same 16 that fail on `main`
-(`47eb7e9`) on this machine. Not run (untouched): `apps/super-admin`, `packages/web-ui`,
+Run on commit `d49f9a2` (after merging `main`, #74), one package after another, integration with
+2 workers per run (`TEST_WORKERS=2`: this machine's Postgres still has `max_connections` 100) on the
+branch's own test databases and Redis dbs. `pnpm lint` clean, `pnpm build` clean, `pnpm
+test:tooling` 16 and `pnpm test:release` 10 pass. Run on `9173756`, before the merge (which changed
+neither): `pnpm test:grafana` 33, `contracts-literals --check` up to date (62 vocabularies, 2 label
+maps), `packages/contracts` 481 (15 files), `apps/mobile` `flutter analyze` no issues and `flutter
+test` 1786 passed, `agency_wire` `dart test` 605 passed. **Not green, so no counts recorded for
+them:** `apps/server` unit had 3 failures, all in `inbound-recordings.test.ts` (9724 passed + 1
+expected fail): this machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file
+fails the same way on a branch with no server code change. `apps/server` integration: the wall-clock
+lane is green (below); the rest lane had 16 failures (2702 passed + 9 expected fail + 2 skipped,
+251 files + 2 skipped), all in `agency-reports-e2e.test.ts` (the in-process renderer answers
+`render_failed`) and `inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`), the same 16
+that fail on `main` on this machine. Not run (untouched): `apps/super-admin`, `packages/web-ui`,
 `apps/report-renderer`, `packages/domain`, `agent_audio`.
 
 | Package | Unit | Integration |
 |---|---|---|
 | `apps/console` | 6801 (363 files) | — |
 | `packages/contracts` | 481 (15 files) | — |
-| `packages/db` | 428 (25 files) | 746 (77 files) |
+| `packages/db` | 435 (26 files) | 746 (77 files) |
 | `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
 
 Previous run, 2026-11-12, on `main` (#74): integration files in parallel (one database and Redis db per worker,
