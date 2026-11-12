@@ -317,7 +317,8 @@ export const AGENCY_INBOUND_ACCEPT_GRACE_MS = 15_000;
 /**
  * IQ62: missed rings in a row (expired, or answered and not bound within the grace) that move the
  * agent from `away_ring` to `device_away` (`ring_off` with reason `ring_missed`). A decline or
- * `busy_on_phone` is not a miss; the count resets on an answered ring and on `available`.
+ * `busy_on_phone` is not a miss, nor is a failed push (`push_failed`); the count resets on an
+ * answered ring and on `available`, and an agent at it is never rung.
  */
 export const AGENCY_INBOUND_RING_MAX_MISSES = 2;
 
@@ -331,7 +332,9 @@ export const AGENCY_INBOUND_RING_MAX_MISSES = 2;
  *  - `accept_lapsed`: answered, but not accepted and bound within
  *    {@link AGENCY_INBOUND_ACCEPT_GRACE_MS}; a miss;
  *  - `busy_on_phone`: the phone declined at once because a cellular call is on (IQ70); not a miss;
- *  - `push_failed`: the push could not be sent (a miss; an unregistered token revokes the device);
+ *  - `push_failed`: the push could not be sent; never a miss (the carrier's, not the agent's): an
+ *    unregistered token revokes the device and ends the absence, any other failure pauses ringing
+ *    briefly and leaves the agent ringable;
  *  - `caller_left`: the caller hung up while it rang;
  *  - `answered_elsewhere`: a station agent freed up and took the caller first (IQ73); not a miss;
  *  - `cancelled`: any other end (the flag switched off, the session ended, a restart).
