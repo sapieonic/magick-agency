@@ -1,3 +1,4 @@
+import { PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY } from '@magick-agency/contracts/api/platform/audit';
 import { describe, expect, it } from 'vitest';
 import { TELEPHONY_PROVIDER_ALIASES } from '@magick-agency/web-ui/telephonyProviders';
 import {
@@ -428,6 +429,14 @@ describe('History row words', () => {
     expect(activityTargetLabel('call')).toBe('Call');
     expect(activityTargetLabel('something_new')).toBe('Record');
     expect(activityTargetLabel(null)).toBe('Record');
+  });
+
+  it('names every audit resource type as the Audit Log filter does (the contract’s labels)', () => {
+    for (const { value, label } of PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY) {
+      expect(activityTargetLabel(value), value).toBe(label);
+    }
+    expect(activityTargetLabel('agency_disposition')).toBe('Call disposition');
+    expect(activityTargetLabel('dnc_entry')).toBe('Do-not-call entry');
   });
 
   it('opens a call, a contact and a soft-phone call on their own pages; nothing else', () => {

@@ -4,6 +4,7 @@ import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders
 import { carrierAccountPauseCopy } from './agencyCarriers';
 import { dedupeKeyName } from '../types/agency-campaign';
 import { dateFormatter } from './format/date';
+import { AUDIT_RESOURCE_TYPE_LABELS } from '@magick-agency/contracts/api/platform/audit';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -372,30 +373,13 @@ export function activityTableCaption(campaignName: string | null): string {
 }
 
 /**
- * What each record type in the "On what" column is, in words. The server's own resource
- * vocabulary (`PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY`), plus `call`, the target the
- * dialer's rows carry. The cell used to print the raw type (`agency_manual_call`) beside
- * a full UUID.
+ * What each record type in the "On what" column is, in words: the audit log's resource-type
+ * labels (the contract's, the server's Audit Log filter's own), plus `call`, the target the
+ * dialer's rows carry. The cell used to print the raw type (`agency_manual_call`) beside a full
+ * UUID.
  */
 export const ACTIVITY_TARGET_LABELS: Readonly<Record<string, string>> = {
-  agency_campaign: 'Campaign',
-  agency_session: 'Agent session',
-  agency_attempt: 'Call attempt',
-  // The row's id is the attempt the disposition was filed on.
-  agency_disposition: 'Call outcome',
-  agency_campaign_agent: 'Agent assignment',
-  agency_contact: 'Contact',
-  agency_manual_call: 'Soft-phone call',
-  agency_softphone_settings: 'Soft-phone settings',
-  customer_history: 'Customer history search',
-  agency_report: 'Report',
-  agency_report_subscription: 'Scheduled report',
-  agency_inbound_route: 'Inbound route',
-  agency_inbound_call: 'Inbound call',
-  agency_inbound_clip: 'Inbound recording',
-  dnc_entry: 'Do Not Call entry',
-  membership_invite: 'Invitation',
-  account: 'Account',
+  ...AUDIT_RESOURCE_TYPE_LABELS,
   call: 'Call',
 };
 

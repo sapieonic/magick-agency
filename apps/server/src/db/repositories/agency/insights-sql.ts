@@ -81,6 +81,14 @@ export function pendingCallbackSql(alias: string, callbackCodesParam: string): s
   return `(${alias}.state = 'pending' AND ${isCallbackSql(alias, callbackCodesParam)})`;
 }
 
+/**
+ * A pending callback whose time has passed: the allocation's `callbacks_overdue`, and Home's
+ * overdue count. Parenthesised.
+ */
+export function callbackOverdueSql(alias: string, callbackCodesParam: string): string {
+  return `(${pendingCallbackSql(alias, callbackCodesParam)} AND ${alias}.next_attempt_at < now())`;
+}
+
 /** Suppressed for DNC. Parenthesised. */
 export function suppressedDncSql(alias: string): string {
   return `(${alias}.state = 'suppressed' AND ${alias}.suppressed_reason = 'dnc')`;

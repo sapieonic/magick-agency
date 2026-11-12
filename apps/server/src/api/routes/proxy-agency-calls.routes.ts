@@ -10,6 +10,7 @@ import { accountSettingsRepository } from '@magick-agency/db/repositories/accoun
 import { agencyCampaignRepository } from '../../db/repositories/agency.repository.js';
 import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../../settings/agency-account-settings.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
+import { enrichAttemptAgentName } from '../../agency/agency-spine.js';
 
 const log = createChildLogger({ component: 'proxy-agency-calls-routes' });
 
@@ -284,24 +285,19 @@ function isDetailEnvelope(body: unknown): body is DetailEnvelope {
 }
 
 /**
- * Put `agent_name` beside the attempt's `agent_user_id`, as the campaign's attempt list
- * (`enrichAttemptAgentNames`) does for every row on it.
- *
- * Without it the call detail named the agent by their user id, one click from a list
- * row that named them. The same lookup the list uses (`agentNamesOrNone`): a failed
- * lookup is logged and leaves `agent_name: null`, so a name never fails the read. An
- * attempt with no agent gets `agent_name: null` too, so the key is always there.
+ * Put `agent_name` beside the attempt's `agent_user_id`, as the campaign's attempt list does
+ * for every row on it (`enrichAttemptAgentName`). Without it the call detail named the agent
+ * by their user id, one click from a list row that named them. A failed lookup is logged
+ * (`agentNamesOrNone`) and leaves `agent_name: null`, so a name never fails the read.
  */
 async function withAttemptAgentName(body: unknown, tenantId: string): Promise<unknown> {
   if (!isDetailEnvelope(body)) return body;
   const attempt = body.attempt;
   if (attempt === null || typeof attempt !== 'object' || Array.isArray(attempt)) return body;
-  const record = attempt as Record<string, unknown>;
-  const agentUserId = typeof record['agent_user_id'] === 'string' ? record['agent_user_id'] : null;
-  const names = await agentNamesOrNone([agentUserId], tenantId, 'agency call read');
   return {
     ...body,
-    attempt: { ...record, agent_name: agentUserId === null ? null : names.get(agentUserId) ?? null },
+    attempt: await enrichAttemptAgentName(attempt as { agent_user_id?: unknown }, tenantId,
+      (ids, t) => agentNamesOrNone(ids, t, 'agency call read')),
   };
 }
 

@@ -104,12 +104,17 @@ export function phoneCondition(
   // `~>=~ / ~<~` rewrite itself — getting the upper bound wrong by hand is a
   // silently short result set. The literal `%` is appended in SQL, so the
   // parameter carries no wildcard and a `%` typed into the search box is data.
-  return `reverse(${digits}) LIKE ${bind.add(reverseString(term))} || '%'`;
+  return endsWithDigitsSql(digits, term, bind.add);
 }
 
-/** Reverse a string of digits — the search term, to match the reversed column. */
-function reverseString(value: string): string {
-  return value.split('').reverse().join('');
+/**
+ * `column` ends in `digits` (digits only, non-empty: the caller strips them, so no `%` or `_`
+ * reaches the pattern), as a PREFIX match on the reversed column, which is what a
+ * `reverse(…)` expression index with `text_pattern_ops` serves. The `%` is appended in SQL.
+ * The contacts' suffix search and the DNC list's ending search both write it here.
+ */
+export function endsWithDigitsSql(column: string, digits: string, add: (value: unknown) => string): string {
+  return `reverse(${column}) LIKE ${add(digits.split('').reverse().join(''))} || '%'`;
 }
 
 /**

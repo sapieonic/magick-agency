@@ -592,6 +592,29 @@ export async function enrichAttemptAgentNames(
 }
 
 /**
+ * {@link enrichAttemptAgentNames} for ONE attempt (the call detail's `attempt`): `agent_name`
+ * beside its `agent_user_id`, `null` when it has none or the lookup finds none. The key is
+ * always there; a lookup that throws is `onError`'s, and the name is `null`.
+ */
+export async function enrichAttemptAgentName<A extends { agent_user_id?: unknown }>(
+  attempt: A,
+  tenantId: string,
+  resolveNames: (ids: readonly string[], tenantId: string) => Promise<Map<string, string | null>>,
+  onError?: (err: unknown) => void,
+): Promise<A & { agent_name: string | null }> {
+  const id = typeof attempt.agent_user_id === 'string' && attempt.agent_user_id.length > 0 ? attempt.agent_user_id : null;
+  let name: string | null = null;
+  if (id !== null) {
+    try {
+      name = (await resolveNames([id], tenantId)).get(id) ?? null;
+    } catch (err) {
+      onError?.(err);
+    }
+  }
+  return { ...attempt, agent_name: name };
+}
+
+/**
  * Put `assigned_to_name` beside each contact row's `assigned_user_id`, for the roster CSV:
  * one lookup per page through the same identity lookup the attempt export uses, degrading to
  * nulls on failure (a name improves the id; it never fails the export).

@@ -280,9 +280,10 @@ edit misses), fresh for 5 s or four times the answer's compute time when longer 
 insights keep the database busy at most a quarter of the time; a 1M running summary, measured at
 2.5–2.9 s, is reused for ~10–12 s), at most 500 entries. The guards run on every request before it is consulted.
 The allocation is read through it by one helper (`cachedAllocation` in `allocation.ts`), shared
-by the allocation route, the activity read and Home's board (`GET /proxy/agency/home`, decision
-B28a, `agency/home-board.ts`), which takes `totals.callbacks_overdue` from it and keeps that count
-a minute on top.
+by the allocation route and the activity read. Home's board (`GET /proxy/agency/home`, decision
+B28a, `agency/home-board.ts`) reads only `totals.callbacks_overdue`, for all its campaigns in one
+statement with the allocation's own predicate (`callbacksOverdueByCampaign`, `callbackOverdueSql`),
+and keeps each count a minute.
 
 ## API (range reads)
 

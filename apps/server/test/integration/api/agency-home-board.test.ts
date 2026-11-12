@@ -6,8 +6,9 @@ import { randomUUID } from 'node:crypto';
  *
  * `GET /proxy/agency/home` (decision B28a): session middleware with Firebase stubbed, tenant
  * context, RBAC, the account scope, the dialer flag, the campaign list (`listForHome`), each
- * campaign's stats through `callCore` and the insights allocation through its cache. The order
- * and the cap, that every number is the one the per-campaign route serves, and the refusals.
+ * campaign's stats through `callCore` and the overdue callbacks by the insights allocation's
+ * predicate. The order and the cap, that every number is the one the per-campaign route serves,
+ * and the refusals.
  */
 
 const mocks = vi.hoisted(() => {

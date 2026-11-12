@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { DNC_SOURCES, type DncSource } from '@magick-agency/contracts/api/agency/dnc';
+import { endsWithDigitsSql } from '../db/repositories/agency/query-builders.js';
 
 /**
  * `dnc_entries` access.
@@ -434,18 +435,16 @@ export class DncRepository {
 
     const where = conditions.join(' AND ');
 
-    const total = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM dnc_entries WHERE ${where}`,
-      params,
-    );
-
-    params.push(filter.limit, filter.offset);
-    const rows = await pool.query<DncEntryRecord>(
-      `SELECT * FROM dnc_entries WHERE ${where}
-        ORDER BY created_at DESC, id DESC
-        LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params,
-    );
+    const n = params.length;
+    const [total, rows] = await Promise.all([
+      pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM dnc_entries WHERE ${where}`, params),
+      pool.query<DncEntryRecord>(
+        `SELECT * FROM dnc_entries WHERE ${where}
+          ORDER BY created_at DESC, id DESC
+          LIMIT $${n + 1} OFFSET $${n + 2}`,
+        [...params, filter.limit, filter.offset],
+      ),
+    ]);
 
     return { entries: rows.rows, total: Number(total.rows[0]!.count) };
   }
@@ -468,8 +467,7 @@ function phoneSearchCondition(search: DncPhoneSearch, params: unknown[]): string
   }
   const ending = search.endsWith?.replace(/\D/g, '') ?? '';
   if (ending.length > 0) {
-    params.push(ending.split('').reverse().join(''));
-    arms.push(`reverse(phone_e164) LIKE $${params.length} || '%'`);
+    arms.push(endsWithDigitsSql('phone_e164', ending, (value) => `$${params.push(value)}`));
   }
   if (arms.length === 0) return 'FALSE';
   return arms.length === 1 ? arms[0]! : `(${arms.join(' OR ')})`;
