@@ -24,6 +24,7 @@ import {
   NO_ANALYSIS_PROFILE,
   campaignSaveRefusal,
   recordingPayload,
+  type CampaignRecordingState,
 } from '../../../utils/agencyCampaignRecording';
 import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyCampaigns';
 import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
@@ -63,7 +64,7 @@ import {
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
 import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
-import { changedSettings } from '../../../utils/campaignSettingsChanges';
+import { changedSettings, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
 import styles from './CampaignBuilderPage.module.css';
@@ -90,15 +91,15 @@ import styles from './CampaignBuilderPage.module.css';
  * form once Save campaign succeeds), and a roster upload still being mapped counts too.
  */
 
-/** What the builder holds that a save sends: compared with what is saved to find unsaved input. */
-interface BuilderForm {
-  name: string;
-  callerIds: readonly string[];
-  /** The carrier picked, or `null` for the default the page would use. */
-  carrier: CarrierChoice | null;
-  recordCalls: boolean;
-  config: CampaignConfigState;
-}
+/**
+ * What the builder holds that a save sends, as campaign Settings counts it, except that the
+ * carrier is `null` while the page's default stands: that default moves as the carriers and
+ * numbers load, and is not an edit.
+ */
+type BuilderForm = Omit<CampaignSettingsForm, 'carrier'> & { carrier: CarrierChoice | null };
+
+/** The builder's recording as a form holds it: on or off, never with an analysis profile. */
+const builderRecording = (record: boolean): CampaignRecordingState => ({ record, profileId: NO_ANALYSIS_PROFILE });
 
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
@@ -145,7 +146,7 @@ export default function CampaignBuilderPage() {
     name: '',
     callerIds: [],
     carrier: null,
-    recordCalls: false,
+    recording: builderRecording(false),
     config,
   }));
   const [dragOver, setDragOver] = useState(false);
@@ -286,7 +287,7 @@ export default function CampaignBuilderPage() {
     const { record_calls } = recordingPayload({
       recordingEnabled,
       analyticsEnabled: false,
-      next: { record: recordCalls, profileId: NO_ANALYSIS_PROFILE },
+      next: builderRecording(recordCalls),
     });
     try {
       const id = await ensureCampaign();
@@ -300,7 +301,7 @@ export default function CampaignBuilderPage() {
         accountId ?? undefined,
       );
       setConfigSaved(true);
-      setSavedForm({ name, callerIds, carrier: chosenCarrier, recordCalls, config });
+      setSavedForm({ name, callerIds, carrier: chosenCarrier, recording: builderRecording(recordCalls), config });
       {
         const priorOrder = initialDispositionOrderRef.current;
         const nextOrder = config.dispositions.map((d) => d.code);
@@ -455,16 +456,9 @@ export default function CampaignBuilderPage() {
     (the carrier as the page would send it, so a default it settles on is not an edit), or a
     roster upload not yet imported.
   */
-  const asSettings = (form: BuilderForm) => ({
-    name: form.name,
-    callerIds: form.callerIds,
-    carrier: form.carrier ?? carrier,
-    recording: { record: form.recordCalls, profileId: NO_ANALYSIS_PROFILE },
-    config: form.config,
-  });
   const unsaved = changedSettings(
-    asSettings(savedForm),
-    asSettings({ name, callerIds, carrier: chosenCarrier, recordCalls, config }),
+    { ...savedForm, carrier: savedForm.carrier ?? carrier },
+    { name, callerIds, carrier, recording: builderRecording(recordCalls), config },
   ).length > 0 || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
   const leaveGuard = useUnsavedChangesGuard(unsaved);
 
