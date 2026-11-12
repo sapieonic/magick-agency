@@ -28,7 +28,11 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-/** Forget every list (tests; a sign-out is a full page load). */
+/**
+ * Forget every list: sign-out (`AuthContext`), which is in place and not a page load, so the
+ * next person to sign in to the same account in this tab must not be shown the last one's list.
+ * A read still on its way stores nothing (`read` checks its entry is still the cache's).
+ */
 export function resetSearchCampaignsCache(): void {
   cache.clear();
 }
