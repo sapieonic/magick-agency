@@ -230,7 +230,7 @@ export const ATTEMPT_OUTCOME_LABELS = {
 
 export const ATTEMPT_STATE_LABELS = {
   queued: 'Queued',
-  dialing: 'Dialing',
+  dialing: 'Dialling',
   ringing: 'Ringing',
   answered: 'Answered',
   bridged: 'On the call',
@@ -239,7 +239,7 @@ export const ATTEMPT_STATE_LABELS = {
 
 export const CONTACT_STATE_LABELS = {
   pending: 'Waiting',
-  in_flight: 'Being dialed',
+  in_flight: 'Being dialled',
   connected: 'On a call',
   completed: 'Completed',
   exhausted: 'Exhausted',
