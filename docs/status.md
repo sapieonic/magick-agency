@@ -1341,30 +1341,32 @@ its Swift have never been compiled.
 
 ## Test counts
 
-Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14), its review fixes and
-the fixes for QA run 20261112-110644 (the branch walked against staging: back arrow, leave guard on
-Back and in New campaign, settings section nav, campaign header and tabs, Call log and History, DNC
-search by any form of a number, Accounts, Analytics, Team, notifications, not-found page), on
-`feat/console-nav-redesign`:
+Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14), its review fixes, the
+fixes for QA run 20261112-110644 and the fixes from the three-persona review of the whole redesign
+(Home shows what the Overview flags, one on-shift count, refresh failures and "Got it"; the
+Campaigns page's Active cards read the Home board, which viewers and operators may now read without
+the supervise-only insights fields; ⌘K recent campaigns and sign-out clearing; the leave guard's
+blocker stack; DNC search needs 4 digits; History labels; "Exports", "organisation" and the role
+descriptions; the mobile app's "Dialling"), on `feat/console-nav-redesign`:
 
-Run on commit `19dea46`, one after another from inside each package. `pnpm lint` clean, `pnpm build`
-clean, `pnpm test:tooling` 16 pass. `agency_wire` `dart test` 605 passed after the British display
-labels (run on `fix/qa-data` before the merge; `literals.json` unchanged). **Not green, so no counts
-recorded for them:** `apps/server` unit had 3 failures, all in `inbound-recordings.test.ts` (9680
-passed): this machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails
-the same way on a branch with no server code change. `apps/server` integration, with its own test
-database and Redis db: the wall-clock lane is green (below); the rest lane had 16 failures (2685
-passed + 9 expected fail + 2 skipped, 254 files), all in `agency-reports-e2e.test.ts` (the
-in-process renderer answers `render_failed`) and `inbound-clips-routes.test.ts` (no `mpg123` /
-`sndfile-programs`), and the same 16 fail on `main` (`47eb7e9`) on this machine. The new
-`dnc-list-search.test.ts` (each typed form of a number, tenant isolation, both indexes used on 50k
-rows) and `agency-home-board.test.ts` pass in it. Not run (untouched): `apps/super-admin`,
-`packages/web-ui`, `apps/report-renderer`, `packages/domain`, `apps/mobile` (beyond `agency_wire`).
+Run on commit `9173756`, one after another from inside each package on the branch's own test
+database and Redis db. `pnpm lint` clean, `pnpm build` clean, `pnpm test:tooling` 16, `pnpm
+test:release` 10 and `pnpm test:grafana` 33 pass; `contracts-literals --check` up to date (62
+vocabularies, 2 label maps). `apps/mobile`: `flutter analyze` no issues, `flutter test` 1786 passed;
+`agency_wire` `dart test` 605 passed. **Not green, so no counts recorded for them:** `apps/server`
+unit had 3 failures, all in `inbound-recordings.test.ts` (9724 passed + 1 expected fail): this
+machine has no audio decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails the same way on
+a branch with no server code change. `apps/server` integration: the wall-clock lane is green
+(below); the rest lane had 16 failures (2697 passed + 9 expected fail + 2 skipped, 254 files), all
+in `agency-reports-e2e.test.ts` (the in-process renderer answers `render_failed`) and
+`inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`), the same 16 that fail on `main`
+(`47eb7e9`) on this machine. Not run (untouched): `apps/super-admin`, `packages/web-ui`,
+`apps/report-renderer`, `packages/domain`, `agent_audio`.
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/console` | 6681 (348 files) | — |
-| `packages/contracts` | 479 (15 files) | — |
+| `apps/console` | 6801 (363 files) | — |
+| `packages/contracts` | 481 (15 files) | — |
 | `packages/db` | 428 (25 files) | 746 (77 files) |
 | `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
 
@@ -2035,7 +2037,7 @@ account their browser last had open. Every signed-in console page is now served 
   below).
   `components/routing/ScopeGate` re-points an unscoped URL (an old `/dialer` bookmark) at the
   active account and refuses a link to a tenant or account the viewer cannot open ("You can’t
-  open this workspace / account", with Go to my workspace and Sign out). Sign-in, invite and
+  open this organisation / account", with Go to my organisation and Sign out). Sign-in, invite and
   verification pages stay unscoped; a signed-out visitor keeps the scope through `?next=`.
 - PostHog receives the prefix as `/t/:tenant/a/:account`, in paths, URLs, autocapture hrefs and
   the sign-in page's encoded `next`. The campaign-completion email links under the campaign's own
@@ -2058,8 +2060,8 @@ account their browser last had open. Every signed-in console page is now served 
   each fix pinned by a test that fails on the code before it:
   - Retry no longer re-points a refused link at the first account. It re-points only a URL
     whose account was open and has since gone, and lands at the replacement's home, not on the old record's page.
-  - A link to a tenant or account the viewer cannot open falls back to the workspace this
-    browser last had, not the session's first tenant, and is never saved. "Go to my workspace" is a full load of `/`.
+  - A link to a tenant or account the viewer cannot open falls back to the organisation this
+    browser last had, not the session's first tenant, and is never saved. "Go to my organisation" is a full load of `/`.
   - A tenant switch resolves the new tenant's accounts first and loads its scope directly. It
     no longer writes `localStorage` before the browser commits the load, so cancelling the station's leave-page prompt changes nothing.
     A tenant with no account to open is switched to in place, at `/`.
