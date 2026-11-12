@@ -18,13 +18,8 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useGateReaders } from '../../hooks/useGateReaders';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
-import { useHomeBoard } from '../../hooks/useHomeBoard';
-import {
-  homeAttentionKey,
-  publishHomeAttentionCount,
-  useHomeAttentionCount,
-} from '../../hooks/useHomeAttentionCount';
-import { attentionBadgeLabel, attentionBadgeText, homeAttention, homeBadgeCount, type HomeMissed } from '../../utils/agency/home';
+import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
+import { attentionBadgeLabel, attentionBadgeText, type HomeMissed } from '../../utils/agency/home';
 import {
   SETTINGS_GATE,
   activeNavId,
@@ -82,7 +77,7 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
             <Icon size={18} className={styles.navIcon} aria-hidden="true" />
             <span className={styles.navLabel}>{section.label}</span>
             {section.id === 'home' ? (
-              <HomeNavBadge onHome={isActive} missed={{ available: missed.available, count: missed.count }} />
+              <HomeNavBadge missed={{ available: missed.available, count: missed.count }} />
             ) : null}
             {section.id === 'inbound' && badge ? (
               <span className={styles.navBadge} data-testid="sidebar-missed-badge">
@@ -101,24 +96,16 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
  * The Home entry's badge: how many dangers and warnings need the supervisor, counted from the
  * list the Home page shows (`homeAttention`, `homeBadgeCount`): never a "waiting, nothing wrong"
  * row, and never the missed calls, which the Inbound entry's badge already counts. Rendered only
- * beside the Home entry, so only for a reader who passes Home's gate. On Home the page publishes
- * the count on every refresh and this reads it; anywhere else this reads the board itself
- * (`useHomeBoard` background mode: one request a minute, none while the tab is hidden or the
- * shared count is fresh) and publishes on every read, so the freshness check holds. In the
- * attention tone, apart from the missed-calls count.
+ * beside the Home entry, so only for a reader who passes Home's gate. It reads the board Home
+ * reads (`useHomeBoard`, one per tenant and account): once a minute on its own, and on Home the
+ * page's 10 s reads, with no request of its own. In the attention tone, apart from the
+ * missed-calls count.
  */
-function HomeNavBadge({ onHome, missed }: { onHome: boolean; missed: HomeMissed }) {
+function HomeNavBadge({ missed }: { missed: HomeMissed }) {
   const { tenantId, accountId } = useTenant();
-  const key = homeAttentionKey(tenantId, accountId);
-  const board = useHomeBoard({ tenantId, accountId, enabled: !onHome, mode: 'background', attentionKey: key });
-  const count = board.status === 'ready' && !onHome ? homeBadgeCount(homeAttention(board.reads, missed, () => '')) : null;
-  // `refreshedAt` is a dependency so a read that changed nothing still stamps the shared count.
-  useEffect(() => {
-    if (key && count !== null) publishHomeAttentionCount(key, count);
-  }, [key, count, board.refreshedAt]);
-  const shared = useHomeAttentionCount(key);
-  const text = attentionBadgeText(shared);
-  const label = attentionBadgeLabel(shared);
+  const count = useHomeBadgeCount(tenantId, accountId, missed);
+  const text = attentionBadgeText(count);
+  const label = attentionBadgeLabel(count);
   if (!text) return null;
   return (
     <span className={`${styles.navBadge} ${styles.navBadgeAttention}`} data-testid="sidebar-attention-badge">

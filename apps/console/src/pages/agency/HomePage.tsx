@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { ChevronRight, CircleCheck, Plus } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -6,14 +6,12 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
-import { useHomeBoard } from '../../hooks/useHomeBoard';
+import { HOME_FAST_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
-import { homeAttentionKey, publishHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
 import { hasPermission } from '../../utils/permissions';
 import { canSeeHome } from '../../utils/consoleNav';
 import {
   homeAttention,
-  homeBadgeCount,
   homeFloor,
   homeNeeds,
   homeWaiting,
@@ -46,10 +44,9 @@ export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
   // `HOME_GATE`; the capability and flag are `/agency`'s route gates, already passed here.
   const supervise = canSeeHome({ role, isFlagEnabled: () => true, isCapabilityEnabled: () => true });
-  const board = useHomeBoard({ tenantId, accountId, enabled: supervise, mode: 'live' });
+  const board = useHomeBoard({ tenantId, accountId, enabled: supervise, intervalMs: HOME_FAST_MS });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
-  const key = homeAttentionKey(tenantId, accountId);
 
   const items = useMemo(
     () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
@@ -57,15 +54,7 @@ export default function HomePage() {
   );
   const needs = homeNeeds(items);
   const waiting = homeWaiting(items);
-  const badgeCount = homeBadgeCount(items);
   const floor = useMemo(() => homeFloor(board.reads), [board.reads]);
-
-  // The sidebar badge counts the same list (its dangers and warnings, not the missed calls the
-  // Inbound badge carries). Published on every refresh, `refreshedAt` included, so the badge's
-  // "fresh enough not to read again" holds while this page is open.
-  useEffect(() => {
-    if (key && board.status === 'ready') publishHomeAttentionCount(key, badgeCount);
-  }, [key, board.status, badgeCount, board.refreshedAt]);
 
   if (role === undefined) return <LoadingSpinner />;
   if (!supervise) return <Navigate to="/agency" replace />;

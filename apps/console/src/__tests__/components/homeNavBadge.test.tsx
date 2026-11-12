@@ -7,8 +7,8 @@ import { board, onBoard, stats } from '../helpers/home';
  * The sidebar's Home entry (B28): its badge counts the dangers and warnings on the Home page's
  * list (never a waiting campaign, never the missed calls the Inbound badge carries), in its own
  * tone beside the missed-calls count; a reader who fails Home's gate gets neither the entry nor
- * any read; on Home the sidebar reads nothing itself and shows the count the page published;
- * away from Home it reads on its own unless that count is fresh, and restamps it on every read.
+ * any read; it shares Home's board (on Home, no request of its own) and reads once a minute
+ * on its own.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -45,13 +45,19 @@ vi.mock('../../brand', () => ({ brand: { name: 'TestBrand' } }));
 
 import { ConsoleSidebar } from '../../components/layout/ConsoleSidebar';
 import { resetMissedCallsCountForTests } from '../../hooks/useMissedCallsCount';
-import { homeAttentionAge, publishHomeAttentionCount, resetHomeAttentionCountForTests } from '../../hooks/useHomeAttentionCount';
-import { HOME_SLOW_MS } from '../../hooks/useHomeBoard';
+import { HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 
-async function renderAt(path: string) {
+/** The Home page's reader of the board, without the page. */
+function HomeReader() {
+  useHomeBoard({ tenantId: 't-1', accountId: 'a-1', enabled: true, intervalMs: HOME_FAST_MS });
+  return null;
+}
+
+async function renderAt(path: string, withHome = false) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <ConsoleSidebar />
+      {withHome && <HomeReader />}
     </MemoryRouter>,
   );
   await act(async () => {});
@@ -60,7 +66,6 @@ async function renderAt(path: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetMissedCallsCountForTests();
-  resetHomeAttentionCountForTests();
   mocks.role = 'account_admin';
   mocks.getMissedInboundCount.mockResolvedValue({ open: 2, open_capped: false, has_rows: true });
   mocks.getAgencyHomeBoard.mockResolvedValue(board([
@@ -92,20 +97,11 @@ describe('the Home entry and its badge', () => {
     expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
   });
 
-  it('on Home reads nothing itself and shows the count the page published', async () => {
-    await renderAt('/agency/home');
+  it('on Home shows the count from the page’s board, with no request of its own', async () => {
+    await renderAt('/agency/home', true);
     expect(screen.getByTestId('console-nav-home').getAttribute('aria-current')).toBe('page');
-    expect(screen.queryByTestId('sidebar-attention-badge')).toBeNull();
-    act(() => publishHomeAttentionCount('t-1/a-1', 2));
-    expect(screen.getByTestId('sidebar-attention-badge').textContent).toBe('2, 2 need your attention');
-    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
-  });
-
-  it('away from Home skips its read while the published count is fresh', async () => {
-    publishHomeAttentionCount('t-1/a-1', 1);
-    await renderAt('/agency/dnc');
-    expect(screen.getByTestId('sidebar-attention-badge').textContent).toBe('1, 1 needs your attention');
-    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId('sidebar-attention-badge').textContent).toBe('3, 3 need your attention'));
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
   });
 
   it('shows no badge when nothing needs attention', async () => {
@@ -126,7 +122,7 @@ describe('the Home entry and its badge', () => {
     expect(screen.queryByTestId('sidebar-attention-badge')).toBeNull();
   });
 
-  it('away from Home restamps the shared count on every read, even when it has not changed', async () => {
+  it('away from Home reads once a minute, and every 10 s only while Home reads too', async () => {
     vi.useFakeTimers();
     try {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
@@ -136,10 +132,13 @@ describe('the Home entry and its badge', () => {
       });
       expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(HOME_SLOW_MS);
+        await vi.advanceTimersByTimeAsync(HOME_SLOW_MS - HOME_FAST_MS);
+      });
+      expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
       });
       expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
-      expect(homeAttentionAge('t-1/a-1')).toBeLessThan(1_000);
     } finally {
       vi.useRealTimers();
     }
