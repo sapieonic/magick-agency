@@ -36,3 +36,23 @@ class PhoneCallTrackerTest {
         assertEquals(true, t.start(active = true), "on again: the state then, whatever was seen before")
     }
 }
+
+class OwnRingTest {
+    @Test
+    fun aCellularCallsModeIsAlwaysAPhoneCallThatIsNotOurs() {
+        assertTrue(isOthersPhoneCall(CallModeKind.CELLULAR, ownRingLive = false))
+        assertTrue(isOthersPhoneCall(CallModeKind.CELLULAR, ownRingLive = true), "our ring is VoIP, never in call")
+    }
+
+    @Test
+    fun theRingtoneModeIsACellularRingUnlessOurOwnRingIsLive() {
+        assertTrue(isOthersPhoneCall(CallModeKind.RINGTONE, ownRingLive = false))
+        assertFalse(isOthersPhoneCall(CallModeKind.RINGTONE, ownRingLive = true), "our own ring (a test ring, an inbound ring)")
+    }
+
+    @Test
+    fun anyOtherModeIsNot() {
+        assertFalse(isOthersPhoneCall(CallModeKind.OTHER, ownRingLive = false))
+        assertFalse(isOthersPhoneCall(CallModeKind.OTHER, ownRingLive = true))
+    }
+}

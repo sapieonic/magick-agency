@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
@@ -177,6 +179,45 @@ void main() {
       h.emit(const RingAnswered(_answer));
       expect(h.station.calls, ['hold:$_callId', 'resume:$_callId']);
       h.dispose();
+    });
+  });
+
+  group('hung up on the phone while it connects (the "Connecting the call…" notification, a headset)', () {
+    test('after the accept went through: the station hangs the call up once it binds', () {
+      fakeAsync((async) {
+        final h = harness(async)..start();
+        h.emit(const RingAnswered(_answer));
+        expect(h.resumed, hasLength(1));
+        h.emit(RingEnded(_callId, 'declined'));
+        expect(h.station.calls.last, 'hangUp:$_callId');
+        h.emit(RingEnded(_callId, 'declined'));
+        expect(h.station.calls.where((c) => c.startsWith('hangUp')), hasLength(1), reason: 'once');
+        h.dispose();
+      });
+    });
+
+    test('the decline beat the accept: the refused accept is not "someone else took it"', () {
+      fakeAsync((async) {
+        final h = harness(async)..start();
+        final reply = Completer<Object?>();
+        h.routes['POST $_acceptPath'] = (_) => reply.future;
+        h.emit(const RingAnswered(_answer));
+        h.emit(RingEnded(_callId, 'declined'));
+        reply.complete(jsonReply(404, pushSample('refusal_no_push_device')..['code'] = 'ring_not_offered'));
+        async.elapse(const Duration(seconds: 2));
+        expect(h.channel.named('reportEnded'), ['reportEnded:$_callId:accept_failed']);
+        expect(h.container.read(ringNoticeProvider), isNull);
+        h.dispose();
+      });
+    });
+
+    test('a ring declined before it was answered is only a decline', () {
+      fakeAsync((async) {
+        final h = harness(async)..start();
+        h.emit(RingEnded(_callId, 'declined'));
+        expect(h.station.calls, isEmpty);
+        h.dispose();
+      });
     });
   });
 

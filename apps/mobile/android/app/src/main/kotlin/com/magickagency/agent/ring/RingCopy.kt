@@ -10,6 +10,7 @@ object RingCopy {
     const val ANSWERING_TEXT = "Connecting the call…"
     const val ANSWER = "Answer"
     const val DECLINE = "Decline"
+    const val HANG_UP = "Hang up"
 
     const val AWAY_TITLE = "Away · inbound calls ring this phone"
     const val AWAY_TEXT = "Open the app to take calls on screen again."
@@ -23,6 +24,8 @@ object RingCopy {
 
     const val CHANNEL_RING = "Inbound calls"
     const val CHANNEL_RING_DESCRIPTION = "Rings this phone for inbound callers while you are away from the app."
+    const val CHANNEL_RING_QUIET = "Inbound calls, silenced or connecting"
+    const val CHANNEL_RING_QUIET_DESCRIPTION = "An inbound call you silenced, or one you answered while it connects."
     const val CHANNEL_AWAY = "Away status"
     const val CHANNEL_AWAY_DESCRIPTION = "Shows that inbound calls ring this phone while you are away."
     const val CHANNEL_NOTICES = "Missed inbound calls"

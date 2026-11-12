@@ -29,3 +29,36 @@ internal class PhoneCallTracker {
         last = null
     }
 }
+
+/**
+ * The app's own ring is live: Mode B rings the phone through the app's self-managed calling
+ * account (an inbound call, or the settings card's test ring), and that ring may put the phone in
+ * the ringtone audio mode. Set by the app module's ring code (it knows when its ring starts and
+ * ends); read wherever an audio-mode reading decides "a phone call that is not ours"
+ * ([AudioSessionController.isTelephonyMode]), so the app's own ring never reads as a cellular call
+ * (the `phone_call` pause, an audio interruption).
+ */
+object OwnRing {
+    @Volatile
+    @JvmStatic
+    var live: Boolean = false
+}
+
+/** An audio mode, as far as "a phone call that is not ours" goes. */
+internal enum class CallModeKind {
+    /** The ringtone mode: a cellular call ringing, or our own ring. */
+    RINGTONE,
+
+    /** In call, call screening, call redirect: a cellular call, never ours (ours is VoIP). */
+    CELLULAR,
+
+    /** Anything else (normal, our VoIP calls' MODE_IN_COMMUNICATION). */
+    OTHER,
+}
+
+/** Whether a reading of [kind] is a phone call that is not ours; pure, so it is unit-tested. */
+internal fun isOthersPhoneCall(kind: CallModeKind, ownRingLive: Boolean): Boolean = when (kind) {
+    CallModeKind.CELLULAR -> true
+    CallModeKind.RINGTONE -> !ownRingLive
+    CallModeKind.OTHER -> false
+}

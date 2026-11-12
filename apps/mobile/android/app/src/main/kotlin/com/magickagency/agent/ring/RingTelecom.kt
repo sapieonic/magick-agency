@@ -60,24 +60,23 @@ internal object RingTelecom {
     }
 
     /**
-     * IQ70: a cellular call is on, so the phone must not ring. Telecom says an incoming call is not
-     * permitted (another call holds the phone and cannot be held), or the audio mode is a
-     * telephony one (as `agent_audio`'s `AudioSessionController.isTelephonyMode`).
+     * IQ70: what the phone says about calls, for the state machine's "busy on the phone"
+     * ([PhoneSignals.busy]): the audio mode (a cellular call's, or the ringtone's) and whether
+     * Telecom permits an incoming call on our account. Our own ring can raise the last two itself,
+     * which is why the state machine, knowing whether ours rings, decides.
      */
-    fun busyOnPhone(context: Context): Boolean {
+    fun phoneSignals(context: Context): PhoneSignals {
         val am = context.getSystemService(AudioManager::class.java)
         val mode = am?.mode ?: AudioManager.MODE_NORMAL
-        val telephonyMode = mode == AudioManager.MODE_RINGTONE ||
-            mode == AudioManager.MODE_IN_CALL ||
+        val cellular = mode == AudioManager.MODE_IN_CALL ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && mode == AudioManager.MODE_CALL_SCREENING) ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && mode == AudioManager.MODE_CALL_REDIRECT)
-        if (telephonyMode) return true
-        if (!register(context)) return false
-        return try {
+        val notPermitted = register(context) && try {
             telecom(context)?.isIncomingCallPermitted(handle(context)) == false
         } catch (e: RuntimeException) {
             false
         }
+        return PhoneSignals(inCellularCall = cellular, ringtoneMode = mode == AudioManager.MODE_RINGTONE, incomingNotPermitted = notPermitted)
     }
 
     /** Asks Telecom for the incoming call; false when it could not be asked (the ring then shows by notification alone). */

@@ -42,8 +42,11 @@ sealed class RingState {
     /** Nothing ringing. */
     data object Idle : RingState()
 
-    /** The phone rings until [deadlineMs] (wall clock). */
-    data class Ringing(val call: RingCall, val deadlineMs: Long) : RingState()
+    /**
+     * The phone rings until [deadlineMs] (wall clock). [replacedOwn]: this ring took over from one
+     * of ours still ringing, whose Telecom call may not be gone when Telecom is asked for this one.
+     */
+    data class Ringing(val call: RingCall, val deadlineMs: Long, val replacedOwn: Boolean = false) : RingState()
 
     /** The agent answered; Flutter has until [graceDeadlineMs] to accept and bind (`reportBound`). */
     data class Answering(val call: RingCall, val answeredAtMs: Long, val graceDeadlineMs: Long) : RingState()
@@ -58,9 +61,55 @@ sealed class RingState {
 /** Where an Answer came from. Only Telecom's (a headset or car button) has no activity launching with it. */
 enum class AnswerSource { NOTIFICATION, LOCK_SCREEN, TELECOM }
 
+/**
+ * What the phone said about calls when a push arrived (IQ70), read by the coordinator. Our own
+ * ring's self-managed Telecom call can raise [ringtoneMode] and [incomingNotPermitted] by itself
+ * (Telecom permits one ringing self-managed call; the ring may put the phone in the ringtone audio
+ * mode), so while ours rings only [inCellularCall] says the phone is busy. Our calls use the VoIP
+ * audio mode (`MODE_IN_COMMUNICATION`), never [inCellularCall]'s.
+ */
+data class PhoneSignals(
+    /** The audio mode is a cellular call's: in call, call screening, call redirect. */
+    val inCellularCall: Boolean = false,
+    /** The audio mode is the ringtone's: a cellular call ringing, or our own ring. */
+    val ringtoneMode: Boolean = false,
+    /** Telecom would not permit an incoming call on our account: another call holds the phone, or our own ring. */
+    val incomingNotPermitted: Boolean = false,
+) {
+    /** Whether the phone is on a call that is not ours, given whether our own ring is live. */
+    fun busy(ownRingLive: Boolean): Boolean = inCellularCall || (!ownRingLive && (ringtoneMode || incomingNotPermitted))
+
+    companion object {
+        val IDLE = PhoneSignals()
+        val CELLULAR_CALL = PhoneSignals(inCellularCall = true)
+    }
+}
+
+/** How long a ring may ring on this phone, from the server's times rather than this phone's clock. */
+object RingTiming {
+    /**
+     * The ring's time left at receipt: `ring_expires_at` less the push's FCM send time (both on
+     * server-side clocks, so a phone clock running fast or slow changes nothing), at most one ring
+     * window plus [RingWire.CLOCK_SLACK_MS]. Without a send time (null or not positive), the phone's
+     * clock is all there is.
+     */
+    fun remainingMs(expiresAtMs: Long, sentAtMs: Long?, nowMs: Long): Long {
+        val left = if (sentAtMs != null && sentAtMs > 0) expiresAtMs - sentAtMs else expiresAtMs - nowMs
+        return minOf(left, RingWire.RING_MS + RingWire.CLOCK_SLACK_MS)
+    }
+}
+
 sealed class RingEvent {
-    /** A push arrived. [busyOnPhone]: a cellular call is on (Telecom does not permit an incoming call, or the audio mode is a telephony one; IQ70). */
-    data class Push(val push: RingPush, val nowMs: Long, val busyOnPhone: Boolean = false) : RingEvent()
+    /**
+     * A push arrived at [nowMs] (this phone's clock). [sentAtMs]: FCM's send time
+     * (`RemoteMessage.sentTime`), null when unknown. [phone]: what the phone said about calls (IQ70).
+     */
+    data class Push(
+        val push: RingPush,
+        val nowMs: Long,
+        val phone: PhoneSignals = PhoneSignals.IDLE,
+        val sentAtMs: Long? = null,
+    ) : RingEvent()
 
     data class AnswerTapped(val callId: String, val nowMs: Long, val source: AnswerSource) : RingEvent()
 
@@ -70,7 +119,10 @@ sealed class RingEvent {
     /** Telecom's `onDisconnect`/`onAbort` (a hang-up from the system, a headset or a car). */
     data class TelecomDisconnected(val callId: String) : RingEvent()
 
-    /** Telecom would not create the incoming call (`onCreateIncomingConnectionFailed`): another call holds the phone. */
+    /**
+     * Telecom would not create the incoming call (`onCreateIncomingConnectionFailed`): another call
+     * holds the phone, or (for a ring that replaced ours) our previous call was not gone yet.
+     */
     data class IncomingRefused(val callId: String) : RingEvent()
 
     data class RingTimedOut(val callId: String) : RingEvent()
@@ -95,6 +147,9 @@ enum class DropReason { DUPLICATE, LATE, EXPIRED, STALE, OTHER_CALL, BUSY_WITH_C
 sealed class RingEffect {
     /** Ring through Telecom (falling back to the notification alone), with the incoming CallStyle notification. */
     data class StartRinging(val call: RingCall, val deadlineMs: Long) : RingEffect()
+
+    /** Telecom refused a ring that replaced ours: ring by the notification alone. */
+    data class RingByNotification(val call: RingCall, val deadlineMs: Long) : RingEffect()
 
     data class PostAnswering(val callId: String, val offerToken: String) : RingEffect() {
         override fun toString(): String = "PostAnswering(callId=$callId)"
@@ -177,22 +232,26 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     // ─── Pushes ──────────────────────────────────────────────────────────────
 
     private fun onPush(e: RingEvent.Push): List<RingEffect> = when (val p = e.push) {
-        is RingPush.Ring -> onRing(p, e.nowMs, e.busyOnPhone)
-        is RingPush.Test -> onTestRing(e.nowMs, e.busyOnPhone)
+        // Our own ring live (one ringing): its Telecom call is not the phone being busy.
+        is RingPush.Ring -> onRing(p, e.nowMs, e.sentAtMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
+        is RingPush.Test -> onTestRing(e.nowMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
         is RingPush.Cancel -> onCancel(p)
         is RingPush.Off -> onOff(p)
     }
 
-    private fun onRing(ring: RingPush.Ring, now: Long, busy: Boolean): List<RingEffect> {
+    private fun onRing(ring: RingPush.Ring, now: Long, sentAt: Long?, busy: Boolean): List<RingEffect> {
         if (ring.callId in ended) return listOf(RingEffect.Dropped(DropReason.LATE))
         val current = activeCall
         if (current?.callId == ring.callId) return listOf(RingEffect.Dropped(DropReason.DUPLICATE))
-        if (ring.expiresAtMs <= now) {
+        // Judged on the server's times (the push's send time), never this phone's clock alone.
+        val remaining = RingTiming.remainingMs(ring.expiresAtMs, sentAt, now)
+        if (remaining <= 0) {
             remember(ring.callId)
             return listOf(RingEffect.Dropped(DropReason.EXPIRED))
         }
         val call = RingCall.of(ring)
         val out = mutableListOf<RingEffect>()
+        val replacing = state is RingState.Ringing
         when (val s = state) {
             // On another call of ours: the server should not ring now, so the ring is stale or
             // crossed. Decline at once (not a miss) rather than let it ring out as a miss.
@@ -220,8 +279,9 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
             out += RingEffect.EmitEnded(call.callId, DeclineReason.BUSY_ON_PHONE.wire, missedIfUnheard = false)
             return out
         }
-        val deadline = minOf(ring.expiresAtMs, now + RingWire.RING_MS + RingWire.CLOCK_SLACK_MS)
-        state = RingState.Ringing(call, deadline)
+        // The local timer runs from receipt, for what the server's times leave.
+        val deadline = now + remaining
+        state = RingState.Ringing(call, deadline, replacedOwn = replacing)
         out += RingEffect.StartRinging(call, deadline)
         out += RingEffect.ScheduleTimer(TimerKind.RING, call.callId, deadline)
         return out
@@ -324,6 +384,9 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     private fun onRefused(callId: String): List<RingEffect> {
         val s = state
         if (s !is RingState.Ringing || s.call.callId != callId) return listOf(RingEffect.Dropped(DropReason.STALE))
+        // Our previous ring's call still held Telecom's one ringing self-managed call: not a busy
+        // phone. The new ring rings by its notification instead (no headset or car answer).
+        if (s.replacedOwn) return listOf(RingEffect.RingByNotification(s.call, s.deadlineMs))
         if (s.call.test) return end(s.call, TEST_REASON, EndCause.BUSY, TimerKind.RING, emit = false, missedIfUnheard = false)
         return listOf(RingEffect.PostDecline(callId, s.call.offerToken, DeclineReason.BUSY_ON_PHONE)) +
             end(s.call, DeclineReason.BUSY_ON_PHONE.wire, EndCause.BUSY, TimerKind.RING, emit = true, missedIfUnheard = false)

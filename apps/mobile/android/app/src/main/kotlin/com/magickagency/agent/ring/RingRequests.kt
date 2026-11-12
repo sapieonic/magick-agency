@@ -41,6 +41,32 @@ object RingRequests {
     /** Attempts per request: one retry, for an answer that never came or a server error. */
     const val MAX_ATTEMPTS = 2
 
+    /** Connect and read timeout, each, for one attempt. */
+    const val TIMEOUT_MS = 5_000
+
+    /** The wait before the retry. */
+    const val RETRY_DELAY_MS = 1_000L
+
+    /**
+     * The decline is sent from a broadcast receiver kept alive by `goAsync`, which Android reports
+     * as not responding after about 10 s: every attempt, and the wait between, stays inside this.
+     */
+    const val DECLINE_BUDGET_MS = 8_000L
+
+    /** No attempt with less than this of the budget left. */
+    const val MIN_ATTEMPT_MS = 1_000L
+
+    /**
+     * The connect and read timeout, each, for an attempt with [remainingMs] of the budget left
+     * (null: no budget, [TIMEOUT_MS]): connect plus read fit in what is left. Null when too little
+     * is left to try ([MIN_ATTEMPT_MS]).
+     */
+    fun attemptTimeoutMs(remainingMs: Long?): Int? {
+        if (remainingMs == null) return TIMEOUT_MS
+        if (remainingMs < MIN_ATTEMPT_MS) return null
+        return minOf(TIMEOUT_MS.toLong(), remainingMs / 2).toInt()
+    }
+
     /** `X-Client`, as `ClientIdentity.header` in Dart: printable ASCII only. */
     fun clientHeader(version: String, build: String, osVersion: String, model: String): String {
         val raw = "magick-agency-mobile/$version+$build (android $osVersion; $model)"
@@ -109,6 +135,10 @@ object RingRequests {
     /** Whether to send again after [attempt] (1-based) ended with [outcome]. A refusal is final. */
     fun shouldRetry(outcome: RingApiOutcome, attempt: Int): Boolean =
         attempt < MAX_ATTEMPTS && (outcome == RingApiOutcome.NETWORK || outcome == RingApiOutcome.SERVER_ERROR)
+
+    /** [shouldRetry], and with a budget ([remainingMs] left, null for none) only when the wait and one attempt still fit. */
+    fun shouldRetry(outcome: RingApiOutcome, attempt: Int, remainingMs: Long?): Boolean =
+        shouldRetry(outcome, attempt) && (remainingMs == null || remainingMs - RETRY_DELAY_MS >= MIN_ATTEMPT_MS)
 
     // Hex by hand: String.format follows the default locale.
     private val HEX = "0123456789ABCDEF".toCharArray()

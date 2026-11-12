@@ -31,6 +31,10 @@ abstract interface class RingAnswerStation {
   /// Whether the station holds [callId] on screen, now or within [within]
   /// ([StationController.holdsRingCall]).
   Future<bool> holdsCall(String callId, Duration within);
+
+  /// The agent hung up [callId] on the phone while it connected: the station hangs it up once it
+  /// binds ([StationController.hangUpRingCall]).
+  void hangUp(String callId);
 }
 
 final class _ControllerStation implements RingAnswerStation {
@@ -50,6 +54,9 @@ final class _ControllerStation implements RingAnswerStation {
 
   @override
   Future<bool> holdsCall(String callId, Duration within) => _station.holdsRingCall(callId, within);
+
+  @override
+  void hangUp(String callId) => _station.hangUpRingCall(callId);
 }
 
 final ringAnswerStationProvider = Provider<RingAnswerStation>(_ControllerStation.new);
@@ -73,6 +80,12 @@ final ringAnswerStationProvider = Provider<RingAnswerStation>(_ControllerStation
 /// and native ends the Telecom connection (`reportEnded`, `accept_failed`). `already_accepted`
 /// for a call the station holds (or receives within [alreadyAcceptedWindow]) is this phone's own
 /// attach having answered first (the socket was already open): the call goes on.
+///
+/// Hanging up on the phone while the call connects (the "Connecting the call…" notification, a
+/// headset or a car): native sends its token-only decline and `ringEnded` `declined`. Once the
+/// accept went through the server refuses that decline (N4) and the call binds anyway, so for a
+/// call answered here the station hangs it up once it binds; an accept the decline beat is no
+/// failure to tell the agent about.
 ///
 /// Also the missed ring: a ring that ended unanswered on the phone (`ringEnded` expired or
 /// accept lapsed) posts native's "Missed inbound call" notification.
@@ -100,6 +113,9 @@ class RingAnswerCoordinator extends Notifier<String?> {
   /// Calls already taken (accepted, or failed), bounded: native may deliver one answer twice,
   /// by `ringAnswered` and by `pendingAnswer` (a cold start), and each call is accepted once.
   final Set<String> _taken = {};
+
+  /// Calls answered here that the agent then hung up on the phone, bounded.
+  final Set<String> _hungUp = {};
 
   @override
   String? build() {
@@ -151,6 +167,11 @@ class RingAnswerCoordinator extends Notifier<String?> {
           if (!_taken.contains(callId)) unawaited(_channel.showMissedRing());
         } else if (isDeclinedRing(reason)) {
           RingTelemetry.declined(callId, reason: reasonRaw);
+          if (reason == InboundRingResult.declined && _taken.contains(callId) && _hungUp.add(callId)) {
+            if (_hungUp.length > 32) _hungUp.remove(_hungUp.first);
+            _log.info('a ring answered here was hung up on the phone', {'call_id': callId});
+            ref.read(ringAnswerStationProvider).hangUp(callId);
+          }
         }
       case RingTokenChanged() || RingTestReceived() || RingStopTapped():
         break;
@@ -224,7 +245,8 @@ class RingAnswerCoordinator extends Notifier<String?> {
     final code = refusal == null || refusal.code == InboundErrorCode.unknown ? null : refusal.code.wire;
     RingTelemetry.expired(answer.callId, reason: 'accept_failed', code: code);
     unawaited(_channel.reportEnded(answer.callId, RingEndReason.acceptFailed));
-    ref.read(ringNoticeProvider.notifier).show(RingCopy.acceptFailed);
+    // The agent hung up on the phone first (their decline beat the accept): nothing to tell them.
+    if (!_hungUp.contains(answer.callId)) ref.read(ringNoticeProvider.notifier).show(RingCopy.acceptFailed);
     ref.read(ringAnswerStationProvider).release(answer.callId);
     if (state == answer.callId) state = null;
   }

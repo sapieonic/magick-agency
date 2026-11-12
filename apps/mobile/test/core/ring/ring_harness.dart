@@ -74,6 +74,9 @@ class FakeRingAnswerStation implements RingAnswerStation {
   }
 
   @override
+  void hangUp(String callId) => calls.add('hangUp:$callId');
+
+  @override
   Future<bool> holdsCall(String callId, Duration within) async {
     calls.add('holdsCall:$callId');
     if (holds.contains(callId)) return true;
@@ -167,7 +170,8 @@ class RingHarness {
     sent.add(s);
     final reply = routes['${request.method} ${request.url.path}'];
     if (reply == null) return jsonReply(404, {'error': 'Not Found', 'message': 'no route ${request.url.path}'});
-    final out = reply(s);
+    var out = reply(s);
+    if (out is Future) out = await out;
     return out is http.Response ? out : jsonReply(200, out);
   }
 

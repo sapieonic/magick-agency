@@ -100,4 +100,36 @@ class RingRequestsTest {
             assertFalse(RingRequests.shouldRetry(o, attempt = 1), "$o")
         }
     }
+
+    @Test
+    fun aDeclineFitsInsideItsBudgetWhateverHappens() {
+        // The worst case: every attempt runs to both timeouts, as a dead network would.
+        val budget = RingRequests.DECLINE_BUDGET_MS
+        var elapsed = 0L
+        var attempt = 1
+        elapsed += 2L * RingRequests.attemptTimeoutMs(budget - elapsed)!!
+        while (RingRequests.shouldRetry(RingApiOutcome.NETWORK, attempt, budget - elapsed)) {
+            elapsed += RingRequests.RETRY_DELAY_MS
+            val timeout = RingRequests.attemptTimeoutMs(budget - elapsed) ?: break
+            attempt += 1
+            elapsed += 2L * timeout
+        }
+        assertTrue(elapsed <= budget, "$elapsed ms")
+        assertTrue(budget < 9_000, "inside the receiver's 10 s, with its 9 s backstop")
+    }
+
+    @Test
+    fun aFastFailureIsStillRetriedOnceInsideTheBudget() {
+        assertTrue(RingRequests.shouldRetry(RingApiOutcome.NETWORK, attempt = 1, remainingMs = 7_800))
+        assertEquals(3_400, RingRequests.attemptTimeoutMs(6_800))
+        assertFalse(RingRequests.shouldRetry(RingApiOutcome.NETWORK, attempt = 1, remainingMs = 1_500), "no time for the wait and an attempt")
+        assertFalse(RingRequests.shouldRetry(RingApiOutcome.NETWORK, attempt = 2, remainingMs = 7_000), "one retry, no more")
+    }
+
+    @Test
+    fun withoutABudgetTheTimeoutsAreTheUsualOnes() {
+        assertEquals(RingRequests.TIMEOUT_MS, RingRequests.attemptTimeoutMs(null))
+        assertTrue(RingRequests.shouldRetry(RingApiOutcome.SERVER_ERROR, attempt = 1, remainingMs = null))
+        assertEquals(null, RingRequests.attemptTimeoutMs(RingRequests.MIN_ATTEMPT_MS - 1))
+    }
 }

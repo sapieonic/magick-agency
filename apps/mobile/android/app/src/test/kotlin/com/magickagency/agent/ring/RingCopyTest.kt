@@ -22,6 +22,7 @@ class RingCopyTest {
         val all = listOf(
             RingCopy.INCOMING_TITLE, RingCopy.TEST_TITLE, RingCopy.TEST_TEXT, RingCopy.ANSWERING_TEXT, RingCopy.AWAY_TITLE,
             RingCopy.AWAY_TEXT, RingCopy.MISSED_TITLE, RingCopy.MISSED_TEXT, RingCopy.RING_OFF_TITLE, RingCopy.CHANNEL_RING_DESCRIPTION,
+            RingCopy.CHANNEL_RING_QUIET, RingCopy.CHANNEL_RING_QUIET_DESCRIPTION, RingCopy.HANG_UP,
         ) + RingWire.RING_OFF_REASONS.mapNotNull(RingCopy::ringOffText)
         for (s in all) {
             for (us in listOf("canceled", "dialed", "color", "optimiz")) assertFalse(s.contains(us), "\"$s\" has \"$us\"")

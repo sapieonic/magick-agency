@@ -98,6 +98,9 @@ internal object RingNotifications {
     private const val TAG = "MagickRing"
 
     const val CHANNEL_RING = "magick_agency_ring"
+
+    /** The ring's notifications that must make no sound: a silenced ring, a call answered and connecting. */
+    const val CHANNEL_RING_QUIET = "magick_agency_ring_quiet"
     const val CHANNEL_AWAY = "magick_agency_away"
     const val CHANNEL_NOTICES = "magick_agency_ring_notices"
 
@@ -127,6 +130,15 @@ internal object RingNotifications {
             }
             nm.createNotificationChannel(ring)
         }
+        if (nm.getNotificationChannel(CHANNEL_RING_QUIET) == null) {
+            val quiet = NotificationChannel(CHANNEL_RING_QUIET, RingCopy.CHANNEL_RING_QUIET, NotificationManager.IMPORTANCE_HIGH).apply {
+                description = RingCopy.CHANNEL_RING_QUIET_DESCRIPTION
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            nm.createNotificationChannel(quiet)
+        }
         if (nm.getNotificationChannel(CHANNEL_AWAY) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(CHANNEL_AWAY, RingCopy.CHANNEL_AWAY, NotificationManager.IMPORTANCE_LOW).apply {
@@ -149,12 +161,18 @@ internal object RingNotifications {
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             nm(context).areNotificationsEnabled()
 
-    /** The ringing call. [silent]: Telecom asked to silence it (a volume key); it stays, quietly. */
+    /**
+     * The ringing call. [silent]: Telecom asked to silence it (a volume key); it stays, quietly. The
+     * looping ringtone belongs to the posted notification, and an update is not sure to stop it,
+     * so the silent copy replaces it: the ringing one is cancelled, and the copy posted on the
+     * soundless channel.
+     */
     fun showIncoming(context: Context, call: RingCall, deadlineMs: Long, silent: Boolean) {
         val title = if (call.test) RingCopy.TEST_TITLE else RingCopy.INCOMING_TITLE
         val caller = Person.Builder().setName(title).setImportant(true).build()
         val fullScreen = RingIntents.fullScreen(context, call.callId)
-        val builder = NotificationCompat.Builder(context, CHANNEL_RING)
+        if (silent) cancelCall(context, call.callId)
+        val builder = NotificationCompat.Builder(context, if (silent) CHANNEL_RING_QUIET else CHANNEL_RING)
             .setSmallIcon(R.drawable.ring_ic_call)
             .setContentTitle(title)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -180,14 +198,20 @@ internal object RingNotifications {
     }
 
     /**
-     * After Answer, until the station binds: an ongoing CallStyle with Hang up (a decline, N4).
-     * Its full-screen intent brings the app up over the lock screen when Answer came from a
-     * headset or a car (no activity launched with it).
+     * After Answer, until the station binds, with Hang up (a decline, N4; once the accept went
+     * through, Dart hangs the call up through the station). The ringing notification is cancelled
+     * first (that stops its ringtone) and this one goes on the soundless channel.
+     *
+     * [surfaceApp] (Answer came from a headset or a car, no activity launching with it): an
+     * ongoing CallStyle whose full-screen intent brings the app up over the lock screen. Otherwise
+     * the app is already launching, so a second launch is not wanted: a plain ongoing call
+     * notification with no full-screen intent (a CallStyle must carry one, or be a foreground
+     * service's).
      */
-    fun showAnswering(context: Context, call: RingCall) {
-        val caller = Person.Builder().setName(RingCopy.INCOMING_TITLE).setImportant(true).build()
+    fun showAnswering(context: Context, call: RingCall, surfaceApp: Boolean) {
         val show = RingIntents.showAnswered(context, call.callId)
-        val n = NotificationCompat.Builder(context, CHANNEL_RING)
+        val hangUp = RingIntents.decline(context, call.callId)
+        val builder = NotificationCompat.Builder(context, CHANNEL_RING_QUIET)
             .setSmallIcon(R.drawable.ring_ic_call)
             .setContentTitle(RingCopy.INCOMING_TITLE)
             .setContentText(RingCopy.ANSWERING_TEXT)
@@ -197,10 +221,15 @@ internal object RingNotifications {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(show)
-            .setFullScreenIntent(show, true)
-            .setStyle(NotificationCompat.CallStyle.forOngoingCall(caller, RingIntents.decline(context, call.callId)))
-            .build()
-        post(context, call.callId, ID_CALL, n)
+        if (surfaceApp) {
+            val caller = Person.Builder().setName(RingCopy.INCOMING_TITLE).setImportant(true).build()
+            builder.setFullScreenIntent(show, true)
+                .setStyle(NotificationCompat.CallStyle.forOngoingCall(caller, hangUp))
+        } else {
+            builder.addAction(0, RingCopy.HANG_UP, hangUp)
+        }
+        cancelCall(context, call.callId)
+        post(context, call.callId, ID_CALL, builder.build())
     }
 
     fun cancelCall(context: Context, callId: String) = nm(context).cancel(callId, ID_CALL)

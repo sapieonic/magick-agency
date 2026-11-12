@@ -295,6 +295,10 @@ class StationController extends Notifier<StationView?>
   String? _ringAnswerHold;
   Timer? _ringAnswerHoldExpiry;
 
+  /// A call answered from a ring that the agent hung up on the phone before it bound
+  /// ([hangUpRingCall]): hung up here once it connects.
+  String? _ringHangUp;
+
   /// Asked whether the station holds a call ([holdsRingCall]), not answered yet.
   final List<_InboundWaiter> _inboundWaiters = [];
 
@@ -712,6 +716,7 @@ class StationController extends Notifier<StationView?>
     _ringOffReady = false;
     _ringMissesWhileAway = 0;
     _ringCall = null;
+    _ringHangUp = null;
     _ringJoinInFlight = false;
     _ringJoinRetryAt = null;
     _cancelAwayTimers();
@@ -2014,6 +2019,16 @@ class StationController extends Notifier<StationView?>
     if (call == null || !call.isPushOffer) return;
     final t = _ringCall ??= _RingCall(call.id);
     final phase = inboundPhase(call);
+    if (_ringHangUp == call.id && phase == InboundPhase.connected) {
+      // The agent hung up on the phone while it was connecting: not inside the frame that
+      // connected it.
+      _ringHangUp = null;
+      _log.info('hanging up a call the agent hung up on the phone while it connected', {'call_id': call.id});
+      scheduleMicrotask(() {
+        final now = _station.inboundOnScreen;
+        if (now != null && now.id == call.id) unawaited(_hangUpInbound(now));
+      });
+    }
     if (!t.bound && (phase == InboundPhase.connected || call.bridgedAt != null)) {
       t.bound = true;
       _ring.reportBound(call.id);
@@ -2180,6 +2195,15 @@ class StationController extends Notifier<StationView?>
       waiter.settle(false);
     });
     return waiter.done.future;
+  }
+
+  /// The agent hung up [callId] on the phone (the "Connecting the call…" notification, a headset
+  /// or a car) after its accept went through: native's token-only decline is refused once
+  /// accepted (N4), so the call still binds here. It is hung up through the station once it
+  /// connects (now, if it has).
+  void hangUpRingCall(String callId) {
+    _ringHangUp = callId;
+    _afterChange();
   }
 
   bool _holdsInbound(String callId) => _s != null && !_terminal && _station.inboundOnScreen?.id == callId;

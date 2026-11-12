@@ -689,16 +689,21 @@ of it has run on a phone ("Not verified yet").
   to `RingCoordinator`, which feeds the pure `RingStateMachine` (`Idle → Ringing → Answering →
   Answered`, or `→ Ended(reason)`; one ring at a time; a duplicate, late or expired ring, and a
   cancel for another call, change nothing) and carries out its effects. A ring on a phone on a
-  cellular call (Telecom does not permit an incoming call, or the audio mode is ringtone, in call,
-  call screening or call redirect), or while the phone is answering or on a call from an earlier
-  ring, is declined at once `busy_on_phone` (IQ70). Otherwise the phone rings until
-  `ring_expires_at` (capped at 20 s plus 2 s of clock slack from arrival): a self-managed Telecom
+  cellular call (the audio mode is in call, call screening or call redirect; or, with no ring of
+  ours ringing, Telecom does not permit an incoming call or the mode is ringtone, which our own
+  ring can cause), or while the phone is answering or on a call from an earlier ring, is declined
+  at once `busy_on_phone` (IQ70). A new ring replaces one of ours still ringing (rung by its
+  notification alone if Telecom refuses it meanwhile). Otherwise the phone rings for
+  `ring_expires_at` less the push's FCM send time (both server-side clocks, so the phone's clock
+  never drops a ring), at most 20 s plus 2 s of slack, timed from arrival: a self-managed Telecom
   call (`MANAGE_OWN_CALLS`, the account "Magick Agency"), whose `onShowIncomingCallUi` posts a
   `CallStyle.forIncomingCall` notification, "Inbound call · Magick Agency" (never a name or a
   number, IQ61), on the high-importance channel `magick_agency_ring` with the ringtone looped
   (`FLAG_INSISTENT`), Answer and Decline, and a full-screen intent. Without Telecom (refused, or no
-  UI asked for in time) the notification rings alone. No foreground service while it rings, so no
-  `FOREGROUND_SERVICE_PHONE_CALL`.
+  UI asked for in time) the notification rings alone. Silenced (a volume key), it is cancelled and
+  posted again on the soundless channel `magick_agency_ring_quiet`. No foreground service while it
+  rings, so no `FOREGROUND_SERVICE_PHONE_CALL`. While our ring is live, `agent_audio` does not read
+  the ringtone mode as a cellular call (`OwnRing`), so a test ring is not a `phone_call` pause.
 - **The lock-screen ring** (`RingActivity`) is the full-screen intent, shown over the lock screen
   with the screen turned on. It is its own small native activity, not `MainActivity`, because it
   must not start Flutter: opening the app attaches the station, and the server takes an attach with
@@ -709,24 +714,31 @@ of it has run on a phone ("Not verified yet").
   answered is live, and a stale tap does not keep it there.
 - **Answer** (the notification's Answer is a `PendingIntent.getActivity` to `MainActivity`, never a
   broadcast or a service): native posts `…/ring/answering` at once (`RingApi`: `HttpURLConnection` to
-  the build's `API_ORIGIN`, the offer token only), marks the Telecom call active, shows "Connecting
-  the call…" (an ongoing CallStyle with Hang up), saves the answer (`pendingAnswer`, in app-private
-  preferences) and tells Dart (`ringAnswered`); the grace timer is the server's 15 s plus a 3 s
-  margin. An answer from a headset or a car (Telecom's `onAnswer`) does the same and tries to bring
-  the app up; the answering notification's full-screen intent covers the rest (a field-test item).
+  the build's `API_ORIGIN`, the offer token only), marks the Telecom call active, replaces the
+  ringing notification with "Connecting the call…" (with Hang up, on the soundless channel), saves
+  the answer (`pendingAnswer`, in app-private preferences) and tells Dart (`ringAnswered`); the
+  grace timer is the server's 15 s plus a 3 s margin. An answer from a headset or a car (Telecom's
+  `onAnswer`) does the same and tries to bring the app up; only then is "Connecting the call…" an
+  ongoing CallStyle with a full-screen intent, which covers the rest (a field-test item).
 - **Cold start on Answer.** Flutter starts from `MainActivity`; once the gate is ready the coordinator
   reads `pendingAnswer` (cleared on read; dropped once the grace has lapsed) and accepts
   (`POST …/ring/accept` with the station device id). `StationController.resumeForRing` opens the
   station on the accept's URL (a parked station reopened, or one opened from the accept alone,
   `HostedSession.ring`), adopts the inbound frame and starts the on-duty service from the
   foreground; the server binds, the app tells native (`reportBound`) and the call notification gives
-  way to the on-duty one. From there it is the "Inbound calls" flow above. A failure that says
-  nothing about the call is retried once after 1 s; then "This call stopped ringing or someone else
-  took it." and `reportEnded(accept_failed)`. Answers are deduped by call id.
+  way to the on-duty one. From there it is the "Inbound calls" flow above. From the answer until the
+  accept answers, the accept's URL is the station's only attach: an app brought to the front by the
+  answer does not reopen its parked socket on a mint of its own (that attach would answer the ring
+  first, N5). A failure that says nothing about the call is retried once after 1 s; then "This call
+  stopped ringing or someone else took it." and `reportEnded(accept_failed)`. `already_accepted` for
+  a call the station holds (or receives within 5 s) is this phone's own attach having won, not a
+  failure. Answers are deduped by call id.
 - **Decline** (the notification's Decline, the lock-screen Decline, or Telecom's reject) posts
-  `…/ring/decline {reason: declined}` natively, at once; not a miss. Hang up on the "Connecting the
-  call…" notification declines too, which the server accepts only until Dart's accept (N4); after
-  it the station's Hang up is the way out.
+  `…/ring/decline {reason: declined}` natively, at once (inside 8 s, so the notification's receiver
+  never holds past Android's limit); not a miss. Hang up on the "Connecting the call…" notification
+  (or a headset's or car's) declines too, which the server accepts only until Dart's accept (N4);
+  for a call Dart has answered, its `ringEnded` `declined` makes the station hang the call up once
+  it connects.
 - **A missed ring** (it rang out, or `ring_cancel` said `expired`) posts "Missed inbound call" ("Your
   phone rang for an inbound caller and the call was not answered."; no name, no number): Dart asks
   native for it (`showMissedRing`) on `ringEnded` `expired` or `accept_lapsed` for a call it did not
@@ -1041,7 +1053,7 @@ packages/
   changes (the Firebase BoM and `firebase-messaging`, the dart-defines written into string
   resources) are reviewed against the SDK only; CI's debug Android build is their first compile.
   Their pure logic (`RingStateMachine`, the push parser, the request builders, the copy and
-  checklist rules: 80 tests) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
+  checklist rules: 92 tests) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
   under the Android Gradle plugin (`./gradlew :app:testDevDebugUnitTest`) from its first run. The
   Dart side ran under `flutter test` with a fake channel; the server's against a mock push carrier.
   Not done at all: a real FCM push (no service account was used), the native Firebase app built from
@@ -1050,6 +1062,9 @@ packages/
   (which drops FCM), the full-screen-intent permission on Android 14+ (Play Console's declaration
   for a calling app is not filed, so a Play build may get it withheld; the checklist reports it), and
   the self-managed calling account (its `CAPABILITY_SELF_MANAGED` is deprecated as of API 37, the
-  compile SDK). iOS: designed only; never compiled, no APNs key or Apple account.
+  compile SDK). Also unverified: whether our own self-managed ring sets the ringtone audio mode
+  (assumed it can), the Telecom call's audio route against `agent_audio`'s routing once the station
+  binds, and a headset's hang-up after the bind. iOS: designed only; never compiled, no APNs key or
+  Apple account.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.

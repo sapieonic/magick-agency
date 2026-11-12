@@ -28,7 +28,8 @@ class RingStateMachineTest {
     private val callA = RingCall("call-a", "token-a", "sess-1", test = false)
     private val graceA = t0 + 3_000 + RingWire.ACCEPT_GRACE_MS + RingWire.GRACE_MARGIN_MS
 
-    private fun push(p: RingPush, now: Long = t0, busy: Boolean = false) = RingEvent.Push(p, now, busy)
+    private fun push(p: RingPush, now: Long = t0, busy: Boolean = false, sentAt: Long? = null) =
+        RingEvent.Push(p, now, if (busy) PhoneSignals.CELLULAR_CALL else PhoneSignals.IDLE, sentAt)
 
     private fun ringing(): RingStateMachine = RingStateMachine().also { it.handle(push(ringA)) }
 
@@ -294,8 +295,94 @@ class RingStateMachineTest {
             ),
             fx,
         )
-        assertEquals(RingState.Ringing(callB, ringB.expiresAtMs), m.state)
+        assertEquals(RingState.Ringing(callB, ringB.expiresAtMs, replacedOwn = true), m.state)
         assertEquals(listOf(Dropped(DropReason.LATE)), m.handle(push(ringA)), "the old one cannot come back")
+    }
+
+    // ─── Our own ring is not a busy phone (IQ70) ─────────────────────────────
+
+    @Test
+    fun whileOursRingsItsOwnTelecomCallAndRingtoneAreNotBusy() {
+        // Telecom permits one ringing self-managed call, and our ring may set the ringtone mode.
+        val ours = PhoneSignals(ringtoneMode = true, incomingNotPermitted = true)
+        val m = ringing()
+        val fx = m.handle(RingEvent.Push(ringB, t0 + 5_000, ours))
+        assertTrue(fx.contains(StartRinging(RingCall("call-b", "token-b", "sess-1", test = false), ringB.expiresAtMs)), "$fx")
+        assertFalse(fx.any { it is PostDecline }, "$fx")
+        assertIs<RingState.Ringing>(m.state)
+    }
+
+    @Test
+    fun aRealRingDuringATestRingIsNotBusy() {
+        val m = testRinging()
+        val fx = m.handle(RingEvent.Push(ringA, t0 + 1_000, PhoneSignals(ringtoneMode = true, incomingNotPermitted = true)))
+        assertFalse(fx.any { it is PostDecline }, "$fx")
+        assertEquals("call-a", (m.state as RingState.Ringing).call.callId)
+    }
+
+    @Test
+    fun aCellularCallInProgressIsBusyEvenWhileOursRings() {
+        val m = ringing()
+        val fx = m.handle(RingEvent.Push(ringB, t0 + 5_000, PhoneSignals.CELLULAR_CALL))
+        assertTrue(fx.contains(PostDecline("call-b", "token-b", DeclineReason.BUSY_ON_PHONE)), "$fx")
+        assertEnded(m, "call-b", "busy_on_phone")
+    }
+
+    @Test
+    fun withNothingOfOursRingingTheRingtoneOrTelecomsRefusalIsBusy() {
+        for (signals in listOf(PhoneSignals(ringtoneMode = true), PhoneSignals(incomingNotPermitted = true))) {
+            val m = RingStateMachine()
+            val fx = m.handle(RingEvent.Push(ringA, t0, signals))
+            assertTrue(fx.contains(PostDecline("call-a", "token-a", DeclineReason.BUSY_ON_PHONE)), "$signals: $fx")
+            assertEnded(m, "call-a", "busy_on_phone")
+        }
+        val test = RingStateMachine()
+        assertEquals(listOf(Dropped(DropReason.BUSY_ON_PHONE)), test.handle(RingEvent.Push(RingPush.Test, t0, PhoneSignals(ringtoneMode = true))))
+    }
+
+    @Test
+    fun telecomRefusingARingThatReplacedOursRingsItByNotification() {
+        // Our previous call may still hold Telecom's one ringing self-managed call.
+        val m = ringing()
+        m.handle(push(ringB, now = t0 + 5_000))
+        val callB = RingCall("call-b", "token-b", "sess-1", test = false)
+        assertEquals(listOf(RingEffect.RingByNotification(callB, ringB.expiresAtMs)), m.handle(RingEvent.IncomingRefused("call-b")))
+        assertIs<RingState.Ringing>(m.state)
+    }
+
+    // ─── Expiry on the server's times (the push's send time) ─────────────────
+
+    @Test
+    fun aPhoneClockRunningFastStillRingsForWhatTheServerLeft() {
+        val m = RingStateMachine()
+        // The phone reads a minute ahead: by its clock the ring expired 40 s ago.
+        val now = t0 + 60_000
+        val fx = m.handle(push(ringA, now = now, sentAt = t0))
+        assertEquals(RingState.Ringing(callA, now + RingWire.RING_MS), m.state)
+        assertEquals(listOf(StartRinging(callA, now + RingWire.RING_MS), ScheduleTimer(TimerKind.RING, "call-a", now + RingWire.RING_MS)), fx)
+    }
+
+    @Test
+    fun aPhoneClockRunningSlowRingsNoLongerThanTheServerLeft() {
+        val m = RingStateMachine()
+        val now = t0 - 60_000
+        m.handle(push(ringA, now = now, sentAt = t0 + 5_000))
+        assertEquals(RingState.Ringing(callA, now + RingWire.RING_MS - 5_000), m.state)
+    }
+
+    @Test
+    fun aRingSentAfterItsExpiryIsDroppedWhateverThePhoneClockSays() {
+        val m = RingStateMachine()
+        assertEquals(listOf(Dropped(DropReason.EXPIRED)), m.handle(push(ringA, now = t0 - 60_000, sentAt = ringA.expiresAtMs)))
+        assertEquals(RingState.Idle, m.state)
+    }
+
+    @Test
+    fun theTimeLeftIsCappedToOneWindowWithItsSlack() {
+        assertEquals(RingWire.RING_MS + RingWire.CLOCK_SLACK_MS, RingTiming.remainingMs(t0 + 600_000, t0, t0 + 99_000))
+        assertEquals(7_000L, RingTiming.remainingMs(t0 + 7_000, t0, t0 + 99_000), "the send time, not the phone's clock")
+        assertEquals(7_000L, RingTiming.remainingMs(t0 + 7_000, null, t0), "no send time: the phone's clock")
+        assertEquals(7_000L, RingTiming.remainingMs(t0 + 7_000, 0, t0), "FCM's 0 is no send time")
     }
 
     @Test

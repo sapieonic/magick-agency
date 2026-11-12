@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import com.magickagency.agent.R
 import java.io.IOException
@@ -25,42 +26,56 @@ internal class RingApi(context: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     fun answering(callId: String, offerToken: String, onDone: ((RingApiOutcome) -> Unit)? = null) =
-        send(onDone) { origin, client, id -> RingRequests.answering(origin, callId, offerToken, client, id) }
+        send(null, onDone) { origin, client, id -> RingRequests.answering(origin, callId, offerToken, client, id) }
 
+    /** Sent from a broadcast receiver held by `goAsync`: every attempt inside [RingRequests.DECLINE_BUDGET_MS]. */
     fun decline(callId: String, offerToken: String, reason: DeclineReason, onDone: ((RingApiOutcome) -> Unit)? = null) =
-        send(onDone) { origin, client, id -> RingRequests.decline(origin, callId, offerToken, reason, client, id) }
+        send(RingRequests.DECLINE_BUDGET_MS, onDone) { origin, client, id -> RingRequests.decline(origin, callId, offerToken, reason, client, id) }
 
-    private fun send(onDone: ((RingApiOutcome) -> Unit)?, build: (String, String, String) -> RingHttpRequest?) {
+    /** [budgetMs]: the whole send (attempts and the wait between) stays inside it; null for none. [onDone] always runs. */
+    private fun send(budgetMs: Long?, onDone: ((RingApiOutcome) -> Unit)?, build: (String, String, String) -> RingHttpRequest?) {
         val origin = app.getString(R.string.magick_api_origin)
         val client = clientHeader()
         executor.execute {
-            val request = build(origin, client, UUID.randomUUID().toString())
-            val outcome = if (request == null) {
-                Log.w(TAG, "No request: the build's API origin is not an http(s) origin")
-                RingApiOutcome.CLIENT_ERROR
-            } else {
-                var attempt = 1
-                var result = RingRequests.classify(execute(request))
-                while (RingRequests.shouldRetry(result, attempt)) {
-                    Thread.sleep(RETRY_DELAY_MS)
-                    attempt += 1
-                    result = RingRequests.classify(execute(request))
+            val start = SystemClock.elapsedRealtime()
+            val left = { budgetMs?.let { it - (SystemClock.elapsedRealtime() - start) } }
+            var outcome = RingApiOutcome.NETWORK
+            try {
+                val request = build(origin, client, UUID.randomUUID().toString())
+                outcome = if (request == null) {
+                    Log.w(TAG, "No request: the build's API origin is not an http(s) origin")
+                    RingApiOutcome.CLIENT_ERROR
+                } else {
+                    var attempt = 1
+                    var result = RingRequests.classify(execute(request, RingRequests.attemptTimeoutMs(left()) ?: 0))
+                    while (RingRequests.shouldRetry(result, attempt, left())) {
+                        Thread.sleep(RingRequests.RETRY_DELAY_MS)
+                        val timeout = RingRequests.attemptTimeoutMs(left()) ?: break
+                        attempt += 1
+                        result = RingRequests.classify(execute(request, timeout))
+                    }
+                    Log.i(TAG, "$request: $result after $attempt attempt(s)")
+                    result
                 }
-                Log.i(TAG, "$request: $result after $attempt attempt(s)")
-                result
+            } catch (e: Exception) {
+                // Never leave onDone unrun (a receiver's goAsync waits on it).
+                Log.w(TAG, "A ring request failed: ${e.javaClass.simpleName}")
+            } finally {
+                val result = outcome
+                if (onDone != null) main.post { onDone(result) }
             }
-            if (onDone != null) main.post { onDone(outcome) }
         }
     }
 
-    /** The HTTP status, or null when no answer came. */
-    private fun execute(request: RingHttpRequest): Int? {
+    /** The HTTP status, or null when no answer came. [timeoutMs]: connect and read, each; 0 sends nothing. */
+    private fun execute(request: RingHttpRequest, timeoutMs: Int): Int? {
+        if (timeoutMs <= 0) return null
         var conn: HttpURLConnection? = null
         return try {
             conn = (URI(request.url).toURL().openConnection() as HttpURLConnection).apply {
                 requestMethod = request.method
-                connectTimeout = TIMEOUT_MS
-                readTimeout = TIMEOUT_MS
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
                 useCaches = false
                 doOutput = true
                 for ((k, v) in request.headers) setRequestProperty(k, v)
@@ -74,6 +89,9 @@ internal class RingApi(context: Context) {
             status
         } catch (e: IOException) {
             Log.w(TAG, "$request failed: ${e.javaClass.simpleName}")
+            null
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "$request not sent: ${e.javaClass.simpleName}")
             null
         } finally {
             conn?.disconnect()
@@ -98,7 +116,5 @@ internal class RingApi(context: Context) {
 
     private companion object {
         const val TAG = "MagickRing"
-        const val TIMEOUT_MS = 5_000
-        const val RETRY_DELAY_MS = 1_000L
     }
 }

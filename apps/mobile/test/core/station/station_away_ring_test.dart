@@ -406,6 +406,33 @@ void main() {
     });
   });
 
+  group('hung up on the phone while the call connected (after the accept)', () {
+    test('the station hangs the call up once it connects', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        const hangupPath = '/proxy/agency/inbound/calls/$_pushCallId/hangup';
+        app.routes['POST $hangupPath'] = (_) => json(200, {
+              'call': _pushFrame('inbound_call_outcome_owed', call: {'bridged_at': '2026-11-01T09:00:17.000Z'})['call'],
+            });
+        app.run(app.controller.resumeForRing(_accept()));
+        app.controller.hangUpRingCall(_pushCallId);
+        async.flushMicrotasks();
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        expect(app.requests('POST', hangupPath), isEmpty, reason: 'not before it connects');
+        app.frame(agentStateFrameJson('on_call', '2026-11-01T09:00:17.000Z'));
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        async.flushMicrotasks();
+        expect(app.requests('POST', hangupPath), hasLength(1));
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        async.flushMicrotasks();
+        expect(app.requests('POST', hangupPath), hasLength(1), reason: 'once');
+        app.dispose();
+      });
+    });
+  });
+
   group('the offer backstop and a push offer', () {
     test('the rule: a push offer is stale only past the accept grace; never before accept', () {
       final station = inboundCall('inbound_call_offered');

@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import com.magickagency.agent_audio.OwnRing
 
 /**
  * The Android side of Mode B's ring: feeds [RingStateMachine] (pure, JVM-tested) from FCM, Telecom,
@@ -64,8 +65,8 @@ internal object RingCoordinator {
 
     // ─── Entry points ────────────────────────────────────────────────────────
 
-    /** An FCM data message ([RingMessagingService], a worker thread). */
-    fun onPush(context: Context, data: Map<String, String>) {
+    /** An FCM data message ([RingMessagingService], a worker thread); [sentAtMs]: FCM's send time, null when unknown. */
+    fun onPush(context: Context, data: Map<String, String>, sentAtMs: Long?) {
         val push = RingPushParser.parse(data)
         if (push == null) {
             Log.w(TAG, "Ignored a push that is not a ring push (type=${data["type"]})")
@@ -73,14 +74,17 @@ internal object RingCoordinator {
         }
         onMain {
             val a = init(context)
-            val busy = (push is RingPush.Ring || push is RingPush.Test) && RingTelecom.busyOnPhone(a)
-            dispatch(RingEvent.Push(push, System.currentTimeMillis(), busy))
+            // What the phone says about calls; whether our own ring explains it is the state machine's call.
+            val phone = if (push is RingPush.Ring || push is RingPush.Test) RingTelecom.phoneSignals(a) else PhoneSignals.IDLE
+            dispatch(RingEvent.Push(push, System.currentTimeMillis(), phone, sentAtMs))
         }
     }
 
+    /** FCM's `onNewToken` and `onRegistered` both report the token: the same one again is not news (one PUT, not two). */
     fun onNewToken(context: Context, token: String) {
         onMain {
             init(context)
+            if (store?.token == token) return@onMain
             store?.token = token
             RingChannel.invoke("token", mapOf("token" to token))
         }
@@ -222,6 +226,8 @@ internal object RingCoordinator {
         val effects = machine.handle(event)
         for (e in effects) apply(e)
         val s = machine.state
+        // agent_audio reads this: our own ring's ringtone mode is not a cellular call.
+        OwnRing.live = s is RingState.Ringing || s is RingState.Answering
         for (l in listeners.toList()) l(s)
         return effects
     }
@@ -230,6 +236,10 @@ internal object RingCoordinator {
         val a = app ?: return
         when (effect) {
             is RingEffect.StartRinging -> startRinging(a, effect.call, effect.deadlineMs)
+            is RingEffect.RingByNotification -> {
+                Log.i(TAG, "Telecom refused a ring that replaced ours; ringing by the notification")
+                RingNotifications.showIncoming(a, effect.call, effect.deadlineMs, silent = effect.call.callId in silenced)
+            }
             is RingEffect.PostAnswering -> api?.answering(effect.callId, effect.offerToken)
             is RingEffect.PostDecline -> {
                 val done = declineDone
@@ -240,7 +250,7 @@ internal object RingCoordinator {
                 connections[effect.callId]?.setActive()
                 val call = machine.activeCall
                 if (call != null && call.callId == effect.callId && machine.state is RingState.Answering) {
-                    RingNotifications.showAnswering(a, call)
+                    RingNotifications.showAnswering(a, call, surfaceApp = effect.surfaceApp)
                 }
                 if (effect.surfaceApp) {
                     // Allowed only where the system lets a bound service start an activity; the
@@ -312,7 +322,7 @@ internal object RingCoordinator {
                 val s = machine.state
                 if (s is RingState.Ringing && s.call.callId == call.callId) {
                     Log.w(TAG, "Telecom did not ask for the ring's UI; showing it anyway")
-                    RingNotifications.showIncoming(a, s.call, s.deadlineMs, silent = false)
+                    RingNotifications.showIncoming(a, s.call, s.deadlineMs, silent = call.callId in silenced)
                 }
             }
             uiFallbacks[call.callId] = fallback
