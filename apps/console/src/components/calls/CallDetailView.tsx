@@ -617,6 +617,15 @@ function RecordingSection({
   }
 
   /*
+   * (e) The call was never answered, so there was never anything to record. Before
+   * the two branches below: both promise (or withhold) a recording, and a busy or
+   * unanswered call read "isn't available yet … check back soon" a day later.
+   */
+  if (!hasRecording && call.answered_at == null) {
+    return note('No recording: the call was not answered.');
+  }
+
+  /*
    * (c) Requested, and this product may not play it.
    *
    * Checked BEFORE the "still processing" branch, because from here the two are

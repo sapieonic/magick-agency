@@ -3,6 +3,7 @@ import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { carrierAccountPauseCopy } from './agencyCarriers';
 import { dedupeKeyName } from '../types/agency-campaign';
+import { dateFormatter } from './format/date';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -54,19 +55,24 @@ export function retentionNotice(retention: ActivityRetention | null): string | n
  * for "updated 5 minutes ago" and useless here — a whole audit flush shares one
  * displayed minute with no ordering cue, and a reviewer comparing the screen
  * against the CSV (which is ISO-8601 UTC) has nothing to reconcile them by.
+ *
+ * In the console's display locale (`utils/format/date`), like every other date it
+ * shows: `11 Nov 2026, 06:10:00 pm GMT+5:30`. It used to follow the browser's.
  */
+const ACTIVITY_TIMESTAMP: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  timeZoneName: 'short',
+};
+
 export function formatActivityTimestamp(at: string): string {
   const date = new Date(at);
   if (Number.isNaN(date.getTime())) return at;
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZoneName: 'short',
-  });
+  return dateFormatter(ACTIVITY_TIMESTAMP).format(date);
 }
 
 /**
@@ -363,4 +369,98 @@ export function activityTableCaption(campaignName: string | null): string {
   return campaignName
     ? `Activity log for ${campaignName}`
     : 'Activity log';
+}
+
+/**
+ * What each record type in the "On what" column is, in words. The server's own resource
+ * vocabulary (`PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY`), plus `call`, the target the
+ * dialer's rows carry. The cell used to print the raw type (`agency_manual_call`) beside
+ * a full UUID.
+ */
+export const ACTIVITY_TARGET_LABELS: Readonly<Record<string, string>> = {
+  agency_campaign: 'Campaign',
+  agency_session: 'Agent session',
+  agency_attempt: 'Call attempt',
+  // The row's id is the attempt the disposition was filed on.
+  agency_disposition: 'Call outcome',
+  agency_campaign_agent: 'Agent assignment',
+  agency_contact: 'Contact',
+  agency_manual_call: 'Soft-phone call',
+  agency_softphone_settings: 'Soft-phone settings',
+  customer_history: 'Customer history search',
+  agency_report: 'Report',
+  agency_report_subscription: 'Scheduled report',
+  agency_inbound_route: 'Inbound route',
+  agency_inbound_call: 'Inbound call',
+  agency_inbound_clip: 'Inbound recording',
+  dnc_entry: 'Do Not Call entry',
+  membership_invite: 'Invitation',
+  account: 'Account',
+  call: 'Call',
+};
+
+/** A record type in words; an unknown one reads as "Record" rather than as its code. */
+export function activityTargetLabel(type: string | null): string {
+  return (type && ACTIVITY_TARGET_LABELS[type]) || 'Record';
+}
+
+/**
+ * Where a row's target opens in the console, or `null` when it has no page of its own
+ * (then the id is shown short, copyable). Routes are written without the URL scope.
+ */
+export function activityTargetPath(
+  target: { type: string | null; id: string | null },
+  campaignId: string,
+): string | null {
+  if (!target.id) return null;
+  switch (target.type) {
+    case 'agency_attempt':
+    case 'agency_disposition':
+      return `/agency/campaigns/${campaignId}/attempts/${target.id}`;
+    case 'agency_contact':
+      return `/agency/campaigns/${campaignId}/contacts/${target.id}`;
+    case 'agency_manual_call':
+      return `/agency/softphone/calls/${target.id}`;
+    default:
+      return null;
+  }
+}
+
+/** What a raw detail key is, in words: `session_id` reads "Agent session". */
+const DETAIL_KEY_LABELS: Readonly<Record<string, string>> = {
+  session_id: 'Agent session',
+  dnc_entry_id: 'Do Not Call entry',
+  dnc_overridden: 'Called despite Do Not Call',
+  hours_overridden: 'Called outside calling hours',
+  disposition_code: 'Outcome',
+  on_behalf: 'On behalf of the agent',
+  note: 'Note',
+  reason: 'Reason',
+  replay: 'Saved again',
+};
+
+/**
+ * A detail key in words: the known ones by name, any other one turned into a sentence-case
+ * phrase (`call_id` → "Call", `retry_count` → "Retry count") rather than shown as a code.
+ */
+export function activityDetailKeyLabel(key: string): string {
+  const known = DETAIL_KEY_LABELS[key];
+  if (known) return known;
+  const words = key.replace(/_id$/, '').replace(/[_.]+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether a detail value is an id: shown short and copyable, not as 36 characters. */
+export function isActivityId(value: unknown): value is string {
+  return typeof value === 'string' && UUID.test(value);
+}
+
+/** A detail value in words: yes or no for a flag, the text as it is, anything else as JSON. */
+export function activityDetailValue(value: unknown): string {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
 }

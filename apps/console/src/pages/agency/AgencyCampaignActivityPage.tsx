@@ -20,8 +20,13 @@ import {
   ACTIVITY_SOURCE_LABEL,
   ACTIVITY_SOURCE_LEGEND,
   CLIENT_ACTOR_TOOLTIP,
+  activityDetailKeyLabel,
   activityDetailSummary,
+  activityDetailValue,
   activityTableCaption,
+  activityTargetLabel,
+  activityTargetPath,
+  isActivityId,
   formatActivityTimestamp,
   partialNotice,
   retentionNotice,
@@ -434,6 +439,14 @@ export function AgencyCampaignActivityPage() {
         </div>
       </header>
 
+      {/*
+        The campaign, by name. This page has no campaign header, and at phone width the
+        top bar shows only "History", so nothing else on screen said whose history it is.
+      */}
+      {campaign?.name && (
+        <p className={styles.campaignName} data-testid="history-campaign-name">{campaign.name}</p>
+      )}
+
       <PageDescription
         pageKey="agency-campaign-activity"
         description={
@@ -667,14 +680,7 @@ export function AgencyCampaignActivityPage() {
                       <ActorCell row={row} />
                     </td>
                     <td className={styles.target}>
-                      {row.target.id ? (
-                        <>
-                          <span className={styles.targetType}>{row.target.type ?? 'item'}</span>
-                          <code className={styles.targetId}>{row.target.id}</code>
-                        </>
-                      ) : (
-                        '—'
-                      )}
+                      {id ? <TargetCell target={row.target} campaignId={id} /> : '—'}
                     </td>
                     <td className={styles.detail}>
                       {summary ?? <RawDetail detail={row.detail} />}
@@ -837,13 +843,51 @@ function RawDetail({ detail }: { detail: Record<string, unknown> }) {
   if (entries.length === 0) return <span className={styles.noDetail}>—</span>;
   return (
     <ul className={styles.rawDetail}>
-      {entries.map(([key, value]) => (
-        <li key={key}>
-          <span className={styles.rawKey}>{key}</span>
-          <span>{typeof value === 'string' ? value : JSON.stringify(value)}</span>
-        </li>
-      ))}
+      {entries.map(([key, value]) => {
+        const label = activityDetailKeyLabel(key);
+        return (
+          <li key={key}>
+            <span className={styles.rawKey}>{label}</span>
+            {/* An id is shown short and copyable, not as 36 characters of the cell. */}
+            {isActivityId(value)
+              ? <TruncatedId value={value} label={`${label} ID`} className={styles.targetId} />
+              : <span>{activityDetailValue(value)}</span>}
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+/**
+ * The "On what" cell: what the row is about, in words, linked to its page where the
+ * console has one (a call, a contact, a soft-phone call). The campaign itself is "This
+ * campaign"; anything else shows its id short and copyable. It used to print the raw
+ * type and a full UUID (`agency_manual_call 6a16fcaf-…`).
+ */
+function TargetCell({
+  target,
+  campaignId,
+}: {
+  target: ActivityRow['target'];
+  campaignId: string;
+}) {
+  if (!target.id) return <>—</>;
+  if (target.type === 'agency_campaign' && target.id === campaignId) return <>This campaign</>;
+  const label = activityTargetLabel(target.type);
+  const path = activityTargetPath(target, campaignId);
+  if (path) {
+    return (
+      <Link to={path} className={styles.targetLink} title={target.id}>
+        {label}
+      </Link>
+    );
+  }
+  return (
+    <>
+      <span className={styles.targetType}>{label}</span>
+      <TruncatedId value={target.id} label={`${label} ID`} className={styles.targetId} />
+    </>
   );
 }
 

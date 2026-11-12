@@ -80,6 +80,20 @@
   word-break: break-all;
 }
 
+.targetLink {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-hover);
+}
+
+.campaignName {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .detail {
   max-width: 340px;
   line-height: 1.5;

@@ -66,6 +66,10 @@ const mocks = vi.hoisted(() => ({
       { allow_recording: boolean | null; analyze_calls: boolean | null } | null
     >
   >(),
+  /** The tenant's display names, under the agent-name enrichment (not mocked itself). */
+  findDisplayNamesInTenant: vi.fn<
+    (ids: readonly string[], tenantId: string) => Promise<Map<string, string | null>>
+  >(),
 }));
 
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
@@ -85,6 +89,9 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: { findByTenantAndAccount: mocks.findSettings },
+}));
+vi.mock('@magick-agency/db/repositories/user.repository', () => ({
+  userRepository: { findDisplayNamesInTenant: mocks.findDisplayNamesInTenant },
 }));
 
 /** The owner's two settings, which gate recording and analytics. */
@@ -164,6 +171,7 @@ beforeEach(() => {
   mocks.findCampaign.mockImplementation(async (id: string) => ({ id, tenant_id: TENANT, account_id: ACCOUNT }));
   setGrants({ recording: true, analytics: true });
   mocks.proxyToCore.mockResolvedValue({ status: 200, body: availableBody() });
+  mocks.findDisplayNamesInTenant.mockResolvedValue(new Map([['u-ravi', 'Ravi Menon']]));
 });
 
 describe('the plugin-level hooks actually run', () => {
@@ -612,6 +620,55 @@ describe('forwarding to the internal handler', () => {
       expect(res.body).not.toContain('nginx');
       await app.close();
     });
+  });
+});
+
+describe('the attempt names its agent, as the attempt list does', () => {
+  /**
+   * The call log's rows carry `agent_name` (`enrichAttemptAgentNames`); this read did
+   * not, so the call detail one click away named the agent by their user id.
+   */
+  it('puts the agent name beside the agent user id, looked up in this tenant', async () => {
+    const app = await buildApp();
+
+    const res = await app.inject({ method: 'GET', url: DETAIL });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().attempt).toMatchObject({ agent_user_id: 'u-ravi', agent_name: 'Ravi Menon' });
+    expect(mocks.findDisplayNamesInTenant).toHaveBeenCalledWith(['u-ravi'], TENANT);
+    await app.close();
+  });
+
+  it('names the agent on a purged call too, where the attempt is all there is', async () => {
+    mocks.proxyToCore.mockResolvedValue({ status: 200, body: purgedBody() });
+    const app = await buildApp();
+
+    const res = await app.inject({ method: 'GET', url: DETAIL });
+    expect(res.json().attempt.agent_name).toBe('Ravi Menon');
+    await app.close();
+  });
+
+  it('answers agent_name: null, without a lookup, for an attempt no agent took', async () => {
+    const body = availableBody();
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200, body: { ...body, attempt: { ...body.attempt, agent_user_id: null } },
+    });
+    const app = await buildApp();
+
+    const res = await app.inject({ method: 'GET', url: DETAIL });
+    expect(res.json().attempt.agent_name).toBeNull();
+    expect(mocks.findDisplayNamesInTenant).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('a failed name lookup still answers the read, with agent_name: null', async () => {
+    mocks.findDisplayNamesInTenant.mockRejectedValue(new Error('db down'));
+    const app = await buildApp();
+
+    const res = await app.inject({ method: 'GET', url: DETAIL });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().attempt).toMatchObject({ agent_user_id: 'u-ravi', agent_name: null });
+    await app.close();
   });
 });
 

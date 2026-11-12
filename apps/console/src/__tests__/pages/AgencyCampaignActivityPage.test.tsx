@@ -1040,3 +1040,73 @@ describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
     expect(await screen.findByText('system:abandonment-guardrail')).not.toBeNull();
   });
 });
+
+describe('the page names the campaign', () => {
+  it('under the heading, since at phone width the top bar says only "History"', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'CD 11TH NOV — Retry 1', status: 'paused' });
+    renderPage();
+    expect((await screen.findByTestId('history-campaign-name')).textContent).toBe('CD 11TH NOV — Retry 1');
+  });
+});
+
+describe('rows say what they are about in words', () => {
+  const SESSION = '8c1dab83-bba7-477c-abad-1271ba787ddc';
+  const MANUAL_CALL = '6a16fcaf-16c0-4969-93b6-5b099f66788f';
+  /** A soft-phone call placed: the row QA read as `agency_manual_call 6a16fcaf-…` and `session_id 8c1dab83-…`. */
+  const PLACED: ActivityRow = {
+    id: 'master:m-placed',
+    at: '2026-11-11T12:40:00.000Z',
+    source: 'master',
+    action: 'agency_manual_call.placed',
+    actor: { type: 'human', system: false, user_id: 'user-1', api_key_id: null, display: 'hari' },
+    target: { type: 'agency_manual_call', id: MANUAL_CALL },
+    detail: { session_id: SESSION, campaign_id: 'camp-1', dnc_overridden: true },
+  };
+  const JOINED: ActivityRow = {
+    ...PLACED,
+    id: 'master:m-joined',
+    action: 'agency_session.joined',
+    target: { type: 'agency_session', id: SESSION },
+    detail: {},
+  };
+
+  it('links a soft-phone call by name and shows no raw type or full id', async () => {
+    mocks.getCampaignActivity.mockResolvedValue(page({
+      rows: [PLACED, JOINED, DISPOSITION, AUTO_PAUSE],
+      available_actions: [
+        ...SERVED_ACTIONS,
+        { value: 'agency_manual_call.placed', label: 'Soft-phone call placed', group: 'Calls' },
+      ],
+    }));
+    renderPage();
+    await screen.findByTestId('activity-row-master:m-placed');
+
+    const placed = screen.getByTestId('activity-row-master:m-placed');
+    const link = within(placed).getByRole('link', { name: 'Soft-phone call' });
+    expect(link.getAttribute('href')).toBe(`/agency/softphone/calls/${MANUAL_CALL}`);
+    expect(placed.textContent).not.toContain('agency_manual_call');
+    expect(placed.textContent).not.toContain('session_id');
+    expect(placed.textContent).toContain('Agent session');
+    expect(placed.textContent).toContain('Called despite Do Not Call');
+    expect(placed.textContent).not.toContain(SESSION);
+    // The id is still reachable: copyable, and named in full for a screen reader.
+    expect(within(placed).getByRole('button', { name: new RegExp(`Agent session ID ${SESSION}`) })).toBeTruthy();
+  });
+
+  it('names a record with no page of its own, its id short', async () => {
+    mocks.getCampaignActivity.mockResolvedValue(page({ rows: [JOINED] }));
+    renderPage();
+    const joined = await screen.findByTestId('activity-row-master:m-joined');
+    expect(joined.textContent).toContain('Agent session');
+    expect(joined.textContent).not.toContain('agency_session');
+    expect(joined.textContent).not.toContain(SESSION);
+  });
+
+  it('links a disposition to the call it was filed on, and calls the campaign "This campaign"', async () => {
+    renderPage();
+    const disposition = await screen.findByTestId(`activity-row-${DISPOSITION.id}`);
+    expect(within(disposition).getByRole('link', { name: 'Call outcome' }).getAttribute('href'))
+      .toBe('/agency/campaigns/camp-1/attempts/attempt-9');
+    expect(screen.getByTestId(`activity-row-${AUTO_PAUSE.id}`).textContent).toContain('This campaign');
+  });
+});
