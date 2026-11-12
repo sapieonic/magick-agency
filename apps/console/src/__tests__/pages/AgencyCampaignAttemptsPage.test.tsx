@@ -840,3 +840,38 @@ describe('a phone filter with no digits is caught in the form', () => {
     expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
   });
 });
+
+describe('a phone number still being typed', () => {
+  it('is not an error at its first "+", is said on Apply, and is never sent', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const calls = mocks.getCampaignAttempts.mock.calls.length;
+    const field = screen.getByPlaceholderText('Number or last digits');
+
+    fireEvent.change(field, { target: { value: '+' } });
+    expect(screen.queryByTestId('attempts-phone-unusable')).toBeNull();
+    expect(field.getAttribute('aria-invalid')).toBeNull();
+    expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByText('Apply'));
+    expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+
+    // A digit clears it, and Apply sends it.
+    fireEvent.change(field, { target: { value: '+9' } });
+    expect(screen.queryByTestId('attempts-phone-unusable')).toBeNull();
+    fireEvent.click(screen.getByText('Apply'));
+    await waitFor(() => expect(currentQuery().get('phone')).toBe('+9'));
+  });
+});
+
+describe('a link whose dates are the wrong way round', () => {
+  it('says to swap them, not that a date cannot be read', async () => {
+    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('from', '`from` must not be later than `to`'));
+    renderWithLocation('?from=2026-08-20T00:00:00.000Z&to=2026-08-10T00:00:00.000Z');
+
+    const alert = await screen.findByText(/The “From” date is after the “To” date/);
+    expect(alert.textContent).not.toContain('not a date this list can use');
+  });
+});

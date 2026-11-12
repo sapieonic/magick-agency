@@ -225,6 +225,21 @@ export function campaignAttemptAgentOptions(
   return options;
 }
 
+/** The call log form's own words for a date range the wrong way round. */
+export const INVERTED_RANGE_COPY = 'The “From” date is after the “To” date, so nothing could match. Swap them to continue.';
+const INVERTED_DIALLED_RANGE_COPY = 'The dialled “From” date is after the dialled “To” date, so nothing could match.';
+
+/**
+ * The server names `from` (or `dialed_from`) both for a date it cannot read and for a range
+ * the wrong way round, with no code to tell them apart: its message is what does
+ * ("`from` must not be later than `to`", "`dialed_from` must be earlier than `dialed_to`").
+ */
+function isInvertedRange(param: string, message: unknown): boolean {
+  return (param === 'from' || param === 'dialed_from')
+    && typeof message === 'string'
+    && /must (not be later|be earlier) than/.test(message);
+}
+
 /** Plain copy for each filter the server can refuse, by its query parameter. */
 const FILTER_REFUSAL_COPY: Record<string, string> = {
   phone: 'The phone number filter needs at least one digit.',
@@ -252,15 +267,35 @@ export function campaignAttemptFilterRefusal(err: unknown): string | null {
   const body = (err as { details?: unknown }).details;
   const issues = body && typeof body === 'object' ? (body as { details?: unknown }).details : null;
   if (!Array.isArray(issues)) return null;
-  const params = issues
-    .map((issue) => (issue && typeof issue === 'object' ? (issue as { param?: unknown }).param : null))
-    .filter((param): param is string => typeof param === 'string');
-  if (params.length === 0) return null;
-  const sentences = [...new Set(params.map((p) => FILTER_REFUSAL_COPY[p] ?? 'One of the filters cannot be used.'))];
+  const named = issues
+    .filter((issue): issue is { param: string; message?: unknown } => (
+      Boolean(issue) && typeof issue === 'object' && typeof (issue as { param?: unknown }).param === 'string'
+    ));
+  if (named.length === 0) return null;
+  const sentences = [...new Set(named.map(({ param, message }) => {
+    if (isInvertedRange(param, message)) return param === 'from' ? INVERTED_RANGE_COPY : INVERTED_DIALLED_RANGE_COPY;
+    return FILTER_REFUSAL_COPY[param] ?? 'One of the filters cannot be used.';
+  }))];
   return `${sentences.join(' ')} Change or remove it above to see the call log.`;
 }
 
 /** Whether a typed phone filter can match anything: it needs a digit (the server's rule). */
 export function phoneFilterUsable(value: string): boolean {
   return value.trim() === '' || /\d/.test(value);
+}
+
+/** What the call log and the roster say about a phone filter with no digit in it. */
+export const PHONE_FILTER_UNUSABLE_COPY = 'Type at least one digit of the phone number.';
+
+/**
+ * What to say under a phone filter as it is typed, or null. Shared by the call log and the
+ * roster, whose server rule is the same. A number is usually begun with `+` (or a bracket), so
+ * a draft made only of `+ - ( )` and spaces is a number still being typed: nothing is said
+ * until the person presses Apply (`checked`). Anything else without a digit ("abc") is said at
+ * once. Apply itself goes only when {@link phoneFilterUsable}.
+ */
+export function phoneFilterDraftError(value: string, checked: boolean): string | null {
+  if (phoneFilterUsable(value)) return null;
+  if (!checked && /^[\s+\-()]*$/.test(value)) return null;
+  return PHONE_FILTER_UNUSABLE_COPY;
 }
