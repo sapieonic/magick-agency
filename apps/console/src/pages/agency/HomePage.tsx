@@ -97,6 +97,7 @@ export default function HomePage() {
         )}
       </header>
 
+      {/* The hook's copy (`HOME_BOARD_ERROR`), never the server's text. */}
       {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={board.reload} />}
       {(board.status === 'loading' || board.status === 'idle') && <LoadingSpinner />}
 
@@ -177,32 +178,39 @@ export default function HomePage() {
               )}
             </section>
           )}
-
-          <section className={styles.card} aria-labelledby="home-today-heading">
-            <div className={styles.cardHead}>
-              <h2 id="home-today-heading" className={styles.cardTitle}>Today so far</h2>
-              <Link to="/agency/analytics" className={styles.cardLink}>Open Reports</Link>
-            </div>
-            {today.status === 'loading' && <p className={styles.quiet}>Loading today’s numbers…</p>}
-            {today.status === 'unavailable' && <p className={styles.quiet}>Today’s numbers didn’t load.</p>}
-            {today.status === 'ready' && (
-              <>
-                <dl className={styles.tiles} data-testid="home-today">
-                  <Tile label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
-                  <Tile label="Conversations" value={formatCount(today.totals.conversations)} />
-                  <Tile label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals) ?? undefined} />
-                  <Tile label="Talk time" value={durationWords(today.totals.talkSeconds)} />
-                </dl>
-                <p className={styles.cardNote}>
-                  Since midnight your time, every campaign in this account. A success is a call whose outcome
-                  the campaign marks ‘Counts as a success’.
-                </p>
-              </>
-            )}
-          </section>
         </>
       )}
+
+      {/* Its own read, so it shows whatever became of the board's. */}
+      <TodaySoFar today={today} />
     </div>
+  );
+}
+
+function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
+  return (
+    <section className={styles.card} aria-labelledby="home-today-heading">
+      <div className={styles.cardHead}>
+        <h2 id="home-today-heading" className={styles.cardTitle}>Today so far</h2>
+        <Link to="/agency/analytics" className={styles.cardLink}>Open Reports</Link>
+      </div>
+      {today.status === 'loading' && <p className={styles.quiet}>Loading today’s numbers…</p>}
+      {today.status === 'unavailable' && <p className={styles.quiet}>Today’s numbers didn’t load.</p>}
+      {today.status === 'ready' && (
+        <>
+          <dl className={styles.tiles} data-testid="home-today">
+            <Tile label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
+            <Tile label="Conversations" value={formatCount(today.totals.conversations)} />
+            <Tile label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals) ?? undefined} />
+            <Tile label="Talk time" value={durationWords(today.totals.talkSeconds)} />
+          </dl>
+          <p className={styles.cardNote}>
+            Since midnight your time, every campaign in this account. A success is a call whose outcome
+            the campaign marks ‘Counts as a success’.
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 
