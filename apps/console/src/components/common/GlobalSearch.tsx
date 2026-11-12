@@ -6,7 +6,7 @@ import { useNavGate } from '../../hooks/useNavGate';
 import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
 import { useCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
-import { browserStorage } from '../../utils/customerSearchRecent';
+import { browserStorage } from '../../utils/browserStorage';
 import { readRecentCampaigns } from '../../utils/recentCampaigns';
 import { plural } from '../../utils/format/number';
 import {
@@ -59,7 +59,7 @@ export function GlobalSearch({ open, onOpenChange: setOpen }: GlobalSearchProps)
   // Global shortcut: Cmd+K / Ctrl+K toggles.
   useEffect(() => {
     function handleGlobalKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === 'k') {
         e.preventDefault();
         if (openRef.current) close(true);
         else setOpen(true);
@@ -83,7 +83,13 @@ function Palette({ onClose }: DialogProps) {
   const gate = useNavGate({ missed: true });
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  /*
+    The highlighted result, by its key rather than its place: the list changes without any typing
+    (recent campaigns resolving, the campaign list arriving, the missed-calls gate settling), and
+    a highlight held by position would then sit on another result, which Enter would open. Null,
+    or a key no longer listed: the first row.
+  */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const store = useMemo(() => browserStorage(), []);
@@ -116,6 +122,7 @@ function Palette({ onClose }: DialogProps) {
     [query, gate, accountId, callingCode, campaigns, recentCampaigns],
   );
   const flat = useMemo(() => answer.groups.flatMap((g) => g.results), [answer]);
+  const selectedIndex = Math.max(0, selectedKey === null ? 0 : flat.findIndex((r) => r.key === selectedKey));
 
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 50);
@@ -155,12 +162,12 @@ function Palette({ onClose }: DialogProps) {
       }
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        if (flat.length > 0) setSelectedIndex((prev) => (prev < flat.length - 1 ? prev + 1 : 0));
+        if (flat.length > 0) setSelectedKey(flat[selectedIndex < flat.length - 1 ? selectedIndex + 1 : 0]!.key);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        if (flat.length > 0) setSelectedIndex((prev) => (prev > 0 ? prev - 1 : flat.length - 1));
+        if (flat.length > 0) setSelectedKey(flat[selectedIndex > 0 ? selectedIndex - 1 : flat.length - 1]!.key);
         return;
       }
       if (e.key === 'Enter') {
@@ -229,7 +236,7 @@ function Palette({ onClose }: DialogProps) {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              setSelectedIndex(0);
+              setSelectedKey(null);
               clearNumberError();
             }}
           />
@@ -262,7 +269,7 @@ function Palette({ onClose }: DialogProps) {
                       className={`${styles.resultItem} ${isSelected ? styles.resultItemSelected : ''}`}
                       onClick={() => choose(result)}
                       onMouseMove={() => {
-                        if (selectedIndex !== idx) setSelectedIndex(idx);
+                        if (selectedIndex !== idx) setSelectedKey(result.key);
                       }}
                       role="option"
                       aria-selected={isSelected}
