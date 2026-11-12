@@ -28,6 +28,18 @@ describe('parseConfig', () => {
     expect(rollup({ AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE: 'many' })).toBeNull();
   });
 
+  it('agency.awayRingMaxMs (Mode B, IQ67): 4 h by default, read from the env, 1 min to 24 h', () => {
+    const maxAge = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? result.config.agency.awayRingMaxMs : null;
+    };
+    expect(maxAge({})).toBe(4 * 60 * 60 * 1000);
+    expect(maxAge({ AGENCY_AWAY_RING_MAX_MS: '7200000' })).toBe(7_200_000);
+    expect(maxAge({ AGENCY_AWAY_RING_MAX_MS: '59999' })).toBeNull();
+    expect(maxAge({ AGENCY_AWAY_RING_MAX_MS: String(24 * 3_600_000 + 1) })).toBeNull();
+    expect(maxAge({ AGENCY_AWAY_RING_MAX_MS: 'forever' })).toBeNull();
+  });
+
   it('agency.customerHistory: 30 a minute, 30 minutes, 10,000 rows by default, read from the env, bounded', () => {
     const history = (env: Record<string, string>) => {
       const result = parseConfig({ ...valid, ...env });

@@ -38,9 +38,9 @@ import {
 /**
  * SNAPSHOT — written out by hand, deliberately not derived from the list under test.
  *
- * 28 members: 16 before `session_on_other_campaign` and `agent_on_live_call`, 18 before
+ * 29 members: 16 before `session_on_other_campaign` and `agent_on_live_call`, 18 before
  * `not_staffed`, 19 before `state_changing`, 20 before the six wrap-up redial codes, 26 before
- * `station_on_other_device` and `session_in_other_tenant`.
+ * `station_on_other_device` and `session_in_other_tenant`, 28 before `agent_away_ring`.
  */
 const CORE_FIXTURE_ACTION_ERROR_CODES = [
   'missing_actor',
@@ -71,6 +71,7 @@ const CORE_FIXTURE_ACTION_ERROR_CODES = [
   'redial_blocked',
   'station_on_other_device',
   'session_in_other_tenant',
+  'agent_away_ring',
 ];
 
 // ── Type-level: the lists are exactly their unions (the runtime twin of the
@@ -102,8 +103,8 @@ describe('action error codes', () => {
     expect([...AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
   });
 
-  it('has 28 members, all distinct', () => {
-    expect(AGENCY_ACTION_ERROR_CODES).toHaveLength(28);
+  it('has 29 members, all distinct', () => {
+    expect(AGENCY_ACTION_ERROR_CODES).toHaveLength(29);
     expectUnique(AGENCY_ACTION_ERROR_CODES);
   });
 

@@ -176,6 +176,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-inbound/shared.ts', // the `CoreCallResult` type only; calls nothing
       'api/routes/proxy-agency-performance/floor.ts',
       'api/routes/proxy-agency-performance/per-agent.ts',
+      'api/routes/proxy-agency-push-devices.routes.ts', // Mode B: the agent app's push devices
       'api/routes/proxy-agency-softphone/calls.ts',
       'api/routes/proxy-agency-softphone/reads.ts',
       'api/routes/proxy-agency-softphone/sessions.ts',

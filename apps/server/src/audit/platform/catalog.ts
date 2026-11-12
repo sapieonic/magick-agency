@@ -58,6 +58,12 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // the from-state and whether the start was queued behind a call or wrap-up.
   'agency_session.softphone_started',
   'agency_session.softphone_ended',
+  // Mode B (IQ67): the server ended an agent's `away_ring` (their phone stopped ringing for
+  // inbound callers): `details.reason` is the `ring_off` reason (`ring_missed`, `max_age`,
+  // `flag_off`, `revoked`, `opted_out`, `taken_over`), with the state it left and the one it wrote
+  // (`device_away` on a break, or `offline`). The system actor, unless the agent's own "Stop
+  // ringing" or device removal ended it. Ids only.
+  'agency_session.away_ring_ended',
   'agency_attempt.hung_up',
   // Wrap-up redial: the agent redialled the customer from wrap-up (`wrapup-redial.ts`).
   'agency_attempt.redialed',
@@ -159,6 +165,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // filed under the recording (`audio_files.id`). Account-wide.
   'agency_inbound_clip.uploaded',
   'agency_inbound_clip.deleted',
+  // Mode B (IQ65): an agent turned ringing on or off for one of their phones (`details.ring_enabled`,
+  // the device id), or removed the phone (`DELETE`, sign-out). Filed under the device row
+  // (`agency_push_devices.id`). Never a push token.
+  'agency_push_device.ring_opt_in_changed',
+  'agency_push_device.revoked',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -209,6 +220,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_inbound_call',
   // One recording (`audio_files.id`) uploaded for inbound routes.
   'agency_inbound_clip',
+  // One of an agent's push devices (`agency_push_devices.id`; Mode B).
+  'agency_push_device',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

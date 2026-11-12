@@ -81,10 +81,14 @@ export function breakReasonFor(
  *    outcome. The claim is cleared by the outcome save or the lapse sweep, which return the agent.
  *
  * Every other state is renewed by its owner (`reserved`, `on_call`: the attempt's or the inbound
- * call's 5 s renewer) or by nothing (`offline`).
+ * call's 5 s renewer) or by nothing (`offline`, and `break` on `away_ring`: Mode B, N2).
  */
 export function heartbeatLeaseMs(live: AgentLiveState | null, holdsWrapup: boolean): number | null {
   if (!live) return null;
+  // Mode B (N2): `away_ring`'s key has the time left to `AGENCY_AWAY_RING_MAX_MS` as its TTL and
+  // nothing renews it. A station still attached in the moment before the app parks its socket must
+  // not cut that to the 45 s `break` lease with a ping.
+  if (live.ring) return null;
   if (live.state === 'available') return AGENT_LEASE_MS.available;
   if (live.state === 'break') return AGENT_LEASE_MS.break;
   if (live.state === 'wrapup' && (holdsWrapup || live.inboundCallId !== null)) return AGENT_LEASE_MS.wrapup;

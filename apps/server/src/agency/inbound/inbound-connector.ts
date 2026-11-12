@@ -490,6 +490,17 @@ export class InboundConnector {
     return !!held && (held.phase === 'connected' || (held.phase === 'offered' && held.bound));
   }
 
+  // ── Mode B hook (added by WP2; WP5 owns this file and implements it) ──────────────────────
+  /**
+   * Whether the session holds a PUSH offer (IQ66: a ring to the away agent's phone, or an answered
+   * ring in its accept grace). Synchronous, beside {@link hasLiveCall}: the station close decides
+   * presence from it with nothing awaited (`AgencyRuntime.releaseStationOnClose`), and the away-ring
+   * reconcile and ends skip a session it answers true for (N1). False until WP5 lands the ring.
+   */
+  holdsPushOffer(_sessionId: string): boolean {
+    return false;
+  }
+
   /** The queue as it stands, per route, for the supervisor's tile (docs/inbound.md §6). */
   queueSnapshot(): InboundQueueSnapshot[] {
     const connected = new Map<string, number>();

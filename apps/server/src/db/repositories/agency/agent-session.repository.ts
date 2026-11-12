@@ -7,7 +7,15 @@ import type {
   AgencyCampaignSessionRecord,
   AgencyStationAttachRecord,
 } from '../../models/agency.model.js';
-import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyClientKind, type AgencySessionKind } from '@magick-agency/contracts/agency';
+import {
+  AWAY_RING_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON,
+  SOFTPHONE_BREAK_REASON,
+  type AgencyAgentState,
+  type AgencyClientKind,
+  type AgencyPushPlatform,
+  type AgencySessionKind,
+} from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -51,7 +59,14 @@ type AgencyAgentJoinResult =
  * `held_elsewhere` carries the app that last attached the station, for the refusal's copy.
  */
 export type AgencyStationDeviceClaim =
-  | { ok: true }
+  /**
+   * This device holds the station. `endedAwayRing`: the claim moved the station off the device
+   * that held it while the session was on `away_ring` (or ringing from it), which ended it in the
+   * same statement (IQ67, M5): `away_ring_since` cleared, a `break/away_ring` row rewritten to
+   * `device_away`. The caller clears Redis's `ring` and tells the old device (`ring_off`,
+   * `taken_over`).
+   */
+  | { ok: true; endedAwayRing?: { previousDeviceId: string | null } }
   | { ok: false; reason: 'held_elsewhere'; client_kind: AgencyClientKind }
   | { ok: false; reason: 'session_gone' };
 
@@ -164,6 +179,42 @@ function sessionTransitionSql(input: { prevWhere: string; set: string; where?: s
                  prev.state AS from_state, prev.break_reason AS from_break_reason,
                  s.state AS to_state, s.break_reason,
                  ${TRANSITION_AT_SQL}`;
+}
+
+/**
+ * A live session on `away_ring` or ringing from it (`away_ring_since IS NOT NULL`, N1), as the
+ * reconcile reads it (`AwayRingService.reconcile`), with the push device that holds its station
+ * (`agency_push_devices` on `(agent_user_id, station_device_id)`; every `device_*` NULL when none).
+ * Never a token: only whether one is registered.
+ */
+export interface AgencyAwayRingCandidate {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  campaign_id: string | null;
+  kind: AgencySessionKind;
+  agent_user_id: string;
+  state: AgencyAgentState;
+  break_reason: string | null;
+  state_since: Date;
+  away_ring_since: Date;
+  station_device_id: string | null;
+  device_platform: AgencyPushPlatform | null;
+  device_ring_enabled: boolean | null;
+  device_revoked: boolean | null;
+  device_has_token: boolean | null;
+}
+
+/** What {@link AgencyAgentSessionRepository.endAwayRing} ended: the session's identity, for the push and the audit. */
+export interface AgencyAwayRingEnded {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  campaign_id: string | null;
+  agent_user_id: string;
+  station_device_id: string | null;
+  /** The state the row was in (`break`, `offline` after a restart, `reserved` mid-ring). */
+  from_state: AgencyAgentState;
 }
 
 export class AgencyAgentSessionRepository {
@@ -647,25 +698,54 @@ export class AgencyAgentSessionRepository {
     // One statement: `cur` locks the live row, `upd` writes only when the holder changes (a
     // reconnect from the holder writes nothing, so `updated_at` does not move on every mint),
     // and the outer read decides from the same locked row.
-    const { rows } = await getPool().query<{ client_kind: AgencyClientKind; holder: string | null; moved: boolean }>(
+    //
+    // Mode B (IQ67, M5): a move that takes the station off the device that holds it while the
+    // session is on `away_ring` (or ringing from it: `away_ring_since` is set) ends `away_ring` in
+    // the same statement, so no reader ever sees the station on the new device with the session
+    // still ringable for the old one: `away_ring_since` is cleared, and a `break/away_ring` row is
+    // rewritten to `break/device_away` (a ring in flight keeps its state; its end is the
+    // connector's). The rewrite is a transition, logged below.
+    const { rows } = await getPool().query<{
+      client_kind: AgencyClientKind;
+      holder: string | null;
+      moved: boolean;
+      ended_away_ring: boolean;
+      transition: AgencySessionTransitionRow | null;
+    }>(
       `WITH cur AS (
-         SELECT id, station_device_id, client_kind FROM agency_agent_sessions
+         SELECT id, station_device_id, client_kind, state, break_reason, away_ring_since FROM agency_agent_sessions
           WHERE id = $1 AND left_at IS NULL
           FOR UPDATE
        ), upd AS (
          UPDATE agency_agent_sessions s
-            SET station_device_id = $2::varchar
+            SET station_device_id = $2::varchar,
+                away_ring_since = NULL,
+                break_reason = CASE WHEN cur.state = 'break' AND cur.break_reason = $5::varchar
+                                    THEN $6::varchar ELSE s.break_reason END,
+                state_since = CASE WHEN cur.state = 'break' AND cur.break_reason = $5::varchar
+                                   THEN now() ELSE s.state_since END
            FROM cur
           WHERE s.id = cur.id
             AND cur.station_device_id IS DISTINCT FROM $2::varchar
             AND (($2::varchar IS NULL AND NOT $4::boolean) OR $3::boolean OR cur.station_device_id IS NULL)
-          RETURNING s.id
+          RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
+                    cur.state AS from_state, cur.break_reason AS from_break_reason,
+                    s.state AS to_state, s.break_reason,
+                    ${TRANSITION_AT_SQL},
+                    cur.away_ring_since IS NOT NULL AS ended_away_ring
        )
-       SELECT cur.client_kind, cur.station_device_id AS holder, EXISTS (SELECT 1 FROM upd) AS moved FROM cur`,
-      [sessionId, deviceId, takeOver && deviceId !== null, reconnect],
+       SELECT cur.client_kind, cur.station_device_id AS holder, EXISTS (SELECT 1 FROM upd) AS moved,
+              COALESCE((SELECT ended_away_ring FROM upd), false) AS ended_away_ring,
+              (SELECT to_jsonb(upd) - 'ended_away_ring' FROM upd) AS transition
+         FROM cur`,
+      [sessionId, deviceId, takeOver && deviceId !== null, reconnect, AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON],
     );
     const row = rows[0];
     if (!row) return { ok: false, reason: 'session_gone' };
+    if (row.moved && row.ended_away_ring) {
+      if (row.transition) await this.recordTransitions([row.transition]);
+      return { ok: true, endedAwayRing: { previousDeviceId: row.holder } };
+    }
     if (row.moved || row.holder === deviceId) return { ok: true };
     return { ok: false, reason: 'held_elsewhere', client_kind: row.client_kind };
   }
@@ -750,16 +830,121 @@ export class AgencyAgentSessionRepository {
 
   async setState(id: string, state: AgencyAgentState, breakReason?: string | null): Promise<void> {
     const keepReason = state === 'offline' && breakReason === undefined;
+    // Mode B (N1, IQ62): `away_ring_since` is the reconcile's key, so every real end of `away_ring`
+    // clears it here, in the same write: `available`, `offline`, and any break but `away_ring`
+    // itself. A ring's own moves (`reserved`, then `on_call` and `wrapup` once answered) keep it:
+    // the ring's end returns the session to `away_ring` (`restoreAwayRing`) or its release to
+    // `available` ends it. `break/away_ring` stamps it once per absence (COALESCE: a return to
+    // `away_ring` keeps the absence's start). `available` also resets the missed rings.
+    const awayRingSince = keepReason
+      ? 'NULL'
+      : `CASE WHEN $2::varchar = 'break' AND $3::varchar = '${AWAY_RING_BREAK_REASON}' THEN COALESCE(s.away_ring_since, now())
+              WHEN $2::varchar IN ('reserved', 'on_call', 'wrapup') THEN s.away_ring_since
+              ELSE NULL END`;
+    const ringMisses = keepReason ? 's.ring_misses' : "CASE WHEN $2::varchar = 'available' THEN 0 ELSE s.ring_misses END";
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
       sessionTransitionSql({
         prevWhere: 'id = $1',
         set: keepReason
-          ? 'state = $2, state_since = now(), updated_at = now()'
-          : 'state = $2, break_reason = $3, state_since = now(), updated_at = now()',
+          ? `state = $2::varchar, state_since = now(), updated_at = now(), away_ring_since = ${awayRingSince}`
+          : `state = $2::varchar, break_reason = $3::varchar, state_since = now(), updated_at = now(),
+             away_ring_since = ${awayRingSince}, ring_misses = ${ringMisses}`,
       }),
       keepReason ? [id, state] : [id, state, breakReason ?? null],
     );
     await this.recordTransitions(rows);
+  }
+
+  // ─── Mode B: `away_ring` (IQ66, IQ67, N1) ───────────────────────────────────
+
+  /**
+   * A ring that ended unanswered restores the mirror (N1): `break/away_ring` again, only while the
+   * session is live and still on its absence (`away_ring_since` set: nothing ended it meanwhile).
+   * The ring's `setState('reserved')` nulled the reason; `releaseInboundToAwayRing` (Redis) and this
+   * are the pair `AwayRingService.releaseInbound` runs. True: written.
+   */
+  async restoreAwayRing(id: string): Promise<boolean> {
+    const { rows } = await getPool().query<AgencySessionTransitionRow>(
+      sessionTransitionSql({
+        prevWhere: 'id = $1 AND left_at IS NULL AND away_ring_since IS NOT NULL',
+        set: `state = 'break', break_reason = $2::varchar, state_since = now(), updated_at = now()`,
+      }),
+      [id, AWAY_RING_BREAK_REASON],
+    );
+    await this.recordTransitions(rows);
+    return rows.length > 0;
+  }
+
+  /**
+   * End `away_ring` in the mirror (IQ67): `device_away`, on `break` (a station is attached) or
+   * `offline` (none), and `away_ring_since` cleared. Only a live row still on its absence; null
+   * when there is none (something else ended it first). Returns what the push and the audit need.
+   */
+  async endAwayRing(id: string, state: 'break' | 'offline'): Promise<AgencyAwayRingEnded | null> {
+    const { rows } = await getPool().query<AgencySessionTransitionRow & { station_device_id: string | null }>(
+      `${sessionTransitionSql({
+        prevWhere: 'id = $1 AND left_at IS NULL AND away_ring_since IS NOT NULL',
+        set: `state = $2::varchar, break_reason = $3::varchar, state_since = now(), updated_at = now(), away_ring_since = NULL`,
+      })}, s.station_device_id`,
+      [id, state, DEVICE_AWAY_BREAK_REASON],
+    );
+    await this.recordTransitions(rows);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.session_id,
+      tenant_id: row.tenant_id,
+      account_id: row.account_id,
+      campaign_id: row.campaign_id,
+      agent_user_id: row.agent_user_id,
+      station_device_id: row.station_device_id,
+      from_state: row.from_state ?? 'offline',
+    };
+  }
+
+  /**
+   * Drop `away_ring_since` alone (no state written, nothing logged): the reconcile found Redis off
+   * `away_ring` with nothing in flight, so whatever moved it already ended the absence and only
+   * the mirror's key was left behind.
+   */
+  async clearAwayRingSince(id: string): Promise<void> {
+    await getPool().query(
+      'UPDATE agency_agent_sessions SET away_ring_since = NULL, updated_at = now() WHERE id = $1 AND away_ring_since IS NOT NULL',
+      [id],
+    );
+  }
+
+  /** Every live session on `away_ring` or ringing from it, with its station's push device (N1). */
+  async findAwayRingCandidates(): Promise<AgencyAwayRingCandidate[]> {
+    const { rows } = await getPool().query<AgencyAwayRingCandidate>(
+      `SELECT s.id, s.tenant_id, s.account_id, s.campaign_id, s.kind, s.agent_user_id, s.state, s.break_reason,
+              s.state_since, s.away_ring_since, s.station_device_id,
+              d.platform AS device_platform,
+              d.ring_enabled AS device_ring_enabled,
+              CASE WHEN d.id IS NULL THEN NULL ELSE d.revoked_at IS NOT NULL END AS device_revoked,
+              CASE WHEN d.id IS NULL THEN NULL
+                   ELSE (CASE WHEN d.platform = 'android' THEN d.fcm_token ELSE d.voip_token END) IS NOT NULL END AS device_has_token
+         FROM agency_agent_sessions s
+         LEFT JOIN agency_push_devices d ON d.user_id = s.agent_user_id AND d.device_id = s.station_device_id
+        WHERE s.away_ring_since IS NOT NULL AND s.left_at IS NULL
+        ORDER BY s.away_ring_since`,
+    );
+    return rows;
+  }
+
+  /**
+   * The agent's live session whose station `deviceId` holds while it is on `away_ring` (or ringing
+   * from it), in any tenant (one live session per agent, OS1): what "Stop ringing" and a removed
+   * device end.
+   */
+  async findLiveAwayRingForDevice(agentUserId: string, deviceId: string): Promise<AgencyAgentSessionRecord | null> {
+    const { rows } = await getPool().query<AgencyAgentSessionRecord>(
+      `SELECT * FROM agency_agent_sessions
+        WHERE agent_user_id = $1 AND station_device_id = $2 AND left_at IS NULL AND away_ring_since IS NOT NULL
+        LIMIT 1`,
+      [agentUserId, deviceId],
+    );
+    return rows[0] ?? null;
   }
 
   /**
@@ -827,7 +1012,7 @@ export class AgencyAgentSessionRepository {
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
       sessionTransitionSql({
         prevWhere: 'id = $1',
-        set: "state = 'offline', left_at = now(), updated_at = now()",
+        set: "state = 'offline', left_at = now(), updated_at = now(), away_ring_since = NULL",
         where: 's.left_at IS NULL',
       }),
       [id],

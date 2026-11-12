@@ -1,0 +1,505 @@
+/**
+ * `away_ring`: the away break whose phone is rung for inbound callers (Mode B, IQ58–IQ74,
+ * docs/inbound.md "Ringing an away phone"). The runtime owns one {@link AwayRingService}
+ * (`runtime.awayRing`); the session routes, the push-device routes, the dialer's release, the
+ * station rehydrate and the bootstrap's reconcile go through it, and the inbound connector's ring
+ * (WP5) ends each unanswered ring with {@link AwayRingService.releaseInbound}.
+ *
+ * The state lives in two places, written in this order:
+ *  - Redis (`agent-state-machine.ts`): `state = break, ring = 1`, a key no heartbeat renews, whose
+ *    TTL is the time left to the maximum age (IQ67, N2);
+ *  - the mirror (`agency_agent_sessions`): `break/away_ring`, and `away_ring_since`, the start of
+ *    this absence, which survives the rings (each rewrites `state_since`) and the restart's
+ *    `markAllOffline`, and keys the reconcile (N1).
+ *
+ * Every END of `away_ring` (IQ67) is `device_away`, then `offline` when no station socket is here
+ * (as `device_away` with no socket always ends), with `away_ring_since` cleared and, when the
+ * server ended it, a `ring_off` push (`reason`) so the phone's "rings this phone" notification
+ * never lies. A ring in flight (the session holds an inbound call, or the connector holds a push
+ * offer for it) is never ended here: its end is the connector's, on the call's own chain (N1).
+ */
+import { createChildLogger } from '@magick-agency/observability';
+import {
+  AWAY_RING_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON,
+  type AgencyAgentState,
+  type AgencyAwayRingRefusal,
+  type AgencyAwayRingRefusalCode,
+  type AgencyRingOffReason,
+} from '@magick-agency/contracts/agency';
+import { pushTokenOf, type PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
+import {
+  agencyAgentSessionRepository,
+  agencyPushDeviceRepository,
+  type AgencyAwayRingCandidate,
+} from '../db/repositories/agency.repository.js';
+import { isCampaignSession, type AgencyAgentSessionRecord } from '../db/models/agency.model.js';
+import { getPushSender } from '../seams/push-sender.js';
+import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
+import { platformAuditLogger } from '../audit/platform/audit-logger.js';
+import { SYSTEM_AUDIT_ACTOR, type AuditActorFields } from '../audit/platform/audit-actor.js';
+import { AGENCY_AWAY_RING_MAX_MS_DEFAULT } from '../config/blocks/agency.js';
+import type { AgentStateMachine } from './agent-state-machine.js';
+import type { StationRegistry } from './station-registry.js';
+import type { InboundConnector } from './inbound/inbound-connector.js';
+
+const log = createChildLogger({ component: 'agency-away-ring' });
+
+/** How long a `ring_off` push may wait at the carrier for a phone that is offline. */
+export const RING_OFF_PUSH_TTL_MS = 60 * 60 * 1000;
+/** How long a `test_ring` push may wait at the carrier: a test nobody sees within a minute is moot. */
+export const TEST_RING_PUSH_TTL_MS = 60 * 1000;
+/** The reconcile's period (IQ67): at boot, then every minute. */
+export const AWAY_RING_RECONCILE_MS = 60_000;
+
+/** The states a queued `away_ring` is applied from by the release at the end of a call or wrap-up. */
+const RELEASE_FROM_STATES: readonly AgencyAgentState[] = ['reserved', 'on_call', 'wrapup', 'available', 'break'];
+
+/** English fallback copy for each refusal; the app words each code itself. */
+const REFUSAL_MESSAGES: Readonly<Record<AgencyAwayRingRefusalCode, string>> = {
+  ring_not_allowed: 'Ringing your phone for inbound calls is not available. You are paused as away instead when you leave the app.',
+  no_push_device: 'This phone is not registered to ring for inbound calls. You are paused as away instead when you leave the app.',
+  ring_disabled: 'Ringing is turned off for this phone. You are paused as away instead when you leave the app.',
+  push_unavailable: 'Your phone cannot be rung just now. You are paused as away instead when you leave the app.',
+};
+
+/** The 409 body for `code`. */
+export function awayRingRefusalBody(code: AgencyAwayRingRefusalCode): AgencyAwayRingRefusal {
+  return { error: 'Conflict', code, message: REFUSAL_MESSAGES[code] };
+}
+
+/** How an end of `away_ring` came out ({@link AwayRingService.end}). */
+export type AwayRingEndOutcome =
+  /** Ended: `device_away` (or `offline`), the mirror written, `ring_off` sent when asked. */
+  | 'ended'
+  /** A ring is in flight: its end is the connector's (WP5), nothing written. */
+  | 'ring_in_flight'
+  /** The session was not on `away_ring` (something else ended it first): nothing written. */
+  | 'not_away_ring'
+  /** Redis did not answer: nothing written. */
+  | 'unavailable';
+
+/** How {@link AwayRingService.releaseInbound} came out. */
+export type AwayRingReleaseOutcome =
+  /** Back on `away_ring` (Redis and the mirror). */
+  | 'away_ring'
+  /**
+   * The call held the session, but its absence had ended meanwhile (a take-over, the maximum age):
+   * the `inbound` field was cleared and the session ended as `device_away` (or `offline`).
+   */
+  | 'ended'
+  /** The session was not on an absence at all (`away_ring_since` NULL, or it left): nothing written. */
+  | 'not_away_ring'
+  /** The call does not hold the session: nothing written. */
+  | 'not_held';
+
+/** What one reconcile pass did ({@link AwayRingService.reconcile}). */
+export interface AwayRingReconcileSummary {
+  candidates: number;
+  ended: number;
+  reseeded: number;
+  restored: number;
+  skippedInFlight: number;
+  cleared: number;
+}
+
+export interface AwayRingServiceDeps {
+  agents: AgentStateMachine;
+  stations: StationRegistry;
+  /** The inbound connector while one runs (the runtime's `inbound`). */
+  inbound: () => InboundConnector | null;
+  /** Both flags on for the account (IQ65). Default: the feature-flag service. */
+  ringAllowed?: (tenantId: string, accountId: string) => Promise<boolean>;
+}
+
+async function flagsAllowRing(tenantId: string, accountId: string): Promise<boolean> {
+  const flags = getFeatureFlagService();
+  const [ring, inbound] = await Promise.all([
+    flags.isEnabled(FLAGS.agency_inbound_ring_enabled, { tenantId, accountId }),
+    flags.isEnabled(FLAGS.agency_inbound_enabled, { tenantId, accountId }),
+  ]);
+  return ring && inbound;
+}
+
+export class AwayRingService {
+  private maxAge = AGENCY_AWAY_RING_MAX_MS_DEFAULT;
+  private reconciling: Promise<AwayRingReconcileSummary> | null = null;
+  private readonly ringAllowedFn: (tenantId: string, accountId: string) => Promise<boolean>;
+
+  constructor(private readonly deps: AwayRingServiceDeps) {
+    this.ringAllowedFn = deps.ringAllowed ?? flagsAllowRing;
+  }
+
+  /** Set at start from config (`AGENCY_AWAY_RING_MAX_MS`). */
+  configure(opts: { maxAgeMs: number }): void {
+    this.maxAge = opts.maxAgeMs;
+  }
+
+  /** `AGENCY_AWAY_RING_MAX_MS`: how long one absence on `away_ring` may last. */
+  get maxAgeMs(): number {
+    return this.maxAge;
+  }
+
+  /** The time left to the maximum age of an absence that began at `since` (null: one starting now). */
+  ttlLeft(since: Date | null, now = Date.now()): number {
+    return this.maxAge - (since ? Math.max(0, now - since.getTime()) : 0);
+  }
+
+  /** Both flags on for the account (IQ65). A flag read that fails reads as off. */
+  async ringAllowed(tenantId: string, accountId: string): Promise<boolean> {
+    return this.ringAllowedFn(tenantId, accountId).catch((err: unknown) => {
+      log.warn({ err, tenantId, accountId }, 'Could not read the ring flags; treating ringing as off');
+      return false;
+    });
+  }
+
+  /**
+   * The connector's synchronous answer: the session holds a push offer (a ring, or an answered
+   * ring in its accept grace). False while no connector runs, and until WP5 implements it.
+   */
+  holdsPushOffer(sessionId: string): boolean {
+    return this.deps.inbound()?.holdsPushOffer(sessionId) ?? false;
+  }
+
+  /**
+   * Why `away_ring` is refused for `session`, or null: it may enter. The order of the checks is
+   * the order of the remedies (IQ58, IQ65; `AgencyAwayRingRefusalCode`): not a campaign session or
+   * the flags off (`ring_not_allowed`); no usable registration for the station's device (none,
+   * revoked, no token: `no_push_device`); not opted in (`ring_disabled`); the sender has no
+   * credentials for the platform (`push_unavailable`). An absence already past its maximum age is
+   * `ring_not_allowed` too: the app pauses as `device_away` instead.
+   */
+  async refusalFor(session: AgencyAgentSessionRecord): Promise<AgencyAwayRingRefusalCode | null> {
+    if (!isCampaignSession(session)) return 'ring_not_allowed';
+    if (!(await this.ringAllowed(session.tenant_id, session.account_id))) return 'ring_not_allowed';
+    const device = session.station_device_id
+      ? await agencyPushDeviceRepository.find(session.agent_user_id, session.station_device_id)
+      : null;
+    if (!device || device.revoked_at !== null || pushTokenOf(device) === null) return 'no_push_device';
+    if (!device.ring_enabled) return 'ring_disabled';
+    if (!getPushSender().configured(device.platform)) return 'push_unavailable';
+    if (this.ttlLeft(session.away_ring_since) <= 0) return 'ring_not_allowed';
+    return null;
+  }
+
+  /**
+   * Enter `away_ring` from one of `fromStates` (the route's apply: `available`, or `break` for the
+   * `device_away → away_ring` switch): Redis first (a compare-and-swap), then the mirror
+   * (`break/away_ring`, `away_ring_since` stamped once per absence), then the station's
+   * `agent_state` frame. The caller ran {@link refusalFor}.
+   */
+  async enter(
+    session: AgencyAgentSessionRecord,
+    fromStates: readonly AgencyAgentState[],
+  ): Promise<{ ok: true; since: string } | { ok: false; reason: string }> {
+    const entered = await this.deps.agents.enterAwayRing(session.id, {
+      ttlMs: this.ttlLeft(session.away_ring_since),
+      fromStates,
+    });
+    if (!entered.ok) return { ok: false, reason: entered.reason };
+    const since = new Date().toISOString();
+    await agencyAgentSessionRepository.setState(session.id, 'break', AWAY_RING_BREAK_REASON);
+    this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: AWAY_RING_BREAK_REASON });
+    return { ok: true, since };
+  }
+
+  /**
+   * The dialer's release applying a queued `away_ring` (`AgencyDialer.releaseAgent`): re-checked
+   * (the flags or the device may have changed while it was queued), then entered from whatever
+   * state the release found. Null when it cannot apply: the caller applies `device_away` instead.
+   * No station socket is needed: this is the one break an agent holds without one.
+   */
+  async applyQueued(sessionId: string): Promise<{ state: 'break'; since: string } | null> {
+    const session = await agencyAgentSessionRepository.findById(sessionId).catch((err: unknown) => {
+      log.warn({ err, sessionId }, 'Could not read the session to apply a queued away-ring break');
+      return null;
+    });
+    if (!session || session.left_at) return null;
+    const refused = await this.refusalFor(session).catch((err: unknown) => {
+      log.warn({ err, sessionId }, 'Could not check a queued away-ring break');
+      return 'ring_not_allowed' as const;
+    });
+    if (refused) {
+      log.info({ sessionId, refused }, 'Queued away-ring break no longer allowed; applying device_away instead');
+      return null;
+    }
+    const entered = await this.enter(session, RELEASE_FROM_STATES);
+    if (!entered.ok) {
+      log.info({ sessionId, reason: entered.reason }, 'Queued away-ring break could not apply; applying device_away instead');
+      return null;
+    }
+    return { state: 'break', since: entered.since };
+  }
+
+  /**
+   * WP5: a push offer for `inboundCallId` ended unanswered (declined, expired, lapsed, the caller
+   * left, the push failed, given back, answered elsewhere) while the agent has no open station:
+   * the session goes back to `away_ring` (Redis: `inbound` cleared, `break, ring = 1`, a fresh
+   * `since`, the TTL left to the maximum age; the mirror: `break/away_ring`, N1).
+   *
+   *  - `away_ring`: done.
+   *  - `ended`: the call held the session but the absence had ended meanwhile (the take-over moved
+   *    the station, the maximum age passed): the field is cleared and the session ends
+   *    (`device_away`, or `offline` with no socket; `ring_off` with the reason when there is one).
+   *  - `not_away_ring`: the session is not on an absence (never was, or it left). Nothing written:
+   *    the connector returns the agent as Mode A does (`releaseInbound` + `releaseAgent`).
+   *  - `not_held`: the call does not hold the session. Nothing written.
+   */
+  async releaseInbound(sessionId: string, inboundCallId: string): Promise<AwayRingReleaseOutcome> {
+    const session = await agencyAgentSessionRepository.findById(sessionId);
+    if (!session || session.left_at || !session.away_ring_since) return 'not_away_ring';
+    const ttl = this.ttlLeft(session.away_ring_since);
+    // Past the maximum age mid-ring: back to `away_ring` for a moment (a 1 s key), then ended
+    // `max_age` like any other end, so there is one path that writes an end.
+    if (!(await this.deps.agents.releaseInboundToAwayRing(sessionId, inboundCallId, Math.max(ttl, 1000)))) return 'not_held';
+    if (!(await agencyAgentSessionRepository.restoreAwayRing(sessionId))) {
+      // The absence ended between the read above and here (a take-over cleared its key).
+      await this.end(sessionId, null);
+      return 'ended';
+    }
+    if (ttl <= 0) {
+      await this.end(sessionId, 'max_age');
+      return 'ended';
+    }
+    return 'away_ring';
+  }
+
+  /**
+   * End `away_ring` (IQ67): `device_away`, then `offline` when no station socket is here. Redis
+   * first, by the end script (only from `break, ring = 1`, or no key at all), then the mirror
+   * (`away_ring_since` cleared), the station's frame when one is attached, the `ring_off` push
+   * (`reason`; null: none, the app itself asked or is on screen) and the audit row.
+   *
+   * `offline` defaults to "no station socket here", read synchronously right before the script's
+   * eval, as the station close reads it; a caller that is about to attach one (the return, the
+   * take-over) passes false.
+   *
+   * A ring in flight is never ended here (`ring_in_flight`): its end is the connector's, on the
+   * call's own chain (N1). TODO(WP5): `InboundConnector.cancelRingForAwayRingEnd(sessionId, reason)`
+   * cancels the ring and then calls this; until then a pass of the reconcile after the ring ends
+   * finishes the job.
+   */
+  async end(
+    sessionId: string,
+    reason: AgencyRingOffReason | null,
+    opts: { offline?: boolean; actor?: AuditActorFields; notify?: boolean } = {},
+  ): Promise<AwayRingEndOutcome> {
+    if (this.holdsPushOffer(sessionId)) return 'ring_in_flight';
+    // Read and eval with nothing awaited between them (the station close's rule).
+    const offline = opts.offline ?? !this.deps.stations.isLocallyOwned(sessionId);
+    const redis = await this.deps.agents.endAwayRing(sessionId, { offline });
+    if (redis.outcome === 'unavailable') return 'unavailable';
+    if (redis.outcome === 'not_away_ring') {
+      const live = await this.deps.agents.get(sessionId);
+      return live?.inboundCallId ? 'ring_in_flight' : 'not_away_ring';
+    }
+    const ended = await agencyAgentSessionRepository.endAwayRing(sessionId, offline ? 'offline' : 'break');
+    if (!ended) return 'not_away_ring';
+    if (!offline) {
+      this.deps.stations.send(sessionId, {
+        event: 'agent_state', state: 'break', since: new Date().toISOString(), break_reason: DEVICE_AWAY_BREAK_REASON,
+      });
+    }
+    if (reason) {
+      if (opts.notify !== false) this.sendRingOff(ended.agent_user_id, ended.station_device_id, sessionId, reason);
+      const actor = opts.actor ?? SYSTEM_AUDIT_ACTOR;
+      platformAuditLogger.log({
+        ...actor,
+        tenant_id: ended.tenant_id,
+        account_id: ended.account_id,
+        action: 'agency_session.away_ring_ended',
+        resource_type: 'agency_session',
+        resource_id: sessionId,
+        ...(ended.campaign_id ? { campaign_id: ended.campaign_id } : {}),
+        details: {
+          reason,
+          from_state: ended.from_state,
+          to_state: offline ? 'offline' : 'break',
+          ...(ended.campaign_id ? { campaign_id: ended.campaign_id } : {}),
+        },
+      });
+    }
+    log.info({ sessionId, reason, offline }, 'Away-ring ended');
+    return 'ended';
+  }
+
+  /**
+   * The agent came back to the app (a station attach, or a join, rehydrating a `break, ring = 1`
+   * key: N5's "clears ring only when the state is break"): `device_away`, the station about to
+   * show it. No `ring_off`: the app is on screen and drops its own notification.
+   */
+  async endOnReturn(sessionId: string): Promise<AwayRingEndOutcome> {
+    return this.end(sessionId, null, { offline: false });
+  }
+
+  /**
+   * OS3's take-over moved the station off the device it rang (the claim already rewrote the
+   * mirror, `claimStationDevice`'s `endedAwayRing`): Redis's `ring` cleared (`break`: the new
+   * device is attaching), and the old device told (`ring_off`, `taken_over`).
+   */
+  async endOnTakeOver(sessionId: string, agentUserId: string, previousDeviceId: string | null): Promise<void> {
+    if (this.holdsPushOffer(sessionId)) {
+      // TODO(WP5): the ring in flight is the connector's to cancel (`answered_elsewhere`).
+      log.info({ sessionId }, 'Take-over during a ring: the ring is the connector\'s to end');
+    } else {
+      const redis = await this.deps.agents.endAwayRing(sessionId, { offline: false });
+      if (redis.outcome === 'not_away_ring') {
+        log.info({ sessionId, state: redis.state }, 'Take-over ended away-ring: Redis was already off it');
+      }
+    }
+    this.sendRingOff(agentUserId, previousDeviceId, sessionId, 'taken_over');
+  }
+
+  /**
+   * "Stop ringing" (`PATCH ring_enabled=false`, `opted_out`) or the device removed (`DELETE`,
+   * `revoked`): end the `away_ring` of the agent's live session whose station this device holds,
+   * if there is one. A ring in flight is left to the connector (and to the next reconcile, which
+   * finds the device opted out or revoked).
+   */
+  async endForDevice(
+    agentUserId: string,
+    deviceId: string,
+    reason: 'opted_out' | 'revoked',
+    actor?: AuditActorFields,
+  ): Promise<AwayRingEndOutcome | 'none'> {
+    const session = await agencyAgentSessionRepository.findLiveAwayRingForDevice(agentUserId, deviceId);
+    if (!session) return 'none';
+    return this.end(session.id, reason, { ...(actor ? { actor } : {}) });
+  }
+
+  /**
+   * Send `ring_off` to the device (fire and forget, never throws): Android only (iOS is sent `ring`
+   * alone, IQ64), and only to a row with a token, revoked or not (a removed device still drops its
+   * notification). A failure is recorded on the row (`unregistered` revokes it).
+   */
+  sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason): void {
+    if (!deviceId) return;
+    void (async () => {
+      const device = await agencyPushDeviceRepository.find(agentUserId, deviceId);
+      if (!device || device.platform !== 'android' || pushTokenOf(device) === null) return;
+      await this.send(device, { type: 'ring_off', session_id: sessionId, reason }, RING_OFF_PUSH_TTL_MS);
+    })().catch((err: unknown) => log.warn({ err, sessionId, reason }, 'Could not send ring_off'));
+  }
+
+  /** Send one push to `device`, recording a failure on its row. Resolves with the sender's answer. */
+  async send(
+    device: PushDeviceRecord,
+    payload: Parameters<ReturnType<typeof getPushSender>['send']>[1],
+    ttlMs: number,
+  ): ReturnType<ReturnType<typeof getPushSender>['send']> {
+    const result = await getPushSender().send(device, payload, { ttlMs });
+    if (!result.ok && result.reason !== 'unconfigured') {
+      await agencyPushDeviceRepository.recordFailure(device.id, result.reason).catch((err: unknown) =>
+        log.warn({ err, deviceRowId: device.id }, 'Could not record a push failure'));
+    }
+    if (!result.ok) log.info({ deviceRowId: device.id, type: payload.type, reason: result.reason }, 'Push not delivered');
+    return result;
+  }
+
+  // ─── The reconcile (IQ67, N1): at boot, then every minute ──────────────────
+
+  /**
+   * One pass over every live session with `away_ring_since` set (N1; never keyed on
+   * `break_reason`, which a ring's `reserved` nulls):
+   *  - a ring in flight (the connector holds a push offer, or Redis an `inbound` field): skipped;
+   *    its end is the connector's (TODO(WP5): a reconcile-driven end during a ring goes through
+   *    `InboundConnector.cancelRingForAwayRingEnd` on the call's chain);
+   *  - past the maximum age, the flags off, the device gone, revoked or without a token, or opted
+   *    out: ended (`max_age`, `flag_off`, `revoked`, `opted_out`), `ring_off` sent;
+   *  - otherwise live but its Redis key gone (a restart that outlived the lease, a crash mid-ring
+   *    whose `reserved` lease lapsed): re-seeded, create-if-absent, and the mirror restored;
+   *  - on `away_ring` in Redis while the mirror says otherwise (the startup reaper's
+   *    `markAllOffline`): the mirror restored;
+   *  - off `away_ring` in Redis with nothing in flight: whatever moved it ended the absence, and
+   *    only the key in the mirror is cleared.
+   * Passes never overlap: a call while one runs gets that pass's summary.
+   */
+  reconcile(now = Date.now()): Promise<AwayRingReconcileSummary> {
+    if (!this.reconciling) {
+      this.reconciling = this.reconcileOnce(now).finally(() => { this.reconciling = null; });
+    }
+    return this.reconciling;
+  }
+
+  private async reconcileOnce(now: number): Promise<AwayRingReconcileSummary> {
+    const summary: AwayRingReconcileSummary = { candidates: 0, ended: 0, reseeded: 0, restored: 0, skippedInFlight: 0, cleared: 0 };
+    const rows = await agencyAgentSessionRepository.findAwayRingCandidates();
+    summary.candidates = rows.length;
+    const allowed = new Map<string, Promise<boolean>>();
+    for (const row of rows) {
+      try {
+        await this.reconcileOne(row, now, allowed, summary);
+      } catch (err) {
+        log.warn({ err, sessionId: row.id }, 'Away-ring reconcile failed for a session');
+      }
+    }
+    if (summary.ended || summary.reseeded || summary.restored || summary.cleared) {
+      log.info(summary, 'Away-ring reconcile acted');
+    }
+    return summary;
+  }
+
+  private async reconcileOne(
+    row: AgencyAwayRingCandidate,
+    now: number,
+    allowed: Map<string, Promise<boolean>>,
+    summary: AwayRingReconcileSummary,
+  ): Promise<void> {
+    if (this.holdsPushOffer(row.id)) {
+      summary.skippedInFlight++;
+      return;
+    }
+    const live = await this.deps.agents.get(row.id);
+    if (live?.inboundCallId) {
+      summary.skippedInFlight++;
+      return;
+    }
+    const reason = await this.endReasonFor(row, now, allowed);
+    if (reason) {
+      if ((await this.end(row.id, reason)) === 'ended') summary.ended++;
+      return;
+    }
+    const mirrorOnIt = row.state === 'break' && row.break_reason === AWAY_RING_BREAK_REASON;
+    if (!live) {
+      const created = await this.deps.agents.reseedAwayRing(row.id, {
+        sinceMs: row.state_since.getTime(),
+        ttlMs: this.ttlLeft(row.away_ring_since, now),
+      });
+      if (created) {
+        summary.reseeded++;
+        if (!mirrorOnIt) await agencyAgentSessionRepository.restoreAwayRing(row.id);
+        log.info({ sessionId: row.id }, 'Away-ring key re-seeded from the database');
+      }
+      return;
+    }
+    if (live.state === 'break' && live.ring) {
+      if (!mirrorOnIt && (await agencyAgentSessionRepository.restoreAwayRing(row.id))) summary.restored++;
+      return;
+    }
+    await agencyAgentSessionRepository.clearAwayRingSince(row.id);
+    summary.cleared++;
+  }
+
+  /** Why the reconcile ends this absence, or null: it may go on. */
+  private async endReasonFor(
+    row: AgencyAwayRingCandidate,
+    now: number,
+    allowed: Map<string, Promise<boolean>>,
+  ): Promise<AgencyRingOffReason | null> {
+    if (this.ttlLeft(row.away_ring_since, now) <= 0) return 'max_age';
+    const flagKey = `${row.tenant_id}:${row.account_id}`;
+    let ok = allowed.get(flagKey);
+    if (!ok) {
+      // A flag read that FAILS ends nobody's ringing: only a flag read as off does.
+      ok = this.ringAllowedFn(row.tenant_id, row.account_id).catch((err: unknown) => {
+        log.warn({ err, tenantId: row.tenant_id, accountId: row.account_id }, 'Could not read the ring flags in the reconcile');
+        return true;
+      });
+      allowed.set(flagKey, ok);
+    }
+    if (!(await ok) || row.kind !== 'campaign') return 'flag_off';
+    if (row.device_platform === null || row.device_revoked || !row.device_has_token) return 'revoked';
+    if (!row.device_ring_enabled) return 'opted_out';
+    return null;
+  }
+}

@@ -187,6 +187,13 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/reports/:id/files/:format',
   'POST /proxy/agency/reports',
   'POST /proxy/agency/reports/:id/retry',
+  // Mode B: the agent app's own push devices (`agency.station.connect`, floored at `agent`). The
+  // actor is always the signed-in user: another agent's device id is simply theirs, not found.
+  'GET /proxy/agency/push-devices/:deviceId',
+  'PUT /proxy/agency/push-devices/:deviceId',
+  'PATCH /proxy/agency/push-devices/:deviceId',
+  'DELETE /proxy/agency/push-devices/:deviceId',
+  'POST /proxy/agency/push-devices/:deviceId/test-ring',
 ].sort();
 
 /**

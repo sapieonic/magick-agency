@@ -430,6 +430,18 @@ export interface AgencyAgentSessionRecord {
    */
   station_device_id: string | null;
   /**
+   * Mode B (0036, IQ62): missed rings in a row; `AGENCY_INBOUND_RING_MAX_MISSES` of them end
+   * `away_ring`. Reset on an answered ring and on `available`.
+   */
+  ring_misses: number;
+  /**
+   * Mode B (0036, IQ67, N1): when this absence on `away_ring` began, kept across rings and the
+   * returns to `away_ring` after them; NULL off it. The reconcile's key (`away-ring.ts`); cleared on
+   * every real end (`available`, `device_away`, any other break, `offline` written by a close, the
+   * take-over, leaving).
+   */
+  away_ring_since: Date | null;
+  /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;
    * narrow with `isCampaignSession` rather than asserting non-null.

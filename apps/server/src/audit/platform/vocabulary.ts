@@ -195,6 +195,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_clip.uploaded', label: 'Inbound recording uploaded', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_clip.deleted', label: 'Inbound recording deleted', group: 'Calls', product: 'agency' },
+  { value: 'agency_push_device.ring_opt_in_changed', label: 'Agent turned inbound ringing on or off for a phone', group: 'Calls', product: 'agency' },
+  { value: 'agency_push_device.revoked', label: 'Agent removed a phone from inbound ringing', group: 'Calls', product: 'agency' },
 
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
@@ -213,6 +215,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   // (`via`) or a queued switch withdrawn (`withdrawn`). The labels say both halves.
   { value: 'agency_session.softphone_started', label: 'Agent switched (or queued a switch) to the soft phone', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.softphone_ended', label: 'Agent left the soft phone (or withdrew a queued switch)', group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.away_ring_ended', label: "Agent's phone stopped ringing for inbound calls", group: 'Staffing', product: 'agency' },
 
   // Team, and the PLATFORM product — see {@link AuditProduct}. The labels say
   // "invitation" rather than "invite" because the noun is what the reader is

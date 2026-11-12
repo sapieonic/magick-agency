@@ -272,6 +272,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // take-over), or another device does and this join is refused.
     if (!await claimStationOrReply(reply, session, device, {
       onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended. Join the campaign again.'),
+      awayRing: runtime.awayRing,
     })) return reply;
 
     // Redis, or `break` — the same rule as the station socket, and for the same
@@ -360,6 +361,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     if (!await claimStationOrReply(reply, session, stationDeviceFields(request.body), {
       reconnect: true,
       onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended.'),
+      awayRing: runtime.awayRing,
     })) return reply;
     const minted = await mintStationTokenOr503(runtime, session.id, reply);
     if (!minted) return reply;
@@ -582,7 +584,18 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       });
     }
     // A forced wrap-up never starts on the soft phone; a plain release from it ends it.
-    const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
+    const liveNow = await runtime.agents.get(session.id);
+    // Mode B: an agent on `away_ring` is away from the app, with no station to be made available
+    // on: the release would write them `offline` (and end their ringing) rather than put them in
+    // the pool. Refused, nothing changed; force-break and sign-off work as today.
+    if (liveNow?.state === 'break' && liveNow.ring) {
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'agent_away_ring',
+        message: 'They\'re away from the app; their phone rings for inbound calls.',
+      };
+      return reply.code(409).send(err);
+    }
+    const leavingSoftphone = onSoftphoneBreak(liveNow, session);
     const forced = await runtime.wrapup.force(session.id);
     let state: AgencyAgentState;
     let endedSoftphone = false;

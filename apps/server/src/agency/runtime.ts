@@ -12,6 +12,8 @@ import {
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import {
   AGENCY_STATION_CLOSE,
+  AWAY_RING_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
   type AgencyAgentState,
 } from '@magick-agency/contracts/agency';
@@ -41,6 +43,7 @@ import { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
 import { queuedBreakReleaseOf } from './reserved-agent.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
 import { InboundCallService } from './inbound/inbound-disposition.js';
+import { AwayRingService } from './away-ring.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -142,6 +145,12 @@ export class AgencyRuntime {
   inbound: InboundConnector | null = null;
   /** The answered inbound call's finish (read, notes, hang up, outcome, DNC) and the outcome lapse. */
   readonly inboundCalls: InboundCallService;
+  /**
+   * Mode B's away break whose phone rings for inbound callers (`away-ring.ts`, IQ66/IQ67): entering
+   * it, ending it, the inbound connector's return to it after an unanswered ring
+   * (`releaseInbound`), and the reconcile the agency bootstrap runs.
+   */
+  readonly awayRing: AwayRingService;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -240,6 +249,10 @@ export class AgencyRuntime {
       // A soft-phone session (no campaign) is never `available`; nothing to wake.
       if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
+    this.awayRing = new AwayRingService({ agents: this.agents, stations: this.stations, inbound: () => this.inbound });
+    // A queued `away_ring` applied by the one release path (a break asked for while hidden during a
+    // call or wrap-up, IQ72), with or without a station socket.
+    this.dialer.registerAwayRing({ applyQueued: (sessionId) => this.awayRing.applyQueued(sessionId) });
   }
 
   // ─── Inbound calls (docs/inbound.md §2, P2) ───────────────────────────────
@@ -365,9 +378,23 @@ export class AgencyRuntime {
     // ever end it, and the heartbeat does not renew it (`heartbeatLeaseMs`), so it is a lapsed
     // lease that has not lapsed yet: `break`, as below.
     const orphanedWrapup = live?.state === 'wrapup' && !wrapup && !live.inboundCallId;
+    // ── Mode B: the agent is back from `away_ring` (N5) ─────────────────────────────────
+    // A station attaching (or a join) over `break, ring = 1` is the agent opening the app: the
+    // absence is over, so `away_ring` ends as `device_away` (the station is about to show it; the
+    // app's return sends `/available`). Only on `break`: an attach during a ring or an accepted
+    // ring finds `reserved` (the reservation cleared `ring`), and that is the connector's.
+    if (live?.state === 'break' && live.ring) {
+      await this.awayRing.endOnReturn(sessionId).catch((err: unknown) =>
+        log.warn({ err, sessionId }, 'Could not end away-ring on the agent\'s return'));
+      returnFromAwayRing(row);
+      return 'break';
+    }
     if (live && !orphanedWrapup) return live.state;
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
+    // A row still on `away_ring` whose key lapsed (its maximum age, or a re-seed not run yet) comes
+    // back as `device_away`: the agent is on screen, and `break` with no `ring` is not `away_ring`.
+    returnFromAwayRing(row);
     // Best-effort mirror. Redis is the authority; a failed write here costs a
     // durable record, never correctness. The caller's row keeps its break reason:
     // a phone Android killed while paused (`device_away`) or on a named break comes
@@ -476,7 +503,16 @@ export class AgencyRuntime {
     // (docs/inbound.md §5.1). Synchronous: the cancel runs on the call's own chain, so nothing
     // is awaited between the supersede read above and the write below.
     this.inbound?.onStationClosed(sessionId);
-    await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
+    // ── Mode B: the decision is ONE script, and it is still the first await (B2, IQ67) ──────
+    // `offline`, unless the session is on `away_ring` (the app parked its socket on purpose: the
+    // phone rings for inbound callers with no socket) or holds a push offer (an answered ring
+    // keeps its accept grace across a socket drop). `holdsPushOffer` is the connector's
+    // synchronous answer, read here with nothing awaited, and the script reads `ring` and
+    // `inbound` in the same step as the write, so no ring CAS can land between the decision and
+    // the write.
+    const holdsPushOffer = this.inbound?.holdsPushOffer(sessionId) ?? false;
+    const wrote = await this.agents.setOfflineUnlessAway(sessionId, holdsPushOffer);
+    if (wrote === 'kept') return false;
     await agencyAgentSessionRepository.setState(sessionId, 'offline')
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror offline agent state'));
     return true;
@@ -868,4 +904,14 @@ export class AgencyRuntime {
     // rehydrate into `break` on reconnect, never `available`.
     log.info('Agency dialer runtime stopped');
   }
+}
+
+/**
+ * The row a rehydrate was handed, told that the agent is back from `away_ring`: its reason is now
+ * `device_away` (the mirror says so too, `AwayRingService.endOnReturn` or the plain path's
+ * `setState`), so the `ready` frame and the bootstrap, which word the break from this row
+ * (`breakReasonFor`), do not say "rings for inbound" to an agent looking at the app.
+ */
+function returnFromAwayRing(row: Pick<AgencyAgentSessionRecord, 'break_reason'> | null): void {
+  if (row?.break_reason === AWAY_RING_BREAK_REASON) row.break_reason = DEVICE_AWAY_BREAK_REASON;
 }

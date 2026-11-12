@@ -19,6 +19,18 @@ const log = createChildLogger({ component: 'agency-agent-state' });
  *   {@link RESERVE_INBOUND_SCRIPT} (with `state = reserved`) and by
  *   {@link REHYDRATE_INBOUND_SCRIPT}; cleared by {@link RELEASE_INBOUND_SCRIPT} only by
  *   the id that holds it.
+ * - `push` — `'1'` while `inbound` is a PUSH offer (Mode B, IQ66: the ring to an away phone),
+ *   written by {@link RESERVE_INBOUND_SCRIPT}'s `break` arm in the same step as the reservation,
+ *   cleared with `inbound` and by every other state write. The station close keeps such a session
+ *   ({@link OFFLINE_UNLESS_AWAY_SCRIPT}).
+ * - `ring` — `'1'` while the session is on `away_ring` (Mode B, IQ66/IQ67): `state = break`, and
+ *   the app's phone may be rung for an inbound caller. Set only by {@link ENTER_AWAY_RING_SCRIPT},
+ *   {@link RELEASE_INBOUND_TO_AWAY_RING_SCRIPT} and the reconcile's create-if-absent
+ *   {@link RESEED_AWAY_RING_SCRIPT}, always with `state = break`. **Every other write of `state`
+ *   clears it** (the CAS, the set, the inbound reservation, {@link END_AWAY_RING_SCRIPT} and the
+ *   close decision when it writes `offline`), so a named break, `available` or any call state can
+ *   never carry it. Nothing renews the key while it is set (`heartbeatLeaseMs` answers null): its
+ *   TTL is the time left to `AGENCY_AWAY_RING_MAX_MS`.
  *
  * **Every write that makes an agent `available` refuses, atomically, while any of
  * them is set** — the guard below runs inside the same script as the write, so ending
@@ -54,7 +66,8 @@ end
  * and a move TO `reserved` (an attempt's reservation: the paced one, the wrap-up
  * redial's, the lease extension at dial) is refused (-3) while the session holds an
  * inbound call, so no attempt can ever be reserved onto an agent an inbound caller
- * holds. The inbound reservation is {@link RESERVE_INBOUND_SCRIPT}, never this.
+ * holds. The inbound reservation is {@link RESERVE_INBOUND_SCRIPT}, never this. Every write
+ * clears `ring` (Mode B): a move out of `away_ring` is a real end of it.
  */
 const CAS_SCRIPT = `${AVAILABLE_GUARD_LUA}
 if redis.call('HGET', KEYS[1], 'state') ~= ARGV[1] then return 0 end
@@ -67,6 +80,7 @@ if ARGV[2] == 'reserved' then
   if held and held ~= '' then return -3 end
 end
 redis.call('HSET', KEYS[1], 'state', ARGV[2], 'attempt', ARGV[3], 'since', ARGV[5])
+redis.call('HDEL', KEYS[1], 'ring', 'push')
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return 1
 `;
@@ -77,7 +91,7 @@ return 1
  * TTL, because an agent state with no lease is an agent nothing can detect the
  * death of. Unconditional in everything but the guard: `available` is refused
  * (-1/-2/-3) while the session holds a manual call, is a soft-phone session, or
- * holds an inbound call.
+ * holds an inbound call. Clears `ring` (Mode B): a named break written over `away_ring` is not one.
  */
 const SET_SCRIPT = `${AVAILABLE_GUARD_LUA}
 if ARGV[1] == 'available' then
@@ -85,6 +99,7 @@ if ARGV[1] == 'available' then
   if refused ~= 0 then return refused end
 end
 redis.call('HSET', KEYS[1], 'state', ARGV[1], 'attempt', ARGV[2], 'since', ARGV[4])
+redis.call('HDEL', KEYS[1], 'ring', 'push')
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `;
@@ -173,10 +188,15 @@ return {st, changed}
  * connector renews while the offer stands). `fromStates` is `available` for an idle
  * agent, and `reserved` / `on_call` / `wrapup` for the release hook, which takes the
  * agent `releaseAgent` would otherwise return to the pool.
+ *
+ * Mode B (IQ66): `break` is allowed only with `ring = 1` (an agent on `away_ring`, whose phone the
+ * connector rings): asked from any other break (a named one, `device_away`, the soft phone's) it
+ * answers `{0, 'break'}`. The write clears `ring`: the agent is `reserved` for the call until the
+ * ring ends, and {@link RELEASE_INBOUND_TO_AWAY_RING_SCRIPT} sets it again when it ends unanswered.
  */
 const RESERVE_INBOUND_SCRIPT = `
 local st = redis.call('HGET', KEYS[1], 'state')
-local f = redis.call('HMGET', KEYS[1], 'manual', 'softphone', 'inbound')
+local f = redis.call('HMGET', KEYS[1], 'manual', 'softphone', 'inbound', 'ring')
 if f[3] and f[3] ~= '' then
   if f[3] == ARGV[1] then return {1, st or ''} end
   return {2, f[3]}
@@ -187,9 +207,12 @@ for i = 4, #ARGV do
   if ARGV[i] == st then allowed = true end
 end
 if not allowed then return {0, st} end
+if st == 'break' and f[4] ~= '1' then return {0, st} end
 if f[1] and f[1] ~= '' then return {-1, ''} end
 if f[2] == '1' then return {-2, ''} end
 redis.call('HSET', KEYS[1], 'state', 'reserved', 'attempt', '', 'since', ARGV[3], 'inbound', ARGV[1])
+redis.call('HDEL', KEYS[1], 'ring')
+if st == 'break' then redis.call('HSET', KEYS[1], 'push', '1') end
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return {1, st}
 `;
@@ -197,7 +220,7 @@ return {1, st}
 /** Clear `inbound`, but only if THIS call holds it. 1 released, 0 not held by it. */
 const RELEASE_INBOUND_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'inbound') ~= ARGV[1] then return 0 end
-redis.call('HDEL', KEYS[1], 'inbound')
+redis.call('HDEL', KEYS[1], 'inbound', 'push')
 return 1
 `;
 
@@ -227,6 +250,125 @@ if (not st) or st == 'offline' or st == 'available' then
 end
 redis.call('HSET', KEYS[1], 'inbound', ARGV[1])
 return {st, changed}
+`;
+
+// ─── Mode B: `away_ring` (IQ66, IQ67; docs/inbound.md "Ringing an away phone") ────────────
+//
+// `away_ring` is a reserved break whose key carries `ring = 1`. It is the one break an agent holds
+// with no station socket (the app parks it once the break lands), so it is the one explicit
+// exception to "leases are liveness detectors": nothing renews it, and its TTL is the time left to
+// `AGENCY_AWAY_RING_MAX_MS` measured from `agency_agent_sessions.away_ring_since` (the caller
+// computes it). The reconcile (`away-ring.ts`) re-seeds a lapsed key from the database, or ends it.
+
+/**
+ * Enter `away_ring`: `state = break`, `ring = 1`, a fresh `since`, the TTL.
+ *
+ * KEYS[1] = the agent hash. ARGV[1] = now (epoch ms), ARGV[2] = TTL ms, ARGV[3..] = the states it
+ * may be entered from. Returns `{1, from}` entered (`from`: the state it was entered from),
+ * `{0, state}` not in one of them (`state` '' with no lease), `{-1|-2|-3, state}` the session holds
+ * a soft-phone call, is a soft-phone session, or holds an inbound call (the `available` guard's
+ * codes: a session that may not be `available` may not be rung either).
+ *
+ * One compare-and-swap, as the device-away apply is: a reservation that lands between the
+ * caller's read and this write wins, and the caller re-decides.
+ */
+const ENTER_AWAY_RING_SCRIPT = `${AVAILABLE_GUARD_LUA}
+local st = redis.call('HGET', KEYS[1], 'state')
+if not st then return {0, ''} end
+local allowed = false
+for i = 3, #ARGV do
+  if ARGV[i] == st then allowed = true end
+end
+if not allowed then return {0, st} end
+local refused = refuse_available(KEYS[1])
+if refused ~= 0 then return {refused, st} end
+redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[1], 'ring', '1')
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return {1, st}
+`;
+
+/**
+ * A push offer that ended unanswered goes back to `away_ring` (IQ66, B3): only while THIS call
+ * holds the session. Clears `inbound`, writes `break`, `ring = 1`, a fresh `since` (IQ63: the
+ * break's `since` is the agent's idle clock, rewritten on every return) and the TTL.
+ *
+ * KEYS[1] = the agent hash. ARGV[1] = the inbound call id, ARGV[2] = now (epoch ms), ARGV[3] =
+ * TTL ms. Returns 1 written, 0 the call does not hold the session (nothing written).
+ */
+const RELEASE_INBOUND_TO_AWAY_RING_SCRIPT = `
+if redis.call('HGET', KEYS[1], 'inbound') ~= ARGV[1] then return 0 end
+redis.call('HDEL', KEYS[1], 'inbound', 'push')
+redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[2], 'ring', '1')
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1
+`;
+
+/**
+ * The reconcile's re-seed (N1): create the `away_ring` key ONLY IF THERE IS NO KEY. Never an
+ * unconditional set: a key that exists says something newer than the database row the reconcile
+ * read (a ring in flight, a return, a release), and the reconcile must not stomp it.
+ *
+ * KEYS[1] = the agent hash. ARGV[1] = `since` (epoch ms), ARGV[2] = TTL ms. Returns 1 created,
+ * 0 a key exists (nothing written).
+ */
+const RESEED_AWAY_RING_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[1], 'ring', '1')
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1
+`;
+
+/**
+ * End `away_ring` (IQ67): `away_ring -> device_away`, a break-to-break switch. Only from
+ * `state = break, ring = 1`: clears `ring`, rewrites `since` and takes the ordinary `break` lease
+ * (the heartbeat renews it again while a station is attached). With ARGV[3] = '1' (no station
+ * socket here: the caller read that synchronously, with nothing awaited before this eval) it writes
+ * `offline` instead, as `device_away` with no socket always ends.
+ *
+ * KEYS[1] = the agent hash. ARGV[1] = now (epoch ms), ARGV[2] = lease ms, ARGV[3] = '1' offline.
+ * Returns `{1, state}` ended (`state` written), `{2, state}` there was no key (`offline` written
+ * when asked, else nothing; `state` '' then), `{0, state}` any other state (nothing written: a ring
+ * in flight, a return, a release got there first).
+ */
+const END_AWAY_RING_SCRIPT = `
+local f = redis.call('HMGET', KEYS[1], 'state', 'ring')
+if not f[1] then
+  if ARGV[3] == '1' then
+    redis.call('HSET', KEYS[1], 'state', 'offline', 'attempt', '', 'since', ARGV[1])
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    return {2, 'offline'}
+  end
+  return {2, ''}
+end
+if f[1] ~= 'break' or f[2] ~= '1' then return {0, f[1]} end
+redis.call('HDEL', KEYS[1], 'ring', 'push')
+local next = 'break'
+if ARGV[3] == '1' then next = 'offline' end
+redis.call('HSET', KEYS[1], 'state', next, 'attempt', '', 'since', ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return {1, next}
+`;
+
+/**
+ * The station close's presence decision (`AgencyRuntime.releaseStationOnClose`), in ONE script so
+ * it stays the method's first and only await before the write: `offline`, UNLESS the session is on
+ * `away_ring` (`break` with `ring = 1`: the app parked its socket on purpose, IQ67) or holds a push
+ * offer (`inbound` set and either the `push` field, which the ring's reservation writes in the same
+ * script, or ARGV[5] = '1', the connector's synchronous `holdsPushOffer`: the accept grace survives
+ * a socket drop, B2). The field is what closes the race: a close whose `holdsPushOffer` read came
+ * before the ring's compare-and-swap was answered still sees the push offer the CAS wrote.
+ *
+ * The ARGV are the plain set's (ARGV[1] = 'offline', ARGV[2] = '' attempt, ARGV[3] = lease ms,
+ * ARGV[4] = now) plus ARGV[5]. Returns 1 `offline` written, 0 kept (nothing written).
+ */
+const OFFLINE_UNLESS_AWAY_SCRIPT = `
+local f = redis.call('HMGET', KEYS[1], 'state', 'ring', 'inbound', 'push')
+if f[1] == 'break' and f[2] == '1' then return 0 end
+if f[3] and f[3] ~= '' and (ARGV[5] == '1' or f[4] == '1') then return 0 end
+redis.call('HSET', KEYS[1], 'state', ARGV[1], 'attempt', ARGV[2], 'since', ARGV[4])
+redis.call('HDEL', KEYS[1], 'ring', 'push')
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1
 `;
 
 /**
@@ -317,8 +459,31 @@ function setResultFrom(res: unknown): AgentSetResult {
   return 'unavailable';
 }
 
-/** The states {@link AgentStateMachine.reserveForInbound} may take an agent from. */
-export type InboundReserveFromState = Extract<AgencyAgentState, 'available' | 'reserved' | 'on_call' | 'wrapup'>;
+/**
+ * The states {@link AgentStateMachine.reserveForInbound} may take an agent from. `break` only with
+ * `ring = 1` (Mode B: an agent on `away_ring`); any other break answers `wrong_state`.
+ */
+export type InboundReserveFromState = Extract<AgencyAgentState, 'available' | 'reserved' | 'on_call' | 'wrapup' | 'break'>;
+
+/** What {@link AgentStateMachine.enterAwayRing} did. */
+export type AwayRingEnterResult =
+  /** Entered: `break`, `ring = 1`, the TTL; `from` is the state it was entered from. */
+  | { ok: true; from: AgencyAgentState }
+  /** Not in one of the states asked for (`state` null: no lease at all). Nothing written. */
+  | { ok: false; reason: 'wrong_state'; state: AgencyAgentState | null }
+  /** The `available` guard: a soft-phone call, a soft-phone session, an inbound call. Nothing written. */
+  | { ok: false; reason: 'manual_call_live' | 'softphone_session' | 'inbound_call_owed'; state: AgencyAgentState | null }
+  | { ok: false; reason: 'unavailable' };
+
+/** What {@link AgentStateMachine.endAwayRing} did. */
+export type AwayRingEndResult =
+  /** It was on `away_ring`; `state` is what was written (`break`, or `offline` when asked). */
+  | { outcome: 'ended'; state: AgencyAgentState }
+  /** There was no key; `offline` was written when asked (`state`), else nothing (`state` null). */
+  | { outcome: 'no_key'; state: AgencyAgentState | null }
+  /** Some other state (a ring in flight, a return, a release): nothing written. */
+  | { outcome: 'not_away_ring'; state: AgencyAgentState }
+  | { outcome: 'unavailable' };
 
 /** What {@link AgentStateMachine.reserveForInbound} did. */
 export type InboundReservationResult =
@@ -344,6 +509,13 @@ export interface AgentLiveState {
   softphone: boolean;
   /** The inbound call this session holds (the `inbound` field), or null. */
   inboundCallId: string | null;
+  /**
+   * Mode B: on `away_ring` (the `ring` field; only ever with `state = break`). Nothing renews the
+   * lease while it is set (`heartbeatLeaseMs`, N2).
+   */
+  ring: boolean;
+  /** Mode B: the inbound call held is a push offer (the `push` field: reserved from `away_ring`). */
+  pushOffer: boolean;
 }
 
 /** An `HGETALL` reply as an {@link AgentLiveState}; null for a lapsed (empty) key. */
@@ -357,6 +529,8 @@ function parseLiveState(h: Record<string, string> | null | undefined): AgentLive
     manualCallId: h.manual || null,
     softphone: h.softphone === '1',
     inboundCallId: h.inbound || null,
+    ring: h.ring === '1',
+    pushOffer: h.push === '1' && !!h.inbound,
   };
 }
 
@@ -655,6 +829,112 @@ export class AgentStateMachine {
     } catch (err) {
       log.error({ err, sessionId, owedInboundCallId }, 'Inbound rehydrate failed');
       return null;
+    }
+  }
+
+  // ─── Mode B: `away_ring` (IQ66, IQ67) ──────────────────────────────────────
+
+  /**
+   * Enter `away_ring` from one of `fromStates` (see {@link ENTER_AWAY_RING_SCRIPT}): `break`,
+   * `ring = 1`, a fresh `since`, `ttlMs` (the time left to the maximum age, the caller's sum).
+   * Fails closed (`unavailable`) when Redis cannot answer. Never announces anything: `away_ring`
+   * is a break.
+   */
+  async enterAwayRing(
+    sessionId: string,
+    opts: { ttlMs: number; fromStates: readonly AgencyAgentState[] },
+  ): Promise<AwayRingEnterResult> {
+    if (!this.redis) return { ok: false, reason: 'unavailable' };
+    if (opts.fromStates.length === 0 || opts.ttlMs <= 0) return { ok: false, reason: 'wrong_state', state: null };
+    try {
+      const [code, value] = await this.redis.eval(
+        ENTER_AWAY_RING_SCRIPT, 1, this.key(sessionId),
+        Date.now().toString(), Math.ceil(opts.ttlMs), ...opts.fromStates,
+      ) as [number, string];
+      const state = value ? (value as AgencyAgentState) : null;
+      if (code === 1) return { ok: true, from: state ?? 'break' };
+      if (code === -1) return { ok: false, reason: 'manual_call_live', state };
+      if (code === -2) return { ok: false, reason: 'softphone_session', state };
+      if (code === -3) return { ok: false, reason: 'inbound_call_owed', state };
+      return { ok: false, reason: 'wrong_state', state };
+    } catch (err) {
+      log.error({ err, sessionId }, 'Away-ring entry failed');
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
+  /**
+   * A push offer that ended unanswered: back to `away_ring`, only while `inboundCallId` holds the
+   * session (see {@link RELEASE_INBOUND_TO_AWAY_RING_SCRIPT}). False: not held by it, or Redis
+   * failed. The database mirror is the caller's (`AwayRingService.releaseInbound` does both).
+   */
+  async releaseInboundToAwayRing(sessionId: string, inboundCallId: string, ttlMs: number): Promise<boolean> {
+    if (!this.redis) return false;
+    try {
+      return (await this.redis.eval(
+        RELEASE_INBOUND_TO_AWAY_RING_SCRIPT, 1, this.key(sessionId),
+        inboundCallId, Date.now().toString(), Math.max(1, Math.ceil(ttlMs)),
+      )) === 1;
+    } catch (err) {
+      log.warn({ err, sessionId, inboundCallId }, 'Inbound release to away-ring failed');
+      return false;
+    }
+  }
+
+  /**
+   * The reconcile's create-if-absent re-seed of an `away_ring` key (see
+   * {@link RESEED_AWAY_RING_SCRIPT}). True: created. False: a key exists, or Redis failed.
+   */
+  async reseedAwayRing(sessionId: string, opts: { sinceMs: number; ttlMs: number }): Promise<boolean> {
+    if (!this.redis || opts.ttlMs <= 0) return false;
+    try {
+      return (await this.redis.eval(
+        RESEED_AWAY_RING_SCRIPT, 1, this.key(sessionId),
+        Math.floor(opts.sinceMs).toString(), Math.ceil(opts.ttlMs),
+      )) === 1;
+    } catch (err) {
+      log.warn({ err, sessionId }, 'Away-ring re-seed failed');
+      return false;
+    }
+  }
+
+  /**
+   * End `away_ring` (see {@link END_AWAY_RING_SCRIPT}): `break` with the ordinary lease, or
+   * `offline` when `offline` (no station socket). Nothing written from any other state.
+   */
+  async endAwayRing(sessionId: string, opts: { offline: boolean }): Promise<AwayRingEndResult> {
+    if (!this.redis) return { outcome: 'unavailable' };
+    try {
+      const [code, value] = await this.redis.eval(
+        END_AWAY_RING_SCRIPT, 1, this.key(sessionId),
+        Date.now().toString(), AGENT_LEASE_MS.break, opts.offline ? '1' : '0',
+      ) as [number, string];
+      const state = value ? (value as AgencyAgentState) : null;
+      if (code === 1) return { outcome: 'ended', state: state ?? 'break' };
+      if (code === 2) return { outcome: 'no_key', state };
+      return { outcome: 'not_away_ring', state: state ?? 'offline' };
+    } catch (err) {
+      log.warn({ err, sessionId }, 'Away-ring end failed');
+      return { outcome: 'unavailable' };
+    }
+  }
+
+  /**
+   * The station close's presence write (see {@link OFFLINE_UNLESS_AWAY_SCRIPT}): `offline`, unless
+   * the session is on `away_ring` or holds a push offer (`holdsPushOffer`, read synchronously by
+   * the caller). `offline` written, `kept`, or `unavailable` (Redis failed; logged).
+   */
+  async setOfflineUnlessAway(sessionId: string, holdsPushOffer: boolean): Promise<'offline' | 'kept' | 'unavailable'> {
+    if (!this.redis) return 'unavailable';
+    try {
+      const res = await this.redis.eval(
+        OFFLINE_UNLESS_AWAY_SCRIPT, 1, this.key(sessionId),
+        'offline', '', AGENT_LEASE_MS.available, Date.now().toString(), holdsPushOffer ? '1' : '0',
+      );
+      return res === 1 ? 'offline' : 'kept';
+    } catch (err) {
+      log.error({ err, sessionId }, 'Agent offline write failed');
+      return 'unavailable';
     }
   }
 

@@ -27,7 +27,18 @@ export {
 } from './agency/agent-retry.repository.js';
 export type { AgentDialClaim, AgentRetryReopenResult, AgentRetrySettings } from './agency/agent-retry.repository.js';
 export { AgencyAgentSessionRepository, agencyAgentSessionRepository } from './agency/agent-session.repository.js';
-export type { AgencySoftphoneJoinResult } from './agency/agent-session.repository.js';
+export type {
+  AgencyAwayRingCandidate,
+  AgencyAwayRingEnded,
+  AgencySoftphoneJoinResult,
+} from './agency/agent-session.repository.js';
+export {
+  AgencyPushDeviceRepository,
+  agencyPushDeviceRepository,
+  pushDeviceRingable,
+  toWirePushDevice,
+} from './agency/push-device.repository.js';
+export type { PushDeviceRegisterInput } from './agency/push-device.repository.js';
 export { AgencyManualCallRepository, agencyManualCallRepository } from './agency/manual-call.repository.js';
 export type {
   AgencyManualCallAdvanceState,
