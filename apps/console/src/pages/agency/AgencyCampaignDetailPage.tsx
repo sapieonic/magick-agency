@@ -16,6 +16,7 @@ import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
 import { CAMPAIGN_TABS, campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
+import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
@@ -188,12 +189,12 @@ export function AgencyCampaignDetailPage() {
         active={panel}
         role={role}
         /*
-          The live floor count, so the tab says whether it is worth opening.
-          `stats.agents` absent is "not known", not "nobody" — `liveAgentCount`
-          renders no badge for either `null` or `0`, so an unread floor never
-          claims to be an empty one.
+          Agents on shift, so the tab says whether it is worth opening: the same
+          count the floor's "N on shift" and the stall banner read
+          (`agentsOnShift`), never `agents.length`, which counted signed-out rows.
+          `stats.agents` absent is "not known" (null), not "nobody".
         */
-        liveAgentCount={stats?.agents ? stats.agents.length : null}
+        agentsOnShift={agentsOnShift(stats?.agents)}
         campaignStatus={campaign.status}
         callbacksOverdue={callbacksOverdue}
       />

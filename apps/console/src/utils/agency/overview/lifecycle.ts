@@ -96,19 +96,19 @@ export function campaignRunLength(seconds: number): string {
 }
 
 /**
- * How {@link CampaignTimeline.ran} opens, per tense.
+ * {@link CampaignTimeline.ran}, per tense.
  *
- * "Live for" rather than "Running for" on a held campaign: it says the campaign
- * has existed that long without claiming the dialer is working, which is exactly
- * the distinction a supervisor who just pressed Pause is checking. `none` is
- * unreachable through `ran` — a campaign with no `started_at` has no duration —
- * and is present so the record is exhaustive rather than defaulted.
+ * A held campaign (paused, stopping) gets no verb at all, only how long ago it
+ * started: "Running for" contradicts the Paused badge, and "Live for" read as
+ * live beside it too (QA). `none` is unreachable through `ran` (a campaign with no
+ * `started_at` has no duration) and is said the same way, so the record is
+ * exhaustive rather than defaulted.
  */
-const RAN_PREFIX: Record<CampaignTense, string> = {
-  running: 'Running for',
-  held: 'Live for',
-  ended: 'Ran for',
-  none: 'Live for',
+const RAN_SENTENCE: Record<CampaignTense, (duration: string) => string> = {
+  running: (duration) => `Running for ${duration}`,
+  held: (duration) => `${duration} ago`,
+  ended: (duration) => `Ran for ${duration}`,
+  none: (duration) => `${duration} ago`,
 };
 
 export interface CampaignTimeline {
@@ -116,7 +116,8 @@ export interface CampaignTimeline {
   started: string | null;
   /**
    * `Ran for 3 days 4 hours` on a finished campaign, `Running for 6 hours` on a
-   * live one, or `null` without a start.
+   * running one, `6 hours ago` (since it started) on a paused or stopping one, or
+   * `null` without a start.
    *
    * The tense is the whole difference and it is decided here rather than in a
    * component: a live campaign's duration is a number that is still moving, and
@@ -249,7 +250,7 @@ export function campaignTimeline(
     ...base,
     started: `Started ${stamp(started, now)}`,
     duration,
-    ran: duration === null ? null : `${RAN_PREFIX[tense]} ${duration}`,
+    ran: duration === null ? null : RAN_SENTENCE[tense](duration),
     ended: endedStamp && terminal ? `${verb} ${endedStamp}` : null,
     neverStarted: false,
   };

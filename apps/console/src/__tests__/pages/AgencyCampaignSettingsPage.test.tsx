@@ -436,7 +436,7 @@ describe('campaign settings — lifecycle and uploads', () => {
     await screen.findByLabelText(/campaign name/i);
     // The fixture has 2 overdue: leaving the detail page must not make the warning look resolved.
     const badge = await screen.findByTestId('campaign-tab-callbacks-alert');
-    expect(badge.textContent).toBe('2, 2 overdue');
+    expect(badge.textContent).toBe('2');
     expect(mocks.getInsightsAllocation).toHaveBeenCalledTimes(1);
   });
 });

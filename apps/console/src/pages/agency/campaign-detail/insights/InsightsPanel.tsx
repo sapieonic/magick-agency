@@ -303,8 +303,13 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
         <div className={styles.toolbarRight}>
           <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="insights-announcement">{announcement}</p>
           <p className={styles.stamp} data-testid="insights-updated">
-            {live.lastUpdatedAt ? `Updated ${formatClockTime(live.lastUpdatedAt)}` : 'Loading…'}
-            {live.polling ? ' · auto-refreshing' : ' · not refreshing'}
+            {/*
+              "Figures", so it is not read as the header's stamp, which covers the
+              campaign's status and floor and polls on its own rule. Only the "now"
+              figures ever poll; the range figures reload on Refresh.
+            */}
+            {live.lastUpdatedAt ? `Figures updated ${formatClockTime(live.lastUpdatedAt)}` : 'Loading…'}
+            {live.polling ? ' · “now” figures auto-refresh' : ' · not auto-refreshing'}
           </p>
           <button type="button" className={`btn-secondary ${styles.toolButton}`} onClick={refresh} aria-label="Refresh insights">
             <RefreshCw size={14} aria-hidden="true" />

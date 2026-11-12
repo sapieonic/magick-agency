@@ -2,10 +2,17 @@
   Section bar for the campaign workspace. Shared by the detail page and the four
   standalone campaign screens, so the strip is in the same place at the same
   size on all of them — the point of a tab bar is that it does not move.
+
+  As wide as its tabs, never as wide as the page: the host pages have different
+  max-widths (Settings 1000px, History 1100px, the Monitor tabs the whole
+  window), and a full-width strip ended at a different x on each, so the bar
+  jumped as you switched. `max-width: 100%` keeps it scrolling on a phone.
 */
 
 .tabs {
   display: flex;
+  width: fit-content;
+  max-width: 100%;
   gap: 2px;
   margin: 18px 0 20px;
   padding-bottom: 0;

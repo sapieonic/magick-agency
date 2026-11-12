@@ -177,10 +177,17 @@ const CARRIER_PAUSE_FALLBACK: Pick<CarrierPauseCopy, 'cause' | 'action'> = {
  * `formatInstant` is injected rather than imported so the caller owns the
  * locale/timezone decision (and so a test can pin the output without pinning the
  * host's clock formatting).
+ *
+ * `agentsOnShift` is the console's own count (`agentsOnShift` over the same payload's
+ * floor rows), when the caller has the rows. It replaces the stall's
+ * `agents_on_shift`, which the server takes from `agents_live`: every open session,
+ * signed-out (`offline`) ones included. Without it the banner said "2 agents on
+ * shift" above a floor that said "0 of 0 on shift" and a tab badge that said 2.
  */
 export function stallCopy(
   stall: AgencyStall,
   formatInstant: (iso: string) => string,
+  options: { agentsOnShift?: number | null } = {},
 ): StallCopy {
   switch (stall.code) {
     case 'auto_paused_abandonment': {
@@ -245,8 +252,9 @@ export function stallCopy(
 
     case 'no_agents_available': {
       const breaks = breakClause(stall.on_break_by_reason);
+      const onShift = options.agentsOnShift ?? stall.agents_on_shift;
       const facts: StallFact[] = [
-        { text: `${count(stall.agents_on_shift, 'agent')} on shift`, emphasis: num(stall.agents_on_shift) },
+        { text: `${count(onShift, 'agent')} on shift`, emphasis: num(onShift) },
         // `num()` like every other count on this run. A raw interpolation drops
         // the thousands separator, so a large floor read "1234 on a call" beside
         // "1,234 agents on shift" — and the emphasis substring then failed to
