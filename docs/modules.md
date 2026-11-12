@@ -985,7 +985,7 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 |---|---|
 | `apps/server/test/integration/dnc/dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/dnc/dnc-index-usage.test.ts` | ~5 |
-| `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 14 |
+| `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 15 |
 | `apps/server/test/integration/dnc/dnc-scope-sentinel.test.ts` | ~6 |
 | `apps/server/test/unit/dnc/dnc.repository.test.ts` | 28 |
 | `apps/server/test/unit/dnc/dnc.routes.test.ts` | 46 |

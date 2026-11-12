@@ -37,6 +37,7 @@ const repo = new DncRepository();
 const LISTED = '+919908815060';
 const US_LISTED = '+15551234567';
 const NEIGHBOUR = '+919908800000';
+const UK_LISTED = '+442079460018';
 
 let tenantId: string;
 let otherTenantId: string;
@@ -74,6 +75,7 @@ describe('what each typed form of a listed number finds', () => {
     await insertDncRow(tenantId, LISTED, accountId);
     await insertDncRow(tenantId, US_LISTED);
     await insertDncRow(tenantId, NEIGHBOUR);
+    await insertDncRow(tenantId, UK_LISTED);
     // The same number on another tenant's list: never this tenant's answer.
     await insertDncRow(otherTenantId, LISTED);
   });
@@ -96,6 +98,11 @@ describe('what each typed form of a listed number finds', () => {
 
   it('a national number of another country is found by its ending', async () => {
     expect(await search('5551234567')).toEqual([US_LISTED]);
+  });
+
+  it('a whole number only the search rule can read is found by the exact arm', async () => {
+    // The bracketed trunk `(0)` is dropped by the rule; its digits (4402079460018) are no ending.
+    expect(await search('+44 (0)20 7946 0018')).toEqual([UK_LISTED]);
   });
 
   it('digits in the middle of a number are not an ending', async () => {
