@@ -46,7 +46,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const overdueOf = (result: { current: ReturnType<typeof useHomeBoard> }) => result.current.reads[0]?.overdue;
+const overdueOf = (result: { current: ReturnType<typeof useHomeBoard> }) => result.current.reads[0]?.allocation?.callbacks_overdue;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -225,6 +225,11 @@ describe('what a read keeps', () => {
     await advance(HOME_FAST_MS);
     expect(result.current.reads[0]!.stats).toEqual(before);
     expect(overdueOf(result)).toBe(5);
+    // Served from the last read, and marked so.
+    expect(result.current.reads[0]!.stale).toBe(true);
+    api.getAgencyHomeBoard.mockResolvedValueOnce(board([onBoard('c1', { stats: before, overdue: 5 })]));
+    await advance(HOME_FAST_MS);
+    expect(result.current.reads[0]!.stale).toBe(false);
   });
 
   it('shows the error when the first read fails, in its own words, and the board once a later one answers', async () => {

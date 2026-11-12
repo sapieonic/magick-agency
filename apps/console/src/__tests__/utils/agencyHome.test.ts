@@ -18,7 +18,15 @@ import { AGENCY_STALL_LABELS, AGENCY_STALL_PRIORITY } from '../../utils/agencyHe
 import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
 import type { AgencyGroupPage, AgencyGroupRow } from '../../types/agency-stats';
 import type { AgencyHomeActiveStatus } from '@magick-agency/contracts/api/agency/home';
-import { campaign, stats } from '../helpers/home';
+import { allocationFacts, campaign, settingsFacts, stats, STAFFED, todayFacts } from '../helpers/home';
+import { allocation, allocationRow, health, summary } from '../helpers/insights';
+import { campaignAttention } from '../../utils/agency/insights/overview';
+import {
+  attentionAllocation,
+  attentionRangeFigures,
+  attentionSettings,
+  attentionStaffing,
+} from '@magick-agency/contracts/api/agency/home';
 
 /**
  * Home's rules (B28): every attention rule, the "near the ceiling" band, the floor rows, the
@@ -29,8 +37,19 @@ import { campaign, stats } from '../helpers/home';
 const NO_MISSED: HomeMissed = { available: false, count: null };
 const fmt = (iso: string) => `at ${iso}`;
 
-function read(id: string, over: Partial<HomeCampaignRead> & { status?: AgencyHomeActiveStatus } = {}): HomeCampaignRead {
-  return { campaign: campaign(id, over.status ?? 'running'), stats: 'stats' in over ? (over.stats ?? null) : stats(), overdue: over.overdue ?? null };
+type ReadOver = Partial<HomeCampaignRead> & { status?: AgencyHomeActiveStatus; overdue?: number };
+
+/** A campaign's read: idle stats, one agent on the floor, nothing overdue, unless given. */
+function read(id: string, over: ReadOver = {}): HomeCampaignRead {
+  return {
+    campaign: campaign(id, over.status ?? 'running'),
+    stats: 'stats' in over ? (over.stats ?? null) : stats(),
+    staffing: 'staffing' in over ? (over.staffing ?? null) : STAFFED,
+    allocation: 'allocation' in over ? (over.allocation ?? null) : allocationFacts({ callbacks_overdue: over.overdue ?? 0 }),
+    today: 'today' in over ? (over.today ?? null) : todayFacts(),
+    settings: 'settings' in over ? (over.settings ?? null) : settingsFacts(),
+    stale: false,
+  };
 }
 
 const STALLS: Record<AgencyStallCode, AgencyStall> = {
@@ -120,8 +139,8 @@ describe('abandonment against the ceiling', () => {
     expect(over[0]).toMatchObject({ tone: 'danger', title: 'Abandonment 4% is over the 3% ceiling' });
   });
 
-  it('is not a row on a paused campaign, or beside an abandonment pause', () => {
-    expect(homeAttention([read('c1', { status: 'paused', stats: rate(4, 100) })], NO_MISSED, fmt)).toEqual([]);
+  it('is a row on a paused campaign too, as on the Overview, but not beside an abandonment pause', () => {
+    expect(homeAttention([read('c1', { status: 'paused', stats: rate(4, 100) })], NO_MISSED, fmt).map((i) => i.id)).toEqual(['abandonment:c1']);
     const paused = homeAttention(
       [read('c1', { stats: { ...rate(4, 100), stall: STALLS.auto_paused_abandonment } })],
       NO_MISSED,
@@ -139,9 +158,90 @@ describe('overdue callbacks', () => {
       fmt,
     );
     expect(items.map((i) => [i.id, i.title, i.to])).toEqual([
-      ['callbacks:c1', '7 callbacks overdue', '/agency/campaigns/c1/callbacks'],
-      ['callbacks:c3', '1 callback overdue', '/agency/campaigns/c3/callbacks'],
+      ['callbacks-overdue:c1', '7 callbacks overdue', '/agency/campaigns/c1/callbacks'],
+      ['callbacks-overdue:c3', '1 callback overdue', '/agency/campaigns/c3/callbacks'],
     ]);
+  });
+
+  it('says, as the Overview does, how many have no owner or an owner who is away', () => {
+    const [item] = homeAttention(
+      [read('c1', { allocation: allocationFacts({ callbacks_overdue: 3, callbacks_overdue_unassigned: 1, callbacks_overdue_absent_owner: 2 }) })],
+      NO_MISSED,
+      fmt,
+    );
+    expect(item!.detail).toBe('1 has no owner. 2 belong to an agent who is away. Customers were promised these calls.');
+    expect(item!.action).toBe('Open callbacks');
+  });
+});
+
+describe('the Overview’s other rows (B28a: Home never disagrees with the page it links to)', () => {
+  it('an unstaffed running campaign: "No agents online", a warning the badge counts, opening the floor', () => {
+    const items = homeAttention([read('c1', { staffing: { staffed: 0, online: 0 } })], NO_MISSED, fmt);
+    expect(items).toEqual([expect.objectContaining({
+      id: 'no-agents:c1', tone: 'warning', title: 'No agents online', detail: 'Nobody is assigned to this campaign yet.',
+      to: '/agency/campaigns/c1/agents', action: 'Open the floor', badge: true,
+    })]);
+    expect(homeBadgeCount(items)).toBe(1);
+    // Assigned agents who are all signed out: the same row.
+    expect(homeAttention([read('c1', { staffing: { staffed: 2, online: 0 } })], NO_MISSED, fmt)[0]!.detail)
+      .toBe('None of the 2 assigned agents is on the floor. Nothing dials until one joins.');
+    // Paused: nothing dials anyway, so an empty floor is not a problem.
+    expect(homeAttention([read('c1', { status: 'paused', staffing: { staffed: 0, online: 0 } })], NO_MISSED, fmt)).toEqual([]);
+  });
+
+  it('contacts held by agents who are away', () => {
+    const [item] = homeAttention([read('c1', { allocation: allocationFacts({ held_by_absent: 4 }) })], NO_MISSED, fmt);
+    expect(item).toMatchObject({ id: 'held-by-absent:c1', tone: 'warning', title: '4 due contacts held by agents who are away', badge: true });
+  });
+
+  it('today’s carrier failures and missing recordings, opening Health on Today', () => {
+    const items = homeAttention(
+      [read('c1', {
+        today: todayFacts({ carrier_failures: 3, recording: { connected: 5, recorded: 2 } }),
+        settings: settingsFacts({ record_calls: true }),
+      })],
+      NO_MISSED,
+      fmt,
+    );
+    expect(items.map((i) => [i.id, i.tone, i.title, i.to, i.badge])).toEqual([
+      ['carrier-failures:c1', 'info', '3 dials failed at the carrier', '/agency/campaigns/c1/health?range=today', false],
+      ['recordings-missing:c1', 'info', '3 connected calls with no recording', '/agency/campaigns/c1/health?range=today', false],
+    ]);
+    expect(items[0]!.detail).toBe('Today, in the campaign’s time zone. The error codes are on the Health tab.');
+    expect(items[1]!.detail).toBe('Recording is on, and 2 of 5 connected calls today have one. The latest calls can take a few minutes to show theirs.');
+  });
+
+  it('calling hours left at the default, as information', () => {
+    const items = homeAttention([read('c1', { settings: settingsFacts({ calling_hours_default: true }) })], NO_MISSED, fmt);
+    expect(items).toEqual([expect.objectContaining({ id: 'calling-hours-default:c1', tone: 'info', to: '/agency/campaigns/c1/settings', badge: false })]);
+  });
+
+  it('a part not known yet says nothing (no guess)', () => {
+    expect(homeAttention([read('c1', { staffing: null, allocation: null, today: null, settings: null })], NO_MISSED, fmt)).toEqual([]);
+  });
+
+  it('every row the Overview lists for a campaign is on Home, in its tone and words', () => {
+    // The Overview's fixtures, through the projections the server's board serves.
+    const a = allocation({ agents: [allocationRow({ state: 'offline' })] });
+    const h = health();
+    for (const status of ['running', 'paused'] as const) {
+      const s = summary(status);
+      const overview = campaignAttention({ summary: s, allocation: a, health: h }).items;
+      const home = homeAttention([read('c1', {
+        status,
+        stats: stats({
+          abandoned_24h: h.abandonment.rolling_24h.abandoned,
+          answered_24h: h.abandonment.rolling_24h.answered,
+          abandonment_ceiling_pct: h.abandonment.ceiling_pct,
+        }),
+        staffing: attentionStaffing(a.agents),
+        allocation: attentionAllocation(a),
+        today: attentionRangeFigures(h),
+        settings: attentionSettings(s.settings),
+      })], NO_MISSED, fmt);
+      expect(overview.length).toBeGreaterThan(3);
+      expect(home.map((i) => [i.id, i.tone, i.title])).toEqual(overview.map((i) => [`${i.id}:c1`, i.tone, i.title]));
+    }
   });
 });
 
@@ -180,7 +280,7 @@ describe('the list', () => {
       { available: true, count: { open: 1, open_capped: false, has_rows: true } },
       fmt,
     );
-    expect(items.map((i) => i.id)).toEqual(['callbacks:b', 'stall:c', 'stall:b', 'missed', 'stall:a']);
+    expect(items.map((i) => i.id)).toEqual(['callbacks-overdue:b', 'stall:c', 'stall:b', 'missed', 'stall:a']);
   });
 
   it('splits into what needs the reader and what is only waiting (nothing wrong)', () => {
@@ -217,11 +317,11 @@ describe('what the Home badge counts', () => {
       missed,
       fmt,
     );
-    // callbacks:b, stall:b, stall:c, abandonment:c, abandonment:d — not stall:a, not missed.
+    // callbacks-overdue:b, stall:b, stall:c, abandonment:c, abandonment:d — not stall:a, not missed.
     expect(items).toHaveLength(7);
     expect(homeBadgeCount(items)).toBe(5);
     expect(items.filter((i) => i.badge).map((i) => i.id).sort()).toEqual(
-      ['abandonment:c', 'abandonment:d', 'callbacks:b', 'stall:b', 'stall:c'],
+      ['abandonment:c', 'abandonment:d', 'callbacks-overdue:b', 'stall:b', 'stall:c'],
     );
   });
 

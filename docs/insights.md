@@ -280,10 +280,14 @@ edit misses), fresh for 5 s or four times the answer's compute time when longer 
 insights keep the database busy at most a quarter of the time; a 1M running summary, measured at
 2.5–2.9 s, is reused for ~10–12 s), at most 500 entries. The guards run on every request before it is consulted.
 The allocation is read through it by one helper (`cachedAllocation` in `allocation.ts`), shared
-by the allocation route and the activity read. Home's board (`GET /proxy/agency/home`, decision
-B28a, `agency/home-board.ts`) reads only `totals.callbacks_overdue`, for all its campaigns in one
-statement with the allocation's own predicate (`callbacksOverdueByCampaign`, `callbackOverdueSql`),
-and keeps each count a minute.
+by the allocation route, the activity read and Home's board (`GET /proxy/agency/home`, decision
+B28a, `agency/home-board.ts`), which serves each campaign's `attentionAllocation` of it (overdue
+callbacks, contacts held by away agents) and keeps it a minute, its staffing (`campaignStaffing`:
+the allocation's own staffing and state reads, counted by `attentionStaffing`) and today's carrier
+failures and recording (`rangeAttentionFigures` over `todayRange`, the console's "Today"). Those
+projections live beside the board's wire in `contracts/api/agency/home.ts`, and the Overview's
+attention rules read the same ones (`attentionFrom` in the console's `insights/overview.ts`), so
+Home's list is the Overview's.
 
 ## API (range reads)
 

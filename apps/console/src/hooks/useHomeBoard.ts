@@ -98,10 +98,19 @@ function read(board: Board, kind: Kind): Promise<void> {
       if (board.generation !== mine) return;
       const reads = answer.campaigns.map((c): HomeCampaignRead => {
         const before = board.last.get(c.id);
+        // A part the server could not read this time (null) keeps the last good one, marked stale.
+        const kept = <K extends 'stats' | 'staffing' | 'allocation' | 'today'>(key: K): HomeCampaignRead[K] =>
+          (c[key] ?? before?.[key] ?? null) as HomeCampaignRead[K];
+        const stale = (['stats', 'staffing', 'allocation', 'today'] as const)
+          .some((key) => c[key] === null && before?.[key] != null);
         return {
           campaign: { id: c.id, name: c.name, status: c.status },
-          stats: c.stats ?? before?.stats ?? null,
-          overdue: c.callbacks_overdue ?? before?.overdue ?? null,
+          stats: kept('stats'),
+          staffing: kept('staffing'),
+          allocation: kept('allocation'),
+          today: kept('today'),
+          settings: c.settings,
+          stale,
         };
       });
       board.last = new Map(reads.map((r) => [r.campaign.id, r]));

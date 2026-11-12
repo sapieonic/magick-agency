@@ -873,18 +873,22 @@ a rate-limit key and never an auth input.
   counting the dangers and warnings on its list (not a waiting campaign, and not the missed calls
   the Inbound badge carries).
   Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
-  abandonment from 80% of its ceiling on a running campaign, a campaign's overdue callbacks, the
-  account's open missed calls), each linking to the campaign tab or page that fixes it, derived on
-  every refresh with no read state (`utils/agency/home.ts`, `homeAttention`), with a campaign that
-  is only waiting for its hours or a retry shown apart as "Waiting, nothing wrong"; **Floor right
+  every row of the campaign Overview's "Needs your attention" run over the board with today for its
+  range figures (`attentionFrom`, shared, not copied), the account's open missed calls), each
+  linking to the campaign tab or page that fixes it, derived on every refresh
+  (`utils/agency/home.ts`, `homeAttention`), with the information rows (a campaign waiting for its
+  hours or a retry, today's carrier failures, calling hours left at the default) shown apart as
+  "For your information"; **Floor right
   now**, a row per running campaign (and per paused one with agents on it) from the stats'
   `agents_by_state`, linking to its Agents tab; **Today so far**, one grouped read (`grouped-stats`,
   `group_by=campaign`, the viewer's local midnight to now) summed into dials, conversations,
   successes (with the success rate) and talk time. Reads (`hooks/useHomeBoard.ts`): one request,
   `GET /proxy/agency/home` (`api/agencyHome.ts`; the server's `agency/home-board.ts`, served from
   the insights route family), answering the active campaigns, at most 25 running first, each with
-  the fields of `/stats` Home reads and the insights allocation's overdue callbacks; every 10 s and
-  on return. The server reuses a still campaign's stats and every overdue count for a minute. The
+  the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's
+  carrier failures and recording and the recording and calling-hours settings; every 10 s and on
+  return. The server reuses a still campaign's stats while its floor holds, and the allocation and
+  today's figures, for a minute. The
   sidebar badge reads the same board (one per tenant and account, `useHomeBadgeCount`): its
   readers share one read at the fastest period any of them asks for, so on Home the badge adds no
   request and elsewhere the board is read once a minute, never while the tab is hidden.

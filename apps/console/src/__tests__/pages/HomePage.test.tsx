@@ -94,7 +94,7 @@ describe('Needs your attention', () => {
 
     const list = await screen.findByTestId('home-attention');
     const link = (id: string) => within(screen.getByTestId(`home-attention-${id}`)).getByRole('link');
-    expect(link('callbacks:c1').getAttribute('href')).toBe('/agency/campaigns/c1/callbacks');
+    expect(link('callbacks-overdue:c1').getAttribute('href')).toBe('/agency/campaigns/c1/callbacks');
     expect(link('stall:c2').getAttribute('href')).toBe('/agency/campaigns/c2/health');
     expect(link('abandonment:c1').getAttribute('href')).toBe('/agency/campaigns/c1/health');
     expect(link('missed').getAttribute('href')).toBe('/agency/inbound/missed');
@@ -111,7 +111,7 @@ describe('Needs your attention', () => {
     ]));
     renderHome();
     const waiting = await screen.findByTestId('home-waiting');
-    expect(within(waiting).getByText('Waiting, nothing wrong')).toBeTruthy();
+    expect(within(waiting).getByText('For your information')).toBeTruthy();
     expect(within(waiting).getByText('Outside calling hours')).toBeTruthy();
     expect(screen.queryByTestId('home-attention')).toBeNull();
     expect(screen.getByTestId('home-attention-empty').textContent).toContain('Nothing needs you right now');

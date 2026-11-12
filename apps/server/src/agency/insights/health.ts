@@ -27,7 +27,9 @@ import {
   agencyInsightsReadRepository,
   agencyInsightsRollupRepository,
 } from '../../db/repositories/agency.repository.js';
-import { campaignZone, rangeWire, type ServedInsightsRange } from './range.js';
+import { attentionRangeFigures, type AgencyAttentionRangeFigures } from '@magick-agency/contracts/api/agency/home';
+import { localDayEnd } from '../calling-hours.js';
+import { campaignZone, parseInsightsRange, rangeWire, type ServedInsightsRange } from './range.js';
 import { InsightsCampaignGone } from './shared.js';
 
 /** The most auto-pauses listed for a range. */
@@ -112,4 +114,42 @@ export async function computeHealth(
     pending_buckets: freshness.pending_buckets,
     generated_at: now.toISOString(),
   };
+}
+
+/**
+ * The range the console's "Today" asks the range reads for (`resolveInsightsRange`: the campaign's
+ * zone, UTC when the runtime does not know it, from its midnight to the next, ending at now),
+ * served as they serve it. Home's board reads today's figures over it, so a row's number is the
+ * one the Health tab shows under `?range=today`.
+ */
+export function todayRange(campaign: AgencyCampaignRecord, now: Date): ServedInsightsRange {
+  const zone = campaignZone(campaign.default_timezone);
+  const end = localDayEnd(zone, now) ?? localDayEnd('UTC', now)!;
+  // The day before `end` lasts 23 to 25 hours, so 36 hours before `end` is in the day before it,
+  // whose end is today's midnight.
+  const start = localDayEnd(zone, new Date(end.getTime() - 36 * 3_600_000)) ?? new Date(end.getTime() - 24 * 3_600_000);
+  const parsed = parseInsightsRange(
+    { from: start.toISOString(), to: end.toISOString() },
+    { createdAt: new Date(campaign.created_at), now, bucket: false },
+  );
+  if (!parsed.ok) throw new Error(`today's range refused: ${parsed.message}`);
+  return parsed.range;
+}
+
+/**
+ * The health read's figures the attention rules read (carrier failures, recording), over `range`:
+ * the same two rollup reads {@link computeHealth} makes, so they equal its `carrier_failures` and
+ * `recording` for the same range.
+ */
+export async function rangeAttentionFigures(
+  campaign: AgencyCampaignRecord,
+  range: ServedInsightsRange,
+): Promise<AgencyAttentionRangeFigures> {
+  const q = { campaignId: campaign.id, tenantId: campaign.tenant_id, from: range.from, to: range.to };
+  const [carrierFailures, recording] = await Promise.all([
+    agencyInsightsRollupRepository.carrierFailures(q),
+    agencyInsightsRollupRepository.recording(q),
+  ]);
+  if (!carrierFailures || !recording) throw new InsightsCampaignGone();
+  return attentionRangeFigures({ carrier_failures: carrierFailures.failed, recording });
 }

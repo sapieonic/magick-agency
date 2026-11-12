@@ -6,9 +6,9 @@ import { randomUUID } from 'node:crypto';
  *
  * `GET /proxy/agency/home` (decision B28a): session middleware with Firebase stubbed, tenant
  * context, RBAC, the account scope, the dialer flag, the campaign list (`listForHome`), each
- * campaign's stats through `callCore` and the overdue callbacks by the insights allocation's
- * predicate. The order and the cap, that every number is the one the per-campaign route serves,
- * and the refusals.
+ * campaign's stats through `callCore`, its staffing and allocation figures through the insights
+ * allocation and its carrier failures and recording over the Health tab's "Today". The order and
+ * the cap, that every number is the one the per-campaign route serves, and the refusals.
  */
 
 const mocks = vi.hoisted(() => {
@@ -17,7 +17,14 @@ const mocks = vi.hoisted(() => {
 });
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: mocks.verifyIdToken }));
 
-import type { AgencyHomeBoard } from '@magick-agency/contracts/api/agency/home';
+import {
+  attentionAllocation,
+  attentionRangeFigures,
+  attentionSettings,
+  attentionStaffing,
+  type AgencyHomeBoard,
+} from '@magick-agency/contracts/api/agency/home';
+import type { AgencyInsightsAllocation, AgencyInsightsHealth, AgencyInsightsSummary } from '@magick-agency/contracts/api/agency/insights';
 import { getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
   call, headersFor, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
@@ -25,6 +32,7 @@ import {
 } from '../load/load-harness.js';
 import { insightsCache } from '../../../src/agency/insights/cache.js';
 import { resetHomeBoardMemosForTests } from '../../../src/agency/home-board.js';
+import { todayRange } from '../../../src/agency/insights/health.js';
 
 let loaded: LoadApp;
 let floors: TenantFloor[];
@@ -78,6 +86,26 @@ beforeAll(async () => {
        FROM generate_series(1, 4) g`,
     [C(13), f.tenant, f.account],
   );
+  // Running campaign 13: both agents assigned, one of them on the floor on a break.
+  for (const agent of f.agents) {
+    await q(`INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)`,
+      [f.tenant, f.account, C(13), agent.id]);
+  }
+  await q(`INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state) VALUES ($1, $2, $3, $4, 'break')`,
+    [f.tenant, f.account, C(13), f.agents[0]!.id]);
+  // Running campaign 13's rollup: today 2 carrier failures and 3 of 5 connected calls recorded;
+  // three days ago 7 more failures and 10 unrecorded calls, which today's figures leave out.
+  for (const [ago, connected, recorded, failed] of [['0 hours', 5, 3, 2], ['3 days', 10, 0, 7]] as const) {
+    await q(
+      `WITH b AS (
+         INSERT INTO agency_insights_rollup_buckets (campaign_id, bucket_start, dials, connected, recorded_connected)
+         VALUES ($1, date_bin('15 minutes', now() - $2::interval, '2000-01-01'), $5, $3, $4)
+         RETURNING campaign_id, bucket_start)
+       INSERT INTO agency_insights_rollup_facets (campaign_id, bucket_start, facet, key, n)
+       SELECT campaign_id, bucket_start, 'outcome', 'failed', $5 FROM b`,
+      [C(13), ago, connected, recorded, failed],
+    );
+  }
 }, 120_000);
 
 beforeEach(() => {
@@ -166,14 +194,42 @@ describe('the numbers are the per-campaign routes’ own', () => {
     }
   });
 
-  it('serves the insights allocation’s overdue callbacks', async () => {
+  it('serves the insights allocation’s attention figures and staffing', async () => {
     const board = await boardOf();
-    const res = await call(app(), 'GET', `/proxy/agency/campaigns/${C(13)}/insights/allocation`, sup(), main());
+    for (const i of [13, 14]) {
+      const res = await call(app(), 'GET', `/proxy/agency/campaigns/${C(i)}/insights/allocation`, sup(), main());
+      expect(res.statusCode, res.body).toBe(200);
+      const allocation = res.json() as AgencyInsightsAllocation;
+      const onBoard = board.campaigns.find((c) => c.id === C(i))!;
+      expect(onBoard.allocation).toEqual(attentionAllocation(allocation));
+      expect(onBoard.staffing).toEqual(attentionStaffing(allocation.agents));
+    }
+    const c13 = board.campaigns.find((c) => c.id === C(13))!;
+    expect(c13.allocation!.callbacks_overdue).toBe(3);
+    expect(c13.staffing).toEqual({ staffed: 2, online: 1 });
+    expect(board.campaigns.find((c) => c.id === C(14))!.allocation!.callbacks_overdue).toBe(0);
+    expect(board.campaigns.find((c) => c.id === C(14))!.staffing).toEqual({ staffed: 0, online: 0 });
+  });
+
+  it('serves today’s carrier failures and recording as the Health tab serves its Today range', async () => {
+    const board = await boardOf();
+    const { rows } = await q('SELECT * FROM agency_campaigns WHERE id = $1', [C(13)]);
+    const range = todayRange(rows[0], new Date());
+    const qs = `from=${encodeURIComponent(range.from.toISOString())}&to=${encodeURIComponent(range.to.toISOString())}`;
+    const res = await call(app(), 'GET', `/proxy/agency/campaigns/${C(13)}/insights/health?${qs}`, sup(), main());
     expect(res.statusCode, res.body).toBe(200);
-    const overdue = (res.json() as { totals: { callbacks_overdue: number } }).totals.callbacks_overdue;
-    expect(overdue).toBe(3);
-    expect(board.campaigns.find((c) => c.id === C(13))!.callbacks_overdue).toBe(3);
-    expect(board.campaigns.find((c) => c.id === C(14))!.callbacks_overdue).toBe(0);
+    const health = res.json() as AgencyInsightsHealth;
+    const onBoard = board.campaigns.find((c) => c.id === C(13))!;
+    expect(onBoard.today).toEqual(attentionRangeFigures(health));
+    expect(onBoard.today).toEqual({ carrier_failures: 2, recording: { connected: 5, recorded: 3 } });
+  });
+
+  it('serves the summary’s recording and calling-hours settings', async () => {
+    const board = await boardOf();
+    const res = await call(app(), 'GET', `/proxy/agency/campaigns/${C(13)}/insights/summary`, sup(), main());
+    expect(res.statusCode, res.body).toBe(200);
+    const summary = res.json() as AgencyInsightsSummary;
+    expect(board.campaigns.find((c) => c.id === C(13))!.settings).toEqual(attentionSettings(summary.settings));
   });
 
   it('reads a status change at once (the memos are keyed by status and updated_at)', async () => {
@@ -203,12 +259,12 @@ describe('a paused campaign’s floor', () => {
       const { rows } = await q(
         `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state)
          VALUES ($1, $2, $3, $4, 'break') RETURNING id`,
-        [main().tenant, main().account, paused, main().agents[0]!.id],
+        [main().tenant, main().account, paused, main().agents[1]!.id],
       );
       try {
         const after = (await boardOf()).campaigns.find((c) => c.id === paused)!;
         expect(after.stats!.agents_live).toBe(1);
-        expect(after.stats!.agents_by_state.break).toBe(1);
+        expect(after.stats!.agents_by_state!.break).toBe(1);
       } finally {
         await q('DELETE FROM agency_agent_sessions WHERE id = $1', [rows[0]!.id]);
       }

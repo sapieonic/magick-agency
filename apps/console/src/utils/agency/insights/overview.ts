@@ -1,4 +1,14 @@
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
+import {
+  attentionAllocation,
+  attentionRangeFigures,
+  attentionSettings,
+  attentionStaffing,
+  type AgencyAttentionAllocation,
+  type AgencyAttentionRangeFigures,
+  type AgencyAttentionSettings,
+  type AgencyAttentionStaffing,
+} from '@magick-agency/contracts/api/agency/home';
 import type { AgencyAttemptOutcome } from '../../../types/agency';
 import type {
   AgencyInsightsActivity,
@@ -18,7 +28,8 @@ import { IDLE_REASON_LABELS } from './copy';
  * The Overview tab's words and rules (decision IN13): the "Needs your attention"
  * list — the few things on the campaign a supervisor should act on, most urgent
  * first, each with the tab that answers it — and the cards that open the other
- * tabs. Pure, so every rule is tested where it is made.
+ * tabs. Pure, so every rule is tested where it is made. Home lists the same
+ * rules ({@link attentionFrom}) over its board, with "today" for the range.
  *
  * ── What it reads ───────────────────────────────────────────────────────────
  * Only as-of-now positions and the health read's own "now" figures: overdue
@@ -63,29 +74,74 @@ export interface Attention {
   clear: string[];
 }
 
-const TONE_ORDER: Record<AttentionTone, number> = { danger: 0, warning: 1, info: 2 };
-
-/** The agents assigned to the campaign, and how many of them are on the floor now. */
-function staffing(allocation: AgencyInsightsAllocation): { staffed: number; online: number } {
-  const staffed = allocation.agents.filter((a) => a.staffed);
-  return { staffed: staffed.length, online: staffed.filter((a) => a.state !== 'offline').length };
+/**
+ * What the attention rules read about one campaign: the Overview's own reads
+ * ({@link campaignAttention}), or Home's board (`utils/agency/home.ts`), which serves
+ * exactly these from the same server reads (decision B28a: Home never disagrees
+ * with the page it links to). Each part is null until it is known; its rules
+ * then say nothing.
+ */
+export interface CampaignAttentionFacts {
+  status: string;
+  settings: AgencyAttentionSettings;
+  /** As of now, from the allocation: overdue callbacks and contacts held by away agents. */
+  allocation: AgencyAttentionAllocation | null;
+  /** As of now: assigned agents and how many are on the floor. */
+  staffing: AgencyAttentionStaffing | null;
+  /** The guardrail's rolling 24 hours (whatever the range) and the campaign's ceiling. */
+  abandonment: { rolling_24h: { abandoned: number; answered: number }; ceiling_pct: number } | null;
+  /** Carrier failures and recording, counted over a range ({@link AttentionRangeWords} names it). */
+  range: AgencyAttentionRangeFigures | null;
 }
+
+/** How the range figures name their range in a sentence and inside one. */
+export interface AttentionRangeWords {
+  sentence: string;
+  phrase: string;
+}
+
+/** The Overview's: whatever the range picker shows. */
+export const RANGE_SHOWN_WORDS: AttentionRangeWords = { sentence: 'In the range shown.', phrase: 'in the range' };
+
+const TONE_ORDER: Record<AttentionTone, number> = { danger: 0, warning: 1, info: 2 };
 
 /** A campaign that can still dial, now or after a resume. */
 function canDial(status: string): boolean {
   return status === 'running' || status === 'paused';
 }
 
-export function campaignAttention({ summary, allocation, health }: AttentionInput): Attention {
+/** The Overview's facts from its three reads: the projections the server's board uses too. */
+export function overviewAttentionFacts({ summary, allocation, health }: AttentionInput): CampaignAttentionFacts {
+  return {
+    status: summary.status,
+    settings: attentionSettings(summary.settings),
+    allocation: allocation ? attentionAllocation(allocation) : null,
+    staffing: allocation ? attentionStaffing(allocation.agents) : null,
+    abandonment: health ? health.abandonment : null,
+    range: health ? attentionRangeFigures(health) : null,
+  };
+}
+
+/** The Overview's "Needs your attention": {@link attentionFrom} over its own reads. */
+export function campaignAttention(input: AttentionInput): Attention {
+  return attentionFrom(overviewAttentionFacts(input), RANGE_SHOWN_WORDS);
+}
+
+/**
+ * The attention rules: the few things on a campaign a supervisor should act on, most
+ * urgent first, each with the tab that answers it. The Overview and Home both list these.
+ */
+export function attentionFrom(facts: CampaignAttentionFacts, words: AttentionRangeWords = RANGE_SHOWN_WORDS): Attention {
   const items: AttentionItem[] = [];
   const clear: string[] = [];
-  const live = canDial(summary.status);
+  const { status, settings: s } = facts;
+  const live = canDial(status);
 
   // ── Callbacks promised and not kept ─────────────────────────────────────
-  if (allocation && allocation.totals.callbacks_overdue > 0) {
-    const overdue = allocation.totals.callbacks_overdue;
-    const unowned = allocation.unassigned.callbacks_overdue;
-    const absent = allocation.at_risk.overdue_callbacks_absent_owner;
+  if (facts.allocation && facts.allocation.callbacks_overdue > 0) {
+    const overdue = facts.allocation.callbacks_overdue;
+    const unowned = facts.allocation.callbacks_overdue_unassigned;
+    const absent = facts.allocation.callbacks_overdue_absent_owner;
     const parts: string[] = [];
     if (unowned === overdue) parts.push(overdue === 1 ? 'It has no owner.' : 'None of them has an owner.');
     else if (unowned > 0) parts.push(`${formatCount(unowned)} ${unowned === 1 ? 'has' : 'have'} no owner.`);
@@ -102,9 +158,9 @@ export function campaignAttention({ summary, allocation, health }: AttentionInpu
   }
 
   // ── Abandonment against the guardrail ───────────────────────────────────
-  if (health) {
-    const rate = abandonmentRate(health.abandonment.rolling_24h);
-    const ceiling = health.abandonment.ceiling_pct;
+  if (facts.abandonment) {
+    const rate = abandonmentRate(facts.abandonment.rolling_24h);
+    const ceiling = facts.abandonment.ceiling_pct;
     const tone = rate.kind === 'value' ? abandonmentTone(rate.pct, ceiling) : undefined;
     if (rate.kind === 'value' && tone) {
       items.push({
@@ -124,74 +180,71 @@ export function campaignAttention({ summary, allocation, health }: AttentionInpu
   }
 
   // ── Nobody on the floor ─────────────────────────────────────────────────
-  if (allocation && live) {
-    const { staffed, online } = staffing(allocation);
-    // Only while it runs: a paused campaign dials nothing until it is resumed,
-    // agents or none, so an empty floor at the end of a shift is not a problem.
-    if (online === 0 && summary.status === 'running') {
-      items.push({
-        id: 'no-agents',
-        tone: 'warning',
-        title: 'No agents online',
-        body: staffed === 0
-          ? 'Nobody is assigned to this campaign yet.'
-          : staffed === 1
-            ? 'The one assigned agent is not on the floor. Nothing dials until they join.'
-            : `None of the ${formatCount(staffed)} assigned agents is on the floor. Nothing dials until one joins.`,
-        tab: 'agents',
-        action: 'Agents',
-      });
-    }
-    const held = allocation.at_risk.held_by_absent.reduce((n, row) => n + row.due, 0);
-    if (held > 0) {
-      items.push({
-        id: 'held-by-absent',
-        tone: 'warning',
-        title: `${plural(held, 'due contact')} held by agents who are away`,
-        body: `Away longer than ${formatCount(allocation.absent_after_minutes)} minutes, or no longer assigned.`,
-        tab: 'agents',
-        action: 'Agents',
-      });
-    }
+  // Only while it runs: a paused campaign dials nothing until it is resumed,
+  // agents or none, so an empty floor at the end of a shift is not a problem.
+  if (facts.staffing && live && facts.staffing.online === 0 && status === 'running') {
+    const { staffed } = facts.staffing;
+    items.push({
+      id: 'no-agents',
+      tone: 'warning',
+      title: 'No agents online',
+      body: staffed === 0
+        ? 'Nobody is assigned to this campaign yet.'
+        : staffed === 1
+          ? 'The one assigned agent is not on the floor. Nothing dials until they join.'
+          : `None of the ${formatCount(staffed)} assigned agents is on the floor. Nothing dials until one joins.`,
+      tab: 'agents',
+      action: 'Agents',
+    });
+  }
+  if (facts.allocation && live && facts.allocation.held_by_absent > 0) {
+    const held = facts.allocation.held_by_absent;
+    items.push({
+      id: 'held-by-absent',
+      tone: 'warning',
+      title: `${plural(held, 'due contact')} held by agents who are away`,
+      body: `Away longer than ${formatCount(facts.allocation.absent_after_minutes)} minutes, or no longer assigned.`,
+      tab: 'agents',
+      action: 'Agents',
+    });
   }
 
   // ── Counted over the range ─────────────────────────────────────────────
-  if (health) {
-    if (health.carrier_failures > 0) {
+  if (facts.range) {
+    if (facts.range.carrier_failures > 0) {
       items.push({
         id: 'carrier-failures',
         tone: 'info',
-        title: `${plural(health.carrier_failures, 'dial')} failed at the carrier`,
-        body: 'In the range shown. The error codes are on the Health tab.',
+        title: `${plural(facts.range.carrier_failures, 'dial')} failed at the carrier`,
+        body: `${words.sentence} The error codes are on the Health tab.`,
         tab: 'health',
         action: 'Health',
       });
     } else {
       clear.push('no carrier failures');
     }
-    const { connected, recorded } = health.recording;
-    if (summary.settings.record_calls && recorded < connected) {
+    const { connected, recorded } = facts.range.recording;
+    if (s.record_calls && recorded < connected) {
       // A recording lands on its call some minutes after the call ends, and only
       // then is the call counted as recorded. While the campaign runs, the
       // last few calls are always short, so the gap is a note, not a warning.
-      const running = summary.status === 'running';
+      const running = status === 'running';
       items.push({
         id: 'recordings-missing',
         tone: running ? 'info' : 'warning',
         title: `${plural(connected - recorded, 'connected call')} with no recording`,
-        body: `Recording is on, and ${formatCount(recorded)} of ${formatCount(connected)} connected calls in the range have one.${running ? ' The latest calls can take a few minutes to show theirs.' : ''}`,
+        body: `Recording is on, and ${formatCount(recorded)} of ${formatCount(connected)} connected calls ${words.phrase} have one.${running ? ' The latest calls can take a few minutes to show theirs.' : ''}`,
         tab: 'health',
         action: 'Health',
       });
-    } else if (summary.settings.record_calls && connected > 0) {
+    } else if (s.record_calls && connected > 0) {
       clear.push('every connected call recorded');
     }
   }
 
   // ── Calling hours never set ─────────────────────────────────────────────
   // The launch checklist warns on a draft (IN7); this keeps saying so after launch.
-  if (summary.settings.calling_hours_default && (live || summary.status === 'draft')) {
-    const s = summary.settings;
+  if (s.calling_hours_default && (live || status === 'draft')) {
     items.push({
       id: 'calling-hours-default',
       tone: 'info',
@@ -243,7 +296,7 @@ export function callsTeaser(activity: AgencyInsightsActivity): TabTeaser {
 export function agentsTeaser(activity: AgencyInsightsActivity | null, allocation: AgencyInsightsAllocation | null): TabTeaser {
   let line1 = 'Who is on the floor, and how each agent is doing.';
   if (allocation) {
-    const { staffed, online } = staffing(allocation);
+    const { staffed, online } = attentionStaffing(allocation.agents);
     line1 = staffed === 0 ? 'Nobody is assigned yet.' : `${formatCount(online)} of ${plural(staffed, 'assigned agent')} online now.`;
   }
   const rows = (activity?.agents ?? []).filter((row) => row.agent_user_id !== null && row.dials > 0);

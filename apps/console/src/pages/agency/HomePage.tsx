@@ -115,7 +115,7 @@ export default function HomePage() {
             )}
             {waiting.length > 0 && (
               <div className={styles.waiting} data-testid="home-waiting">
-                <h3 className={styles.waitingTitle}>Waiting, nothing wrong</h3>
+                <h3 className={styles.waitingTitle}>For your information</h3>
                 <ul className={styles.attentionList}>
                   {waiting.map((item) => (
                     <AttentionRow key={item.id} item={item} now={now} />

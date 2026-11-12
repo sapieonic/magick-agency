@@ -157,8 +157,11 @@ counterpart (`CustomerSearchOptionsResponse` included). It reuses the dialer voc
 
 Home's board (`home.ts`, `GET /proxy/agency/home`, decision B28a) is console-side only: the public
 API layer assembles it (the campaign list, the internal stats handler's payload through
-`helpers/live-stats.ts`, the insights allocation through its cache). `AgencyHomeCampaignStats` is a
-`Pick` of the console `AgencyCampaignStats`, so its fields keep that type's optionality.
+`helpers/live-stats.ts`, the insights allocation through its cache, the health read's rollup
+figures for today). `AgencyHomeCampaignStats` is a `Pick` of the console `AgencyCampaignStats`, so
+its fields keep that type's optionality. The attention facts (`AgencyAttentionAllocation`,
+`AgencyAttentionStaffing`, `AgencyAttentionRangeFigures`, `AgencyAttentionSettings`) are projections
+of the console Insights types, made by the functions beside them on both sides.
 
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,

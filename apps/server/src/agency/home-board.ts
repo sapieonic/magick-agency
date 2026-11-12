@@ -1,45 +1,54 @@
 /**
  * Home's board (decision B28a, `GET /proxy/agency/home`, the wire is
  * `packages/contracts/src/api/agency/home.ts`): the account's active campaigns and, per campaign,
- * what Home reads, in one answer. Assembled from reads that already exist, never a second copy of
- * their rules:
+ * what the campaign Overview's "Needs your attention" rules read, in one answer, so Home's list is
+ * the Overview's. Assembled from reads that already exist, never a second copy of their rules:
  *
  *  - the campaigns: `agencyCampaignRepository.listForHome` (the Campaigns page's order, capped);
  *  - per campaign, the internal stats handler's payload (`liveStats`, the route's hop through
  *    `callCore`, so the stall, the guardrail's 24 hours and the floor are the health strip's
- *    own), projected to the fields Home reads;
- *  - the overdue callbacks of every campaign on the board in one read
- *    (`callbacksOverdueByCampaign`: the insights allocation's `callbacks_overdue` predicate).
+ *    own), projected to the fields Home reads, and the allocation's staffing (`campaignStaffing`:
+ *    assigned agents and how many are on the floor);
+ *  - per campaign, the insights allocation (`cachedAllocation`, the Insights tab's own cache)
+ *    projected by `attentionAllocation`: overdue callbacks and due contacts held by away agents;
+ *  - per campaign, today's carrier failures and recording (`rangeAttentionFigures` over
+ *    `todayRange`: the Health tab's "Today");
+ *  - the campaign's recording and calling-hours settings, from the row (`insightsSettings`).
  *
  * ── What it costs, and why it reuses ─────────────────────────────────────────
  * The console asks for the board every 10 s while Home is open and every 60 s for each other
- * tab's sidebar badge. Three memos keep that from costing more than the reads it replaced:
+ * tab's sidebar badge. Memos keep that bounded:
  *
  *  - **The account's board** is reused for {@link HOME_BOARD_MS}, and requests that arrive while
  *    it is computed share that computation (single flight). Only the per-campaign reads are
  *    memoised: the campaign list is read on every request, and the memo's key carries each
  *    listed campaign's id, status and `updated_at`, so a campaign starting, stopping or being
  *    edited misses at once.
- *  - **A still campaign's stats** (not running or stopping, no live calls, nobody on shift on its
- *    floor: the campaigns home's `needsPolling` rule, read from the payload itself) are reused for
- *    {@link HOME_STILL_MS} while its floor holds: the memo's key carries the floor's signature
- *    (`floorSignatures`, one indexed read for the board: open sessions, newest state change,
- *    newest join), so an agent joining a paused campaign's floor, or a signed-out station being
- *    reaped, misses at once. A moving campaign's are read on every board.
- *  - **The overdue count** is reused for {@link HOME_STILL_MS} per campaign (a follow-up count,
- *    not a live queue; it was the console's 60 s tick). The campaigns that miss are read together.
+ *  - **A still campaign's stats and staffing** (not running or stopping, no live calls, nobody on
+ *    shift on its floor: the campaigns home's `needsPolling` rule, read from the payload itself)
+ *    are reused for {@link HOME_STILL_MS} while its floor holds: the memo's key carries the floor's
+ *    signature (`floorSignatures`, one indexed read for the board: open sessions, newest state
+ *    change, newest join), so an agent joining a paused campaign's floor, or a signed-out station
+ *    being reaped, misses at once. A moving campaign's are read on every board.
+ *  - **The allocation figures and today's figures** are reused for {@link HOME_STILL_MS} per
+ *    campaign (follow-up counts, not a live queue). At most one allocation per campaign per minute
+ *    on the board, shared with any Insights tab open on it through the insights cache.
  *
- * The last two are keyed by the campaign's status and `updated_at` (`insightsCacheKey`), so a
- * pause, resume, stop or settings edit misses at once. In process: HTTP is served by one process.
+ * All are keyed by the campaign's status and `updated_at` (`insightsCacheKey`), so a pause,
+ * resume, stop or settings edit misses at once. In process: HTTP is served by one process.
  *
  * A campaign's read that fails is `null` on the board (logged), never a guess and never a failed
- * board: the console keeps what it showed for that campaign.
+ * board: the console keeps what it showed for that campaign, and says so.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
 import {
   AGENCY_HOME_ACTIVE_STATUSES,
   AGENCY_HOME_CAMPAIGN_CAP,
+  attentionSettings,
+  type AgencyAttentionAllocation,
+  type AgencyAttentionRangeFigures,
+  type AgencyAttentionStaffing,
   type AgencyHomeActiveStatus,
   type AgencyHomeBoard,
   type AgencyHomeCampaign,
@@ -49,29 +58,34 @@ import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { agencyCampaignRepository } from '../db/repositories/agency.repository.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import { InsightsCache, insightsCacheKey } from './insights/cache.js';
+import { insightsSettings } from './insights/settings.js';
 
 const log = createChildLogger({ component: 'agency-home-board' });
 
 /** How long an account's board is reused (single flight while it is computed). */
 export const HOME_BOARD_MS = 5_000;
 
-/** How long a still campaign's stats, and any campaign's overdue count, are reused. */
+/** How long a still campaign's stats, and any campaign's allocation and today's figures, are reused. */
 export const HOME_STILL_MS = 60_000;
 
-/** Campaigns whose stats are read at once: a board is at most 25 campaigns, one per account per {@link HOME_BOARD_MS}. */
+/** Campaigns read at once: a board is at most 25 campaigns, one per account per {@link HOME_BOARD_MS}. */
 export const HOME_READ_CONCURRENCY = 8;
 
 /** What the board reads per campaign. The route supplies them (`liveStats` is a `callCore` hop). */
 export interface HomeBoardDeps {
   /** The internal stats handler's payload under the campaign's own account; null when it refused. */
   liveStats: (campaign: AgencyCampaignRecord) => Promise<Partial<AgencyCampaignStats> | null>;
-  /** `totals.callbacks_overdue` of each campaign's insights allocation, by id (absent: 0). */
-  callbacksOverdue: (campaigns: AgencyCampaignRecord[]) => Promise<ReadonlyMap<string, number>>;
+  /** Assigned agents and how many are on the floor (`campaignStaffing`). */
+  staffing: (campaign: AgencyCampaignRecord) => Promise<AgencyAttentionStaffing>;
+  /** The insights allocation's attention figures (`attentionAllocation(cachedAllocation(…))`). */
+  allocation: (campaign: AgencyCampaignRecord) => Promise<AgencyAttentionAllocation>;
+  /** Carrier failures and recording over today in the campaign's zone (`rangeAttentionFigures`). */
+  today: (campaign: AgencyCampaignRecord) => Promise<AgencyAttentionRangeFigures>;
 }
 
 /**
  * Whether a campaign's live numbers move: running or stopping, or calls still live, or anyone on
- * its floor. The console's campaigns home polls by the same rule (`needsPolling`).
+ * shift on its floor. The console's campaigns home polls by the same rule (`needsPolling`).
  */
 export function campaignMoving(status: string, stats: Partial<AgencyCampaignStats>): boolean {
   if (status === 'running' || status === 'stopping') return true;
@@ -99,7 +113,7 @@ const MEMO_MAX_ENTRIES = 500;
 
 /**
  * A per-campaign value reused {@link HOME_STILL_MS} while the campaign's status and `updated_at`
- * hold, and `extra` (the floor's signature, for the stats) with them.
+ * hold, and `extra` (the floor's signature, for the live reads) with them.
  */
 class CampaignMemo<V> {
   private readonly entries = new Map<string, { key: string; at: number; value: V }>();
@@ -136,34 +150,74 @@ class CampaignMemo<V> {
   }
 }
 
-const still = new CampaignMemo<Partial<AgencyCampaignStats>>('home-stats');
-const overdue = new CampaignMemo<number>('home-overdue');
+/** A campaign's live reads: the stats payload and the staffing, each null when it failed. */
+interface LiveReads {
+  stats: Partial<AgencyCampaignStats> | null;
+  staffing: AgencyAttentionStaffing | null;
+}
+
+const still = new CampaignMemo<LiveReads>('home-live');
+const allocations = new CampaignMemo<AgencyAttentionAllocation>('home-allocation');
+const todays = new CampaignMemo<AgencyAttentionRangeFigures>('home-today');
 /** Each account's per-campaign reads, {@link HOME_BOARD_MS} (the clock read when it is used). */
 const boards = new InsightsCache(HOME_BOARD_MS, MEMO_MAX_ENTRIES, () => Date.now(), 1);
 
 /** Tests only: forget every memo. */
 export function resetHomeBoardMemosForTests(): void {
   still.clear();
-  overdue.clear();
+  allocations.clear();
+  todays.clear();
   boards.clear();
 }
 
+async function settle<T>(what: string, campaignId: string, read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (err) {
+    log.warn({ err, campaignId, read: what }, 'Home board read failed; serving null for it');
+    return null;
+  }
+}
+
 /**
- * A campaign's stats: a still one's kept while its floor's signature holds (`floor`: undefined when
- * the signature read failed, and then nothing is reused).
+ * A campaign's stats and staffing: a still one's kept while its floor's signature holds (`floor`:
+ * undefined when the signature read failed, and then nothing is reused). Kept only when both
+ * answered.
  */
-async function statsFor(
+async function liveFor(
   campaign: AgencyCampaignRecord,
   deps: HomeBoardDeps,
   now: number,
   floor: string | undefined,
-): Promise<Partial<AgencyCampaignStats> | null> {
+): Promise<LiveReads> {
   const kept = floor === undefined ? undefined : still.get(campaign, now, floor);
   if (kept) return kept;
-  const stats = await deps.liveStats(campaign);
+  const [stats, staffing] = await Promise.all([
+    settle('stats', campaign.id, () => deps.liveStats(campaign)),
+    settle('staffing', campaign.id, () => deps.staffing(campaign)),
+  ]);
+  const reads = { stats, staffing };
   still.delete(campaign.id);
-  if (stats && floor !== undefined && !campaignMoving(campaign.status, stats)) still.set(campaign, now, stats, floor);
-  return stats;
+  if (stats && staffing && floor !== undefined && !campaignMoving(campaign.status, stats)) {
+    still.set(campaign, now, reads, floor);
+  }
+  return reads;
+}
+
+/** A value reused {@link HOME_STILL_MS} per campaign; a failed read is null and read again next board. */
+async function memoised<V>(
+  memo: CampaignMemo<V>,
+  what: string,
+  campaign: AgencyCampaignRecord,
+  now: number,
+  read: () => Promise<V>,
+): Promise<V | null> {
+  const kept = memo.get(campaign, now);
+  if (kept !== undefined) return kept;
+  const value = await settle(what, campaign.id, read);
+  if (value === null) memo.delete(campaign.id);
+  else memo.set(campaign, now, value);
+  return value;
 }
 
 /**
@@ -179,59 +233,24 @@ async function floorsOf(rows: AgencyCampaignRecord[]): Promise<Map<string, strin
   }
 }
 
-/** Each campaign's overdue count: the kept ones, and the rest in one read (all null when it fails). */
-async function overdueFor(
-  campaigns: AgencyCampaignRecord[],
-  deps: HomeBoardDeps,
-  now: number,
-): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
-  const missing: AgencyCampaignRecord[] = [];
-  for (const campaign of campaigns) {
-    const kept = overdue.get(campaign, now);
-    if (kept === undefined) missing.push(campaign);
-    else out.set(campaign.id, kept);
-  }
-  if (missing.length === 0) return out;
-  try {
-    const counts = await deps.callbacksOverdue(missing);
-    for (const campaign of missing) {
-      const n = counts.get(campaign.id) ?? 0;
-      overdue.set(campaign, now, n);
-      out.set(campaign.id, n);
-    }
-  } catch (err) {
-    log.warn({ err, campaigns: missing.length, read: 'callbacks_overdue' }, 'Home board read failed; serving null for it');
-    for (const campaign of missing) out.set(campaign.id, null);
-  }
-  return out;
-}
-
-async function settle<T>(what: string, campaignId: string, read: () => Promise<T>): Promise<T | null> {
-  try {
-    return await read();
-  } catch (err) {
-    log.warn({ err, campaignId, read: what }, 'Home board read failed; serving null for it');
-    return null;
-  }
-}
-
 async function readCampaigns(rows: AgencyCampaignRecord[], deps: HomeBoardDeps): Promise<AgencyHomeCampaign[]> {
   const now = Date.now();
   const floors = await floorsOf(rows);
-  const [counts, stats] = await Promise.all([
-    overdueFor(rows, deps, now),
-    mapWithConcurrency(rows, HOME_READ_CONCURRENCY, (campaign) =>
-      settle('stats', campaign.id, () => statsFor(campaign, deps, now, floors ? floors.get(campaign.id) ?? '' : undefined))),
-  ]);
-  return rows.map((campaign, i) => {
-    const read = stats[i];
+  return mapWithConcurrency(rows, HOME_READ_CONCURRENCY, async (campaign): Promise<AgencyHomeCampaign> => {
+    const [live, allocation, today] = await Promise.all([
+      liveFor(campaign, deps, now, floors ? floors.get(campaign.id) ?? '' : undefined),
+      memoised(allocations, 'allocation', campaign, now, () => deps.allocation(campaign)),
+      memoised(todays, 'today', campaign, now, () => deps.today(campaign)),
+    ]);
     return {
       id: campaign.id,
       name: campaign.name,
       status: campaign.status as AgencyHomeActiveStatus,
-      stats: read ? homeStats(read) : null,
-      callbacks_overdue: counts.get(campaign.id) ?? null,
+      stats: live.stats ? homeStats(live.stats) : null,
+      staffing: live.staffing,
+      allocation,
+      today,
+      settings: attentionSettings(insightsSettings(campaign, null)),
     };
   });
 }

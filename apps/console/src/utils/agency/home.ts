@@ -3,6 +3,10 @@ import type { AgencyInboundMissedCountResponse } from '../../types/inbound';
 import type { AgencyGroupPage } from '../../types/agency-stats';
 import {
   AGENCY_HOME_CAMPAIGN_CAP,
+  type AgencyAttentionAllocation,
+  type AgencyAttentionRangeFigures,
+  type AgencyAttentionSettings,
+  type AgencyAttentionStaffing,
   type AgencyHomeActiveStatus,
   type AgencyHomeCampaignStats,
 } from '@magick-agency/contracts/api/agency/home';
@@ -10,8 +14,9 @@ import { AGENCY_STALL_LABELS, stallCopy } from '../agencyHealthStrip';
 import { campaignTabHref, type CampaignTabId } from '../agencyCampaignTabs';
 import { plural } from '../format/number';
 import { badgeText } from '../badgeText';
-import { abandonmentTone, ceilingPctText } from './abandonmentCeiling';
+import { abandonmentTone } from './abandonmentCeiling';
 import { abandonmentRate, rateText, successRate, type InsightsRate } from './insights/rates';
+import { attentionFrom, type AttentionRangeWords, type CampaignAttentionFacts } from './insights/overview';
 
 /**
  * The Home page's rules (decision B28, Home): what needs a supervisor now, the floor of each
@@ -23,11 +28,18 @@ import { abandonmentRate, rateText, successRate, type InsightsRate } from './ins
  * unread: an item is there while its condition holds and gone on the next refresh after it
  * is fixed.
  *
+ * ── The Overview's rules, not a copy (B28a) ────────────────────────────────
+ * Beside each campaign's stall (the health strip's top diagnosis, which the Overview leaves to
+ * the strip above its tabs), every row is one of the campaign Overview's "Needs your
+ * attention" rules (`attentionFrom` in `insights/overview.ts`), run over the board's figures,
+ * which the server reads from the Overview's own reads. Its range figures (carrier failures,
+ * recordings) are today's in the campaign's zone, and their rows open the Health tab on
+ * "Today", so Home never disagrees with the page it links to.
+ *
  * ── Wording ────────────────────────────────────────────────────────────────
  * Every sentence is one the console already says somewhere: the stall labels and headlines
- * are the health strip's (`agencyHealthStrip`), the abandonment and callback lines are the
- * campaign Overview's "Needs your attention" (`insights/overview.ts`), the missed-calls line
- * the Missed list's subtitle.
+ * are the health strip's (`agencyHealthStrip`), the rest the campaign Overview's, the
+ * missed-calls line the Missed list's subtitle.
  */
 
 /** At most this many active campaigns are on Home's board (the server applies it). */
@@ -65,13 +77,23 @@ export interface HomeCampaignRef {
   status: AgencyHomeActiveStatus;
 }
 
-/** One active campaign and what Home has read for it. */
+/** One active campaign and what Home has read for it. Each part null until known. */
 export interface HomeCampaignRead {
   campaign: HomeCampaignRef;
   /** Null until its stats answer (or when that read failed and nothing was read before). */
   stats: AgencyHomeCampaignStats | null;
-  /** The callbacks overdue now (the allocation's totals), null until known. */
-  overdue: number | null;
+  /** Assigned agents and how many are on the floor. */
+  staffing: AgencyAttentionStaffing | null;
+  /** The allocation's overdue callbacks and contacts held by away agents. */
+  allocation: AgencyAttentionAllocation | null;
+  /** Today's carrier failures and recording, in the campaign's zone. */
+  today: AgencyAttentionRangeFigures | null;
+  settings: AgencyAttentionSettings | null;
+  /**
+   * Whether any part is the last good read's because this one failed for it: the page marks the
+   * campaign's rows so a number it could not refresh is not read as fresh.
+   */
+  stale: boolean;
 }
 
 export interface HomeMissed {
@@ -126,16 +148,55 @@ export function abandonmentAttention(stats: AgencyHomeCampaignStats): 'near' | '
   return tone === 'bad' ? 'over' : tone === 'warn' ? 'near' : null;
 }
 
+/** How Home names its range figures: today, in the campaign's own zone. */
+export const HOME_TODAY_WORDS: AttentionRangeWords = { sentence: 'Today, in the campaign’s time zone.', phrase: 'today' };
+
+/** The Overview's rule ids whose figures are counted over a range: their rows open the tab on Today. */
+const RANGE_RULES: ReadonlySet<string> = new Set(['carrier-failures', 'recordings-missing']);
+
+/** Home's button words for the tab an Overview rule names. */
+const OPEN_TAB: Record<CampaignTabId, string> = {
+  overview: 'Open campaign',
+  calls: 'Open calls',
+  agents: 'Open the floor',
+  callbacks: 'Open callbacks',
+  health: 'Open Health',
+  contacts: 'Open contacts',
+  attempts: 'Open call attempts',
+  manual: 'Open manual calls',
+  activity: 'Open activity',
+  settings: 'Open settings',
+};
+
+/** The facts the Overview's rules read, from a campaign's board read. */
+export function homeAttentionFacts(read: HomeCampaignRead): CampaignAttentionFacts | null {
+  if (!read.settings) return null;
+  const { stats } = read;
+  const pair = stats && stats.abandoned_24h !== undefined && stats.answered_24h !== undefined
+    && typeof stats.abandonment_ceiling_pct === 'number'
+    ? { rolling_24h: { abandoned: stats.abandoned_24h, answered: stats.answered_24h }, ceiling_pct: stats.abandonment_ceiling_pct }
+    : null;
+  return {
+    status: read.campaign.status,
+    settings: read.settings,
+    allocation: read.allocation,
+    staffing: read.staffing,
+    abandonment: pair,
+    range: read.today,
+  };
+}
+
 /**
  * Every condition Home shows, most urgent first (danger, warning, information), campaigns in
- * their Campaigns-page order within a tone. One row per live condition:
+ * their Campaigns-page order within a tone. Per campaign:
  *
- *  - a campaign's stall: its top one, as the health strip shows it (one diagnosis, not five);
- *  - abandonment in the meter's warning band or over the ceiling, on a running campaign (a
- *    paused one dials nothing; an automatic abandonment pause is already its stall row);
- *  - a campaign's overdue callbacks;
- *  - the account's open missed inbound calls, when the reader gets the Missed list (a warning:
- *    someone should call them back; not counted by the Home badge, see `badge`).
+ *  - its stall: the top one, as the health strip shows it (one diagnosis, not five);
+ *  - every row of the campaign Overview's "Needs your attention" ({@link attentionFrom}), with
+ *    today for the range; abandonment is left out when the stall is the guardrail's own pause
+ *    (that row already says it).
+ *
+ * And the account's open missed inbound calls, when the reader gets the Missed list (a warning:
+ * someone should call them back; not counted by the Home badge, see `badge`).
  *
  * The page splits it ({@link homeNeeds}, {@link homeWaiting}); the badge counts
  * {@link homeBadgeCount}.
@@ -147,7 +208,8 @@ export function homeAttention(
 ): HomeAttentionItem[] {
   const items: HomeAttentionItem[] = [];
 
-  for (const { campaign, stats, overdue } of reads) {
+  for (const read of reads) {
+    const { campaign, stats } = read;
     const about = { id: campaign.id, name: campaign.name };
 
     const stall = stats?.stall ?? null;
@@ -166,38 +228,20 @@ export function homeAttention(
       });
     }
 
-    if (stats && campaign.status === 'running' && stall?.code !== 'auto_paused_abandonment') {
-      const level = abandonmentAttention(stats);
-      if (level) {
-        const rate = rateText(statsAbandonmentRate(stats));
-        const ceiling = ceilingPctText(stats.abandonment_ceiling_pct ?? 0);
-        items.push({
-          id: `abandonment:${campaign.id}`,
-          tone: level === 'over' ? 'danger' : 'warning',
-          campaign: about,
-          title: level === 'over'
-            ? `Abandonment ${rate} is over the ${ceiling} ceiling`
-            : `Abandonment ${rate} is close to the ${ceiling} ceiling`,
-          detail: 'Over the last 24 hours. Above the ceiling the guardrail pauses the campaign.',
-          at: null,
-          action: 'Open Health',
-          to: campaignTabHref('health', campaign.id),
-          badge: true,
-        });
-      }
-    }
-
-    if (overdue !== null && overdue > 0) {
+    const facts = homeAttentionFacts(read);
+    if (!facts) continue;
+    for (const rule of attentionFrom(facts, HOME_TODAY_WORDS).items) {
+      if (rule.id === 'abandonment' && stall?.code === 'auto_paused_abandonment') continue;
       items.push({
-        id: `callbacks:${campaign.id}`,
-        tone: 'danger',
+        id: `${rule.id}:${campaign.id}`,
+        tone: rule.tone,
         campaign: about,
-        title: `${plural(overdue, 'callback')} overdue`,
-        detail: 'Customers were promised these calls.',
+        title: rule.title,
+        detail: rule.body,
         at: null,
-        action: 'Open callbacks',
-        to: campaignTabHref('callbacks', campaign.id),
-        badge: true,
+        action: OPEN_TAB[rule.tab],
+        to: campaignTabHref(rule.tab, campaign.id, RANGE_RULES.has(rule.id) ? '?range=today' : ''),
+        badge: rule.tone !== 'info',
       });
     }
   }
@@ -234,7 +278,10 @@ export function homeNeeds(items: readonly HomeAttentionItem[]): HomeAttentionIte
   return items.filter((item) => item.tone !== 'info');
 }
 
-/** "Waiting, nothing wrong": a campaign waiting for its calling hours or a scheduled retry. */
+/**
+ * "For your information": nothing is wrong. A campaign waiting for its calling hours or a scheduled
+ * retry, today's carrier failures, recordings still landing, calling hours left at the default.
+ */
 export function homeWaiting(items: readonly HomeAttentionItem[]): HomeAttentionItem[] {
   return items.filter((item) => item.tone === 'info');
 }
