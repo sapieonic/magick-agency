@@ -34,6 +34,7 @@ vi.mock('../../api/users', () => ({
 vi.mock('../../analytics/events', () => ({ trackSetupEvent: vi.fn() }));
 
 import TeamPage from '../../pages/team/TeamPage';
+import { ROLE_DESCRIPTIONS } from '../../pages/team/teamRoles';
 
 function makeMember(overrides?: {
   role?: TenantMember['membership']['role'];
@@ -356,5 +357,54 @@ describe('TeamPage — closing the member actions menu', () => {
     openMenu();
     fireEvent.mouseDown(screen.getByRole('menuitem', { name: /Change role/i }));
     expect(screen.getByRole('menu', { name: 'Member actions' })).toBeTruthy();
+  });
+});
+
+/**
+ * What each role can do, where it is picked (decision AA7): under the invite's Role select, and
+ * on each Change role option. The page guide says the same as the table: viewers and operators
+ * can both take calls, and the whole tenant is "the organisation".
+ */
+describe('TeamPage — roles say what they can do', () => {
+  it('describes the role picked in the invite, and follows the pick', () => {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }));
+    const role = screen.getByLabelText('Role') as HTMLSelectElement;
+    const description = () => screen.getByTestId('invite-role-description');
+    expect(document.getElementById(role.getAttribute('aria-describedby')!)).toBe(description());
+    fireEvent.change(role, { target: { value: 'agent' } });
+    expect(description().textContent).toBe(ROLE_DESCRIPTIONS.agent);
+    fireEvent.change(role, { target: { value: 'viewer' } });
+    expect(description().textContent).toBe(ROLE_DESCRIPTIONS.viewer);
+    expect(screen.getByRole('option', { name: 'All accounts (whole organisation)' })).toBeTruthy();
+  });
+
+  it('describes each role Change role offers', () => {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Member actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
+    const operator = screen.getByRole('menuitem', { name: 'Operator' });
+    expect(operator.getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(operator.getAttribute('aria-describedby')!)?.textContent).toBe(ROLE_DESCRIPTIONS.operator);
+  });
+
+  it('guides truthfully: viewers and operators can both take calls, across the organisation', () => {
+    render(
+      <MemoryRouter>
+        <TeamPage />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/viewers can only see data/)).toBeNull();
+    expect(screen.getByText(/viewers and operators see campaigns and results and can take calls too \(the two roles are the same today\)/)).toBeTruthy();
+    expect(screen.getByText(/join your organisation/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/workspace/);
   });
 });

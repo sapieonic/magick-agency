@@ -102,7 +102,8 @@ export function renderReportReadyEmail(input: ReportReadyEmailInput, consoleBase
       `${lead}${about}, covering ${window} (${input.timezone}), could not be prepared.`,
       'Open the report to see why and to run it again.',
     ];
-  const action = input.outcome === 'ready' ? 'Open the report' : 'View the report';
+  // "report" is the one file; the list it sits in is Exports, as the console names it (B28).
+  const action = input.outcome === 'ready' ? 'Open the report in Exports' : 'View the report in Exports';
 
   const textBody = [
     ...lines,

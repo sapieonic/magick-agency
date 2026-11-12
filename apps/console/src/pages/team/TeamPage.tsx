@@ -209,8 +209,8 @@ export default function TeamPage() {
         pageKey="team"
         description="Manage your team members and their access levels. Invite new users by email, assign roles to control what they can see and do, and remove members when needed."
         tips={[
-          'Roles control access: viewers can only see data, operators can also take calls, supervisors run an account, and admins run the whole workspace.',
-          'Invited users will receive an email with instructions to join your workspace.',
+          'Roles control access: agents take calls and follow up their own missed calls; viewers and operators see campaigns and results and can take calls too (the two roles are the same today); supervisors run an account; admins also create accounts and change people’s access across the organisation.',
+          'Invited users will receive an email with instructions to join your organisation.',
         ]}
       />
 
@@ -224,7 +224,7 @@ export default function TeamPage() {
         <EmptyState
           icon={<Users size={32} />}
           title="No team members"
-          description="Invite your team members to collaborate on this workspace."
+          description="Invite your team members to collaborate on this organisation."
           action={
             canInvite ? (
               <button
@@ -346,7 +346,7 @@ export default function TeamPage() {
       <ConfirmDialog
         open={!!confirmRemove}
         title="Remove team member"
-        message={`Are you sure you want to remove ${confirmRemove?.user.display_name || confirmRemove?.user.email}? They will lose access to this workspace.`}
+        message={`Are you sure you want to remove ${confirmRemove?.user.display_name || confirmRemove?.user.email}? They will lose access to this organisation.`}
         confirmLabel={removing ? 'Removing...' : 'Remove'}
         danger
         onConfirm={handleRemove}

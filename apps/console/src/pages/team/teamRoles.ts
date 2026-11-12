@@ -26,6 +26,29 @@ export function getRoleColor(role: Role): string {
 }
 
 /**
+ * What each role can do, in a line, shown where a role is picked (the invite and Change role).
+ * Read from the contract's `PERMISSION_MATRIX`, not from what the names suggest, and pinned to it
+ * by `teamRoles.test.ts`: every claim a line makes is checked against the permissions the role
+ * holds.
+ *
+ * Viewer and Operator read the same because they are the same (decision AA7): no permission
+ * floors at `operator`, and taking calls (`agency.station.connect`) floors at `agent`, so both
+ * can take calls and neither can change anything. They are described, not merged.
+ */
+export const ROLE_DESCRIPTIONS: Record<Role, string> = {
+  tenant_owner: 'Everything an admin does, and can change or remove admins.',
+  tenant_admin: 'Everything a supervisor does, and can create accounts, change people’s roles and remove them.',
+  account_admin: 'Runs campaigns and live calls, edits the account’s settings and the Do Not Call list, and invites people. Can take calls too.',
+  operator: 'The same as Viewer: sees campaigns, results and the Do Not Call list, and can take calls. Can’t change campaigns or settings.',
+  viewer: 'Sees campaigns, results and the Do Not Call list, and can take calls. Can’t change campaigns or settings.',
+  agent: 'Takes calls, follows up their own missed calls and can look up a customer’s past calls. Sees nothing else.',
+};
+
+export function getRoleDescription(role: Role): string {
+  return ROLE_DESCRIPTIONS[role] ?? '';
+}
+
+/**
  * `account_admin` where a role is picked: "Supervisor", the console's word for
  * whoever runs an account, with the access level beside it so nobody picks it
  * thinking it is a dialler-only seat (it can also invite people and change

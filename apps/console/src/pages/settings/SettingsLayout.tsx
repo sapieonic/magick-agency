@@ -21,7 +21,9 @@ import styles from './SettingsLayout.module.css';
  *
  * The entry open is remembered for this viewer, so `/settings` reopens it
  * (`SettingsIndexRedirect`). On a phone the sub-nav collapses into one "Settings page" picker
- * above the page (CSS swaps the two), rather than stacking every entry above every page.
+ * above the page (CSS swaps the two), rather than stacking every entry above every page; "Find a
+ * setting" and the campaign-settings pointer stay, and the list shows again with what a search
+ * matched.
  */
 export default function SettingsLayout() {
   const { pathname } = useLocation();
@@ -104,7 +106,13 @@ export default function SettingsLayout() {
             {query === '' ? '' : `${plural(count, 'setting')} found`}
           </p>
 
-          <nav aria-label="Settings" data-testid="settings-nav">
+          {/* On a phone the picker stands in for this list, which shows only a search's matches. */}
+          <nav
+            aria-label="Settings"
+            className={styles.nav}
+            data-filtering={query === '' ? undefined : ''}
+            data-testid="settings-nav"
+          >
             {shown.map((group) => (
               <section key={group.scope} className={styles.group} data-testid={`settings-group-${group.scope}`}>
                 <h2 className={styles.groupTitle}>{settingsGroupTitle(group.scope, names)}</h2>

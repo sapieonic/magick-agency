@@ -15,6 +15,7 @@ import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { NOBODY_FREE_MEANING } from '../../utils/inbound/missedCopy';
 import missedStyles from '../../components/agency/inbound/MissedCalls.module.css';
 import { InboundQueueTiles } from '../../components/agency/inbound/InboundQueueTiles';
+import { SettingsEntryLink } from '../../components/common/SettingsEntryLink';
 import styles from '../../components/agency/inbound/Inbound.module.css';
 
 /**
@@ -82,6 +83,7 @@ export default function MissedCallsPage({ surface = 'agency' }: { surface?: 'age
       <PageHeader
         title="Missed calls"
         subtitle={supervise ? 'Inbound calls in this account that reached nobody.' : 'Inbound calls assigned to you that reached nobody.'}
+        actions={<SettingsEntryLink entry="inbound" />}
       />
       <PageDescription
         pageKey="agency-inbound-missed"

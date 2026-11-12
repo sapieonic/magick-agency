@@ -182,7 +182,7 @@ function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
     <section className={styles.card} aria-labelledby="home-today-heading">
       <div className={styles.cardHead}>
         <h2 id="home-today-heading" className={styles.cardTitle}>Today so far</h2>
-        <Link to="/agency/analytics" className={styles.cardLink}>Open Reports</Link>
+        <Link to="/agency/analytics" className={styles.cardLink}>Open Analytics</Link>
       </div>
       {today.status === 'loading' && <p className={styles.quiet}>Loading today’s numbers…</p>}
       {today.status === 'unavailable' && <p className={styles.quiet}>Today’s numbers didn’t load.</p>}

@@ -68,7 +68,8 @@ describe('renderReportReadyEmail', () => {
     expect(email.subject).toBe('Your agent review for Priya S is ready');
     expect(email.url).toBe(`https://console.example.com/t/${TENANT}/a/${ACCOUNT}/agency/reports/${RUN}`);
     expect(email.textBody).toContain('covering 9 Oct 2026 to 7 Nov 2026 (Europe/London), is ready to download.');
-    expect(email.textBody).toContain(`Open the report: ${email.url}`);
+    expect(email.textBody).toContain(`Open the report in Exports: ${email.url}`);
+    expect(email.htmlBody).toContain('Open the report in Exports &rarr;</a>');
     expect(email.textBody).toContain('downloaded for 90 days');
     expect(email.htmlBody).toContain(`href="${email.url}"`);
   });
@@ -77,6 +78,7 @@ describe('renderReportReadyEmail', () => {
     const email = renderReportReadyEmail({ ...base, kind: 'campaign', subjectName: 'Spring renewals', outcome: 'failed' }, 'https://c.example');
     expect(email.subject).toBe('Your campaign report for Spring renewals could not be prepared');
     expect(email.textBody).toContain('Open the report to see why and to run it again.');
+    expect(email.textBody).toContain('View the report in Exports: https://c.example/');
   });
 
   it('a scheduled account report says so; a truncated one says its sheets were cut short', () => {
