@@ -56,7 +56,7 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  */
 export function AgentLanding({ children }: { children: ReactNode }) {
   const { role } = useTenant();
-  const { pathname, search } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const [params] = useSearchParams();
   const { isEnabled: capabilityEnabled, loading: governanceLoading } = useGovernance();
   const { isEnabled: flagEnabled, status: flagStatus } = useFeatureFlags();
@@ -110,9 +110,11 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    *
    * Validated through `agentLandingArrival` rather than passed through raw, so junk
    * in the URL cannot travel any further than this component.
+   *
+   * A twin is the same page, so everything after the path goes with it: the query and the hash.
    */
   const twin = dialerTwinPath(pathname);
-  if (twin) return <Navigate to={`${twin}${search}`} replace />;
+  if (twin) return <Navigate to={`${twin}${search}${hash}`} replace />;
 
   const arrival = agentLandingArrival(params.get(AGENT_LANDING_PARAM));
   const to = arrival ? `${DIALER_PATH}?${AGENT_LANDING_PARAM}=${arrival}` : DIALER_PATH;

@@ -50,7 +50,7 @@ function Shell() {
 
 function Where() {
   const location = useLocation();
-  return <div data-testid="where">{`${location.pathname}${location.search}`}</div>;
+  return <div data-testid="where">{`${location.pathname}${location.search}${location.hash}`}</div>;
 }
 
 function renderAt(entry = '/app') {
@@ -250,7 +250,9 @@ describe('AgentLanding — a console page with its own /dialer twin', () => {
     ['/agency/reports?tab=subscriptions', '/dialer/reports?tab=subscriptions'],
     ['/agency/inbound/missed', '/dialer/missed'],
     ['/agency/customers?number=%2B919800000000', '/dialer/customers?number=%2B919800000000'],
-  ])('sends a dedicated agent from %s to %s, query and all', async (entry, expected) => {
+    ['/agency/reports/run-1?tab=summary#agents', '/dialer/reports/run-1?tab=summary#agents'],
+    ['/agency/inbound/missed#overdue', '/dialer/missed#overdue'],
+  ])('sends a dedicated agent from %s to %s, query and hash and all', async (entry, expected) => {
     renderAgency(entry);
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe(expected));
   });
