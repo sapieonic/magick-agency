@@ -160,11 +160,36 @@ describe('dncPhoneSearch — what the list search box finds (India the default)'
     expect(read('+44 (0)20 794')).toEqual({ e164: null, endsWith: null, startsWith: '+4420794' });
   });
 
-  it('refuses a + number cut short before the calling code and 4 digits', () => {
-    for (const typed of ['+91 99', '+1 555', '+919908']) {
-      expect(dncPhoneSearch(typed, '91').ok, typed).toBe(false);
-    }
-    expect(read('+9199088').startsWith).toBe('+9199088');
+  it('refuses a + number cut short before its calling code and 4 more digits, with its own code and words', () => {
+    expect(dncPhoneSearch('+91 990', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 4 digits after +91, or leave off the + to search by the last digits.',
+    });
+    expect(dncPhoneSearch('+1 555', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 4 digits after +1, or leave off the + to search by the last digits.',
+    });
+    // A calling code the number rule does not list has no known length: 7 digits in all.
+    expect(dncPhoneSearch('+27 8212', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 7 digits after the +, or leave off the + to search by the last digits.',
+    });
+  });
+
+  it('runs a + number cut short once it has its calling code and 4 more digits, whatever the code’s length', () => {
+    expect(read('+91 9908').startsWith).toBe('+919908');
+    expect(read('+1 5551').startsWith).toBe('+15551');
+    expect(read('+44 2079').startsWith).toBe('+442079');
+    expect(read('+971 5012').startsWith).toBe('+9715012');
+    expect(read('+27 82123').startsWith).toBe('+2782123');
+  });
+
+  it('text typed with 00 is an ending as typed, and the start of a number once what follows clears the + floor', () => {
+    expect(read('0044 2079')).toEqual({ e164: null, endsWith: '00442079', startsWith: '+442079' });
+    expect(read('0091 99088')).toEqual({ e164: null, endsWith: '009199088', startsWith: '+9199088' });
+    // Too short to be a number cut short: an ending only, its zeros kept.
+    expect(read('0044 207')).toEqual({ e164: null, endsWith: '0044207', startsWith: null });
+    expect(read('0060')).toEqual({ e164: null, endsWith: '0060', startsWith: null });
   });
 
   it('a national number of another country is still found by its ending', () => {

@@ -7,7 +7,7 @@ import { attentionAllocation } from '@magick-agency/contracts/api/agency/home';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { computeHomeBoard, type HomeInsightsDeps } from '../../../agency/home-board.js';
 import { cachedAllocation, campaignStaffing } from '../../../agency/insights/allocation.js';
-import { rangeAttentionFigures, todayRange } from '../../../agency/insights/health.js';
+import { rangeAttentionFigures } from '../../../agency/insights/health.js';
 import { liveStats } from '../helpers/live-stats.js';
 import { dialerEnabled } from '../helpers/dialer-gate.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
@@ -16,7 +16,7 @@ import { accountOrRefuse } from '../helpers/account-scope.js';
 const INSIGHTS: HomeInsightsDeps = {
   staffing: campaignStaffing,
   allocation: async (campaign) => attentionAllocation(await cachedAllocation(campaign)),
-  today: (campaign) => rangeAttentionFigures(campaign, todayRange(campaign, new Date())),
+  today: rangeAttentionFigures,
 };
 
 export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<void> {

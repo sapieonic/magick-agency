@@ -16,13 +16,12 @@ const mocks = vi.hoisted(() => ({
   campaignStaffing: vi.fn(),
   cachedAllocation: vi.fn(),
   rangeAttentionFigures: vi.fn(),
-  todayRange: vi.fn(),
   liveStats: vi.fn(),
 }));
 vi.mock('../../../src/agency/home-board.js', () => ({ computeHomeBoard: mocks.computeHomeBoard }));
 vi.mock('../../../src/api/routes/helpers/dialer-gate.js', () => ({ dialerEnabled: mocks.dialerEnabled }));
 vi.mock('../../../src/agency/insights/allocation.js', () => ({ campaignStaffing: mocks.campaignStaffing, cachedAllocation: mocks.cachedAllocation }));
-vi.mock('../../../src/agency/insights/health.js', () => ({ rangeAttentionFigures: mocks.rangeAttentionFigures, todayRange: mocks.todayRange }));
+vi.mock('../../../src/agency/insights/health.js', () => ({ rangeAttentionFigures: mocks.rangeAttentionFigures }));
 vi.mock('../../../src/api/routes/helpers/live-stats.js', () => ({ liveStats: mocks.liveStats }));
 
 import { registerHomeBoardRoutes } from '../../../src/api/routes/proxy-agency-insights/home.js';
@@ -140,11 +139,7 @@ describe('GET /proxy/agency/home', () => {
     });
     expect(mocks.cachedAllocation).toHaveBeenCalledWith(campaign);
 
-    const range = { from: new Date(0), to: new Date(1) };
-    mocks.todayRange.mockReturnValue(range);
-    mocks.rangeAttentionFigures.mockResolvedValue({ carrier_failures: 4, recording: { connected: 2, recorded: 1 } });
-    expect(await insights.today(campaign)).toEqual({ carrier_failures: 4, recording: { connected: 2, recorded: 1 } });
-    expect(mocks.todayRange).toHaveBeenCalledWith(campaign, expect.any(Date));
-    expect(mocks.rangeAttentionFigures).toHaveBeenCalledWith(campaign, range);
+    // The board works today's range out (`todayRange`, so its memo is keyed by the day it read).
+    expect(insights.today).toBe(mocks.rangeAttentionFigures);
   });
 });

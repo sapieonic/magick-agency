@@ -73,8 +73,9 @@ const addSchema = z.object({
  */
 const listSchema = z.object({
   /**
-   * Typed text: a whole number in any common form, its last digits (at least 4), or a `+` number
-   * cut short (`dncPhoneSearch`; too few digits is a 400 `search_too_short`).
+   * Typed text: a whole number in any common form, its last digits (at least 4), or a `+` (or
+   * `00`) number cut short (`dncPhoneSearch`; too few digits is a 400 `search_too_short`, or
+   * `search_prefix_too_short` for a `+` number short of its calling code and 4 more digits).
    */
   phone: z.string().min(1).max(40).optional(),
   account_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),

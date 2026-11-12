@@ -123,12 +123,33 @@ describe('what each typed form of a listed number finds', () => {
     }
   });
 
-  it('too few digits is refused, not run', () => {
-    for (const typed of ['0', '060', '+91 99', '+1 555']) {
+  it('a number cut short needs only its calling code and 4 more digits, whatever the code’s length', async () => {
+    expect(await search('+1 5551')).toEqual([US_LISTED]);
+    expect(await search('+44 2079')).toEqual([UK_LISTED]);
+    expect(await search('+91 9908')).toEqual([NEIGHBOUR, LISTED]);
+  });
+
+  it('a number cut short typed with 00 finds the numbers it starts, as with a +', async () => {
+    // `00442079` was once only an ending, which no stored number has.
+    expect(await search('0044 2079')).toEqual([UK_LISTED]);
+    expect(await search('0091 99088 15')).toEqual([LISTED]);
+    expect(await search('001 555 123')).toEqual([US_LISTED]);
+  });
+
+  it('too few digits is refused, not run, an ending and a number cut short each with its own words', () => {
+    for (const typed of ['0', '060']) {
       expect(dncPhoneSearch(typed, '91'), typed).toEqual({
         ok: false, code: 'search_too_short', message: 'Type at least 4 digits of the number.',
       });
     }
+    expect(dncPhoneSearch('+91 99', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 4 digits after +91, or leave off the + to search by the last digits.',
+    });
+    expect(dncPhoneSearch('+1 555', '91')).toEqual({
+      ok: false, code: 'search_prefix_too_short',
+      message: 'Type at least 4 digits after +1, or leave off the + to search by the last digits.',
+    });
   });
 
   it('a national number of another country is found by its ending', async () => {
@@ -218,6 +239,13 @@ describe(`at ${SEEDED_ROWS.toLocaleString('en-US')} rows the search is index-ser
     const plan = await planFor('+91 90000 12');
     expect(plan.indexNames, plan.json).toContain('idx_dnc_entries_tenant_phone');
     expect(plan.indexNames, plan.json).not.toContain('idx_dnc_entries_tenant_phone_reversed');
+    expect(plan.seqScans, plan.json).toBe(0);
+  });
+
+  it('a number cut short typed with 00 uses both: a range on the exact index and the reversed one', async () => {
+    const plan = await planFor('0091 90000 12');
+    expect(plan.indexNames, plan.json).toContain('idx_dnc_entries_tenant_phone');
+    expect(plan.indexNames, plan.json).toContain('idx_dnc_entries_tenant_phone_reversed');
     expect(plan.seqScans, plan.json).toBe(0);
   });
 

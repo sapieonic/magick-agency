@@ -38,7 +38,10 @@
  *    being reaped, misses at once. A moving campaign's are read on every board.
  *  - **The allocation figures and today's figures** are reused for {@link HOME_STILL_MS} per
  *    campaign (follow-up counts, not a live queue). At most one allocation per campaign per minute
- *    on the board, shared with any Insights tab open on it through the insights cache.
+ *    on the board, shared with any Insights tab open on it through the insights cache. Today's
+ *    range is worked out on every board (`todayRange`, the Health tab's "Today") and its start is
+ *    part of the memo's key, so at the campaign zone's midnight the old day's figures miss at once
+ *    (Home never shows yesterday while the Health tab shows today).
  *
  * All are keyed by the campaign's status and `updated_at` (`insightsCacheKey`), so a pause,
  * resume, stop or settings edit misses at once. In process: HTTP is served by one process.
@@ -66,6 +69,8 @@ import { agencyCampaignRepository } from '../db/repositories/agency.repository.j
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import { InsightsCache, insightsCacheKey } from './insights/cache.js';
 import { insightsSettings } from './insights/settings.js';
+import { todayRange } from './insights/health.js';
+import type { ServedInsightsRange } from './insights/range.js';
 
 const log = createChildLogger({ component: 'agency-home-board' });
 
@@ -96,8 +101,11 @@ export interface HomeInsightsDeps {
   staffing: (campaign: AgencyCampaignRecord) => Promise<AgencyAttentionStaffing>;
   /** The insights allocation's attention figures (`attentionAllocation(cachedAllocation(…))`). */
   allocation: (campaign: AgencyCampaignRecord) => Promise<AgencyAttentionAllocation>;
-  /** Carrier failures and recording over today in the campaign's zone (`rangeAttentionFigures`). */
-  today: (campaign: AgencyCampaignRecord) => Promise<AgencyAttentionRangeFigures>;
+  /**
+   * Carrier failures and recording over `range` (`rangeAttentionFigures`): today in the campaign's
+   * zone, as the board worked it out (`todayRange`), so the figures and the memo's key are one day.
+   */
+  today: (campaign: AgencyCampaignRecord, range: ServedInsightsRange) => Promise<AgencyAttentionRangeFigures>;
 }
 
 /**
@@ -128,7 +136,8 @@ const MEMO_MAX_ENTRIES = 500;
 
 /**
  * A per-campaign value reused {@link HOME_STILL_MS} while the campaign's status and `updated_at`
- * hold, and `extra` (the floor's signature, for the live reads) with them.
+ * hold, and `extra` with them (the floor's signature for the live reads, today's start for today's
+ * figures).
  */
 class CampaignMemo<V> {
   private readonly entries = new Map<string, { key: string; at: number; value: V }>();
@@ -228,20 +237,39 @@ async function liveFor(
   return { stats, staffing };
 }
 
-/** A value reused {@link HOME_STILL_MS} per campaign; a failed read is null and read again next board. */
+/**
+ * A value reused {@link HOME_STILL_MS} per campaign while `extra` holds too; a failed read is null
+ * and read again next board.
+ */
 async function memoised<V>(
   memo: CampaignMemo<V>,
   what: string,
   campaign: AgencyCampaignRecord,
   now: number,
   read: () => Promise<V>,
+  extra = '',
 ): Promise<V | null> {
-  const kept = memo.get(campaign, now);
+  const kept = memo.get(campaign, now, extra);
   if (kept !== undefined) return kept;
   const value = await settle(what, campaign.id, read);
   if (value === null) memo.delete(campaign.id);
-  else memo.set(campaign, now, value);
+  else memo.set(campaign, now, value, extra);
   return value;
+}
+
+/**
+ * Today's carrier failures and recording: the range is today in the campaign's zone at `now`, and
+ * its start keys the memo, so a new day misses at once. A range that cannot be worked out is a
+ * failed read (null).
+ */
+async function todayFor(
+  campaign: AgencyCampaignRecord,
+  insights: HomeInsightsDeps,
+  now: number,
+): Promise<AgencyAttentionRangeFigures | null> {
+  const range = await settle('today_range', campaign.id, async () => todayRange(campaign, new Date(now)));
+  if (!range) return null;
+  return memoised(todays, 'today', campaign, now, () => insights.today(campaign, range), range.from.toISOString());
 }
 
 /**
@@ -265,7 +293,7 @@ async function readCampaigns(rows: AgencyCampaignRecord[], deps: HomeBoardDeps):
     const [live, allocation, today] = await Promise.all([
       liveFor(campaign, deps, now, floors ? floors.get(campaign.id) ?? '' : undefined),
       insights ? memoised(allocations, 'allocation', campaign, now, () => insights.allocation(campaign)) : null,
-      insights ? memoised(todays, 'today', campaign, now, () => insights.today(campaign)) : null,
+      insights ? todayFor(campaign, insights, now) : null,
     ]);
     return {
       id: campaign.id,

@@ -23,9 +23,9 @@ export { registerInsightsAsOfNowRoutes, registerInsightsRangeRoutes, registerHom
  *    guards and refused `400 invalid_insights_query`; the served range (rounded to the rollup's
  *    15-minute buckets) is echoed and is part of the cache key.
  *
- * Guards, in this order, on every route: session and tenant context (the hooks below);
- * `agency.supervise` (account admin and up; tenant owners pass; agents and viewers get the RBAC
- * 403); then `insightsCampaign` (`./proxy-agency-insights/shared.ts`): the dialer flag (`403
+ * Guards, in this order, on every route but Home's board (below): session and tenant context (the
+ * hooks below); `agency.supervise` (account admin and up; tenant owners pass; agents and viewers
+ * get the RBAC 403); then `insightsCampaign` (`./proxy-agency-insights/shared.ts`): the dialer flag (`403
  * feature_disabled`), the id's shape (`404 campaign_not_found`, never a `22P02`) and the ownership
  * probe (tenant AND account; its 404 forwarded). The routes validate their own ids, so the family
  * gets no wrapper id guard. The contact-assignment flag is NOT checked: the allocation is served
@@ -33,8 +33,11 @@ export { registerInsightsAsOfNowRoutes, registerInsightsRangeRoutes, registerHom
  *
  * Home's board (`./proxy-agency-insights/home.ts`, `GET /proxy/agency/home`, decision B28a) lives
  * here too: it reads the allocation through the same cache and the stats strip through the same
- * hop as the summary. It is account-wide, so it has no `:id`: `agency.supervise`, then the account
- * scope (`400 account_scope_required`), then the dialer flag.
+ * hop as the summary. It is account-wide, so it has no `:id`. Its gate is lower than the family's:
+ * `agency.campaigns.read` (the floor of the campaign list and `/stats`, so a viewer's or operator's
+ * Campaigns page reads it), and the insights parts (staffing, allocation, today's figures,
+ * settings) are neither read nor sent below `agency.supervise`; then the account scope (`400
+ * account_scope_required`), then the dialer flag.
  */
 export async function proxyAgencyInsightsRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
