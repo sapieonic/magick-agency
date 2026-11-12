@@ -1,11 +1,13 @@
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
+import 'package:magick_agency_agent/core/ring/ring_answer_coordinator.dart';
 import 'package:magick_agency_agent/core/ring/ring_channel.dart';
 import 'package:magick_agency_agent/core/ring/ring_copy.dart';
 import 'package:magick_agency_agent/core/ring/station_ring.dart';
 
 import '../inbound/inbound_fixtures.dart' show pushSample;
+import '../station/controller_harness.dart' show Sent;
 import 'ring_harness.dart';
 
 /// Answering from a ring (IQ71): the gate resolves, the answered ring is taken (`pendingAnswer`
@@ -115,6 +117,65 @@ void main() {
       expect(h.requests('POST', _acceptPath), hasLength(1));
       expect(h.channel.named('reportEnded'), ['reportEnded:$_callId:accept_failed']);
       expect(h.container.read(ringNoticeProvider), RingCopy.acceptFailed);
+      h.dispose();
+    });
+  });
+
+  group('already_accepted: this phone\'s own station attached first (N5)', () {
+    Object alreadyAccepted(Sent _) =>
+        jsonReply(409, pushSample('refusal_no_push_device')..['code'] = 'already_accepted');
+
+    test('the station holds the call: it goes on, no notice, native not told to end it', () {
+      fakeAsync((async) {
+        final h = harness(async)..start();
+        h.routes['POST $_acceptPath'] = alreadyAccepted;
+        h.station.holds.add(_callId);
+        h.emit(const RingAnswered(_answer));
+        async.elapse(const Duration(seconds: 2));
+        expect(h.requests('POST', _acceptPath), hasLength(1));
+        expect(h.station.calls, ['hold:$_callId', 'holdsCall:$_callId', 'release:$_callId']);
+        expect(h.channel.named('reportEnded'), isEmpty);
+        expect(h.container.read(ringNoticeProvider), isNull);
+        expect(h.container.read(ringAnswerCoordinatorProvider), isNull);
+        h.dispose();
+      });
+    });
+
+    test('the call reaches the station inside the window (its frame after the 409): it goes on', () {
+      fakeAsync((async) {
+        final h = harness(async)..start();
+        h.routes['POST $_acceptPath'] = alreadyAccepted;
+        h.station.holdsAfter = (callId: _callId, after: const Duration(seconds: 2));
+        h.emit(const RingAnswered(_answer));
+        async.elapse(const Duration(seconds: 6));
+        expect(h.channel.named('reportEnded'), isEmpty);
+        expect(h.container.read(ringNoticeProvider), isNull);
+        h.dispose();
+      });
+    });
+
+    test('the station never shows the call: another device took it, and the agent is told', () {
+      fakeAsync((async) {
+        final h = harness(async)..start();
+        h.routes['POST $_acceptPath'] = alreadyAccepted;
+        h.emit(const RingAnswered(_answer));
+        async.elapse(const Duration(seconds: 4));
+        expect(h.channel.named('reportEnded'), isEmpty, reason: 'still inside the window');
+        async.elapse(const Duration(seconds: 2));
+        expect(h.requests('POST', _acceptPath), hasLength(1), reason: 'a refusal: no retry');
+        expect(h.channel.named('reportEnded'), ['reportEnded:$_callId:accept_failed']);
+        expect(h.container.read(ringNoticeProvider), RingCopy.acceptFailed);
+        expect(h.station.calls.last, 'release:$_callId');
+        h.dispose();
+      });
+    });
+  });
+
+  test('the station is held for the accept from the answer until it resumes', () {
+    fakeAsync((async) {
+      final h = harness(async)..start();
+      h.emit(const RingAnswered(_answer));
+      expect(h.station.calls, ['hold:$_callId', 'resume:$_callId']);
       h.dispose();
     });
   });

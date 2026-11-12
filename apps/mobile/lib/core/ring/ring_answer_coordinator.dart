@@ -15,11 +15,44 @@ import 'ring_rules.dart';
 import 'ring_telemetry.dart';
 import 'station_ring.dart';
 
-/// Where an accepted ring goes: the station core's [StationController.resumeForRing].
-/// Injectable, so the coordinator is tested without a station.
-final ringResumerProvider = Provider<Future<void> Function(InboundRingAcceptResponse accept)>(
-  (ref) => (accept) => ref.read(stationControllerProvider.notifier).resumeForRing(accept),
-);
+/// What answering a ring needs of the station core ([StationController]). Injectable, so the
+/// coordinator is tested without a station.
+abstract interface class RingAnswerStation {
+  /// The agent answered [callId] and its accept is in flight: the accept's URL is the station's
+  /// only attach until [resume] or [release] ([StationController.holdForRingAnswer]).
+  void hold(String callId);
+
+  /// The accept failed, or the call was found on the station without it: the hold ends.
+  void release(String callId);
+
+  /// Where an accepted ring goes ([StationController.resumeForRing]).
+  Future<void> resume(InboundRingAcceptResponse accept);
+
+  /// Whether the station holds [callId] on screen, now or within [within]
+  /// ([StationController.holdsRingCall]).
+  Future<bool> holdsCall(String callId, Duration within);
+}
+
+final class _ControllerStation implements RingAnswerStation {
+  _ControllerStation(this._ref);
+  final Ref _ref;
+
+  StationController get _station => _ref.read(stationControllerProvider.notifier);
+
+  @override
+  void hold(String callId) => _station.holdForRingAnswer(callId);
+
+  @override
+  void release(String callId) => _station.releaseRingAnswer(callId);
+
+  @override
+  Future<void> resume(InboundRingAcceptResponse accept) => _station.resumeForRing(accept);
+
+  @override
+  Future<bool> holdsCall(String callId, Duration within) => _station.holdsRingCall(callId, within);
+}
+
+final ringAnswerStationProvider = Provider<RingAnswerStation>(_ControllerStation.new);
 
 /// Answering from a ring (Mode B, IQ71). Native has already posted `…/ring/answering` at the
 /// tap (the grace runs from there, [inboundAcceptGrace]); this takes the call:
@@ -28,12 +61,18 @@ final ringResumerProvider = Provider<Future<void> Function(InboundRingAcceptResp
 ///    the gate is ready after a cold start from the full-screen intent (the accept needs the
 ///    agent's Firebase Bearer and the request scope the gate sets).
 /// 2. `POST …/ring/accept {offer_token, device_id}` (the station device id, OS3).
-/// 3. The station opens on the answer ([ringResumerProvider]), and the Mode A screens take over.
+/// 3. The station opens on the answer ([RingAnswerStation.resume]), and the Mode A screens take
+///    over. From the answer until then the station attaches on nothing but the accept's URL
+///    ([RingAnswerStation.hold]): the server takes an attach during a ring as the answer (N5), so
+///    a socket of its own (the app brought to the front by the answer) would win the race and the
+///    accept would be refused `already_accepted`.
 ///
 /// A failure is retried once when it says nothing about the call (no network, a 5xx, a 429);
 /// then, or at once on the server's refusal (`ring_not_offered`, `ring_expired`,
 /// `already_accepted`), the agent is told "This call stopped ringing or someone else took it."
-/// and native ends the Telecom connection (`reportEnded`, `accept_failed`).
+/// and native ends the Telecom connection (`reportEnded`, `accept_failed`). `already_accepted`
+/// for a call the station holds (or receives within [alreadyAcceptedWindow]) is this phone's own
+/// attach having answered first (the socket was already open): the call goes on.
 ///
 /// Also the missed ring: a ring that ended unanswered on the phone (`ringEnded` expired or
 /// accept lapsed) posts native's "Missed inbound call" notification.
@@ -44,6 +83,9 @@ class RingAnswerCoordinator extends Notifier<String?> {
 
   /// The wait before the one retry.
   static const retryDelay = Duration(seconds: 1);
+
+  /// How long `already_accepted` waits for the call to show on the station before it is a failure.
+  static const alreadyAcceptedWindow = Duration(seconds: 5);
 
   late RingChannel _channel;
   late InboundCallApi _api;
@@ -132,6 +174,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
     state = answer.callId;
     RingTelemetry.answered(answer.callId, coldStart: coldStart);
     _log.info('accepting a ring', {'call_id': answer.callId, 'cold_start': coldStart});
+    final station = ref.read(ringAnswerStationProvider)..hold(answer.callId);
     final deviceId = await ref.read(stationDeviceIdsProvider).id();
     InboundRefusal? refusal;
     for (var attempt = 0; attempt < 2; attempt++) {
@@ -141,7 +184,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
       switch (result) {
         case InboundOk(:final value):
           try {
-            await ref.read(ringResumerProvider)(value);
+            await station.resume(value);
           } catch (e, st) {
             _log.error('opening the station for a ring failed', {'call_id': answer.callId}, e, st);
             _failed(answer, null);
@@ -158,6 +201,17 @@ class RingAnswerCoordinator extends Notifier<String?> {
             'transient': r.transient,
             'attempt': attempt,
           });
+          if (r.code == InboundErrorCode.alreadyAccepted) {
+            // This phone's own station attached first (N5): the call is ours if it is on screen.
+            final held = await station.holdsCall(answer.callId, alreadyAcceptedWindow);
+            if (!ref.mounted) return;
+            if (held) {
+              _log.info('ring already accepted by this station\'s attach', {'call_id': answer.callId});
+              station.release(answer.callId);
+              if (state == answer.callId) state = null;
+              return;
+            }
+          }
           if (r.transient && attempt == 0) await Future<void>.delayed(retryDelay);
       }
       if (!refusal.transient) break;
@@ -171,6 +225,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
     RingTelemetry.expired(answer.callId, reason: 'accept_failed', code: code);
     unawaited(_channel.reportEnded(answer.callId, RingEndReason.acceptFailed));
     ref.read(ringNoticeProvider.notifier).show(RingCopy.acceptFailed);
+    ref.read(ringAnswerStationProvider).release(answer.callId);
     if (state == answer.callId) state = null;
   }
 }

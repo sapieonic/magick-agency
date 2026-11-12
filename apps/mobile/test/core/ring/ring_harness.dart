@@ -47,6 +47,50 @@ const devicePath = '/proxy/agency/push-devices/$ringDeviceId';
 http.Response jsonReply(int status, Object? body) =>
     http.Response(body == null ? '' : jsonEncode(body), status, headers: {'content-type': 'application/json'});
 
+/// The station as answering a ring sees it: what it was asked recorded, and whether it holds a
+/// call set by the test ([holds], [holdsAfter]).
+class FakeRingAnswerStation implements RingAnswerStation {
+  FakeRingAnswerStation(this.async);
+  final FakeAsync async;
+  final List<InboundRingAcceptResponse> resumed = [];
+  final List<String> calls = [];
+
+  /// The calls the station holds now.
+  final Set<String> holds = {};
+
+  /// A call that shows on the station this long after it is asked about.
+  ({String callId, Duration after})? holdsAfter;
+
+  @override
+  void hold(String callId) => calls.add('hold:$callId');
+
+  @override
+  void release(String callId) => calls.add('release:$callId');
+
+  @override
+  Future<void> resume(InboundRingAcceptResponse accept) async {
+    calls.add('resume:${accept.call.id}');
+    resumed.add(accept);
+  }
+
+  @override
+  Future<bool> holdsCall(String callId, Duration within) async {
+    calls.add('holdsCall:$callId');
+    if (holds.contains(callId)) return true;
+    final later = holdsAfter;
+    if (later == null || later.callId != callId) {
+      await Future<void>.delayed(within);
+      return false;
+    }
+    if (later.after > within) {
+      await Future<void>.delayed(within);
+      return false;
+    }
+    await Future<void>.delayed(later.after);
+    return true;
+  }
+}
+
 /// Mode B's services in a container: the registration and the coordinator over a fake
 /// channel, a mock server, a gate the test sets, and the station's resume recorded.
 class RingHarness {
@@ -67,7 +111,7 @@ class RingHarness {
         stationDeviceIdsProvider.overrideWithValue(
           StationDeviceIds(() => MemoryStore({StationDeviceIds.storeKey: ringDeviceId})),
         ),
-        ringResumerProvider.overrideWithValue((accept) async => resumed.add(accept)),
+        ringAnswerStationProvider.overrideWithValue(station),
         ...ringOverrides,
         ...overrides,
       ],
@@ -88,7 +132,8 @@ class RingHarness {
   late final ProviderContainer container;
   final channel = FakeRingChannel();
   final lifecycle = FakeLifecycle();
-  final List<InboundRingAcceptResponse> resumed = [];
+  late final station = FakeRingAnswerStation(async);
+  List<InboundRingAcceptResponse> get resumed => station.resumed;
   final List<Sent> sent = [];
   final Map<String, Object? Function(Sent)> routes = {};
 

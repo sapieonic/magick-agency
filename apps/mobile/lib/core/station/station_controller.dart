@@ -290,6 +290,14 @@ class StationController extends Notifier<StationView?>
   /// The push offer on the station (a call answered from a ring), as told to native.
   _RingCall? _ringCall;
 
+  /// A ring answered on this phone whose `…/ring/accept` is in flight (its call id): the accept's
+  /// URL is then the station's only attach ([holdForRingAnswer]).
+  String? _ringAnswerHold;
+  Timer? _ringAnswerHoldExpiry;
+
+  /// Asked whether the station holds a call ([holdsRingCall]), not answered yet.
+  final List<_InboundWaiter> _inboundWaiters = [];
+
   /// A station opened from a ring is being filled in by its join ([_maybeFillRingStation]).
   bool _ringJoinInFlight = false;
   DateTime? _ringJoinRetryAt;
@@ -345,7 +353,14 @@ class StationController extends Notifier<StationView?>
     _notifier = ref.read(stationNotifierProvider);
     _ring = ref.read(stationRingProvider);
     _inboundApi = InboundCallApi(ref.read(apiClientProvider), onUnauthorized: _reportUnauthorized);
-    ref.onDispose(() => unawaited(_closeSession(disposing: true)));
+    ref.onDispose(() {
+      _clearRingAnswerHold();
+      for (final w in List.of(_inboundWaiters)) {
+        w.settle(false);
+      }
+      _inboundWaiters.clear();
+      unawaited(_closeSession(disposing: true));
+    });
     return null;
   }
 
@@ -1033,6 +1048,7 @@ class StationController extends Notifier<StationView?>
     final inbound = _station.inboundOnScreen;
     s.inboundNotes.callChanged(inbound?.id, serverNotes: inbound?.notes, accepting: inbound != null);
     _syncRingCall();
+    _settleInboundWaiters();
     _applyLifecycle(s);
     _maybeExplainRingOff(s);
     _maybeAnnounceReturn(s);
@@ -1430,9 +1446,11 @@ class StationController extends Notifier<StationView?>
       s.audio.resumed();
     }
     final c = _station.connection;
-    // A give-up is the agent's to undo (Reconnect), except a silent one:
-    // that is worth one clean try, as when the network comes back.
-    if (c == StationConnection.reconnecting ||
+    if (_ringAnswerHold != null && c == StationConnection.reconnecting) {
+      // Brought to the front by a ring's answer: the accept's URL reopens the socket
+      // ([resumeForRing]); a mint of its own now would answer the ring by attaching (N5).
+      _log.info('back during a ring answer: the socket waits for the accept', {'call_id': _ringAnswerHold});
+    } else if (c == StationConnection.reconnecting ||
         (c == StationConnection.disconnected && s.socket.gaveUpCause == 'heartbeat')) {
       s.socket.reconnect();
     } else if (unconfirmed &&
@@ -1719,7 +1737,8 @@ class StationController extends Notifier<StationView?>
     final manual = _terminal ? null : _station.manualCall;
     final manualHeld = isCallUnsettled(manual);
     s.socket.setAppPings(appPingsWanted(foreground: _foreground, state: st, manualCall: manualHeld) && !_terminal);
-    s.socket.setKeepAlive(keepAliveWanted(foreground: _foreground, state: st, manualCall: manualHeld));
+    // A ring answer's accept in flight: the socket waits for the accept's URL ([holdForRingAnswer]).
+    s.socket.setKeepAlive(keepAliveWanted(foreground: _foreground, state: st, manualCall: manualHeld) && _ringAnswerHold == null);
     if (!_foreground) _maybeSendAway();
     _setWakeLock(wakeLockWanted(
       onDuty: !_terminal,
@@ -2083,6 +2102,7 @@ class StationController extends Notifier<StationView?>
   ///   service start.
   Future<void> resumeForRing(InboundRingAcceptResponse accept) async {
     final call = accept.call;
+    _clearRingAnswerHold();
     final s = _s;
     if (s != null && s.id == accept.sessionId && !s.hosted.isSoftphone && !_terminal) {
       _log.info('answered from a ring: reopening the station', {'call_id': call.id});
@@ -2097,9 +2117,13 @@ class StationController extends Notifier<StationView?>
         s.audio.open(_onDutyNotification());
       }
       // The socket first: the call adopted next makes a parked socket wanted again, and that
-      // connect must use the accept's token (another mint would replace it).
-      s.socket.useUrlOnce(accept.stationWsUrl, accept.stationTokenExpiresAt);
-      s.socket.reconnect();
+      // connect must use the accept's token (another mint would replace it). A socket already
+      // open (back in the app before the answer) is kept: the server binds on it (the accept's
+      // "a station is already here").
+      if (!s.socket.isOpen) {
+        s.socket.useUrlOnce(accept.stationWsUrl, accept.stationTokenExpiresAt);
+        s.socket.reconnect();
+      }
       adoptInboundCall(call);
       _afterChange();
       return;
@@ -2109,6 +2133,64 @@ class StationController extends Notifier<StationView?>
     final name = match != null && match.campaignId == accept.campaignId ? match.campaignName : null;
     await _open(HostedSession.ring(accept, campaignName: name, accountId: _api.accountId));
     adoptInboundCall(call);
+  }
+
+  /// The longest a ring answer holds the socket ([holdForRingAnswer]): past the accept and its
+  /// one retry, so a coordinator that never comes back cannot leave the station shut.
+  static const ringAnswerHoldMax = Duration(seconds: 20);
+
+  /// Mode B: the agent answered [callId] on this phone and its `…/ring/accept` is in flight. Until
+  /// [resumeForRing] (or [releaseRingAnswer]) the accept's URL is the station's only attach: a
+  /// return to the app ([_onShow], the answer brings it to the front) does not reopen the parked
+  /// socket, and a dropped socket does not reconnect on a mint of its own. The server takes an
+  /// attach during a ring as the answer (N5): a socket of its own would win the race, bind the
+  /// call, and the accept would then be refused `already_accepted`.
+  void holdForRingAnswer(String callId) {
+    _ringAnswerHold = callId;
+    _ringAnswerHoldExpiry?.cancel();
+    _ringAnswerHoldExpiry = Timer(ringAnswerHoldMax, () {
+      _log.warn('a ring answer held the station too long: released', {'call_id': callId});
+      releaseRingAnswer(callId);
+    });
+  }
+
+  /// The ring answer for [callId] is over without [resumeForRing] (the accept failed, or the
+  /// call was found on the station): the socket is wanted as usual again.
+  void releaseRingAnswer(String callId) {
+    if (_ringAnswerHold != callId) return;
+    _clearRingAnswerHold();
+    _afterChange();
+  }
+
+  void _clearRingAnswerHold() {
+    _ringAnswerHold = null;
+    _ringAnswerHoldExpiry?.cancel();
+    _ringAnswerHoldExpiry = null;
+  }
+
+  /// Whether the station holds the inbound call [callId] on screen, now or once a frame brings it
+  /// within [within]: a ring's accept refused `already_accepted` because this phone's own socket
+  /// attached first (N5) is then no failure.
+  Future<bool> holdsRingCall(String callId, Duration within) {
+    if (_holdsInbound(callId)) return Future.value(true);
+    final waiter = _InboundWaiter(callId);
+    _inboundWaiters.add(waiter);
+    waiter.timer = Timer(within, () {
+      _inboundWaiters.remove(waiter);
+      waiter.settle(false);
+    });
+    return waiter.done.future;
+  }
+
+  bool _holdsInbound(String callId) => _s != null && !_terminal && _station.inboundOnScreen?.id == callId;
+
+  void _settleInboundWaiters() {
+    if (_inboundWaiters.isEmpty) return;
+    for (final w in List.of(_inboundWaiters)) {
+      if (!_holdsInbound(w.callId)) continue;
+      _inboundWaiters.remove(w);
+      w.settle(true);
+    }
   }
 
   // ─── Actions ────────────────────────────────────────────────────────────
@@ -3196,6 +3278,19 @@ class StationController extends Notifier<StationView?>
 }
 
 /// The push offer on the station, as told to native (Mode B).
+/// One [StationController.holdsRingCall] waiting for its call.
+final class _InboundWaiter {
+  _InboundWaiter(this.callId);
+  final String callId;
+  final done = Completer<bool>();
+  Timer? timer;
+
+  void settle(bool held) {
+    timer?.cancel();
+    if (!done.isCompleted) done.complete(held);
+  }
+}
+
 final class _RingCall {
   _RingCall(this.callId);
   final String callId;

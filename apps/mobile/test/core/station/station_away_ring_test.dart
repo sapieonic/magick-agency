@@ -312,6 +312,100 @@ void main() {
     });
   });
 
+  group('a ring answered while the app is alive (the answer brings it to the front)', () {
+    test('answer first: back in the app, the parked socket waits for the accept\'s URL, '
+        'and opens on it with no mint of its own', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        expect(app.connector.attempts, 1, reason: 'an attach of its own would answer the ring (N5) ahead of the accept');
+        expect(app.mints, 0);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('a hold nobody ends is bounded: the socket reopens as usual', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1);
+        async.elapse(StationController.ringAnswerHoldMax);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.mints, 1);
+        app.dispose();
+      });
+    });
+
+    test('a failed accept releases the hold: the socket reopens as usual', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.controller.releaseRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        app.dispose();
+      });
+    });
+
+    test('back in the app first: its own socket attached (N5); the station holds the call when its frame comes, '
+        'and the accept\'s answer keeps that socket', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.mints, 1);
+        app.controller.holdForRingAnswer(_pushCallId);
+        bool? held;
+        app.controller.holdsRingCall(_pushCallId, const Duration(seconds: 5)).then((v) => held = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(held, isNull, reason: 'not on the station yet');
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        async.flushMicrotasks();
+        expect(held, isTrue);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2, reason: 'the server binds on the socket already here');
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        expect(r.channel.named('reportBound'), ['reportBound:$_pushCallId']);
+        app.dispose();
+      });
+    });
+
+    test('the station never shows the call: holdsRingCall answers false once the window ends', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        bool? held;
+        app.controller.holdsRingCall(_pushCallId, const Duration(seconds: 5)).then((v) => held = v);
+        app.readyFrame('break', extra: {'break_reason': 'away_ring'});
+        async.elapse(const Duration(seconds: 5));
+        expect(held, isFalse);
+        app.dispose();
+      });
+    });
+  });
+
   group('the offer backstop and a push offer', () {
     test('the rule: a push offer is stale only past the accept grace; never before accept', () {
       final station = inboundCall('inbound_call_offered');
