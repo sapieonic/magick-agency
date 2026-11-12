@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { UNSAFE_NavigationContext, parsePath, useLocation, type Navigator, type To } from 'react-router-dom';
+import { useHoldHistorySteps } from '../contexts/UrlScopeContext';
 
 export interface UnsavedChangesGuard {
   /** A navigation away is waiting for the person to say whether to leave. */
@@ -20,10 +21,12 @@ export interface UnsavedChangesGuard {
  * - **In-app navigation** (links, the sidebar, search, `navigate()`): while `dirty`, the
  *   router's navigator holds any push or replace to another path and sets `asking`. A change
  *   of hash or query on this path goes through (the section nav writes `#id` with replace).
- * - **Back and Forward**: a `popstate` listener in the capture phase, which runs before the
- *   history's own, stops the event and steps the browser back to this entry, then asks.
- *   Leaving replays the step. It needs the entry index react-router keeps in `history.state`;
- *   without one (a memory router) the step goes through.
+ * - **Back and Forward**: held by `UrlScopeProvider` before the router hears of them
+ *   (`useHoldHistorySteps`), which steps the browser back to this entry; then it asks.
+ *   Leaving replays the step. Not a `popstate` listener of the page's own: Chromium runs a
+ *   window's listeners in the order they were added, so the history's, added at app mount,
+ *   always went first and the page was gone before it could ask. Outside the provider (a
+ *   memory router) there is no browser Back to hold.
  * - **Reload, close, typing a URL, an account switch** (a full page load): `beforeunload`, so
  *   the browser asks in its own words.
  *
@@ -31,7 +34,8 @@ export interface UnsavedChangesGuard {
  */
 export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
   const { navigator, basename } = useContext(UNSAFE_NavigationContext);
-  const { pathname, key } = useLocation();
+  const { pathname } = useLocation();
+  const holdSteps = useHoldHistorySteps();
   /** The held navigation, run by `leave`; `asking` mirrors whether there is one. */
   const pendingRef = useRef<(() => void) | null>(null);
   const [asking, setAsking] = useState(false);
@@ -44,13 +48,6 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
   const here = basename && basename !== '/' ? `${basename.replace(/\/+$/, '')}${pathname}` : pathname;
   const hereRef = useRef(here);
   hereRef.current = here;
-
-  /** This entry's index in the browser history (react-router keeps it in `history.state.idx`). */
-  const indexRef = useRef<number | null>(null);
-  useEffect(() => {
-    const idx = (window.history.state as { idx?: unknown } | null)?.idx;
-    indexRef.current = typeof idx === 'number' ? idx : null;
-  }, [key]);
 
   useEffect(() => {
     if (!dirty) {
@@ -71,32 +68,21 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
       if (samePage(args[0])) replace(...args);
       else hold(() => replace(...args));
     };
-    nav.go = (delta: number) => {
-      hold(() => go(delta));
-    };
-
-    let reverting = false;
+    /** Set once the person chose to leave, so the step that carries it out is not held again. */
     let leaving = false;
-    const onPopState = (event: PopStateEvent) => {
-      if (leaving) return;
-      if (reverting) {
-        // The browser coming back to this entry, which this listener asked for.
-        reverting = false;
-        event.stopImmediatePropagation();
-        return;
-      }
-      const to = (event.state as { idx?: unknown } | null)?.idx;
-      const from = indexRef.current;
-      if (typeof to !== 'number' || from === null || to === from) return;
-      if (window.location.pathname === hereRef.current) return;
-      event.stopImmediatePropagation();
-      reverting = true;
-      window.history.go(from - to);
-      hold(() => {
-        leaving = true;
-        window.history.go(to - from);
-      });
+    const leaveBy = (delta: number) => () => {
+      leaving = true;
+      go(delta);
     };
+    nav.go = (delta: number) => {
+      hold(leaveBy(delta));
+    };
+    const releaseSteps = holdSteps(({ pathname: to, delta }) => {
+      // A step within this page (a hash typed into the address bar) loses nothing.
+      if (leaving || to === hereRef.current) return false;
+      hold(leaveBy(delta));
+      return true;
+    });
 
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -104,16 +90,15 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
       event.returnValue = '';
     };
 
-    window.addEventListener('popstate', onPopState, true);
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => {
       nav.push = push;
       nav.replace = replace;
       nav.go = go;
-      window.removeEventListener('popstate', onPopState, true);
+      releaseSteps();
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
-  }, [dirty, navigator, hold]);
+  }, [dirty, navigator, hold, holdSteps]);
 
   const leave = useCallback(() => {
     const run = pendingRef.current;
