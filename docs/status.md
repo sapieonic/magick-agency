@@ -1356,7 +1356,7 @@ files do; 3 of 3 green since). Wall-clock lane 23 (5 files). Postgres client con
 at 95 across the four rest runs (they had reached 100, the old limit, before it was raised).
 Wall time against a serial run (`TEST_WORKERS=1`) on the same machine the same day: rest lane
 1139 s → 420–445 s; wall-clock lane 133 s (its files sum to 320 s run one after another);
-`packages/db` integration about 57 s. Not run (untouched): the web UIs, `packages/contracts`,
+`packages/db` integration 137 s → 48 s. Not run (untouched): the web UIs, `packages/contracts`,
 `packages/domain`, `packages/observability`, `apps/report-renderer`, `apps/mobile`, `pnpm
 test:grafana`.
 
