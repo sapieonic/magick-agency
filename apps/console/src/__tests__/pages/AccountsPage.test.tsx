@@ -165,7 +165,7 @@ describe('AccountsPage — who may create', () => {
   it('with no accounts, tells someone who cannot create one whom to ask', () => {
     setup({ accounts: [], memberships: [membership('account_admin', null)] });
     expect(screen.queryByRole('button', { name: /New account/i })).toBeNull();
-    expect(screen.getByText(/Ask an admin with access to the whole workspace/)).toBeTruthy();
+    expect(screen.getByText(/Ask an admin with access to the whole organisation/)).toBeTruthy();
   });
 });
 

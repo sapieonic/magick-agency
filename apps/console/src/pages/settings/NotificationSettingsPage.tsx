@@ -270,8 +270,8 @@ export default function NotificationSettingsPage() {
       <PageDescription
         pageKey="notifications"
         description={
-          'Choose which emails you receive from this workspace. These settings are yours alone — '
-          + 'they do not affect your colleagues, and you have separate settings in every workspace '
+          'Choose which emails you receive from this organisation. These settings are yours alone — '
+          + 'they do not affect your colleagues, and you have separate settings in every organisation '
           + 'you belong to.'
         }
         tips={guideTips(events)}
@@ -307,7 +307,7 @@ export default function NotificationSettingsPage() {
            * So this is the genuinely-empty catalog, not a role story. Kept
            * because an empty page reads as a failure either way.
            */
-          description="There are no notifications aimed at your role in this workspace yet."
+          description="There are no notifications aimed at your role in this organisation yet."
         />
       )}
 

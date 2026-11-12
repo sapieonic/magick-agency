@@ -124,7 +124,7 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
                 {a.name}
               </option>
             ))}
-            {!scopedTo && <option value={ALL_ACCOUNTS}>All accounts (whole workspace)</option>}
+            {!scopedTo && <option value={ALL_ACCOUNTS}>All accounts (whole organisation)</option>}
           </select>
           <p id="invite-account-hint" className={styles.fieldHint}>
             {scopedTo

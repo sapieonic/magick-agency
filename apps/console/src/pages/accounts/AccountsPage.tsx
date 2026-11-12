@@ -87,17 +87,17 @@ export default function AccountsPage() {
       <PageHeader title="Accounts" badge={accounts.length} actions={canCreate && !empty ? createButton : undefined} />
       <PageDescription
         pageKey="accounts"
-        description="Accounts divide your workspace into separate teams. Each account has its own campaigns, settings and call history, and the account switcher in the sidebar moves between them."
+        description="Accounts divide your organisation into separate teams. Each account has its own campaigns, settings and call history, and the account switcher in the sidebar moves between them."
         tips={[
-          'Invite people to one account, or to the whole workspace, from the Team page.',
+          'Invite people to one account, or to the whole organisation, from the Team page.',
           'A new account can’t place calls until support sets its call limit. You can set up its campaigns and team in the meantime.',
         ]}
       />
 
       {access === 'account_scoped' && (
         <p className={styles.scopedNote} data-testid="accounts-scoped-note">
-          Your admin access covers one account rather than the whole workspace, so you
-          can’t create accounts. Ask an admin with access to the whole workspace.
+          Your admin access covers one account rather than the whole organisation, so you
+          can’t create accounts. Ask an admin with access to the whole organisation.
         </p>
       )}
 
@@ -119,7 +119,7 @@ export default function AccountsPage() {
             title="No accounts"
             description={canCreate
               ? 'Create an account to start running campaigns.'
-              : 'Ask an admin with access to the whole workspace to create one.'}
+              : 'Ask an admin with access to the whole organisation to create one.'}
             action={canCreate ? createButton : undefined}
           />
         )

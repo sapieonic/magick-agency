@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useLayoutEffect, type CSSProperties } from 'react';
+import { useState, useCallback, useEffect, useId, useRef, useLayoutEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, MoreVertical, Send, Shield, Trash2 } from 'lucide-react';
 import { canManageRole } from '@magick-agency/contracts/rbac';
@@ -7,7 +7,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { updateUserRole } from '../../api/users';
 import type { TenantMember, UpdateRoleInput } from '../../types/team';
 import type { Role } from '../../types/auth';
-import { CHANGE_ROLES, getRoleColor } from './teamRoles';
+import { CHANGE_ROLES, getRoleColor, getRoleDescription } from './teamRoles';
 import { invitationIsResendable } from './teamInvites';
 import styles from './TeamPage.module.css';
 
@@ -53,6 +53,7 @@ export function MemberActionsMenu({
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
 
   // The contract's rule, the one the server applies: strictly higher in
   // `ROLE_HIERARCHY` (`agent` sits below `viewer`). No resolved role acts on nobody.
@@ -195,22 +196,33 @@ export function MemberActionsMenu({
                 </button>
                 {roleMenuOpen && (
                   <div className={styles.roleSubmenu}>
-                    {assignable.map((r) => (
-                      <button
-                        key={r.value}
-                        type="button"
-                        className={styles.roleOption}
-                        role="menuitem"
-                        onClick={() => handleRoleChange(r.value)}
-                        disabled={updating}
-                      >
-                        <span
-                          className={styles.roleOptionDot}
-                          style={{ backgroundColor: getRoleColor(r.value) }}
-                        />
-                        {r.label}
-                      </button>
-                    ))}
+                    {assignable.map((r) => {
+                      // Named by the role, described by what it can do.
+                      const optionId = `${menuId}-${r.value}`;
+                      return (
+                        <button
+                          key={r.value}
+                          type="button"
+                          className={styles.roleOption}
+                          role="menuitem"
+                          aria-labelledby={`${optionId}-label`}
+                          aria-describedby={`${optionId}-description`}
+                          onClick={() => handleRoleChange(r.value)}
+                          disabled={updating}
+                        >
+                          <span
+                            className={styles.roleOptionDot}
+                            style={{ backgroundColor: getRoleColor(r.value) }}
+                          />
+                          <span className={styles.roleOptionText}>
+                            <span id={`${optionId}-label`}>{r.label}</span>
+                            <span id={`${optionId}-description`} className={styles.roleOptionDescription}>
+                              {getRoleDescription(r.value)}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>

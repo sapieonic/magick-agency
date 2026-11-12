@@ -7,7 +7,7 @@ import { inviteUser } from '../../api/users';
 import { CopyableField } from '../../components/common/CopyableField';
 import { trackSetupEvent } from '../../analytics/events';
 import type { InviteUserInput, InviteUserResult } from '../../types/team';
-import { INVITE_ROLES } from './teamRoles';
+import { INVITE_ROLES, getRoleDescription } from './teamRoles';
 import { inviteSignInUrl, isInvitationLink } from './teamInvites';
 import styles from './TeamPage.module.css';
 
@@ -95,7 +95,10 @@ export function useInviteSubmission(tenantId: string | null, onCreated?: () => v
   return { submitting, error, created, submit };
 }
 
-/** The Role select, offering the roles an invite may carry (`INVITE_ROLES`). */
+/**
+ * The Role select, offering the roles an invite may carry (`INVITE_ROLES`), with what the role
+ * picked can do written under it (`ROLE_DESCRIPTIONS`).
+ */
 export function InviteRoleSelect({
   id,
   value,
@@ -105,14 +108,20 @@ export function InviteRoleSelect({
   value: InviteRole;
   onChange: (role: InviteRole) => void;
 }) {
+  const hintId = `${id}-description`;
   return (
-    <select id={id} value={value} onChange={(e) => onChange(e.target.value as InviteRole)}>
-      {INVITE_ROLES.map((r) => (
-        <option key={r.value} value={r.value}>
-          {r.label}
-        </option>
-      ))}
-    </select>
+    <>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value as InviteRole)} aria-describedby={hintId}>
+        {INVITE_ROLES.map((r) => (
+          <option key={r.value} value={r.value}>
+            {r.label}
+          </option>
+        ))}
+      </select>
+      <p id={hintId} className={styles.fieldHint} data-testid="invite-role-description">
+        {getRoleDescription(value)}
+      </p>
+    </>
   );
 }
 
@@ -176,7 +185,7 @@ function AgentLinkNote() {
 
   return (
     <p className={styles.handoffNote} data-testid="agent-dialer-gated-note">
-      This link points at the dialler, which isn’t switched on for this workspace —
+      This link points at the dialler, which isn’t switched on for this organisation —
       so they’ll sign in and be told it’s unavailable. Ask your administrator to
       enable the Agency Dialer before you send it.
     </p>
