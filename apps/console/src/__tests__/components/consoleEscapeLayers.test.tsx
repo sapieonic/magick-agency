@@ -8,7 +8,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
  * leaves the menu open; the second closes the menu.
  */
 
-const mocks = vi.hoisted(() => ({ listAgencyCampaigns: vi.fn() }));
+const mocks = vi.hoisted(() => ({ listAgencyCampaignsPage: vi.fn() }));
 
 vi.mock('../../hooks/usePostHogIdentify', () => ({ usePostHogIdentify: () => {} }));
 vi.mock('../../analytics/useProductSurface', () => ({ useProductSurface: () => {} }));
@@ -29,7 +29,7 @@ vi.mock('../../hooks/useMissedCallsAccess', () => ({
   useMissedCallsAccess: () => ({ available: false, inboundOn: false, count: null, settled: true }),
 }));
 vi.mock('../../components/layout/ConsoleSidebar', () => ({ ConsoleSidebar: () => null }));
-vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
+vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaignsPage: mocks.listAgencyCampaignsPage }));
 
 import { ConsoleLayout } from '../../components/layout/ConsoleLayout';
 
@@ -55,7 +55,7 @@ const profile = () => screen.getByTestId('profile-menu-trigger');
 const searchInput = () => within(screen.getByRole('dialog', { name: 'Search' })).getByRole('combobox');
 
 beforeEach(() => {
-  mocks.listAgencyCampaigns.mockResolvedValue([]);
+  mocks.listAgencyCampaignsPage.mockResolvedValue({ campaigns: [], total: 0 });
 });
 afterEach(() => {
   cleanup();

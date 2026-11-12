@@ -242,7 +242,7 @@ export async function listAgencyCampaigns(
 
 /** One page of the campaign list, newest first, with the account's total. */
 export async function listAgencyCampaignsPage(
-  tenantId: string,
+  tenantId: string | undefined,
   accountId: string,
   offset: number,
   limit = LIST_PAGE_SIZE,
