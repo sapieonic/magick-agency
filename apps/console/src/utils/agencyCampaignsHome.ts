@@ -89,6 +89,28 @@ export function concurrencyLine(
 
 export type CampaignFilter = 'all' | 'active' | 'draft' | 'finished';
 
+/**
+ * The campaigns home keeps its filter in the URL (`?status=draft`, absent for All), so a reload
+ * and Back from a campaign keep the group the supervisor was looking at. Here rather than on the
+ * page, whose source the stats-consumer guard reads for quoted payload keys.
+ */
+const CAMPAIGN_FILTER_PARAM = 'status';
+const NARROWING_FILTERS: readonly CampaignFilter[] = ['active', 'draft', 'finished'];
+
+/** The filter the URL names; anything else, or nothing, is All. */
+export function campaignFilterFromParams(params: URLSearchParams): CampaignFilter {
+  const value = params.get(CAMPAIGN_FILTER_PARAM);
+  return NARROWING_FILTERS.find((f) => f === value) ?? 'all';
+}
+
+/** `params` with the filter set to `next`, every other key kept. */
+export function withCampaignFilter(params: URLSearchParams, next: CampaignFilter): URLSearchParams {
+  const updated = new URLSearchParams(params);
+  if (next === 'all') updated.delete(CAMPAIGN_FILTER_PARAM);
+  else updated.set(CAMPAIGN_FILTER_PARAM, next);
+  return updated;
+}
+
 export type CampaignCounts = Record<CampaignFilter, number>;
 
 export function countCampaigns(campaigns: readonly AgencyCampaign[]): CampaignCounts {
