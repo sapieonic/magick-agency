@@ -14,7 +14,7 @@ import {
 import {
   ALL_ACCOUNTS,
   inviteAccountId,
-  inviterScopedAccount,
+  inviterScope,
   type InviteAccountChoice,
 } from './inviteScope';
 import styles from './TeamPage.module.css';
@@ -38,13 +38,21 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
    * The inviter's own account when they are held to it (the server refuses any other),
    * so there is one answer and it is filled in. Otherwise nothing: the inviter picks an
    * account, or "All accounts", on purpose (`inviteScope.ts` says why there is no
-   * default).
+   * default). When the page cannot tell which account the server holds them to, the
+   * field offers nothing and says why.
+   *
+   * Derived on every render, not seeded once: memberships and the account in view can
+   * resolve while the modal is open, and a choice seeded before then would name no
+   * option (or one the server refuses).
    */
-  const scopedTo = inviterScopedAccount(memberships, tenantId, currentAccountId);
-  const [accountChoice, setAccountChoice] = useState<InviteAccountChoice>(scopedTo ?? '');
+  const scope = inviterScope(memberships, tenantId, currentAccountId);
+  const scopedTo = scope.kind === 'account' ? scope.accountId : null;
+  const scopeUnknown = scope.kind === 'unknown';
+  const [pickedAccount, setPickedAccount] = useState<InviteAccountChoice>('');
+  const accountChoice: InviteAccountChoice = scopedTo ?? (scopeUnknown ? '' : pickedAccount);
   /* A scoped inviter's one account is offered even before (or without) the tenant's list,
      named from the switcher's list, so the select never shows a value with no option. */
-  const offeredAccounts = scopedTo
+  const offeredAccounts = scopeUnknown ? [] : scopedTo
     ? [{
       id: scopedTo,
       name: accounts.find((a) => a.id === scopedTo)?.name
@@ -110,8 +118,9 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
           <select
             id="invite-account"
             value={accountChoice}
-            onChange={(e) => setAccountChoice(e.target.value)}
+            onChange={(e) => setPickedAccount(e.target.value)}
             required
+            disabled={scopeUnknown}
             aria-describedby="invite-account-hint"
           >
             {!scopedTo && (
@@ -124,10 +133,12 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
                 {a.name}
               </option>
             ))}
-            {!scopedTo && <option value={ALL_ACCOUNTS}>All accounts (whole organisation)</option>}
+            {scope.kind === 'tenant' && <option value={ALL_ACCOUNTS}>All accounts (whole organisation)</option>}
           </select>
           <p id="invite-account-hint" className={styles.fieldHint}>
-            {scopedTo
+            {scopeUnknown
+              ? 'Your access covers particular accounts rather than the whole organisation, and this invite can’t tell which one it may use. Ask an admin with access to the whole organisation to send it.'
+              : scopedTo
               ? 'You can invite people to your own account only.'
               : 'The account they’ll work in. Choose “All accounts” only for someone who should reach every account.'}
           </p>

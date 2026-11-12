@@ -32,7 +32,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 }));
 
 import { InviteModal } from '../../pages/team/InviteModal';
-import { ALL_ACCOUNTS, inviteAccountId, inviterScopedAccount } from '../../pages/team/inviteScope';
+import { ALL_ACCOUNTS, inviteAccountId, inviterScope } from '../../pages/team/inviteScope';
 
 const TENANT = 'tenant-1';
 
@@ -40,19 +40,28 @@ function seat(accountId: string | null) {
   return { tenant_id: TENANT, account_id: accountId, role: 'tenant_admin', status: 'active' as const };
 }
 
-function setup({ memberships = [seat(null)], currentAccountId = 'acct-1' } = {}) {
+type Seat = ReturnType<typeof seat>;
+
+function mockScope(memberships: Seat[], currentAccountId: string | null) {
   mocks.useAuth.mockReturnValue({ memberships });
   mocks.useTenant.mockReturnValue({
     tenantId: TENANT,
     accountId: currentAccountId,
     accounts: [{ id: 'acct-1', name: 'Default' }],
   });
+}
+
+const modal = () => <InviteModal onClose={vi.fn()} onInvited={vi.fn()} onCreated={vi.fn()} />;
+
+function setup({ memberships = [seat(null)], currentAccountId = 'acct-1' as string | null } = {}) {
+  mockScope(memberships, currentAccountId);
   mocks.useAccounts.mockReturnValue({
     accounts: [{ id: 'acct-1', name: 'Default' }, { id: 'acct-2', name: 'Renewals' }],
   });
-  render(<InviteModal onClose={vi.fn()} onInvited={vi.fn()} onCreated={vi.fn()} />);
+  const view = render(modal());
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'sup@example.com' } });
   fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'account_admin' } });
+  return view;
 }
 
 const submitButton = () => screen.getByRole('button', { name: 'Send invite' }) as HTMLButtonElement;
@@ -119,6 +128,48 @@ describe('InviteModal — the account is always an explicit choice', () => {
     await waitFor(() => expect(mocks.inviteUser).toHaveBeenCalledTimes(1));
     expect(mocks.inviteUser.mock.calls[0]![1]).toMatchObject({ account_id: 'acct-1' });
   });
+
+  it('holds a scoped inviter to their one account even before an account is in view', async () => {
+    /* `null` is also "tenant-wide": read as that, the form offered every account and "All
+       accounts" to someone the server refuses each of them to. */
+    setup({ memberships: [seat('acct-1')], currentAccountId: null });
+
+    expect(screen.queryByRole('option', { name: /All accounts/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Renewals' })).toBeNull();
+    expect((screen.getByLabelText('Account') as HTMLSelectElement).value).toBe('acct-1');
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(mocks.inviteUser).toHaveBeenCalledTimes(1));
+    expect(mocks.inviteUser.mock.calls[0]![1]).toMatchObject({ account_id: 'acct-1' });
+  });
+
+  it('offers no account, and says why, when it cannot tell which account a scoped inviter is held to', () => {
+    setup({ memberships: [seat('acct-1'), seat('acct-2')], currentAccountId: 'acct-1' });
+
+    const select = screen.getByLabelText('Account') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(screen.queryByRole('option', { name: /All accounts/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Renewals' })).toBeNull();
+    expect(screen.getByText(/can’t tell which one it may use/)).toBeTruthy();
+    expect(submitButton().disabled).toBe(true);
+    fireEvent.submit(screen.getByLabelText('Email').closest('form')!);
+    expect(mocks.inviteUser).not.toHaveBeenCalled();
+  });
+
+  it('follows the scope when it resolves while the modal is open', async () => {
+    /* Seeded once, the choice stayed '' after the scope resolved: no option matched it and
+       Send stayed disabled. */
+    const { rerender } = setup({ memberships: [], currentAccountId: null });
+    expect(submitButton().disabled).toBe(true);
+
+    mockScope([seat('acct-1')], 'acct-1');
+    rerender(modal());
+
+    expect((screen.getByLabelText('Account') as HTMLSelectElement).value).toBe('acct-1');
+    expect(submitButton().disabled).toBe(false);
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(mocks.inviteUser).toHaveBeenCalledTimes(1));
+    expect(mocks.inviteUser.mock.calls[0]![1]).toMatchObject({ account_id: 'acct-1' });
+  });
 });
 
 describe('inviteScope', () => {
@@ -128,15 +179,32 @@ describe('inviteScope', () => {
     expect(inviteAccountId('acct-2')).toBe('acct-2');
   });
 
-  it('reads the inviter as the server does: the row for this account first, then tenant-wide', () => {
-    expect(inviterScopedAccount([seat(null)], TENANT, 'acct-1')).toBeNull();
-    expect(inviterScopedAccount([seat('acct-1')], TENANT, 'acct-1')).toBe('acct-1');
-    expect(inviterScopedAccount([seat(null), seat('acct-1')], TENANT, 'acct-1')).toBe('acct-1');
-    expect(inviterScopedAccount([seat(null), seat('acct-2')], TENANT, 'acct-1')).toBeNull();
+  const tenant = { kind: 'tenant' };
+  const account = (accountId: string) => ({ kind: 'account', accountId });
+  const unknown = { kind: 'unknown' };
+
+  it('reads a tenant-wide inviter as unrestricted, unless they also hold the account in view', () => {
+    expect(inviterScope([seat(null)], TENANT, 'acct-1')).toEqual(tenant);
+    expect(inviterScope([seat(null)], TENANT, null)).toEqual(tenant);
+    expect(inviterScope([seat(null), seat('acct-1')], TENANT, 'acct-1')).toEqual(account('acct-1'));
+    expect(inviterScope([seat(null), seat('acct-2')], TENANT, 'acct-1')).toEqual(tenant);
+  });
+
+  it('never reads an inviter with no tenant-wide row as unrestricted', () => {
+    expect(inviterScope([seat('acct-1')], TENANT, 'acct-1')).toEqual(account('acct-1'));
+    // No account in view yet: their one account, not "tenant-wide".
+    expect(inviterScope([seat('acct-1')], TENANT, null)).toEqual(account('acct-1'));
+    expect(inviterScope([seat('acct-1'), seat('acct-1')], TENANT, null)).toEqual(account('acct-1'));
+    // The invite carries no account header, so the server holds a two-account inviter to
+    // their OLDEST row, whatever is in view: the page cannot say which.
+    expect(inviterScope([seat('acct-1'), seat('acct-2')], TENANT, 'acct-1')).toEqual(unknown);
+    expect(inviterScope([seat('acct-1'), seat('acct-2')], TENANT, null)).toEqual(unknown);
+    expect(inviterScope([], TENANT, 'acct-1')).toEqual(unknown);
   });
 
   it('ignores inactive seats and other tenants', () => {
-    expect(inviterScopedAccount([{ ...seat(null), status: 'revoked' as const }], TENANT, 'acct-1')).toBe('acct-1');
-    expect(inviterScopedAccount([{ ...seat(null), tenant_id: 'tenant-2' }], TENANT, 'acct-1')).toBe('acct-1');
+    expect(inviterScope([{ ...seat(null), status: 'revoked' as const }, seat('acct-1')], TENANT, null)).toEqual(account('acct-1'));
+    expect(inviterScope([{ ...seat(null), tenant_id: 'tenant-2' }, seat('acct-1')], TENANT, null)).toEqual(account('acct-1'));
+    expect(inviterScope([{ ...seat(null), status: 'revoked' as const }], TENANT, 'acct-1')).toEqual(unknown);
   });
 });

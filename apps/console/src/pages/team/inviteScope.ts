@@ -31,22 +31,43 @@ export function inviteAccountId(choice: InviteAccountChoice): string | undefined
 }
 
 /**
- * The account an account-scoped inviter is held to, or `null` for a tenant-wide one.
- *
- * Mirrors the server's rule (`accountScopeMismatch` in `user.routes.ts`): the request's
- * membership is the inviter's row for the account they are in, else their tenant-wide
- * row, and a scoped one may only invite into its own account. So offering "All accounts"
- * or a sibling account to a scoped inviter would offer a 403.
+ * What the inviter may put in the account field: anything (`tenant`), one account they are
+ * held to (`account`), or `unknown` when this page cannot tell which account the server will
+ * hold them to, so it offers none rather than offer a 403.
  */
-export function inviterScopedAccount(
+export type InviterScope =
+  | { kind: 'tenant' }
+  | { kind: 'account'; accountId: string }
+  | { kind: 'unknown' };
+
+/**
+ * The scope an inviter's invite is held to, read as the server reads it.
+ *
+ * `POST /users/invite` is sent without `X-Account-Id`, so the server acts under the inviter's
+ * tenant-wide row, else their OLDEST account-scoped row (`selectMembership`), and a scoped row
+ * may only invite into its own account (`accountScopeMismatch` in `user.routes.ts`). So:
+ *
+ *  - a tenant-wide row reaches every account: `tenant`. One exception, kept on purpose: an
+ *    inviter who also holds a row for the account in view is offered that account only, which
+ *    is narrower than the server allows and never refused.
+ *  - no tenant-wide row and exactly one account: that account, whatever account is in view (an
+ *    account in view may not be resolved yet).
+ *  - no tenant-wide row and several accounts (or none): `unknown`. The server picks the oldest,
+ *    which is a tie-break, not something to put in front of the inviter as "your account".
+ *
+ * Never `tenant` without a tenant-wide row: that would offer "All accounts" and every sibling
+ * account to someone the server refuses each of them to.
+ */
+export function inviterScope(
   memberships: ReadonlyArray<Pick<Membership, 'tenant_id' | 'account_id' | 'status'>>,
   tenantId: string | null,
   accountId: string | null,
-): string | null {
+): InviterScope {
   const mine = memberships.filter((m) => m.tenant_id === tenantId && m.status === 'active');
-  if (accountId && mine.some((m) => m.account_id === accountId)) return accountId;
-  if (mine.some((m) => m.account_id === null)) return null;
-  // No row for this account and none tenant-wide: the server would refuse anything; hold
-  // the form to the account in view rather than offer the whole workspace.
-  return accountId;
+  const accounts = [...new Set(mine.flatMap((m) => (m.account_id === null ? [] : [m.account_id])))];
+  if (mine.some((m) => m.account_id === null)) {
+    return accountId && accounts.includes(accountId) ? { kind: 'account', accountId } : { kind: 'tenant' };
+  }
+  if (accounts.length === 1) return { kind: 'account', accountId: accounts[0]! };
+  return { kind: 'unknown' };
 }
