@@ -410,10 +410,13 @@ export function activityTargetPath(
   }
 }
 
-/** What a raw detail key is, in words: `session_id` reads "Agent session". */
+/**
+ * What a raw detail key is, in words: `session_id` reads "Agent session". The ids of an audit
+ * resource type read as that type's label, so "On what" and the details name a thing alike.
+ */
 const DETAIL_KEY_LABELS: Readonly<Record<string, string>> = {
-  session_id: 'Agent session',
-  dnc_entry_id: 'Do Not Call entry',
+  session_id: AUDIT_RESOURCE_TYPE_LABELS.agency_session!,
+  dnc_entry_id: AUDIT_RESOURCE_TYPE_LABELS.dnc_entry!,
   dnc_overridden: 'Called despite Do Not Call',
   hours_overridden: 'Called outside calling hours',
   disposition_code: 'Outcome',

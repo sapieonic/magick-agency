@@ -1105,7 +1105,7 @@ describe('rows say what they are about in words', () => {
   it('links a disposition to the call it was filed on, and calls the campaign "This campaign"', async () => {
     renderPage();
     const disposition = await screen.findByTestId(`activity-row-${DISPOSITION.id}`);
-    expect(within(disposition).getByRole('link', { name: 'Call disposition' }).getAttribute('href'))
+    expect(within(disposition).getByRole('link', { name: 'Call outcome' }).getAttribute('href'))
       .toBe('/agency/campaigns/camp-1/attempts/attempt-9');
     expect(screen.getByTestId(`activity-row-${AUTO_PAUSE.id}`).textContent).toContain('This campaign');
   });

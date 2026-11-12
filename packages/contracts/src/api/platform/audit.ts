@@ -23,9 +23,10 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_campaign', label: 'Campaign' },
   { value: 'agency_session', label: 'Agent session' },
   { value: 'agency_attempt', label: 'Call attempt' },
-  // The row's id is the attempt the disposition was filed on.
-  { value: 'agency_disposition', label: 'Call disposition' },
-  { value: 'agency_campaign_agent', label: 'Campaign agent assignment' },
+  // "Call outcome", the product's word for a disposition. The row's id is the attempt it was
+  // filed on.
+  { value: 'agency_disposition', label: 'Call outcome' },
+  { value: 'agency_campaign_agent', label: 'Agent assignment' },
   { value: 'agency_contact', label: 'Contact' },
   { value: 'agency_manual_call', label: 'Soft-phone call' },
   { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
@@ -35,7 +36,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_inbound_route', label: 'Inbound route' },
   { value: 'agency_inbound_call', label: 'Inbound call' },
   { value: 'agency_inbound_clip', label: 'Inbound recording' },
-  { value: 'dnc_entry', label: 'Do-not-call entry' },
+  // Capitalised as the Do Not Call page names its list.
+  { value: 'dnc_entry', label: 'Do Not Call entry' },
   // "Invitation", not "Membership": the rows filed under it are about the token
   // and its life (sent, accepted), and on every refusal path there is no
   // membership change to point at. Same reasoning as `agency_campaign_agent`

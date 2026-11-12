@@ -435,8 +435,9 @@ describe('History row words', () => {
     for (const { value, label } of PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY) {
       expect(activityTargetLabel(value), value).toBe(label);
     }
-    expect(activityTargetLabel('agency_disposition')).toBe('Call disposition');
-    expect(activityTargetLabel('dnc_entry')).toBe('Do-not-call entry');
+    expect(activityTargetLabel('agency_disposition')).toBe('Call outcome');
+    expect(activityTargetLabel('agency_campaign_agent')).toBe('Agent assignment');
+    expect(activityTargetLabel('dnc_entry')).toBe('Do Not Call entry');
   });
 
   it('opens a call, a contact and a soft-phone call on their own pages; nothing else', () => {
@@ -450,6 +451,8 @@ describe('History row words', () => {
 
   it('names a detail key in words, a known one by name and any other in sentence case', () => {
     expect(activityDetailKeyLabel('session_id')).toBe('Agent session');
+    expect(activityDetailKeyLabel('dnc_entry_id')).toBe(activityTargetLabel('dnc_entry'));
+    expect(activityDetailKeyLabel('dnc_entry_id')).toBe('Do Not Call entry');
     expect(activityDetailKeyLabel('call_id')).toBe('Call');
     expect(activityDetailKeyLabel('retry_count')).toBe('Retry count');
   });
