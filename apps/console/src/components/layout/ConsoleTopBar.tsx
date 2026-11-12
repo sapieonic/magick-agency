@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Menu, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useGateReaders } from '../../hooks/useGateReaders';
-import { backCrumb, breadcrumbFor, settingsEntryForPath, type GateInput } from '../../utils/consoleNav';
+import { backCrumb, breadcrumbFor, type GateInput } from '../../utils/consoleNav';
 import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
 import { useSuppliedCrumbs } from './PageCrumbs';
@@ -36,7 +36,7 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
   const { role, accountId } = useTenant();
   const readers = useGateReaders();
   const gate: GateInput = { role, ...readers };
-  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label, useSuppliedCrumbs(pathname), role);
+  const crumbs = breadcrumbFor(pathname, useSuppliedCrumbs(pathname), role);
   const back = phone ? backCrumb(crumbs) : null;
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');

@@ -148,12 +148,20 @@ export function dialerTwinPath(pathname: string): string | null {
   return null;
 }
 
+/** What the breadcrumb calls a page below a tab or a Settings entry that does not name itself. */
+export interface SubPage {
+  label: string;
+  /** For the `…/new` page below it, when that has a name of its own. */
+  newLabel?: string;
+}
+
 export interface SectionTab {
   id: string;
   label: string;
   /** The page's own URL (unchanged by the regrouping). */
   to: string;
   gate: Gate;
+  subPage?: SubPage;
 }
 
 export interface ConsoleSection {
@@ -183,7 +191,13 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     label: 'Campaigns',
     paths: ['/agency/campaigns', '/agency/softphone'],
     tabs: [
-      { id: 'campaigns', label: 'Campaigns', to: '/agency/campaigns', gate: agencyGate({ permission: 'agency.campaigns.read' }) },
+      {
+        id: 'campaigns',
+        label: 'Campaigns',
+        to: '/agency/campaigns',
+        gate: agencyGate({ permission: 'agency.campaigns.read' }),
+        subPage: { label: 'Campaign', newLabel: 'New campaign' },
+      },
       /* The server scopes `GET /softphone/calls` to the whole account only for
          `agency.supervise` (`docs/softphone.md` §7); behind the soft-phone flag. */
       {
@@ -191,6 +205,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         label: 'Soft-phone calls',
         to: '/agency/softphone',
         gate: agencyGate({ permission: 'agency.supervise', flags: [SOFTPHONE_FLAG] }),
+        subPage: { label: 'Soft-phone call' },
       },
     ],
   },
@@ -216,7 +231,13 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { id: 'analytics', label: 'Analytics', to: '/agency/analytics', gate: agencyGate({ permission: 'agency.campaigns.read' }) },
       /* `docs/reports.md`: a supervisor's history and subscriptions, anyone else's own runs. */
       /* "Exports" in the bar, under the Reports section; the id and URL keep the old name. */
-      { id: 'reports', label: 'Exports', to: '/agency/reports', gate: agencyGate({ permission: 'agency.campaigns.read', flags: [REPORTS_FLAG] }) },
+      {
+        id: 'reports',
+        label: 'Exports',
+        to: '/agency/reports',
+        gate: agencyGate({ permission: 'agency.campaigns.read', flags: [REPORTS_FLAG] }),
+        subPage: { label: 'Report' },
+      },
     ],
   },
   {
@@ -378,38 +399,33 @@ function withoutLinksHere(crumbs: readonly Crumb[], path: string, role: Role | u
  *
  * `pageCrumbs` are what a page supplied through `usePageCrumbs` (`components/layout/PageCrumbs`)
  * for what the URL cannot say, such as a campaign's name; they follow the section (and the tab,
- * for a sub-page of a tab other than the section's first) and replace the generic page crumb.
- * A section's own tab pages keep their crumbs.
+ * for a sub-page of a tab other than the section's first) and replace the generic page crumb
+ * (the tab's `subPage`). One that links where a crumb before it already does is left out, so the
+ * trail never names a page twice. A section's own tab pages keep their crumbs.
  *
  * In Settings the "Settings" crumb is not a link: `/settings` reopens the last Settings page
  * visited, which is the page the reader is on. A page below an entry (one inbound route) links
  * back to the entry.
  */
-export function breadcrumbFor(
-  pathname: string,
-  settingsLabel?: string | null,
-  pageCrumbs?: readonly Crumb[] | null,
-  role?: Role,
-): Crumb[] {
+export function breadcrumbFor(pathname: string, pageCrumbs?: readonly Crumb[] | null, role?: Role): Crumb[] {
   const path = trimTrailingSlash(pathname);
-  return withoutLinksHere(crumbTrail(path, settingsLabel, pageCrumbs), path, role);
+  return withoutLinksHere(crumbTrail(path, pageCrumbs), path, role);
 }
 
-function crumbTrail(path: string, settingsLabel?: string | null, pageCrumbs?: readonly Crumb[] | null): Crumb[] {
-  const supplied = pageCrumbs && pageCrumbs.length > 0 ? [...pageCrumbs] : null;
+function crumbTrail(path: string, pageCrumbs?: readonly Crumb[] | null): Crumb[] {
+  const supplied = pageCrumbs && pageCrumbs.length > 0 ? pageCrumbs : null;
   if (pathWithin(path, '/settings')) {
     const entry = settingsEntryForPath(path);
-    const label = settingsLabel ?? entry?.label;
-    if (!label) return [{ label: 'Settings' }, ...(supplied ?? [])];
-    if (!entry || path === entry.path) return [{ label: 'Settings' }, { label }];
-    const below = supplied ?? [{ label: settingsSubPageLabel(path) }];
-    return [{ label: 'Settings' }, { label, to: entry.path }, ...below];
+    if (!entry) return [{ label: 'Settings' }, ...(supplied ?? [])];
+    if (path === entry.path) return [{ label: 'Settings' }, { label: entry.label }];
+    const trail: Crumb[] = [{ label: 'Settings' }, { label: entry.label, to: entry.path }];
+    return supplied ? withPageCrumbs(trail, supplied) : [...trail, { label: subPageLabel(path, entry.path, entry.subPage) }];
   }
   if (pathWithin(path, '/agency/customers')) return [{ label: 'Customer history' }];
 
   const section = CONSOLE_SECTIONS.find((s) => s.paths.some((p) => pathWithin(path, p)));
   /* Outside every section (a page not found, say) only what the page names itself. */
-  if (!section) return supplied ?? [];
+  if (!section) return [...(supplied ?? [])];
   const home: Crumb = { label: section.label, to: section.tabs[0]!.to };
 
   const tab = section.tabs.find((t) => t.to === path);
@@ -420,20 +436,18 @@ function crumbTrail(path: string, settingsLabel?: string | null, pageCrumbs?: re
   const trail: Crumb[] = parentTab && parentTab.label !== section.label
     ? [home, { label: parentTab.label, to: parentTab.to }]
     : [home];
-  if (supplied) return [...trail, ...supplied];
-
-  if (path === '/agency/campaigns/new') return [...trail, { label: 'New campaign' }];
-  if (pathWithin(path, '/agency/campaigns')) return [...trail, { label: 'Campaign' }];
-  if (pathWithin(path, '/agency/softphone')) return [...trail, { label: 'Soft-phone call' }];
-  if (pathWithin(path, '/agency/reports')) return [...trail, { label: 'Report' }];
-  return trail;
+  if (supplied) return withPageCrumbs(trail, supplied);
+  return parentTab?.subPage ? [...trail, { label: subPageLabel(path, parentTab.to, parentTab.subPage) }] : trail;
 }
 
-/** The page below a Settings entry, for a page that does not name itself. */
-function settingsSubPageLabel(path: string): string {
-  if (path === '/settings/inbound/new') return 'New inbound route';
-  if (pathWithin(path, '/settings/inbound')) return 'Inbound route';
-  return 'Details';
+/** A page's own crumbs after the trail, less any that link where the trail already does. */
+function withPageCrumbs(trail: readonly Crumb[], supplied: readonly Crumb[]): Crumb[] {
+  return [...trail, ...supplied.filter((crumb) => !crumb.to || !trail.some((t) => t.to === crumb.to))];
+}
+
+/** The crumb for a page below `parent` that does not name itself; "Details" with no `subPage`. */
+function subPageLabel(path: string, parent: string, subPage: SubPage = { label: 'Details' }): string {
+  return subPage.newLabel && path === `${parent}/new` ? subPage.newLabel : subPage.label;
 }
 
 /**
@@ -464,6 +478,7 @@ export interface SettingsEntry {
   path: string;
   scope: SettingsScope;
   gate: Gate;
+  subPage?: SubPage;
 }
 
 /**
@@ -502,6 +517,7 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
     path: '/settings/inbound',
     scope: 'account',
     gate: settingsGate({ permission: 'agency.inbound.write', flags: [INBOUND_FLAG], capabilities: ['agency'] }),
+    subPage: { label: 'Inbound route', newLabel: 'New inbound route' },
   },
   {
     id: 'call-summaries',
