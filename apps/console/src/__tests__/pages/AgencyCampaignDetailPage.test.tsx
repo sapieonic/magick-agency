@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import type {
   AgencyCampaign,
   AgencyCampaignStats,
@@ -106,6 +106,7 @@ import DetailPage from '../../pages/agency/AgencyCampaignDetailPage';
 import { CampaignLandingRedirect } from '../../pages/agency/campaign-detail/CampaignLandingRedirect';
 import * as insightsSamples from '../helpers/insights';
 import { ApiError } from '../../api/client';
+import { resetCampaignTabBadges, useCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   return { id: 'camp-1', name: 'Collections', status: 'running', ...over };
@@ -770,6 +771,49 @@ describe('campaign detail — sections', () => {
     await screen.findByTestId('overview-kpis');
     await waitFor(() => expect(mocks.insights.getInsightsAllocation).toHaveBeenCalled());
     expect(screen.queryByTestId('campaign-tab-callbacks-alert')).toBeNull();
+  });
+
+  it("never shows or publishes one campaign's overdue count under the next one the page moves to", async () => {
+    /*
+      The route has no `key`, so moving from camp-1 to camp-2 keeps the page mounted. camp-1's
+      count (7) must not become camp-2's badge while camp-2's allocation is on its way, on this
+      page or in the store the campaign's other screens read.
+    */
+    resetCampaignTabBadges();
+    mocks.getAgencyCampaign.mockImplementation((id: string) =>
+      Promise.resolve(campaign(id === 'camp-2' ? { id: 'camp-2', name: 'Renewals' } : {})));
+    mocks.getAgencyCampaignStats.mockImplementation((id: string) => Promise.resolve(stats({ campaign_id: id })));
+    const first = insightsSamples.allocation();
+    first.totals.callbacks_overdue = 7;
+    mocks.insights.getInsightsAllocation.mockImplementation((id: string) =>
+      id === 'camp-2' ? new Promise(() => {}) : Promise.resolve(first));
+    let go: (to: string) => void = () => undefined;
+    function Driver() {
+      go = useNavigate();
+      return null;
+    }
+    function StoredOverdue() {
+      const held = useCampaignTabBadge('overdue', 'camp-2', true);
+      return <output data-testid="stored-overdue">{held ?? 'none'}</output>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/overview']}>
+        <Driver />
+        <Routes>
+          <Route path="/agency/campaigns/:id/overview" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect((await screen.findByTestId('campaign-tab-callbacks-alert')).textContent).toBe('7');
+
+    act(() => go('/agency/campaigns/camp-2/overview'));
+    await screen.findByRole('heading', { name: 'Renewals' });
+    await waitFor(() => expect(mocks.insights.getInsightsAllocation).toHaveBeenCalledWith('camp-2', 'tenant-1', 'account-1'));
+    expect(screen.queryByTestId('campaign-tab-callbacks-alert')).toBeNull();
+    cleanup();
+    // What camp-2's own screens would be shown: a held count, or nothing while its read is pending.
+    render(<StoredOverdue />);
+    expect(screen.getByTestId('stored-overdue').textContent).toBe('none');
   });
 
   it('marks the open section as the current page, and only that one', async () => {
