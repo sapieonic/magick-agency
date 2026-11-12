@@ -1350,15 +1350,21 @@ test:tooling` 16 pass. `agency_wire` `dart test` 605 passed for the new Home boa
 `fix/nav-home` before the merge). **Not green, so no counts recorded for them:** `apps/server` unit
 had 3 failures, all in `inbound-recordings.test.ts` (9662 passed): this machine has no audio
 decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails the same way on a branch with no
-server code change. `apps/server` integration (both lanes) and `packages/db` were not run: Docker
-was down, so `test/integration/api/agency-home-board.test.ts` (the Home board route and
-`listForHome`'s SQL) has not run yet and must before the branch merges. Not run (untouched):
+server code change. `apps/server` integration, on `48dadb3` with its own test database and Redis db: the
+wall-clock lane is green (below); the rest lane had 16 failures (2669 passed + 9 expected fail +
+2 skipped, 253 files), all in `agency-reports-e2e.test.ts` (the in-process renderer answers
+`render_failed`) and `inbound-clips-routes.test.ts` (no `mpg123` / `sndfile-programs`, which it
+needs), and the same 16 fail on `main` (`47eb7e9`) on this machine. The new
+`agency-home-board.test.ts` passes, 13 tests; its account scope was mutation-checked against real
+Postgres (dropping the account from `listForHome` turns it red, a case added after the first run
+stayed green). `packages/db` was not run (unchanged). Not run (untouched):
 `apps/super-admin`, `packages/web-ui`, `apps/report-renderer`, `packages/domain`, `apps/mobile`.
 
 | Package | Unit | Integration |
 |---|---|---|
 | `apps/console` | 6560 (339 files) | — |
 | `packages/contracts` | 476 (14 files) | — |
+| `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
 
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
 
