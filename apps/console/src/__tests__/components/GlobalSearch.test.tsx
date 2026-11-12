@@ -352,7 +352,7 @@ describe('campaigns', () => {
     expect(where()).toBe('/agency/campaigns/c-1/attempts');
     fireEvent.click(trigger());
     type('diwali history');
-    fireEvent.click(within(dialog()).getByRole('option', { name: /^Diwali renewals › Activity/ }));
+    fireEvent.click(within(dialog()).getByRole('option', { name: /^Diwali renewals › History/ }));
     expect(where()).toBe('/agency/campaigns/c-1/activity');
   });
 
