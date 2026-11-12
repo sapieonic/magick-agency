@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
  * context, RBAC, the account scope, the dialer flag, the campaign list (`listForHome`), each
  * campaign's stats through `callCore` and the overdue callbacks by the insights allocation's
  * predicate. The order and the cap, that every number is the one the per-campaign route serves,
- * and the refusals.
+ * who may read it (the list's and `/stats`' floor, with the overdue counts withheld below
+ * `agency.supervise`), and the refusals.
  */
 
 const mocks = vi.hoisted(() => {
@@ -35,6 +36,20 @@ const q = (sql: string, values: unknown[] = []) => getTestPool().query(sql, valu
 const main = () => floors[0]!;
 const sup = (f: TenantFloor = main()): Actor => f.supervisors[0]!;
 const C = (i: number) => main().campaigns[i]!;
+/** A viewer and an operator of tenant 0's account (the harness seeds agents and supervisors only). */
+const readers: Partial<Record<'viewer' | 'operator', Actor>> = {};
+
+/** A member of tenant 0's account with `role`, as the session middleware will resolve them. */
+async function seedReader(role: 'viewer' | 'operator'): Promise<Actor> {
+  const id = randomUUID();
+  const uid = `home-${role}-${id.slice(0, 8)}`;
+  await q(`INSERT INTO users (id, firebase_uid, email, display_name, status) VALUES ($1, $2, $3, $4, 'active')`,
+    [id, uid, `${uid}@load.example.com`, role]);
+  await q(`INSERT INTO memberships (id, user_id, tenant_id, account_id, role, status) VALUES ($1, $2, $3, $4, $5, 'active')`,
+    [randomUUID(), id, main().tenant, main().account, role]);
+  // `Actor['role']` names the harness's two seeded roles; the session reads the membership row.
+  return { id, uid, tok: `tok:${uid}`, role: role as unknown as Actor['role'], ip: `10.9.${role === 'viewer' ? 1 : 2}.1` };
+}
 
 async function home(actor: Actor = sup(), f: TenantFloor = main()) {
   return call(app(), 'GET', '/proxy/agency/home', actor, f);
@@ -78,6 +93,8 @@ beforeAll(async () => {
        FROM generate_series(1, 4) g`,
     [C(13), f.tenant, f.account],
   );
+  readers.viewer = await seedReader('viewer');
+  readers.operator = await seedReader('operator');
 }, 120_000);
 
 beforeEach(() => {
@@ -189,6 +206,30 @@ describe('the numbers are the per-campaign routes’ own', () => {
       await q(`UPDATE agency_campaigns SET status = 'running', updated_at = now() WHERE id = $1`, [C(26)]);
     }
   });
+});
+
+describe('who may read it', () => {
+  it.each(['viewer', 'operator'] as const)(
+    'serves a %s the supervisor’s board, with the overdue counts withheld (null)',
+    async (role) => {
+      const theirs = await home(readers[role]!);
+      expect(theirs.statusCode, theirs.body).toBe(200);
+      const board = theirs.json() as AgencyHomeBoard;
+      const supervisors = await boardOf();
+      expect(board.active_total).toBe(supervisors.active_total);
+      expect(board.campaigns.map((c) => c.id)).toEqual(supervisors.campaigns.map((c) => c.id));
+      expect(board.campaigns.map((c) => c.stats)).toEqual(supervisors.campaigns.map((c) => c.stats));
+      // Campaign 13 has three overdue callbacks; the supervisor's board says so, theirs does not.
+      expect(supervisors.campaigns.find((c) => c.id === C(13))!.callbacks_overdue).toBe(3);
+      expect(board.campaigns.every((c) => c.callbacks_overdue === null)).toBe(true);
+      // The allocation the count comes from is refused to them on its own route too.
+      const allocation = await call(app(), 'GET', `/proxy/agency/campaigns/${C(13)}/insights/allocation`, readers[role]!, main());
+      expect(allocation.statusCode).toBe(403);
+      // And `/stats`, whose fields the board carries, is theirs.
+      const stats = await call(app(), 'GET', `/proxy/agency/campaigns/${C(13)}/stats`, readers[role]!, main());
+      expect(stats.statusCode, stats.body).toBe(200);
+    },
+  );
 });
 
 describe('guards', () => {
