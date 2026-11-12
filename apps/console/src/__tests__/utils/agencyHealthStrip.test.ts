@@ -177,6 +177,23 @@ describe('stallCopy — each arm names its own evidence', () => {
     expect(copy.advice).toBeUndefined();
   });
 
+  it('no_agents_available counts on shift by the floor’s rows when the caller has them', () => {
+    // The server's `agents_on_shift` is `agents_live`: signed-out sessions too. The
+    // banner said "2 agents on shift" above a floor of two Offline agents (QA).
+    const stall: AgencyStall = {
+      code: 'no_agents_available',
+      agents_on_shift: 2,
+      on_break_by_reason: {},
+      on_call: 0,
+      last_dial_at: null,
+    };
+    expect(stallCopy(stall, at, { agentsOnShift: 0 }).evidence).toMatch(/^0 agents on shift/);
+    expect(stallCopy(stall, at, { agentsOnShift: 1 }).facts[0]).toEqual({ text: '1 agent on shift', emphasis: '1' });
+    // No rows in the payload ("not known"): the server's figure is all there is.
+    expect(stallCopy(stall, at, { agentsOnShift: null }).evidence).toMatch(/^2 agents on shift/);
+    expect(stallCopy(stall, at).evidence).toMatch(/^2 agents on shift/);
+  });
+
   it('no_agents_available distinguishes “never dialed” from “stopped dialing”', () => {
     const copy = stallCopy(
       {

@@ -229,17 +229,58 @@ describe('calls and outcomes', () => {
 describe('callbacks', () => {
   it('reads on time, late and missed, and the open callbacks by owner', () => {
     show(<CallbacksSection ctx={ctx} activity={activity()} />);
-    expect(screen.getByTestId('kpi-callbacks-on-time').textContent).toContain('71.4% of those due');
+    expect(screen.getByTestId('kpi-callbacks-on-time').textContent).toContain('71.4% of those dialled or missed');
     expect(screen.getByTestId('kpi-callbacks-missed-range').textContent).toContain('6');
+    expect(screen.getByTestId('kpi-callbacks-pending').textContent).toContain('Not dialled yet');
     expect(screen.getByTestId('kpi-callbacks-pending').textContent).toContain('24');
-    expect(screen.getByTestId('kpi-callbacks-pending').textContent).toContain('18 still to come · 6 overdue');
+    expect(screen.getByTestId('kpi-callbacks-pending').textContent).toContain('18 not due yet · 6 past their booked time');
     const table = screen.getByTestId('callbacks-table');
     expect(within(table).getByText('Priya Nair')).toBeTruthy();
+    // The owner table is the range's family, so it says so in its own words.
+    expect(within(table).getByText('Not dialled yet')).toBeTruthy();
+    expect(within(table).getByText('Past booked time')).toBeTruthy();
     // Not links: the open-by-owner counts are callbacks BOOKED in range (due ones included), and
-    // "due today" is due before local midnight; no contacts filter lists either set, so a link
-    // would open a list whose total is another number.
+    // "overdue now" is no contacts filter's set; a link would open a list whose total is another number.
     expect(within(table).queryAllByRole('link')).toEqual([]);
     expect(within(screen.getByTestId('kpi-callbacks-open')).queryAllByRole('link')).toEqual([]);
+  });
+
+  it('leads "Overdue now" with the overdue count the tab badge shows, not the ones due later today', () => {
+    // QA: "Open now 5" (due later today) above "14 overdue" read as five open callbacks.
+    show(<CallbacksSection ctx={ctx} activity={activity()} />);
+    const card = screen.getByTestId('kpi-callbacks-open');
+    expect(card.textContent).toContain('Overdue now');
+    expect(card.querySelector('[data-withheld]')?.textContent).toBe('4');
+    expect(card.textContent).toContain('10 more due later today');
+    expect(card.textContent).not.toContain('Open now');
+  });
+
+  it('says why the two overdue figures differ, and only when they do', () => {
+    // QA: "16 overdue" on Still open and the owner table, "14 overdue" on Open now, no reason given.
+    const differ = activity();
+    differ.callbacks.pending_due = 16;
+    differ.callbacks.open_overdue = 14;
+    show(<CallbacksSection ctx={ctx} activity={differ} />);
+    expect(screen.getByTestId('callbacks-gap-note').textContent).toContain('by the time promised');
+    expect(screen.getByTestId('callbacks-gap-note').textContent).toContain('by when the dialler will next call them');
+
+    cleanup();
+    const agree = activity();
+    agree.callbacks.pending_due = 14;
+    agree.callbacks.open_overdue = 14;
+    show(<CallbacksSection ctx={ctx} activity={agree} />);
+    expect(screen.queryByTestId('callbacks-gap-note')).toBeNull();
+  });
+
+  it('says plainly when no callback has been dialled or missed yet, rather than a dash', () => {
+    const none = activity();
+    none.callbacks.kept_on_time = 0;
+    none.callbacks.kept_late = 0;
+    none.callbacks.missed = 0;
+    show(<CallbacksSection ctx={ctx} activity={none} />);
+    const card = screen.getByTestId('kpi-callbacks-on-time');
+    expect(card.textContent).toContain('None dialled or missed yet');
+    expect(card.textContent).not.toContain('—');
   });
 });
 

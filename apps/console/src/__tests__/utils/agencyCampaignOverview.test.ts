@@ -472,11 +472,12 @@ describe('the tense follows the status, not "is it terminal?"', () => {
     */
     const ran = campaignTimeline(campaign('paused'), null, NOW).ran;
     expect(ran).not.toContain('Running for');
-    expect(ran).toContain('6 hours');
+    // Nor "Live for": beside a Paused badge that read as live too (QA). Only how long ago it started.
+    expect(ran).toBe('6 hours ago');
   });
 
-  it('does not tell a STOPPING campaign it is running either', () => {
-    expect(campaignTimeline(campaign('stopping'), null, NOW).ran).not.toContain('Running for');
+  it('does not tell a STOPPING campaign it is running or live either', () => {
+    expect(campaignTimeline(campaign('stopping'), null, NOW).ran).toBe('6 hours ago');
   });
 
   it('still says "Running for" on a campaign that really is dialing', () => {

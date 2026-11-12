@@ -300,6 +300,17 @@ describe('Insights — the range', () => {
 });
 
 describe('Insights — Refresh and Print', () => {
+  it('names its stamp "Figures", so it is not read against the header’s own refresh stamp', async () => {
+    // QA: the header said "Auto-refreshing" and this said "not refreshing", both as "Updated".
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId('insights-updated').textContent).toMatch(/^Figures updated .+ · “now” figures auto-refresh$/));
+
+    cleanup();
+    api.getInsightsSummary.mockResolvedValue(summary('stopped'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId('insights-updated').textContent).toMatch(/^Figures updated .+ · not auto-refreshing$/));
+  });
+
   it('Refresh re-reads every section the tab shows and tells a screen reader it did', async () => {
     renderPanel();
     await screen.findByTestId('overview-kpis');

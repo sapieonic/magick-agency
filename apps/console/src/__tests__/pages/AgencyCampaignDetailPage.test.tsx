@@ -612,10 +612,9 @@ describe('campaign detail — landmarks and the refresh stamp', () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
-    // Case-sensitive: the shell says "Auto-refreshing", the Insights stamp
-    // "auto-refreshing". Neither stamp is a live region; Insights announces
-    // only a Refresh the reader asked for.
-    const timestamp = screen.getByText(/Updated .*Auto-refreshing/);
+    // The shell's stamp says what it refreshes; the Insights stamp says "Figures updated".
+    // Neither stamp is a live region; Insights announces only a Refresh the reader asked for.
+    const timestamp = screen.getByText(/^Updated .*status and agents auto-refresh/);
     expect(timestamp.getAttribute('aria-live')).toBeNull();
   });
 });
@@ -757,7 +756,10 @@ describe('campaign detail — sections', () => {
     mocks.insights.getInsightsAllocation.mockResolvedValue(withOverdue);
     renderPage();
     const badge = await screen.findByTestId('campaign-tab-callbacks-alert');
-    expect(badge.textContent).toBe('7, 7 overdue');
+    expect(badge.textContent).toBe('7');
+    // One accessible name, the count said once (it was "Callbacks 7 , 7 overdue").
+    expect(badge.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Callbacks, 7 overdue' })).toBe(screen.getByTestId('campaign-tab-callbacks'));
 
     cleanup();
     const none = insightsSamples.allocation();
@@ -792,6 +794,40 @@ describe('campaign detail — sections', () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
     expect(screen.queryByTestId('campaign-tab-agents-count')).toBeNull();
+  });
+
+  it('tells one truth about who is on shift: the badge, the stall banner and the floor', async () => {
+    // Two signed-out sessions the reaper has not closed yet. The server's stall counts
+    // them (`agents_live`); the floor says Offline. QA saw "2" on the badge, "2 agents on
+    // shift" on the banner and "0 of 0 on shift" on the floor, all at once.
+    const offline = (session_id: string) => wrappingAgent({ session_id, state: 'offline', connected: false });
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(
+      stats({
+        agents_live: 2,
+        agents: [offline('a'), offline('b')],
+        stall: { code: 'no_agents_available', agents_on_shift: 2, on_break_by_reason: {}, on_call: 0, last_dial_at: null },
+      }),
+    );
+    renderPage('agents');
+    const strip = await screen.findByTestId('health-strip-diagnosis');
+    expect(strip.textContent).toContain('0 agents on shift');
+    expect(screen.queryByTestId('campaign-tab-agents-count')).toBeNull();
+    expect(screen.getByText(/of 0 on shift/)).toBeTruthy();
+
+    cleanup();
+    // One on shift, one signed out: 1 everywhere.
+    mocks.getAgencyCampaignStats.mockResolvedValue(
+      stats({
+        agents: [wrappingAgent({ session_id: 'on' }), offline('off')],
+        stall: { code: 'no_agents_available', agents_on_shift: 2, on_break_by_reason: {}, on_call: 0, last_dial_at: null },
+      }),
+    );
+    renderPage('agents');
+    expect((await screen.findByTestId('health-strip-diagnosis')).textContent).toContain('1 agent on shift');
+    expect(screen.getByTestId('campaign-tab-agents-count').textContent).toBe('1');
+    expect(screen.getByRole('link', { name: 'Agents, 1 on shift' })).toBeTruthy();
+    expect(screen.getByText(/of 1 on shift/)).toBeTruthy();
   });
 
   it('re-reads every section of the tab when the shell’s Refresh is pressed', async () => {
@@ -1470,7 +1506,7 @@ describe('campaign detail — the header timeline', () => {
     // campaign started. One line answering both is how the first is read as the
     // second.
     expect(screen.getByTestId('campaign-timeline').textContent).not.toMatch(/Updated/);
-    expect(screen.getByText(/Updated .*Auto-refreshing/)).toBeTruthy();
+    expect(screen.getByText(/^Updated .*status and agents auto-refresh/)).toBeTruthy();
   });
 
   it('omits the whole line when the campaign carries no start, rather than dashing it', async () => {

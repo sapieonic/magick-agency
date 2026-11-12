@@ -34,6 +34,9 @@ const ACTION_META: Record<Action, { label: string; icon: typeof Play; danger?: b
   stop: { label: 'Stop', icon: Square, danger: true },
 };
 
+/** Beside the header's "Updated" stamp while the page polls (see the stamp). */
+export const HEADER_POLL_NOTE = 'status and agents auto-refresh';
+
 interface CampaignDetailHeaderProps {
   campaign: AgencyCampaign;
   /** When this screen last read the server, or `null` before the first answer. */
@@ -122,7 +125,13 @@ export function CampaignDetailHeader({
           {lastUpdatedAt
             ? `Updated ${formatClockTime(lastUpdatedAt)}`
             : 'Loading latest activity…'}
-          {autoRefreshing ? ' · Auto-refreshing' : ''}
+          {/*
+            Says WHAT refreshes: this page's poll re-reads the campaign and its
+            floor, never the tab's figures below, whose own stamp says whether
+            they refresh. A bare "Auto-refreshing" here sat above "not refreshing"
+            in the range bar and read as a contradiction.
+          */}
+          {autoRefreshing ? ` · ${HEADER_POLL_NOTE}` : ''}
         </p>
         {/*
           The campaign's OWN clock, beneath the console's. "Updated 10:23" is
@@ -170,7 +179,13 @@ export function CampaignDetailHeader({
         />
       </div>
 
-      <div className={styles.actions}>
+      {/*
+        On a phone the lifecycle buttons keep their words and everything after
+        them shrinks to its icon (the label stays as the accessible name and the
+        tooltip), so the row is two lines at most and the tabs stay on the first
+        screen. They used to stack a full-width row each, about 800px of buttons.
+      */}
+      <div className={styles.actions} data-testid="campaign-actions">
         {canControl
           && controls.map(({ action, disabledReason }) => {
             const meta = ACTION_META[action];
@@ -183,7 +198,7 @@ export function CampaignDetailHeader({
                   disabled={busy !== null || disabledReason !== null}
                   title={disabledReason ?? undefined}
                 >
-                  <meta.icon size={16} />
+                  <meta.icon size={16} aria-hidden="true" />
                   {busy === action ? 'Working…' : meta.label}
                 </button>
                 {disabledReason && (
@@ -200,17 +215,19 @@ export function CampaignDetailHeader({
               <Link
                 to="/agency/campaigns/new"
                 className={`${styles.actionButton} ${styles.secondaryAction}`}
+                title="New campaign"
               >
-                <Plus size={16} />
-                New campaign
+                <Plus size={16} aria-hidden="true" />
+                <span className={styles.actionLabel}>New campaign</span>
               </Link>
             ) : (
               <Link
                 to={`/agency/campaigns/${campaign.id}/contacts/add`}
                 className={`${styles.actionButton} ${styles.secondaryAction}`}
+                title="Add contacts"
               >
-                <Upload size={16} />
-                Add contacts
+                <Upload size={16} aria-hidden="true" />
+                <span className={styles.actionLabel}>Add contacts</span>
               </Link>
             )}
           </>
@@ -235,8 +252,8 @@ export function CampaignDetailHeader({
             data-testid="campaign-retry-action"
             title="Create a new campaign from the contacts this one did not reach"
           >
-            <RotateCcw size={16} />
-            Retry contacts
+            <RotateCcw size={16} aria-hidden="true" />
+            <span className={styles.actionLabel}>Retry contacts</span>
           </button>
         )}
         {/*
@@ -254,8 +271,8 @@ export function CampaignDetailHeader({
             className={`${styles.actionButton} ${styles.stationAction}`}
             title="Join this campaign's pool and start taking its calls"
           >
-            <Headphones size={16} />
-            Join as agent
+            <Headphones size={16} aria-hidden="true" />
+            <span className={styles.actionLabel}>Join as agent</span>
           </Link>
         )}
         {/*
@@ -263,7 +280,7 @@ export function CampaignDetailHeader({
           IN14): who changed what is a fact about the campaign, read now and
           then, not one of the questions the tabs answer.
         */}
-        <CampaignHistoryLink campaignId={campaign.id} role={role} />
+        <CampaignHistoryLink campaignId={campaign.id} role={role} compactOnPhone />
         <button
           type="button"
           className={`${styles.actionButton} ${styles.iconAction}`}
@@ -271,7 +288,7 @@ export function CampaignDetailHeader({
           aria-label="Refresh"
           title="Refresh campaign activity"
         >
-          <RefreshCw size={17} />
+          <RefreshCw size={17} aria-hidden="true" />
         </button>
       </div>
     </header>

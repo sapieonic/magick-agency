@@ -8,6 +8,7 @@ import {
   stallCopy,
 } from '../../utils/agencyHealthStrip';
 import { formatDate } from '@magick-agency/web-ui/format';
+import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { hasPermission } from '../../utils/permissions';
 import {
@@ -78,7 +79,8 @@ export function CampaignHealthStrip({
   // what a supervisor reads with nothing on this side going red.
   const others = sortStallCodes(stats?.other_stalls ?? []);
 
-  const copy = stall ? stallCopy(stall, formatDate) : null;
+  // "N agents on shift" by the floor's own count, so it agrees with the floor and the tab badge.
+  const copy = stall ? stallCopy(stall, formatDate, { agentsOnShift: agentsOnShift(stats?.agents) }) : null;
 
   // The API's own floors on the two destinations, checked before the link exists
   // rather than after the supervisor has followed it. See the `role` prop.

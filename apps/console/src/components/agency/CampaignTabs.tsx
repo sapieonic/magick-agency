@@ -2,6 +2,8 @@ import { useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { getInsightsAllocation } from '../../api/agencyInsights';
+import { getAgencyCampaignStats } from '../../api/agencyCampaigns';
+import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import {
@@ -57,16 +59,17 @@ export interface CampaignTabsProps {
   /** Drives which tabs render at all; see `CAMPAIGN_TABS` for each gate. */
   role: Role | undefined;
   /**
-   * Live agents on the floor right now, when the caller happens to know.
+   * Agents on shift now (`agentsOnShift`: the floor's rows that are not offline),
+   * from a host that already polls the stats (the detail page; null until it
+   * knows). Left out, the bar reads the stats once itself, so the Agents badge is
+   * on every campaign screen, not only on the five the detail page draws.
    *
    * The badge is a "someone is there" signal rather than a read-out, so it
-   * renders only for a positive count. `null`/`undefined` — "not known here",
-   * which is NOT zero — and a known `0` both render nothing: an empty floor
-   * and an unread one are equally not worth a numeral on a tab, and the tab is
-   * not where either gets diagnosed. `AgentFloor` itself tells those two apart
-   * (`floor-empty` vs `floor-unavailable`) for the supervisor who opens it.
+   * renders only for a positive count. `null` ("not known here", which is NOT
+   * zero) and a known `0` both render nothing; `AgentFloor` itself tells those
+   * two apart for the supervisor who opens it.
    */
-  liveAgentCount?: number | null;
+  agentsOnShift?: number | null;
   /**
    * For `trackAgencyCampaignTabViewed`, fired on click. `string`, matching
    * `AgencyCampaign.status` itself (the API's CHECK constraint is the authority,
@@ -92,11 +95,12 @@ export function CampaignTabs({
   campaignId,
   active,
   role,
-  liveAgentCount,
+  agentsOnShift: knownOnShift,
   campaignStatus,
   callbacksOverdue,
 }: CampaignTabsProps) {
   const overdue = useCallbacksOverdue(campaignId, role, callbacksOverdue);
+  const onShift = useAgentsOnShift(campaignId, knownOnShift);
   // The range rides between panels (`campaignTabHref`); a standalone screen's
   // query string is its own filters, never a range, so it rides nowhere.
   const { search } = useLocation();
@@ -126,13 +130,7 @@ export function CampaignTabs({
             </span>
             {group.tabs.map((tab) => {
               const isActive = tab.id === current;
-              const showCount = tab.id === 'agents' && typeof liveAgentCount === 'number' && liveAgentCount > 0;
-              // Rendered only for a positive count, in the danger tone: unlike the
-              // floor count this one is a warning, not a "someone is there".
-              const alert = tab.id === 'callbacks' && overdue !== null && overdue > 0
-                ? { count: overdue, label: `${overdue} overdue` }
-                : null;
-              const showAlert = alert !== null;
+              const badge = tabBadge(tab.id, onShift, overdue);
               return (
                 /*
                   A plain `Link`, deliberately not a `NavLink`. NavLink derives
@@ -148,6 +146,12 @@ export function CampaignTabs({
                   className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
                   aria-current={isActive ? 'page' : undefined}
                   title={tab.hint}
+                  /*
+                    One name for the link, said once: "Callbacks, 14 overdue". The
+                    badge's numeral is hidden from assistive tech, so the count is
+                    never read twice (it was: "Callbacks 14 , 14 overdue").
+                  */
+                  aria-label={badge ? `${tab.label}, ${badge.label}` : undefined}
                   data-testid={`campaign-tab-${tab.id}`}
                   onClick={() => {
                     // Undefined or unrecognised ⇒ skip rather than guess (prop doc).
@@ -162,15 +166,13 @@ export function CampaignTabs({
                   }}
                 >
                   {tab.label}
-                  {showCount && (
-                    <span className={styles.badge} data-testid="campaign-tab-agents-count">
-                      {liveAgentCount}
-                    </span>
-                  )}
-                  {showAlert && (
-                    <span className={`${styles.badge} ${styles.badgeAlert}`} data-testid={`campaign-tab-${tab.id}-alert`}>
-                      <span aria-hidden="true">{alert.count}</span>
-                      <span className="sr-only">{`, ${alert.label}`}</span>
+                  {badge && (
+                    <span
+                      className={`${styles.badge} ${badge.alert ? styles.badgeAlert : ''}`}
+                      aria-hidden="true"
+                      data-testid={badge.testId}
+                    >
+                      {badge.count}
                     </span>
                   )}
                 </Link>
@@ -184,6 +186,44 @@ export function CampaignTabs({
 }
 
 export default CampaignTabs;
+
+interface TabBadge {
+  count: number;
+  /** What the count is, for the link's accessible name. */
+  label: string;
+  /** A warning (overdue callbacks) rather than a head count. */
+  alert: boolean;
+  testId: string;
+}
+
+/** A tab's badge, or null: only Agents (on shift) and Callbacks (overdue), only for a positive count. */
+export function tabBadge(tab: CampaignTabId, onShift: number | null, overdue: number | null): TabBadge | null {
+  if (tab === 'agents' && onShift !== null && onShift > 0) {
+    return { count: onShift, label: `${onShift} on shift`, alert: false, testId: 'campaign-tab-agents-count' };
+  }
+  // In the danger tone: unlike the floor count this one is a warning.
+  if (tab === 'callbacks' && overdue !== null && overdue > 0) {
+    return { count: overdue, label: `${overdue} overdue`, alert: true, testId: 'campaign-tab-callbacks-alert' };
+  }
+  return null;
+}
+
+/**
+ * Agents on shift for the badge: the host's count when it has one, else one read
+ * of the stats here (not polled, like the callbacks below). The stats read is
+ * gated as the campaign itself, so every role that sees the bar may make it.
+ */
+function useAgentsOnShift(campaignId: string, known: number | null | undefined): number | null {
+  const { tenantId, accountId } = useTenant();
+  const read = known === undefined && Boolean(tenantId && accountId);
+  const fetchStats = useCallback(
+    () => getAgencyCampaignStats(campaignId, tenantId ?? undefined, accountId ?? undefined),
+    [campaignId, tenantId, accountId],
+  );
+  const stats = useAsyncResource(fetchStats, { initialData: null, enabled: read });
+  if (known !== undefined) return known;
+  return read ? agentsOnShift(stats.data?.agents) : null;
+}
 
 /**
  * The overdue callbacks for the badge: the host's count when it has one, else

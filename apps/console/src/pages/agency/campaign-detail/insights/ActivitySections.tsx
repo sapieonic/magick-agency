@@ -18,6 +18,7 @@ import {
 } from '../../../../utils/agency/insights/rates';
 import { attemptsLink } from '../../../../utils/agency/insights/links';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
+import { callbacksGapNote, keptOnTimeSub, notDialledSub, overdueNowSub } from '../../../../utils/agency/insights/copy';
 import {
   CountLink,
   CsvButton,
@@ -227,12 +228,13 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
   const cb = activity.callbacks;
   const resolved = cb.kept_on_time + cb.kept_late + cb.missed;
   const onTime = rateFigure(insightsRate(cb.kept_on_time, resolved));
+  const gapNote = callbacksGapNote(cb);
   type Owner = AgencyInsightsActivity['callbacks']['by_owner'][number];
   const columns: InsightsColumn<Owner>[] = [
     { key: 'owner', header: 'Owner', render: (row) => (row.agent_user_id === null ? 'Unassigned' : ctx.agentName(row.agent_user_id)), csv: (row) => (row.agent_user_id === null ? 'Unassigned' : ctx.agentName(row.agent_user_id)) },
     {
       key: 'open',
-      header: 'Open',
+      header: 'Not dialled yet',
       numeric: true,
       // Not a link: these are the callbacks BOOKED for a time in this range that are still open,
       // due ones included, and no contacts filter selects that set (a link would open a list
@@ -240,7 +242,7 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
       render: (row) => formatCount(row.open),
       csv: (row) => row.open,
     },
-    { key: 'overdue', header: 'Overdue', numeric: true, render: (row) => formatCount(row.overdue), csv: (row) => row.overdue },
+    { key: 'overdue', header: 'Past booked time', numeric: true, render: (row) => formatCount(row.overdue), csv: (row) => row.overdue },
   ];
   return (
     <Panel
@@ -251,28 +253,33 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
     >
       <div className={styles.kpis}>
         <Kpi label="Booked" value={formatCount(cb.booked)} sub="In this range" testId="kpi-callbacks-booked" />
-        <Kpi label="Kept on time" value={formatCount(cb.kept_on_time)} sub={`${onTime.value} of those due`} testId="kpi-callbacks-on-time" />
+        <Kpi label="Kept on time" value={formatCount(cb.kept_on_time)} sub={keptOnTimeSub(cb, onTime.withheld ? null : onTime.value)} testId="kpi-callbacks-on-time" />
         <Kpi label="Late" value={formatCount(cb.kept_late)} testId="kpi-callbacks-late" />
         <Kpi label="Missed" value={formatCount(cb.missed)} sub="Never dialled, or the contact closed first" testId="kpi-callbacks-missed-range" />
+        {/* The range's open callbacks, by booked time (`callbacksGapNote` for the two definitions). */}
         <Kpi
-          label="Still open"
+          label="Not dialled yet"
           value={formatCount(cb.pending_future + cb.pending_due)}
-          sub={`${formatCount(cb.pending_future)} still to come · ${formatCount(cb.pending_due)} overdue`}
+          sub={notDialledSub(cb)}
           testId="kpi-callbacks-pending"
         />
+        {/*
+          As of now, whatever the range: the number the tab badge and the Overview tile show.
+          It led with the callbacks due later today under "Open now", which read as all the
+          open callbacks. Not a link: no contacts filter selects "overdue callbacks".
+        */}
         <Kpi
-          label="Open now"
-          // Not a link: due before local midnight, which no contacts filter selects (the
-          // Callbacks waiting filter is every later callback, a different number).
-          value={formatCount(cb.open_due_today)}
-          sub={`Due today · ${formatCount(cb.open_overdue)} overdue · whatever the range`}
+          label="Overdue now"
+          value={formatCount(cb.open_overdue)}
+          sub={overdueNowSub(cb)}
           testId="kpi-callbacks-open"
         />
       </div>
+      {gapNote ? <p className={styles.muted} data-testid="callbacks-gap-note">{gapNote}</p> : null}
       {cb.by_owner.length > 0 ? (
-        <InsightsTable caption="Open callbacks by owner" columns={columns} rows={cb.by_owner} rowKey={(row) => row.agent_user_id ?? 'pool'} sortable testId="callbacks-table" />
+        <InsightsTable caption="Callbacks booked for this range and not dialled yet, by owner" columns={columns} rows={cb.by_owner} rowKey={(row) => row.agent_user_id ?? 'pool'} sortable testId="callbacks-table" />
       ) : (
-        <p className={styles.muted}>No open callbacks.</p>
+        <p className={styles.muted}>No callback booked for this range is waiting to be dialled.</p>
       )}
     </Panel>
   );

@@ -37,6 +37,27 @@
   color: var(--accent-hover);
 }
 
+/* In the campaign header on a phone: the icon alone, the word kept for assistive tech. */
+@media (max-width: 680px) {
+  .compact {
+    width: 40px;
+    padding: 0;
+  }
+
+  /* The global `.sr-only`, spelled out: `composes` cannot sit in a media query. */
+  .compact .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
 @media print {
   .link {
     display: none !important;
