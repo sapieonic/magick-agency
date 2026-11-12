@@ -400,7 +400,7 @@ describe('list — scope filters, and the null-vs-absent distinction', () => {
 
     await repo.list({
       tenantId: TENANT,
-      phone: { e164: '+15551230001', endsWith: '5551230001' },
+      phone: { e164: '+15551230001', endsWith: '5551230001', startsWith: null },
       source: 'api',
       limit: 25,
       offset: 50,
@@ -420,20 +420,35 @@ describe('list — the number search', () => {
   });
 
   it('a whole number matches exactly OR by its ending, the ending reversed for the index', async () => {
-    await repo.list({ tenantId: TENANT, phone: { e164: '+919908815060', endsWith: '9908815060' }, limit: 10, offset: 0 });
+    await repo.list({ tenantId: TENANT, phone: { e164: '+919908815060', endsWith: '9908815060', startsWith: null }, limit: 10, offset: 0 });
     expect(sqlOf()).toContain("(phone_e164 = $2 OR reverse(phone_e164) LIKE $3 || '%')");
     expect(paramsOf(1)).toEqual([TENANT, '+919908815060', '0605188099', 10, 0]);
   });
 
   it('a partial number matches by its ending only', async () => {
-    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: '15060' }, limit: 10, offset: 0 });
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: '15060', startsWith: null }, limit: 10, offset: 0 });
     expect(sqlOf()).toContain("reverse(phone_e164) LIKE $2 || '%'");
     expect(sqlOf()).not.toContain('phone_e164 =');
     expect(paramsOf(1)).toEqual([TENANT, '06051', 10, 0]);
   });
 
+  it('a number cut short matches as a range on the stored number, the LIKE kept as the exact test', async () => {
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: null, startsWith: '+9199088' }, limit: 10, offset: 0 });
+    expect(sqlOf()).toContain("(phone_e164 >= $2 AND phone_e164 < $3 AND phone_e164 LIKE $2 || '%')");
+    expect(sqlOf()).not.toContain('reverse(');
+    expect(paramsOf(1)).toEqual([TENANT, '+9199088', '+9199089', 10, 0]);
+  });
+
+  it('carries trailing nines into the upper bound, and an all-nines prefix has none', async () => {
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: null, startsWith: '+9199' }, limit: 10, offset: 0 });
+    expect(paramsOf(1)).toEqual([TENANT, '+9199', '+92', 10, 0]);
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: null, startsWith: '+999' }, limit: 10, offset: 0 });
+    expect(sqlOf(3)).toContain("(phone_e164 >= $2 AND phone_e164 LIKE $2 || '%')");
+    expect(paramsOf(3)).toEqual([TENANT, '+999', 10, 0]);
+  });
+
   it('never lets a wildcard through, and a search with nothing usable matches nothing', async () => {
-    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: '%_' }, limit: 10, offset: 0 });
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: '%_', startsWith: null }, limit: 10, offset: 0 });
     expect(sqlOf()).toContain('WHERE tenant_id = $1 AND FALSE');
     expect(paramsOf(1)).toEqual([TENANT, 10, 0]);
   });

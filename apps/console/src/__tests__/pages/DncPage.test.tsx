@@ -470,13 +470,25 @@ describe('DNC — searching the list', () => {
     render(<DncPage />);
     await screen.findByText('+919820041772');
     const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
-    expect(box.getAttribute('placeholder')).toBe('Whole number, or the last few digits');
+    expect(box.getAttribute('placeholder')).toBe('Whole number, or last 4+ digits');
 
     mocks.listDncEntries.mockResolvedValue(page([]));
     fireEvent.change(box, { target: { value: ' 98200 41772 ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
     await waitFor(() => expect(mocks.listDncEntries.mock.calls.at(-1)![0]).toMatchObject({ phone: '98200 41772', offset: 0 }));
-    expect(await screen.findByText(/Type the whole number, in any format, or its last few digits/)).toBeTruthy();
+    expect(await screen.findByText(/Type the whole number, in any format, or at least its last 4 digits/)).toBeTruthy();
+  });
+
+  it('shows the server’s refusal of a search with too few digits', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+    const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
+
+    mocks.listDncEntries.mockRejectedValue(new Error('Type at least 4 digits of the number.'));
+    fireEvent.change(box, { target: { value: '060' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    expect(await screen.findByText('Type at least 4 digits of the number.')).toBeTruthy();
   });
 });

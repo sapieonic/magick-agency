@@ -539,7 +539,19 @@ describe('GET /dnc — filters', () => {
     const arg = mocks.list.mock.calls[0]![0] as Record<string, unknown>;
     expect(arg['tenantId']).toBe(TENANT);
     // Read by the search rule: the whole number, and its digits as an ending.
-    expect(arg['phone']).toEqual({ e164: '+15551230001', endsWith: '15551230001' });
+    expect(arg['phone']).toEqual({ e164: '+15551230001', endsWith: '15551230001', startsWith: null });
+    await app.close();
+  });
+
+  it('refuses a search with too few digits, and never runs it', async () => {
+    const { app } = await buildApp();
+
+    const res = await app.inject({ method: 'GET', url: '/dnc/?phone=060' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: 'Bad Request', code: 'search_too_short', message: 'Type at least 4 digits of the number.',
+    });
+    expect(mocks.list).not.toHaveBeenCalled();
     await app.close();
   });
 
