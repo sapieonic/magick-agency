@@ -1,84 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { listWorkedRing, RING_CIRCUMFERENCE } from '../../utils/agency/overview/pulse';
 import { campaignRunLength, campaignTimeline } from '../../utils/agency/overview/lifecycle';
-import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
+import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
  * What is left of the Overview panel's derivations after the Insights tab replaced it: the
- * campaigns home's list-worked ring (`utils/agency/overview/pulse.ts`) and the detail page's
- * lifecycle line (`utils/agency/overview/lifecycle.ts`).
+ * detail page's lifecycle line (`utils/agency/overview/lifecycle.ts`).
  *
- * Both are computed from optional-and-nullable fields. The failure these tests exist to stop is
+ * It is computed from optional-and-nullable fields. The failure these tests exist to stop is
  * the quiet one: a missing number rendered as a confident `0`, or an absent instant rendered as a
  * campaign of zero length.
  */
-
-function stats(over: Partial<AgencyCampaignStats> = {}): AgencyCampaignStats {
-  return {
-    contacts_total: 1000,
-    contacts_pending: 400,
-    contacts_in_flight: 3,
-    contacts_completed: 550,
-    contacts_suppressed: 20,
-    contacts_exhausted: 27,
-    retries_pending: 12,
-    attempts_live: 3,
-    attempts_total: 1400,
-    attempts_connected: 610,
-    human_connects: 500,
-    connect_rate_pct: 35.714,
-    attempts_success: 120,
-    success_rate_pct: 19.67,
-    stall: null,
-    other_stalls: [],
-    concurrency_limit: 5,
-    concurrency_in_use: 2,
-    abandonment_ceiling_pct: 3,
-    ...over,
-  };
-}
-
-describe('the list-worked ring', () => {
-  it('counts the three states nothing dials again', () => {
-    // 550 + 20 + 27 of 1000.
-    const ring = listWorkedRing(stats());
-
-    expect(ring.known).toBe(true);
-    expect(ring.percent).toBeCloseTo(59.7, 5);
-    expect(ring.label).toBe('60%');
-    expect(ring.caption).toBe('597 of 1,000 contacts');
-    const [dash] = ring.dashArray.split(' ');
-    expect(Number(dash)).toBeCloseTo(RING_CIRCUMFERENCE * 0.597, 0);
-  });
-
-  it('refuses to draw an arc from an incomplete payload', () => {
-    // Two of three components is a ring that understates the campaign by an
-    // unknowable amount while looking exactly as authoritative as a whole one.
-    const ring = listWorkedRing(stats({ contacts_suppressed: undefined }));
-
-    expect(ring.known).toBe(false);
-    expect(ring.percent).toBeNull();
-    expect(ring.label).toBe('—');
-    expect(ring.dashArray.startsWith('0 ')).toBe(true);
-  });
-
-  it('says there is no list rather than reporting 0% worked', () => {
-    const ring = listWorkedRing(stats({
-      contacts_total: 0,
-      contacts_completed: 0,
-      contacts_suppressed: 0,
-      contacts_exhausted: 0,
-    }));
-
-    expect(ring.known).toBe(false);
-    expect(ring.label).toBe('—');
-    expect(ring.caption).toBe('No contacts have been added to this campaign yet.');
-  });
-
-  it('has nothing to say without a payload', () => {
-    expect(listWorkedRing(null).caption).toBe('The contact counts didn’t load.');
-  });
-});
 
 /*
   ── The campaign's own clock ────────────────────────────────────
@@ -352,39 +283,6 @@ describe('inconsistent and unparseable payloads', () => {
   const NOW = new Date('2026-08-27T15:30:00.000Z');
   const campaign = (over: Partial<AgencyCampaign> = {}): AgencyCampaign =>
     ({ id: 'c1', name: 'Collections', status: 'running', ...over });
-
-  it('refuses to draw a ring past 100%, rather than clamping only the arc', () => {
-    /*
-      The arc was clamped and the NUMBER was not, so a payload assembled from two
-      reads drew a full circle captioned "160%" and "16 of 10 contacts". A
-      percentage over 100 is not a rounding error — one of the four counts is
-      from a different moment — so nothing here is salvageable.
-    */
-    const ring = listWorkedRing({
-      contacts_total: 10,
-      contacts_completed: 8,
-      contacts_suppressed: 5,
-      contacts_exhausted: 3,
-    } as never);
-
-    expect(ring.known).toBe(false);
-    expect(ring.label).not.toContain('160');
-    expect(ring.caption).not.toContain('16 of 10');
-    expect(ring.dashArray.startsWith('0 ')).toBe(true);
-  });
-
-  it('still draws an exactly-complete list', () => {
-    // The boundary the guard must not eat: worked === total is 100%, not a
-    // contradiction.
-    const ring = listWorkedRing({
-      contacts_total: 10,
-      contacts_completed: 6,
-      contacts_suppressed: 3,
-      contacts_exhausted: 1,
-    } as never);
-    expect(ring.known).toBe(true);
-    expect(ring.label).toBe('100%');
-  });
 
   it('treats a start in the future as skew, not as a campaign of zero length', () => {
     // `campaignRunLength` clamped the negative to zero, so the header read
