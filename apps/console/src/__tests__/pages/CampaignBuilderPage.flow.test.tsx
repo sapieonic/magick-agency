@@ -300,9 +300,11 @@ describe('leaving the builder', () => {
     expect(screen.getByText('Campaigns list')).toBeTruthy();
   });
 
-  it('holds nothing once the campaign is saved', async () => {
+  it('holds nothing once the campaign is saved, settings and all', async () => {
     await renderWithExit();
     fillBasics('Renewals');
+    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
+    fireEvent.change(screen.getByDisplayValue('09:00'), { target: { value: '10:00' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
     await waitFor(() => expect(screen.getByText('Saved.', { exact: false })).toBeTruthy());
 
