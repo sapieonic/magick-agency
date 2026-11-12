@@ -9,6 +9,7 @@ import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
 import { useCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { browserStorage } from '../../utils/customerSearchRecent';
+import { plural } from '../../utils/format/number';
 import { dialerOn, type GateInput } from '../../utils/consoleNav';
 import {
   canSearchCampaigns,
@@ -218,7 +219,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
     ? 'Searching…'
     : flat.length === 0
       ? trimmed === '' ? '' : 'No results'
-      : `${flat.length} ${flat.length === 1 ? 'result' : 'results'}`;
+      : plural(flat.length, 'result');
   const active = flat[selectedIndex];
 
   let flatIndex = -1;

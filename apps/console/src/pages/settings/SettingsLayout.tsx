@@ -4,6 +4,7 @@ import { Search } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { appliesTo, passesGate, settingsEntryForPath, settingsGroupTitle } from '../../utils/consoleNav';
 import { CAMPAIGNS_GATE, settingsEntryMatches } from '../../utils/consoleSearch';
+import { plural } from '../../utils/format/number';
 import { rememberSettingsEntry } from '../../utils/settingsLastVisited';
 import { useSettingsNav } from './useSettingsNav';
 import styles from './SettingsLayout.module.css';
@@ -100,7 +101,7 @@ export default function SettingsLayout() {
             />
           </div>
           <p id={statusId} className={styles.srOnly} aria-live="polite">
-            {query === '' ? '' : `${count} ${count === 1 ? 'setting' : 'settings'} found`}
+            {query === '' ? '' : `${plural(count, 'setting')} found`}
           </p>
 
           <nav aria-label="Settings" data-testid="settings-nav">
