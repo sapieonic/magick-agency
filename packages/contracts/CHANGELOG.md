@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.19.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.18.0...contracts-v0.19.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **console,server,contracts,db,mobile:** AgencyHomeCampaign drops callbacks_overdue for allocation, staffing, today and settings.
+
+### Features
+
+* **console,server,contracts,db,mobile:** one console shell with Home, a Settings hub and one search ([#76](https://github.com/sapieonic/magick-agency/issues/76)) ([71960ed](https://github.com/sapieonic/magick-agency/commit/71960ed438e219fd63e922066af0b41b84cc8b79))
+
 ## [0.18.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.17.0...contracts-v0.18.0) (2026-11-11)
 
 
