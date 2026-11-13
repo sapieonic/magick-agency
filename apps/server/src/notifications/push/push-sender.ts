@@ -12,7 +12,7 @@
 import type { AgencyPushPlatform, AgencyRingPush } from '@magick-agency/contracts/agency';
 import type { PushSendOptions, PushSendResult, PushSender, PushSenderDevice } from '../../seams/push-sender.js';
 import type { ApnsCredentials, FcmCredentials } from './credentials.js';
-import { FcmSender, type PushFetch } from './fcm-sender.js';
+import { FcmSender, type FcmTimers, type PushFetch } from './fcm-sender.js';
 import { ApnsSender, type ApnsConnect } from './apns-sender.js';
 import { settle, type PlatformPushSender } from './common.js';
 
@@ -31,6 +31,8 @@ export interface PushTransports {
   timeoutMs?: number;
   /** The clock the token caches read (tests). */
   now?: () => number;
+  /** The timers FCM's background token refresh runs on (tests). */
+  fcmTimers?: FcmTimers;
 }
 
 export class RoutingPushSender implements PushSender {
@@ -53,6 +55,11 @@ export class RoutingPushSender implements PushSender {
 
   configured(platform: AgencyPushPlatform): boolean {
     return this.#senders[platform] !== undefined;
+  }
+
+  /** Start each sender's background work (FCM: its access token traded now and kept fresh). Not awaited. */
+  start(): void {
+    for (const sender of Object.values(this.#senders)) sender.start?.();
   }
 
   async close(): Promise<void> {
@@ -83,7 +90,11 @@ export function createPushSender(
     ...(t.now ? { now: t.now } : {}),
   };
   return new RoutingPushSender({
-    ...(push.fcm ? { android: new FcmSender({ credentials: push.fcm, ...common, ...(t.fetch ? { fetchImpl: t.fetch } : {}) }) } : {}),
+    ...(push.fcm ? {
+      android: new FcmSender({
+        credentials: push.fcm, ...common, ...(t.fetch ? { fetchImpl: t.fetch } : {}), ...(t.fcmTimers ? { timers: t.fcmTimers } : {}),
+      }),
+    } : {}),
     ...(push.apns ? { ios: new ApnsSender({ credentials: push.apns, ...common, ...(t.apnsConnect ? { connect: t.apnsConnect } : {}) }) } : {}),
   });
 }

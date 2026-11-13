@@ -89,6 +89,8 @@ describe('startPlatform', () => {
     beforeEach(async () => {
       vi.useRealTimers();
       carrier = await MockPushCarrier.start();
+      // The bootstrap starts FCM's token refresh: it reaches this carrier, never Google.
+      carrier.install();
     });
     afterEach(async () => {
       resetPushSender();

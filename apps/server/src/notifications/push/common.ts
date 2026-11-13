@@ -14,10 +14,14 @@ import type { PushFailureScope, PushSendOptions, PushSendResult, PushSenderDevic
 /** Each carrier request (the OAuth exchange, a send) is bounded by this: a ring window is 20 s. */
 export const PUSH_REQUEST_TIMEOUT_MS = 5_000;
 
-/** One platform's sender. `send` never throws; `close` releases its connections (at stop). */
+/**
+ * One platform's sender. `send` never throws; `start` (optional, at boot) begins its background
+ * work, never awaited; `close` stops it and releases its connections (at stop).
+ */
 export interface PlatformPushSender {
   readonly platform: AgencyPushPlatform;
   send(device: PushSenderDevice, payload: AgencyRingPush, opts: PushSendOptions): Promise<PushSendResult>;
+  start?(): void;
   close(): Promise<void>;
 }
 

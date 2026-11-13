@@ -48,6 +48,7 @@ import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { SYSTEM_AUDIT_ACTOR, type AuditActorFields } from '../audit/platform/audit-actor.js';
 import { AGENCY_AWAY_RING_MAX_MS_DEFAULT } from '../config/blocks/agency.js';
 import { AGENT_LEASE_MS, type AgentStateMachine } from './agent-state-machine.js';
+import { InFlight } from './pacing/in-flight.js';
 import type { StationRegistry } from './station-registry.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
 import { accountKeyOfCall } from './inbound/inbound-queue.js';
@@ -65,6 +66,9 @@ export const RING_OFF_PUSH_TTL_MS = 10 * 60 * 1000;
 export const TEST_RING_PUSH_TTL_MS = 60 * 1000;
 /** The reconcile's period (IQ67): at boot, then every minute. */
 export const AWAY_RING_RECONCILE_MS = 60_000;
+/** {@link AwayRingService.drain}: how many times it waits for the work in flight, and how long each wait may last. */
+const DRAIN_PASSES = 10;
+const DRAIN_PASS_MS = 15_000;
 
 /**
  * The states a queued `away_ring` is applied from by the release at the end of a call or wrap-up.
@@ -249,7 +253,7 @@ export class AwayRingService {
   private reconcileTimer: NodeJS.Timeout | null = null;
   private stopped = false;
   /** Work started and not awaited (the `ring_off` pushes): {@link drain} and {@link stop} wait for it. */
-  private readonly background = new Set<Promise<unknown>>();
+  private readonly background = new InFlight();
   private readonly ringAllowedFn: (tenantId: string, accountId: string) => Promise<boolean>;
 
   constructor(private readonly deps: AwayRingServiceDeps) {
@@ -696,7 +700,7 @@ export class AwayRingService {
     // here, once per absence, device or none.
     if (reason === 'taken_over') trackAwayRingEnded('taken_over');
     if (!deviceId) return;
-    this.track((async () => {
+    void this.background.track((async () => {
       const device = await agencyPushDeviceRepository.find(agentUserId, deviceId);
       if (!device || device.platform !== 'android' || pushTokenOf(device) === null) return;
       await this.send(device, {
@@ -708,15 +712,13 @@ export class AwayRingService {
     })().catch((err: unknown) => log.warn({ err, sessionId, reason }, 'Could not send ring_off')));
   }
 
-  /** Keep `work` (which never rejects) until it settles, so {@link drain} waits for it. */
-  private track(work: Promise<unknown>): void {
-    this.background.add(work);
-    void work.finally(() => this.background.delete(work));
-  }
-
-  /** Wait for the work started and not awaited (the `ring_off` pushes in flight). */
+  /**
+   * Wait for the work started and not awaited (the `ring_off` pushes in flight) until none is left:
+   * work that a settling push started is waited for too, for at most {@link DRAIN_PASSES} passes of
+   * {@link DRAIN_PASS_MS} each.
+   */
   async drain(): Promise<void> {
-    for (let i = 0; i < 10 && this.background.size > 0; i++) await Promise.allSettled([...this.background]);
+    for (let i = 0; i < DRAIN_PASSES && this.background.size > 0; i++) await this.background.settle(DRAIN_PASS_MS);
   }
 
   /** Run the reconcile every {@link AWAY_RING_RECONCILE_MS} (the bootstrap, after the boot pass). */

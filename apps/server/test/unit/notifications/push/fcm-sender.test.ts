@@ -11,7 +11,7 @@ vi.mock('@magick-agency/observability/metrics/platform', () => metrics);
 
 import { logger } from '@magick-agency/observability';
 import {
-  FCM_OAUTH_TOKEN_URL, FCM_SCOPE, FcmSender, fcmSendUrl, fcmTtl, mapFcmAnswer, type PushFetch,
+  FCM_OAUTH_TOKEN_URL, FCM_SCOPE, FCM_TOKEN_RETRY_MS, FcmSender, fcmSendUrl, fcmTtl, mapFcmAnswer, type FcmTimers, type PushFetch,
 } from '../../../../src/notifications/push/fcm-sender.js';
 import type { FcmCredentials } from '../../../../src/notifications/push/credentials.js';
 import { pushFailureScope, type PushSenderDevice } from '../../../../src/seams/push-sender.js';
@@ -32,6 +32,7 @@ function harness(opts: {
   oauth?: (n: number) => Response | Promise<Response>;
   send?: (n: number, call: Call) => Response | Promise<Response>;
   timeoutMs?: number;
+  timers?: FcmTimers;
 } = {}) {
   let now = T0;
   const oauthCalls: Call[] = [];
@@ -45,7 +46,10 @@ function harness(opts: {
     sendCalls.push(call);
     return (opts.send ?? (() => Response.json({ name: 'projects/agent-app/messages/1' })))(sendCalls.length, call);
   };
-  const sender = new FcmSender({ credentials: CREDS, fetchImpl, now: () => now, ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}) });
+  const sender = new FcmSender({
+    credentials: CREDS, fetchImpl, now: () => now,
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}), ...(opts.timers ? { timers: opts.timers } : {}),
+  });
   return {
     sender, oauthCalls, sendCalls,
     advance(ms: number) { now += ms; },
@@ -171,6 +175,86 @@ describe('FcmSender: auth', () => {
     const h = harness({ send: () => fcmError(401, 'UNAUTHENTICATED') });
     expect(await h.send()).toEqual({ ok: false, reason: 'unavailable' });
     expect(h.sendCalls).toHaveLength(2);
+  });
+});
+
+describe('FcmSender: the token kept fresh once started', () => {
+  /** Timers the test fires by hand: each scheduled callback with its delay. */
+  function manualTimers() {
+    const pending: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
+    const timers: FcmTimers = {
+      setTimeout: (fn, ms) => { const t = { fn, ms, cleared: false }; pending.push(t); return t; },
+      clearTimeout: (handle) => { (handle as { cleared: boolean }).cleared = true; },
+    };
+    return {
+      timers,
+      /** The live timers' delays. */
+      delays: () => pending.filter((t) => !t.cleared).map((t) => t.ms),
+      /** Fire the one live timer, then let its exchange settle. */
+      async fire() {
+        const live = pending.filter((t) => !t.cleared);
+        expect(live).toHaveLength(1);
+        live[0]!.cleared = true;
+        live[0]!.fn();
+        await new Promise((r) => setTimeout(r, 0));
+      },
+    };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('start trades the token at once; a send after it waits on no exchange', async () => {
+    const t = manualTimers();
+    const h = harness({ timers: t.timers });
+    h.sender.start();
+    h.sender.start(); // idempotent
+    await settle();
+    expect(h.oauthCalls).toHaveLength(1);
+    expect(await h.send()).toEqual({ ok: true });
+    expect(h.oauthCalls).toHaveLength(1);
+    expect(h.sendCalls[0]!.headers['authorization']).toBe('Bearer access-1');
+  });
+
+  it('the token is traded again 5 minutes before the cached one ends, so a send never finds it expired', async () => {
+    const t = manualTimers();
+    const h = harness({ timers: t.timers });
+    h.sender.start();
+    await settle();
+    // Cached for 55 minutes: the next exchange is due at 50.
+    expect(t.delays()).toEqual([50 * MIN]);
+    h.advance(50 * MIN);
+    await t.fire();
+    expect(h.oauthCalls).toHaveLength(2);
+    h.advance(5 * MIN);
+    expect(await h.send()).toEqual({ ok: true });
+    expect(h.oauthCalls).toHaveLength(2);
+    expect(h.sendCalls[0]!.headers['authorization']).toBe('Bearer access-2');
+    expect(t.delays()).toEqual([50 * MIN]);
+  });
+
+  it('a failed background exchange is logged and tried again a minute later', async () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const t = manualTimers();
+    const h = harness({
+      timers: t.timers,
+      oauth: (n) => (n === 1 ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : Response.json({ access_token: `access-${n}`, expires_in: 3600 })),
+    });
+    h.sender.start();
+    await settle();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ platform: 'android' }), 'FCM access token refresh failed; trying again');
+    expect(t.delays()).toEqual([FCM_TOKEN_RETRY_MS]);
+    await t.fire();
+    expect(h.oauthCalls).toHaveLength(2);
+    expect(t.delays()).toEqual([50 * MIN]);
+  });
+
+  it('close stops the refresh', async () => {
+    const t = manualTimers();
+    const h = harness({ timers: t.timers });
+    h.sender.start();
+    await settle();
+    await h.sender.close();
+    expect(t.delays()).toEqual([]);
+    expect(h.oauthCalls).toHaveLength(1);
   });
 });
 

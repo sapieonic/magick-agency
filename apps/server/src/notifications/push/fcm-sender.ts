@@ -7,6 +7,10 @@
  *    an access token (one hour). It is cached for 55 minutes (or its lifetime less 5 minutes, if
  *    shorter); concurrent sends share one refresh. A failed exchange is not cached: the next send
  *    tries again. A send answered 401 drops the cached token and is sent once more with a new one.
+ *    Once started ({@link FcmSender.start}, at boot) the token is traded at once and again
+ *    {@link FCM_TOKEN_REFRESH_AHEAD_MS} before it ends, in the background, so a ring never waits on
+ *    the exchange; a failed background exchange is logged and tried again
+ *    {@link FCM_TOKEN_RETRY_MS} later.
  *  - The message: `data` (every value a string, IQ61's fields only), `android.priority: HIGH` (a
  *    ring must wake a dozing phone) and `android.ttl` the ring window in whole seconds (rounded
  *    up): a phone that comes online after it is not rung for a caller who has gone.
@@ -22,6 +26,9 @@
  *    transport (`fetchImpl`, or `setPushTransportsForTests` in `push-sender.ts`), never the host.
  */
 import type { AgencyRingPush } from '@magick-agency/contracts/agency';
+import { logger } from '@magick-agency/observability';
+import { isAbortFromTimeout } from '../../utils/abort-error.js';
+import { withTimeoutOr } from '../../utils/with-timeout.js';
 import { pushFailureScope, type PushSendOptions, type PushSendResult, type PushSenderDevice } from '../../seams/push-sender.js';
 import type { FcmCredentials } from './credentials.js';
 import { signJwt } from './jwt.js';
@@ -36,6 +43,12 @@ export const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 
 /** The access token is used for at most this long (Google issues them for an hour). */
 export const FCM_TOKEN_CACHE_MS = 55 * 60 * 1000;
+/** Once started, the token is traded again this long before the cached one ends. */
+export const FCM_TOKEN_REFRESH_AHEAD_MS = 5 * 60 * 1000;
+/** A failed background exchange is tried again after this long. */
+export const FCM_TOKEN_RETRY_MS = 60 * 1000;
+/** The background refresh never runs more often than this (a token Google issues for under 5 minutes). */
+const FCM_TOKEN_MIN_REFRESH_MS = 30 * 1000;
 /** FCM's longest `ttl` (28 days). */
 const FCM_MAX_TTL_S = 28 * 24 * 60 * 60;
 
@@ -53,7 +66,22 @@ export interface FcmSenderOptions {
   timeoutMs?: number;
   /** Default `Date.now`. */
   now?: () => number;
+  /** The timers the background token refresh runs on; default the global ones (tests: fake ones). */
+  timers?: FcmTimers;
 }
+
+/** The timers {@link FcmSender.start}'s background refresh runs on. */
+export interface FcmTimers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+const GLOBAL_TIMERS: FcmTimers = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+};
+
+const TIMED_OUT: Answer = { kind: 'failed', code: 'timeout' };
 
 type Answer =
   | { kind: 'response'; status: number; body: string; retryAfter: string | null }
@@ -117,15 +145,30 @@ export class FcmSender implements PlatformPushSender {
   readonly #timeoutMs: number;
   readonly #now: () => number;
   readonly #gate: RetryAfterGate;
+  readonly #timers: FcmTimers;
   #token: { value: string; expiresAt: number } | null = null;
   #refreshing: Promise<string> | null = null;
+  /** {@link start} ran and {@link close} has not: the token is kept fresh in the background. */
+  #started = false;
+  #refreshTimer: unknown = null;
 
   constructor(opts: FcmSenderOptions) {
     this.#credentials = opts.credentials;
     this.#fetch = opts.fetchImpl ?? ((url, init) => fetch(url, init));
     this.#timeoutMs = opts.timeoutMs ?? PUSH_REQUEST_TIMEOUT_MS;
     this.#now = opts.now ?? Date.now;
+    this.#timers = opts.timers ?? GLOBAL_TIMERS;
     this.#gate = new RetryAfterGate(this.#now);
+  }
+
+  /**
+   * Trade the access token now and keep it fresh until {@link close} (not awaited; a failure is
+   * logged and tried again), so no send waits on the exchange. Idempotent.
+   */
+  start(): void {
+    if (this.#started) return;
+    this.#started = true;
+    this.#keepFresh();
   }
 
   async send(device: PushSenderDevice, payload: AgencyRingPush, opts: PushSendOptions): Promise<PushSendResult> {
@@ -139,7 +182,30 @@ export class FcmSender implements PlatformPushSender {
   }
 
   async close(): Promise<void> {
+    this.#started = false;
+    if (this.#refreshTimer !== null) this.#timers.clearTimeout(this.#refreshTimer);
+    this.#refreshTimer = null;
     this.#token = null;
+  }
+
+  /** One background exchange, then the next one scheduled: before the new token ends, or a retry. */
+  #keepFresh(): void {
+    this.#refreshTimer = null;
+    if (!this.#started) return;
+    this.#refresh().then(
+      () => this.#scheduleRefresh(Math.max(FCM_TOKEN_MIN_REFRESH_MS, (this.#token?.expiresAt ?? 0) - this.#now() - FCM_TOKEN_REFRESH_AHEAD_MS)),
+      (err: unknown) => {
+        logger.warn({ err, platform: 'android' }, 'FCM access token refresh failed; trying again');
+        this.#scheduleRefresh(FCM_TOKEN_RETRY_MS);
+      },
+    );
+  }
+
+  #scheduleRefresh(ms: number): void {
+    if (!this.#started) return;
+    const handle = this.#timers.setTimeout(() => this.#keepFresh(), ms);
+    (handle as { unref?: () => void } | null)?.unref?.();
+    this.#refreshTimer = handle;
   }
 
   async #send(device: PushSenderDevice, payload: AgencyRingPush, { ttlMs }: PushSendOptions): Promise<SendOutcome> {
@@ -195,6 +261,11 @@ export class FcmSender implements PlatformPushSender {
   /** The cached access token, or one fresh from Google; concurrent callers share one exchange. */
   async #accessToken(): Promise<string> {
     if (this.#token && this.#now() < this.#token.expiresAt) return this.#token.value;
+    return this.#refresh();
+  }
+
+  /** A fresh access token from Google, whatever is cached; concurrent callers share one exchange. */
+  #refresh(): Promise<string> {
     if (!this.#refreshing) {
       this.#refreshing = this.#exchange().finally(() => { this.#refreshing = null; });
     }
@@ -225,28 +296,16 @@ export class FcmSender implements PlatformPushSender {
   }
 
   async #post(url: string, headers: Record<string, string>, body: string): Promise<Answer> {
-    // The abort stops the request; the race bounds the send even if a transport ignored it.
-    const controller = new AbortController();
-    let timer: NodeJS.Timeout | undefined;
-    const timedOut = new Promise<Answer>((resolve) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        resolve({ kind: 'failed', code: 'timeout' });
-      }, this.#timeoutMs);
-    });
     const request = (async (): Promise<Answer> => {
       try {
-        const res = await this.#fetch(url, { method: 'POST', headers, body, signal: controller.signal });
+        const res = await this.#fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(this.#timeoutMs) });
         const text = await res.text();
         return { kind: 'response', status: res.status, body: text, retryAfter: res.headers.get('retry-after') };
-      } catch {
-        return { kind: 'failed', code: controller.signal.aborted ? 'timeout' : 'network' };
+      } catch (err) {
+        return { kind: 'failed', code: isAbortFromTimeout(err) ? 'timeout' : 'network' };
       }
     })();
-    try {
-      return await Promise.race([request, timedOut]);
-    } finally {
-      clearTimeout(timer);
-    }
+    // The signal stops the request; the bound holds even for a transport that ignores it.
+    return withTimeoutOr(request, this.#timeoutMs, TIMED_OUT);
   }
 }

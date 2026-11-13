@@ -29,7 +29,8 @@ import { getPushSender, setPushSender } from '../seams/push-sender.js';
  *     after the flush.
  *  4. The push senders (Mode B; `seams/push-sender.ts`, `docs/seams.md` §3.6): registered when
  *     `PUSH_*` configures FCM, APNs or both; with neither the seam stays unwired (every send
- *     `unconfigured`, `away_ring` refused). Boot logs which platforms can be rung (no secrets).
+ *     `unconfigured`, `away_ring` refused). Boot logs which platforms can be rung (no secrets), and
+ *     starts FCM's access token refresh (not awaited).
  *     Cleared and closed in this stop, after every other area has stopped ringing.
  *
  * Returns a stop function the process awaits on shutdown.
@@ -41,7 +42,11 @@ export async function startPlatform(ctx: AppContext): Promise<() => Promise<void
   let subscriber: Redis | null = null;
 
   const push = createPushSender(config.push);
-  if (push) setPushSender(push);
+  if (push) {
+    setPushSender(push);
+    // FCM's access token is traded now and kept fresh, so no ring waits on the exchange.
+    push.start();
+  }
   logger.info({
     android: push?.configured('android') ?? false,
     ios: push?.configured('ios') ?? false,
