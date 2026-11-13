@@ -2,7 +2,8 @@
 
 The server's one S3 bucket (decision B14) and the IAM user it reads and writes it
 with, as a Terraform root module. Each environment gets its own bucket and IAM user,
-named from the `environment` variable, and its own state. With `create_server = true`
+named from the `environment` variable, and its own state, kept in S3 so any machine with AWS
+access can apply it (see "State"). With `create_server = true`
 it also creates the VM that runs the production compose stack, with a security group
 and an Elastic IP (see "The server VM"). With `enable_reports = true` it creates the
 report renderer: an SQS queue, a Lambda with its Chromium layer, and the callback secret in
@@ -20,6 +21,8 @@ the only pieces it does not manage.
 | [`terraform/outputs.tf`](terraform/outputs.tf) | Bucket name, region, the key pair, `server_env` (the four `.env` lines), the VM's Elastic IP, instance id and security group, and the reports queue, function, `reports_server_env` and the command that reads the callback secret from SSM |
 | [`terraform/tests/`](terraform/tests/) | `terraform test` against a mocked provider (no AWS, no build, no download): reports off plans nothing new; reports on needs no other input and plans the settings below; the layer the renderer pins, the zip's hash, the secret and two rotations |
 | [`terraform/variables.tf`](terraform/variables.tf) | `environment` (required) and the optional overrides; `terraform.tfvars.example` lists them |
+| [`terraform/versions.tf`](terraform/versions.tf) | Providers, and the S3 backend that holds the state |
+| [`state/main.tf`](state/main.tf) | The state bucket itself, applied once per AWS account (see "State") |
 
 What lives in the bucket: roster CSV uploads and rejected-row exports under
 `agency-ingest/<tenant>/` (contact lists, so PII), the abandon clips and, with reports,
@@ -53,7 +56,7 @@ AMI id (`ssm:GetParameter`). Nothing here talks to AWS until `plan`.
 ```bash
 cd aws/terraform
 cp terraform.tfvars.example dev-manas.tfvars      # set environment = "dev-manas"
-terraform init
+terraform init                                    # connects to the state bucket ("State")
 terraform workspace new dev-manas                 # once per environment; later: terraform workspace select dev-manas
 terraform plan  -var-file=dev-manas.tfvars
 terraform apply -var-file=dev-manas.tfvars
@@ -66,19 +69,76 @@ appended to the file onto `AWS_SECRET_ACCESS_KEY=`. If `.env` already has `S3_AU
 
 Restart the server. It logs `S3 client initialized` with the bucket name.
 
-**One workspace per environment, and it must match.** State is local and per
-workspace (`terraform.tfstate.d/<environment>/`, gitignored). The bucket carries a
-precondition that the selected workspace equals `environment`, so `staging.tfvars`
-applied in the `dev-manas` workspace fails at plan instead of renaming dev's bucket.
-Apply an environment from the machine that holds its state, or copy the state
-across.
+**One workspace per environment, and it must match.** Each workspace has its own state in
+the state bucket ("State"). The bucket carries a precondition that the selected workspace
+equals `environment`, so `staging.tfvars` applied in the `dev-manas` workspace fails at plan
+instead of renaming dev's bucket.
 
 **The state holds the server's secret access key.** `aws_iam_access_key` stores the
-secret in state, which is why state, plans and `*.tfvars` are all gitignored. To
+secret in state, which is why state, plans and `*.tfvars` are all gitignored, and why read
+access to the state bucket is read access to that key. To
 rotate the key: `terraform apply -replace='aws_iam_access_key.server[0]' -var-file=…` (quoted: zsh
 reads the brackets as a glob),
 update the server's env, restart. With `create_access_key = false` no key is made;
 create one outside Terraform and give it to the server yourself.
+
+## State
+
+The state is in an S3 bucket, `magick-agency-terraform-state` in `ap-south-1`
+(`terraform/versions.tf`), so any machine with AWS credentials for the account can plan and
+apply; none has to keep a copy. The default workspace's state is at `aws/terraform.tfstate`,
+every other workspace's at `env:/<workspace>/aws/terraform.tfstate`. The Grafana module keeps
+its state in the same bucket, at `grafana/terraform.tfstate` ([`grafana/README.md`](../grafana/README.md)).
+A lock file next to it
+(`use_lockfile`, Terraform 1.10+) stops two applies at once: a second one waits for, or fails
+on, the lock. The bucket is versioned, so every earlier state is kept for 90 days.
+
+**On another machine** you need Terraform 1.10+, the checkout at the release you are applying,
+AWS credentials, and the environment's tfvars (gitignored, so copy it across or recreate it from
+`terraform.tfvars.example`). Then:
+
+```bash
+cd aws/terraform
+terraform init
+terraform workspace select dev-manas              # list them with: terraform workspace list
+terraform plan -var-file=dev-manas.tfvars          # should show no changes
+```
+
+The backend does not read `aws_profile` from the tfvars: export `AWS_PROFILE`, or run
+`terraform init -backend-config="profile=<name>"`. The identity needs `s3:ListBucket` on the
+state bucket, and `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on its objects (the
+delete is for the lock file).
+
+**The state bucket, once per AWS account.** `aws/state` creates it: versioned, SSE-S3,
+public access blocked, TLS only, protected from `terraform destroy`. Its own state is local and
+holds nothing secret; it is only needed to change the bucket later, and a lost copy comes back
+with `terraform import aws_s3_bucket.state magick-agency-terraform-state` (and the same for the
+bucket's other resources).
+
+```bash
+cd aws/state
+terraform init
+terraform apply
+```
+
+S3 bucket names are global. If the name is taken, or for another account, set `bucket_name` in
+`aws/state` and the same `bucket` in `terraform/versions.tf` and
+`grafana/terraform/versions.tf` (or pass
+`-backend-config="bucket=<name>"` to every `terraform init`).
+
+**Moving state that is still local.** A machine that applied before the backend existed has its
+state in `aws/terraform/terraform.tfstate` (the default workspace) and
+`aws/terraform/terraform.tfstate.d/<workspace>/`. Copy it up once, from that machine:
+
+```bash
+cd aws/terraform
+terraform init -migrate-state                     # answer yes; every local workspace is copied
+terraform workspace select <environment>
+terraform plan -var-file=<environment>.tfvars      # no changes means the copy is complete
+rm -rf terraform.tfstate terraform.tfstate.backup terraform.tfstate.d   # they hold the access key
+```
+
+Delete the local files only after the plan shows no changes: until then they are the only copy.
 
 ## The server's permissions
 
@@ -328,7 +388,7 @@ A server that writes a version the live renderer does not know gets every run fa
 catches up.
 
 **No CI deploys to AWS.** Nothing in CI applies this module: it is by hand, at the
-release's tag, from the machine that holds the environment's state.
+release's tag, from any machine with AWS access (the state is in S3, "State").
 
 ### Rollback
 

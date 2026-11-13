@@ -63,7 +63,7 @@ Collect these first. Some of them take days to arrive.
 | Optional: Gemini and/or OpenAI-compatible API keys | Post-call analysis | see `apps/server/.env.example` |
 | Optional: Grafana Cloud OTLP endpoint and token | Metrics, traces, alerts | `OTEL_*`, [`grafana/README.md`](grafana/README.md) |
 
-Tools on your laptop: `git`, `ssh`, the AWS CLI or console access, and Terraform 1.x (for the S3
+Tools on your laptop: `git`, `ssh`, the AWS CLI or console access, and Terraform 1.10+ (for the S3
 bucket and, optionally, the VM and the reports renderer; with reports, also Node 22 and pnpm 10,
 because the plan builds the renderer). You do not need Node or pnpm on the server; Docker builds
 everything.
@@ -170,8 +170,9 @@ it in step 6.1.
 ### 3.4 S3 bucket and keys
 
 `aws/terraform` creates the bucket and an IAM user with exactly the permissions the server uses.
-Follow [`aws/README.md`](aws/README.md) with `environment = "production"` (or `staging`), from a
-machine that will keep the Terraform state. At the end, print the four lines the server needs and
+Follow [`aws/README.md`](aws/README.md) with `environment = "production"` (or `staging`). The
+Terraform state goes to an S3 bucket, so any machine with AWS access can apply later; on a new AWS
+account, create that bucket first (`aws/README.md`, "State"). At the end, print the four lines the server needs and
 keep them for step 5:
 
 ```bash

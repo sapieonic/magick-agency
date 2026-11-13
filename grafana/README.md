@@ -18,16 +18,25 @@ repo; see [Routing](#routing-managed-outside-this-repo).
 
 ```bash
 cd grafana/terraform
+export AWS_PROFILE=<profile>                     # or any AWS credentials: the state is in S3
 export GRAFANA_URL="https://sapieonic.grafana.net"
 export GRAFANA_AUTH="<service-account-token>"   # dashboards + alerting writer
 terraform init && terraform plan && terraform apply
 ```
 
-**State is local and separate.** This module keeps its own `terraform.tfstate`
-(gitignored, like `.terraform/` and `*.tfvars`), so it is planned and applied
-separately from anything else on the stack and never sees other resources.
-Apply from the machine that holds this state, or copy it, or `terraform import`
-each resource first. Optional overrides are in `terraform.tfvars.example`.
+**State is in S3 and separate.** This module's state is
+`grafana/terraform.tfstate` in the same bucket as `aws/terraform`'s
+(`magick-agency-terraform-state`, made once per AWS account by `aws/state`;
+[`aws/README.md`](../aws/README.md), "State"), so any machine with AWS access
+and the Grafana token can apply it, and a lock file stops two applies at once.
+It is its own key, so it is planned and applied separately from anything else on
+the stack and never sees other resources. Applying needs Terraform 1.10+ and AWS
+credentials besides the token: `s3:ListBucket` on the bucket, and
+`s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on `grafana/*`. A machine
+that applied before the backend existed moves its local `terraform.tfstate` up
+once with `terraform init -migrate-state`, checks that `terraform plan` shows no
+changes, then deletes the local file. Optional overrides are in
+`terraform.tfvars.example` (gitignored once copied, so copy it across too).
 
 The dashboard is locked in the UI unless `allow_ui_updates = true`. To change it,
 edit in the UI, **Export → classic JSON**, commit it to `dashboards/`, run

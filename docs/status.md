@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-12.
+"is it done". As of 2026-11-13.
 
 ## Summary
 
@@ -1434,6 +1434,25 @@ resources and Gradle changes were never processed. The pure Kotlin logic's 115 t
 real caller. The Play Console full-screen-intent declaration is not filed. iOS is a design only
 (`mobile.md` "iOS: the design (Mode B)"). Test counts: "Test counts", the Mode B entry.
 
+### Terraform state in S3 2026-11-13
+
+Manas: the Terraform only applied from the one machine that held its local state. Now
+`aws/terraform` and `grafana/terraform` keep their state in one S3 bucket,
+`magick-agency-terraform-state` in `ap-south-1`, each under its own key (`aws/terraform.tfstate`,
+with other workspaces under `env:/<workspace>/`, and `grafana/terraform.tfstate`), with the S3
+backend's lock file, so any machine with AWS credentials can plan and apply. A new root module,
+`aws/state`, makes the bucket once per account: versioned (old states kept 90 days), SSE-S3,
+public access blocked, TLS only, `prevent_destroy`. Both modules now need Terraform 1.10+
+(`use_lockfile`). How to apply from a new machine and how to move a local state up:
+[`aws/README.md`](../aws/README.md), "State".
+
+Evidence, local, 2026-11-13: `terraform validate` on `aws/state`, `aws/terraform` and
+`grafana/terraform` (`init -backend=false`); `aws/terraform` `terraform test` 11 passed;
+`pnpm test:grafana` 33 passed. On AWS, 2026-11-13: `aws/state` applied (the bucket exists) and
+`aws/terraform`'s `default` workspace moved into it with `terraform init -migrate-state` from
+Manas's machine. **Not verified:** a no-change plan from a second machine; the Grafana module has
+never been applied, so its key is empty until its first apply.
+
 ## Test counts
 
 **Mode B, 2026-11-13 (final, after the cleanup pass).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`
@@ -2351,6 +2370,8 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
       inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
+- [ ] Terraform state bucket made (`aws/state`) and any local state moved into it
+      (`aws/README.md`, "State").
 - [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads, applied per
       environment from `aws/terraform` (`aws/README.md`). The same module can create the VM, its
       security group and Elastic IP (`create_server`).
