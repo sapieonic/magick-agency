@@ -103,13 +103,13 @@ async function device(overrides: Partial<{ deviceId: string; ringEnabled: boolea
   });
 }
 
-function service(opts: { attached?: Set<string>; holds?: Set<string>; allowed?: boolean } = {}) {
+function service(opts: { attached?: Set<string>; holds?: Set<string>; allowed?: boolean; agents?: InstanceType<typeof AgentStateMachine> } = {}) {
   const attached = opts.attached ?? new Set<string>();
   const sent: unknown[] = [];
   /** The connector's cancel of a ring in flight (N1), asked by an end during a ring; here the ring was answered and stands. */
   const cancels: Array<[string, string]> = [];
   const svc = new AwayRingService({
-    agents: sm(),
+    agents: opts.agents ?? sm(),
     stations: { isLocallyOwned: (id: string) => attached.has(id), send: (_id: string, f: unknown) => { sent.push(f); return true; } } as never,
     inbound: () => ({
       holdsPushOffer: (id: string) => opts.holds?.has(id) ?? false,
@@ -372,12 +372,15 @@ describe('the session mirror of away_ring (real Postgres)', () => {
 
   it('the take-over ends away_ring in the claim itself, and logs the switch to device_away', async () => {
     const s = await session({ state: 'available' });
-    await sessions.setState(s.id, 'break', 'away_ring');
+    const absence = new Date(Date.now() - 90_000);
+    expect(await sessions.enterAwayRing(s.id, absence)).toEqual(absence);
     // A reconnect from the device holding it moves nothing and ends nothing.
     expect(await sessions.claimStationDevice(s.id, { deviceId: 'phone-aaaa-1', takeOver: false })).toEqual({ ok: true });
     expect(await sessions.claimStationDevice(s.id, { deviceId: 'laptop-bbbb-2', takeOver: true }))
-      .toEqual({ ok: true, endedAwayRing: { previousDeviceId: 'phone-aaaa-1' } });
+      .toEqual({ ok: true, endedAwayRing: { previousDeviceId: 'phone-aaaa-1', awaySince: absence } });
     expect(await row(s.id)).toMatchObject({ station_device_id: 'laptop-bbbb-2', state: 'break', break_reason: 'device_away', away_ring_since: null });
+    // One pause: the switch to device_away keeps the absence's start.
+    expect((await row(s.id)).state_since).toEqual(absence);
     const { rows } = await getTestPool().query(
       `SELECT from_state, to_state, break_reason FROM agency_agent_session_events WHERE session_id = $1 ORDER BY at`, [s.id]);
     expect(rows.at(-1)).toEqual({ from_state: 'break', to_state: 'break', break_reason: 'device_away' });
@@ -495,10 +498,15 @@ describe('AwayRingService', () => {
   it('reconcile ends an absence past its maximum age: offline with no socket, device_away, ring_off, audited', async () => {
     const d = await device();
     const s = await onAwayRing({ sinceAgoMs: MAX_AGE + 1_000 });
+    const absence = (await row(s.id)).away_ring_since as Date;
     expect(await service().svc.reconcile()).toMatchObject({ ended: 1 });
     expect(await sm().get(s.id)).toMatchObject({ state: 'offline', ring: false });
     expect(await row(s.id)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
-    expect(await pushes(1)).toEqual([{ deviceRowId: d.id, payload: { type: 'ring_off', session_id: s.id, reason: 'max_age' } }]);
+    // The ring_off names the absence it ends, so a late one cannot end the next on the phone.
+    expect(await pushes(1)).toEqual([{
+      deviceRowId: d.id,
+      payload: { type: 'ring_off', session_id: s.id, reason: 'max_age', away_since: absence.toISOString() },
+    }]);
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
       action: 'agency_session.away_ring_ended', resource_id: s.id, actor_type: 'system',
       details: expect.objectContaining({ reason: 'max_age', to_state: 'offline' }),
@@ -521,6 +529,51 @@ describe('AwayRingService', () => {
     expect((await pushes(1))[0]!.payload).toMatchObject({ type: 'ring_off', reason });
   });
 
+  it('a server-ended absence keeps its start: Redis, the frame, the mirror and the ring_off all name the instant away_ring began', async () => {
+    await device();
+    const s = await session({ state: 'available' });
+    await sm().set(s.id, 'available');
+    const { svc, frames } = service({ attached: new Set([s.id]) });
+    const entered = await svc.enter((await sessions.findById(s.id))!, ['available']);
+    if (!entered.ok) throw new Error('not entered');
+    // Redis and the mirror stamp the one instant the frame (and the HTTP answer) said.
+    expect(frames).toEqual([{ event: 'agent_state', state: 'break', since: entered.since, break_reason: 'away_ring' }]);
+    expect(new Date((await sm().get(s.id))!.since!).toISOString()).toBe(entered.since);
+    expect(((await row(s.id)).away_ring_since as Date).toISOString()).toBe(entered.since);
+    // A ring came and went: Redis's `since` (the idle clock, IQ63) and `state_since` move on.
+    await sm().reserveForInbound(s.id, 'ib-1', ['break']);
+    await sessions.setState(s.id, 'reserved');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await svc.releaseInbound(s.id, 'ib-1')).toBe('away_ring');
+    expect((await sm().get(s.id))!.since).toBeGreaterThan(Date.parse(entered.since));
+    // Two misses (or any server end) with the app's station here: device_away, `since` kept.
+    frames.length = 0;
+    expect(await svc.end(s.id, 'ring_missed')).toBe('ended');
+    expect(frames).toEqual([{ event: 'agent_state', state: 'break', since: entered.since, break_reason: 'device_away' }]);
+    expect(await sm().get(s.id)).toMatchObject({ state: 'break', ring: false, since: Date.parse(entered.since) });
+    expect(((await row(s.id)).state_since as Date).toISOString()).toBe(entered.since);
+    expect((await pushes(1))[0]!.payload).toEqual({ type: 'ring_off', session_id: s.id, reason: 'ring_missed', away_since: entered.since });
+    // The transition log still splits the pause by reason at the switch's own instant.
+    const { rows } = await getTestPool().query(
+      'SELECT to_state, break_reason, at FROM agency_agent_session_events WHERE session_id = $1 ORDER BY at, id', [s.id]);
+    expect(rows.map((r) => r.break_reason)).toEqual(['away_ring', null, 'away_ring', 'device_away']);
+    expect((rows.at(-1)!.at as Date).getTime()).toBeGreaterThan(Date.parse(entered.since));
+  });
+
+  it('with no station here the end writes offline now, and the ring_off still names the absence', async () => {
+    await device();
+    const s = await session({ state: 'available' });
+    await sm().set(s.id, 'available');
+    const { svc } = service();
+    const entered = await svc.enter((await sessions.findById(s.id))!, ['available']);
+    if (!entered.ok) throw new Error('not entered');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await svc.end(s.id, 'ring_missed')).toBe('ended');
+    expect((await sm().get(s.id))!.since).toBeGreaterThan(Date.parse(entered.since));
+    expect(((await row(s.id)).state_since as Date).getTime()).toBeGreaterThan(Date.parse(entered.since));
+    expect((await pushes(1))[0]!.payload).toMatchObject({ reason: 'ring_missed', away_since: entered.since });
+  });
+
   it("an end whose Redis write the reconcile saw first (it cleared the key) still ends the mirror: device_away, not a row left on away_ring", async () => {
     await device();
     const s = await onAwayRing();
@@ -539,6 +592,31 @@ describe('AwayRingService', () => {
     await sm().set(s.id, 'available');
     expect(await service().svc.reconcile()).toMatchObject({ cleared: 1 });
     expect((await row(s.id)).away_ring_since).toBeNull();
+  });
+
+  it('reconcile never wipes a NEW absence entered between its read and its clear', async () => {
+    await device();
+    const s = await onAwayRing();
+    // Whatever moved the agent off away_ring ended that absence: only the key is left behind...
+    await sm().set(s.id, 'available');
+    // ...and, while the pass awaits Redis, the agent goes away ringing again (a fresh start).
+    const machine = sm();
+    const realGet = machine.get.bind(machine);
+    const fresh = new Date(Date.now() + 5_000);
+    let entered = false;
+    machine.get = async (id: string) => {
+      const live = await realGet(id);
+      if (id === s.id && !entered) {
+        entered = true;
+        await getTestPool().query('UPDATE agency_agent_sessions SET away_ring_since = $2 WHERE id = $1', [s.id, fresh]);
+      }
+      return live;
+    };
+    expect(await service({ agents: machine }).svc.reconcile()).toMatchObject({ candidates: 1, cleared: 0 });
+    expect((await row(s.id)).away_ring_since).toEqual(fresh);
+    // The clear names the absence it read, to the millisecond.
+    expect(await sessions.clearAwayRingSince(s.id, new Date(fresh.getTime() - 1))).toBe(false);
+    expect(await sessions.clearAwayRingSince(s.id, fresh)).toBe(true);
   });
 
   it("the connector's return after an unanswered ring: Redis and the mirror back on away_ring; nothing for a call that does not hold it", async () => {
@@ -565,9 +643,14 @@ describe('AwayRingService', () => {
     const s = await onAwayRing();
     const claim = await sessions.claimStationDevice(s.id, { deviceId: 'laptop-bbbb-2', takeOver: true });
     expect(claim).toMatchObject({ endedAwayRing: { previousDeviceId: 'phone-aaaa-1' } });
-    await service().svc.endOnTakeOver(s.id, user, 'phone-aaaa-1');
-    expect(await sm().get(s.id)).toMatchObject({ state: 'break', ring: false });
-    expect(await pushes(1)).toEqual([{ deviceRowId: d.id, payload: { type: 'ring_off', session_id: s.id, reason: 'taken_over' } }]);
+    if (!claim.ok || !claim.endedAwayRing) throw new Error('no end');
+    const absence = claim.endedAwayRing.awaySince!;
+    await service().svc.endOnTakeOver(s.id, user, 'phone-aaaa-1', absence);
+    // The new device is shown the same pause: `since` kept at the absence's start.
+    expect(await sm().get(s.id)).toMatchObject({ state: 'break', ring: false, since: absence.getTime() });
+    expect(await pushes(1)).toEqual([{
+      deviceRowId: d.id, payload: { type: 'ring_off', session_id: s.id, reason: 'taken_over', away_since: absence.toISOString() },
+    }]);
   });
 
   it('a push the carrier says is unregistered revokes the device', async () => {
@@ -648,17 +731,21 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
     const rt = runtime();
     const s = await awayRingFor(rt);
     const rec = (await sessions.findById(s.id))!;
+    const absence = rec.away_ring_since!;
     expect(await rt.rehydrateAgent(s.id, rec)).toBe('break');
     expect(rec.break_reason).toBe('device_away');
-    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: false });
-    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null });
-    // A lapsed key with the row still on away_ring comes back as device_away too.
+    // One absence: the return keeps its start as `since`, in Redis and the mirror.
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: false, since: absence.getTime() });
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null, state_since: absence });
+    // A lapsed key with the row still on away_ring comes back as device_away too, its start kept.
     await sessions.setState(s.id, 'break', 'away_ring');
+    const absence2 = (await row(s.id)).away_ring_since as Date;
     await getTestRedis().del(key(s.id));
     const rec2 = (await sessions.findById(s.id))!;
     expect(await rt.rehydrateAgent(s.id, rec2)).toBe('break');
     expect(rec2.break_reason).toBe('device_away');
-    expect(await row(s.id)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', since: absence2.getTime() });
+    expect(await row(s.id)).toMatchObject({ break_reason: 'device_away', away_ring_since: null, state_since: absence2 });
   });
 
   it('a queued away_ring applies at the release with no socket at all; refused meanwhile, it is device_away', async () => {

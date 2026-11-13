@@ -457,6 +457,7 @@ describe('the ends of a ring', () => {
     const c = connector({ ringMs: 300 });
     await deskAgent('on_call'); // keeps the callers waiting (could take them later)
     const away = await awayAgent();
+    const absence = ((await sessionRow(away.sessionId)).away_ring_since as Date).toISOString();
     const { call: one } = await caller(c);
     await ringPush(away.deviceRowId, one.id);
     await until('expired', async () => (await row(one.id)).ring_result === 'expired');
@@ -473,7 +474,9 @@ describe('the ends of a ring', () => {
     expect(AGENCY_INBOUND_RING_MAX_MISSES).toBe(2);
     expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null, ring_misses: 2 });
     expect(await agents.get(away.sessionId)).toMatchObject({ state: 'offline', ring: false });
-    expect(await until('ring_off', () => pushes('ring_off', away.deviceRowId)[0] ?? null)).toEqual({ type: 'ring_off', session_id: away.sessionId, reason: 'ring_missed' });
+    // The ring_off names the absence the misses ended (two rings later: its start, not a ring's end).
+    expect(await until('ring_off', () => pushes('ring_off', away.deviceRowId)[0] ?? null))
+      .toEqual({ type: 'ring_off', session_id: away.sessionId, reason: 'ring_missed', away_since: absence });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'agency_session.away_ring_ended', resource_id: away.sessionId, details: expect.objectContaining({ reason: 'ring_missed' }) }));
     expect(pushes('ring', away.deviceRowId).map((p) => p['call_id'])).toEqual([one.id, two.id]);
   });
@@ -883,13 +886,17 @@ describe('the away break around a ring (N1)', () => {
     const { call } = await caller(c);
     await ringPush(away.deviceRowId);
     // The claim (another device's "Use it here") rewrote the mirror; then the runtime's end.
-    await sessions.claimStationDevice(away.sessionId, { deviceId: 'laptop-take-over-1', takeOver: true }, { reconnect: false });
-    await awayRing.endOnTakeOver(away.sessionId, away.userId, away.deviceId);
+    const claim = await sessions.claimStationDevice(away.sessionId, { deviceId: 'laptop-take-over-1', takeOver: true }, { reconnect: false });
+    if (!claim.ok || !claim.endedAwayRing) throw new Error('the claim did not end the absence');
+    const absence = claim.endedAwayRing.awaySince!;
+    await awayRing.endOnTakeOver(away.sessionId, away.userId, away.deviceId, absence);
     await drain();
     expect(await row(call.id)).toMatchObject({ state: 'queued', ring_result: 'answered_elsewhere' });
-    expect(await agents.get(away.sessionId)).toMatchObject({ state: 'break', ring: false, inboundCallId: null });
-    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null });
-    expect(await until('ring_off', () => pushes('ring_off', away.deviceRowId)[0] ?? null)).toMatchObject({ reason: 'taken_over' });
+    // The ring's end keeps the absence's start as `since` (Redis and the mirror), as every end does.
+    expect(await agents.get(away.sessionId)).toMatchObject({ state: 'break', ring: false, inboundCallId: null, since: absence.getTime() });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null, state_since: absence });
+    expect(await until('ring_off', () => pushes('ring_off', away.deviceRowId)[0] ?? null))
+      .toMatchObject({ reason: 'taken_over', away_since: absence.toISOString() });
   });
 
   it('"Stop ringing" during a ring cancels it and ends the absence (opted_out)', async () => {

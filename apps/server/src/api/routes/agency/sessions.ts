@@ -1021,7 +1021,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     await runtime.agents.clear(session.id);
     await agencyAgentSessionRepository.leave(session.id);
     await runtime.stations.detach(session.id);
-    if (awayRinging) runtime.awayRing.sendRingOff(session.agent_user_id, session.station_device_id, session.id, 'taken_over');
+    if (awayRinging) runtime.awayRing.sendRingOff(session.agent_user_id, session.station_device_id, session.id, 'taken_over', session.away_ring_since);
     return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'offline', since: new Date().toISOString() });
   });
 }

@@ -344,6 +344,10 @@ describe('decideDeviceAway — Mode B', () => {
 
 describe('runDeviceAway — away_ring', () => {
   /** The world, with the away-ring service scripted over its lease (`ring`). */
+  const ABSENCE_START = '2026-11-02T07:58:41.120Z';
+  /** The instant the service stamped on Redis, the mirror and the frame. */
+  const ENTERED_AT = '2026-11-02T08:10:00.250Z';
+
   function ringWorld(state: AgencyAgentState | null, opts: { refused?: string | null; ring?: boolean } = {}) {
     const w = world(state);
     let ring = opts.ring ?? false;
@@ -358,12 +362,12 @@ describe('runDeviceAway — away_ring', () => {
         if (!w.lease || !from.includes(w.lease.state)) return { ok: false, reason: 'wrong_state' };
         w.lease = { state: 'break', since: Date.now() };
         ring = true;
-        return { ok: true, since: new Date().toISOString() };
+        return { ok: true, since: ENTERED_AT };
       }),
-      end: vi.fn(async () => {
-        if (!(w.lease?.state === 'break' && ring)) return 'not_away_ring';
+      endKeepingSince: vi.fn(async () => {
+        if (!(w.lease?.state === 'break' && ring)) return { outcome: 'not_away_ring' };
         ring = false;
-        return 'ended';
+        return { outcome: 'ended', since: ABSENCE_START };
       }),
     };
     (w.runtime as unknown as { awayRing: typeof awayRing }).awayRing = awayRing;
@@ -384,7 +388,8 @@ describe('runDeviceAway — away_ring', () => {
   it('available → away_ring now, through the service (Redis CAS, mirror, frame)', async () => {
     const { w, awayRing, ring } = ringWorld('available');
     const res = await runDeviceAway(w.runtime, session(), 'away_ring');
-    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'away_ring' }) });
+    // Answered with the service's own instant, the absence's start the app measures from.
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'away_ring', since: ENTERED_AT }) });
     expect(awayRing.enter).toHaveBeenCalledWith(expect.objectContaining({ id: 'sess-1' }), ['available']);
     expect(ring()).toBe(true);
     expect(w.transition).not.toHaveBeenCalled();
@@ -434,8 +439,9 @@ describe('runDeviceAway — away_ring', () => {
   it('device_away while on away_ring ends the ringing and keeps the pause (no ring_off: the app asked)', async () => {
     const { w, awayRing, ring } = ringWorld('break', { ring: true });
     const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'away_ring' }), 'device_away');
-    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away' }) });
-    expect(awayRing.end).toHaveBeenCalledWith('sess-1', null, { offline: false });
+    // One pause: answered with the start of the absence it ends, not now.
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away', since: ABSENCE_START }) });
+    expect(awayRing.endKeepingSince).toHaveBeenCalledWith('sess-1', null, { offline: false });
     expect(ring()).toBe(false);
   });
 

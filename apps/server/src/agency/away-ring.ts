@@ -14,8 +14,11 @@
  *
  * Every END of `away_ring` (IQ67) is `device_away`, then `offline` when no station socket is here
  * (as `device_away` with no socket always ends), with `away_ring_since` cleared and, when the
- * server ended it, a `ring_off` push (`reason`) so the phone's "rings this phone" notification
- * never lies. A ring in flight (the session holds an inbound call, or the connector holds a push
+ * server ended it, a `ring_off` push (`reason`, and `away_since`: the absence it ends) so the
+ * phone's "rings this phone" notification never lies. `away_ring → device_away` is a switch
+ * inside ONE absence, so it keeps the absence's start as `since` (Redis, the `agent_state` frame,
+ * the mirror's `state_since`): the app measures its 30 s return and "who rang while you were
+ * away" from it. Only the `offline` arm starts a new state. A ring in flight (the session holds an inbound call, or the connector holds a push
  * offer for it) is never ended here: its end is the connector's, on the call's own chain (N1).
  */
 import { createChildLogger } from '@magick-agency/observability';
@@ -39,7 +42,7 @@ import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { SYSTEM_AUDIT_ACTOR, type AuditActorFields } from '../audit/platform/audit-actor.js';
 import { AGENCY_AWAY_RING_MAX_MS_DEFAULT } from '../config/blocks/agency.js';
-import type { AgentStateMachine } from './agent-state-machine.js';
+import { AGENT_LEASE_MS, type AgentStateMachine } from './agent-state-machine.js';
 import type { StationRegistry } from './station-registry.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
 
@@ -84,6 +87,17 @@ export type AwayRingEndOutcome =
   | 'not_away_ring'
   /** Redis did not answer: nothing written. */
   | 'unavailable';
+
+/** {@link AwayRingService.end}'s options. */
+export interface AwayRingEndOptions {
+  /** Write `offline` (default: no station socket here, read right before the Redis write). */
+  offline?: boolean;
+  actor?: AuditActorFields;
+  /** False: no `ring_off` (default: sent whenever there is a `reason`). */
+  notify?: boolean;
+  /** The absence's start when the caller has it (default: read from the session row). */
+  absenceSince?: Date | null;
+}
 
 /** How {@link AwayRingService.releaseInbound} came out. */
 export type AwayRingReleaseOutcome =
@@ -198,30 +212,40 @@ export class AwayRingService {
     session: AgencyAgentSessionRecord,
     fromStates: readonly AgencyAgentState[],
   ): Promise<{ ok: true; since: string } | { ok: false; reason: string; noKey?: boolean }> {
+    const sinceMs = Date.now();
     const entered = await this.deps.agents.enterAwayRing(session.id, {
       ttlMs: this.ttlLeft(session.away_ring_since),
       fromStates,
+      sinceMs,
     });
     if (!entered.ok) {
       return { ok: false, reason: entered.reason, ...(entered.reason === 'wrong_state' && entered.state === null ? { noKey: true } : {}) };
     }
-    const since = new Date().toISOString();
-    await agencyAgentSessionRepository.setState(session.id, 'break', AWAY_RING_BREAK_REASON);
-    this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: AWAY_RING_BREAK_REASON });
-    return { ok: true, since };
+    return { ok: true, since: await this.mirrorEntered(session.id, sinceMs) };
   }
 
   /** {@link applyQueued}'s entry over no key at all: created only if still absent, then mirrored. */
   private async enterWhereNoKey(session: AgencyAgentSessionRecord): Promise<{ ok: true; since: string } | { ok: false; reason: string; noKey?: boolean }> {
+    const sinceMs = Date.now();
     const created = await this.deps.agents.reseedAwayRing(session.id, {
-      sinceMs: Date.now(),
+      sinceMs,
       ttlMs: this.ttlLeft(session.away_ring_since),
     });
     if (!created) return { ok: false, reason: 'wrong_state' };
-    const since = new Date().toISOString();
-    await agencyAgentSessionRepository.setState(session.id, 'break', AWAY_RING_BREAK_REASON);
-    this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: AWAY_RING_BREAK_REASON });
-    return { ok: true, since };
+    return { ok: true, since: await this.mirrorEntered(session.id, sinceMs) };
+  }
+
+  /**
+   * After Redis entered `away_ring` with `since = sinceMs`: the mirror (`break/away_ring`,
+   * `away_ring_since` stamped with the same instant once per absence) and the station's
+   * `agent_state` frame. Answers the absence's start as the mirror holds it (an absence that was
+   * already running keeps its start), the `since` the app is told.
+   */
+  private async mirrorEntered(sessionId: string, sinceMs: number): Promise<string> {
+    const stored = await agencyAgentSessionRepository.enterAwayRing(sessionId, new Date(sinceMs));
+    const since = (stored ?? new Date(sinceMs)).toISOString();
+    this.deps.stations.send(sessionId, { event: 'agent_state', state: 'break', since, break_reason: AWAY_RING_BREAK_REASON });
+    return since;
   }
 
   /**
@@ -307,26 +331,40 @@ export class AwayRingService {
   async end(
     sessionId: string,
     reason: AgencyRingOffReason | null,
-    opts: { offline?: boolean; actor?: AuditActorFields; notify?: boolean } = {},
+    opts: AwayRingEndOptions = {},
   ): Promise<AwayRingEndOutcome> {
-    if (this.holdsPushOffer(sessionId)) return 'ring_in_flight';
+    return (await this.endKeepingSince(sessionId, reason, opts)).outcome;
+  }
+
+  /**
+   * {@link end}, also answering the `since` the session now has when it ended on `break`
+   * (`device_away`): the absence's start, kept. The device-away route answers it.
+   */
+  async endKeepingSince(
+    sessionId: string,
+    reason: AgencyRingOffReason | null,
+    opts: AwayRingEndOptions = {},
+  ): Promise<{ outcome: AwayRingEndOutcome; since?: string }> {
+    // The absence's start, read first: Redis keeps it as `since` on the `device_away` it writes.
+    const absenceSince = opts.absenceSince !== undefined ? opts.absenceSince : await this.absenceStartOf(sessionId);
+    if (this.holdsPushOffer(sessionId)) return { outcome: 'ring_in_flight' };
     // Read and eval with nothing awaited between them (the station close's rule).
     const offline = opts.offline ?? !this.deps.stations.isLocallyOwned(sessionId);
-    const redis = await this.deps.agents.endAwayRing(sessionId, { offline });
-    if (redis.outcome === 'unavailable') return 'unavailable';
+    const redis = await this.deps.agents.endAwayRing(sessionId, { offline, absenceSinceMs: absenceSince?.getTime() ?? null });
+    if (redis.outcome === 'unavailable') return { outcome: 'unavailable' };
     if (redis.outcome === 'not_away_ring') {
       const live = await this.deps.agents.get(sessionId);
-      return live?.inboundCallId ? 'ring_in_flight' : 'not_away_ring';
+      return { outcome: live?.inboundCallId ? 'ring_in_flight' : 'not_away_ring' };
     }
     const ended = await agencyAgentSessionRepository.endAwayRing(sessionId, offline ? 'offline' : 'break');
-    if (!ended) return 'not_away_ring';
-    if (!offline) {
-      this.deps.stations.send(sessionId, {
-        event: 'agent_state', state: 'break', since: new Date().toISOString(), break_reason: DEVICE_AWAY_BREAK_REASON,
-      });
+    if (!ended) return { outcome: 'not_away_ring' };
+    const awaySince = ended.away_since ?? absenceSince;
+    const since = offline ? undefined : (awaySince ?? new Date()).toISOString();
+    if (since) {
+      this.deps.stations.send(sessionId, { event: 'agent_state', state: 'break', since, break_reason: DEVICE_AWAY_BREAK_REASON });
     }
     if (reason) {
-      if (opts.notify !== false) this.sendRingOff(ended.agent_user_id, ended.station_device_id, sessionId, reason);
+      if (opts.notify !== false) this.sendRingOff(ended.agent_user_id, ended.station_device_id, sessionId, reason, awaySince);
       const actor = opts.actor ?? SYSTEM_AUDIT_ACTOR;
       platformAuditLogger.log({
         ...actor,
@@ -345,7 +383,31 @@ export class AwayRingService {
       });
     }
     log.info({ sessionId, reason, offline }, 'Away-ring ended');
-    return 'ended';
+    return { outcome: 'ended', ...(since ? { since } : {}) };
+  }
+
+  /** The session's `away_ring_since` (the absence's start), or null: none, or the read failed. */
+  private async absenceStartOf(sessionId: string): Promise<Date | null> {
+    const row = await agencyAgentSessionRepository.findById(sessionId).catch((err: unknown) => {
+      log.warn({ err, sessionId }, 'Could not read the absence start to end away-ring');
+      return null;
+    });
+    return row?.away_ring_since ?? null;
+  }
+
+  /**
+   * A push offer ended while its absence had already been ended by what ended the ring (the
+   * take-over's claim rewrote the mirror to `device_away` and cleared `away_ring_since`): the
+   * call's `inbound` field cleared and the session left on `break`, the mirror on `device_away`,
+   * both keeping `since` at the absence's start (`absenceSince`, the claim's; now when unknown).
+   * The new station's attach shows it. No `ring_off`: the take-over sends its own.
+   */
+  async endAfterRing(sessionId: string, inboundCallId: string, absenceSince: Date | null): Promise<void> {
+    await this.deps.agents.releaseInbound(sessionId, inboundCallId);
+    const sinceMs = absenceSince?.getTime();
+    await this.deps.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break, ...(sinceMs !== undefined ? { sinceMs } : {}) });
+    await agencyAgentSessionRepository.setState(sessionId, 'break', DEVICE_AWAY_BREAK_REASON, { stateSince: absenceSince })
+      .catch((err: unknown) => log.warn({ err, sessionId }, 'Could not mirror a ring ended with its absence'));
   }
 
   /**
@@ -362,20 +424,25 @@ export class AwayRingService {
    * mirror, `claimStationDevice`'s `endedAwayRing`): Redis's `ring` cleared (`break`: the new
    * device is attaching), and the old device told (`ring_off`, `taken_over`).
    */
-  async endOnTakeOver(sessionId: string, agentUserId: string, previousDeviceId: string | null): Promise<void> {
+  async endOnTakeOver(
+    sessionId: string,
+    agentUserId: string,
+    previousDeviceId: string | null,
+    awaySince: Date | null = null,
+  ): Promise<void> {
     if (this.holdsPushOffer(sessionId)) {
       // The ring in flight is the connector's to cancel, on the call's chain (`answered_elsewhere`;
       // an answered one too: the device that answered no longer holds the station). It leaves the
-      // agent on a plain break for the new device's attach.
-      const cancelled = await this.deps.inbound()?.cancelRingForAwayRingEnd(sessionId, 'taken_over');
+      // agent on a plain break for the new device's attach, `since` kept at the absence's start.
+      const cancelled = await this.deps.inbound()?.cancelRingForAwayRingEnd(sessionId, 'taken_over', { absenceSince: awaySince });
       log.info({ sessionId, cancelled }, 'Take-over during a ring: the ring was cancelled');
     } else {
-      const redis = await this.deps.agents.endAwayRing(sessionId, { offline: false });
+      const redis = await this.deps.agents.endAwayRing(sessionId, { offline: false, absenceSinceMs: awaySince?.getTime() ?? null });
       if (redis.outcome === 'not_away_ring') {
         log.info({ sessionId, state: redis.state }, 'Take-over ended away-ring: Redis was already off it');
       }
     }
-    this.sendRingOff(agentUserId, previousDeviceId, sessionId, 'taken_over');
+    this.sendRingOff(agentUserId, previousDeviceId, sessionId, 'taken_over', awaySince);
   }
 
   /**
@@ -419,12 +486,23 @@ export class AwayRingService {
    * alone, IQ64), and only to a row with a token, revoked or not (a removed device still drops its
    * notification). A failure is recorded on the row (`unregistered` revokes it).
    */
-  sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason): void {
+  sendRingOff(
+    agentUserId: string,
+    deviceId: string | null,
+    sessionId: string,
+    reason: AgencyRingOffReason,
+    awaySince: Date | null,
+  ): void {
     if (!deviceId) return;
     void (async () => {
       const device = await agencyPushDeviceRepository.find(agentUserId, deviceId);
       if (!device || device.platform !== 'android' || pushTokenOf(device) === null) return;
-      await this.send(device, { type: 'ring_off', session_id: sessionId, reason }, RING_OFF_PUSH_TTL_MS);
+      await this.send(device, {
+        type: 'ring_off',
+        session_id: sessionId,
+        reason,
+        ...(awaySince ? { away_since: awaySince.toISOString() } : {}),
+      }, RING_OFF_PUSH_TTL_MS);
     })().catch((err: unknown) => log.warn({ err, sessionId, reason }, 'Could not send ring_off'));
   }
 
@@ -526,8 +604,8 @@ export class AwayRingService {
       if (!mirrorOnIt && (await agencyAgentSessionRepository.restoreAwayRing(row.id))) summary.restored++;
       return;
     }
-    await agencyAgentSessionRepository.clearAwayRingSince(row.id);
-    summary.cleared++;
+    // Only the absence this pass read: a new one entered since (a fresh `away_ring_since`) stays.
+    if (await agencyAgentSessionRepository.clearAwayRingSince(row.id, row.away_ring_since)) summary.cleared++;
   }
 
   /** Why the reconcile ends this absence, or null: it may go on. */

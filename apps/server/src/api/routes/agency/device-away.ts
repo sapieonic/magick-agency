@@ -179,9 +179,9 @@ export async function runDeviceAway(
     });
     const now = new Date();
     const since = now.toISOString();
-    const applied = (): DeviceAwayResult => ({
+    const applied = (at: string = since): DeviceAwayResult => ({
       ok: true,
-      body: { session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break', since, break_reason: reason.code },
+      body: { session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break', since: at, break_reason: reason.code },
     });
 
     // ── Mode B: entering `away_ring` (from `available`, or switched from `device_away`) ──────
@@ -193,14 +193,16 @@ export async function runDeviceAway(
         if (entered.reason === 'wrong_state' || entered.reason === 'unavailable') continue;
       } else {
         if (queued?.code === reason.code) runtime.breaks.take(session.id);
-        return applied();
+        // The absence's start, as the station's frame says (the instant Redis and the mirror hold).
+        return applied(entered.since);
       }
     }
     // ── Mode B: `device_away` asked while on `away_ring`: the ringing ends, the pause stays ──
+    // One absence: the pause keeps its start (`since`), as the station's frame says.
     if (code === DEVICE_AWAY_BREAK_REASON && decision === 'switch') {
-      const ended = await runtime.awayRing.end(session.id, null, { offline: false });
-      if (ended === 'ended') return applied();
-      if (ended === 'not_away_ring' || ended === 'unavailable') continue;
+      const ended = await runtime.awayRing.endKeepingSince(session.id, null, { offline: false });
+      if (ended.outcome === 'ended') return applied(ended.since);
+      if (ended.outcome === 'not_away_ring' || ended.outcome === 'unavailable') continue;
       // A ring in flight: the connector's. Answered as it stands below.
     }
 

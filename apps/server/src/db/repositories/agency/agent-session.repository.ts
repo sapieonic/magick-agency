@@ -64,10 +64,10 @@ export type AgencyStationDeviceClaim =
    * This device holds the station. `endedAwayRing`: the claim moved the station off the device
    * that held it while the session was on `away_ring` (or ringing from it), which ended it in the
    * same statement (IQ67, OS3): `away_ring_since` cleared, a `break/away_ring` row rewritten to
-   * `device_away`. The caller clears Redis's `ring` and tells the old device (`ring_off`,
-   * `taken_over`).
+   * `device_away` (its `state_since` kept at the absence's start, `awaySince`). The caller clears
+   * Redis's `ring` and tells the old device (`ring_off`, `taken_over`, with `awaySince`).
    */
-  | { ok: true; endedAwayRing?: { previousDeviceId: string | null } }
+  | { ok: true; endedAwayRing?: { previousDeviceId: string | null; awaySince: Date | null } }
   | { ok: false; reason: 'held_elsewhere'; client_kind: AgencyClientKind }
   | { ok: false; reason: 'session_gone' };
 
@@ -169,7 +169,7 @@ const TRANSITION_AT_SQL = `to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-M
  */
 function sessionTransitionSql(input: { prevWhere: string; set: string; where?: string }): string {
   return `WITH prev AS (
-         SELECT id, state, break_reason FROM agency_agent_sessions
+         SELECT id, state, break_reason, away_ring_since FROM agency_agent_sessions
           WHERE ${input.prevWhere} FOR UPDATE
        )
        UPDATE agency_agent_sessions s
@@ -229,6 +229,11 @@ export interface AgencyAwayRingEnded {
   station_device_id: string | null;
   /** The state the row was in (`break`, `offline` after a restart, `reserved` mid-ring). */
   from_state: AgencyAgentState;
+  /**
+   * The start of the absence that ended (`away_ring_since` before the write); null when the row
+   * matched on its `break/away_ring` reason alone (the reconcile had just cleared the key).
+   */
+  away_since: Date | null;
 }
 
 export class AgencyAgentSessionRepository {
@@ -724,6 +729,7 @@ export class AgencyAgentSessionRepository {
       holder: string | null;
       moved: boolean;
       ended_away_ring: boolean;
+      away_since: Date | string | null;
       transition: AgencySessionTransitionRow | null;
     }>(
       `WITH cur AS (
@@ -737,7 +743,7 @@ export class AgencyAgentSessionRepository {
                 break_reason = CASE WHEN cur.state = 'break' AND cur.break_reason = $5::varchar
                                     THEN $6::varchar ELSE s.break_reason END,
                 state_since = CASE WHEN cur.state = 'break' AND cur.break_reason = $5::varchar
-                                   THEN now() ELSE s.state_since END
+                                   THEN COALESCE(cur.away_ring_since, now()) ELSE s.state_since END
            FROM cur
           WHERE s.id = cur.id
             AND cur.station_device_id IS DISTINCT FROM $2::varchar
@@ -746,11 +752,13 @@ export class AgencyAgentSessionRepository {
                     cur.state AS from_state, cur.break_reason AS from_break_reason,
                     s.state AS to_state, s.break_reason,
                     ${TRANSITION_AT_SQL},
-                    cur.away_ring_since IS NOT NULL AS ended_away_ring
+                    cur.away_ring_since IS NOT NULL AS ended_away_ring,
+                    cur.away_ring_since AS away_since
        )
        SELECT cur.client_kind, cur.station_device_id AS holder, EXISTS (SELECT 1 FROM upd) AS moved,
               COALESCE((SELECT ended_away_ring FROM upd), false) AS ended_away_ring,
-              (SELECT to_jsonb(upd) - 'ended_away_ring' FROM upd) AS transition
+              (SELECT away_since FROM upd) AS away_since,
+              (SELECT to_jsonb(upd) - 'ended_away_ring' - 'away_since' FROM upd) AS transition
          FROM cur`,
       [sessionId, deviceId, takeOver && deviceId !== null, reconnect, AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON],
     );
@@ -758,7 +766,10 @@ export class AgencyAgentSessionRepository {
     if (!row) return { ok: false, reason: 'session_gone' };
     if (row.moved && row.ended_away_ring) {
       if (row.transition) await this.recordTransitions([row.transition]);
-      return { ok: true, endedAwayRing: { previousDeviceId: row.holder } };
+      return {
+        ok: true,
+        endedAwayRing: { previousDeviceId: row.holder, awaySince: row.away_since === null ? null : new Date(row.away_since) },
+      };
     }
     if (row.moved || row.holder === deviceId) return { ok: true };
     return { ok: false, reason: 'held_elsewhere', client_kind: row.client_kind };
@@ -842,7 +853,17 @@ export class AgencyAgentSessionRepository {
     return new Map(rows.map((r) => [r.id, Math.max(0, Number(r.age_ms))]));
   }
 
-  async setState(id: string, state: AgencyAgentState, breakReason?: string | null): Promise<void> {
+  async setState(
+    id: string,
+    state: AgencyAgentState,
+    breakReason?: string | null,
+    /**
+     * `stateSince`: the `state_since` to write (default now), for a state that continues an earlier
+     * one (the `device_away` that ends an `away_ring` absence keeps the absence's start). Only with a
+     * `breakReason` given.
+     */
+    opts: { stateSince?: Date | null } = {},
+  ): Promise<void> {
     const keepReason = state === 'offline' && breakReason === undefined;
     // Mode B (N1, IQ62): `away_ring_since` is the reconcile's key, so every real end of `away_ring`
     // clears it here, in the same write: `available`, `offline`, and any break but `away_ring`
@@ -861,10 +882,10 @@ export class AgencyAgentSessionRepository {
         prevWhere: 'id = $1',
         set: keepReason
           ? `state = $2::varchar, state_since = now(), updated_at = now(), away_ring_since = ${awayRingSince}`
-          : `state = $2::varchar, break_reason = $3::varchar, state_since = now(), updated_at = now(),
+          : `state = $2::varchar, break_reason = $3::varchar, state_since = COALESCE($4::timestamptz, now()), updated_at = now(),
              away_ring_since = ${awayRingSince}, ring_misses = ${ringMisses}`,
       }),
-      keepReason ? [id, state] : [id, state, breakReason ?? null],
+      keepReason ? [id, state] : [id, state, breakReason ?? null, opts.stateSince ?? null],
     );
     await this.recordTransitions(rows);
   }
@@ -899,11 +920,20 @@ export class AgencyAgentSessionRepository {
     // arm covers the reconcile's `clearAwayRingSince` landing between the end's Redis write and
     // this one (it read Redis already off `away_ring`): without it this matched nothing and the
     // row stayed `break/away_ring` with no `ring_off` and no audit.
-    const { rows } = await getPool().query<AgencySessionTransitionRow & { station_device_id: string | null }>(
+    //
+    // `state_since` on `break` (`device_away`) is the absence's start, not now: `away_ring` →
+    // `device_away` is a switch inside ONE pause, so the supervisor's floor and IQ50's recent-pause
+    // read (`deviceAwayPauseAges`) see one pause, as Redis and the app do. Time per state and per
+    // break reason is read from the transition log (`agency_agent_session_events`, each event at
+    // its own instant), which this write extends with its `away_ring → device_away` event as before.
+    // `offline` (no station) starts a new state: now.
+    const { rows } = await getPool().query<AgencySessionTransitionRow & { station_device_id: string | null; away_since: Date | null }>(
       `${sessionTransitionSql({
         prevWhere: `id = $1 AND left_at IS NULL AND (away_ring_since IS NOT NULL OR (state = 'break' AND break_reason = '${AWAY_RING_BREAK_REASON}'))`,
-        set: `state = $2::varchar, break_reason = $3::varchar, state_since = now(), updated_at = now(), away_ring_since = NULL`,
-      })}, s.station_device_id`,
+        set: `state = $2::varchar, break_reason = $3::varchar,
+              state_since = CASE WHEN $2::varchar = 'break' THEN COALESCE(s.away_ring_since, now()) ELSE now() END,
+              updated_at = now(), away_ring_since = NULL`,
+      })}, s.station_device_id, prev.away_ring_since AS away_since`,
       [id, state, DEVICE_AWAY_BREAK_REASON],
     );
     await this.recordTransitions(rows);
@@ -917,7 +947,28 @@ export class AgencyAgentSessionRepository {
       agent_user_id: row.agent_user_id,
       station_device_id: row.station_device_id,
       from_state: row.from_state ?? 'offline',
+      away_since: row.away_since,
     };
+  }
+
+  /**
+   * Enter `away_ring` in the mirror (IQ67): `break/away_ring`, and `away_ring_since` stamped with
+   * `since` once per absence (a return to `away_ring` within one keeps the absence's start). `since`
+   * is the caller's instant, the one Redis's `since` was written with, so the `agent_state` frame,
+   * the HTTP answer and a later `ring_off`'s `away_since` all name the same instant. Returns the
+   * absence's start as stored; null when the session has no row.
+   */
+  async enterAwayRing(id: string, since: Date): Promise<Date | null> {
+    const { rows } = await getPool().query<AgencySessionTransitionRow & { away_ring_since: Date | null }>(
+      `${sessionTransitionSql({
+        prevWhere: 'id = $1',
+        set: `state = 'break', break_reason = $2::varchar, state_since = $3::timestamptz, updated_at = now(),
+              away_ring_since = COALESCE(s.away_ring_since, $3::timestamptz)`,
+      })}, s.away_ring_since`,
+      [id, AWAY_RING_BREAK_REASON, since],
+    );
+    await this.recordTransitions(rows);
+    return rows[0]?.away_ring_since ?? null;
   }
 
   /**
@@ -925,11 +976,16 @@ export class AgencyAgentSessionRepository {
    * `away_ring` with nothing in flight, so whatever moved it already ended the absence and only
    * the mirror's key was left behind.
    */
-  async clearAwayRingSince(id: string): Promise<void> {
-    await getPool().query(
-      'UPDATE agency_agent_sessions SET away_ring_since = NULL, updated_at = now() WHERE id = $1 AND away_ring_since IS NOT NULL',
-      [id],
+  async clearAwayRingSince(id: string, expected: Date): Promise<boolean> {
+    // Only the absence the reconcile read (`expected`): the reconcile awaits between that read and
+    // this write, and a NEW absence entered meanwhile (a fresh `away_ring_since`) must not be wiped,
+    // or it would never be rung and never be ended.
+    const { rowCount } = await getPool().query(
+      `UPDATE agency_agent_sessions SET away_ring_since = NULL, updated_at = now()
+        WHERE id = $1 AND date_trunc('milliseconds', away_ring_since) = date_trunc('milliseconds', $2::timestamptz)`,
+      [id, expected],
     );
+    return (rowCount ?? 0) > 0;
   }
 
   /** Every live session on `away_ring` or ringing from it, with its station's push device (N1). */

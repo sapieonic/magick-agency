@@ -36,6 +36,7 @@ vi.mock('../../../src/auth/firebase.js', () => ({
 }));
 
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 import type { FastifyInstance } from 'fastify';
 import { closePool, getPool, initDbPool } from '@magick-agency/db';
@@ -61,6 +62,11 @@ async function waitFor<T>(what: string, probe: () => Promise<T | null | undefine
     await new Promise((r) => setTimeout(r, 25));
   }
 }
+
+/** The app's golden station frames (`packages/contracts/fixtures/agent/station.json`). */
+const STATION_FIXTURES = JSON.parse(
+  readFileSync(new URL('../../../../../packages/contracts/fixtures/agent/station.json', import.meta.url), 'utf8'),
+) as Record<'agent_state_after_away_ring_return' | 'ready_after_away_ring_return', Record<string, unknown>>;
 
 interface Who { id: string; tok: string }
 interface Station { ws: WebSocket; frames: Array<Record<string, any>>; closed: Promise<void> }
@@ -141,15 +147,22 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     return { agent, campaignId: campaign.id as string, sessionId, station };
   }
 
-  async function goAwayRinging(agent: Who, sessionId: string, station: Station) {
+  /** Away ringing, the socket parked; answers the `since` the break was answered with. */
+  async function goAwayRinging(agent: Who, sessionId: string, station: Station): Promise<string> {
     const res = await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'away_ring' });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ state: 'break', break_reason: 'away_ring' });
+    const since = res.json().since as string;
+    // The answer, the station's frame and the mirror name one instant: the absence's start.
+    await waitFor('the away_ring frame', () => station.frames.find((f) => f['event'] === 'agent_state' && f['break_reason'] === 'away_ring'));
+    expect(station.frames.find((f) => f['event'] === 'agent_state' && f['break_reason'] === 'away_ring')!['since']).toBe(since);
+    expect(((await row(sessionId)).away_ring_since as Date).toISOString()).toBe(since);
     // The app parks its socket once the break lands (IQ67).
     station.ws.close();
     await station.closed;
     await waitFor('the close handled', async () => !runtime.stations.isLocallyOwned(sessionId));
     await new Promise((r) => setTimeout(r, 100));
+    return since;
   }
 
   async function row(sid: string) {
@@ -300,8 +313,10 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(ringing.json()).toMatchObject({ state: 'break', break_reason: 'away_ring' });
     expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: true });
     expect((await row(sessionId)).away_ring_since).toBeInstanceOf(Date);
+    expect(((await row(sessionId)).away_ring_since as Date).toISOString()).toBe(ringing.json().since);
     const back = await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'device_away' });
-    expect(back.json()).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    // One pause: back on device_away it keeps the start of the away_ring it ends.
+    expect(back.json()).toMatchObject({ state: 'break', break_reason: 'device_away', since: ringing.json().since });
     expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: false });
     expect(await row(sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
   });
@@ -310,7 +325,7 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
 
   it('the station close keeps away_ring; force-available is refused; "Stop ringing" ends it with ring_off', async () => {
     const { agent, sessionId, station } = await onDuty();
-    await goAwayRinging(agent, sessionId, station);
+    const awaySince = await goAwayRinging(agent, sessionId, station);
     expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: true });
     expect(await row(sessionId)).toMatchObject({ state: 'break', break_reason: 'away_ring' });
     expect(await getTestRedis().pttl(`agency:agent:${sessionId}:state`)).toBeGreaterThan(60_000);
@@ -325,7 +340,7 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'offline', ring: false });
     expect(await row(sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
     await waitFor('ring_off', () => sent.find((s) => s.payload['type'] === 'ring_off'));
-    expect(sent.find((s) => s.payload['type'] === 'ring_off')!.payload).toEqual({ type: 'ring_off', session_id: sessionId, reason: 'opted_out' });
+    expect(sent.find((s) => s.payload['type'] === 'ring_off')!.payload).toEqual({ type: 'ring_off', session_id: sessionId, reason: 'opted_out', away_since: awaySince });
   });
 
   it('the silent-station sweep drops a phone still attached on away_ring, and the close keeps it', async () => {
@@ -341,13 +356,29 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
 
   it('the agent\'s return (a station attaching) ends away_ring as device_away, and ready says so', async () => {
     const { agent, sessionId, station } = await onDuty();
-    await goAwayRinging(agent, sessionId, station);
+    const awaySince = await goAwayRinging(agent, sessionId, station);
+    // Away for a while: a fresh `since` would make this return look seconds old.
+    await new Promise((r) => setTimeout(r, 50));
     const mint = await send('POST', `/proxy/agency/sessions/${sessionId}/station-token`, agent, { device_id: PHONE });
     expect(mint.statusCode, mint.body).toBe(200);
     const back = await connect(mint.json().station_ws_url as string);
-    expect(back.frames.find((f) => f['event'] === 'ready')).toMatchObject({ state: 'break', break_reason: 'device_away' });
-    expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: false });
+    const ready = back.frames.find((f) => f['event'] === 'ready')!;
+    expect(ready).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    // The `agent_state` the return sends comes first and keeps the absence's start; `ready` stays on
+    // that break, so the app keeps the `since` (its 30 s return and "who rang while you were away").
+    const states = back.frames.filter((f) => f['event'] === 'agent_state');
+    expect(states).toEqual([{ event: 'agent_state', state: 'break', since: awaySince, break_reason: 'device_away' }]);
+    expect(back.frames.indexOf(states[0]!)).toBeLessThan(back.frames.indexOf(ready));
+    // The frames have the shape of the app's golden samples (`packages/contracts/fixtures/agent/station.json`).
+    expect(Object.keys(states[0]!).sort()).toEqual(Object.keys(STATION_FIXTURES.agent_state_after_away_ring_return).sort());
+    expect(Object.keys(ready).sort()).toEqual(Object.keys(STATION_FIXTURES.ready_after_away_ring_return).sort());
+    for (const k of ['event', 'state', 'break_reason'] as const) {
+      expect(states[0]![k]).toBe(STATION_FIXTURES.agent_state_after_away_ring_return[k]);
+      expect(ready[k]).toBe(STATION_FIXTURES.ready_after_away_ring_return[k]);
+    }
+    expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: false, since: Date.parse(awaySince) });
     expect(await row(sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
+    expect(((await row(sessionId)).state_since as Date).toISOString()).toBe(awaySince);
     // No ring_off: the app is on screen.
     expect(sent.filter((s) => s.payload['type'] === 'ring_off')).toEqual([]);
     const avail = await send('POST', `/proxy/agency/sessions/${sessionId}/available`, agent, {});
@@ -356,7 +387,7 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
 
   it('the session left from another device while away ringing tells the parked phone (ring_off, taken_over)', async () => {
     const { agent, sessionId, station } = await onDuty();
-    await goAwayRinging(agent, sessionId, station);
+    const awaySince = await goAwayRinging(agent, sessionId, station);
     const leave = await app.inject({
       method: 'POST', url: `/proxy/agency/sessions/${sessionId}/leave`, headers: headers(agent, { 'x-client': 'web' }), payload: '{}',
     });
@@ -365,12 +396,12 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect((await row(sessionId)).left_at).not.toBeNull();
     await waitFor('ring_off', () => sent.find((s) => s.payload['type'] === 'ring_off'));
     expect(sent.filter((s) => s.payload['type'] === 'ring_off').map((s) => s.payload))
-      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'taken_over' }]);
+      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'taken_over', away_since: awaySince }]);
   });
 
   it('another device taking the station over ends away_ring and tells the old device taken_over', async () => {
     const { agent, campaignId, sessionId, station } = await onDuty();
-    await goAwayRinging(agent, sessionId, station);
+    const awaySince = await goAwayRinging(agent, sessionId, station);
     const take = await app.inject({
       method: 'POST', url: '/proxy/agency/sessions',
       headers: headers(agent, { 'x-client': 'web' }),
@@ -380,8 +411,9 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(take.json()).toMatchObject({ session_id: sessionId, state: 'break', break_reason: 'device_away' });
     expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: false });
     expect(await row(sessionId)).toMatchObject({ station_device_id: LAPTOP, break_reason: 'device_away', away_ring_since: null });
+    expect(await runtime.agents.get(sessionId)).toMatchObject({ since: Date.parse(awaySince) });
     await waitFor('ring_off', () => sent.find((s) => s.payload['type'] === 'ring_off'));
     expect(sent.filter((s) => s.payload['type'] === 'ring_off').map((s) => s.payload))
-      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'taken_over' }]);
+      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'taken_over', away_since: awaySince }]);
   });
 });

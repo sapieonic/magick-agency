@@ -319,7 +319,7 @@ export class AgencyRuntime {
    */
   async rehydrateAgent(
     sessionId: string,
-    session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> | null,
+    session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> & Partial<Pick<AgencyAgentSessionRecord, 'away_ring_since'>> | null,
   ): Promise<AgencyAgentState> {
     const row = session ?? null;
     // ── An inbound call's outcome owed (docs/inbound.md §2, "Server restart") ─────────
@@ -391,9 +391,14 @@ export class AgencyRuntime {
     }
     if (live && !orphanedWrapup) return live.state;
 
-    await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
-    // A row still on `away_ring` whose key lapsed (its maximum age, or a re-seed not run yet) comes
-    // back as `device_away`: the agent is on screen, and `break` with no `ring` is not `away_ring`.
+    // A row still on an absence whose key lapsed (its maximum age, or a re-seed not run yet) comes
+    // back as `device_away` (the agent is on screen, and `break` with no `ring` is not `away_ring`),
+    // keeping the absence's start as `since`, as every end of `away_ring` does.
+    const absenceSince = !softphoneFlavoured ? row?.away_ring_since ?? null : null;
+    await this.agents.set(sessionId, 'break', {
+      leaseMs: AGENT_LEASE_MS.break,
+      ...(absenceSince ? { sinceMs: absenceSince.getTime() } : {}),
+    });
     returnFromAwayRing(row);
     // Best-effort mirror. Redis is the authority; a failed write here costs a
     // durable record, never correctness. The caller's row keeps its break reason:
@@ -401,7 +406,8 @@ export class AgencyRuntime {
     // back to that break, not an unnamed one (`ready` and the bootstrap carry it).
     await (softphoneFlavoured
       ? agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
-      : agencyAgentSessionRepository.setState(sessionId, 'break', row?.break_reason ?? null))
+      : agencyAgentSessionRepository.setState(sessionId, 'break', absenceSince ? DEVICE_AWAY_BREAK_REASON : row?.break_reason ?? null,
+        { stateSince: absenceSince }))
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
     return 'break';
   }

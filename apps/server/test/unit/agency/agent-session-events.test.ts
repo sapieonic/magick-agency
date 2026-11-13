@@ -115,11 +115,12 @@ describe('setState records the transition it just performed', () => {
     // agent-transition-ordering.test.ts, which holds a real lock; this only guards
     // the clause from being dropped.
     expect(sql).toContain('FOR UPDATE');
-    expect(sql).toMatch(/WITH prev AS \(\s*SELECT id, state, break_reason FROM agency_agent_sessions\s+WHERE id = \$1 FOR UPDATE/);
+    expect(sql).toMatch(/WITH prev AS \(\s*SELECT id, state, break_reason, away_ring_since FROM agency_agent_sessions\s+WHERE id = \$1 FOR UPDATE/);
     expect(sql).toContain('prev.state AS from_state');
     expect(sql).toContain('s.state AS to_state');
-    // The mirror's own behaviour is unchanged — the log is additive.
-    expect(sql).toContain('state_since = now()');
+    // The mirror's own behaviour is unchanged — the log is additive. (`$4` is the caller's
+    // `stateSince`, null unless a pause continues an earlier one: the end of `away_ring`.)
+    expect(sql).toContain('state_since = COALESCE($4::timestamptz, now())');
   });
 
   it('appends one event carrying the identity the occupancy read needs', async () => {

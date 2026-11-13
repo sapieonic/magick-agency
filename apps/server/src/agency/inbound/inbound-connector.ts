@@ -316,7 +316,7 @@ export interface InboundConnectorDeps {
 }
 
 /** What the connector reaches of the runtime's away break (`AwayRingService`). */
-export type InboundAwayRing = Pick<AwayRingService, 'releaseInbound' | 'end' | 'send' | 'ringAllowed'>;
+export type InboundAwayRing = Pick<AwayRingService, 'releaseInbound' | 'end' | 'endAfterRing' | 'send' | 'ringAllowed'>;
 
 /** What the router knows of a call it hands over. */
 export interface InboundTakeInput {
@@ -1726,7 +1726,11 @@ export class InboundConnector {
    * reconcile finds the absence to end), except on a take-over: the device that answered no longer
    * holds the station. `none`: no push offer for the session.
    */
-  async cancelRingForAwayRingEnd(sessionId: string, reason: AgencyRingOffReason): Promise<'cancelled' | 'answered' | 'none'> {
+  async cancelRingForAwayRingEnd(
+    sessionId: string,
+    reason: AgencyRingOffReason,
+    opts: { absenceSince?: Date | null } = {},
+  ): Promise<'cancelled' | 'answered' | 'none'> {
     const held = this.forSession(sessionId);
     if (!held || !this.holdsPushOffer(sessionId)) return 'none';
     return await this.serial(held.id, async (): Promise<'cancelled' | 'answered' | 'none'> => {
@@ -1735,8 +1739,10 @@ export class InboundConnector {
       if (held.ring.answering && !takenOver) return 'answered';
       await this.endRing(held, sessionId, takenOver && !held.ring.answering ? 'answered_elsewhere' : 'cancelled', {
         // The take-over's claim already ended the absence in the mirror, and its caller sends the
-        // old device `ring_off`: the agent is left on a plain break for the new device's attach.
+        // old device `ring_off`: the agent is left on a plain break for the new device's attach,
+        // `since` kept at the absence's start (`opts.absenceSince`, the claim's).
         awayRingEnd: takenOver ? null : reason,
+        ...(opts.absenceSince !== undefined ? { absenceSince: opts.absenceSince } : {}),
       });
       return 'cancelled';
     }) ?? 'none';
@@ -1939,7 +1945,14 @@ export class InboundConnector {
     held: HeldCall,
     sessionId: string,
     result: AgencyInboundRingResult,
-    opts: { search?: boolean; awayRingEnd?: AgencyRingOffReason | null; offerResult?: InboundOfferResult; neverAgain?: boolean } = {},
+    opts: {
+      search?: boolean;
+      awayRingEnd?: AgencyRingOffReason | null;
+      /** With `awayRingEnd: null`: the start of the absence its cause ended, kept as `since`. */
+      absenceSince?: Date | null;
+      offerResult?: InboundOfferResult;
+      neverAgain?: boolean;
+    } = {},
   ): Promise<AgencyInboundCallRecord | null> {
     if (held.phase !== 'offered' || held.sessionId !== sessionId || held.channel !== 'push' || held.bound) return null;
     const ring = held.ring;
@@ -1966,7 +1979,7 @@ export class InboundConnector {
     held.channel = 'station';
     trackInboundRing(result);
     if (ring && result !== 'push_failed') this.sendRingCancel(ring, held.id, result);
-    const released = await this.releaseRungAgent(held.id, sessionId, opts.awayRingEnd);
+    const released = await this.releaseRungAgent(held.id, sessionId, opts.awayRingEnd, opts.absenceSince ?? null);
     if (released === 'away_ring' && opts.awayRingEnd === undefined) await this.noteMiss(sessionId, MISSES.has(result));
     if (!row && !requeueFailed) {
       held.phase = 'queued';
@@ -1998,13 +2011,15 @@ export class InboundConnector {
    * accepted ring whose station attached), Mode A's: the field cleared and `releaseAgent`
    * (`station`). Otherwise back to `away_ring` (`AwayRingService.releaseInbound`); with
    * `endReason` the absence then ends with it (`ended`; null: its cause already ended it in the
-   * mirror, so the agent is left on a plain break). A session no longer on an absence goes back as
-   * Mode A's (`returned`). Never throws.
+   * mirror, so the agent is left on `device_away` with `since` kept at `absenceSince`,
+   * `AwayRingService.endAfterRing`). A session no longer on an absence goes back as Mode A's
+   * (`returned`). Never throws.
    */
   private async releaseRungAgent(
     callId: string,
     sessionId: string,
     endReason?: AgencyRingOffReason | null,
+    absenceSince: Date | null = null,
   ): Promise<'station' | 'away_ring' | 'ended' | 'returned' | 'not_held'> {
     try {
       const station = this.deps.stations.get(sessionId);
@@ -2021,15 +2036,13 @@ export class InboundConnector {
         return 'ended';
       }
       if (out === 'not_away_ring') {
-        await this.deps.agents.releaseInbound(sessionId, callId);
         if (endReason !== undefined) {
-          // The absence was ended by what ended this ring (the take-over's claim): a plain break,
-          // `device_away`, which the new station's attach shows.
-          await this.deps.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
-          await agencyAgentSessionRepository.setState(sessionId, 'break', DEVICE_AWAY_BREAK_REASON)
-            .catch((err: unknown) => log.warn({ err, sessionId }, 'Could not mirror a ring ended with its absence'));
+          // The absence was ended by what ended this ring (the take-over's claim): `device_away`,
+          // which the new station's attach shows, `since` kept at the absence's start.
+          await awayRing.endAfterRing(sessionId, callId, absenceSince);
           return 'ended';
         }
+        await this.deps.agents.releaseInbound(sessionId, callId);
         void this.releaseInBackground(sessionId);
         return 'returned';
       }

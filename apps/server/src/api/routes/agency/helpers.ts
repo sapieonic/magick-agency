@@ -432,7 +432,7 @@ export async function claimStationOrReply(
     // from it (`breakReasonFor`), and the agent is no longer on `away_ring`.
     if (session.break_reason === AWAY_RING_BREAK_REASON) session.break_reason = DEVICE_AWAY_BREAK_REASON;
     if (options.awayRing && session.agent_user_id) {
-      await options.awayRing.endOnTakeOver(session.id, session.agent_user_id, claim.endedAwayRing.previousDeviceId)
+      await options.awayRing.endOnTakeOver(session.id, session.agent_user_id, claim.endedAwayRing.previousDeviceId, claim.endedAwayRing.awaySince)
         .catch((err: unknown) => log.warn({ err, sessionId: session.id }, 'Could not end away-ring on a take-over'));
     }
   }
@@ -500,7 +500,9 @@ interface IdleSessionRuntime {
   softphone: { hasLiveCall(sessionId: string): boolean };
   inbound?: { findCallForSession(sessionId: string): unknown } | null;
   /** Mode B: the `ring_off` push to a phone whose away break the end cut short. */
-  awayRing?: { sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason): void };
+  awayRing?: {
+    sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason, awaySince: Date | null): void;
+  };
 }
 
 /** The session fields {@link endIdleSessionElsewhere} reads (the join's refusal carries the whole row). */
@@ -545,7 +547,7 @@ export async function endIdleSessionElsewhere(
     await leave(id);
     await runtime.stations.detach(id);
     if (awayRinging && session.agent_user_id) {
-      runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, id, 'taken_over');
+      runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, id, 'taken_over', session.away_ring_since ?? null);
     }
     log.info({ sessionId: id, tenantId: session.tenant_id },
       'Ended an idle session in another tenant so the agent can join here (OS7)');

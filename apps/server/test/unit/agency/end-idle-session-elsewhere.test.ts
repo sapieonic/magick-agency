@@ -45,7 +45,8 @@ describe('endIdleSessionElsewhere (OS7)', () => {
     const away = { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: new Date() };
     expect(await endIdleSessionElsewhere(rt, away, leave)).toBe(true);
     expect(leave).toHaveBeenCalledWith('sess-there');
-    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over');
+    // The ring_off names the absence it ends (`away_since`).
+    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over', away.away_ring_since);
 
     rt.awayRing.sendRingOff.mockClear();
     expect(await endIdleSessionElsewhere(rt, { ...away, away_ring_since: null }, leave)).toBe(true);
@@ -54,8 +55,9 @@ describe('endIdleSessionElsewhere (OS7)', () => {
 
   it('Mode B: the row on an absence whose key lapsed still tells the phone', async () => {
     rt.agents.get.mockResolvedValueOnce(null);
-    expect(await endIdleSessionElsewhere(rt, { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: new Date() }, leave)).toBe(true);
-    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over');
+    const since = new Date();
+    expect(await endIdleSessionElsewhere(rt, { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: since }, leave)).toBe(true);
+    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over', since);
   });
 
   it('ends one with no lease at all, or an offline one', async () => {

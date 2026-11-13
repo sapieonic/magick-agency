@@ -263,7 +263,8 @@ return {st, changed}
 /**
  * Enter `away_ring`: `state = break`, `ring = 1`, a fresh `since`, the TTL.
  *
- * KEYS[1] = the agent hash. ARGV[1] = now (epoch ms), ARGV[2] = TTL ms, ARGV[3..] = the states it
+ * KEYS[1] = the agent hash. ARGV[1] = `since` (epoch ms: the caller's instant, the one it stamps on
+ * the mirror's `away_ring_since` too), ARGV[2] = TTL ms, ARGV[3..] = the states it
  * may be entered from. Returns `{1, from}` entered (`from`: the state it was entered from),
  * `{0, state}` not in one of them (`state` '' with no lease), `{-1|-2|-3, state}` the session holds
  * a soft-phone call, is a soft-phone session, or holds an inbound call (the `available` guard's
@@ -319,13 +320,16 @@ return 1
 `;
 
 /**
- * End `away_ring` (IQ67): `away_ring -> device_away`, a break-to-break switch. Only from
- * `state = break, ring = 1`: clears `ring`, rewrites `since` and takes the ordinary `break` lease
- * (the heartbeat renews it again while a station is attached). With ARGV[3] = '1' (no station
+ * End `away_ring` (IQ67): `away_ring -> device_away`, a break-to-break switch inside ONE absence.
+ * Only from `state = break, ring = 1`: clears `ring`, writes `since` = ARGV[4], the absence's start
+ * (the app measures its return and "who rang while you were away" from it, so a fresh `since` would
+ * make every return look seconds old; ARGV[1] when ARGV[4] is ''), and takes the ordinary `break`
+ * lease (the heartbeat renews it again while a station is attached). With ARGV[3] = '1' (no station
  * socket here: the caller read that synchronously, with nothing awaited before this eval) it writes
- * `offline` instead, as `device_away` with no socket always ends.
+ * `offline` instead, as `device_away` with no socket always ends, with `since` = now.
  *
- * KEYS[1] = the agent hash. ARGV[1] = now (epoch ms), ARGV[2] = lease ms, ARGV[3] = '1' offline.
+ * KEYS[1] = the agent hash. ARGV[1] = now (epoch ms), ARGV[2] = lease ms, ARGV[3] = '1' offline,
+ * ARGV[4] = the absence's start (epoch ms) or ''.
  * Returns `{1, state}` ended (`state` written), `{2, state}` there was no key (`offline` written
  * when asked, else nothing; `state` '' then), `{0, state}` any other state (nothing written: a ring
  * in flight, a return, a release got there first).
@@ -343,8 +347,13 @@ end
 if f[1] ~= 'break' or f[2] ~= '1' then return {0, f[1]} end
 redis.call('HDEL', KEYS[1], 'ring', 'push')
 local next = 'break'
-if ARGV[3] == '1' then next = 'offline' end
-redis.call('HSET', KEYS[1], 'state', next, 'attempt', '', 'since', ARGV[1])
+local since = ARGV[4]
+if since == nil or since == '' then since = ARGV[1] end
+if ARGV[3] == '1' then
+  next = 'offline'
+  since = ARGV[1]
+end
+redis.call('HSET', KEYS[1], 'state', next, 'attempt', '', 'since', since)
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return {1, next}
 `;
@@ -671,14 +680,23 @@ export class AgentStateMachine {
      * listener starts (an inbound offer, a pacing tick) can reach the agent before its own
      * `available` frame does (`AgencyDialer.releaseAgent`).
      */
-    opts: { attemptId?: string; leaseMs?: number; announce?: boolean } = {},
+    opts: {
+      attemptId?: string;
+      leaseMs?: number;
+      announce?: boolean;
+      /**
+       * The `since` to write (epoch ms); default now. Only for a state that continues an earlier
+       * one: the end of an `away_ring` absence keeps the absence's start (`AwayRingService`).
+       */
+      sinceMs?: number;
+    } = {},
   ): Promise<AgentSetResult> {
     if (!this.redis) return 'unavailable';
     const leaseMs = opts.leaseMs ?? AGENT_LEASE_MS.available;
     try {
       const res = await this.redis.eval(
         SET_SCRIPT, 1, this.key(sessionId),
-        state, opts.attemptId ?? '', leaseMs, Date.now().toString(),
+        state, opts.attemptId ?? '', leaseMs, Math.floor(opts.sinceMs ?? Date.now()).toString(),
       );
       const result = setResultFrom(res);
       if (result !== 'ok') log.info({ sessionId, state, result }, 'Agent state set refused');
@@ -847,14 +865,14 @@ export class AgentStateMachine {
    */
   async enterAwayRing(
     sessionId: string,
-    opts: { ttlMs: number; fromStates: readonly AgencyAgentState[] },
+    opts: { ttlMs: number; fromStates: readonly AgencyAgentState[]; sinceMs?: number },
   ): Promise<AwayRingEnterResult> {
     if (!this.redis) return { ok: false, reason: 'unavailable' };
     if (opts.fromStates.length === 0 || opts.ttlMs <= 0) return { ok: false, reason: 'wrong_state', state: null };
     try {
       const [code, value] = await this.redis.eval(
         ENTER_AWAY_RING_SCRIPT, 1, this.key(sessionId),
-        Date.now().toString(), Math.ceil(opts.ttlMs), ...opts.fromStates,
+        Math.floor(opts.sinceMs ?? Date.now()).toString(), Math.ceil(opts.ttlMs), ...opts.fromStates,
       ) as [number, string];
       const state = value ? (value as AgencyAgentState) : null;
       if (code === 1) return { ok: true, from: state ?? 'break' };
@@ -904,15 +922,17 @@ export class AgentStateMachine {
   }
 
   /**
-   * End `away_ring` (see {@link END_AWAY_RING_SCRIPT}): `break` with the ordinary lease, or
-   * `offline` when `offline` (no station socket). Nothing written from any other state.
+   * End `away_ring` (see {@link END_AWAY_RING_SCRIPT}): `break` with the ordinary lease and `since`
+   * kept at `absenceSinceMs` (the absence's start; now when null), or `offline` when `offline` (no
+   * station socket; `since` now). Nothing written from any other state.
    */
-  async endAwayRing(sessionId: string, opts: { offline: boolean }): Promise<AwayRingEndResult> {
+  async endAwayRing(sessionId: string, opts: { offline: boolean; absenceSinceMs?: number | null }): Promise<AwayRingEndResult> {
     if (!this.redis) return { outcome: 'unavailable' };
     try {
       const [code, value] = await this.redis.eval(
         END_AWAY_RING_SCRIPT, 1, this.key(sessionId),
         Date.now().toString(), AGENT_LEASE_MS.break, opts.offline ? '1' : '0',
+        opts.absenceSinceMs == null ? '' : Math.floor(opts.absenceSinceMs).toString(),
       ) as [number, string];
       const state = value ? (value as AgencyAgentState) : null;
       if (code === 1) return { outcome: 'ended', state: state ?? 'break' };
