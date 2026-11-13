@@ -21,6 +21,9 @@ abstract final class RingCopy {
   /// The away notification's "Stop ringing" (this absence only).
   static const ringingStopped = 'Ringing stopped. You’re paused.';
 
+  /// "Stop ringing" whose pause never applied: the phone may still ring for this absence.
+  static const stopRingingFailed = 'Couldn’t stop ringing. Open your station to pause.';
+
   // ── Answering from a ring ──
   static const acceptFailed = 'This call stopped ringing or someone else took it.';
   static const dismiss = 'Dismiss';

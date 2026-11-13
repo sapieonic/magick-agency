@@ -154,10 +154,18 @@ class RingAnswerCoordinator extends Notifier<String?> {
     if (!ref.mounted) return;
     if (pending == null) {
       // A cold start from the away notification's "Stop ringing": the station is not here to read
-      // it on its return, so the session it was for is paused (device_away) from here.
-      final stop = await _channel.takeStopRinging();
-      final session = stop?.sessionId;
-      if (session != null && ref.mounted) await ref.read(ringAnswerStationProvider).stopRinging(session);
+      // it on its return, so the session it was for is paused (device_away) from here. Read, not
+      // taken: the station clears it once device_away applied, so a process that dies first finds
+      // it again on its next start (native drops it after one ring window plus the grace).
+      final stop = await _channel.peekStopRinging();
+      if (stop == null || !ref.mounted) return;
+      final session = stop.sessionId;
+      if (session == null) {
+        // No session to pause: nothing to do with it.
+        unawaited(_channel.clearStopRinging());
+        return;
+      }
+      await ref.read(ringAnswerStationProvider).stopRinging(session);
       return;
     }
     _received(pending.callId, 'pending_answer');

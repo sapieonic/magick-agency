@@ -14,7 +14,8 @@ import java.lang.ref.WeakReference
  * one MethodChannel, standard codec, both directions. Registered on MainActivity's FlutterEngine;
  * native → Dart calls go through [invoke] and report whether Dart's handler took them, so what Dart
  * has not heard is kept (`pendingAnswer`) or posted natively (a missed ring). What Dart reads when
- * it is ready (`takeRingOff`, `takeStopRinging`) is kept until read.
+ * it is ready is kept until read (`takeRingOff`) or until Dart clears it (`peekStopRinging`,
+ * `clearStopRinging`).
  * Main thread only.
  */
 @SuppressLint("StaticFieldLeak") // Holds the application context only.
@@ -110,14 +111,29 @@ internal object RingChannel {
                 }
             }
             "takeRingOff" -> result.success(RingCoordinator.takeRingOff(context)?.toChannelMap())
-            "takeStopRinging" -> result.success(
-                RingCoordinator.takeStopRinging(context)?.let { stop ->
+            "peekStopRinging" -> result.success(
+                RingCoordinator.peekStopRinging(context)?.let { stop ->
                     mapOf(
                         "session_id" to stop.sessionId,
                         "since" to stop.sinceMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
                     )
                 },
             )
+            "clearStopRinging" -> {
+                RingCoordinator.clearStopRinging(context)
+                result.success(null)
+            }
+            "setServerClock" -> {
+                // The codec sends a Dart int as an Int or a Long, by size.
+                val offset = (call.argument<Any>("offset_ms") as? Number)?.toLong()
+                val at = call.argument<String>("measured_at")?.let(RingPushParser::parseIsoMillis)
+                if (offset == null || at == null) {
+                    result.error("bad_args", "setServerClock needs offset_ms and measured_at", null)
+                } else {
+                    RingCoordinator.setServerClock(context, offset, at)
+                    result.success(null)
+                }
+            }
             "moveTaskToBack" -> result.success(activity?.get()?.moveTaskToBack(true) ?: false)
             "holdOverLockScreen" -> {
                 val on = call.argument<Boolean>("on")

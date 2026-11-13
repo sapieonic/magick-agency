@@ -40,8 +40,15 @@ abstract interface class StationRing {
   /// The `ring_off` native took while away ([RingChannel.takeRingOff]), once.
   Future<RingOffRecord?> takeRingOff();
 
-  /// The away notification's "Stop ringing" not yet taken ([RingChannel.takeStopRinging]), once.
-  Future<RingStopRequest?> takeStopRinging();
+  /// The away notification's "Stop ringing" not yet cleared ([RingChannel.peekStopRinging]), left in place.
+  Future<RingStopRequest?> peekStopRinging();
+
+  /// "Stop ringing" is done with: `device_away` applied ([RingChannel.clearStopRinging]).
+  void clearStopRinging();
+
+  /// The server clock offset the station measured, for native to time a ring on the server's
+  /// clock ([RingChannel.setServerClock]).
+  void setServerClock({required int offsetMs, required DateTime measuredAt});
 
   /// The app's task to the back ([RingChannel.moveTaskToBack]).
   void moveTaskToBack();
@@ -80,7 +87,13 @@ final class _NoRing implements StationRing {
   Future<RingOffRecord?> takeRingOff() async => null;
 
   @override
-  Future<RingStopRequest?> takeStopRinging() async => null;
+  Future<RingStopRequest?> peekStopRinging() async => null;
+
+  @override
+  void clearStopRinging() {}
+
+  @override
+  void setServerClock({required int offsetMs, required DateTime measuredAt}) {}
 
   @override
   void moveTaskToBack() {}

@@ -74,15 +74,28 @@ class FakeRingChannel implements RingChannel {
   @override
   Future<void> holdOverLockScreen(bool on) async => calls.add('holdOverLockScreen:$on');
 
-  /// What `takeStopRinging` answers next (then null: cleared on read).
+  /// What `peekStopRinging` answers (left in place until `clearStopRinging`, as native keeps it).
   RingStopRequest? stop;
 
   @override
-  Future<RingStopRequest?> takeStopRinging() async {
-    calls.add('takeStopRinging');
-    final r = stop;
+  Future<RingStopRequest?> peekStopRinging() async {
+    calls.add('peekStopRinging');
+    return stop;
+  }
+
+  @override
+  Future<void> clearStopRinging() async {
+    calls.add('clearStopRinging');
     stop = null;
-    return r;
+  }
+
+  /// The last `setServerClock`.
+  ({int offsetMs, DateTime measuredAt})? serverClock;
+
+  @override
+  Future<void> setServerClock({required int offsetMs, required DateTime measuredAt}) async {
+    calls.add('setServerClock:$offsetMs');
+    serverClock = (offsetMs: offsetMs, measuredAt: measuredAt);
   }
 
   @override
@@ -145,7 +158,14 @@ class FakeStationRing implements StationRing {
   Future<RingOffRecord?> takeRingOff() => channel.takeRingOff();
 
   @override
-  Future<RingStopRequest?> takeStopRinging() => channel.takeStopRinging();
+  Future<RingStopRequest?> peekStopRinging() => channel.peekStopRinging();
+
+  @override
+  void clearStopRinging() => channel.clearStopRinging();
+
+  @override
+  void setServerClock({required int offsetMs, required DateTime measuredAt}) =>
+      channel.setServerClock(offsetMs: offsetMs, measuredAt: measuredAt);
 
   @override
   void moveTaskToBack() => channel.moveTaskToBack();

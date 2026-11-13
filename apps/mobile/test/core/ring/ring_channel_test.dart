@@ -55,4 +55,18 @@ void main() {
       {'on': false},
     ]);
   });
+
+  test('"Stop ringing" is peeked, then cleared; the server clock goes over as offset_ms and measured_at (ISO, UTC)', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(const MethodChannel(MethodRingChannel.channelName), (call) async {
+      calls.add(call);
+      return call.method == 'peekStopRinging' ? {'session_id': 'sess-1', 'since': '2026-11-02T07:58:41.120Z'} : null;
+    });
+    final channel = MethodRingChannel();
+    expect(await channel.peekStopRinging(), RingStopRequest(sessionId: 'sess-1', since: DateTime.utc(2026, 11, 2, 7, 58, 41, 120)));
+    await channel.clearStopRinging();
+    await channel.setServerClock(offsetMs: -4200, measuredAt: DateTime.utc(2026, 11, 2, 7, 50));
+    expect(calls.map((c) => c.method), ['peekStopRinging', 'clearStopRinging', 'setServerClock']);
+    expect(calls.last.arguments, {'offset_ms': -4200, 'measured_at': '2026-11-02T07:50:00.000Z'});
+  });
 }

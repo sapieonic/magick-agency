@@ -43,7 +43,11 @@ internal object RingCoordinator {
         app?.let { return it }
         val a = context.applicationContext
         app = a
-        store = RingStore(a).also { machine.restoreAway(it.away) }
+        store = RingStore(a).also {
+            machine.restoreAway(it.away)
+            // "Stop ringing" tapped in an earlier process: its decline window still holds.
+            machine.restoreDeclineUntil(it.declineUntilMs, System.currentTimeMillis())
+        }
         api = RingApi(a)
         return a
     }
@@ -91,7 +95,10 @@ internal object RingCoordinator {
             val a = init(context)
             // What the phone says about calls; whether our own ring explains it is the state machine's call.
             val phone = if (push is RingPush.Ring || push is RingPush.Test) RingTelecom.phoneSignals(a) else PhoneSignals.IDLE
-            dispatch(RingEvent.Push(push, System.currentTimeMillis(), phone, sentAtMs))
+            val now = System.currentTimeMillis()
+            // The server's present, from the offset Dart measured, while it is fresh.
+            val offset = store?.serverClock?.takeIf { it.isFresh(now) }?.offsetMs
+            dispatch(RingEvent.Push(push, now, phone, sentAtMs, offset))
         }
     }
 
@@ -229,7 +236,7 @@ internal object RingCoordinator {
         // A new absence: a ring_off or a "Stop ringing" Dart never took was for an earlier one.
         if (on) {
             store?.ringOff = null
-            store?.stopRinging = null
+            store?.clearStopRinging()
         }
         dispatch(RingEvent.AwayChanged(if (on) AwayAbsence(sessionId, sinceMs) else null))
         store?.away = machine.away
@@ -247,21 +254,45 @@ internal object RingCoordinator {
      * The away notification's "Stop ringing" ([com.magickagency.agent.MainActivity], before Flutter
      * hears of the launch): for this absence only. A ring ringing now is declined, and one arriving
      * in the next ring window too, so the app opening to leave `away_ring` never answers one by
-     * attaching (N5). Kept for Dart (`takeStopRinging`), which asks `device_away` before its
-     * station attaches. Main thread.
+     * attaching (N5); the window is kept across a process start. Kept for Dart (`peekStopRinging`),
+     * which asks `device_away` before its station attaches and clears it (`clearStopRinging`) once
+     * that applied. Main thread.
      */
     fun stopRingingTapped(context: Context) {
         init(context)
-        store?.stopRinging = machine.away?.takeIf { it.shown } ?: AwayAbsence(null, null)
-        dispatch(RingEvent.StopRingingTapped(System.currentTimeMillis()))
+        val now = System.currentTimeMillis()
+        dispatch(RingEvent.StopRingingTapped(now))
+        val absence = machine.away?.takeIf { it.shown } ?: AwayAbsence(null, null)
+        store?.saveStopRinging(StopRingingRecord(absence, now), machine.declineUntilMs)
     }
 
-    /** `takeStopRinging`: the "Stop ringing" tap Dart has not taken, once (cleared on read). Main thread. */
-    fun takeStopRinging(context: Context): AwayAbsence? {
+    /**
+     * `peekStopRinging`: the "Stop ringing" tap Dart has not cleared, left in place. One older than
+     * [RingWire.STOP_RINGING_KEEP_MS] is dropped and not returned. Main thread.
+     */
+    fun peekStopRinging(context: Context): AwayAbsence? {
         init(context)
-        val stop = store?.stopRinging
-        if (stop != null) store?.stopRinging = null
-        return stop
+        val stop = store?.stopRinging ?: return null
+        if (!stop.isFresh(System.currentTimeMillis())) {
+            store?.clearStopRinging()
+            return null
+        }
+        return stop.absence
+    }
+
+    /** `clearStopRinging`: Dart's `device_away` applied, so the tap is done with. Main thread. */
+    fun clearStopRinging(context: Context) {
+        init(context)
+        store?.clearStopRinging()
+    }
+
+    /**
+     * `setServerClock`: the server's clock reads [offsetMs] ahead of this phone's, as Dart measured
+     * at [measuredAtMs] (this phone's clock). A ring's time left reads it while it is fresh. Main thread.
+     */
+    fun setServerClock(context: Context, offsetMs: Long, measuredAtMs: Long) {
+        init(context)
+        store?.serverClock = ServerClockOffset(offsetMs, measuredAtMs)
     }
 
     // ─── The state machine and its effects ───────────────────────────────────

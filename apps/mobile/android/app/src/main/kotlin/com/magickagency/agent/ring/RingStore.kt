@@ -7,8 +7,9 @@ import android.content.SharedPreferences
  * What the ring keeps across a process start: the FCM token, the ring the agent answered before
  * Flutter was running (`pendingAnswer`, for a cold start from the full-screen intent; cleared on
  * read, on bind and on any end, and dropped once the grace has lapsed), a "Stop ringing" tap
- * Dart has not taken yet, the absence the away notification shows, and the `ring_off` that ended
- * it (for Dart's `takeRingOff`). App-private preferences; the app allows no backup.
+ * Dart has not cleared yet and the decline window it opened, the server clock offset Dart
+ * measured, the absence the away notification shows, and the `ring_off` that ended it (for
+ * Dart's `takeRingOff`). App-private preferences; the app allows no backup.
  */
 internal class RingStore(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -18,28 +19,69 @@ internal class RingStore(context: Context) {
         set(value) = prefs.edit().putString(KEY_TOKEN, value).apply()
 
     /**
-     * The away notification's "Stop ringing" Dart has not taken yet (`takeStopRinging`): the absence
-     * it was tapped in (its fields null when unknown), or null when there is none.
+     * The away notification's "Stop ringing" Dart has not cleared yet (`peekStopRinging`, cleared
+     * by `clearStopRinging` once `device_away` applied): the absence it was tapped in (its fields
+     * null when unknown) and when, or null when there is none. A record from a build that did not
+     * keep the tap's time reads as tapped at 0, so it is never fresh.
      */
-    var stopRinging: AwayAbsence?
+    val stopRinging: StopRingingRecord?
         get() {
             if (!prefs.getBoolean(KEY_STOP_RINGING, false)) return null
-            return AwayAbsence(
-                sessionId = prefs.getString(KEY_STOP_SESSION, null),
-                sinceMs = prefs.getLong(KEY_STOP_SINCE, -1L).takeIf { it >= 0 },
+            return StopRingingRecord(
+                absence = AwayAbsence(
+                    sessionId = prefs.getString(KEY_STOP_SESSION, null),
+                    sinceMs = prefs.getLong(KEY_STOP_SINCE, -1L).takeIf { it >= 0 },
+                ),
+                tappedAtMs = prefs.getLong(KEY_STOP_AT, 0L),
             )
         }
+
+    /**
+     * Keeps a "Stop ringing" tap and the decline window it opened ([declineUntilMs]) in one write.
+     * commit, not apply: the tap's launch may be a cold start that reads the tap in a new process,
+     * and a process the system reclaims right after the tap must still decline a ring arriving in
+     * the window when it starts again. One commit covers both.
+     */
+    fun saveStopRinging(record: StopRingingRecord, declineUntilMs: Long) {
+        val e = prefs.edit().remove(KEY_STOP_SESSION).remove(KEY_STOP_SINCE)
+            .putBoolean(KEY_STOP_RINGING, true)
+            .putLong(KEY_STOP_AT, record.tappedAtMs)
+            .putLong(KEY_DECLINE_UNTIL, declineUntilMs)
+        record.absence.sessionId?.let { e.putString(KEY_STOP_SESSION, it) }
+        record.absence.sinceMs?.let { e.putLong(KEY_STOP_SINCE, it) }
+        e.commit()
+    }
+
+    /**
+     * apply, not commit: a clear lost with the process leaves a tap that is dropped unread once it
+     * is [RingWire.STOP_RINGING_KEEP_MS] old, and asking `device_away` again meanwhile is harmless.
+     */
+    fun clearStopRinging() {
+        prefs.edit().remove(KEY_STOP_RINGING).remove(KEY_STOP_SESSION).remove(KEY_STOP_SINCE).remove(KEY_STOP_AT).apply()
+    }
+
+    /** Until then (this phone's clock) a ring is declined at once ("Stop ringing"); 0 when none was kept. */
+    val declineUntilMs: Long
+        get() = prefs.getLong(KEY_DECLINE_UNTIL, 0L)
+
+    /**
+     * The server clock offset Dart measured (`setServerClock`), for a ring's time left. apply, not
+     * commit: Dart says it again each time the station parks for `away_ring`, and a ring without it
+     * falls back to the push's send time.
+     */
+    var serverClock: ServerClockOffset?
+        get() {
+            if (!prefs.contains(KEY_CLOCK_OFFSET) || !prefs.contains(KEY_CLOCK_AT)) return null
+            return ServerClockOffset(prefs.getLong(KEY_CLOCK_OFFSET, 0L), prefs.getLong(KEY_CLOCK_AT, 0L))
+        }
         set(value) {
-            val e = prefs.edit().remove(KEY_STOP_SESSION).remove(KEY_STOP_SINCE)
+            val e = prefs.edit()
             if (value == null) {
-                e.remove(KEY_STOP_RINGING)
+                e.remove(KEY_CLOCK_OFFSET).remove(KEY_CLOCK_AT)
             } else {
-                e.putBoolean(KEY_STOP_RINGING, true)
-                value.sessionId?.let { e.putString(KEY_STOP_SESSION, it) }
-                value.sinceMs?.let { e.putLong(KEY_STOP_SINCE, it) }
+                e.putLong(KEY_CLOCK_OFFSET, value.offsetMs).putLong(KEY_CLOCK_AT, value.measuredAtMs)
             }
-            // commit: the tap's launch may be a cold start that reads it in a new process.
-            e.commit()
+            e.apply()
         }
 
     fun savePendingAnswer(answer: PendingAnswer) {
@@ -120,6 +162,10 @@ internal class RingStore(context: Context) {
         const val KEY_STOP_RINGING = "stop_ringing_pending"
         const val KEY_STOP_SESSION = "stop_ringing_session_id"
         const val KEY_STOP_SINCE = "stop_ringing_away_since"
+        const val KEY_STOP_AT = "stop_ringing_tapped_at"
+        const val KEY_DECLINE_UNTIL = "stop_ringing_decline_until"
+        const val KEY_CLOCK_OFFSET = "server_clock_offset_ms"
+        const val KEY_CLOCK_AT = "server_clock_measured_at"
         const val KEY_PA_CALL = "pending_answer_call_id"
         const val KEY_PA_TOKEN = "pending_answer_offer_token"
         const val KEY_PA_SESSION = "pending_answer_session_id"

@@ -44,6 +44,23 @@ object RingWire {
      */
     const val STOP_RINGING_HOLD_MS = RING_MS
 
+    /**
+     * How long a "Stop ringing" tap Dart has not cleared is kept: one ring window plus the accept
+     * grace, the longest a ring in flight at the tap can hold the session. Older, it is dropped
+     * unread, so it never pauses a later absence.
+     */
+    const val STOP_RINGING_KEEP_MS = RING_MS + ACCEPT_GRACE_MS
+
+    /**
+     * Without a fresh server clock offset, the most of a push's delivery delay a ring's time left
+     * loses ([RingTiming.remainingMs]): the phone's clock cannot tell a slow delivery from a clock
+     * running fast, so a fast clock shortens a ring by this much at most and never drops it.
+     */
+    const val DELIVERY_CAP_MS = 3_000L
+
+    /** How long the server clock offset Dart measured is trusted ([ServerClockOffset.isFresh]). */
+    const val SERVER_CLOCK_MAX_AGE_MS = 24L * 60 * 60 * 1000
+
     /** `AGENCY_INBOUND_RING_RESULTS`: a `ring_cancel`'s `reason`, and `ringEnded`'s. */
     val RING_RESULTS = listOf(
         "answered", "declined", "expired", "accept_lapsed", "busy_on_phone", "push_failed", "caller_left",

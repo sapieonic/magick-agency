@@ -385,9 +385,11 @@ void main() {
         async.elapse(const Duration(seconds: 10));
         app.lifecycle.show();
         async.flushMicrotasks();
-        expect(r.channel.named('takeStopRinging'), hasLength(1));
+        expect(r.channel.named('peekStopRinging'), hasLength(1));
         expect(reasons(app), ['away_ring', 'device_away']);
         expect(app.connector.attempts, 2, reason: 'attached only once device_away applied');
+        expect(app.socket.url.queryParameters['caps'], 'inbound', reason: 'paused: no ring can be un-answered now');
+        expect(r.channel.named('clearStopRinging'), hasLength(1), reason: 'native keeps the tap until device_away applied');
         expect(r.channel.named('moveTaskToBack'), hasLength(1));
         expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
         expect(app.requests('PATCH', '/proxy/agency/push-devices/a1b2c3d4e5f60718293a4b5c6d7e8f90'), isEmpty, reason: 'no opt-out: that is the Me card\'s');
@@ -446,7 +448,41 @@ void main() {
       });
     });
 
-    test('device_away never applies: after 10 s the station attaches anyway', () {
+    test('device_away never applies: after 10 s the station attaches WITHOUT caps=inbound, which ends the ring rather '
+        'than answering it; once the station says the agent is paused, it declares inbound calls again and says so', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1000, reservedWhileRinging: true);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 9));
+        expect(app.connector.attempts, 1);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse,
+            reason: 'the last answer said reserved: an attach with caps=inbound would answer the ring (N5)');
+        expect(app.socket.url.queryParameters['client'], 'mobile');
+        expect(app.container.read(ringNoticeProvider), isNull, reason: 'not paused yet as far as the app knows');
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        expect(r.channel.named('clearStopRinging'), isEmpty);
+
+        // The attach without inbound calls ends away_ring as device_away (the contract's frames).
+        backFromAwayRing(app);
+        expect(app.connector.attempts, 3, reason: 'attached afresh to declare inbound calls');
+        expect(app.socket.url.queryParameters['caps'], 'inbound');
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        expect(r.channel.named('moveTaskToBack'), hasLength(1));
+        expect(r.channel.named('clearStopRinging'), hasLength(1));
+        // Declared once: the same frames again change nothing.
+        backFromAwayRing(app);
+        expect(app.connector.attempts, 3);
+        app.dispose();
+      });
+    });
+
+    test('attached without caps=inbound, a frame still on away_ring or reserved keeps it off', () {
       fakeAsync((async) {
         final r = _Ring(async)..availableThenAway();
         final app = r.app;
@@ -454,11 +490,72 @@ void main() {
         r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
         app.lifecycle.show();
         async.flushMicrotasks();
-        async.elapse(const Duration(seconds: 9));
-        expect(app.connector.attempts, 1);
         async.elapse(StationController.stopRingingBound);
         expect(app.connector.attempts, 2);
-        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        app.readyFrame('break', extra: {'break_reason': 'away_ring'});
+        app.readyFrame('reserved');
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        // A drop's retry connects without it too.
+        app.socket.serverClose();
+        async.elapse(const Duration(seconds: 1));
+        expect(app.connector.attempts, 3);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        app.dispose();
+      });
+    });
+
+    test('device_away never applies and the station never says the agent is paused: "Couldn\'t stop ringing", '
+        'the app stays in front, and native keeps the tap', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1000);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(StationController.stopRingingBound * 2);
+        expect(app.container.read(ringNoticeProvider), 'Couldn’t stop ringing. Open your station to pause.');
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        expect(r.channel.named('clearStopRinging'), isEmpty);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        app.dispose();
+      });
+    });
+
+    test('a device_away refused outright (not worth retrying) attaches without caps=inbound too', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.routes['POST $_breakPath'] = (req) => json(422, {'error': 'invalid_state'});
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        app.dispose();
+      });
+    });
+
+    test('left and back again while Stop ringing waits for device_away: the socket still waits', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 3);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1, reason: 'an attach now would answer the ring still in flight (N5)');
+        async.elapse(const Duration(milliseconds: 500));
+        expect(app.connector.attempts, 1);
+        async.elapse(const Duration(seconds: 3));
+        expect(app.connector.attempts, 2, reason: 'device_away applied: the hold ends');
+        expect(app.socket.url.queryParameters['caps'], 'inbound');
         app.dispose();
       });
     });
@@ -505,7 +602,71 @@ void main() {
         expect(app.requests('POST', '/proxy/agency/sessions/sess-9/break').single.body, {'reason': 'device_away'});
         expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
         expect(r.channel.named('moveTaskToBack'), hasLength(1));
+        expect(r.channel.named('clearStopRinging'), hasLength(1), reason: 'applied: native lets the tap go');
         app.dispose();
+      });
+    });
+
+    test('a cold start whose device_away never applies: "Couldn\'t stop ringing", not "You\'re paused", the app stays '
+        'in front, and native keeps the tap for the next start', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.routes['POST /proxy/agency/sessions/sess-9/break'] =
+            (_) => json(200, stateBody('reserved', breakReason: 'device_away', pending: 'break'));
+        var done = false;
+        app.controller.stopRingingWithoutStation('sess-9').then((_) => done = true);
+        async.elapse(StationController.stopRingingBound + const Duration(seconds: 1));
+        expect(done, isTrue);
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-9/break').length, greaterThan(1), reason: 'asked again each second');
+        expect(app.container.read(ringNoticeProvider), 'Couldn’t stop ringing. Open your station to pause.');
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        expect(r.channel.named('clearStopRinging'), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('a stale "Stop ringing" for another session is let go', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-0');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(r.channel.named('clearStopRinging'), hasLength(1));
+        app.dispose();
+      });
+    });
+  });
+
+  group('the server clock for a ring\'s timing', () {
+    test('parking for away_ring hands native the offset the socket measured, with when', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.socket.serverPong(serverOffsetMs: 7000);
+        async.elapse(const Duration(seconds: 2));
+        final measured = app.now().subtract(const Duration(seconds: 2));
+        app.routes['POST $_breakPath'] = (req) => json(200, stateBody('break', breakReason: 'away_ring'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'away_ring');
+        async.flushMicrotasks();
+        expect(app.socket.closed, isTrue);
+        expect(r.channel.serverClock, (offsetMs: 7000, measuredAt: measured));
+        app.dispose();
+      });
+    });
+
+    test('no pong yet: nothing is handed over (native falls back to the push\'s send time)', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        expect(r.app.socket.closed, isTrue);
+        expect(r.channel.named('setServerClock'), isEmpty);
+        r.app.dispose();
       });
     });
   });

@@ -93,31 +93,58 @@ data class PhoneSignals(
     }
 }
 
-/** How long a ring may ring on this phone, from the server's times rather than this phone's clock. */
+/**
+ * The server clock offset Dart measured on the station socket (`setServerClock`): the server's
+ * clock reads [offsetMs] ahead of this phone's (negative: behind), as measured at [measuredAtMs]
+ * (this phone's clock).
+ */
+data class ServerClockOffset(val offsetMs: Long, val measuredAtMs: Long) {
+    /** Measured no more than [RingWire.SERVER_CLOCK_MAX_AGE_MS] ago (and not in this phone's future). */
+    fun isFresh(nowMs: Long): Boolean = nowMs >= measuredAtMs && nowMs - measuredAtMs <= RingWire.SERVER_CLOCK_MAX_AGE_MS
+}
+
+/**
+ * The away notification's "Stop ringing" Dart has not cleared yet: the absence it was tapped in
+ * and when ([tappedAtMs], this phone's clock).
+ */
+data class StopRingingRecord(val absence: AwayAbsence, val tappedAtMs: Long) {
+    /** Tapped no more than [RingWire.STOP_RINGING_KEEP_MS] ago: older, it is dropped unread. */
+    fun isFresh(nowMs: Long): Boolean = nowMs >= tappedAtMs && nowMs - tappedAtMs <= RingWire.STOP_RINGING_KEEP_MS
+}
+
+/** How long a ring may ring on this phone, read on the server's clock as far as the phone can. */
 object RingTiming {
+    /** The most a ring rings for: one ring window plus [RingWire.CLOCK_SLACK_MS]. */
+    const val MAX_MS = RingWire.RING_MS + RingWire.CLOCK_SLACK_MS
+
     /**
-     * The ring's time left at receipt ([nowMs], this phone's clock), at most one ring window plus
-     * [RingWire.CLOCK_SLACK_MS]:
+     * The ring's time left at receipt ([nowMs], this phone's clock): not positive means it is over
+     * (the caller drops it), else at most [MAX_MS]. Continuous in [nowMs] (no rule switches on how
+     * far the phone's clock is from the send time):
      *
-     *  - With the push's FCM send time ([sentAtMs]) and a phone clock that looks in step with it
-     *    (`0 ≤ now − sentAt ≤` one ring window plus the slack: the push took no longer to arrive
-     *    than a ring lasts), `ring_expires_at − now`: what the server left at send, less the time
-     *    the push spent in delivery, so a push delivered late rings no longer than the server
-     *    offers the call (an Answer after that would be refused).
-     *  - With a send time but a phone clock that does not look in step (before the send time, or
-     *    further after it than a ring lasts), `ring_expires_at − sentAt`: both on server-side
-     *    clocks, so a phone clock running fast or slow never drops a ring; the delivery delay is
-     *    then unknown and not taken off.
-     *  - Without a send time (null or not positive), the phone's clock is all there is.
+     *  - With a fresh server clock offset ([serverOffsetMs], [ServerClockOffset.isFresh]): the
+     *    server's present is `now + offset` (never before the push's send time [sentAtMs], when
+     *    known), and the ring rings for `ring_expires_at − serverNow`. A push delivered late rings
+     *    only for what the server still offers, and a phone clock running fast or slow does not
+     *    matter.
+     *  - Without one, with the push's FCM send time: `ring_expires_at − sentAt` (both server-side
+     *    clocks) less the delivery delay `now − sentAt` clamped to `0..`[RingWire.DELIVERY_CAP_MS]
+     *    on this phone's clock. A phone clock running fast shortens a ring by the cap at most and
+     *    never drops it; one running slow takes nothing off; a push delivered late rings a little
+     *    long (an Answer after the server's expiry is refused).
+     *  - With neither, the phone's clock is all there is: `ring_expires_at − now`.
      */
-    fun remainingMs(expiresAtMs: Long, sentAtMs: Long?, nowMs: Long): Long {
-        val window = RingWire.RING_MS + RingWire.CLOCK_SLACK_MS
+    fun remainingMs(expiresAtMs: Long, sentAtMs: Long?, nowMs: Long, serverOffsetMs: Long? = null): Long {
+        val sent = sentAtMs?.takeIf { it > 0 }
         val left = when {
-            sentAtMs == null || sentAtMs <= 0 -> expiresAtMs - nowMs
-            nowMs - sentAtMs in 0..window -> expiresAtMs - nowMs
-            else -> expiresAtMs - sentAtMs
+            serverOffsetMs != null -> {
+                val serverNow = nowMs + serverOffsetMs
+                expiresAtMs - (if (sent != null) maxOf(serverNow, sent) else serverNow)
+            }
+            sent != null -> expiresAtMs - sent - (nowMs - sent).coerceIn(0L, RingWire.DELIVERY_CAP_MS)
+            else -> expiresAtMs - nowMs
         }
-        return minOf(left, window)
+        return minOf(left, MAX_MS)
     }
 }
 
@@ -125,12 +152,15 @@ sealed class RingEvent {
     /**
      * A push arrived at [nowMs] (this phone's clock). [sentAtMs]: FCM's send time
      * (`RemoteMessage.sentTime`), null when unknown. [phone]: what the phone said about calls (IQ70).
+     * [serverOffsetMs]: how far the server's clock reads ahead of this phone's, when known and fresh.
      */
     data class Push(
         val push: RingPush,
         val nowMs: Long,
         val phone: PhoneSignals = PhoneSignals.IDLE,
         val sentAtMs: Long? = null,
+        /** The server clock offset Dart measured, when fresh ([ServerClockOffset.isFresh]); else null. */
+        val serverOffsetMs: Long? = null,
     ) : RingEvent()
 
     data class AnswerTapped(val callId: String, val nowMs: Long, val source: AnswerSource) : RingEvent()
@@ -253,7 +283,17 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     private var testReported: String? = null
 
     /** Until then (this phone's clock), a ring is declined at once: the agent tapped "Stop ringing". */
-    private var declineUntilMs = 0L
+    var declineUntilMs = 0L
+        private set
+
+    /**
+     * A process start: the decline window the store kept ("Stop ringing" was tapped in an earlier
+     * process). Taken only while it has at most [RingWire.STOP_RINGING_HOLD_MS] left at [nowMs], so a
+     * phone clock set back never holds rings off for longer than one window.
+     */
+    fun restoreDeclineUntil(untilMs: Long, nowMs: Long) {
+        if (untilMs > nowMs && untilMs - nowMs <= RingWire.STOP_RINGING_HOLD_MS) declineUntilMs = maxOf(declineUntilMs, untilMs)
+    }
 
     /** The latest absence the away notification was shown for; null when the phone knows of none. */
     var away: AwayAbsence? = null
@@ -296,18 +336,18 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
 
     private fun onPush(e: RingEvent.Push): List<RingEffect> = when (val p = e.push) {
         // Our own ring live (one ringing): its Telecom call is not the phone being busy.
-        is RingPush.Ring -> onRing(p, e.nowMs, e.sentAtMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
+        is RingPush.Ring -> onRing(p, e.nowMs, e.sentAtMs, e.serverOffsetMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
         is RingPush.Test -> onTestRing(e.nowMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
         is RingPush.Cancel -> onCancel(p)
         is RingPush.Off -> onOff(p, e.sentAtMs)
     }
 
-    private fun onRing(ring: RingPush.Ring, now: Long, sentAt: Long?, busy: Boolean): List<RingEffect> {
+    private fun onRing(ring: RingPush.Ring, now: Long, sentAt: Long?, serverOffset: Long?, busy: Boolean): List<RingEffect> {
         if (ring.callId in ended) return listOf(RingEffect.Dropped(DropReason.LATE))
         val current = activeCall
         if (current?.callId == ring.callId) return listOf(RingEffect.Dropped(DropReason.DUPLICATE))
-        // Judged on the server's times (the push's send time), never this phone's clock alone.
-        val remaining = RingTiming.remainingMs(ring.expiresAtMs, sentAt, now)
+        // Judged on the server's clock as far as the phone knows it, never this phone's clock alone.
+        val remaining = RingTiming.remainingMs(ring.expiresAtMs, sentAt, now, serverOffset)
         if (remaining <= 0) {
             remember(ring.callId)
             return listOf(RingEffect.Dropped(DropReason.EXPIRED))

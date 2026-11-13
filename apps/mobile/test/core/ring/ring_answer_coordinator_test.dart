@@ -70,6 +70,20 @@ void main() {
       h.setGate(ready);
       expect(h.station.calls, ['stopRinging:sess-1']);
       expect(h.requests('POST', _acceptPath), isEmpty);
+      expect(h.channel.named('peekStopRinging'), hasLength(1));
+      expect(h.channel.named('clearStopRinging'), isEmpty, reason: 'read, not taken: cleared once device_away applied');
+      h.dispose();
+    });
+  });
+
+  test('a cold start whose "Stop ringing" names no session: nothing to pause, so it is let go', () {
+    fakeAsync((async) {
+      final h = harness(async, signedIn: false);
+      h.channel.stop = const RingStopRequest();
+      h.start();
+      h.setGate(ready);
+      expect(h.station.calls, isEmpty);
+      expect(h.channel.named('clearStopRinging'), hasLength(1));
       h.dispose();
     });
   });

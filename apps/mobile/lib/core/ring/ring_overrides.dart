@@ -72,7 +72,14 @@ final class _RegistrationStationRing implements StationRing {
   Future<RingOffRecord?> takeRingOff() => _channel.takeRingOff();
 
   @override
-  Future<RingStopRequest?> takeStopRinging() => _channel.takeStopRinging();
+  Future<RingStopRequest?> peekStopRinging() => _channel.peekStopRinging();
+
+  @override
+  void clearStopRinging() => unawaited(_channel.clearStopRinging());
+
+  @override
+  void setServerClock({required int offsetMs, required DateTime measuredAt}) =>
+      unawaited(_channel.setServerClock(offsetMs: offsetMs, measuredAt: measuredAt));
 
   @override
   void moveTaskToBack() => unawaited(_channel.moveTaskToBack());

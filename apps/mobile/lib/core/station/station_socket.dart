@@ -369,14 +369,19 @@ class StationSocket {
   }
 
   /// What this build takes beyond its session's own work, declared on every upgrade
-  /// (`caps=inbound`): without it the server offers this station no inbound calls and sends it
-  /// neither `inbound_call` nor `customer_waiting`.
+  /// (`caps=inbound`) unless [declareInbound] is off: without it the server offers this station no
+  /// inbound calls and sends it neither `inbound_call` nor `customer_waiting`.
   static const capabilities = [StationCapability.inbound];
+
+  /// Whether the next connect declares [capabilities]. Off only while an attach must not answer
+  /// a ring (N5: the server takes an attach with `caps=inbound` during an un-answered ring as its
+  /// answer; one without it ends the ring instead). Read at every connect, whoever starts it.
+  bool declareInbound = true;
 
   Uri _withQuery(Uri url) => url.replace(
         queryParameters: StationCapability.withQuery(
           <String, String>{...url.queryParameters, 'client': 'mobile', 'media': _media.wire},
-          capabilities,
+          declareInbound ? capabilities : const <StationCapability>[],
         ),
       );
 

@@ -350,24 +350,75 @@ class RingStateMachineTest {
         assertIs<RingState.Ringing>(m.state)
     }
 
-    // ─── Expiry on the server's times (the push's send time) ─────────────────
+    // ─── Expiry on the server's clock (the offset Dart measured, else the send time) ─
+
+    private fun pushAt(p: RingPush, now: Long, sentAt: Long?, offset: Long?) =
+        RingEvent.Push(p, now, PhoneSignals.IDLE, sentAt, offset)
 
     @Test
-    fun aPhoneClockRunningFastStillRingsForWhatTheServerLeft() {
+    fun aFreshOffsetRingsOnlyForWhatTheServerStillOffersAPushDeliveredLate() {
+        // The phone reads 7 s behind the server; the push spent 12 s in delivery.
+        val offset = 7_000L
+        val now = t0 + 12_000 - offset
+        assertEquals(8_000L, RingTiming.remainingMs(ringA.expiresAtMs, t0, now, offset))
         val m = RingStateMachine()
-        // The phone reads a minute ahead: by its clock the ring expired 40 s ago.
-        val now = t0 + 60_000
-        val fx = m.handle(push(ringA, now = now, sentAt = t0))
-        assertEquals(RingState.Ringing(callA, now + RingWire.RING_MS), m.state)
-        assertEquals(listOf(StartRinging(callA, now + RingWire.RING_MS), ScheduleTimer(TimerKind.RING, "call-a", now + RingWire.RING_MS)), fx)
+        m.handle(pushAt(ringA, now, sentAt = t0, offset = offset))
+        assertEquals(RingState.Ringing(callA, now + 8_000), m.state)
+        // Delivered after the server's expiry: dropped, not rung, whatever the phone's clock says.
+        assertEquals(listOf(Dropped(DropReason.EXPIRED)), RingStateMachine().handle(pushAt(ringA, t0 + 21_000 - offset, t0, offset)))
+        // No send time: the offset alone.
+        assertEquals(8_000L, RingTiming.remainingMs(ringA.expiresAtMs, null, now, offset))
     }
 
     @Test
-    fun aPhoneClockRunningSlowRingsNoLongerThanTheServerLeft() {
+    fun aFreshOffsetIsNeverReadAsBeforeThePushWasSent() {
+        // An offset that puts the server's present before the send time (the phone's clock set back
+        // since it was measured): the send time is the earliest the present can be.
+        assertEquals(RingWire.RING_MS, RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 - 30_000, 0L))
+    }
+
+    @Test
+    fun aPhoneClockRunningFastWithNoOffsetLosesAtMostTheCapAndIsNeverDropped() {
+        // Fast by 19.5 s, 21 s, a minute, an hour: the ring rings for at least the window less the cap.
+        for (fast in listOf(500L, 3_000L, 19_500L, 21_000L, 22_001L, 60_000L, 3_600_000L)) {
+            val left = RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 + fast)
+            assertTrue(left >= RingWire.RING_MS - RingWire.DELIVERY_CAP_MS, "fast by $fast: $left")
+            assertTrue(left >= 17_000L, "fast by $fast: $left")
+        }
+        val m = RingStateMachine()
+        val now = t0 + 60_000
+        val fx = m.handle(push(ringA, now = now, sentAt = t0))
+        val until = now + RingWire.RING_MS - RingWire.DELIVERY_CAP_MS
+        assertEquals(RingState.Ringing(callA, until), m.state)
+        assertEquals(listOf(StartRinging(callA, until), ScheduleTimer(TimerKind.RING, "call-a", until)), fx)
+    }
+
+    @Test
+    fun aPhoneClockRunningSlowTakesNothingOff() {
+        assertEquals(RingWire.RING_MS, RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 - 5_000))
         val m = RingStateMachine()
         val now = t0 - 60_000
         m.handle(push(ringA, now = now, sentAt = t0 + 5_000))
-        assertEquals(RingState.Ringing(callA, now + RingWire.RING_MS - 5_000), m.state)
+        assertEquals(RingState.Ringing(callA, now + RingWire.RING_MS - 5_000), m.state, "what the server left at send")
+    }
+
+    @Test
+    fun theTimeLeftHasNoJumpAcrossWhatWasOnceABoundary() {
+        // Without an offset, step the phone's clock 1 ms at a time across 0..30 s after the send:
+        // no step moves the time left by more than 1 ms (the old rule jumped at 22 s).
+        var previous = RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 - 1)
+        for (d in 0L..30_000L) {
+            val left = RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 + d)
+            assertTrue(kotlin.math.abs(left - previous) <= 1, "at ${d} ms: $previous -> $left")
+            previous = left
+        }
+        // With an offset, the same across the window's end.
+        previous = RingTiming.remainingMs(ringA.expiresAtMs, t0, t0, 0L)
+        for (d in 0L..30_000L) {
+            val left = RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 + d, 0L)
+            assertTrue(kotlin.math.abs(left - previous) <= 1, "offset, at ${d} ms: $previous -> $left")
+            previous = left
+        }
     }
 
     @Test
@@ -379,31 +430,28 @@ class RingStateMachineTest {
 
     @Test
     fun theTimeLeftIsCappedToOneWindowWithItsSlack() {
-        assertEquals(RingWire.RING_MS + RingWire.CLOCK_SLACK_MS, RingTiming.remainingMs(t0 + 600_000, t0, t0 + 99_000))
-        assertEquals(7_000L, RingTiming.remainingMs(t0 + 7_000, t0, t0 + 99_000), "the send time, not the phone's clock")
+        assertEquals(RingTiming.MAX_MS, RingTiming.remainingMs(t0 + 600_000, t0, t0 + 99_000))
+        assertEquals(RingTiming.MAX_MS, RingTiming.remainingMs(t0 + 600_000, t0, t0, 0L))
+        assertEquals(7_000L - RingWire.DELIVERY_CAP_MS, RingTiming.remainingMs(t0 + 7_000, t0, t0 + 99_000), "the send time, less the cap")
         assertEquals(7_000L, RingTiming.remainingMs(t0 + 7_000, null, t0), "no send time: the phone's clock")
         assertEquals(7_000L, RingTiming.remainingMs(t0 + 7_000, 0, t0), "FCM's 0 is no send time")
     }
 
     @Test
-    fun aPushDeliveredLateRingsOnlyForWhatIsLeftOfTheServersWindow() {
-        // Sent 15 s ago with 20 s to run, the phone's clock in step: 5 s left, not 20.
-        assertEquals(5_000L, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 + 15_000))
+    fun withNoOffsetADelayUnderTheCapIsTakenOffInFull() {
+        assertEquals(RingWire.RING_MS - 1_200, RingTiming.remainingMs(ringA.expiresAtMs, t0, t0 + 1_200))
         val m = RingStateMachine()
         m.handle(push(ringA, now = t0 + 15_000, sentAt = t0))
-        assertEquals(RingState.Ringing(callA, t0 + RingWire.RING_MS), m.state)
-        // In step at the edge of the window (one ring plus the slack after the send).
-        assertEquals(-RingWire.CLOCK_SLACK_MS, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 + RingWire.RING_MS + RingWire.CLOCK_SLACK_MS))
-        // Delivered after the server's expiry: dropped, not rung.
-        assertEquals(listOf(Dropped(DropReason.EXPIRED)), RingStateMachine().handle(push(ringA, now = t0 + 21_000, sentAt = t0)))
+        assertEquals(RingState.Ringing(callA, t0 + 15_000 + RingWire.RING_MS - RingWire.DELIVERY_CAP_MS), m.state)
     }
 
     @Test
-    fun aSkewedPhoneClockFallsBackToTheTimeLeftAtSend() {
-        // The phone's clock reads before the send time (behind): the delivery delay is unknown.
-        assertEquals(RingWire.RING_MS, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 - 5_000))
-        // Further after the send than a ring lasts (ahead): the same.
-        assertEquals(RingWire.RING_MS, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 + RingWire.RING_MS + RingWire.CLOCK_SLACK_MS + 1))
+    fun aServerClockOffsetIsFreshForADay() {
+        val c = ServerClockOffset(offsetMs = 4_000, measuredAtMs = t0)
+        assertTrue(c.isFresh(t0))
+        assertTrue(c.isFresh(t0 + RingWire.SERVER_CLOCK_MAX_AGE_MS))
+        assertFalse(c.isFresh(t0 + RingWire.SERVER_CLOCK_MAX_AGE_MS + 1))
+        assertFalse(c.isFresh(t0 - 1), "measured in this phone's future: its clock was set back")
     }
 
     @Test
@@ -853,6 +901,40 @@ class RingStateMachineTest {
         // Past the hold, rings ring again (the agent may be away_ring again by then).
         val later = RingPush.Ring("call-c", "token-c", "sess-1", t0 + RingWire.STOP_RINGING_HOLD_MS + RingWire.RING_MS)
         assertIs<StartRinging>(m.handle(push(later, now = t0 + RingWire.STOP_RINGING_HOLD_MS))[0])
+    }
+
+    @Test
+    fun theDeclineWindowSurvivesAProcessStart() {
+        val before = RingStateMachine()
+        before.handle(RingEvent.StopRingingTapped(t0))
+        assertEquals(t0 + RingWire.STOP_RINGING_HOLD_MS, before.declineUntilMs)
+        // A new process 5 s later restores what the store kept, and still declines.
+        val after = RingStateMachine().also { it.restoreDeclineUntil(before.declineUntilMs, t0 + 5_000) }
+        assertEquals(
+            listOf(PostDecline("call-b", "token-b", DeclineReason.DECLINED), EmitEnded("call-b", "declined", missedIfUnheard = false)),
+            after.handle(push(ringB, now = t0 + 6_000)),
+        )
+    }
+
+    @Test
+    fun aRestoredDeclineWindowIsTakenOnlyWhileItHasAtMostOneWindowLeft() {
+        val lapsed = RingStateMachine().also { it.restoreDeclineUntil(t0 + 1_000, t0 + 1_000) }
+        assertIs<StartRinging>(lapsed.handle(push(ringB, now = t0 + 5_000))[0], "the window is over")
+        // The phone's clock set back since: a window reaching further than one ring is not kept.
+        val skewed = RingStateMachine().also { it.restoreDeclineUntil(t0 + RingWire.STOP_RINGING_HOLD_MS + 1, t0) }
+        assertEquals(0L, skewed.declineUntilMs)
+        assertIs<StartRinging>(skewed.handle(push(ringA))[0])
+    }
+
+    @Test
+    fun aStopRingingTapIsKeptForOneRingWindowPlusTheGrace() {
+        val stop = StopRingingRecord(AwayAbsence("sess-1", absenceA), tappedAtMs = t0)
+        assertEquals(35_000L, RingWire.STOP_RINGING_KEEP_MS)
+        assertTrue(stop.isFresh(t0))
+        assertTrue(stop.isFresh(t0 + 35_000))
+        assertFalse(stop.isFresh(t0 + 35_001), "older: dropped unread, so it never pauses a later absence")
+        assertFalse(stop.isFresh(t0 - 1))
+        assertFalse(StopRingingRecord(AwayAbsence(null, null), tappedAtMs = 0).isFresh(t0), "a record with no tap time")
     }
 
     @Test

@@ -215,7 +215,7 @@ void main() {
       expect((ringEventOf('ringEnded', {'call_id': 'c1', 'reason': 'something_new'})! as RingEnded).reason, InboundRingResult.unknown);
       expect((ringEventOf('testRingReceived', null)! as RingTestReceived).shown, isTrue, reason: 'an older native side');
       expect((ringEventOf('testRingReceived', {'shown': false})! as RingTestReceived).shown, isFalse);
-      expect(ringEventOf('stopRingingTapped', null), isNull, reason: 'Dart takes "Stop ringing" (takeStopRinging)');
+      expect(ringEventOf('stopRingingTapped', null), isNull, reason: 'Dart reads "Stop ringing" (peekStopRinging)');
       expect(ringEventOf('ringOff', {'reason': 'ring_missed'}), isNull, reason: 'not in the frozen channel');
     });
 

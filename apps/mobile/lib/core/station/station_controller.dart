@@ -304,6 +304,20 @@ class StationController extends Notifier<StationView?>
   /// applied over HTTP: an attach during a ring would answer it (N5).
   bool _returnHold = false;
 
+  /// "Stop ringing" attached without `caps=inbound` (`device_away` never applied over HTTP, so an
+  /// un-answered ring may still hold the session): the socket declares it again once a frame says
+  /// the agent is on a pause that is not `away_ring`, or available ([_maybeRestoreInbound]).
+  bool _inboundWithheld = false;
+
+  /// "Stop ringing" whose `device_away` never applied over HTTP: the agent is told once the
+  /// station's own frames say they are paused, or after [stopRingingBound] that it did not work.
+  bool _stopUnconfirmed = false;
+  Timer? _stopConfirmTimer;
+
+  /// When the last pong sample was measured (this phone's clock): the server clock offset handed
+  /// to native for a ring's timing is as old as this. Null before the first.
+  DateTime? _clockMeasuredAt;
+
   /// The app's own `away_ring` applied in the absence the agent is back from: the away card says
   /// this phone was ringing for inbound calls, though the server reports `device_away` on return.
   /// Cleared once the agent leaves that pause.
@@ -744,6 +758,9 @@ class StationController extends Notifier<StationView?>
     _awayRang = false;
     _ringStopped = false;
     _returnHold = false;
+    _inboundWithheld = false;
+    _cancelStopConfirm();
+    _clockMeasuredAt = null;
     _awayNoRing = null;
     _ringMissesWhileAway = 0;
     _ringCall = null;
@@ -808,6 +825,7 @@ class StationController extends Notifier<StationView?>
           breakReason: frame.breakReason ??
               (first && hosted != null && hosted.initialState == AgentState.onBreak ? hosted.initialBreakReason : null),
         ));
+        _maybeRestoreInbound();
         // Back after a drop with a soft-phone call held: the server sends its
         // copy right after `ready` only while the call is unsettled, so one
         // that settled meanwhile sends nothing and would stay "live" here.
@@ -840,6 +858,7 @@ class StationController extends Notifier<StationView?>
           _awayAskedNowAt = null;
         }
         _dispatch(AgentStateAction(frame));
+        _maybeRestoreInbound();
       case WrapupFrame(:final wrapup):
         // A redial that failed before it rang: its wrap-up is the first the station hears of it.
         final carry = _redialCarry;
@@ -945,6 +964,7 @@ class StationController extends Notifier<StationView?>
     if (ts != null) {
       _estimator = _estimator.push(ts: ts, serverTs: frame.serverTs, receivedAt: receivedAtMs);
       offset = _estimator.offsetMs;
+      _clockMeasuredAt = _now();
     }
     _dispatch(PongAction(offset));
   }
@@ -1500,7 +1520,7 @@ class StationController extends Notifier<StationView?>
     final c = _station.connection;
     if (parkedReturn) {
       _returnHold = true;
-      unawaited(_ring.takeStopRinging().then(
+      unawaited(_ring.peekStopRinging().then(
         (stop) => _afterParkedReturn(s, stop),
         onError: (Object e) {
           _log.warn('reading Stop ringing failed', {'error': e.runtimeType.toString()});
@@ -1511,6 +1531,11 @@ class StationController extends Notifier<StationView?>
       // Brought to the front by a ring's answer: the accept's URL reopens the socket
       // ([resumeForRing]); a mint of its own now would answer the ring by attaching (N5).
       _log.info('back during a ring answer: the socket waits for the accept', {'call_id': _ringAnswerHold});
+    } else if (_returnHold) {
+      // Back again while "Stop ringing" waits for device_away (or while native is asked whether
+      // the launch was it): the hold's end reopens the socket ([_releaseReturnHold]). An attach
+      // now would answer a ring still in flight (N5).
+      _log.info('back during Stop ringing: the socket waits for device_away');
     } else if (c == StationConnection.reconnecting ||
         (c == StationConnection.disconnected && s.socket.gaveUpCause == 'heartbeat')) {
       s.socket.reconnect();
@@ -1527,7 +1552,8 @@ class StationController extends Notifier<StationView?>
   }
 
   /// How long "Stop ringing" keeps asking `device_away` (a ring in flight keeps `away_ring` on the
-  /// server until it ends) before the station attaches anyway.
+  /// server until it ends) before the station attaches anyway, without `caps=inbound`; and then how
+  /// long it waits for the station to say the agent is paused before saying it did not work.
   static const stopRingingBound = Duration(seconds: 10);
 
   /// Back from a parked `away_ring`, once native said whether the launch was "Stop ringing"
@@ -1538,6 +1564,8 @@ class StationController extends Notifier<StationView?>
       _stopRingingHere(s);
       return;
     }
+    // Another session's: moot here.
+    if (stop != null) _ring.clearStopRinging();
     _releaseReturnHold(s);
   }
 
@@ -1549,15 +1577,22 @@ class StationController extends Notifier<StationView?>
 
   /// "Stop ringing" on the away notification, the app warm: this absence only. Native declined a
   /// ring ringing at the tap (and declines one arriving in the next ring window); the station asks
-  /// `device_away` over HTTP before it attaches, since an attach during a ring would answer it
-  /// (N5). Once it applied (or after [stopRingingBound]) the socket reopens, the agent is told
-  /// "Ringing stopped. You're paused." and the app goes back behind what they were doing. No
-  /// opt-out (that is the Me card's), no IQ50 return, and hidden again in this absence the app
-  /// asks `device_away`, until the agent is back in the pool.
+  /// `device_away` over HTTP before it attaches, since an attach with `caps=inbound` during an
+  /// un-answered ring would answer it (N5). Once it applied, the socket reopens as usual, native
+  /// lets the tap go, the agent is told "Ringing stopped. You're paused." and the app goes back
+  /// behind what they were doing. Not applied within [stopRingingBound] (the answer still said
+  /// `reserved` or `away_ring`, or it failed): the socket reopens WITHOUT `caps=inbound`, which
+  /// ends an un-answered ring instead of answering it, and declares it again once the station says
+  /// where the agent stands ([_maybeRestoreInbound]); the notice waits for that. No opt-out (that
+  /// is the Me card's), no IQ50 return, and hidden again in this absence the app asks
+  /// `device_away`, until the agent is back in the pool.
   void _stopRingingHere(_Session s) {
     _log.info('Stop ringing: device_away before the station attaches');
     _ringStopped = true;
     _returnHold = true;
+    // Whatever opens the socket from here, nothing attaches with caps=inbound until device_away
+    // applied ([_returnHold] keeps it parked meanwhile; this covers any connect that slips past).
+    s.socket.declareInbound = false;
     _ringOffCheck = false;
     _ringOffReady = false;
     _ringReturn = null;
@@ -1567,15 +1602,62 @@ class StationController extends Notifier<StationView?>
     // Whatever native kept of this absence's end is moot now.
     unawaited(_ring.takeRingOff().then((_) {}, onError: (Object _) {}));
     _askDeviceAwayForStop(s.id, _now().add(stopRingingBound), stillWanted: () => identical(_s, s), done: (landed) {
-      if (!landed) _log.warn('Stop ringing: device_away did not apply in time; the station attaches anyway');
+      if (landed) {
+        s.socket.declareInbound = true;
+        _ring.clearStopRinging();
+        _releaseReturnHold(s);
+        _afterStopRinging(landed: true);
+        return;
+      }
+      _log.warn('Stop ringing: device_away did not apply in time; the station attaches without inbound calls');
+      _inboundWithheld = true;
+      _stopUnconfirmed = true;
+      _stopConfirmTimer?.cancel();
+      _stopConfirmTimer = Timer(stopRingingBound, () {
+        if (!identical(_s, s) || !_stopUnconfirmed) return;
+        _stopUnconfirmed = false;
+        _stopConfirmTimer = null;
+        _log.warn('Stop ringing: the station never said the agent is paused');
+        _afterStopRinging(landed: false);
+      });
       _releaseReturnHold(s);
-      _afterStopRinging();
     });
     _afterChange();
   }
 
+  void _cancelStopConfirm() {
+    _stopUnconfirmed = false;
+    _stopConfirmTimer?.cancel();
+    _stopConfirmTimer = null;
+  }
+
+  /// After a frame stated where the agent stands: a socket "Stop ringing" opened without
+  /// `caps=inbound` declares it again once the agent is on a pause that is not `away_ring`, or
+  /// available (no ring can be un-answered then), by attaching afresh. A "Stop ringing" still
+  /// unconfirmed is then done: paused, the agent is told and the app goes back.
+  void _maybeRestoreInbound() {
+    final s = _s;
+    if (s == null || !_inboundWithheld) return;
+    final st = _station.agentState;
+    final paused = st == AgentState.onBreak && _station.breakReasonCode != ReservedBreakCode.awayRing.wire;
+    if (!paused && st != AgentState.available) return;
+    _log.info('Stop ringing: the agent is ${paused ? 'paused' : 'available'}; inbound calls declared again');
+    _inboundWithheld = false;
+    s.socket.declareInbound = true;
+    if (_stopUnconfirmed) {
+      _cancelStopConfirm();
+      _ring.clearStopRinging();
+      if (paused) _afterStopRinging(landed: true);
+    }
+    // Not from inside the frame's own handling: the attach replaces the socket that sent it.
+    scheduleMicrotask(() {
+      if (identical(_s, s) && s.socket.declareInbound) s.socket.reconnect();
+    });
+  }
+
   /// "Stop ringing" on a cold start (no station here, [RingAnswerStation.stopRinging]): the same
-  /// `device_away` for the session the absence was in, then the notice and back behind.
+  /// `device_away` for the session the absence was in, then the notice. Native's record of the tap
+  /// is cleared only once it applied, so a process that dies first asks again on its next start.
   Future<void> stopRingingWithoutStation(String sessionId) async {
     final s = _s;
     if (s != null) {
@@ -1586,17 +1668,23 @@ class StationController extends Notifier<StationView?>
     _log.info('Stop ringing on a cold start: device_away', {'session_id': sessionId});
     final done = Completer<void>();
     _askDeviceAwayForStop(sessionId, _now().add(stopRingingBound), stillWanted: () => ref.mounted, done: (landed) {
-      if (!landed) _log.warn('Stop ringing on a cold start: device_away did not apply in time');
-      _afterStopRinging();
+      if (landed) {
+        _ring.clearStopRinging();
+      } else {
+        _log.warn('Stop ringing on a cold start: device_away did not apply in time');
+      }
+      _afterStopRinging(landed: landed);
       done.complete();
     });
     return done.future;
   }
 
-  void _afterStopRinging() {
+  /// The agent is told how "Stop ringing" went. [landed]: paused, and the app goes back behind
+  /// what they were doing. Not: the app stays in front, saying ringing did not stop.
+  void _afterStopRinging({required bool landed}) {
     if (!ref.mounted) return;
-    ref.read(ringNoticeProvider.notifier).show(RingCopy.ringingStopped);
-    if (_foreground || _s == null) _ring.moveTaskToBack();
+    ref.read(ringNoticeProvider.notifier).show(landed ? RingCopy.ringingStopped : RingCopy.stopRingingFailed);
+    if (landed && (_foreground || _s == null)) _ring.moveTaskToBack();
   }
 
   /// `device_away` for [sessionId] until it applies: answered `reserved` (a ring in flight: the
@@ -2191,6 +2279,10 @@ class StationController extends Notifier<StationView?>
     s.socket.park(reason: 'away_ring');
     _audioStoodDown = true;
     unawaited(s.audio.close());
+    // The server's clock as measured on this socket, so native times a ring on it rather than on
+    // this phone's clock, which can run fast or slow.
+    final measuredAt = _clockMeasuredAt;
+    if (measuredAt != null) _ring.setServerClock(offsetMs: _mapper.appliedOffsetMs, measuredAt: measuredAt);
     // The absence's start on the server's clock (the break's `since`), so native can tell a late
     // `ring_off` for an earlier absence from one for this.
     _ring.showAwayNotification(true, since: _awayRingSince(), sessionId: s.id);
@@ -2381,11 +2473,16 @@ class StationController extends Notifier<StationView?>
         _audioStoodDown = false;
         s.audio.open(_onDutyNotification());
       }
+      // The agent answered: inbound calls are wanted on this socket whatever "Stop ringing" held.
+      final withheld = !s.socket.declareInbound;
+      _inboundWithheld = false;
+      _cancelStopConfirm();
+      s.socket.declareInbound = true;
       // The socket first: the call adopted next makes a parked socket wanted again, and that
       // connect must use the accept's token (another mint would replace it). A socket already
       // open (back in the app before the answer) is kept: the server binds on it (the accept's
-      // "a station is already here").
-      if (!s.socket.isOpen) {
+      // "a station is already here"), unless it attached without inbound calls.
+      if (!s.socket.isOpen || withheld) {
         s.socket.useUrlOnce(accept.stationWsUrl, accept.stationTokenExpiresAt);
         s.socket.reconnect();
       }

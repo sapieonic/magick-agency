@@ -717,11 +717,17 @@ verified yet").
   answering or on a call from an earlier ring, is declined at once `busy_on_phone` (IQ70). The
   calling account is registered once per process on a ring's path (the checklist refreshes it). A
   new ring replaces one of ours still ringing (rung by its notification alone if Telecom refuses it
-  meanwhile). Otherwise the phone rings for what the server left: with the push's FCM send time and
-  a phone clock in step with it (`0 ≤ now − sent ≤` 20 s plus 2 s of slack), `ring_expires_at −
-  now`, so a push delivered late rings no longer than the server offers the call; with a clock that
-  is not in step, `ring_expires_at` less the send time (both server-side clocks, so a skewed phone
-  clock never drops a ring); at most 20 s plus 2 s of slack, timed from arrival: a self-managed
+  meanwhile). Otherwise the phone rings for what the server left, on the server's clock as far as
+  the phone knows it (`RingTiming`): with the server clock offset the station measured on its
+  socket (`setServerClock`, handed over each time the station parks for `away_ring`, trusted for
+  24 h), `ring_expires_at − (now + offset)` (never reading the server's present as before the
+  push's send time), so a push delivered late rings no longer than the server offers the call and a
+  phone clock running fast or slow changes nothing; without one, `ring_expires_at` less the push's
+  FCM send time (both server-side clocks) less the delivery delay `now − sent` clamped to 0–3 s, so
+  a phone clock running fast shortens a ring by 3 s at most and never drops it, one running slow
+  takes nothing off, and a push delivered late rings a little long (an Answer after the expiry is
+  refused); with neither, the phone's clock. The rule is continuous in the phone's clock (no
+  boundary where it jumps). At most 20 s plus 2 s of slack, timed from arrival: a self-managed
   Telecom call (`MANAGE_OWN_CALLS`, the account "Magick Agency"), whose `onShowIncomingCallUi`
   posts a `CallStyle.forIncomingCall` notification, "Inbound call · Magick Agency" (never a name or
   a number, IQ61), on the high-importance channel `magick_agency_ring` with the ringtone looped
@@ -796,16 +802,27 @@ verified yet").
 - **"Stop ringing"** on the away notification is for this absence only (the permanent switch is
   the Me card's toggle). It opens the app with an extra; native declines a ring ringing at the tap,
   and one arriving in the next ring window (an app attaching during a ring would answer it, N5),
-  and keeps the tap for Dart (`takeStopRinging`). The returning station keeps its socket parked and
-  asks `device_away` over HTTP (the server's switch from `away_ring`); while a ring is in flight the
-  answer says `reserved` (the pause queued behind the ring's offer until native's decline releases
-  it) or still `away_ring`, and it is asked again each second, up to 10 s,
-  then the station attaches anyway. Then: no IQ50 return, the banner "Ringing stopped. You're
-  paused.", and the app's task goes back (`moveTaskToBack`). Hidden again in that absence, the app
-  asks `device_away`, not `away_ring`, until the agent is back in the pool, and the paused
-  notification reads "Ringing stopped. You're paused. Open the app to take calls again." On a cold
-  start (no station in memory) the answer coordinator does the same for the session the absence was
-  in, once the gate is ready.
+  keeping that window across a process start, and keeps the tap for Dart (`peekStopRinging`), which
+  clears it (`clearStopRinging`) only once `device_away` applied; native drops a tap older than one
+  ring window plus the accept grace (35 s) unread, so it never pauses a later absence. The
+  returning station keeps its socket parked and asks `device_away` over HTTP (the server's switch
+  from `away_ring`); while a ring is in flight the answer may say `reserved` (the pause queued
+  behind the ring's offer) or still `away_ring`, and it is asked again each second, up to 10 s.
+  Coming back again meanwhile (the agent left during the wait) does not reopen the socket. Once it
+  applied: the socket reopens with `caps=inbound` as usual, the banner "Ringing stopped. You're
+  paused.", no IQ50 return, and the app's task goes back (`moveTaskToBack`). Not applied by then
+  (still `reserved` or `away_ring`, or a failure not worth retrying): the socket reopens **without**
+  `caps=inbound` (`StationSocket.declareInbound`), which ends an un-answered ring rather than
+  answering it (N5 needs the capability), and every connect stays that way until a frame says the
+  agent is on a pause other than `away_ring`, or available; then the station attaches afresh with
+  `caps=inbound`, and, paused, the banner and the move to the back follow. No such frame within
+  another 10 s: "Couldn't stop ringing. Open your station to pause.", and the app stays in front.
+  Hidden again in that absence, the app asks `device_away`, not `away_ring`, until the agent is
+  back in the pool, and the paused notification reads "Ringing stopped. You're paused. Open the app
+  to take calls again." On a cold start (no station in memory) the answer coordinator does the same
+  for the session the absence was in, once the gate is ready: applied, the banner, the move to the
+  back and the tap cleared; not, "Couldn't stop ringing. Open your station to pause.", the app in
+  front, and the tap kept for the next start inside its 35 s.
 - **The test ring.** "Send a test ring" posts `POST /push-devices/:deviceId/test-ring` (202; one per
   10 s, "You just sent one. Wait a few seconds, then try again."); the server sends a `test_ring`
   push and the phone rings locally through Telecom ("Test ring · Magick Agency", "This is how an
@@ -834,7 +851,8 @@ nothing on it yet. Change it only deliberately, on both sides at once, and updat
 the same commit. Changed 2026-11-13 (the review fixes): `showAwayNotification` names its absence,
 `testRingReceived` says whether the call was shown, and `takeRingOff`, `takeStopRinging`,
 `moveTaskToBack` and `holdOverLockScreen` were added; `stopRingingTapped` was removed (Dart takes
-the tap instead).
+the tap instead). Changed again 2026-11-13: `takeStopRinging` became `peekStopRinging` (not
+cleared on read) with `clearStopRinging`, and `setServerClock` was added.
 
 One `MethodChannel` named **`magick_agency/ring`**, standard codec, used in both directions. Every
 argument and result is a map with string keys (or `null`, a string, a bool); ids and tokens are
@@ -854,7 +872,9 @@ logged on either side.
 | `showAwayNotification` | `{on, since?, session_id?}`: `since` the absence's start (the break's `since`), both optional | `null`: shows or removes the ongoing "Away · this phone rings for inbound calls" notification (actions "Back to calls", "Stop ringing"). On: native keeps the absence (across a process start) to drop a late `ring_off` for an earlier one, and drops a `ring_off` or "Stop ringing" never taken |
 | `showMissedRing` | none | `null`: posts the local "Missed inbound call" notification (no name, no number) |
 | `takeRingOff` | none | `{session_id, away_since, reason}` (each may be `null`) or `null`: the `ring_off` native took for the absence it showed. **Cleared on read** |
-| `takeStopRinging` | none | `{session_id, since}` (each may be `null`) or `null`: the away notification's "Stop ringing" Dart has not taken, with the absence it was tapped in. **Cleared on read** |
+| `peekStopRinging` | none | `{session_id, since}` (each may be `null`) or `null`: the away notification's "Stop ringing" Dart has not cleared, with the absence it was tapped in. **Not cleared on read**: Dart clears it once `device_away` applied, so a process that dies first reads it again. Native drops one tapped more than 35 s ago (one ring window plus the accept grace), or when a new absence shows, and answers `null` for it |
+| `clearStopRinging` | none | `null`: the "Stop ringing" `peekStopRinging` read is done with (`device_away` applied, or nothing to pause) |
+| `setServerClock` | `{offset_ms, measured_at}`: `offset_ms` an int, how far the server's clock reads ahead of the phone's (negative: behind); `measured_at` when the station measured it (the phone's clock, ISO 8601 UTC) | `null`: native keeps it (across a process start) and times a ring on the server's clock with it while it is no more than 24 h old |
 | `moveTaskToBack` | none | `bool`: the app's task went to the back |
 | `holdOverLockScreen` | `{on}`: `bool` | `null`: while on, `MainActivity` stays over the lock screen after the ring's Answered state ends (a call answered from a ring, until its outcome is saved or it leaves) |
 
@@ -891,11 +911,20 @@ always Dart's.
 - **What Dart has not heard is kept.** Each native → Dart call reports whether Dart's handler took
   it: an answer stays in `pendingAnswer` (app-private preferences, across a process start; cleared on
   read, on bind and on any end, and dropped once the grace has lapsed), and an unheard `expired`
-  posts the missed notification natively. A "Stop ringing" tap and an accepted `ring_off` wait in
-  the store for Dart to take them.
+  posts the missed notification natively. An accepted `ring_off` waits in the store for Dart to
+  take it; a "Stop ringing" tap waits for Dart to clear it, for 35 s at most.
 - **"Stop ringing"** (`MainActivity`, before Flutter hears of the launch) declines a ring ringing
   then, and any ring arriving in the next ring window (`RingWire.STOP_RINGING_HOLD_MS`), as
-  `declined` (not a miss).
+  `declined` (not a miss). The tap and the window's end go to the store in one `commit` (the
+  launch may be a cold start in a new process, and a process restarted inside the window must
+  still decline); a restored window is kept only while it has at most one ring window left (a
+  phone clock set back never holds rings off for longer). The tap is dropped unread once older
+  than `RingWire.STOP_RINGING_KEEP_MS` (35 s); Dart's clear is an `apply` (a lost one only leaves
+  a tap that lapses).
+- **The ring's time left** (`RingTiming.remainingMs`) reads the offset from `setServerClock`
+  (`ServerClockOffset`, fresh for `RingWire.SERVER_CLOCK_MAX_AGE_MS`, 24 h; stored with `apply`,
+  as Dart says it again at every park), else the push's send time less at most
+  `RingWire.DELIVERY_CAP_MS` (3 s) of delivery, as "The ring" above says.
 - **`reportBound` during a ring** (the agent opened the app by its icon and the attach answered it,
   N5) marks the call answered and active without an answer post.
 - **The full-screen intent opens `RingActivity`**, not `MainActivity` with an extra, so the lock
@@ -914,8 +943,11 @@ always Dart's.
   in wrap-up queues `away_ring`. Once `away_ring` applies with nothing on the line, the station
   socket is parked, the on-duty service stops and `showAwayNotification(true, since, session_id)`;
   the station's own "You're paused" notification is not shown for it.
-- **Coming back** from a parked `away_ring` asks `takeStopRinging` first ("Stop ringing", above),
-  else reopens the socket (`showAwayNotification(false)`). IQ50's 30 s return waits for the
+- **Coming back** from a parked `away_ring` asks `peekStopRinging` first ("Stop ringing", above),
+  else reopens the socket (`showAwayNotification(false)`); a tap for another session is cleared.
+  "Stop ringing" clears the tap once `device_away` applied (or once the station's frames say the
+  agent is paused, after an attach without `caps=inbound`). Parking for `away_ring` hands native
+  the server clock offset measured on the socket (`setServerClock`), when a pong has measured it. IQ50's 30 s return waits for the
   reopened socket's `ready`, and reads the absence from the return's `since`. The ring-off banner
   needs a concrete reason (`ringOffReasonOnReturn`): `takeRingOff` for this absence
   (`ringOffEndsAbsence`), two `ringEnded` misses while away, the device status read then, or 4 h
@@ -930,8 +962,9 @@ always Dart's.
   `cancelled` when it leaves before binding; `holdOverLockScreen(true)` while it is on the station,
   `false` once it leaves (its outcome saved). A push offer does not chime, and the offer backstop
   keeps it until 10 s past `accepted_at` + the accept grace (`inboundOfferStaleAt`). On a cold start
-  with no pending answer, the coordinator takes a "Stop ringing" and pauses that session
-  (`StationController.stopRingingWithoutStation`).
+  with no pending answer, the coordinator reads a "Stop ringing" (`peekStopRinging`) and pauses that
+  session (`StationController.stopRingingWithoutStation`, which clears it once `device_away`
+  applied); a tap with no session is cleared.
 - `ringEnded` `expired` or `accept_lapsed` posts `showMissedRing`, except for a call the agent
   answered.
 

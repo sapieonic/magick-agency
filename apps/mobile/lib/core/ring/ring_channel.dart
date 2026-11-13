@@ -49,11 +49,21 @@ abstract interface class RingChannel {
   /// station, through its outcome; native otherwise lets go once the call ends.
   Future<void> holdOverLockScreen(bool on);
 
-  /// The away notification's "Stop ringing" that Dart has not taken yet, or null. Cleared on
-  /// read; a new absence drops one never read. Native has already declined a ring ringing then
+  /// The away notification's "Stop ringing" that Dart has not cleared yet, or null. Left in
+  /// place: Dart clears it ([clearStopRinging]) once `device_away` applied, so a process that dies
+  /// before then still finds it. Native drops one older than one ring window plus the accept grace,
+  /// and a new absence drops one never cleared. Native has already declined a ring ringing then
   /// (and declines one arriving in the next ring window): the station must ask `device_away`
   /// before it attaches, or an attach during a ring would answer it (N5).
-  Future<RingStopRequest?> takeStopRinging();
+  Future<RingStopRequest?> peekStopRinging();
+
+  /// The "Stop ringing" [peekStopRinging] read is done with: `device_away` applied.
+  Future<void> clearStopRinging();
+
+  /// The server's clock reads [offsetMs] ahead of this phone's (negative: behind), as the station
+  /// measured at [measuredAt] (this phone's clock). Native times a ring on the server's clock with
+  /// it while it is fresh.
+  Future<void> setServerClock({required int offsetMs, required DateTime measuredAt});
 
   /// Sends the app's task to the back (Android's `moveTaskToBack`): after "Stop ringing" the
   /// agent goes back to what they were doing. False when native could not.
@@ -378,7 +388,14 @@ final class MethodRingChannel implements RingChannel {
   Future<RingOffRecord?> takeRingOff() async => RingOffRecord.tryRead(await _invoke<Object?>('takeRingOff'));
 
   @override
-  Future<RingStopRequest?> takeStopRinging() async => RingStopRequest.tryRead(await _invoke<Object?>('takeStopRinging'));
+  Future<RingStopRequest?> peekStopRinging() async => RingStopRequest.tryRead(await _invoke<Object?>('peekStopRinging'));
+
+  @override
+  Future<void> clearStopRinging() => _invoke<void>('clearStopRinging');
+
+  @override
+  Future<void> setServerClock({required int offsetMs, required DateTime measuredAt}) =>
+      _invoke<void>('setServerClock', {'offset_ms': offsetMs, 'measured_at': measuredAt.toUtc().toIso8601String()});
 
   @override
   Future<bool> moveTaskToBack() async => await _invoke<bool>('moveTaskToBack') ?? false;
