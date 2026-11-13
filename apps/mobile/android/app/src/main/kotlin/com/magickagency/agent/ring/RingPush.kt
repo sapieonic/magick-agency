@@ -30,6 +30,12 @@ object RingWire {
      */
     const val CLOCK_SLACK_MS = 2_000L
 
+    /**
+     * How much older than the absence the phone shows a `ring_off`'s absence may start and still be
+     * taken as ending it: the two starts are stamped by different writes on the server.
+     */
+    const val RING_OFF_TOLERANCE_MS = 2_000L
+
     /** `AGENCY_INBOUND_RING_RESULTS`: a `ring_cancel`'s `reason`, and `ringEnded`'s. */
     val RING_RESULTS = listOf(
         "answered", "declined", "expired", "accept_lapsed", "busy_on_phone", "push_failed", "caller_left",
@@ -65,8 +71,12 @@ sealed class RingPush {
     /** Stop ringing [callId]; [reason] is one of [RingWire.RING_RESULTS] (`cancelled` when absent or unknown). */
     data class Cancel(val callId: String, val reason: String) : RingPush()
 
-    /** The server ended this device's `away_ring`; [reason] is one of [RingWire.RING_OFF_REASONS], or null when unknown. */
-    data class Off(val sessionId: String?, val reason: String?) : RingPush()
+    /**
+     * The server ended this device's `away_ring`; [reason] is one of [RingWire.RING_OFF_REASONS], or
+     * null when unknown. [awaySinceMs]: the start of the absence it ends (`away_since`, epoch ms);
+     * null from a server older than the field.
+     */
+    data class Off(val sessionId: String?, val reason: String?, val awaySinceMs: Long? = null) : RingPush()
 
     /** The settings card's "Send a test ring": ring locally, no call behind it. */
     data object Test : RingPush()
@@ -91,6 +101,7 @@ object RingPushParser {
             "ring_off" -> RingPush.Off(
                 sessionId = data.nonBlank("session_id"),
                 reason = data["reason"]?.takeIf { it in RingWire.RING_OFF_REASONS },
+                awaySinceMs = data.nonBlank("away_since")?.let(::parseIsoMillis),
             )
             "test_ring" -> RingPush.Test
             else -> null

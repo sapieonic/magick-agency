@@ -47,7 +47,8 @@ final class _RegistrationStationRing implements StationRing {
   Stream<RingEvent> get events => _channel.events;
 
   @override
-  void showAwayNotification(bool on) => _channel.showAwayNotification(on);
+  void showAwayNotification(bool on, {DateTime? since, String? sessionId}) =>
+      _channel.showAwayNotification(on, since: since, sessionId: sessionId);
 
   @override
   void reportBound(String callId) => _channel.reportBound(callId);

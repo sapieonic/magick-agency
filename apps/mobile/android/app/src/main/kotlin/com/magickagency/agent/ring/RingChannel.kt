@@ -96,10 +96,13 @@ internal object RingChannel {
                 if (on == null) {
                     result.error("bad_args", "showAwayNotification needs on", null)
                 } else {
-                    RingNotifications.showAway(context, on)
+                    // `since` and `session_id` are optional: the absence the notification is for.
+                    val since = call.argument<String>("since")?.let(RingPushParser::parseIsoMillis)
+                    RingCoordinator.showAway(context, on, since, call.argument<String>("session_id"))
                     result.success(null)
                 }
             }
+            "takeRingOff" -> result.success(RingCoordinator.takeRingOff(context)?.toChannelMap())
             "showMissedRing" -> {
                 RingNotifications.showMissed(context)
                 result.success(null)
@@ -107,6 +110,13 @@ internal object RingChannel {
             else -> result.notImplemented()
         }
     }
+
+    /** `takeRingOff`'s `{session_id, away_since, reason}`, each null when unknown. */
+    private fun RingEffect.RingOff.toChannelMap(): Map<String, String?> = mapOf(
+        "session_id" to sessionId,
+        "away_since" to awaySinceMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+        "reason" to reason,
+    )
 
     private inline fun withCallId(call: MethodCall, result: MethodChannel.Result, block: (String) -> Unit) {
         val id = call.argument<String>("call_id")

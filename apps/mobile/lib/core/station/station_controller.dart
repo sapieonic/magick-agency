@@ -1987,8 +1987,15 @@ class StationController extends Notifier<StationView?>
     s.socket.park(reason: 'away_ring');
     _audioStoodDown = true;
     unawaited(s.audio.close());
-    _ring.showAwayNotification(true);
+    // The absence's start on the server's clock (the break's `since`), so native can tell a late
+    // `ring_off` for an earlier absence from one for this.
+    _ring.showAwayNotification(true, since: _awayRingSince(), sessionId: s.id);
   }
+
+  /// When this absence on `away_ring` began, on the server's clock: the break's `since` while the
+  /// station shows it, else when the pause was asked for.
+  DateTime _awayRingSince() =>
+      (_station.effectiveState == AgentState.onBreak ? _station.agentStateSince : null) ?? _serverInstant(_awayAskedNowAt ?? _now());
 
   /// The station stops here (closed, 4404, 4409): nothing of Mode B may outlive it.
   void _releaseRing() {

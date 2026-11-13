@@ -58,6 +58,14 @@ sealed class RingState {
     data class Ended(val callId: String, val reason: String) : RingState()
 }
 
+/**
+ * The absence (`away_ring`) the away notification is for: [sessionId] and [sinceMs] (its start on
+ * the server's clock, epoch ms) as Dart said when it showed it, either null when unknown. [shown]:
+ * the notification is up; false once the agent came back or a `ring_off` ended it (kept as the
+ * latest absence this phone knew of).
+ */
+data class AwayAbsence(val sessionId: String?, val sinceMs: Long?, val shown: Boolean = true)
+
 /** Where an Answer came from. Only Telecom's (a headset or car button) has no activity launching with it. */
 enum class AnswerSource { NOTIFICATION, LOCK_SCREEN, TELECOM }
 
@@ -149,6 +157,9 @@ sealed class RingEvent {
     /** `reportEnded(call_id, reason)` from Dart: `ended`, `accept_failed` or `cancelled`. */
     data class EndedByApp(val callId: String, val reason: String) : RingEvent()
 
+    /** Dart showed the away notification for an absence ([AwayAbsence], shown), or took it down (null [absence]). */
+    data class AwayChanged(val absence: AwayAbsence?) : RingEvent()
+
     /** The ringing notification for [callId] was handed to the system: [posted] false when it was refused (notifications off). */
     data class IncomingShown(val callId: String, val posted: Boolean) : RingEvent()
 }
@@ -159,7 +170,7 @@ enum class EndCause { LOCAL, REMOTE, REJECTED, MISSED, CANCELED, ANSWERED_ELSEWH
 enum class TimerKind { RING, GRACE }
 
 /** Why an event changed nothing (for the log and the tests). */
-enum class DropReason { DUPLICATE, LATE, EXPIRED, STALE, OTHER_CALL, BUSY_WITH_CALL, BUSY_ON_PHONE, ALREADY_ANSWERED, BOUND }
+enum class DropReason { DUPLICATE, LATE, EXPIRED, STALE, OTHER_CALL, BUSY_WITH_CALL, BUSY_ON_PHONE, ALREADY_ANSWERED, BOUND, STALE_RING_OFF }
 
 sealed class RingEffect {
     /** Ring through Telecom (falling back to the notification alone), with the incoming CallStyle notification. */
@@ -209,8 +220,11 @@ sealed class RingEffect {
      */
     data class EmitTestRing(val shown: Boolean) : RingEffect()
 
-    /** A `ring_off`: drop the away notification and say why ([reason] null when unknown). */
-    data class RingOff(val reason: String?) : RingEffect()
+    /**
+     * A `ring_off` for the absence the phone shows: drop the away notification, say why ([reason]
+     * null when unknown), and keep it for Dart (`takeRingOff`) with the absence it ended.
+     */
+    data class RingOff(val reason: String?, val sessionId: String? = null, val awaySinceMs: Long? = null) : RingEffect()
 
     data class Dropped(val reason: DropReason) : RingEffect()
 }
@@ -231,6 +245,15 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     /** The test ring whose outcome Dart has been told ([RingEffect.EmitTestRing]). */
     private var testReported: String? = null
 
+    /** The latest absence the away notification was shown for; null when the phone knows of none. */
+    var away: AwayAbsence? = null
+        private set
+
+    /** A process start: the absence the store kept (the notification outlives the process). */
+    fun restoreAway(absence: AwayAbsence?) {
+        away = absence
+    }
+
     fun handle(event: RingEvent): List<RingEffect> = when (event) {
         is RingEvent.Push -> onPush(event)
         is RingEvent.AnswerTapped -> onAnswer(event)
@@ -242,6 +265,11 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         is RingEvent.Bound -> onBound(event.callId)
         is RingEvent.EndedByApp -> onEndedByApp(event.callId, event.reason)
         is RingEvent.IncomingShown -> onShown(event.callId, event.posted)
+        is RingEvent.AwayChanged -> {
+            // Taken down: kept as the latest absence, no longer shown.
+            away = event.absence ?: away?.copy(shown = false)
+            emptyList()
+        }
     }
 
     /** The call a ring is live for (ringing, answering or answered), if any. */
@@ -260,7 +288,7 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         is RingPush.Ring -> onRing(p, e.nowMs, e.sentAtMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
         is RingPush.Test -> onTestRing(e.nowMs, e.phone.busy(ownRingLive = state is RingState.Ringing))
         is RingPush.Cancel -> onCancel(p)
-        is RingPush.Off -> onOff(p)
+        is RingPush.Off -> onOff(p, e.sentAtMs)
     }
 
     private fun onRing(ring: RingPush.Ring, now: Long, sentAt: Long?, busy: Boolean): List<RingEffect> {
@@ -367,8 +395,11 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         }
     }
 
-    private fun onOff(off: RingPush.Off): List<RingEffect> {
-        val out = mutableListOf<RingEffect>(RingEffect.RingOff(off.reason))
+    private fun onOff(off: RingPush.Off, sentAtMs: Long?): List<RingEffect> {
+        // A ring_off delayed past the end of its absence must not end the next one.
+        if (!acceptsRingOff(away, off, sentAtMs)) return listOf(RingEffect.Dropped(DropReason.STALE_RING_OFF))
+        away = away?.copy(shown = false)
+        val out = mutableListOf<RingEffect>(RingEffect.RingOff(off.reason, off.sessionId, off.awaySinceMs))
         val s = state
         if (s is RingState.Ringing) {
             out += end(s.call, "cancelled", EndCause.CANCELED, TimerKind.RING, emit = !s.call.test, missedIfUnheard = false)
@@ -521,6 +552,31 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     companion object {
         const val TEST_CALL_PREFIX = "test_ring:"
         const val TEST_REASON = "test"
+
+        /**
+         * Whether a `ring_off` ends the absence the phone knows of ([away]), or is stale (a carrier
+         * delivered it after that absence was over and maybe another began):
+         *
+         *  - The phone knows of no absence (none shown since the process's store began): taken, as
+         *    before the rule.
+         *  - The latest absence is no longer shown (the agent came back, or a `ring_off` already
+         *    ended it): dropped. The app said why on the return itself.
+         *  - Another session's: dropped.
+         *  - With `away_since`: taken when its absence started no more than
+         *    [RingWire.RING_OFF_TOLERANCE_MS] before the shown one's (an older absence's is dropped).
+         *  - Without it (a server older than the field): taken when the push was sent no more than
+         *    the tolerance before the shown absence began (a `ring_off` sent during the shown absence
+         *    can only end it), or when the send time is unknown.
+         */
+        fun acceptsRingOff(away: AwayAbsence?, off: RingPush.Off, sentAtMs: Long?): Boolean {
+            val a = away ?: return true
+            if (!a.shown) return false
+            if (off.sessionId != null && a.sessionId != null && off.sessionId != a.sessionId) return false
+            val since = a.sinceMs ?: return true
+            val offSince = off.awaySinceMs
+            if (offSince != null) return offSince >= since - RingWire.RING_OFF_TOLERANCE_MS
+            return sentAtMs == null || sentAtMs <= 0 || sentAtMs >= since - RingWire.RING_OFF_TOLERANCE_MS
+        }
 
         /** A `ring_cancel` reason as a Telecom end. */
         fun causeFor(reason: String): EndCause = when (reason) {

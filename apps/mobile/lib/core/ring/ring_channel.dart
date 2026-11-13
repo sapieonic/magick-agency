@@ -37,8 +37,10 @@ abstract interface class RingChannel {
   /// Native disconnects the Telecom connection for [callId] and drops its notification.
   Future<void> reportEnded(String callId, RingEndReason reason);
 
-  /// Shows or removes the ongoing "Away · this phone rings for inbound calls" notification.
-  Future<void> showAwayNotification(bool on);
+  /// Shows or removes the ongoing "Away · this phone rings for inbound calls" notification. On:
+  /// for the absence that began at [since] (server clock) in [sessionId], which native keeps so a
+  /// `ring_off` for an earlier absence, delivered late, is dropped.
+  Future<void> showAwayNotification(bool on, {DateTime? since, String? sessionId});
 
   /// Posts the local "Missed inbound call" notification (no name, no number).
   Future<void> showMissedRing();
@@ -286,7 +288,11 @@ final class MethodRingChannel implements RingChannel {
       _invoke<void>('reportEnded', {'call_id': callId, 'reason': reason.wire});
 
   @override
-  Future<void> showAwayNotification(bool on) => _invoke<void>('showAwayNotification', {'on': on});
+  Future<void> showAwayNotification(bool on, {DateTime? since, String? sessionId}) => _invoke<void>('showAwayNotification', {
+        'on': on,
+        if (since != null) 'since': since.toUtc().toIso8601String(),
+        'session_id': ?sessionId,
+      });
 
   @override
   Future<void> showMissedRing() => _invoke<void>('showMissedRing');

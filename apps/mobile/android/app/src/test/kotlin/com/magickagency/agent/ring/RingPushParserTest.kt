@@ -98,6 +98,21 @@ class RingPushParserTest {
     }
 
     @Test
+    fun aRingOffNamesTheAbsenceItEnds() {
+        // The contract's fixture (`push.json` push_ring_off).
+        assertEquals(
+            RingPush.Off("6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12", "ring_missed", java.time.Instant.parse("2026-11-02T07:58:41.120Z").toEpochMilli()),
+            RingPushParser.parse(
+                mapOf(
+                    "type" to "ring_off", "session_id" to "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12", "reason" to "ring_missed",
+                    "away_since" to "2026-11-02T07:58:41.120Z",
+                ),
+            ),
+        )
+        assertEquals(RingPush.Off(null, "max_age", null), RingPushParser.parse(mapOf("type" to "ring_off", "reason" to "max_age", "away_since" to "soon")))
+    }
+
+    @Test
     fun aRingOffWithAnUnknownReasonStillCounts() {
         assertEquals(RingPush.Off(null, null), RingPushParser.parse(mapOf("type" to "ring_off", "reason" to "something_new")))
     }

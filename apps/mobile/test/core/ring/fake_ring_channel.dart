@@ -58,8 +58,14 @@ class FakeRingChannel implements RingChannel {
   @override
   Future<void> reportEnded(String callId, RingEndReason reason) async => calls.add('reportEnded:$callId:${reason.wire}');
 
+  /// The absence the last `showAwayNotification(true)` named.
+  ({DateTime? since, String? sessionId})? awayShownFor;
+
   @override
-  Future<void> showAwayNotification(bool on) async => calls.add('showAwayNotification:$on');
+  Future<void> showAwayNotification(bool on, {DateTime? since, String? sessionId}) async {
+    calls.add('showAwayNotification:$on');
+    if (on) awayShownFor = (since: since, sessionId: sessionId);
+  }
 
   @override
   Future<void> showMissedRing() async => calls.add('showMissedRing');
@@ -82,7 +88,8 @@ class FakeStationRing implements StationRing {
   Stream<RingEvent> get events => channel.events;
 
   @override
-  void showAwayNotification(bool on) => channel.showAwayNotification(on);
+  void showAwayNotification(bool on, {DateTime? since, String? sessionId}) =>
+      channel.showAwayNotification(on, since: since, sessionId: sessionId);
 
   @override
   void reportBound(String callId) => channel.reportBound(callId);

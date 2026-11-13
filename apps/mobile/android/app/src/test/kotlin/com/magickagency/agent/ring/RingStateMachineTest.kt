@@ -102,7 +102,7 @@ class RingStateMachineTest {
     @Test
     fun aRingOffWhileIdleOnlyDropsTheAwayNotification() {
         val m = RingStateMachine()
-        assertEquals(listOf(RingOff("ring_missed")), m.handle(push(RingPush.Off("sess-1", "ring_missed"))))
+        assertEquals(listOf(RingOff("ring_missed", "sess-1")), m.handle(push(RingPush.Off("sess-1", "ring_missed"))))
         assertEquals(RingState.Idle, m.state)
     }
 
@@ -270,7 +270,7 @@ class RingStateMachineTest {
         val m = ringing()
         assertEquals(
             listOf(
-                RingOff("flag_off"),
+                RingOff("flag_off", "sess-1"),
                 CancelTimer(TimerKind.RING, "call-a"),
                 Disconnect("call-a", EndCause.CANCELED),
                 EmitEnded("call-a", "cancelled", missedIfUnheard = false),
@@ -756,5 +756,71 @@ class RingStateMachineTest {
         val fx = ringing().handle(RingEvent.AnswerTapped("call-a", t0, AnswerSource.NOTIFICATION)) +
             ringing().handle(RingEvent.DeclineTapped("call-a"))
         for (e in fx) assertFalse(e.toString().contains("token-a"), "$e")
+    }
+
+    // ─── A ring_off for the absence the phone shows, not an earlier one ─────
+
+    private val absenceA = t0 - 3_600_000
+    private val absenceB = t0 - 60_000
+
+    private fun awayFor(since: Long, session: String = "sess-1"): RingStateMachine =
+        RingStateMachine().also { it.handle(RingEvent.AwayChanged(AwayAbsence(session, since))) }
+
+    @Test
+    fun aRingOffDelayedPastItsAbsenceDoesNotEndTheNextOne() {
+        val m = awayFor(absenceB)
+        m.handle(push(ringA))
+        assertEquals(
+            listOf(Dropped(DropReason.STALE_RING_OFF)),
+            m.handle(push(RingPush.Off("sess-1", "ring_missed", absenceA), sentAt = absenceA + 1_000)),
+        )
+        assertIs<RingState.Ringing>(m.state, "the ring of the absence shown rings on")
+        assertEquals(AwayAbsence("sess-1", absenceB), m.away, "and its notification stays")
+    }
+
+    @Test
+    fun aRingOffForTheShownAbsenceEndsIt() {
+        val m = awayFor(absenceB)
+        val fx = m.handle(push(RingPush.Off("sess-1", "ring_missed", absenceB - 1_500)))
+        assertEquals(listOf(RingOff("ring_missed", "sess-1", absenceB - 1_500)), fx, "inside the 2 s tolerance")
+        assertEquals(false, m.away?.shown)
+        // A second (a duplicate delivery): the absence is over.
+        assertEquals(listOf(Dropped(DropReason.STALE_RING_OFF)), m.handle(push(RingPush.Off("sess-1", "ring_missed", absenceB))))
+    }
+
+    @Test
+    fun aRingOffAfterTheAgentCameBackIsDropped() {
+        val m = awayFor(absenceB)
+        m.handle(RingEvent.AwayChanged(null))
+        assertEquals(AwayAbsence("sess-1", absenceB, shown = false), m.away, "kept as the latest absence")
+        assertEquals(listOf(Dropped(DropReason.STALE_RING_OFF)), m.handle(push(RingPush.Off("sess-1", "flag_off", absenceB))))
+    }
+
+    @Test
+    fun anotherSessionsRingOffIsDropped() {
+        assertEquals(
+            listOf(Dropped(DropReason.STALE_RING_OFF)),
+            awayFor(absenceB).handle(push(RingPush.Off("sess-0", "taken_over", absenceB))),
+        )
+    }
+
+    @Test
+    fun withoutAwaySinceTheSendTimeDecides() {
+        // An older server: sent during the shown absence, it can only end that one.
+        assertEquals(listOf(RingOff("ring_missed", "sess-1", null)), awayFor(absenceB).handle(push(RingPush.Off("sess-1", "ring_missed"), sentAt = absenceB + 30_000)))
+        // Sent before the shown absence began: an earlier absence's.
+        assertEquals(
+            listOf(Dropped(DropReason.STALE_RING_OFF)),
+            awayFor(absenceB).handle(push(RingPush.Off("sess-1", "ring_missed"), sentAt = absenceB - 10_000)),
+        )
+        // No send time either: taken, as before the rule.
+        assertEquals(listOf(RingOff("ring_missed", "sess-1", null)), awayFor(absenceB).handle(push(RingPush.Off("sess-1", "ring_missed"))))
+    }
+
+    @Test
+    fun aPhoneThatKnowsOfNoAbsenceTakesARingOff() {
+        assertTrue(RingStateMachine.acceptsRingOff(null, RingPush.Off(null, "ring_missed", absenceA), null))
+        val restored = RingStateMachine().also { it.restoreAway(AwayAbsence("sess-1", absenceB)) }
+        assertEquals(listOf(Dropped(DropReason.STALE_RING_OFF)), restored.handle(push(RingPush.Off("sess-1", "ring_missed", absenceA))), "a process start keeps the absence")
     }
 }

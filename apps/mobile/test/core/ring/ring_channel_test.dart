@@ -40,4 +40,19 @@ void main() {
     await sub.cancel();
     await expectLater(nativeCalls('ringEnded', {'call_id': 'call-1', 'reason': 'expired'}), throwsA(isA<PlatformException>()));
   });
+
+  test('showAwayNotification names the absence: since (ISO, UTC) and the session; both optional', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(const MethodChannel(MethodRingChannel.channelName), (call) async {
+      calls.add(call);
+      return null;
+    });
+    final channel = MethodRingChannel();
+    await channel.showAwayNotification(true, since: DateTime.utc(2026, 11, 2, 7, 58, 41, 120), sessionId: 'sess-1');
+    await channel.showAwayNotification(false);
+    expect(calls.map((c) => c.arguments), [
+      {'on': true, 'since': '2026-11-02T07:58:41.120Z', 'session_id': 'sess-1'},
+      {'on': false},
+    ]);
+  });
 }

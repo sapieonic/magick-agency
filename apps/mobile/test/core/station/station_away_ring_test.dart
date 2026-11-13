@@ -94,6 +94,8 @@ void main() {
         expect(app.socket.closed, isTrue, reason: 'parked: the server keeps an away_ring session with no socket');
         expect(app.engine.calls, contains('fgs.stop'));
         expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true']);
+        expect(r.channel.awayShownFor, (since: DateTime.utc(2026, 11, 1, 9), sessionId: 'sess-1'),
+            reason: 'the absence it shows, for native to tell a late ring_off from this one');
         expect(app.notifier.calls, isNot(contains('paused')));
         async.elapse(const Duration(minutes: 5));
         expect(app.connector.attempts, 1, reason: 'never reconnected while away');

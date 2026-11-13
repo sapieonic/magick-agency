@@ -15,8 +15,9 @@ abstract interface class StationRing {
   /// What native tells Dart (the station counts the misses while away).
   Stream<RingEvent> get events;
 
-  /// The ongoing "Away · this phone rings for inbound calls" notification.
-  void showAwayNotification(bool on);
+  /// The ongoing "Away · this phone rings for inbound calls" notification, for the absence that
+  /// began at [since] (server clock) in [sessionId]: native drops a `ring_off` for an earlier one.
+  void showAwayNotification(bool on, {DateTime? since, String? sessionId});
 
   /// A push offer's audio bound on the station.
   void reportBound(String callId);
@@ -40,7 +41,7 @@ final class _NoRing implements StationRing {
   Stream<RingEvent> get events => const Stream<RingEvent>.empty();
 
   @override
-  void showAwayNotification(bool on) {}
+  void showAwayNotification(bool on, {DateTime? since, String? sessionId}) {}
 
   @override
   void reportBound(String callId) {}

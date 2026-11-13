@@ -43,7 +43,7 @@ internal object RingCoordinator {
         app?.let { return it }
         val a = context.applicationContext
         app = a
-        store = RingStore(a)
+        store = RingStore(a).also { machine.restoreAway(it.away) }
         api = RingApi(a)
         return a
     }
@@ -203,6 +203,27 @@ internal object RingCoordinator {
         }
     }
 
+    /**
+     * `showAwayNotification`: the away notification up for the absence that began at [sinceMs]
+     * (server clock) in [sessionId], or down. A new absence drops a `ring_off` Dart never took (it
+     * was for an earlier one). Main thread.
+     */
+    fun showAway(context: Context, on: Boolean, sinceMs: Long?, sessionId: String?) {
+        val a = init(context)
+        RingNotifications.showAway(a, on)
+        if (on) store?.ringOff = null
+        dispatch(RingEvent.AwayChanged(if (on) AwayAbsence(sessionId, sinceMs) else null))
+        store?.away = machine.away
+    }
+
+    /** `takeRingOff`: the `ring_off` that ended the shown absence, once (cleared on read). Main thread. */
+    fun takeRingOff(context: Context): RingEffect.RingOff? {
+        init(context)
+        val off = store?.ringOff
+        store?.ringOff = null
+        return off
+    }
+
     /** The away notification's "Stop ringing" ([com.magickagency.agent.MainActivity]). Main thread. */
     fun stopRingingTapped(context: Context) {
         init(context)
@@ -308,7 +329,11 @@ internal object RingCoordinator {
                 "ringEnded", mapOf("call_id" to effect.callId, "reason" to effect.reason),
             ) { heard -> if (!heard && effect.missedIfUnheard) RingNotifications.showMissed(a) }
             is RingEffect.EmitTestRing -> RingChannel.invoke("testRingReceived", mapOf("shown" to effect.shown))
-            is RingEffect.RingOff -> RingNotifications.showRingOff(a, effect.reason)
+            is RingEffect.RingOff -> {
+                store?.away = machine.away
+                store?.ringOff = effect
+                RingNotifications.showRingOff(a, effect.reason)
+            }
             is RingEffect.Dropped -> Log.i(TAG, "Ring event dropped: ${effect.reason}")
         }
     }
