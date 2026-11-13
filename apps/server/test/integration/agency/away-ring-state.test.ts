@@ -152,12 +152,12 @@ describe('the away_ring Lua (real Redis)', () => {
 
   it('enters only from the states asked, and never past the available guard', async () => {
     const s = randomUUID();
-    await sm().set(s, 'break');
+    await sm().set(s, 'break', { breakReason: 'device_away' });
     expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['available'] })).toEqual({ ok: false, reason: 'wrong_state', state: 'break' });
     expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] })).toEqual({ ok: true });
 
     const manual = randomUUID();
-    await sm().set(manual, 'break');
+    await sm().set(manual, 'break', { breakReason: 'device_away' });
     await sm().claimManual(manual, 'mc-1');
     expect(await sm().enterAwayRing(manual, { ttlMs: 60_000, fromStates: ['break'] })).toMatchObject({ ok: false, reason: 'manual_call_live' });
 
@@ -174,11 +174,15 @@ describe('the away_ring Lua (real Redis)', () => {
     await sm().set(s, 'available');
     await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['available'] });
     // The agent's own catalog break (the set), written over away_ring: no ring.
-    await sm().set(s, 'break');
-    expect(await sm().get(s)).toMatchObject({ state: 'break', ring: false });
+    await sm().set(s, 'break', { breakReason: 'lunch' });
+    expect(await sm().get(s)).toMatchObject({ state: 'break', ring: false, breakReason: 'lunch' });
     // ...so the inbound reservation does not take it, and away_ring is never re-entered by a ring.
     expect(await sm().reserveForInbound(s, 'ib-1', ['break'])).toEqual({ ok: false, reason: 'wrong_state', state: 'break' });
+    // ...nor by the switch: from `break`, only `device_away` is switched to away_ring.
+    expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] })).toEqual({ ok: false, reason: 'wrong_state', state: 'break' });
+    expect(await sm().get(s)).toMatchObject({ state: 'break', ring: false, breakReason: 'lunch' });
 
+    await sm().set(s, 'break', { breakReason: 'device_away' });
     await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] });
     await sm().transition(s, 'break', 'available');
     expect((await sm().get(s))!.ring).toBe(false);
@@ -186,6 +190,61 @@ describe('the away_ring Lua (real Redis)', () => {
     await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['available'] });
     await sm().set(s, 'available');
     expect(await sm().get(s)).toMatchObject({ state: 'available', ring: false });
+  });
+
+  it("the hash records the break's reason with every write of break, and every other write clears it", async () => {
+    const s = randomUUID();
+    const reason = async () => (await getTestRedis().hget(key(s), 'reason')) ?? null;
+    // The set and the CAS take it.
+    await sm().set(s, 'break', { breakReason: 'lunch' });
+    expect(await reason()).toBe('lunch');
+    await sm().transition(s, 'break', 'available');
+    expect(await reason()).toBeNull();
+    await sm().transition(s, 'available', 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: 'device_away' });
+    expect(await sm().get(s)).toMatchObject({ state: 'break', breakReason: 'device_away' });
+    // A break written with none has none (it is never switched to away_ring: below).
+    await sm().set(s, 'break');
+    expect(await reason()).toBeNull();
+    // A reason given with any other state is not written.
+    await sm().set(s, 'wrapup', { breakReason: 'lunch' });
+    expect(await reason()).toBeNull();
+    // The away-ring scripts write their own: away_ring on the entry, device_away on the end.
+    await sm().set(s, 'available');
+    await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['available'] });
+    expect(await sm().get(s)).toMatchObject({ state: 'break', ring: true, breakReason: 'away_ring' });
+    await sm().endAwayRing(s, { offline: false });
+    expect(await sm().get(s)).toMatchObject({ state: 'break', ring: false, breakReason: 'device_away' });
+    // ...so the app's switch back to away_ring is allowed from it.
+    expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] })).toEqual({ ok: true });
+    // The ring's reservation clears it; its release back to away_ring writes it again.
+    await sm().reserveForInbound(s, 'ib-1', ['break']);
+    expect(await reason()).toBeNull();
+    await sm().releaseInboundToAwayRing(s, 'ib-1', 60_000);
+    expect(await reason()).toBe('away_ring');
+    await sm().endAwayRing(s, { offline: true });
+    expect(await sm().get(s)).toMatchObject({ state: 'offline', breakReason: null });
+    expect(await reason()).toBeNull();
+    // The re-seed writes away_ring; the station close's offline clears it.
+    const seeded = randomUUID();
+    await sm().reseedAwayRing(seeded, { sinceMs: 1_000, ttlMs: 60_000 });
+    expect((await sm().get(seeded))!.breakReason).toBe('away_ring');
+    const plain = randomUUID();
+    await sm().set(plain, 'break', { breakReason: 'device_away' });
+    await sm().setOfflineUnlessAway(plain, false);
+    expect(await getTestRedis().hget(key(plain), 'reason')).toBeNull();
+  });
+
+  it('a break with no reason in Redis is never switched to away_ring (fails safe: the agent stays paused, not rung)', async () => {
+    const s = randomUUID();
+    await sm().set(s, 'break');
+    expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] })).toEqual({ ok: false, reason: 'wrong_state', state: 'break' });
+    expect(await sm().get(s)).toMatchObject({ state: 'break', ring: false });
+    // An inbound outcome owed rehydrates to a reasonless break: never switched either.
+    const owed = randomUUID();
+    await sm().set(owed, 'break', { breakReason: 'device_away' });
+    await sm().set(owed, 'offline');
+    await sm().rehydrateInbound(owed, 'ib-owed');
+    expect((await sm().get(owed))!.breakReason).toBeNull();
   });
 
   it('the inbound reservation takes away_ring (break with ring) and clears ring; the plain reasons still need their states', async () => {
@@ -255,7 +314,7 @@ describe('the away_ring Lua (real Redis)', () => {
 
   it('a heartbeat renew never touches away_ring, even one that read break (device_away) before the switch', async () => {
     const s = randomUUID();
-    await sm().set(s, 'break');
+    await sm().set(s, 'break', { breakReason: 'device_away' });
     // The heartbeat read `break` here (`device_away`, renewed like any break)...
     const read = (await sm().get(s))!.state;
     // ...the app switched to away_ring meanwhile...

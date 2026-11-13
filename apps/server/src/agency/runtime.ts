@@ -396,8 +396,12 @@ export class AgencyRuntime {
     // keeping the absence's start as `since`, as every end of `away_ring` does.
     const absenceSince = !softphoneFlavoured ? row?.away_ring_since ?? null : null;
     if (absenceSince) trackAwayRingEnded('returned');
+    // The break the mirror is written with below, in Redis too: the session row's reason is the one
+    // durable record of which break a lapsed lease was on.
+    const breakReason = softphoneFlavoured ? SOFTPHONE_BREAK_REASON : absenceSince ? DEVICE_AWAY_BREAK_REASON : row?.break_reason ?? null;
     await this.agents.set(sessionId, 'break', {
       leaseMs: AGENT_LEASE_MS.break,
+      breakReason,
       ...(absenceSince ? { sinceMs: absenceSince.getTime() } : {}),
     });
     returnFromAwayRing(row);

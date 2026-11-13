@@ -1,6 +1,7 @@
 import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyAgentState } from '@magick-agency/contracts/agency';
+import { AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-agent-state' });
 
@@ -31,6 +32,15 @@ const log = createChildLogger({ component: 'agency-agent-state' });
  *   close decision when it writes `offline`), so a named break, `available` or any call state can
  *   never carry it. Nothing renews the key while it is set (`heartbeatLeaseMs` answers null): its
  *   TTL is the time left to `AGENCY_AWAY_RING_MAX_MS`.
+ * - `reason` — the code of the break `state = break` is on (`device_away`, `away_ring`, a catalog
+ *   code, `soft_phone`...), written in the same step as every write of `break` that knows it (the
+ *   set and the CAS take it as an argument; the away-ring scripts write their own) and **cleared by
+ *   every other write of `state`**, and by a `break` written without one. Redis is the authority on
+ *   which break the agent is on: the session row's `break_reason` is a mirror read at the start of
+ *   a request, and can be stale (a mirror write that failed, a supervisor's break that landed after
+ *   the read). {@link ENTER_AWAY_RING_SCRIPT} switches a `break` to `away_ring` only when this says
+ *   `device_away`, so a named break is never replaced by it; a `break` written without a reason
+ *   fails safe (the switch is refused, the agent stays paused and is not rung).
  *
  * **Every write that makes an agent `available` refuses, atomically, while any of
  * them is set** — the guard below runs inside the same script as the write, so ending
@@ -57,7 +67,8 @@ end
  *
  * KEYS[1] = agency:agent:{sessionId}:state (HASH: state, attempt, since, manual, softphone)
  * ARGV[1] = expected state  ARGV[2] = next state
- * ARGV[3] = attempt id ('' clears)  ARGV[4] = lease TTL ms
+ * ARGV[3] = attempt id ('' clears)  ARGV[4] = lease TTL ms  ARGV[5] = now (epoch ms)
+ * ARGV[6] = the break's reason code, with `break` (optional: absent or '' clears `reason`)
  *
  * There is no read-then-write, so there is no window in which two attempts hold
  * the same agent. A 0 means another tick got there first and the engine should
@@ -81,6 +92,11 @@ if ARGV[2] == 'reserved' then
 end
 redis.call('HSET', KEYS[1], 'state', ARGV[2], 'attempt', ARGV[3], 'since', ARGV[5])
 redis.call('HDEL', KEYS[1], 'ring', 'push')
+if ARGV[2] == 'break' and ARGV[6] and ARGV[6] ~= '' then
+  redis.call('HSET', KEYS[1], 'reason', ARGV[6])
+else
+  redis.call('HDEL', KEYS[1], 'reason')
+end
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return 1
 `;
@@ -92,6 +108,7 @@ return 1
  * death of. Unconditional in everything but the guard: `available` is refused
  * (-1/-2/-3) while the session holds a manual call, is a soft-phone session, or
  * holds an inbound call. Clears `ring` (Mode B): a named break written over `away_ring` is not one.
+ * ARGV[5] = the break's reason code with `break` (optional: absent or '' clears `reason`), as the CAS's.
  */
 const SET_SCRIPT = `${AVAILABLE_GUARD_LUA}
 if ARGV[1] == 'available' then
@@ -100,6 +117,11 @@ if ARGV[1] == 'available' then
 end
 redis.call('HSET', KEYS[1], 'state', ARGV[1], 'attempt', ARGV[2], 'since', ARGV[4])
 redis.call('HDEL', KEYS[1], 'ring', 'push')
+if ARGV[1] == 'break' and ARGV[5] and ARGV[5] ~= '' then
+  redis.call('HSET', KEYS[1], 'reason', ARGV[5])
+else
+  redis.call('HDEL', KEYS[1], 'reason')
+end
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `;
@@ -155,7 +177,7 @@ const REHYDRATE_SOFTPHONE_SCRIPT = `
 local st = redis.call('HGET', KEYS[1], 'state')
 local changed = 0
 if (not st) or st == 'offline' then
-  redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[4])
+  redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[4], 'reason', '${SOFTPHONE_BREAK_REASON}')
   redis.call('PEXPIRE', KEYS[1], ARGV[3])
   st = 'break'
   changed = 1
@@ -211,7 +233,7 @@ if st == 'break' and f[4] ~= '1' then return {0, st} end
 if f[1] and f[1] ~= '' then return {-1, ''} end
 if f[2] == '1' then return {-2, ''} end
 redis.call('HSET', KEYS[1], 'state', 'reserved', 'attempt', '', 'since', ARGV[3], 'inbound', ARGV[1])
-redis.call('HDEL', KEYS[1], 'ring')
+redis.call('HDEL', KEYS[1], 'ring', 'reason')
 if st == 'break' then redis.call('HSET', KEYS[1], 'push', '1') end
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return {1, st}
@@ -244,6 +266,7 @@ local st = redis.call('HGET', KEYS[1], 'state')
 local changed = 0
 if (not st) or st == 'offline' or st == 'available' then
   redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[3])
+  redis.call('HDEL', KEYS[1], 'reason')
   redis.call('PEXPIRE', KEYS[1], ARGV[2])
   st = 'break'
   changed = 1
@@ -272,6 +295,11 @@ return {st, changed}
  *
  * One compare-and-swap, as the device-away apply is: a reservation that lands between the
  * caller's read and this write wins, and the caller re-decides.
+ *
+ * From `break` only when the hash's `reason` is `device_away` (the `device_away → away_ring` switch):
+ * any other break (a named catalog break, the soft phone's, one written with no reason) answers
+ * `{0, 'break'}`, so a break the agent chose is never replaced by `away_ring` whatever the session
+ * row says.
  */
 const ENTER_AWAY_RING_SCRIPT = `${AVAILABLE_GUARD_LUA}
 local st = redis.call('HGET', KEYS[1], 'state')
@@ -283,7 +311,8 @@ end
 if not allowed then return {0, st} end
 local refused = refuse_available(KEYS[1])
 if refused ~= 0 then return {refused, st} end
-redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[1], 'ring', '1')
+if st == 'break' and redis.call('HGET', KEYS[1], 'reason') ~= '${DEVICE_AWAY_BREAK_REASON}' then return {0, st} end
+redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[1], 'ring', '1', 'reason', '${AWAY_RING_BREAK_REASON}')
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return {1, st}
 `;
@@ -299,7 +328,7 @@ return {1, st}
 const RELEASE_INBOUND_TO_AWAY_RING_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'inbound') ~= ARGV[1] then return 0 end
 redis.call('HDEL', KEYS[1], 'inbound', 'push')
-redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[2], 'ring', '1')
+redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[2], 'ring', '1', 'reason', '${AWAY_RING_BREAK_REASON}')
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `;
@@ -314,7 +343,7 @@ return 1
  */
 const RESEED_AWAY_RING_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
-redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[1], 'ring', '1')
+redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[1], 'ring', '1', 'reason', '${AWAY_RING_BREAK_REASON}')
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return 1
 `;
@@ -354,6 +383,11 @@ if ARGV[3] == '1' then
   since = ARGV[1]
 end
 redis.call('HSET', KEYS[1], 'state', next, 'attempt', '', 'since', since)
+if next == 'break' then
+  redis.call('HSET', KEYS[1], 'reason', '${DEVICE_AWAY_BREAK_REASON}')
+else
+  redis.call('HDEL', KEYS[1], 'reason')
+end
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return {1, next}
 `;
@@ -376,7 +410,7 @@ local f = redis.call('HMGET', KEYS[1], 'state', 'ring', 'inbound', 'push')
 if f[1] == 'break' and f[2] == '1' then return {0, f[1]} end
 if f[3] and f[3] ~= '' and (ARGV[5] == '1' or f[4] == '1') then return {0, f[1] or ''} end
 redis.call('HSET', KEYS[1], 'state', ARGV[1], 'attempt', ARGV[2], 'since', ARGV[4])
-redis.call('HDEL', KEYS[1], 'ring', 'push')
+redis.call('HDEL', KEYS[1], 'ring', 'push', 'reason')
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return {1, ''}
 `;
@@ -538,6 +572,12 @@ export interface AgentLiveState {
   ring: boolean;
   /** Mode B: the inbound call held is a push offer (the `push` field: reserved from `away_ring`). */
   pushOffer: boolean;
+  /**
+   * The code of the break the session is on (the `reason` field), only with `state = break`; null
+   * for any other state, or a break written with no reason. Always set by a read; optional so a
+   * caller's hand-built state reads as no reason.
+   */
+  breakReason?: string | null;
 }
 
 /** An `HGETALL` reply as an {@link AgentLiveState}; null for a lapsed (empty) key. */
@@ -553,6 +593,7 @@ function parseLiveState(h: Record<string, string> | null | undefined): AgentLive
     inboundCallId: h.inbound || null,
     ring: h.ring === '1',
     pushOffer: h.push === '1' && !!h.inbound,
+    breakReason: h.state === 'break' && h.reason ? h.reason : null,
   };
 }
 
@@ -658,13 +699,18 @@ export class AgentStateMachine {
     sessionId: string,
     from: AgencyAgentState,
     to: AgencyAgentState,
-    opts: { attemptId?: string; leaseMs: number } = { leaseMs: AGENT_LEASE_MS.available },
+    opts: {
+      attemptId?: string;
+      leaseMs: number;
+      /** With `to = break`: the break's code, written as the hash's `reason` (see the header). */
+      breakReason?: string | null;
+    } = { leaseMs: AGENT_LEASE_MS.available },
   ): Promise<boolean> {
     if (!this.redis) return false;
     try {
       const res = await this.redis.eval(
         CAS_SCRIPT, 1, this.key(sessionId),
-        from, to, opts.attemptId ?? '', opts.leaseMs, Date.now().toString(),
+        from, to, opts.attemptId ?? '', opts.leaseMs, Date.now().toString(), opts.breakReason ?? '',
       );
       if (res === 1 && to === 'available') this.announceAvailable(sessionId);
       return res === 1;
@@ -697,6 +743,11 @@ export class AgentStateMachine {
        * one: the end of an `away_ring` absence keeps the absence's start (`AwayRingService`).
        */
       sinceMs?: number;
+      /**
+       * With `state = break`: the break's code, written as the hash's `reason` (see the header).
+       * Left out, the break has none, and `away_ring` is never switched to from it.
+       */
+      breakReason?: string | null;
     } = {},
   ): Promise<AgentSetResult> {
     if (!this.redis) return 'unavailable';
@@ -704,7 +755,7 @@ export class AgentStateMachine {
     try {
       const res = await this.redis.eval(
         SET_SCRIPT, 1, this.key(sessionId),
-        state, opts.attemptId ?? '', leaseMs, Math.floor(opts.sinceMs ?? Date.now()).toString(),
+        state, opts.attemptId ?? '', leaseMs, Math.floor(opts.sinceMs ?? Date.now()).toString(), opts.breakReason ?? '',
       );
       const result = setResultFrom(res);
       if (result !== 'ok') log.info({ sessionId, state, result }, 'Agent state set refused');

@@ -68,7 +68,10 @@ import { AWAY_RING_RETURN_END, awayRingRefusalBody } from '../../../agency/away-
  *    `device_away` (a break-to-break switch, entered from `break`);
  *  - `end_ring`: `device_away` asked on `away_ring` (`ring = 1`): the ringing ends, the pause stays.
  *    Neither switch runs from any other break, so a named catalog break or the soft phone's never
- *    gains `ring = 1` and is never replaced;
+ *    gains `ring = 1` and is never replaced. Which break the agent is on is Redis's (the hash's
+ *    `reason`), and the entry script checks it again in the same step as its write: a break written
+ *    over `device_away` after this read (a supervisor's, the agent's own from another tab) is never
+ *    replaced, and a `break` written with no reason is never switched from;
  *  - `decline_ring`: `device_away` asked while a ring holds the session `reserved` (`pushOffer`,
  *    the away notification's "Stop ringing", IQ79): a ring not yet answered is declined through the
  *    ring's one end; an answered one is the agent taking the call, and the pause is then re-decided
@@ -90,7 +93,10 @@ export function decideDeviceAway(input: {
   code?: AgencyAppPauseBreakReason;
   /** Redis's `ring` (Mode B): the session is on `away_ring`. */
   ring?: boolean;
-  /** The session row's break reason (the break a `break` lease is on). */
+  /**
+   * Redis's break reason (the agent hash's `reason`: the break a `break` lease is on), never the
+   * session row's, which is a mirror read once at the start of the request and may be stale.
+   */
   breakReason?: string | null;
   /** Mode B: the session holds a push offer (a ring, or an answered ring in its accept grace). */
   pushOffer?: boolean;
@@ -193,7 +199,7 @@ export async function runDeviceAway(
       queued: queued?.code ?? null,
       code,
       ring: live?.ring ?? false,
-      breakReason: session.break_reason,
+      breakReason: live?.breakReason ?? null,
       pushOffer: !declineTried && code === DEVICE_AWAY_BREAK_REASON && live?.state === 'reserved'
         && runtime.awayRing.holdsPushOffer(session.id),
     });
@@ -246,7 +252,7 @@ export async function runDeviceAway(
         break;
       }
       case 'apply': {
-        const moved = await runtime.agents.transition(session.id, 'available', 'break', { leaseMs: AGENT_LEASE_MS.break });
+        const moved = await runtime.agents.transition(session.id, 'available', 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: reason.code });
         if (!moved) {
           pass++;
           continue;
@@ -296,7 +302,7 @@ export async function runDeviceAway(
 function asItStands(
   session: AgencyAgentSessionRecord,
   code: string,
-  live: { state: AgencyAgentState; since?: number | null; ring?: boolean } | null,
+  live: { state: AgencyAgentState; since?: number | null; ring?: boolean; breakReason?: string | null } | null,
   queued: Readonly<AgencyBreakReason> | null,
   queuedHere: boolean,
   now: string,
@@ -304,10 +310,11 @@ function asItStands(
   const state = live?.state ?? 'offline';
   // Queued here, and the queue is empty again on `break`: the release applied ours
   // between two passes (the row read at the start of the request predates it). On
-  // `away_ring` already (`ring`): that is its reason, whatever the row read said.
+  // `away_ring` already (`ring`): that is its reason, whatever the row read said. Otherwise Redis's
+  // reason when it has one (the row read at the start may be stale), else the row's.
   const breakReason = queuedHere && state === 'break' && !queued
     ? code
-    : state === 'break' && live?.ring ? AWAY_RING_BREAK_REASON : session.break_reason;
+    : state === 'break' && live?.ring ? AWAY_RING_BREAK_REASON : live?.breakReason ?? session.break_reason;
   const body: AgencySessionStateResponse & { [BREAK_UNCHANGED_KEY]?: true } = {
     session_id: session.id,
     campaign_id: session.campaign_id,

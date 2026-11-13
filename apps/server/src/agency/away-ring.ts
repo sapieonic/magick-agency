@@ -640,7 +640,9 @@ export class AwayRingService {
   async endAfterRing(sessionId: string, inboundCallId: string, absenceSince: Date | null): Promise<void> {
     await this.deps.agents.releaseInbound(sessionId, inboundCallId);
     const sinceMs = absenceSince?.getTime();
-    await this.deps.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break, ...(sinceMs !== undefined ? { sinceMs } : {}) });
+    await this.deps.agents.set(sessionId, 'break', {
+      leaseMs: AGENT_LEASE_MS.break, breakReason: DEVICE_AWAY_BREAK_REASON, ...(sinceMs !== undefined ? { sinceMs } : {}),
+    });
     await agencyAgentSessionRepository.setState(sessionId, 'break', DEVICE_AWAY_BREAK_REASON, { stateSince: absenceSince })
       .catch((err: unknown) => log.warn({ err, sessionId }, 'Could not mirror a ring ended with its absence'));
   }

@@ -791,9 +791,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         };
         return reply.code(503).send(err);
       }
-      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: check.reason.code });
     } else {
-      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: check.reason.code });
       await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
     }
     runtime.stations.send(session.id, {

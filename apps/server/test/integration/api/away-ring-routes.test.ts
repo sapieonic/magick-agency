@@ -323,6 +323,23 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(await row(sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
   });
 
+  it('a named break Redis holds is never switched to away_ring, even when the row read says device_away', async () => {
+    const { agent, sessionId } = await onDuty();
+    await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'device_away' });
+    expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', breakReason: 'device_away' });
+    // A named break lands (the route records its code in Redis)...
+    const lunch = await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' });
+    expect(lunch.json()).toMatchObject({ state: 'break', break_reason: 'lunch' });
+    expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', breakReason: 'lunch' });
+    // ...but its mirror write was lost: the row the next request reads still says device_away.
+    await getTestPool().query("UPDATE agency_agent_sessions SET break_reason = 'device_away' WHERE id = $1", [sessionId]);
+    const ringing = await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'away_ring' });
+    expect(ringing.statusCode, ringing.body).toBe(200);
+    expect(ringing.json()).toMatchObject({ state: 'break', break_reason: 'lunch' });
+    expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: false, breakReason: 'lunch' });
+    expect((await row(sessionId)).away_ring_since).toBeNull();
+  });
+
   it('the switch back to device_away leaves no away pause queued', async () => {
     const { agent, sessionId, station } = await onDuty();
     const awaySince = await goAwayRinging(agent, sessionId, station);

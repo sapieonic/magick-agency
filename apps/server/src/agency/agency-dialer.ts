@@ -925,7 +925,7 @@ export class AgencyDialer {
     // A queued `away_ring` cannot apply while an outcome is owed (the phone may not be rung for a
     // session that owes one): held as `device_away`, the break the app falls back to.
     const queuedBreak = withoutAwayRing(this.breaks.take(sessionId));
-    const set = await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
+    const set = await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: queuedBreak?.code ?? null });
     await mirrored(
       agencyAgentSessionRepository.setState(sessionId, 'break', queuedBreak?.code ?? null),
       sessionId, 'Could not mirror held agent state',
@@ -2139,6 +2139,7 @@ export class AgencyDialer {
     const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
       announce: false,
+      breakReason: queuedBreak?.code ?? null,
     });
     // The soft phone's guard (docs/softphone.md §4.1): `available` is refused while
     // the session holds a soft-phone call or is a soft-phone session. The agent

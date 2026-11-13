@@ -76,7 +76,7 @@ describe('takeBreakUnchanged', () => {
 interface World {
   runtime: AgencyRuntime;
   /** What Redis says, read by `agents.get` and moved by a winning CAS. */
-  lease: { state: AgencyAgentState; since: number } | null;
+  lease: { state: AgencyAgentState; since: number; breakReason?: string | null } | null;
   breaks: BreakRegistry;
   sent: unknown[];
   transition: ReturnType<typeof vi.fn>;
@@ -85,24 +85,24 @@ interface World {
   unannounced: boolean;
 }
 
-function world(state: AgencyAgentState | null, opts: { unannounced?: boolean } = {}): World {
+function world(state: AgencyAgentState | null, opts: { unannounced?: boolean; breakReason?: string | null } = {}): World {
   const w = {
-    lease: state ? { state, since: Date.parse('2026-11-01T08:00:00Z') } : null,
+    lease: state ? { state, since: Date.parse('2026-11-01T08:00:00Z'), breakReason: opts.breakReason ?? null } : null,
     breaks: new BreakRegistry(),
     sent: [] as unknown[],
     beforeRead: [] as Array<() => void>,
     unannounced: opts.unannounced ?? false,
   } as World;
-  w.transition = vi.fn(async (_id: string, from: AgencyAgentState, to: AgencyAgentState) => {
+  w.transition = vi.fn(async (_id: string, from: AgencyAgentState, to: AgencyAgentState, o?: { breakReason?: string | null }) => {
     if (w.lease?.state !== from) return false;
-    w.lease = { state: to, since: Date.now() };
+    w.lease = { state: to, since: Date.now(), breakReason: to === 'break' ? o?.breakReason ?? null : null };
     return true;
   });
   w.runtime = {
     agents: {
       get: vi.fn(async () => {
         w.beforeRead.shift()?.();
-        return w.lease ? { state: w.lease.state, attemptId: null, since: w.lease.since, manualCallId: null, softphone: false } : null;
+        return w.lease ? { state: w.lease.state, attemptId: null, since: w.lease.since, manualCallId: null, softphone: false, breakReason: w.lease.breakReason ?? null } : null;
       }),
       transition: w.transition,
     },
@@ -132,7 +132,8 @@ describe('runDeviceAway', () => {
     const res = await runDeviceAway(w.runtime, session());
     expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away', kind: 'campaign', campaign_id: 'camp-1' }) });
     expect(res.ok && BREAK_UNCHANGED_KEY in res.body).toBe(false);
-    expect(w.transition).toHaveBeenCalledWith('sess-1', 'available', 'break', { leaseMs: AGENT_LEASE_MS.break });
+    // The break's reason goes to Redis with the state, in the same CAS.
+    expect(w.transition).toHaveBeenCalledWith('sess-1', 'available', 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: 'device_away' });
     expect(w.lease?.state).toBe('break');
     expect(repos.session.setState).toHaveBeenCalledWith('sess-1', 'break', 'device_away');
     expect(w.sent).toEqual([expect.objectContaining({ event: 'agent_state', state: 'break', break_reason: 'device_away' })]);
@@ -357,13 +358,16 @@ describe('runDeviceAway — away_ring', () => {
   /** The instant the service stamped on Redis, the mirror and the frame. */
   const ENTERED_AT = '2026-11-02T08:10:00.250Z';
 
-  function ringWorld(state: AgencyAgentState | null, opts: { refused?: string | null; ring?: boolean } = {}) {
-    const w = world(state);
+  function ringWorld(state: AgencyAgentState | null, opts: { refused?: string | null; ring?: boolean; breakReason?: string | null } = {}) {
+    const w = world(state, { breakReason: opts.breakReason ?? null });
     let ring = opts.ring ?? false;
     const get = w.runtime.agents.get as ReturnType<typeof vi.fn>;
     get.mockImplementation(async () => {
       w.beforeRead.shift()?.();
-      return w.lease ? { state: w.lease.state, attemptId: null, since: w.lease.since, manualCallId: null, softphone: false, inboundCallId: null, ring, pushOffer: false } : null;
+      return w.lease ? {
+        state: w.lease.state, attemptId: null, since: w.lease.since, manualCallId: null, softphone: false, inboundCallId: null, ring, pushOffer: false,
+        breakReason: w.lease.breakReason ?? null,
+      } : null;
     });
     const awayRing = {
       refusalFor: vi.fn(async () => opts.refused ?? null),
@@ -413,10 +417,27 @@ describe('runDeviceAway — away_ring', () => {
   });
 
   it('device_away → away_ring is a break-to-break switch (from break only)', async () => {
-    const { w, awayRing } = ringWorld('break');
+    const { w, awayRing } = ringWorld('break', { breakReason: 'device_away' });
     const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'device_away' }), 'away_ring');
     expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'away_ring' }) });
     expect(awayRing.enter).toHaveBeenCalledWith(expect.anything(), ['break']);
+  });
+
+  it('decides from Redis, never the row read at the start: a named break the mirror missed is never switched to away_ring', async () => {
+    // Redis on "lunch" (a supervisor's break after the row was read, or a mirror write that failed);
+    // the row still says device_away.
+    const { w, awayRing, ring } = ringWorld('break', { breakReason: 'lunch' });
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'device_away' }), 'away_ring');
+    expect(res.ok && res.body).toMatchObject({ state: 'break', break_reason: 'lunch', [BREAK_UNCHANGED_KEY]: true });
+    expect(awayRing.enter).not.toHaveBeenCalled();
+    expect(ring()).toBe(false);
+  });
+
+  it('a break Redis holds with no reason is never switched to away_ring, whatever the row says (fails safe)', async () => {
+    const { w, awayRing } = ringWorld('break', { breakReason: null });
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'device_away' }), 'away_ring');
+    expect(res.ok && res.body).toMatchObject({ state: 'break', break_reason: 'device_away', [BREAK_UNCHANGED_KEY]: true });
+    expect(awayRing.enter).not.toHaveBeenCalled();
   });
 
   it('a named catalog break never gains ring = 1: unchanged, nothing entered', async () => {

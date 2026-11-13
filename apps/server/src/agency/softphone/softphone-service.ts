@@ -752,8 +752,8 @@ export class SoftphoneService {
       // No lease at all: there is no state to race (a reservation CASes from a live
       // `available`), so the write creates it.
       const moved = live
-        ? await this.deps.agents.transition(session.id, live.state, 'break', { leaseMs: AGENT_LEASE_MS.break })
-        : (await this.deps.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break })) === 'ok';
+        ? await this.deps.agents.transition(session.id, live.state, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: SOFTPHONE_BREAK_REASON })
+        : (await this.deps.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: SOFTPHONE_BREAK_REASON })) === 'ok';
       if (moved) break;
       if (pass === 1 || !live) return refuse({ code: 'dial_failed' });
       live = await this.deps.agents.get(session.id);
