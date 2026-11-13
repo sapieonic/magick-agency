@@ -649,7 +649,7 @@ void main() {
         async.flushMicrotasks();
         bool? held;
         app.controller.holdsRingCall(_pushCallId, const Duration(seconds: 5)).then((v) => held = v);
-        app.readyFrame('break', extra: {'break_reason': 'away_ring'});
+        backFromAwayRing(app);
         async.elapse(const Duration(seconds: 5));
         expect(held, isFalse);
         app.dispose();
