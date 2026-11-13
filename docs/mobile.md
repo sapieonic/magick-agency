@@ -703,12 +703,12 @@ verified yet").
   return reads the absence from its start: back within 30 s returns to calls, longer waits for the
   tap. The away card still says the phone was ringing for inbound calls (the app asked `away_ring`
   itself), and the Missed summary counts from the absence's start. A banner above the tab bar says
-  "Your phone stopped ringing for inbound calls: …" only on a concrete reason
-  (`ringOffReasonOnReturn`): the `ring_off` native took for this absence (`takeRingOff`, matched to
-  the session and the absence's start), else two misses heard while away, the device status read
-  then (revoked, or a last push failure the server revokes on: `unregistered` or `invalid`; opted
-  out, the flag off, no push), or an absence of 4 hours (the server's default maximum age). No
-  reason, no banner.
+  "Your phone stopped ringing for inbound calls: …" (for `left`, "…: you left the session.") only
+  on a concrete reason (`ringOffReasonOnReturn`): the `ring_off` native took for this absence
+  (`takeRingOff`, matched to the session and the absence's start), else two misses heard while
+  away, the device status read then (revoked, or a last push failure the server revokes on:
+  `unregistered` or `invalid`; opted out, the flag off, no push), or an absence of 4 hours (the
+  server's default maximum age). No reason, no banner.
 - **The ring** (Android, `android/app/src/main/kotlin/com/magickagency/agent/ring/`). FCM without a
   Flutter plugin: `firebase-messaging` in the app module (Firebase BoM 34.19.0, the one
   `firebase_core` 4.15.2 builds against), and Firebase's default app built natively at process start
@@ -775,7 +775,12 @@ verified yet").
   accept answers, the accept's URL is the station's only attach: an app brought to the front by the
   answer does not reopen its parked socket on a mint of its own (that attach would answer the ring
   first, N5): while the accept is in flight the station's `_onShow` does not reconnect and a
-  reconnect never mints for itself; a socket already open when the accept answers is kept. A
+  reconnect never mints for itself. A return already asking native whether its launch was "Stop
+  ringing" when the answer arrives (the lock screen's Answer on a warm parked app brings it to the
+  front before `RingCoordinator.answer` reaches Dart) ends without reconnecting and takes the "Stop
+  ringing" as moot (no `device_away`), and "Stop ringing"'s `device_away` applying during an accept
+  does not reopen the socket either: the accept's URL does, or, if the accept fails, the keep-alive
+  once the hold is released. A socket already open when the accept answers is kept. A
   failure that says nothing about the call is retried once after 1 s; then "This call
   stopped ringing or someone else took it." and `reportEnded(accept_failed)`. `already_accepted` for
   a call the station holds (or receives within 5 s) is this phone's own attach having won, not a
@@ -799,7 +804,9 @@ verified yet").
   reason is `answered`, the server having bound it first); **`ring_off`** for the absence the
   phone shows drops the away notification, ends a ring still ringing, posts "Your phone stopped
   ringing for inbound calls" with the reason ("You missed two inbound calls. Open the app to turn it
-  back on.", "It stops after 4 hours away.", and so on; nothing for `opted_out`) and keeps it for
+  back on.", "It stops after 4 hours away.", "Your station was opened on another device." for
+  `taken_over`, "You left the session." for `left`, the agent's own Leave or the idle session's
+  end, and so on; nothing for `opted_out`) and keeps it for
   Dart's return (`takeRingOff`). A `ring_off` delivered late is dropped (`RingStateMachine
   .acceptsRingOff`): another session's, one whose `away_since` starts more than 2 s before the
   shown absence, or one arriving once the agent is back (the notification taken down). Without
@@ -961,6 +968,8 @@ always Dart's.
   the station's own "You're paused" notification is not shown for it.
 - **Coming back** from a parked `away_ring` asks `peekStopRinging` first ("Stop ringing", above),
   else reopens the socket (`showAwayNotification(false)`); a tap for another session is cleared.
+  A ring answered meanwhile (`holdForRingAnswer`) wins: the return and "Stop ringing" leave the
+  parked socket to the accept's URL (`resumeForRing`).
   "Stop ringing" clears the tap once `device_away` applied (or once the station's frames say the
   agent is paused, after an attach without `caps=inbound`). Parking for `away_ring` hands native
   the server clock offset measured on the socket (`setServerClock`), when a pong has measured it. IQ50's 30 s return waits for the
