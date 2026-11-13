@@ -111,6 +111,8 @@ function connector(opts: {
   ringMs?: number; acceptGraceMs?: number; republishMs?: number; pushRetryMs?: number; agents?: InstanceType<typeof AgentStateMachine>;
   /** The connector's clock (default the wall clock). */
   now?: () => number;
+  /** The queue's maximum-wait timers (default Node's). */
+  queueTimers?: { set(fn: () => void, ms: number): unknown; clear(handle: unknown): void };
 } = {}): Connector {
   const exits = new AgencyInboundCallRouter({
     bridge: bridge as never,
@@ -139,6 +141,7 @@ function connector(opts: {
     ...(opts.republishMs ? { republishMs: opts.republishMs } : {}),
     ...(opts.pushRetryMs ? { pushRetryMs: opts.pushRetryMs } : {}),
     ...(opts.now ? { now: opts.now } : {}),
+    ...(opts.queueTimers ? { queueTimers: opts.queueTimers } : {}),
   });
   c.start();
   connectors.push(c);
@@ -632,6 +635,100 @@ describe('the ends of a ring', () => {
     expect((await devices.find(away.userId, away.deviceId))!.revoked_at).not.toBeNull();
     expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'agency_session.away_ring_ended', details: expect.objectContaining({ reason: 'revoked' }) }));
+  });
+});
+
+// ─── 2a. Ends that race (QA) ────────────────────────────────────────────────
+
+/** Queue timers the test fires by hand: the maximum wait lapses when the test says. */
+function handTimers() {
+  const pending = new Set<{ fn: () => void; ms: number }>();
+  return {
+    timers: {
+      set(fn: () => void, ms: number) { const h = { fn, ms }; pending.add(h); return h; },
+      clear(h: unknown) { pending.delete(h as { fn: () => void; ms: number }); },
+    },
+    /** Fire every pending timer of at most `ms` (the maximum wait is the longest one here). */
+    fire(ms = Number.POSITIVE_INFINITY) {
+      for (const h of [...pending]) if (h.ms <= ms) { pending.delete(h); h.fn(); }
+    },
+  };
+}
+
+describe('a ring`s end racing another end', () => {
+  it('the maximum wait lapsing during an answered grace waits for it: the overflow comes when the grace lapses, not before and not later', async () => {
+    const hand = handTimers();
+    const c = connector({ acceptGraceMs: 400, queueTimers: hand.timers });
+    await deskAgent('on_call');
+    const away = await awayAgent();
+    const { call, done } = await caller(c);
+    const token = String((await ringPush(away.deviceRowId, call.id))['offer_token']);
+    expect(await c.ringAnswering(call.id, token)).toMatchObject({ ok: true });
+    // The route's maximum wait lapses inside the grace: the answered ring runs to its end.
+    const lapsedAt = Date.now();
+    hand.fire();
+    await drain();
+    expect(await row(call.id)).toMatchObject({ state: 'offered', session_id: away.sessionId });
+    // The grace lapses (the app never bound): a miss, then the overflow at once.
+    await done;
+    const overflowedAfter = Date.now() - lapsedAt;
+    expect(await row(call.id)).toMatchObject({ state: 'ended', outcome: 'overflow', ring_result: 'accept_lapsed' });
+    expect(overflowedAfter).toBeLessThan(400 + 2_000);
+    await drain();
+    await expectAwayRing(away.sessionId);
+    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 1 });
+  });
+
+  it('the device removed mid-ring: the ring cancelled, the agent on device_away, the absence over (revoked)', async () => {
+    const c = connector();
+    await deskAgent('on_call');
+    const away = await awayAgent();
+    const { call } = await caller(c);
+    await ringPush(away.deviceRowId, call.id);
+    await devices.revoke(away.userId, away.deviceId);
+    expect(await awayRing.endForDevice(away.userId, away.deviceId, 'revoked')).toBe('ended');
+    await drain();
+    expect(await row(call.id)).toMatchObject({ state: 'queued', session_id: null, ring_result: 'cancelled' });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null, ring_misses: 0 });
+    expect(await agents.get(away.sessionId)).toMatchObject({ state: 'offline', ring: false, inboundCallId: null });
+    expect(await until('ring_off', () => pushes('ring_off', away.deviceRowId)[0] ?? null)).toMatchObject({ reason: 'revoked' });
+    expect(c.holdsPushOffer(away.sessionId)).toBe(false);
+  });
+
+  it('answering that reaches the call`s chain after the ring timer fired: ring_not_offered, the ring expired (a miss)', async () => {
+    const c = connector({ ringMs: 150 });
+    await deskAgent('on_call');
+    const away = await awayAgent();
+    const { call } = await caller(c);
+    const token = String((await ringPush(away.deviceRowId, call.id))['offer_token']);
+    // Hold the chain; the ring timer fires and its expiry queues first, then the tap.
+    const hold = gate();
+    c.testSeam.holdCallChain(call.id, hold.wait);
+    const ringEnds = (await row(call.id)).ringing_at!.getTime() + 150;
+    await until('the ring timer fired', () => (Date.now() > ringEnds + 50 ? true : null));
+    const answering = c.ringAnswering(call.id, token);
+    hold.open();
+    expect(await answering).toEqual({ ok: false, code: 'ring_not_offered' });
+    await drain();
+    expect(await row(call.id)).toMatchObject({ state: 'queued', ring_result: 'expired', accepted_at: null });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 1 });
+    await expectAwayRing(away.sessionId);
+  });
+
+  it('the caller hangs up inside the accept grace: caller_left, no miss, the phone told, the accept refused', async () => {
+    const c = connector({ acceptGraceMs: 5_000 });
+    const away = await awayAgent();
+    const { call, done } = await caller(c);
+    const token = String((await ringPush(away.deviceRowId, call.id))['offer_token']);
+    expect(await c.ringAnswering(call.id, token)).toMatchObject({ ok: true });
+    bridge.end(call.id);
+    await done;
+    await drain();
+    expect(await row(call.id)).toMatchObject({ state: 'ended', outcome: 'abandoned_in_queue', ring_result: 'caller_left' });
+    expect(pushes('ring_cancel', away.deviceRowId)).toEqual([{ type: 'ring_cancel', call_id: call.id, session_id: away.sessionId, reason: 'caller_left' }]);
+    await expectAwayRing(away.sessionId);
+    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0 });
+    expect(await c.ringAccept(call.id, token, { agentUserId: away.userId, deviceId: away.deviceId })).toMatchObject({ ok: false });
   });
 });
 

@@ -349,6 +349,43 @@ describe('Mode B ring routes over HTTP (integration)', () => {
     await connector.drain();
   });
 
+  it('accept for a ringing call of another tenant is the uniform 404, even with the right token and an agent signed in there', async () => {
+    const away = await awayAgent();
+    const { callId, token } = await caller();
+    // An agent of another tenant, with their own session and the tenant headers of theirs.
+    const otherTenant = (await insertTenant()).id as string;
+    const otherAccount = (await insertAccount({ tenant_id: otherTenant })).id as string;
+    const u = await insertUser();
+    await insertMembership({ user_id: u.id, tenant_id: otherTenant, account_id: otherAccount, role: 'agent' });
+    const res = await app.inject({
+      method: 'POST', url: `/proxy/agency/inbound/calls/${callId}/ring/accept`,
+      headers: {
+        authorization: `Bearer tok:${u.firebase_uid as string}`, 'x-tenant-id': otherTenant, 'x-account-id': otherAccount,
+        'content-type': 'application/json', 'x-client': MOBILE,
+      },
+      payload: JSON.stringify({ offer_token: token, device_id: away.deviceId }),
+    });
+    expect(res.statusCode, res.body).toBe(404);
+    expect(res.json()).toMatchObject({ code: 'ring_not_offered' });
+    // Indistinguishable from a call that is not ringing at all.
+    const unknown = await app.inject({
+      method: 'POST', url: `/proxy/agency/inbound/calls/${randomUUID()}/ring/accept`,
+      headers: {
+        authorization: `Bearer tok:${u.firebase_uid as string}`, 'x-tenant-id': otherTenant, 'x-account-id': otherAccount,
+        'content-type': 'application/json', 'x-client': MOBILE,
+      },
+      payload: JSON.stringify({ offer_token: token, device_id: away.deviceId }),
+    });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual(res.json());
+    // The ring is untouched: its own agent still accepts it.
+    expect(await agencyInboundCallRepository.findByIdAnyTenant(callId)).toMatchObject({ state: 'offered', accepted_at: null });
+    const accepted = await ring(callId, 'accept', away.agent, { offer_token: token, device_id: away.deviceId });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    bridge.end(callId);
+    await connector.drain();
+  });
+
   it('the token-only routes are rate-limited per IP', async () => {
     const limit = RING_TOKEN_RATE_LIMIT.max;
     let limited = -1;

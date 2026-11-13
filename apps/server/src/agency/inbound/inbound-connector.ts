@@ -64,7 +64,7 @@ import {
   type InboundCallerView,
   type StickyAgentStatus,
 } from './eligibility.js';
-import { InboundQueue, accountKeyOfCall, summarizeWaiting, type InboundQueueRouteSnapshot } from './inbound-queue.js';
+import { InboundQueue, accountKeyOfCall, summarizeWaiting, type InboundQueueRouteSnapshot, type InboundQueueTimers } from './inbound-queue.js';
 import { inboundCallToWire, loadInboundPanelContext, type InboundPanelContext } from './inbound-call-wire.js';
 import { InboundHandovers, type HandoverHost, type InboundOfferRefused } from './inbound-handover.js';
 import { matchName } from './match-name.js';
@@ -317,6 +317,8 @@ export interface InboundConnectorDeps {
   acceptGraceMs?: number;
   /** {@link INBOUND_PUSH_RETRY_MS} (tests: shorter). */
   pushRetryMs?: number;
+  /** The queue's maximum-wait and sticky-wait timers (tests: fired by hand). Default: Node's. */
+  queueTimers?: InboundQueueTimers;
 }
 
 /** What the connector reaches of the runtime's away break (`AwayRingService`). */
@@ -540,6 +542,7 @@ export class InboundConnector {
       : async () => []);
     this.queue = new InboundQueue({
       now: this.now,
+      ...(deps.queueTimers ? { timers: deps.queueTimers } : {}),
       onMaxWait: (callId) => this.onTimer(callId, 'max_wait'),
       onStickyLapse: (callId) => this.onTimer(callId, 'sticky_lapse'),
     });
