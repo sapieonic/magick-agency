@@ -9,6 +9,7 @@ import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
+import '../../../core/station/station_copy.dart' show awayRingBreakLabel;
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../../missed/missed_on_duty.dart';
@@ -299,7 +300,7 @@ class AwayView extends ConsumerWidget {
             children: [
               const StatusPill(StationCopy.awayPill, tone: Tone.warn),
               const SizedBox(height: Space.md),
-              Text(ringing ? StationCopy.awayRingHeadline : StationCopy.awayHeadline, style: text.headlineSmall),
+              Text(ringing ? awayRingBreakLabel : StationCopy.awayHeadline, style: text.headlineSmall),
               const SizedBox(height: Space.sm),
               Text(
                 ringing ? StationCopy.awayRingDetail(at) : StationCopy.awayDetail(at),

@@ -96,8 +96,8 @@ abstract final class StationCopy {
   static String awayDetail(String? at) => at == null
       ? 'You switched to another app, so we paused you. No customer was connected to an empty line.'
       : 'At $at you switched to another app, so we paused you. No customer was connected to an empty line.';
-  // Mode B's `away_ring`: the same pause, with this phone rung for inbound callers.
-  static const awayRingHeadline = 'Away · this phone rings for inbound calls';
+  // Mode B's `away_ring`: the same pause, with this phone rung for inbound callers. Its headline is
+  // the app's one label for it (`awayRingBreakLabel`).
   static String awayRingDetail(String? at) => at == null
       ? 'You switched to another app, so we paused you, and this phone rings for inbound calls while you’re away.'
       : 'At $at you switched to another app, so we paused you, and this phone rings for inbound calls while you’re away.';

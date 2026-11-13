@@ -9,7 +9,7 @@ abstract final class RingCopy {
   static const stoppedPrefix = 'Your phone stopped ringing for inbound calls';
 
   static String stopped(RingOffReason? reason) => switch (reason) {
-        RingOffReason.ringMissed => '$stoppedPrefix: you missed two inbound calls.',
+        RingOffReason.ringMissed => '$stoppedPrefix: you missed $_missedInARow.',
         RingOffReason.revoked => '$stoppedPrefix: this phone is no longer registered. Open Me to set it up again.',
         RingOffReason.optedOut => '$stoppedPrefix: ringing is turned off on this phone.',
         RingOffReason.flagOff => '$stoppedPrefix: ringing was switched off for this account.',
@@ -53,9 +53,18 @@ abstract final class RingCopy {
   static const explain =
       'When you leave the app while available, inbound callers ring this phone like a normal call. Answer to take '
       'the call in the app. You won’t get campaign calls while you’re away.';
-  static const missRule =
-      'If you miss two inbound calls, this phone stops ringing until you open the app again, so callers aren’t '
+  static final missRule =
+      'If you miss $_missedInARow, this phone stops ringing until you open the app again, so callers aren’t '
       'kept waiting for you.';
+
+  /// The misses that end ringing ([inboundRingMaxMisses]), as the copy says them: "two inbound calls".
+  static final _missedInARow =
+      inboundRingMaxMisses == 1 ? 'an inbound call' : '${_inWords(inboundRingMaxMisses)} inbound calls';
+
+  /// [n] in words up to ten, else in figures.
+  static String _inWords(int n) => n >= 1 && n <= 10
+      ? const ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'][n - 1]
+      : '$n';
   static const checklistTitle = 'What this phone needs';
   static const fix = 'Fix';
   static const ready = 'Ready';
