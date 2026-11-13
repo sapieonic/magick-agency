@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import '../api/decode_body.dart';
 
 /// This install's push device (Mode B, `packages/contracts/src/agency/push-devices.ts`), over
 /// [ApiClient]. The `:deviceId` is the station device id (OS3), so the device the server may ring
@@ -60,12 +61,5 @@ final class PushDeviceApi {
     }
   }
 
-  static PushDeviceStatus _decode(String path, Object? body) {
-    if (body is! Map<String, Object?>) throw ApiDecodeError(path, 'expected an object');
-    try {
-      return PushDeviceStatus.fromJson(body);
-    } on FormatException catch (e) {
-      throw ApiDecodeError(path, e);
-    }
-  }
+  static PushDeviceStatus _decode(String path, Object? body) => decodeBody(path, body, PushDeviceStatus.fromJson);
 }

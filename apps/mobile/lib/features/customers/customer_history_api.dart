@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
-import '../performance/performance_api.dart' show decodeBody;
+import '../../core/api/decode_body.dart';
 
 /// Customer history's routes through [ApiClient]: the search and its pages
 /// are `POST`s with the number in the body, never in a path or a query (CH6),
