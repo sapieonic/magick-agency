@@ -110,7 +110,7 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // console has no push device to register.
   ['GET /proxy/agency/push-devices/:_', 'mobile app push device status (Mode B)'],
   ['PUT /proxy/agency/push-devices/:_', 'mobile app push device register (Mode B)'],
-  ['PATCH /proxy/agency/push-devices/:_', 'mobile app ring opt-in, "Stop ringing" (Mode B)'],
+  ['PATCH /proxy/agency/push-devices/:_', 'mobile app ring opt-in and opt-out, the Me toggle (Mode B)'],
   ['DELETE /proxy/agency/push-devices/:_', 'mobile app push device removal on sign-out (Mode B)'],
   ['POST /proxy/agency/push-devices/:_/test-ring', 'mobile app "Send a test ring" (Mode B)'],
   // Mode B: the ring of an away agent's phone (`proxy-agency-inbound-ring.routes.ts`): native

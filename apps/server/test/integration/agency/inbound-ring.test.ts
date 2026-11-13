@@ -66,7 +66,7 @@ type RouteRecord = import('../../../src/db/repositories/agency.repository.js').A
  *  4. IQ73 (N3): a station agent who frees up mid-ring takes the caller; `answering` first keeps
  *     the ring (both orderings on the call's chain);
  *  5. the away break around a ring (N1): a crash mid-ring then boot, a reconcile tick during a
- *     ring, a take-over during a ring, "Stop ringing" during a ring.
+ *     ring, a take-over during a ring, the opt-out (the Me toggle) during a ring.
  */
 
 const T = DEFAULTS.tenantId;
@@ -1087,7 +1087,7 @@ describe('the away break around a ring (N1)', () => {
       .toMatchObject({ reason: 'taken_over', away_since: absence.toISOString() });
   });
 
-  it('"Stop ringing" during a ring cancels it and ends the absence (opted_out)', async () => {
+  it('the opt-out (the Me toggle) during a ring cancels it and ends the absence (opted_out)', async () => {
     const c = connector();
     await deskAgent('on_call');
     const away = await awayAgent();

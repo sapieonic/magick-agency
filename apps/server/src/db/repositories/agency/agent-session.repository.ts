@@ -1053,8 +1053,8 @@ export class AgencyAgentSessionRepository {
 
   /**
    * The agent's live session whose station `deviceId` holds while it is on `away_ring` (or ringing
-   * from it), in any tenant (one live session per agent, OS1): what "Stop ringing" and a removed
-   * device end.
+   * from it), in any tenant (one live session per agent, OS1): what the opt-out (the Me toggle) and a
+   * removed device end.
    */
   async findLiveAwayRingForDevice(agentUserId: string, deviceId: string): Promise<AgencyAgentSessionRecord | null> {
     const { rows } = await getPool().query<AgencyAgentSessionRecord>(

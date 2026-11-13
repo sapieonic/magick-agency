@@ -10,7 +10,7 @@
  *
  *  - `GET /push-devices/:id`: the device's status (`AgencyPushDeviceStatus`).
  *  - `PUT /push-devices/:id`: register or refresh it; a revoked row is revived.
- *  - `PATCH /push-devices/:id`: opt in or out; off ends this device's `away_ring` ("Stop ringing").
+ *  - `PATCH /push-devices/:id`: opt in or out; off (the opt-out, the Me toggle) ends this device's `away_ring`.
  *  - `DELETE /push-devices/:id`: revoke it (sign-out); ends this device's `away_ring`. 204.
  *  - `POST /push-devices/:id/test-ring`: a `test_ring` push through the sender. 202.
  *
@@ -186,7 +186,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     return reply.send({ ...(await statusOf(runtime, actor, device)), [PUSH_DEVICE_AUDIT_KEY]: audit });
   });
 
-  // ── PATCH /push-devices/:id — opt in or out ("Stop ringing") ───────────
+  // ── PATCH /push-devices/:id — opt in or out (the Me toggle) ─────────────
   sub.patch('/push-devices/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const actor = actorFrom(request, reply, 'body');
     if (!actor) return reply;
@@ -199,7 +199,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     const before = await agencyPushDeviceRepository.find(actor.userId, deviceId);
     const device = await agencyPushDeviceRepository.setRingEnabled(actor.userId, deviceId, parsed.data.ring_enabled);
     if (!device) return reply.code(404).send({ error: 'Not Found', message: 'This phone is not registered. Open the app on it first.' });
-    // "Stop ringing": this device's `away_ring` ends now (`device_away`, `ring_off`). A ring in
+    // The opt-out (the Me toggle): this device's `away_ring` ends now (`device_away`, `ring_off`). A ring in
     // flight is the connector's; the reconcile ends the absence after it.
     if (!device.ring_enabled) await endAwayRingForDevice(runtime, actor.userId, deviceId, 'opted_out');
     const changed = before?.ring_enabled !== device.ring_enabled;
