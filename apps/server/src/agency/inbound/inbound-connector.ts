@@ -2119,6 +2119,20 @@ export class InboundConnector {
     void this.trackBackground(this.search(accountKey));
   }
 
+  /**
+   * TEST SEAM, never called by the server: the two internals the ring's ordering tests drive.
+   * `holdCallChain` queues a step on the call's serial chain that waits for `until`, so the steps
+   * queued behind it run in a known order once it opens; `searchNow` runs one search of the
+   * account (`tenantId:accountId`) as the republish would, tracked like any background search, and
+   * resolves when it is done.
+   */
+  get testSeam(): { holdCallChain(callId: string, until: Promise<unknown>): void; searchNow(accountKey: string): Promise<void> } {
+    return {
+      holdCallChain: (callId, until) => { void this.serial(callId, async () => { await until; }); },
+      searchNow: (accountKey) => this.trackBackground(this.search(accountKey)),
+    };
+  }
+
   /** One search of the account's waiting callers (see the header, step 2). */
   private async search(accountKey: string): Promise<void> {
     if (this.stopped) return;

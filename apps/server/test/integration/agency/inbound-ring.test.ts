@@ -5,7 +5,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { DEFAULTS, OTHER_ACCOUNT, insertTenant } from '../setup/factories.js';
 import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js';
 import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
-import { FakeBridge, FakeStations, gate, sleep, until, type FakeStationEntry } from './inbound-connector-fakes.js';
+import { FakeBridge, FakeStations, gate, until, type FakeStationEntry } from './inbound-connector-fakes.js';
 
 const audit = vi.hoisted(() => ({ log: vi.fn() }));
 /** Every `error` the connector logs (a step or a search that threw). */
@@ -108,6 +108,8 @@ let awayRing: InstanceType<typeof AwayRingService>;
 /** A connector over the shared Redis and Postgres, ringing through the real away break. */
 function connector(opts: {
   ringMs?: number; acceptGraceMs?: number; republishMs?: number; pushRetryMs?: number; agents?: InstanceType<typeof AgentStateMachine>;
+  /** The connector's clock (default the wall clock). */
+  now?: () => number;
 } = {}): Connector {
   const exits = new AgencyInboundCallRouter({
     bridge: bridge as never,
@@ -135,6 +137,7 @@ function connector(opts: {
     acceptGraceMs: opts.acceptGraceMs ?? 5_000,
     ...(opts.republishMs ? { republishMs: opts.republishMs } : {}),
     ...(opts.pushRetryMs ? { pushRetryMs: opts.pushRetryMs } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
   });
   c.start();
   connectors.push(c);
@@ -199,6 +202,8 @@ async function makeRoute(over: Record<string, unknown> = {}, accountId: string =
 }
 
 const row = async (id: string) => (await calls.findByIdAnyTenant(id))!;
+/** An instant just after the call's ring began (`ringing_at`): a station agent available from then on came after it (IQ73). */
+const afterRing = async (id: string) => (await row(id)).ringing_at!.getTime() + 1;
 const sessionRow = async (id: string) => (await pool().query('SELECT * FROM agency_agent_sessions WHERE id = $1', [id])).rows[0];
 const drain = async () => { for (const c of connectors) await c.drain(); };
 const pushes = (type: string, deviceRowId?: string) => sender.sent
@@ -444,7 +449,7 @@ describe('the ends of a ring', () => {
     // The next phone is rung for the same caller: accepted, then hung up from the app (the Bearer hang-up).
     const other = await awayAgent();
     // The account is searched again (the 2 s republish would, sooner here).
-    (c as unknown as { searchInBackground: (k: string) => void }).searchInBackground(`${T}:${A}`);
+    void c.testSeam.searchNow(`${T}:${A}`);
     const token2 = String((await ringPush(other.deviceRowId, call.id))['offer_token']);
     expect(await c.ringAccept(call.id, token2, { agentUserId: other.userId, deviceId: other.deviceId })).toMatchObject({ ok: true });
     expect(await c.ringDecline(call.id, token2, 'declined')).toEqual({ ok: false, code: 'already_accepted' });
@@ -528,23 +533,33 @@ describe('the ends of a ring', () => {
   });
 
   it('a push service outage never walks a caller through the pool: no miss for anyone, no next phone until the pause ends, then the retry', async () => {
-    const c = connector({ pushRetryMs: 600, republishMs: 100 });
+    // The connector's own clock: the pause ends when the test says, not when the machine gets to it.
+    let clock = Date.now();
+    const c = connector({ pushRetryMs: 600, republishMs: 60_000, now: () => clock });
+    const accountKey = `${T}:${A}`;
     await deskAgent('on_call');
     const phones = [await awayAgent(), await awayAgent(), await awayAgent()];
-    // Every push fails while the service is down.
+    // Every push fails while the service is down (an FCM 429 names no scope: the service's too).
     for (let i = 0; i < 3; i++) sender.answers.push({ ok: false, reason: i === 1 ? 'rate_limited' : 'unavailable' });
     const { call } = await caller(c);
     await until('push_failed', async () => (await row(call.id)).ring_result === 'push_failed');
-    // Well inside the pause, with the republish searching every 100 ms: still one ring only.
-    await sleep(300);
     await drain();
+    // Searches inside the pause (its last millisecond included): still one ring only.
+    const failedAt = clock;
+    for (const offset of [0, 300, 599]) {
+      clock = failedAt + offset;
+      await c.testSeam.searchNow(accountKey);
+      await drain();
+    }
     expect(pushes('ring')).toHaveLength(1);
     expect(await row(call.id)).toMatchObject({ state: 'queued', ring_count: 1 });
     for (const p of phones) {
       expect(await sessionRow(p.sessionId)).toMatchObject({ ring_misses: 0 });
       await expectAwayRing(p.sessionId);
     }
-    // After the pause the republish rings again (the service is back after three failures).
+    // At the pause's end a search rings again (the service is back after three failures).
+    clock = failedAt + 600;
+    await c.testSeam.searchNow(accountKey);
     await until('rung again', () => (pushes('ring').length >= 2 ? true : null));
     for (const p of phones) expect(await sessionRow(p.sessionId)).toMatchObject({ ring_misses: 0 });
   });
@@ -647,7 +662,7 @@ describe('a ring`s end, when things go wrong', () => {
     // A ring rung before the second miss's end landed (another caller's search between that ring's
     // release and its end): its end, whatever it is, ends the absence that was owed.
     const late = await awayAgent();
-    (c as unknown as { searchInBackground: (k: string) => void }).searchInBackground(`${T}:${A}`);
+    void c.testSeam.searchNow(`${T}:${A}`);
     const token = String((await ringPush(late.deviceRowId, call.id))['offer_token']);
     await pool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [late.sessionId, AGENCY_INBOUND_RING_MAX_MISSES]);
     expect(await c.ringDecline(call.id, token, 'declined')).toMatchObject({ ok: true });
@@ -667,7 +682,8 @@ describe('who is rung', () => {
     const { call } = await caller(c);
     await until('queued', async () => (await row(call.id)).state === 'queued');
     await drain();
-    await sleep(100);
+    // Another search, as the republish would run: still not rung.
+    await c.testSeam.searchNow(`${T}:${A}`);
     await drain();
     expect(pushes('ring')).toEqual([]);
     expect(await row(call.id)).toMatchObject({ state: 'queued', ring_count: 0 });
@@ -750,8 +766,8 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
     const away = await awayAgent();
     const { call } = await caller(c);
     const token = String((await ringPush(away.deviceRowId))['offer_token']);
-    await sleep(5);
-    await agents.set(desk, 'available', { leaseMs: 60_000 });
+    // IQ73 compares the station agent's `since` with the ring's start: stated, not slept for.
+    await agents.set(desk, 'available', { leaseMs: 60_000, sinceMs: await afterRing(call.id) });
     c.onAgentAvailable(desk);
     await until('taken', async () => (await row(call.id)).session_id === desk);
     await drain();
@@ -782,9 +798,9 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
     const token = String((await ringPush(away.deviceRowId))['offer_token']);
     // Hold the call's chain, so both steps queue behind it in a known order.
     const hold = gate();
-    void (c as unknown as { serial: (id: string, fn: () => Promise<void>) => Promise<void> }).serial(call.id, () => hold.wait);
-    await sleep(5);
-    await agents.set(desk, 'available', { leaseMs: 60_000 });
+    c.testSeam.holdCallChain(call.id, hold.wait);
+    // IQ73 compares the station agent's `since` with the ring's start: stated, not slept for.
+    await agents.set(desk, 'available', { leaseMs: 60_000, sinceMs: await afterRing(call.id) });
     c.onAgentAvailable(desk);
     // The search reserved the desk agent under the lock and queued its take-over step.
     await until('desk reserved', async () => (await agents.get(desk))?.inboundCallId === call.id);
@@ -803,10 +819,10 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
     const { call } = await caller(c);
     const token = String((await ringPush(away.deviceRowId))['offer_token']);
     const hold = gate();
-    void (c as unknown as { serial: (id: string, fn: () => Promise<void>) => Promise<void> }).serial(call.id, () => hold.wait);
+    c.testSeam.holdCallChain(call.id, hold.wait);
     const answering = c.ringAnswering(call.id, token);
-    await sleep(5);
-    await agents.set(desk, 'available', { leaseMs: 60_000 });
+    // IQ73 compares the station agent's `since` with the ring's start: stated, not slept for.
+    await agents.set(desk, 'available', { leaseMs: 60_000, sinceMs: await afterRing(call.id) });
     c.onAgentAvailable(desk);
     await until('desk reserved', async () => (await agents.get(desk))?.inboundCallId === call.id);
     hold.open();
@@ -839,9 +855,8 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
     const away = await awayAgent();
     const { call } = await caller(c);
     const token = String((await ringPush(away.deviceRowId))['offer_token']);
-    await sleep(5);
-    await agents.set(deskA, 'available', { leaseMs: 60_000 });
-    await agents.set(deskB, 'available', { leaseMs: 60_000 });
+    await agents.set(deskA, 'available', { leaseMs: 60_000, sinceMs: await afterRing(call.id) });
+    await agents.set(deskB, 'available', { leaseMs: 60_000, sinceMs: await afterRing(call.id) });
     c.onAgentAvailable(deskA);
     await reached.wait;
     expect(await c.ringDecline(call.id, token, 'declined')).toMatchObject({ ok: true });
@@ -863,7 +878,7 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
     await ringPush(away.deviceRowId, call.id);
     // Searches of the account mid-ring (another caller arriving, a presence change, would run one).
     for (let i = 0; i < 3; i++) {
-      (c as unknown as { searchInBackground: (k: string) => void }).searchInBackground(`${T}:${A}`);
+      void c.testSeam.searchNow(`${T}:${A}`);
       await drain();
     }
     expect(await row(call.id)).toMatchObject({ state: 'offered', session_id: away.sessionId, offer_channel: 'push' });
