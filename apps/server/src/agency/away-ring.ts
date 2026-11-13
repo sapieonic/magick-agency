@@ -189,6 +189,13 @@ export interface AwayRingEndOptions {
   countAs?: Extract<AwayRingEndedReason, 'returned'>;
 }
 
+/**
+ * How the agent's own return ends an absence (the app back on screen, or its own `device_away`):
+ * on `break`, never `offline` (a station is here or about to attach), and counted `returned`. With
+ * no reason, so no `ring_off`: the app knows.
+ */
+export const AWAY_RING_RETURN_END: Readonly<Pick<AwayRingEndOptions, 'offline' | 'countAs'>> = { offline: false, countAs: 'returned' };
+
 /** {@link AwayRingService.releaseInbound}'s options. */
 export interface AwayRingReleaseOptions {
   /**
@@ -481,7 +488,7 @@ export class AwayRingService {
     }
     if (queued === DEVICE_AWAY_BREAK_REASON && !opts.ending) {
       log.info({ sessionId, inboundCallId }, 'A device_away queued behind a ring applies at its end');
-      await this.end(sessionId, null, { offline: false, countAs: 'returned' });
+      await this.end(sessionId, null, AWAY_RING_RETURN_END);
       return 'ended';
     }
     return 'away_ring';
@@ -617,7 +624,7 @@ export class AwayRingService {
    * show it. No `ring_off`: the app is on screen and drops its own notification.
    */
   async endOnReturn(sessionId: string): Promise<AwayRingEndOutcome> {
-    return this.end(sessionId, null, { offline: false, countAs: 'returned' });
+    return this.end(sessionId, null, AWAY_RING_RETURN_END);
   }
 
   /**

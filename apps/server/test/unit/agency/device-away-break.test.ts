@@ -19,7 +19,6 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import {
-  awayRingRefusal,
   BREAK_UNCHANGED_KEY,
   decideDeviceAway,
   isAppPauseBreakReason,
@@ -27,6 +26,7 @@ import {
   takeBreakUnchanged,
 } from '../../../src/api/routes/agency/device-away.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
+import { awayRingRefusalBody } from '../../../src/agency/away-ring.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import type { AgencyAgentSessionRecord } from '../../../src/db/models/agency.model.js';
 
@@ -320,8 +320,8 @@ describe('the phone-call pause (IQ51): the device-away rules with its own code',
 describe('decideDeviceAway — Mode B', () => {
   it.each([
     // [code, live, ring, row reason, queued, expected]
-    ['away_ring', 'available', false, null, null, 'apply'],
-    ['away_ring', 'break', false, 'device_away', null, 'switch'],
+    ['away_ring', 'available', false, null, null, 'enter_ring'],
+    ['away_ring', 'break', false, 'device_away', null, 'enter_ring'],
     ['away_ring', 'break', true, 'away_ring', null, 'unchanged'],
     ['away_ring', 'break', false, 'lunch', null, 'unchanged'],
     ['away_ring', 'break', false, 'soft_phone', null, 'unchanged'],
@@ -331,12 +331,19 @@ describe('decideDeviceAway — Mode B', () => {
     ['away_ring', 'on_call', false, null, 'away_ring', 'unchanged'],
     ['away_ring', 'reserved', false, null, 'lunch', 'unchanged'],
     ['away_ring', 'offline', false, null, null, 'unchanged'],
-    ['device_away', 'break', true, 'away_ring', null, 'switch'],
+    ['device_away', 'break', true, 'away_ring', null, 'end_ring'],
     ['device_away', 'break', false, 'away_ring', null, 'unchanged'],
     ['device_away', 'wrapup', false, null, 'away_ring', 'queue'],
     ['phone_call', 'break', true, 'away_ring', null, 'unchanged'],
   ] as const)('%s on %s (ring %s, row %s, queued %s) → %s', (code, live, ring, breakReason, queued, expected) => {
     expect(decideDeviceAway({ campaignSession: true, live, queued, code, ring, breakReason })).toBe(expected);
+  });
+
+  it('device_away while a ring holds the session reserved declines it; nothing else does', () => {
+    expect(decideDeviceAway({ campaignSession: true, live: 'reserved', queued: null, code: 'device_away', pushOffer: true })).toBe('decline_ring');
+    expect(decideDeviceAway({ campaignSession: true, live: 'reserved', queued: null, code: 'device_away', pushOffer: false })).toBe('queue');
+    expect(decideDeviceAway({ campaignSession: true, live: 'reserved', queued: null, code: 'away_ring', pushOffer: true })).toBe('queue');
+    expect(decideDeviceAway({ campaignSession: true, live: 'reserved', queued: null, code: 'phone_call', pushOffer: true })).toBe('queue');
   });
 
   it('a soft-phone session is never changed by away_ring either', () => {
@@ -497,9 +504,9 @@ describe('runDeviceAway — away_ring', () => {
     expect(res.ok && res.body).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'away_ring' });
   });
 
-  it('awayRingRefusal is the typed 409 body, and device_away still applies (the app\'s fallback)', async () => {
-    expect(awayRingRefusal()).toMatchObject({ error: 'Conflict', code: 'ring_not_allowed' });
-    expect(awayRingRefusal('ring_disabled')).toMatchObject({ code: 'ring_disabled' });
+  it('awayRingRefusalBody is the typed 409 body, and device_away still applies (the app\'s fallback)', async () => {
+    expect(awayRingRefusalBody('ring_not_allowed')).toMatchObject({ error: 'Conflict', code: 'ring_not_allowed' });
+    expect(awayRingRefusalBody('ring_disabled')).toMatchObject({ code: 'ring_disabled' });
     const w = world('available');
     const res = await runDeviceAway(w.runtime, session(), 'device_away');
     expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away' }) });
