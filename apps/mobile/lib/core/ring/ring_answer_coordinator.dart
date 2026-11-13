@@ -97,8 +97,8 @@ final ringAnswerStationProvider = Provider<RingAnswerStation>(_ControllerStation
 /// Also the missed ring: a ring that ended unanswered on the phone (`ringEnded` expired or
 /// accept lapsed) posts native's "Missed inbound call" notification.
 ///
-/// State: the call being accepted, or null.
-class RingAnswerCoordinator extends Notifier<String?> {
+/// No state: what it does shows on the station and in the ring notice.
+class RingAnswerCoordinator extends Notifier<void> {
   static final _log = Log('ring.answer');
 
   /// The wait before the one retry.
@@ -124,8 +124,18 @@ class RingAnswerCoordinator extends Notifier<String?> {
   /// Calls answered here that the agent then hung up on the phone, bounded.
   final Set<String> _hungUp = {};
 
+  /// How many calls each of those sets keeps.
+  static const _remembered = 32;
+
+  /// Adds [id] to [ids], forgetting the oldest beyond [_remembered]; false when it was there.
+  static bool _remember(Set<String> ids, String id) {
+    if (!ids.add(id)) return false;
+    if (ids.length > _remembered) ids.remove(ids.first);
+    return true;
+  }
+
   @override
-  String? build() {
+  void build() {
     _channel = ref.read(ringChannelProvider);
     _api = InboundCallApi(
       ref.read(apiClientProvider),
@@ -138,7 +148,6 @@ class RingAnswerCoordinator extends Notifier<String?> {
       _ready = next is GateReady;
       if (_ready && !was) scheduleMicrotask(() => unawaited(_whenReady()));
     }, fireImmediately: true);
-    return null;
   }
 
   Future<void> _whenReady() async {
@@ -190,8 +199,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
           if (!_taken.contains(callId)) unawaited(_channel.showMissedRing());
         } else if (isDeclinedRing(reason)) {
           RingTelemetry.declined(callId, reason: reasonRaw);
-          if (reason == InboundRingResult.declined && _taken.contains(callId) && _hungUp.add(callId)) {
-            if (_hungUp.length > 32) _hungUp.remove(_hungUp.first);
+          if (reason == InboundRingResult.declined && _taken.contains(callId) && _remember(_hungUp, callId)) {
             _log.info('a ring answered here was hung up on the phone', {'call_id': callId});
             ref.read(ringAnswerStationProvider).hangUp(callId);
           }
@@ -209,26 +217,23 @@ class RingAnswerCoordinator extends Notifier<String?> {
     _waiting = answer;
     if (held == null || held.callId == answer.callId) return;
     _log.warn('a held ring answer was replaced before the gate was ready', {'call_id': held.callId, 'by': answer.callId});
-    if (_taken.add(held.callId) && _taken.length > 32) _taken.remove(_taken.first);
+    _remember(_taken, held.callId);
     RingTelemetry.expired(held.callId, reason: 'accept_failed');
     unawaited(_channel.reportEnded(held.callId, RingEndReason.acceptFailed));
   }
 
   void _received(String callId, String via) {
-    if (!_seen.add(callId)) return;
-    if (_seen.length > 32) _seen.remove(_seen.first);
+    if (!_remember(_seen, callId)) return;
     RingTelemetry.received(callId, via: via);
   }
 
   /// Takes the call [answer] names, once: a second answer for the same call (native delivers
   /// it by `ringAnswered` and again by `pendingAnswer`) does nothing.
   Future<void> answer(RingAnswer answer, {required bool coldStart}) async {
-    if (!_taken.add(answer.callId)) {
+    if (!_remember(_taken, answer.callId)) {
       _log.info('ring answer already taken', {'call_id': answer.callId});
       return;
     }
-    if (_taken.length > 32) _taken.remove(_taken.first);
-    state = answer.callId;
     RingTelemetry.answered(answer.callId, coldStart: coldStart);
     _log.info('accepting a ring', {'call_id': answer.callId, 'cold_start': coldStart});
     final station = ref.read(ringAnswerStationProvider)..hold(answer.callId);
@@ -247,7 +252,6 @@ class RingAnswerCoordinator extends Notifier<String?> {
             _failed(answer, null);
             return;
           }
-          if (ref.mounted && state == answer.callId) state = null;
           return;
         case InboundRefused(refusal: final r):
           refusal = r;
@@ -265,7 +269,6 @@ class RingAnswerCoordinator extends Notifier<String?> {
             if (held) {
               _log.info('ring already accepted by this station\'s attach', {'call_id': answer.callId});
               station.release(answer.callId);
-              if (state == answer.callId) state = null;
               return;
             }
           }
@@ -284,8 +287,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
     // The agent hung up on the phone first (their decline beat the accept): nothing to tell them.
     if (!_hungUp.contains(answer.callId)) ref.read(ringNoticeProvider.notifier).show(RingCopy.acceptFailed);
     ref.read(ringAnswerStationProvider).release(answer.callId);
-    if (state == answer.callId) state = null;
   }
 }
 
-final ringAnswerCoordinatorProvider = NotifierProvider<RingAnswerCoordinator, String?>(RingAnswerCoordinator.new);
+final ringAnswerCoordinatorProvider = NotifierProvider<RingAnswerCoordinator, void>(RingAnswerCoordinator.new);

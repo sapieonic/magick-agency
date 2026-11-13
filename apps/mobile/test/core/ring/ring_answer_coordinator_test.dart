@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
-import 'package:magick_agency_agent/core/ring/ring_answer_coordinator.dart';
 import 'package:magick_agency_agent/core/ring/ring_channel.dart';
 import 'package:magick_agency_agent/core/ring/ring_copy.dart';
 import 'package:magick_agency_agent/core/ring/station_ring.dart';
@@ -181,7 +180,6 @@ void main() {
         expect(h.station.calls, ['hold:$_callId', 'holdsCall:$_callId', 'release:$_callId']);
         expect(h.channel.named('reportEnded'), isEmpty);
         expect(h.container.read(ringNoticeProvider), isNull);
-        expect(h.container.read(ringAnswerCoordinatorProvider), isNull);
         h.dispose();
       });
     });
