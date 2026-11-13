@@ -658,7 +658,8 @@ verified yet").
   in the app. You won't get campaign calls while you're away."; the checklist "What this phone
   needs", six items each Ready or with a Fix button that opens the system screen (native
   `openSettings`): Notifications (allowed, and the ring channel not blocked), Full-screen calls
-  (Android 14+'s `canUseFullScreenIntent`), Battery optimisation (off for the app), Microphone,
+  (Android 14+'s `canUseFullScreenIntent`), Battery optimisation (off for the app; its Fix is
+  agent_audio's prompt, `BatteryExemption`, with the list screen where an OEM removed it), Microphone,
   Phone calling permission (the app's self-managed Telecom account enabled) and Do Not Disturb
   (lets calls through, or the ring channel bypasses it); the miss rule ("If you miss two inbound
   calls, this phone stops ringing until you open the app again…"; a decline does not reset the

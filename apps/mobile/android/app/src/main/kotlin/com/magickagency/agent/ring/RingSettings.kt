@@ -8,10 +8,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.PowerManager
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.util.Log
+import com.magickagency.agent_audio.BatteryExemption
 
 /** The settings card's checklist (`checklist`) and the screens that fix each item (`openSettings`). */
 internal object RingSettings {
@@ -24,7 +24,7 @@ internal object RingSettings {
         val notifications = RingNotifications.canPost(context) &&
             (ringChannel == null || ringChannel.importance != NotificationManager.IMPORTANCE_NONE)
         val fullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) nm.canUseFullScreenIntent() else true
-        val battery = context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
+        val battery = BatteryExemption.isExempt(context)
         val microphone = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         return RingChecklist(
             notifications = notifications,
@@ -79,10 +79,11 @@ internal object RingSettings {
             } else {
                 listOf(appNotifications)
             }
-            "battery_exempt" -> listOf(
-                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri),
-                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-            )
+            // agent_audio's prompt, with its fallback to the list screen where an OEM removed it.
+            "battery_exempt" -> {
+                if (!BatteryExemption.request(context, null)) Log.w(TAG, "No settings screen opened for $item")
+                return
+            }
             "microphone" -> listOf(appDetails)
             "phone_account" -> {
                 RingTelecom.register(context)

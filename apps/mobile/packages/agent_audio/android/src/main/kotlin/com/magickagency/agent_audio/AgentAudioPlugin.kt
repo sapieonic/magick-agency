@@ -5,17 +5,13 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.app.ForegroundServiceStartNotAllowedException
 import android.app.NotificationManager
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.os.SystemClock
-import android.provider.Settings
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -352,11 +348,8 @@ class AgentAudioPlugin :
                 context.stopService(Intent(context, OnDutyService::class.java))
                 result.success(null)
             }
-            "isIgnoringBatteryOptimizations" -> {
-                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-                result.success(pm.isIgnoringBatteryOptimizations(context.packageName))
-            }
-            "requestIgnoreBatteryOptimizations" -> result.success(requestBatteryExemption())
+            "isIgnoringBatteryOptimizations" -> result.success(BatteryExemption.isExempt(context))
+            "requestIgnoreBatteryOptimizations" -> result.success(BatteryExemption.request(context, activity))
             else -> result.notImplemented()
         }
     }
@@ -565,24 +558,6 @@ class AgentAudioPlugin :
                 }
             }
         }
-    }
-
-    private fun requestBatteryExemption(): Boolean {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (pm.isIgnoringBatteryOptimizations(context.packageName)) return true
-        val host = activity
-        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
-        val list = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-        for (intent in listOf(direct, list)) {
-            try {
-                if (host != null) host.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return true
-            } catch (_: ActivityNotFoundException) {
-                // Some OEM builds remove the direct prompt; fall through to the list screen.
-            } catch (_: SecurityException) {
-            }
-        }
-        return false
     }
 
     // endregion
