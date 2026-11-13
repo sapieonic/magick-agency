@@ -331,9 +331,10 @@ at load, so a broken credential fails boot naming the env key, never its value):
   `invalid`; 429 (`TooManyRequests`, per token) → `rate_limited`, scope `device`; 403, 5xx, any
   other 4xx, network and the timeout → `unavailable`. A stream refused unprocessed is sent once
   more; nothing that may have reached the phone is.
-- A 429 holds the device back (`rate_limited`, unsent) until its `Retry-After` (10 s without one):
-  nothing is retried inside a ring. A held send answers the scope of the 429 that set the hold
-  (`RetryAfterGate`): `device` for APNs (per token), `service` for FCM (the project's quota). Logs name the device row id, the push type and the call id,
+- A 429 holds sends back (`rate_limited`, unsent) until its `Retry-After` (10 s without one):
+  nothing is retried inside a ring. The hold is as wide as the scope of the 429 that set it, and a
+  held send answers that scope (`RetryAfterGate`): `device` for APNs (per token: that device alone),
+  `service` for FCM (the project's quota: every Android send). Logs name the device row id, the push type and the call id,
   never a token. Metrics (`packages/observability/src/metrics/platform.ts`):
   `agency_push_sends_total{platform,result}` (`result`: `ok`, `skipped`, or the failure reason) and
   `agency_push_send_seconds{platform}`.

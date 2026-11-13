@@ -374,7 +374,7 @@ describe('FcmSender: errors', () => {
     expect(aborted).toBe(true);
   });
 
-  it('429: never retried, and the device is held back until its Retry-After', async () => {
+  it('429: never retried, and every send is held back until its Retry-After (the project\'s quota)', async () => {
     const h = harness({ send: (n) => (n === 1 ? fcmError(429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', { 'retry-after': '30' }) : Response.json({ name: 'm' })) });
     expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited' });
     expect(h.sendCalls).toHaveLength(1);
@@ -383,10 +383,12 @@ describe('FcmSender: errors', () => {
     expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'service' });
     expect(h.sendCalls).toHaveLength(1);
     expect(metrics.trackPushSend).toHaveBeenLastCalledWith('android', 'rate_limited', undefined);
-    // Another device is not held back.
-    expect(await h.send({ ...DEVICE, id: 'row-2', fcm_token: 'other' })).toEqual({ ok: true });
+    // Another device is held back too: the quota is the project's, so it costs no request either.
+    expect(await h.send({ ...DEVICE, id: 'row-2', fcm_token: 'other' })).toEqual({ ok: false, reason: 'rate_limited', scope: 'service' });
+    expect(h.sendCalls).toHaveLength(1);
     h.advance(1);
     expect(await h.send()).toEqual({ ok: true });
+    expect(await h.send({ ...DEVICE, id: 'row-2', fcm_token: 'other' })).toEqual({ ok: true });
     expect(h.sendCalls).toHaveLength(3);
   });
 

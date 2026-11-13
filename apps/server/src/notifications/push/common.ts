@@ -52,35 +52,45 @@ export function parseRetryAfter(header: string | null | undefined, now: number):
 }
 
 /**
- * The carrier asked us to slow down for a device: until its `Retry-After` has passed, a send to
- * that device answers `rate_limited` without a request. Nothing is retried inside a ring (its
- * window is shorter than any sensible back-off); the agency side treats it as a failed send.
+ * The carrier asked us to slow down: until its `Retry-After` has passed, a send it holds back
+ * answers `rate_limited` without a request. Nothing is retried inside a ring (its window is shorter
+ * than any sensible back-off); the agency side treats it as a failed send.
  *
- * A hold remembers whose trouble the 429 that set it was (`PushFailureScope`), and a held send
- * answers with that scope: an APNs 429 is per token (`device`), an FCM 429 the project's quota
- * (`service`), so a service-scoped hold pauses ringing rather than marking the phone as one this
- * caller never rings again.
+ * A hold is kept as wide as whose trouble the 429 that set it was (`PushFailureScope`), and a held
+ * send answers with that scope: an APNs 429 is per token (`device`: that device alone is held), an
+ * FCM 429 the project's quota (`service`: every send of this sender, so of its platform, is held),
+ * so a service hold pauses ringing rather than marking a phone as one this caller never rings again,
+ * and costs no request per phone while it lasts.
  */
 export class RetryAfterGate {
-  readonly #until = new Map<string, { until: number; scope: PushFailureScope }>();
+  readonly #devices = new Map<string, number>();
+  /** Epoch ms until which every send is held (a `service` 429); 0: none. */
+  #serviceUntil = 0;
 
   constructor(private readonly now: () => number) {}
 
-  /** The scope of the hold on `deviceId` while it lasts; null when there is none. */
+  /** The scope of the hold on a send to `deviceId` while it lasts; null when there is none. */
   blocked(deviceId: string): PushFailureScope | null {
-    const held = this.#until.get(deviceId);
-    if (held === undefined) return null;
-    if (this.now() < held.until) return held.scope;
-    this.#until.delete(deviceId);
+    const now = this.now();
+    if (now < this.#serviceUntil) return 'service';
+    const until = this.#devices.get(deviceId);
+    if (until === undefined) return null;
+    if (now < until) return 'device';
+    this.#devices.delete(deviceId);
     return null;
   }
 
+  /** Hold `deviceId` back for `ms` (`device`), or every send (`service`). */
   hold(deviceId: string, ms: number, scope: PushFailureScope): void {
-    if (this.#until.size >= 10_000) {
-      const now = this.now();
-      for (const [id, held] of this.#until) if (held.until <= now) this.#until.delete(id);
+    const now = this.now();
+    if (scope === 'service') {
+      this.#serviceUntil = now + ms;
+      return;
     }
-    this.#until.set(deviceId, { until: this.now() + ms, scope });
+    if (this.#devices.size >= 10_000) {
+      for (const [id, until] of this.#devices) if (until <= now) this.#devices.delete(id);
+    }
+    this.#devices.set(deviceId, now + ms);
   }
 }
 

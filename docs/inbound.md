@@ -886,9 +886,10 @@ agent's own: a failed push is the carrier's): the caller goes back to the head o
 - **The push service's:** `unavailable` (5xx, 401/403, a bare 404, a timeout, a network error, a
   message refused as malformed), `unconfigured`, and an FCM 429 (`QUOTA_EXCEEDED` does not say
   whether the device's or the project's quota was hit, so it is taken as the project's), including
-  a send held back by the `Retry-After` an FCM 429 set (a sender's hold answers the scope of the 429
-  that set it, so a project quota whose `Retry-After` outlives the pause pauses again, rather than
-  walking the caller through every held phone). Every
+  a send held back by the `Retry-After` an FCM 429 set (a sender's hold is as wide as the scope of
+  the 429 that set it, every Android send for an FCM one, and answers that scope, so a project quota
+  whose `Retry-After` outlives the pause pauses again, rather than walking the caller through every
+  held phone). Every
   phone would fail alike, so the agent stays on `away_ring` and ringable for this caller too, no new
   search runs, and all ringing in this connector pauses for `INBOUND_PUSH_RETRY_MS` (10 s): searches
   meanwhile skip every `push` candidate (a station agent is still offered), and the republish after
@@ -1867,8 +1868,9 @@ behind the call. A pause queued behind a ring is settled when the ring ends unbo
 takes any left: before, a queued `device_away` outlived the ring and `/available` and paused the agent
 after their next call. An attach without `caps=inbound` during a ring ends it `cancelled` and the
 absence as `device_away` (the agent's return), not Mode A's return to the pool, and `ready` names
-that break. A sender's `Retry-After` hold answers the scope of the 429 that set it (an FCM quota is
-the service's, so the ring pauses instead of passing held phones over, IQ75). An absence's end with
+that break. A sender's `Retry-After` hold is as wide as the scope of the 429 that set it and answers
+that scope (an FCM quota is the service's: every Android send is held, and the ring pauses instead
+of passing held phones over, IQ75). An absence's end with
 no reason is counted `returned` only for the return and the app's own `device_away`. Home's floor
 signature moves on a state change that keeps `state_since` (the switch, IQ76). §6.1 "`device_away`
 during a ring".

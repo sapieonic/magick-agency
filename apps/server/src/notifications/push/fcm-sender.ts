@@ -17,9 +17,9 @@
  *  - Errors (`AgencyPushFailureReason`, {@link mapFcmAnswer}): `UNREGISTERED` → `unregistered`;
  *    `SENDER_ID_MISMATCH` (a token of another Firebase project) and `INVALID_ARGUMENT` on the token
  *    itself (`message.token`) → `invalid` (both revoke the device); 429 or `QUOTA_EXCEEDED` →
- *    `rate_limited`, and the device is held back until its `Retry-After` (never retried inside a
- *    ring; while held, a send answers `rate_limited` with the 429's own scope, `service`: the
- *    project's quota, not this phone's); 401/403 (our
+ *    `rate_limited`, and every send is held back until its `Retry-After` (never retried inside a
+ *    ring; while held, a send to any device answers `rate_limited` with the 429's own scope,
+ *    `service`: the project's quota, not this phone's); 401/403 (our
  *    credentials), a bare 404, 5xx, any other 4xx (a message refused as malformed), a network
  *    error, a timeout or a failed token exchange → `unavailable`.
  *  - Hosts are fixed ({@link FCM_OAUTH_TOKEN_URL}, {@link FCM_API_ORIGIN}); tests swap the
@@ -212,7 +212,8 @@ export class FcmSender implements PlatformPushSender {
     const token = device.fcm_token;
     if (!token) return { result: { ok: false, reason: 'invalid' }, code: 'no_token' };
     // Held by a Retry-After: answered with the scope of the 429 that set the hold (an FCM 429 is
-    // the project's quota, so the service's: ringing pauses, the phone is not passed over).
+    // the project's quota, so the service's: every device is held, ringing pauses, no phone is
+    // passed over).
     const held = this.#gate.blocked(device.id);
     if (held) return { result: { ok: false, reason: 'rate_limited', scope: held }, code: 'retry_after' };
 

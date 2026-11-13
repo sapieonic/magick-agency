@@ -237,6 +237,8 @@ describe('ApnsSender: errors', () => {
     now += 19_999;
     expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
     expect(carrier.sends).toHaveLength(1);
+    // Per token: another device is not held back.
+    expect(await sender.send(MockPushCarrier.device('ios', 'row-ios-2'), RING, { ttlMs: 20_000 })).toEqual({ ok: true });
     now += 1;
     expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: true });
   });
