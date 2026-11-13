@@ -168,7 +168,8 @@ void main() {
     channel.token = null;
     await pump(tester);
     expect(tester.widget<SwitchListTile>(find.byKey(const Key('ring-toggle'))).onChanged, isNull);
-    expect(find.text('This phone can’t receive rings: push messages aren’t available on it.'), findsOneWidget);
+    expect(find.text('Won’t ring: push messages aren’t available on this phone'), findsOneWidget);
+    expect(find.text('Ringing can’t be turned on here.'), findsOneWidget);
   });
 
   testWidgets('the headline: ready when leaving the app rings this phone', (tester) async {

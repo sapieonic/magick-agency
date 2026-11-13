@@ -16,11 +16,11 @@ enum RingBlocker {
   /// The server has no push credentials.
   notConfigured,
 
+  /// No push token on this phone (no Firebase, no Play services): turning ringing on can't help.
+  noPush,
+
   /// The agent has not turned ringing on for this phone.
   optedOut,
-
-  /// No push token on this phone (no Firebase, no Play services).
-  noPush,
 
   /// The server holds no live registration for this phone.
   notRegistered,
@@ -45,8 +45,8 @@ RingBlocker? ringBlockerOf({
   if (status == null) return RingBlocker.statusUnknown;
   if (!status.accountAllowsRing) return RingBlocker.notAllowed;
   if (!status.pushConfigured) return RingBlocker.notConfigured;
-  if (!optIn) return RingBlocker.optedOut;
   if (token == null || token.isEmpty) return RingBlocker.noPush;
+  if (!optIn) return RingBlocker.optedOut;
   final device = status.device;
   if (device == null || !device.pushRegistered || device.revokedAt != null) return RingBlocker.notRegistered;
   if (checklist == null) return RingBlocker.checklistUnknown;

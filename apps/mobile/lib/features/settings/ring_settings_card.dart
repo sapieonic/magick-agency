@@ -83,9 +83,12 @@ class RingSettingsCard extends ConsumerWidget {
       );
     }
     final headlineBlocker = settings.blocker;
-    final blocker = !status.pushConfigured
-        ? RingCopy.notConfigured
-        : (settings.token == null ? RingCopy.noPush : null);
+    // What turning ringing on can't fix: the toggle is off-limits, and the note says what follows.
+    final offLimits = switch (headlineBlocker) {
+      RingBlocker.notConfigured => RingCopy.notConfigured,
+      RingBlocker.noPush => RingCopy.noPush,
+      _ => null,
+    };
     final checklist = settings.checklist;
     return Card(
       key: const Key('ring-settings'),
@@ -97,12 +100,12 @@ class RingSettingsCard extends ConsumerWidget {
           SwitchListTile(
             key: const Key('ring-toggle'),
             value: settings.optIn,
-            onChanged: blocker != null || settings.saving ? null : (on) => registration.setOptIn(on),
+            onChanged: offLimits != null || settings.saving ? null : (on) => registration.setOptIn(on),
             title: const Text(RingCopy.toggle),
             subtitle: Text(RingCopy.explain, style: text.bodySmall),
           ),
-          if (blocker != null)
-            _Note(text: blocker, color: t.warning)
+          if (offLimits != null)
+            _Note(text: offLimits, color: t.warning)
           else if (settings.error != null)
             _Note(text: settings.error!, color: t.danger),
           const Divider(),
@@ -119,7 +122,7 @@ class RingSettingsCard extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.md),
             child: Text(RingCopy.missRule, style: text.bodySmall!.copyWith(color: t.textSecondary)),
           ),
-          if (settings.optIn && blocker == null) ...[
+          if (settings.optIn && offLimits == null) ...[
             const Divider(),
             _TestRing(phase: settings.testRing, onSend: registration.sendTestRing),
           ],

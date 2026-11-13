@@ -180,6 +180,7 @@ void main() {
       expect(b(status: _status('device_status_ringing', top: {'push_configured': false})), RingBlocker.notConfigured);
       expect(b(optIn: false), RingBlocker.optedOut);
       expect(b(token: null), RingBlocker.noPush);
+      expect(b(optIn: false, token: null), RingBlocker.noPush, reason: 'turning ringing on would not help');
       expect(b(status: _status('device_status_unregistered')), RingBlocker.notRegistered);
       expect(b(list: null), RingBlocker.checklistUnknown);
       expect(b(list: RingChecklist({...all.items, RingChecklistItem.notifications: false, RingChecklistItem.microphone: false})), RingBlocker.notifications);

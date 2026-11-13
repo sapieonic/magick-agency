@@ -662,8 +662,11 @@ verified yet").
   Phone calling permission (the app's self-managed Telecom account enabled) and Do Not Disturb
   (lets calls through, or the ring channel bypasses it); the miss rule ("If you miss two inbound
   calls, this phone stops ringing until you open the app again…"; a decline does not reset the
-  count); and "Send a test ring" (below). It says so instead when the server has no push
-  credentials ("Ask your administrator") or the phone has no push token. While its first load is on
+  count); and "Send a test ring" (below). When the server has no push credentials or the phone has
+  no push token the toggle is off-limits: the headline says which (no push token ranks before
+  "turned off", since turning it on would not help) and a note under the toggle says what follows,
+  one sentence per fact ("Ask your administrator to set it up.", "Ringing can't be turned on
+  here."). While its first load is on
   its way it shows "Loading this phone's ringing settings…"; a failed first load shows "Couldn't
   load this phone's ringing settings." with Try again. On an iPhone the status is read (never
   registered, `ringStatusOnlyProvider`) and, where the account rings phones, the card says "Ringing

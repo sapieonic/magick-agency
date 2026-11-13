@@ -70,8 +70,10 @@ abstract final class RingCopy {
   static const ready = 'Ready';
   static const needsAttention = 'Needs attention';
   static const checklistUnknown = 'This phone couldn’t say whether it can ring. Try again in a moment.';
-  static const noPush = 'This phone can’t receive rings: push messages aren’t available on it.';
-  static const notConfigured = 'Ringing phones isn’t set up on the server yet. Ask your administrator.';
+  /// Under the headline's [blockerWhy] when the toggle is off-limits: what follows from it, not the
+  /// same fact again.
+  static const noPush = 'Ringing can’t be turned on here.';
+  static const notConfigured = 'Ask your administrator to set it up.';
   static const unsupportedPlatform = 'Ringing for inbound calls isn’t available on this phone yet.';
   static const optInFailed = 'That change didn’t go through. Try again.';
   static const loadFailed = 'Couldn’t load this phone’s ringing settings.';
