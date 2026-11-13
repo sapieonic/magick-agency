@@ -64,18 +64,22 @@ data class RingChecklist(
     val phoneAccount: Boolean,
     val dndAllowsCalls: Boolean,
 ) {
-    fun toChannelMap(): Map<String, Boolean> = mapOf(
-        "notifications" to notifications,
-        "full_screen" to fullScreen,
-        "battery_exempt" to batteryExempt,
-        "microphone" to microphone,
-        "phone_account" to phoneAccount,
-        "dnd_allows_calls" to dndAllowsCalls,
-    )
+    /** `checklist`'s answer: each key with its item, in [ITEMS]' order. */
+    fun toChannelMap(): Map<String, Boolean> = KEYS.associate { (key, read) -> key to read(this) }
 
     companion object {
+        /** Each channel key with the item it reads: the one place the keys are written. */
+        private val KEYS: List<Pair<String, (RingChecklist) -> Boolean>> = listOf(
+            "notifications" to RingChecklist::notifications,
+            "full_screen" to RingChecklist::fullScreen,
+            "battery_exempt" to RingChecklist::batteryExempt,
+            "microphone" to RingChecklist::microphone,
+            "phone_account" to RingChecklist::phoneAccount,
+            "dnd_allows_calls" to RingChecklist::dndAllowsCalls,
+        )
+
         /** The channel's checklist keys, which `openSettings` takes as its `item`. */
-        val ITEMS = listOf("notifications", "full_screen", "battery_exempt", "microphone", "phone_account", "dnd_allows_calls")
+        val ITEMS: List<String> = KEYS.map { it.first }
     }
 }
 
