@@ -422,12 +422,16 @@ describe('the push-device repository (real Postgres)', () => {
     expect(await devices.recordFailure(d.id, 'unregistered')).toEqual({ revoked: false });
   });
 
-  it("finds a session's device by its station device id, and none for another agent's", async () => {
+  it("finds a live session's device by its station device id with the session's side of the ring rule; none for another agent's, or a left session", async () => {
     const d = await device();
     const s = await session();
-    expect((await devices.findForSession(s.id))!.id).toBe(d.id);
+    expect(await devices.findForLiveSession(s.id)).toMatchObject({
+      device: { id: d.id }, session: { campaign_id: campaignId, away_ring_since: null, ring_misses: 0 },
+    });
     const stranger = await insertAgentSession(campaignId, { station_device_id: 'phone-aaaa-1' }) as { id: string };
-    expect(await devices.findForSession(stranger.id)).toBeNull();
+    expect(await devices.findForLiveSession(stranger.id)).toBeNull();
+    await sessions.leave(s.id);
+    expect(await devices.findForLiveSession(s.id)).toBeNull();
   });
 });
 

@@ -212,21 +212,6 @@ export class AgencyPushDeviceRepository {
       device,
     };
   }
-
-  /**
-   * The push device that holds a session's station (IQ60): the agent's row for the session's
-   * `station_device_id`, revoked or not; null when the session names no device or it never
-   * registered.
-   */
-  async findForSession(sessionId: string): Promise<PushDeviceRecord | null> {
-    const { rows } = await getPool().query<PushDeviceRecord>(
-      `SELECT d.* FROM agency_agent_sessions s
-         JOIN agency_push_devices d ON d.user_id = s.agent_user_id AND d.device_id = s.station_device_id
-        WHERE s.id = $1`,
-      [sessionId],
-    );
-    return rows[0] ?? null;
-  }
 }
 
 export const agencyPushDeviceRepository = new AgencyPushDeviceRepository();
