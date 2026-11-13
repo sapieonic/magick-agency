@@ -386,17 +386,17 @@ return 1
  * The invariant this protects is the whole point of the lease design: a key TTL
  * expires only when the thing renewing it is gone. If renew re-created an expired key, an agent
  * whose replica died would silently come back to life in whatever state they were
- * last in — and the engine would dial into them. `EXISTS` first, and the state
- * must still match what the renewer believes.
+ * last in — and the engine would dial into them. The state must still match what
+ * the renewer believes (a missing key reads no state, so it is never renewed).
  *
  * Never on `away_ring` (`ring = 1`, IQ67): its TTL is the time left to its maximum age, and nothing
  * renews it. Matching the state alone let a heartbeat that read `break` (`device_away`) before a
  * switch to `away_ring` cut that TTL to the break lease's 45 s.
  */
 const RENEW_SCRIPT = `
-if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
-if redis.call('HGET', KEYS[1], 'state') ~= ARGV[1] then return 0 end
-if redis.call('HGET', KEYS[1], 'ring') == '1' then return 0 end
+local f = redis.call('HMGET', KEYS[1], 'state', 'ring')
+if f[1] ~= ARGV[1] then return 0 end
+if f[2] == '1' then return 0 end
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return 1
 `;
@@ -481,8 +481,8 @@ export type InboundReserveFromState = Extract<AgencyAgentState, 'available' | 'r
 
 /** What {@link AgentStateMachine.enterAwayRing} did. */
 export type AwayRingEnterResult =
-  /** Entered: `break`, `ring = 1`, the TTL; `from` is the state it was entered from. */
-  | { ok: true; from: AgencyAgentState }
+  /** Entered: `break`, `ring = 1`, the TTL. */
+  | { ok: true }
   /** Not in one of the states asked for (`state` null: no lease at all). Nothing written. */
   | { ok: false; reason: 'wrong_state'; state: AgencyAgentState | null }
   /** The `available` guard: a soft-phone call, a soft-phone session, an inbound call. Nothing written. */
@@ -874,12 +874,10 @@ export class AgentStateMachine {
         ENTER_AWAY_RING_SCRIPT, 1, this.key(sessionId),
         Math.floor(opts.sinceMs ?? Date.now()).toString(), Math.ceil(opts.ttlMs), ...opts.fromStates,
       ) as [number, string];
-      const state = value ? (value as AgencyAgentState) : null;
-      if (code === 1) return { ok: true, from: state ?? 'break' };
-      if (code === -1) return { ok: false, reason: 'manual_call_live', state };
-      if (code === -2) return { ok: false, reason: 'softphone_session', state };
-      if (code === -3) return { ok: false, reason: 'inbound_call_owed', state };
-      return { ok: false, reason: 'wrong_state', state };
+      const result = setResultFrom(code);
+      if (result === 'ok') return { ok: true };
+      // 0: not in a state asked for; the guard's codes as `set` maps them.
+      return { ok: false, reason: result === 'unavailable' ? 'wrong_state' : result, state: value ? (value as AgencyAgentState) : null };
     } catch (err) {
       log.error({ err, sessionId }, 'Away-ring entry failed');
       return { ok: false, reason: 'unavailable' };

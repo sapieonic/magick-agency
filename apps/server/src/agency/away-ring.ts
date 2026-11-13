@@ -164,8 +164,6 @@ export interface AwayRingEndOptions {
   /** Write `offline` (default: no station socket here, read right before the Redis write). */
   offline?: boolean;
   actor?: AuditActorFields;
-  /** False: no `ring_off` (default: sent whenever there is a `reason`). */
-  notify?: boolean;
   /** The absence's start when the caller has it (default: read from the session row). */
   absenceSince?: Date | null;
   /**
@@ -250,11 +248,6 @@ export class AwayRingService {
   /** Set at start from config (`AGENCY_AWAY_RING_MAX_MS`). */
   configure(opts: { maxAgeMs: number }): void {
     this.maxAge = opts.maxAgeMs;
-  }
-
-  /** `AGENCY_AWAY_RING_MAX_MS`: how long one absence on `away_ring` may last. */
-  get maxAgeMs(): number {
-    return this.maxAge;
   }
 
   /** The time left to the maximum age of an absence that began at `since` (null: one starting now). */
@@ -557,7 +550,7 @@ export class AwayRingService {
       this.deps.stations.send(sessionId, { event: 'agent_state', state: 'break', since, break_reason: DEVICE_AWAY_BREAK_REASON });
     }
     if (reason) {
-      if (opts.notify !== false) this.sendRingOff(ended.agent_user_id, ended.station_device_id, sessionId, reason, awaySince);
+      this.sendRingOff(ended.agent_user_id, ended.station_device_id, sessionId, reason, awaySince);
       const actor = opts.actor ?? SYSTEM_AUDIT_ACTOR;
       platformAuditLogger.log({
         ...actor,

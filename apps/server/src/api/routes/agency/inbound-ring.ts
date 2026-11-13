@@ -49,6 +49,7 @@ export interface InboundRingDeclineAudit {
 export interface InboundRingAcceptAudit {
   call_id: string;
   session_id: string;
+  /** The campaign of the contact the caller matched (the audit row's `campaign_id`); null when none. */
   campaign_id: string | null;
   device_id: string;
 }

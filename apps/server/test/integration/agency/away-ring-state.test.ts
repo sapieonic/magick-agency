@@ -143,7 +143,7 @@ describe('the away_ring Lua (real Redis)', () => {
   it('enters from available: break, ring, a fresh since, the TTL it was given; nothing renews it', async () => {
     const s = randomUUID();
     await sm().set(s, 'available');
-    expect(await sm().enterAwayRing(s, { ttlMs: 3_600_000, fromStates: ['available'] })).toEqual({ ok: true, from: 'available' });
+    expect(await sm().enterAwayRing(s, { ttlMs: 3_600_000, fromStates: ['available'] })).toEqual({ ok: true });
     expect(await sm().get(s)).toMatchObject({ state: 'break', ring: true, inboundCallId: null, attemptId: null });
     const ttl = await getTestRedis().pttl(key(s));
     expect(ttl).toBeGreaterThan(AGENT_LEASE_MS.break);
@@ -154,7 +154,7 @@ describe('the away_ring Lua (real Redis)', () => {
     const s = randomUUID();
     await sm().set(s, 'break');
     expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['available'] })).toEqual({ ok: false, reason: 'wrong_state', state: 'break' });
-    expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] })).toEqual({ ok: true, from: 'break' });
+    expect(await sm().enterAwayRing(s, { ttlMs: 60_000, fromStates: ['break'] })).toEqual({ ok: true });
 
     const manual = randomUUID();
     await sm().set(manual, 'break');

@@ -157,6 +157,7 @@ export async function proxyAgencyInboundRingRoutes(app: FastifyInstance, opts: {
         action: 'agency_inbound_call.ring_accepted',
         resource_type: 'agency_inbound_call',
         resource_id: audit.call_id,
+        ...(audit.campaign_id ? { campaign_id: audit.campaign_id } : {}),
         details: { session_id: audit.session_id, device_id: audit.device_id },
       });
     }, (answer) => {
