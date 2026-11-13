@@ -36,6 +36,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_inbound_route', label: 'Inbound route' },
   { value: 'agency_inbound_call', label: 'Inbound call' },
   { value: 'agency_inbound_clip', label: 'Inbound recording' },
+  { value: 'agency_push_device', label: 'Agent phone (inbound ringing)' },
   // Capitalised as the Do Not Call page names its list.
   { value: 'dnc_entry', label: 'Do Not Call entry' },
   // "Invitation", not "Membership": the rows filed under it are about the token

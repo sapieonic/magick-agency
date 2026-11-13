@@ -714,7 +714,7 @@ describe('failure mode 6 — the process restarted', () => {
     // Written, not merely returned: the pacing tick reads Redis, so a `break` that
     // exists only in the HTTP response would leave the tick seeing no lease at all.
     expect((await runtime.agents.get('s1'))?.state).toBe('break');
-    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'break', null);
+    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'break', null, { stateSince: null });
     // And on the lease table's own `break` TTL, not an improvised one.
     expect(redis.allArgs()).toContain(String(AGENT_LEASE_MS.break));
   });
@@ -725,7 +725,7 @@ describe('failure mode 6 — the process restarted', () => {
     // Lunch) into an unnamed break in the `ready` that follows.
     const { runtime } = makeRuntime();
     expect(await runtime.rehydrateAgent('s1', { kind: 'campaign', break_reason: 'device_away' } as never)).toBe('break');
-    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'break', 'device_away');
+    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'break', 'device_away', { stateSince: null });
   });
 
   it('does NOT overwrite a live lease — the mid-call reconnect case', async () => {

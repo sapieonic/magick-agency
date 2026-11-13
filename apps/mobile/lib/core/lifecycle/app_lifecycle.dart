@@ -53,8 +53,8 @@ final class WakelockPlusLock implements WakeLock {
 
 /// The station's local notifications while the app is away.
 abstract interface class StationNotifier {
-  /// "You're paused. Open the app to take calls again."
-  Future<void> showPaused();
+  /// "You're paused. Open the app to take calls again." ([body]: the station's words for why).
+  Future<void> showPaused({String body = pausedNotificationBody});
 
   /// "Save the outcome by 11:28" ([deadline] on this device's clock), titled
   /// for the campaign call's wrap-up.
@@ -113,7 +113,7 @@ final class LocalStationNotifier implements StationNotifier {
   }
 
   @override
-  Future<void> showPaused() => _show(pausedNotificationTitle, pausedNotificationBody);
+  Future<void> showPaused({String body = pausedNotificationBody}) => _show(pausedNotificationTitle, body);
 
   @override
   Future<void> showWrapupDeadline(DateTime deadline) =>

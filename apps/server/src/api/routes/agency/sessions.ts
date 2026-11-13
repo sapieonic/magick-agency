@@ -30,7 +30,7 @@ import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import {
   accountNameInTenant, claimStationOrReply, joinEndingIdleElsewhere, mintStationTokenOr503, refuseIfHeldElsewhere,
-  requireOwnedSession, resolveRetryContext, sendActionError, sendSessionInOtherTenant, stationDeviceFields,
+  leaveSession, requireOwnedSession, resolveRetryContext, sendActionError, sendSessionInOtherTenant, stationDeviceFields,
   stationIntervalsFor,
 } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
@@ -272,6 +272,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // take-over), or another device does and this join is refused.
     if (!await claimStationOrReply(reply, session, device, {
       onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended. Join the campaign again.'),
+      awayRing: runtime.awayRing,
     })) return reply;
 
     // Redis, or `break` — the same rule as the station socket, and for the same
@@ -360,6 +361,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     if (!await claimStationOrReply(reply, session, stationDeviceFields(request.body), {
       reconnect: true,
       onGone: () => sendActionError(reply, 409, 'session_ended', undefined, 'This session has ended.'),
+      awayRing: runtime.awayRing,
     })) return reply;
     const minted = await mintStationTokenOr503(runtime, session.id, reply);
     if (!minted) return reply;
@@ -582,7 +584,14 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       });
     }
     // A forced wrap-up never starts on the soft phone; a plain release from it ends it.
-    const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
+    const liveNow = await runtime.agents.get(session.id);
+    // Mode B: an agent on `away_ring` is away from the app, with no station to be made available
+    // on: the release would write them `offline` (and end their ringing) rather than put them in
+    // the pool. Refused, nothing changed; force-break and sign-off work as today.
+    if (liveNow?.state === 'break' && liveNow.ring) {
+      return sendActionError(reply, 409, 'agent_away_ring', undefined, 'They\'re away from the app; their phone rings for inbound calls.');
+    }
+    const leavingSoftphone = onSoftphoneBreak(liveNow, session);
     const forced = await runtime.wrapup.force(session.id);
     let state: AgencyAgentState;
     let endedSoftphone = false;
@@ -651,6 +660,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     if (isAppPauseBreakReason(asked)) {
       const result = await runDeviceAway(runtime, session, asked);
       if (result.ok) return reply.send(result.body);
+      // Mode B: `away_ring` refused (typed, 409); the app falls back to `device_away`.
+      if (result.refused) return reply.code(409).send(result.refused);
       // Every pass lost its compare-and-swap to a reservation or a release: a conflict
       // with the state, not a fault, so a 409 the error mask passes unchanged.
       const err: AgencyActionErrorResponse = {
@@ -780,9 +791,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         };
         return reply.code(503).send(err);
       }
-      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: check.reason.code });
     } else {
-      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: check.reason.code });
       await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
     }
     runtime.stations.send(session.id, {
@@ -997,9 +1008,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.code(409).send(err);
     }
 
-    await runtime.agents.clear(session.id);
-    await agencyAgentSessionRepository.leave(session.id);
-    await runtime.stations.detach(session.id);
+    // Mode B: a session left while on `away_ring` (its phone parked, so the leave came from
+    // another device: the app on screen would have ended the absence on its return) tells that
+    // phone (`leaveSession`). A ring in flight refused the leave above.
+    await leaveSession(runtime, session, await runtime.agents.get(session.id));
     return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'offline', since: new Date().toISOString() });
   });
 }

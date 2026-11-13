@@ -15,6 +15,13 @@
     <!-- VoIP is an allowed use; asked for from the pre-flight on OEMs that kill background apps. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Mode B, ringing an away agent's phone (docs/mobile.md "The ring channel (Mode B)"): the
+         ring is a self-managed Telecom call with a full-screen CallStyle notification. No
+         foreground service while it rings, so no FOREGROUND_SERVICE_PHONE_CALL. Android 14+
+         grants USE_FULL_SCREEN_INTENT only to calling and alarm apps (a Play Console
+         declaration); the checklist reports it when withheld. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <!-- flutter_secure_storage declares these for its optional biometric mode, which this app
          does not use: not asking for what the app never does. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" tools:node="remove" />
@@ -60,6 +67,38 @@
                 <data android:scheme="https" android:host="${appLinkHost}" android:pathPrefix="/agency/join/" />
             </intent-filter>
         </activity>
+        <!-- The lock-screen ring (the ringing notification's full-screen intent). It never
+             starts Flutter: opening the app would attach the station, which answers (N5). -->
+        <activity
+            android:name=".ring.RingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="com.magickagency.agent.ring"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <!-- FCM without a Flutter plugin: the ring's data pushes reach native code only. -->
+        <service
+            android:name=".ring.RingMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <!-- Telecom binds it for the ring's self-managed calls. -->
+        <service
+            android:name=".ring.RingConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+        <!-- The ringing notification's Decline. -->
+        <receiver
+            android:name=".ring.RingActionReceiver"
+            android:exported="false" />
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

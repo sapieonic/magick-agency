@@ -1356,6 +1356,46 @@ column and the agent index; the per-tenant index stays (recreated if missing, al
 then up), `baseline.test.ts`, the down → up inventory suite, and the server's
 `test/integration/agency/agency-session-tenant-unique.test.ts` (the join and the claim).
 
+### 0036 — `migrations/0036_inbound_ring.sql`
+
+Mode B: ring an away agent's phone for inbound calls (IQ58–IQ74). **`agency_push_devices`** (new):
+one row per (agent, device), `UNIQUE (user_id, device_id)` (**`uq_agency_push_devices_user_device`**,
+the register's arbiter and the ring's join from a session on `(agent_user_id, station_device_id)`);
+`device_id` `VARCHAR(64)` is the app's station device id (OS3), so the phone rung for a session is the
+one holding its station (IQ60). Per user, not per tenant (OS1): `tenant_id` is the tenant it last
+registered from and scopes nothing the ring reads. `platform` (`android` | `ios`,
+`AGENCY_PUSH_PLATFORMS`), `fcm_token` / `voip_token` `TEXT` (device addresses: plain text, never
+served, never logged), `app_build`, `ring_enabled` (default false: the agent's opt-in for this
+device), `last_seen_at`, `revoked_at`, `last_failure_at` + `last_failure_reason`
+(`AGENCY_PUSH_FAILURE_REASONS`, both or neither). User and tenant FKs `ON DELETE CASCADE` (a device
+address is no record to keep). **`uq_agency_push_devices_fcm_token`** / **`_voip_token`**, partial on
+live rows (`revoked_at IS NULL`): one live row per push address. CHECKs `ck_agency_push_devices_platform`,
+`_device_id` (non-blank), `_tokens` (non-empty when set), `_failure`. `trg_agency_push_devices_updated_at`.
+**`agency_inbound_calls`**: `offer_channel` `VARCHAR(8)` (`station` | `push`,
+`AGENCY_INBOUND_OFFER_CHANNELS`; NULL before any offer, and on an offer written before Mode B's
+writers, read as `station`), `ringing_at`, `accepted_at`, `ring_result` `VARCHAR(24)`
+(`AGENCY_INBOUND_RING_RESULTS`), `ring_count` `SMALLINT NOT NULL DEFAULT 0`;
+`ck_agency_inbound_calls_offer_channel`, `_ring_result`, and `_ring` (a `push` offer has its
+`ringing_at`, an answer only after a ring, `ring_count >= 0`). **`agency_agent_sessions`**:
+`ring_misses` `SMALLINT NOT NULL DEFAULT 0` (`ck_agency_agent_sessions_ring_misses`, never negative;
+IQ62) and `away_ring_since` `TIMESTAMPTZ` (when this absence on `away_ring` began, kept across rings
+that rewrite `state_since`; the reconcile's key, N1). **Down** drops the CHECKs, the columns and the
+table (nothing an agent wrote: devices re-register). No repository yet (the row type is
+`src/models/push-device.model.ts`). **Tests**: `test/integration/db/inbound-ring-migration.test.ts`
+(the shapes and defaults, every CHECK from both sides, each stored vocabulary against the contract's
+list, the keys and partial indexes, the cascades and trigger, down then up), `baseline.test.ts` and
+the down → up inventory suite.
+
+### 0037 — `migrations/0037_away_ring_sessions_index.sql`
+
+Mode B: the sessions on an away break whose phone rings. **`idx_agency_agent_sessions_away_ring`**
+`(tenant_id, account_id) WHERE away_ring_since IS NOT NULL AND left_at IS NULL`: partial, so it
+holds only the agents away right now, for the inbound connector's search of an account
+(`findRingableInAccount`) and the away-ring reconcile (`findAwayRingCandidates`), which otherwise
+scanned every session row. **Down** drops it. **Tests**:
+`test/integration/db/away-ring-sessions-index-migration.test.ts` (the definition, the search's plan,
+down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
@@ -1384,6 +1424,8 @@ then up), `baseline.test.ts`, the down → up inventory suite, and the server's
   the merged activity-trail query handles both.
 - `uq_agency_agent_live_agent` (one live session per agent across tenants, 0035; `uq_agency_agent_live_tenant` kept beside it for rollback) is the session constraint;
   there is no per-campaign variant.
+- `uq_agency_push_devices_user_device` (0036) is the push device's key: one row per agent and
+  station device id, across tenants.
 
 ## Open questions
 

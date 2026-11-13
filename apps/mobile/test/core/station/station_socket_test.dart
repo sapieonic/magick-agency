@@ -100,6 +100,28 @@ void main() {
     });
   });
 
+  test('declareInbound off: every connect, however it starts, leaves out caps; back on, the next declares it', () {
+    fakeAsync((async) {
+      final h = _Harness(async);
+      h.socket.declareInbound = false;
+      h.openFirst();
+      expect(h.connector.last.url.queryParameters, {'token': 'boot', 'client': 'mobile', 'media': 'alaw8'});
+      // A drop's retry and a parked socket's resume connect without it too.
+      h.dropAndMeasure();
+      expect(h.connector.last.url.queryParameters.containsKey('caps'), isFalse);
+      h.socket.park();
+      h.socket.setKeepAlive(false);
+      h.socket.setKeepAlive(true);
+      async.flushMicrotasks();
+      expect(h.connector.last.url.queryParameters.containsKey('caps'), isFalse);
+      h.socket.declareInbound = true;
+      h.socket.reconnect();
+      async.flushMicrotasks();
+      expect(h.connector.last.url.queryParameters['caps'], 'inbound');
+      h.socket.dispose();
+    });
+  });
+
   test('app pings: one on open, then one every heartbeat, as {event:ping, ts}', () {
     fakeAsync((async) {
       final h = _Harness(async)..openFirst();

@@ -12,12 +12,14 @@ const EXPECTED = {
   agency_contact_assignment_enabled: { default: false, envVar: 'FF_AGENCY_CONTACT_ASSIGNMENT', clientExposed: true },
   agency_reports_enabled: { default: false, envVar: 'FF_AGENCY_REPORTS', clientExposed: true },
   agency_inbound_enabled: { default: false, envVar: 'FF_AGENCY_INBOUND', clientExposed: true },
+  // Not client-exposed: the app reads `account_allows_ring` from its push device's status.
+  agency_inbound_ring_enabled: { default: false, envVar: 'FF_AGENCY_INBOUND_RING', clientExposed: undefined },
 } as const;
 
 describe('agency flags', () => {
-  it('are exactly the eight keys', () => {
+  it('are exactly the nine keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(8);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(9);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {

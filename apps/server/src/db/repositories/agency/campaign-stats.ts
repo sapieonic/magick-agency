@@ -491,16 +491,20 @@ export async function campaignStats(
 
 /**
  * What makes each campaign's floor change, in one read (Home's board): per campaign with any open
- * session, how many there are, the newest `state_since` and the newest `joined_at`. A join, a leave
- * (`left_at` set), a state change or a swap of one agent for another each changes it. Heartbeats do
- * not, so a still campaign's memo is not broken every few seconds. One probe of
- * `idx_agency_agent_sessions_live` per campaign. A campaign with nobody open is absent.
+ * session, how many there are, the newest `state_since`, the newest `joined_at`, and a digest of
+ * every open session's state and break reason. A join, a leave (`left_at` set), a state change or a
+ * swap of one agent for another each changes it, a change that keeps `state_since` too (Mode B's
+ * `away_ring → device_away` switch keeps the absence's start, IQ76). Heartbeats do not, so a still
+ * campaign's memo is not broken every few seconds. One probe of `idx_agency_agent_sessions_live`
+ * per campaign. A campaign with nobody open is absent.
  */
 export async function floorSignatures(campaignIds: readonly string[]): Promise<Map<string, string>> {
   if (campaignIds.length === 0) return new Map();
   const { rows } = await getPool().query<{ campaign_id: string; signature: string }>(
     `SELECT s.campaign_id::text AS campaign_id,
-            count(*)::text || '/' || max(s.state_since)::text || '/' || max(s.joined_at)::text AS signature
+            count(*)::text || '/' || max(s.state_since)::text || '/' || max(s.joined_at)::text || '/'
+              || encode(sha256(convert_to(
+                   string_agg(s.id::text || ':' || s.state || ':' || coalesce(s.break_reason, ''), ',' ORDER BY s.id), 'UTF8')), 'hex') AS signature
        FROM agency_agent_sessions s
       WHERE s.campaign_id = ANY($1::uuid[]) AND s.left_at IS NULL
       GROUP BY s.campaign_id`,

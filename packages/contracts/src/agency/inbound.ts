@@ -288,6 +288,71 @@ export type AgencyInboundCatalogSource = (typeof AGENCY_INBOUND_CATALOG_SOURCES)
  */
 export const AGENCY_INBOUND_CONNECT_DELAY_MS = 1_500;
 
+// ─── Ringing an away agent's phone (Mode B, IQ58–IQ74) ──────────────────────
+
+/**
+ * How an inbound call was offered to its agent (`agency_inbound_calls.offer_channel`,
+ * `0036_inbound_ring.sql`; NULL before any offer). `station`: the `inbound_call` frame on an open
+ * station socket, audio bound {@link AGENCY_INBOUND_CONNECT_DELAY_MS} later (Mode A). `push`: the
+ * agent is on the `away_ring` break and their phone is rung by a data push (`AgencyRingPush`,
+ * IQ66); there is no socket until they answer, so `connects_at` is NULL and the call binds once
+ * the app has accepted (`accepted_at`) and its station has attached.
+ */
+export const AGENCY_INBOUND_OFFER_CHANNELS = ['station', 'push'] as const;
+export type AgencyInboundOfferChannel = (typeof AGENCY_INBOUND_OFFER_CHANNELS)[number];
+
+/**
+ * IQ59: how long an away agent's phone rings for one caller before the ring expires (a miss,
+ * IQ62) and the caller goes back to the head of the queue. A contract constant, never an env key.
+ */
+export const AGENCY_INBOUND_RING_MS = 20_000;
+
+/**
+ * IQ59: from the tap on Answer (`…/ring/answering`) to audio, how long the app has to accept and
+ * attach its station before the offer lapses (`accept_lapsed`, a miss). Covers a cold start on
+ * mobile data. A contract constant, never an env key.
+ */
+export const AGENCY_INBOUND_ACCEPT_GRACE_MS = 15_000;
+
+/**
+ * IQ62: missed rings in a row (expired, or answered and not bound within the grace) that move the
+ * agent from `away_ring` to `device_away` (`ring_off` with reason `ring_missed`). A decline or
+ * `busy_on_phone` is not a miss, nor is a failed push (`push_failed`); the count resets on an
+ * answered ring and on `available`, and an agent at it is never rung.
+ */
+export const AGENCY_INBOUND_RING_MAX_MISSES = 2;
+
+/**
+ * How a push offer (a ring) ended (`agency_inbound_calls.ring_result`, `0036_inbound_ring.sql`,
+ * CHECKed; the `reason` of a `ring_cancel` push):
+ *
+ *  - `answered`: accepted and bound;
+ *  - `declined`: the agent pressed Decline (token-only, valid until accept, N4); not a miss;
+ *  - `expired`: rang {@link AGENCY_INBOUND_RING_MS} unanswered; a miss;
+ *  - `accept_lapsed`: answered, but not accepted and bound within
+ *    {@link AGENCY_INBOUND_ACCEPT_GRACE_MS}; a miss;
+ *  - `busy_on_phone`: the phone declined at once because a cellular call is on (IQ70); not a miss;
+ *  - `push_failed`: the push could not be sent; never a miss (the carrier's, not the agent's): an
+ *    unregistered token revokes the device and ends the absence, any other failure pauses ringing
+ *    briefly and leaves the agent ringable;
+ *  - `caller_left`: the caller hung up while it rang;
+ *  - `answered_elsewhere`: a station agent freed up and took the caller first (IQ73); not a miss;
+ *  - `cancelled`: any other end (the flag switched off, the session ended, a restart).
+ */
+export const AGENCY_INBOUND_RING_RESULTS = [
+  'answered', 'declined', 'expired', 'accept_lapsed', 'busy_on_phone', 'push_failed', 'caller_left',
+  'answered_elsewhere', 'cancelled',
+] as const;
+export type AgencyInboundRingResult = (typeof AGENCY_INBOUND_RING_RESULTS)[number];
+
+/**
+ * Why the phone declined a ring (`AgencyInboundRingDeclineRequest.reason`): the agent pressed
+ * Decline, or the app declined at once because the phone is on a cellular call (IQ70). Neither is
+ * a miss.
+ */
+export const AGENCY_INBOUND_RING_DECLINE_REASONS = ['declined', 'busy_on_phone'] as const;
+export type AgencyInboundRingDeclineReason = (typeof AGENCY_INBOUND_RING_DECLINE_REASONS)[number];
+
 /**
  * How long an answered inbound call may wait for its outcome before the lapse sweep closes it
  * `no_disposition` and returns the agent: the soft phone's rule, the same 30 minutes (IQ11).
@@ -364,8 +429,27 @@ export interface AgencyInboundCall {
   waited_seconds: number;
   // ISO-8601 timestamps.
   offered_at: string;
-  /** When audio binds (`offered_at` + {@link AGENCY_INBOUND_CONNECT_DELAY_MS}); NULL once connected or ended. */
+  /**
+   * When audio binds (`offered_at` + {@link AGENCY_INBOUND_CONNECT_DELAY_MS}); NULL once connected
+   * or ended, and always NULL on a `push` offer (it binds once accepted and attached, IQ66).
+   */
   connects_at: string | null;
+  /**
+   * How this offer reached the agent (IQ66): `station` (Mode A, every offer to an open station),
+   * `push` (the agent's phone was rung while away). NULL before any offer.
+   */
+  offer_channel: AgencyInboundOfferChannel | null;
+  /**
+   * A `push` offer's ring deadline (`ringing_at` + {@link AGENCY_INBOUND_RING_MS}); NULL on a
+   * station offer, and once the ring was answered or ended.
+   */
+  ring_expires_at: string | null;
+  /**
+   * When the agent answered a `push` offer (`…/ring/answering` or `…/ring/accept`): the
+   * {@link AGENCY_INBOUND_ACCEPT_GRACE_MS} grace runs from here. NULL on a station offer and
+   * before the answer. The app's stale-offer rule reads it.
+   */
+  accepted_at: string | null;
   bridged_at: string | null;
   ended_at: string | null;
   /** Talk time from the bind, once ended; NULL before. */
@@ -478,4 +562,70 @@ export interface AgencyInboundCallDncResponse {
   /** False when the `dnc_entries` write is still in flight; the roster row is suppressed either way. */
   dnc_recorded: boolean;
   contact_state: AgencyContactState | null;
+}
+
+// ─── The ring routes (Mode B, IQ71) ─────────────────────────────────────────
+//
+// `POST /proxy/agency/inbound/calls/:id/ring/{answering,decline,accept}`. `answering` and `decline`
+// carry only the offer token (native Android code posts them at the tap, without Flutter or a
+// Firebase token): 128 random bits, bound to (call, session), single-use per action, compared in
+// constant time, never logged, audited or persisted; an unknown, spent or expired token gets a
+// uniform 404 `ring_not_offered`, and both routes are rate-limited per IP. `accept` needs the
+// agent's Firebase Bearer as well, and the `device_id` that holds the session's station (OS3).
+// Refusals: `AgencyInboundErrorCode` (`../errors.ts`).
+
+/**
+ * `POST /inbound/calls/:id/ring/answering`: the agent tapped Answer. Stops the ring timer and
+ * starts the {@link AGENCY_INBOUND_ACCEPT_GRACE_MS} grace; from here a station agent freeing up no
+ * longer takes the caller (IQ73). Idempotent while the grace runs.
+ */
+export interface AgencyInboundRingAnsweringRequest {
+  offer_token: string;
+}
+
+/** The answer to `…/ring/answering`. Carries nothing about the caller: the token is its only authority. */
+export interface AgencyInboundRingAnsweringResponse {
+  call_id: string;
+  /** ISO-8601: `accepted_at` + {@link AGENCY_INBOUND_ACCEPT_GRACE_MS}, when the offer lapses unless accepted and bound. */
+  accept_by: string;
+}
+
+/**
+ * `POST /inbound/calls/:id/ring/decline`: the phone declined the ring. Valid until `accept` (N4;
+ * after it, the station's hang-up is the way out); counted `declined` or `busy_on_phone`, never a
+ * miss. The caller goes back to the head of the queue.
+ */
+export interface AgencyInboundRingDeclineRequest {
+  offer_token: string;
+  reason: AgencyInboundRingDeclineReason;
+}
+
+/** The answer to `…/ring/decline`. */
+export interface AgencyInboundRingDeclineResponse {
+  call_id: string;
+  ring_result: AgencyInboundRingResult;
+}
+
+/**
+ * `POST /inbound/calls/:id/ring/accept` (Firebase Bearer, the agent the call is offered to): take
+ * the call. Does `answering` if that has not happened yet, then mints the station token for
+ * `device_id` through the station claim (OS3: it must be the device holding the session's
+ * station). The app opens the socket on `station_ws_url` with `caps=inbound`; the call binds once
+ * the station has attached.
+ */
+export interface AgencyInboundRingAcceptRequest {
+  offer_token: string;
+  /** The app's station device id (`AgencyStationDevice.device_id`); must equal the session's `station_device_id`. */
+  device_id: string;
+}
+
+/** The answer to `…/ring/accept`: the call as offered, and the station bootstrap to attach with. */
+export interface AgencyInboundRingAcceptResponse {
+  call: AgencyInboundCall;
+  session_id: string;
+  campaign_id: string;
+  /** RELATIVE path with the token appended, as on `AgencySessionBootstrap.station_ws_url`. */
+  station_ws_url: string;
+  /** ISO-8601. Single-use, and short: see `AgencySessionBootstrap.station_token_expires_at`. */
+  station_token_expires_at: string;
 }

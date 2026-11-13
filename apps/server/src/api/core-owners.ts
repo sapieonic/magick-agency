@@ -98,6 +98,20 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'POST /inbound/calls/:id/disposition': 'none',
   'POST /inbound/calls/:id/dnc': 'none',
   'GET /inbound/queue': 'none',
+  // Mode B: the ring of an away agent's phone (`agency/inbound-ring.ts`). A ring has no station
+  // socket (the app parked it), and inbound callers are connected in one process (IB8): the
+  // connector holding the ring is this process's.
+  'POST /inbound/calls/:id/ring/answering': 'none',
+  'POST /inbound/calls/:id/ring/decline': 'none',
+  'POST /inbound/calls/:id/ring/accept': 'none',
+  // Mode B: the agent app's push devices (`agency/push-devices.ts`), Postgres and the push sender.
+  // The opt-out and the removal end the device's `away_ring`, which is held with no station socket
+  // (Redis and Postgres only), so they run where they are called.
+  'GET /push-devices/:id': 'none',
+  'PUT /push-devices/:id': 'none',
+  'PATCH /push-devices/:id': 'none',
+  'DELETE /push-devices/:id': 'none',
+  'POST /push-devices/:id/test-ring': 'none',
 };
 
 /** A matched internal route: its owner kind and the path's `:id`, if it has one. */

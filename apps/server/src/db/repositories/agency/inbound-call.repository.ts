@@ -44,6 +44,8 @@ import type {
   AgencyInboundFollowUpStatus,
   AgencyInboundHandledReason,
   AgencyInboundMissedReason,
+  AgencyInboundOfferChannel,
+  AgencyInboundRingResult,
   AgencyInboundStickyReason,
   AgencyKeysetPage,
 } from '@magick-agency/contracts/agency';
@@ -166,6 +168,17 @@ export interface AgencyInboundCallRecord {
    * row the migration could not name a route for: the default ({@link INBOUND_DEFAULT_WRAPUP_SECONDS}).
    */
   wrapup_seconds: number | null;
+  // Mode B (0036): the ring.
+  /** How the latest offer reached its agent; NULL before any offer (or an offer older than Mode B's writers: a station's). */
+  offer_channel: AgencyInboundOfferChannel | null;
+  /** When the latest ring started (the ring window counts from it). */
+  ringing_at: Date | null;
+  /** When the latest ring was answered (the accept grace counts from it). */
+  accepted_at: Date | null;
+  /** How the latest ring ended. */
+  ring_result: AgencyInboundRingResult | null;
+  /** Rings this call has had, across requeues. */
+  ring_count: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -309,6 +322,7 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
   c.session_id, c.queued_at, c.offered_at, c.offer_count, c.recording_requested, c.disposition_code,
   c.disposition_source, c.notes, c.callback_at, c.dispositioned_by_user_id, c.dispositioned_at,
   c.dispositioned_on_behalf, c.settled_at, c.voicemail_seconds, c.clash_attempt_id, c.wrapup_seconds,
+  c.offer_channel, c.ringing_at, c.accepted_at, c.ring_result, c.ring_count,
   c.created_at, c.updated_at`;
 
 /**
@@ -435,11 +449,16 @@ export class AgencyInboundCallRepository {
    *    answered the same way. Outside a caller's transaction only: inside one, that error aborts
    *    the caller's transaction, so pass `client` only where the Redis reservation already makes
    *    the race impossible.
+   *
+   * Mode B (IQ66): `channel` is how the offer reaches the agent (`station`, the default, or
+   * `push`: their phone is rung). A push offer also stamps `ringing_at` (the ring window counts
+   * from it), clears the previous ring's `accepted_at` and `ring_result`, and counts the ring
+   * (`ring_count + 1`). A station offer leaves the ring columns as the last ring left them.
    */
   async offer(
     id: string,
     sessionId: string,
-    opts: { at?: Date } = {},
+    opts: { at?: Date; channel?: AgencyInboundOfferChannel } = {},
     deps: { client?: Db } = {},
   ): Promise<{ ok: true; call: AgencyInboundCallRecord } | { ok: false; reason: AgencyInboundOfferRefusal }> {
     const db = deps.client ?? getPool();
@@ -447,13 +466,18 @@ export class AgencyInboundCallRepository {
     try {
       ({ rows } = await db.query<AgencyInboundCallRecord>(
         `UPDATE agency_inbound_calls c
-            SET state = 'offered', session_id = $2::uuid, offered_at = $4::timestamptz, offer_count = c.offer_count + 1
+            SET state = 'offered', session_id = $2::uuid, offered_at = $4::timestamptz, offer_count = c.offer_count + 1,
+                offer_channel = $5::varchar,
+                ringing_at = CASE WHEN $5::varchar = 'push' THEN $4::timestamptz ELSE c.ringing_at END,
+                accepted_at = CASE WHEN $5::varchar = 'push' THEN NULL ELSE c.accepted_at END,
+                ring_result = CASE WHEN $5::varchar = 'push' THEN NULL ELSE c.ring_result END,
+                ring_count = c.ring_count + CASE WHEN $5::varchar = 'push' THEN 1 ELSE 0 END
           WHERE c.id = $1::uuid AND c.state = ANY($3::varchar[])
             AND NOT EXISTS (
               SELECT 1 FROM agency_inbound_calls o
                WHERE o.session_id = $2::uuid AND o.settled_at IS NULL AND o.id <> $1::uuid)
           RETURNING ${CALL_COLUMNS}`,
-        [id, sessionId, INBOUND_CALL_TRANSITIONS.offered, opts.at ?? new Date()],
+        [id, sessionId, INBOUND_CALL_TRANSITIONS.offered, opts.at ?? new Date(), opts.channel ?? 'station'],
       ));
     } catch (err) {
       if (isUniqueViolation(err, SESSION_UNSETTLED_INDEX)) return { ok: false, reason: 'session_busy' };
@@ -474,20 +498,52 @@ export class AgencyInboundCallRepository {
    * `queued`, the session cleared, `queued_at` kept (stamped now if it was offered straight from
    * the greeting), so the queue's maximum wait still counts from the first queueing. Only while it
    * is offered to `sessionId`: a stale requeue for a session the call has since left does nothing.
-   * Null when nothing moved.
+   * Null when nothing moved. Mode B: `ringResult` writes how the ring of a push offer ended in the
+   * same statement (only on a push offer).
    */
   async requeue(
     id: string,
     sessionId: string,
-    opts: { at?: Date } = {},
+    opts: { at?: Date; ringResult?: AgencyInboundRingResult } = {},
     deps: { client?: Db } = {},
   ): Promise<AgencyInboundCallRecord | null> {
     const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
       `UPDATE agency_inbound_calls c
-          SET state = 'queued', session_id = NULL, queued_at = COALESCE(c.queued_at, $3::timestamptz)
+          SET state = 'queued', session_id = NULL, queued_at = COALESCE(c.queued_at, $3::timestamptz),
+              ring_result = CASE WHEN c.offer_channel = 'push' AND $4::varchar IS NOT NULL THEN $4::varchar ELSE c.ring_result END
         WHERE c.id = $1::uuid AND c.state = 'offered' AND c.session_id = $2::uuid
         RETURNING ${CALL_COLUMNS}`,
-      [id, sessionId, opts.at ?? new Date()],
+      [id, sessionId, opts.at ?? new Date(), opts.ringResult ?? null],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Mode B: the ring of a push offer was answered (`…/ring/answering`, `…/ring/accept`, or the
+   * app's station attaching mid-ring): `accepted_at` stamped once. Only while the call is on a push
+   * offer to `sessionId`. Null when nothing moved.
+   */
+  async markRingAnswered(id: string, sessionId: string, at: Date, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c
+          SET accepted_at = COALESCE(c.accepted_at, $3::timestamptz)
+        WHERE c.id = $1::uuid AND c.state = 'offered' AND c.session_id = $2::uuid AND c.offer_channel = 'push'
+        RETURNING ${CALL_COLUMNS}`,
+      [id, sessionId, at],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Mode B: how the latest ring ended, where no requeue writes it (an answered ring that bound, a
+   * caller who left while it rang). Only on a row whose latest offer was a push. The row as written;
+   * null when nothing was.
+   */
+  async setRingResult(id: string, result: AgencyInboundRingResult, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c SET ring_result = $2::varchar WHERE c.id = $1::uuid AND c.offer_channel = 'push'
+        RETURNING ${CALL_COLUMNS}`,
+      [id, result],
     );
     return rows[0] ?? null;
   }

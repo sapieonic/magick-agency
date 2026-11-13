@@ -129,3 +129,22 @@ InboundLeftReason? inboundLeftReason(InboundCall last, DateTime now, {DateTime? 
   if (last.state == InboundCallState.queued) return InboundLeftReason.requeued;
   return null;
 }
+
+/// When an offer still on offer here, with nothing settling it, has lost the frame that would
+/// have (the station's backstop): [staleAfter] past the moment its audio was due to bind, or
+/// null when nothing here can tell.
+///
+///  * A station offer (Mode A) binds at `connects_at`: stale [staleAfter] after it.
+///  * A push offer (Mode B, IQ66) has no `connects_at`: it binds once the app has accepted and
+///    its station has attached, inside [inboundAcceptGrace] of `accepted_at` (the server lapses it
+///    `accept_lapsed` after that). Stale [staleAfter] past the grace, never sooner: a slow cold
+///    start on mobile data is still inside it. Not accepted yet (no `accepted_at`): not this
+///    station's to retire on a guess.
+DateTime? inboundOfferStaleAt(InboundCall call, Duration staleAfter) {
+  if (inboundPhase(call) != InboundPhase.offered) return null;
+  final connectsAt = call.connectsAt;
+  if (connectsAt != null) return connectsAt.add(staleAfter);
+  final acceptedAt = call.acceptedAt;
+  if (call.isPushOffer && acceptedAt != null) return acceptedAt.add(inboundAcceptGrace).add(staleAfter);
+  return null;
+}

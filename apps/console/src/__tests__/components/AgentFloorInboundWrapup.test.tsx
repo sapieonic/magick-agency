@@ -141,3 +141,21 @@ describe('an inbound wrap-up on the floor', () => {
     expect(screen.getByTestId('force-available-button').textContent).toBe('End wrap-up');
   });
 });
+
+describe('force-available on an agent who has gone away with their phone ringing (Mode B)', () => {
+  it('says plainly why the server refused `409 agent_away_ring`, and changes nothing', async () => {
+    // The floor showed a wrap-up a moment ago; by the click the agent had left the app on
+    // `away_ring` (the race the refusal backstops: the drawer offers no return on a break).
+    mocks.forceAgentAvailable.mockRejectedValueOnce(
+      new ApiError(409, { error: 'Conflict', code: 'agent_away_ring', message: 'They\'re away from the app; their phone rings for inbound calls.' }),
+    );
+    const onForced = open(agent({ inbound_outcome_owed: false }));
+    fireEvent.click(screen.getByTestId('force-available-button'));
+    fireEvent.click(screen.getByRole('button', { name: 'End wrap-up and return' }));
+    await waitFor(() => expect(mocks.showErrorToast).toHaveBeenCalled());
+    expect((mocks.showErrorToast.mock.calls[0]![0] as Error).message)
+      .toBe('They’re away from the app; their phone rings for inbound calls.');
+    expect(onForced).not.toHaveBeenCalled();
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+});

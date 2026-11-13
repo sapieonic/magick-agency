@@ -134,6 +134,11 @@ export class InboundQueue {
     return over ? 'over_cap' : 'queued';
   }
 
+  /** The caller's entry, waiting or on offer (Mode B: a caller whose phone ring IQ73 may take over). */
+  entry(callId: string): InboundQueueEntry | undefined {
+    return this.held.get(callId)?.entry;
+  }
+
   offeredTo(callId: string): string | null {
     return this.held.get(callId)?.offeredTo ?? null;
   }

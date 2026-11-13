@@ -9,6 +9,7 @@ import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
+import '../../../core/station/station_copy.dart' show awayRingBreakLabel;
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../../missed/missed_on_duty.dart';
@@ -279,9 +280,12 @@ class AwayView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final since = ref.watch(stationViewProvider.select((v) => v?.onBreak?.since ?? v?.phaseSince));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
+    final ringing = ref.watch(stationViewProvider.select((v) => v?.onBreak?.isAwayRing ?? false));
+    final noRing = ref.watch(stationViewProvider.select((v) => v?.onBreak?.noRing));
     final now = ref.watch(stationClockProvider);
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
+    final at = since == null ? null : formatTime(since);
     final resuming = busy == StationBusy.endingBreak || busy == StationBusy.goingAvailable || busy == StationBusy.cancellingBreak;
 
     return IdleLayout(
@@ -296,12 +300,20 @@ class AwayView extends ConsumerWidget {
             children: [
               const StatusPill(StationCopy.awayPill, tone: Tone.warn),
               const SizedBox(height: Space.md),
-              Text(StationCopy.awayHeadline, style: text.headlineSmall),
+              Text(ringing ? awayRingBreakLabel : StationCopy.awayHeadline, style: text.headlineSmall),
               const SizedBox(height: Space.sm),
               Text(
-                StationCopy.awayDetail(since == null ? null : formatTime(since)),
+                ringing ? StationCopy.awayRingDetail(at) : StationCopy.awayDetail(at),
                 style: text.bodyMedium!.copyWith(color: t.textSecondary),
               ),
+              if (noRing != null) ...[
+                const SizedBox(height: Space.sm),
+                Text(
+                  StationCopy.awayNoRing(noRing),
+                  key: const Key('away-no-ring'),
+                  style: text.bodyMedium!.copyWith(color: t.warning),
+                ),
+              ],
               const SizedBox(height: Space.sm),
               Text(
                 StationCopy.awayAutoReturnHint,

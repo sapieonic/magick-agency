@@ -852,7 +852,8 @@ describe('AgencyDialer queued break ', () => {
     // future shift.
     const stations = new StationRegistry(null, '', 'r1');
     const agents = reservedAgents();
-    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue('ok');
+    // Written by the station close's script (Mode B: it keeps a session on `away_ring`).
+    const offlineSpy = vi.spyOn(agents, 'setOfflineUnlessAway').mockResolvedValue({ outcome: 'offline' });
     const breaks = fakeBreaks({ code: 'lunch', label: 'Lunch' });
     const dialer = new AgencyDialer(
       fakeBridge() as any, stations, agents, fakeWrapup() as any, breaks as any,
@@ -861,7 +862,7 @@ describe('AgencyDialer queued break ', () => {
     expect(await dialer.releaseAgent('gone-session')).toEqual({ state: 'offline', result: 'ok' });
 
     expect(breaks.cancel).toHaveBeenCalledWith('gone-session');
-    expect(setSpy).toHaveBeenCalledWith('gone-session', 'offline', expect.anything());
+    expect(offlineSpy).toHaveBeenCalledWith('gone-session', false);
   });
 });
 

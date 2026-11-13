@@ -105,6 +105,8 @@ class StationViewMapper {
     bool redialPlaced = false,
     String? inboundHangupFailure,
     String? inboundNotice,
+    bool awayRang = false,
+    String? awayNoRing,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -120,7 +122,17 @@ class StationViewMapper {
       // when it sent none (a server older than the field) is a pause this app
       // asked for while away the honest reading.
       final code = s.breakReasonCode ?? (awayPauseRequested ? wire.ReservedBreakCode.deviceAway.wire : '');
-      onBreak = BreakInfo(code: code, label: breakLabel(code, breakReasons), since: phaseSince);
+      // Back from the app's own `away_ring`: the server reports `device_away`, but the phone was
+      // ringing for inbound calls while the agent was away, and the card says so.
+      final rang = awayRang && code == wire.ReservedBreakCode.deviceAway.wire;
+      onBreak = BreakInfo(
+        code: code,
+        label: rang ? awayRingBreakLabel : breakLabel(code, breakReasons),
+        since: phaseSince,
+        rang: rang,
+        // Paused rather than rung, though ringing is on for this phone: why it won't ring.
+        noRing: !rang && code == wire.ReservedBreakCode.deviceAway.wire ? awayNoRing : null,
+      );
     }
     final queued = pendingBreakCode == null
         ? null
@@ -304,6 +316,7 @@ class StationViewMapper {
   /// readable words for a code the catalog lost, never the raw code.
   static String breakLabel(String code, List<wire.BreakReason> reasons) {
     if (code == wire.ReservedBreakCode.deviceAway.wire) return deviceAwayBreakLabel;
+    if (code == wire.ReservedBreakCode.awayRing.wire) return awayRingBreakLabel;
     if (code == wire.ReservedBreakCode.softPhone.wire) return softPhoneBreakLabel;
     if (code == wire.ReservedBreakCode.phoneCall.wire) return phoneCallBreakLabel;
     if (code.isEmpty) return agentStateLabels[wire.AgentState.onBreak]!;

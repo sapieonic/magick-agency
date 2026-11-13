@@ -40,6 +40,16 @@ void main() {
       expect(old, isNot(f));
     });
 
+    test('back from away_ring: agent_state keeps the absence start, ready stays on the same break', () {
+      final s = sample<AgentStateFrame>('agent_state_after_away_ring_return');
+      expect(s.state, AgentState.onBreak);
+      expect(s.breakReason, 'device_away');
+      expect(s.since, DateTime.utc(2026, 11, 2, 7, 58, 41, 120));
+      final r = sample<ReadyFrame>('ready_after_away_ring_return');
+      expect(r.state, AgentState.onBreak);
+      expect(r.breakReason, 'device_away');
+    });
+
     test('ready on a reconnect onto a live call restores the panel and the queued break', () {
       final f = sample<ReadyFrame>('ready_reconnect_live');
       final a = f.activeAttempt!;

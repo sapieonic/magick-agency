@@ -2,10 +2,10 @@
 
 The module boundaries inside `apps/server` and the fixed interfaces between them: which files
 each module area owns, which config keys each declares, where shared infrastructure lives, and the
-two cross-module seams. Read it before moving a file, adding a config key, route plugin or
+cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4).
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B).
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -44,12 +44,18 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 | Block | Top-level keys |
 |---|---|
 | `base.ts` | `server`, `db`, `redis`, `otel`, `processes` |
-| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile` |
+| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile`, `push` |
 | `agency.ts` | `agency` |
 | `voice.ts` | `concurrency`, `telephony`, `telephonyCredentials`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
 | `analysis.ts` | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`, `retention` |
 
 A module that needs S3 reads `config.s3` rather than declaring its own key.
+
+Keys inside a block are the block's own. One the seams below rely on: `agency.awayRingMaxMs`
+(`AGENCY_AWAY_RING_MAX_MS`, default 4 h, 1 min to 24 h; Mode B, IQ67), how long one absence on
+the `away_ring` break may last. It is the Redis key's TTL, and the away-ring reconcile
+(`agency/away-ring.ts`, run by `bootstrap/agency.ts` at boot and every minute) ends an absence past
+it. The push senders' credentials (`PUSH_*`) are the platform block's (§3.6).
 
 Composition files that every area depends on, changed with care: `packages/contracts/**`,
 `packages/db/migrations/**`, `apps/server/src/seams/**`,
@@ -265,6 +271,94 @@ default included, each spoken message, the signal), `test/integration/agency/inb
 (the router on real Postgres with a fake bridge) and `test/integration/telephony/plivo-inbound-e2e.test.ts`
 (through `buildApp` and the bootstraps).
 
+### 3.6 Agency (ringing an away phone) → platform (push senders)
+
+`apps/server/src/seams/push-sender.ts` (Mode B, IQ58–IQ74; `docs/mobile.md` "The ring channel
+(Mode B)"). The platform area owns the carriers of a push (FCM HTTP v1 for Android, APNs VoIP for
+iOS: credentials, signing, the HTTP calls, the error mapping, the metrics; `notifications/push/`);
+what a push means (which device, when a phone rings, why it stops) is the agency area's, reached
+only through `PushSender`:
+
+- `send(device, payload, { ttlMs })`: `device` is a `PushSenderDevice` (the push device row's `id`,
+  `platform`, `fcm_token`, `voip_token`; `pushTokenOf` in `@magick-agency/db/models/push-device.model`
+  picks the token), `payload` the contract's `AgencyRingPush` (IQ61: never a name or a number),
+  `ttlMs` how long the carrier may hold it. It answers `{ ok: true }` or `{ ok: false, reason,
+  scope? }`, the reason one of the contract's `AGENCY_PUSH_FAILURE_REASONS` (`unregistered`,
+  `invalid`, `rate_limited`, `unavailable`, `unconfigured`), and never throws. Whose trouble a
+  failure is (`pushFailureScope`): `device` for `unregistered` and `invalid` (a token refused for
+  good, which revokes the device: `pushFailureRevokes`) and for a failure the sender scoped to one
+  device (`scope: 'device'`: an APNs 429, or a send held by the Retry-After one set); `service` for
+  the rest (`unavailable`, `unconfigured`, an FCM 429, or a send held by the Retry-After one set). Only a `service` failure pauses ringing for the whole
+  process.
+- `configured(platform)`: whether the deployment has that platform's credentials.
+
+`setPushSender` / `getPushSender` / `resetPushSender` (tests), as §3.5's router. Until an
+implementation is registered, the unwired default answers every send `unconfigured` and no platform
+is configured, so `away_ring` is refused `push_unavailable` and nobody is rung.
+
+The implementation is `notifications/push/push-sender.ts` (`RoutingPushSender`, one sender per
+configured platform), registered by `bootstrap/platform.ts` when the `push` config block configures
+at least one platform and cleared and closed at its stop (platform stops last, after every area that
+rings); boot logs which platforms can be rung. Config (`config/blocks/platform.ts`, parsed into keys
+at load, so a broken credential fails boot naming the env key, never its value):
+
+| Key | Meaning |
+|---|---|
+| `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64` | Android. The base64 of a service account key file of the app's Firebase project (`project_id`, `client_email`, an RSA `private_key`). |
+| `PUSH_APNS_KEY_P8_B64` | iOS, all five or none. The base64 of the team's APNs auth key (`.p8`, EC P-256). |
+| `PUSH_APNS_KEY_ID`, `PUSH_APNS_TEAM_ID` | The key's id and the Apple team id (10 characters each). |
+| `PUSH_APNS_BUNDLE_ID` | The app's bundle id, without `.voip` (the topic is `{bundle}.voip`). |
+| `PUSH_APNS_ENV` | `sandbox` or `production`, no default: a debug build's token sent to production is refused `BadDeviceToken`, which revokes the device. |
+
+- **FCM HTTP v1** (`fcm-sender.ts`): an RS256 assertion traded at `oauth2.googleapis.com` for an
+  access token cached 55 minutes (single flight; a 401 drops it and sends once more). The platform
+  bootstrap starts the sender (`RoutingPushSender.start`): the token is traded at boot and again
+  5 minutes before it ends, in the background, so a ring never waits on the exchange (a failed one
+  is logged and tried again a minute later). Each request is bounded by `AbortSignal.timeout` and,
+  for a transport that ignores it, `withTimeoutOr`. A data-only
+  message (`android.priority: HIGH`, `android.ttl` the ring window). `UNREGISTERED` →
+  `unregistered` (a bare 404 never revokes: `unavailable`); 429/`QUOTA_EXCEEDED` → `rate_limited`
+  (no scope: FCM does not say whether the device's or the project's quota was hit);
+  `SENDER_ID_MISMATCH` and `INVALID_ARGUMENT` on `message.token` → `invalid`; 401/403, a bare 404,
+  5xx, any other 4xx (a message refused as malformed), network, a failed token exchange and the
+  5 s timeout → `unavailable`.
+- **APNs VoIP** (`apns-sender.ts`): one reused HTTP/2 session to `api.push.apple.com` or
+  `api.sandbox.push.apple.com`, dropped and reopened after a GOAWAY, an error, a close or a peer that
+  answers neither the send nor a PING; an ES256 provider token minted every 50 minutes (and again
+  on `ExpiredProviderToken`). Only `ring` and `test_ring` are sent (every VoIP push must report a
+  call to CallKit); `ring_cancel` and `ring_off` answer `{ ok: true }` unsent. 410,
+  `BadDeviceToken`, `Unregistered`, `ExpiredToken` → `unregistered`; `DeviceTokenNotForTopic` →
+  `invalid`; 429 (`TooManyRequests`, per token) → `rate_limited`, scope `device`; 403, 5xx, any
+  other 4xx, network and the timeout → `unavailable`. A stream refused unprocessed is sent once
+  more; nothing that may have reached the phone is.
+- A 429 holds sends back (`rate_limited`, unsent) until its `Retry-After` (10 s without one):
+  nothing is retried inside a ring. The hold is as wide as the scope of the 429 that set it, and a
+  held send answers that scope (`RetryAfterGate`): `device` for APNs (per token: that device alone),
+  `service` for FCM (the project's quota: every Android send). Logs name the device row id, the push type and the call id,
+  never a token. Metrics (`packages/observability/src/metrics/platform.ts`):
+  `agency_push_sends_total{platform,result}` (`result`: `ok`, `skipped`, or the failure reason) and
+  `agency_push_send_seconds{platform}`.
+- The carriers' hosts are fixed. Tests reach the mock carrier (`test/mocks/push/`,
+  `MockPushCarrier`: FCM as an in-process `fetch`, APNs as a loopback h2c server, both checking the
+  signatures, with scripted answers per token or platform) through `createPushSender`'s transports
+  or `setPushTransportsForTests`, never a configurable host.
+
+**The agency side** reaches the seam only through `getPushSender()`: `AwayRingService`
+(`agency/away-ring.ts`: `configured` in the `away_ring` refusals, `send` for `ring_off` and the test
+ring, recording a failure on the device row, which revokes it on `unregistered` or `invalid`), the inbound
+ring (`agency/inbound/inbound-ring.ts`: `ring` and `ring_cancel`; it never calls the seam itself, every
+Mode B dependency of the inbound connector goes through `AwayRingService` as its `InboundAwayRing`
+port, which also answers who may be rung, `configured` included) and the push-device routes
+(`push_configured` in the device status). What it sends is the contract's `AgencyRingPush`; the
+device rows are `agency_push_devices` (`0036_inbound_ring.sql`, read through
+`db/repositories/agency/push-device.repository.ts`, the model in `@magick-agency/db`).
+`AGENCY_AWAY_RING_MAX_MS` (§2) is the agency block's, not the push block's.
+
+Tests: `test/unit/seams/push-sender.test.ts` (the interface at type level, the unwired default, set
+and reset), `test/unit/notifications/push/*.test.ts` (the senders against the mock carrier, the
+routing, the JWTs), `test/unit/config/push-config.test.ts`, `test/unit/bootstrap/platform.test.ts`
+(the wiring).
+
 ## 4. Shared infrastructure
 
 Read or written by more than one module area, so it has one home (decision B10):
@@ -283,6 +377,19 @@ Read or written by more than one module area, so it has one home (decision B10):
 - `apps/server/src/audit/`: `auditLogger` (→ `audit_logs`, the "Dialer" half of the activity trail)
   and the platform audit logger with its catalog, vocabulary and actor types (→ `platform_audit_log`,
   the "Console" half). Both tables are kept (decision B7).
+
+**The token-only ring routes reach the agency runtime before `callCore`.** Every other public route
+gets its tenancy from the Firebase session and the tenant headers, then calls the internal handler
+(B16). `POST /proxy/agency/inbound/calls/:id/ring/answering` and `…/ring/decline` carry no session
+(native Android code posts them at the tap with the offer token alone, IQ71), so the public layer
+asks the connector which tenant and account hold the call:
+`getAgencyRuntime()?.inbound?.ringTenancy(callId)`, wired in `api/agency.plugin.ts` and passed to
+`proxyAgencyInboundRingRoutes` as `ringTenancy`. A call the connector does not hold is the uniform
+404 `ring_not_offered` and never reaches `callCore`; the token itself is checked by the internal
+handler. The same lookup keys the routes' rate limit (per IP and ringing call). Pinned by
+`test/unit/api/routes/proxy-agency-inbound-ring.routes.test.ts` (the lookup before `callCore`, no
+Bearer) and `test/unit/api/agency-agent-reach.test.ts` (`TOKEN_ONLY_ROUTES`: the only agency HTTP
+routes without a session).
 
 ## 5. Known gaps
 

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
-import '../performance/performance_api.dart' show decodeBody;
+import '../../core/api/decode_body.dart';
 
 /// The agent's own-contact routes (contact assignment), all through
 /// [ApiClient]. The subject is always the signed-in agent: no request names one.

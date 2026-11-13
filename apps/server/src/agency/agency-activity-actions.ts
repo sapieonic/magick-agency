@@ -91,6 +91,12 @@ type CampaignScopedAuditAction = Exclude<
   | 'agency_inbound_call.reassigned'
   | 'agency_inbound_call.reopened'
   | 'agency_inbound_call.claimed'
+  // Mode B: the ring of an away agent's phone, filed under the inbound call, never a campaign.
+  | 'agency_inbound_call.ring_declined'
+  | 'agency_inbound_call.ring_accepted'
+  // An agent's push devices are theirs, across tenants and campaigns (Mode B): no row carries a campaign.
+  | 'agency_push_device.ring_opt_in_changed'
+  | 'agency_push_device.revoked'
 >;
 
 /**
@@ -214,6 +220,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_session.force_available', label: 'Made available by supervisor', group: 'Staffing' },
   { value: 'agency_session.softphone_started', label: 'Switched (or queued a switch) to soft phone', group: 'Staffing' },
   { value: 'agency_session.softphone_ended', label: 'Left soft phone (or withdrew the switch)', group: 'Staffing' },
+  { value: 'agency_session.away_ring_ended', label: 'Phone stopped ringing for inbound calls', group: 'Staffing' },
 ] as const satisfies readonly ActivityActionOption[];
 
 type ServedAction = (typeof CAMPAIGN_ACTIVITY_ACTIONS)[number]['value'];

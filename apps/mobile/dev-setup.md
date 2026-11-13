@@ -260,6 +260,49 @@ providers, so after changing station code prefer `R`, or leave the station and j
 The `dev` flavour installs as **"MA Agent Dev"** (`com.magickagency.agent.dev`), next to staging
 and production builds.
 
+### Ringing this phone for inbound calls (Mode B, Android)
+
+Optional: only to work on Mode B, the phone rung for inbound callers while the agent is away from the
+app (`docs/mobile.md` "Ringing while away (Mode B)", `docs/inbound.md` §6.1). iOS registers nothing
+yet. You need a real Android phone or an emulator image **with Google Play** (FCM needs Play
+services).
+
+1. **A Firebase Android app per flavour, in the same Firebase project as the server.** The package
+   names are `com.magickagency.agent.dev`, `com.magickagency.agent.staging` and
+   `com.magickagency.agent` (prod); each `env/<flavour>.json` (or your `env/<flavour>.local.json`)
+   carries its own app's `FIREBASE_APP_ID_ANDROID`, and all of them the project's
+   `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID` and `FIREBASE_MESSAGING_SENDER_ID` (step 7). No
+   `google-services.json` is used.
+2. **The native side reads the same dart-defines.** Flutter hands the build's defines to Gradle,
+   and `android/app/build.gradle.kts` writes `API_ORIGIN` (string `magick_api_origin`: native code
+   posts the ring's answer and decline there without Flutter) and the Firebase client config
+   (`google_app_id` from `FIREBASE_APP_ID_ANDROID`, `google_api_key`, `project_id`, and
+   `gcm_defaultSenderId` from `FIREBASE_MESSAGING_SENDER_ID`) into string resources, from which
+   Firebase builds its default app when the process starts, so a ring push wakes the app with no
+   Flutter running. A value with characters other than letters, digits and `: / . _ + -` is left
+   out. Without the three Firebase ids the build still works and push is unavailable (the Me card
+   says "This phone can't receive rings"). Defines are build-time: after changing one, stop the app
+   and `flutter run` again (a hot restart does not rebuild the resources). `API_ORIGIN` must reach
+   the server from the phone exactly as in the table above.
+3. **The server** needs the same project's service account:
+   Firebase console › Project settings › Service accounts › Generate new private key, then in
+   `apps/server/.env` `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64=$(base64 -w0 key.json)` (macOS:
+   `base64 -i key.json`). Restart it: the boot log says `Push senders configured` with `android:
+   true`. The server must reach `oauth2.googleapis.com` and `fcm.googleapis.com`. Keep the key out
+   of the repo.
+4. **The flags.** `agency_inbound_enabled` and `agency_inbound_ring_enabled` on for the agent's
+   tenant or account (super-admin console › the tenant › *Feature Flags*), or
+   `FF_AGENCY_INBOUND=true` and `FF_AGENCY_INBOUND_RING=true` in `apps/server/.env` as the default.
+5. **On the phone:** sign in and open the account (the app registers the phone then, and again on
+   every return to the app), then Me › *Inbound calls* (shown only with both flags on): turn on "Ring this phone for inbound calls", fix every item of "What this phone needs"
+   (on Android 14+ allow full-screen calls; turn on the calling account), and tap **Send a test
+   ring**. The phone rings within a few seconds ("Test ring · Magick Agency") and the card says
+   "Your phone rang. Ringing works on this phone." Nothing within 30 s says "No test ring arrived";
+   one per 10 s. The test ring goes through the server and FCM, but rings locally with no call.
+6. **A real ring** needs an inbound route and a caller (`docs/operations.md`, "Setting up inbound
+   calls for a tenant", and a Plivo account); without one, the server's
+   `test/integration/telephony/inbound-ring-e2e.test.ts` drives the whole path against mocks.
+
 ## 9. Before you push
 
 Run the same checks as CI:
@@ -277,11 +320,12 @@ flutter build apk --debug --flavor dev --dart-define-from-file=env/dev.json
 - **Changing a contract** in `packages/contracts`: run `node tooling/contracts-literals.mjs` from
   the repo root, then commit the regenerated `literals.json` with the change. Add or update the
   sample in `packages/contracts/fixtures/agent/` the app decodes.
-- **Native tests for the audio engine** (Kotlin), from `android/`, after one `flutter build apk`
-  or `flutter run` has written `android/local.properties`:
+- **Native tests for the audio engine and the ring** (Kotlin), from `android/`, after one
+  `flutter build apk` or `flutter run` has written `android/local.properties`:
 
   ```bash
   ./gradlew :agent_audio:testDebugUnitTest
+  ./gradlew :app:testDevDebugUnitTest      # Mode B's ring: state machine, push parser, requests, copy
   ```
 
 ## Troubleshooting

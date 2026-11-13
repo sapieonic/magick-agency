@@ -186,6 +186,8 @@ production.
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
 | `POSTHOG_ENABLED=true` + `POSTHOG_API_KEY` | Product analytics | Host default `https://us.i.posthog.com` |
 | `OTEL_ENABLED=true` + `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_SERVICE_NAME` | Traces, metrics and logs over OTLP (http/protobuf) | All three or nothing starts (the server warns when only the name is missing). `OTEL_SERVICE_NAME`: `magick-agency` = production, `magick-agency-Staging`, `magick-agency-Dedicated`; anything else (e.g. `agency-dev-<you>`) is not alerted on. Grafana Cloud also needs `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64 id:token>`. `OTEL_METRICS_EXPORT_INTERVAL_MS` default 60000. Alert rules and dashboard: `grafana/README.md` |
+| `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64` | Mode B on Android: ringing an away agent's phone for an inbound caller ([`inbound.md`](inbound.md) §6.1) | The base64 (`base64 -w0 key.json`) of a service account key of **the Firebase project the app is built for** (Firebase console › Project settings › Service accounts; it must be allowed to send Cloud Messaging messages). FCM HTTP v1: the server signs an assertion, trades it at `oauth2.googleapis.com` for a token (cached 55 min) and posts to `fcm.googleapis.com`. Parsed at boot: an unreadable key fails boot naming the env key, never its value. Unset: Android is not configured, `away_ring` is refused `push_unavailable` and nobody is rung; boot logs `Push senders configured` / `not configured`. Per account it also needs both flags (below). Keep it out of logs and the repo; rotate by generating a new key, replacing the value and restarting |
+| `PUSH_APNS_KEY_P8_B64`, `PUSH_APNS_KEY_ID`, `PUSH_APNS_TEAM_ID`, `PUSH_APNS_BUNDLE_ID`, `PUSH_APNS_ENV` | Mode B on iOS (the server side only: the app does not ring yet, IQ64) | All five or none. The base64 of the team's APNs auth key (`.p8`), its key id, the team id, the app's bundle id without `.voip`, and `sandbox` or `production` (no default). **`PUSH_APNS_ENV` must match the builds that register:** `sandbox` for a debug build, `production` for TestFlight and the App Store; a token of the other environment is refused `BadDeviceToken`, which revokes the device and ends its agent's ringing. Sends VoIP pushes over HTTP/2 to `api.push.apple.com` (or `api.sandbox.push.apple.com`) |
 | `AGENCY_ROSTER_REPLACE_ENABLED=true` | Roster replace / clear | Leave off: every replace fails until a supersede exists (B15) |
 
 ### Key settings and defaults
@@ -200,6 +202,7 @@ production.
 | `AGENCY_CUSTOMER_SEARCH_PER_MINUTE`, `AGENCY_CUSTOMER_SEARCH_TTL_MINUTES`, `AGENCY_CUSTOMER_EXPORT_MAX_ROWS` | `30` (1–10000), `30` (1–1440), `10000` (1–100000) | Customer history (`docs/customer-history.md`): searches and exports a minute per user (CH11, its own bucket besides `RATE_LIMIT_USER_MAX`), how long a search id serves its timeline and export, and the export's row cap (`X-Export-Truncated: true` past it). Timeline pages and `GET /proxy/agency/customers/options` are not charged to the per-minute cap |
 | `AGENCY_REPORTS_RENDERER`, `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_BASE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET`, `AGENCY_REPORTS_CHROME_PATH` | `inline`, unset | Reports (`docs/reports.md`): `inline` renders in process; `sqs` sends runs to the renderer Lambda and needs the queue URL, the server's public base URL (callback `<base>/webhooks/reports/rendered`) and a secret of at least 32 characters (used exactly as written: leading or trailing whitespace fails boot), and the S3 bucket (`S3_AUDIO_BUCKET`), or boot fails; the base URL is scheme and host only. Per tenant it also needs the `agency_reports_enabled` flag (default off; `FF_AGENCY_REPORTS` sets the default) |
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS`, `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS`, `AGENCY_REPORTS_TICK_INTERVAL_MS`, `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, `AGENCY_REPORTS_MAX_ATTEMPTS`, `AGENCY_REPORTS_RETENTION_DAYS`, `AGENCY_REPORTS_TENANT_PENDING_LIMIT`, `AGENCY_REPORTS_USER_PER_MINUTE` | `100000`, `2000`, `60000`, `900000`, `3`, `90`, `5`, `3` | Reports: detail-sheet row cap (RP12), assembler poll, tick, render timeout and sends before `render_timed_out` (RP13), file retention in days (RP8), runs pending per tenant, ad hoc requests per user per minute |
+| `AGENCY_AWAY_RING_MAX_MS` | `14400000` (4 h; 60000–86400000) | Mode B (IQ67): how long one absence on the `away_ring` break may last, from its start across the rings in it, before the server ends it (`device_away`, a `ring_off` push with `max_age`). It is the Redis key's TTL; the reconcile (boot and every 60 s) ends an absence past it |
 | `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B27); the web image is then built with `CONSOLE_API_BASE_URL` |
 | `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
@@ -417,7 +420,8 @@ schema when it seeds) and refuses any other name or port. How to run it, its set
    IB8). With media workers on, inbound calls are answered but nobody is put through to an agent:
    every caller to an open route hears the call-back message. The server warns at boot, the
    super-admin credential page says so, `agency_inbound_connect_available` reads 0 and
-   `agy-inbound-connect-unavailable` pages.
+   `agy-inbound-connect-unavailable` pages. Mode B's rings are offers of the same connector
+   ([`inbound.md`](inbound.md) §6.1), so they need it too.
 
 ## Shutdown and grace period
 
@@ -596,6 +600,31 @@ fallback XML hosted off the deployment and `PLIVO_INBOUND_FALLBACK_ANSWER_URL` s
    and offers, wait time, the share reaching nobody, connect availability and Application health)
    and the `inbound` alert group (runbooks below). The super-admin Usage page counts inbound calls,
    their carrier time and hold time apart from dials.
+6. **Optional: ringing away agents' phones (Mode B, Android;** [`inbound.md`](inbound.md) §6.1).
+   Once inbound works on screen:
+   - **The deployment:** `PUSH_FCM_SERVICE_ACCOUNT_JSON_B64` for the app's Firebase project
+     ("Optional blocks" above; `DEPLOYMENT.md` 8.7), the server able to reach
+     `oauth2.googleapis.com` and `fcm.googleapis.com`, still `MEDIA_WORKERS=0`. The Android build
+     on agents' phones must carry the Firebase defines (`apps/mobile/dev-setup.md`), and a Play
+     release needs Play Console's full-screen-intent declaration (App content: the app is a calling
+     app); without the permission on Android 14+ a ring cannot fill the locked screen (the app's
+     checklist says so).
+   - **The flag:** Feature Flags, `agency_inbound_ring_enabled` on for the pilot account (or the
+     tenant), beside `agency_inbound_enabled` (`FF_AGENCY_INBOUND_RING` sets the default). Off by
+     default; switching it off ends every agent's ringing at the next reconcile (within a minute,
+     `flag_off`). It only allows the opt-in: each agent turns "Ring this phone for inbound calls" on
+     in the app (Me) and sends a test ring from there.
+   - **A test call:** an agent opted in, available, leaves the app (their floor tile reads "Away ·
+     rings for inbound"); ring the route's number: their phone rings, Answer puts the caller through
+     in the app. Decline, or let it ring 20 s: the caller goes back to the queue and on to the team
+     or the overflow; two missed rings in a row stop that phone ringing ("Your phone stopped ringing
+     for inbound calls").
+   - **Watch:** the dashboard's *Mode B: ringing away phones* row (rings by result, ring to answer,
+     push sends by result, away-ring ends by reason, answer to bind, connected callers' wait by
+     channel) and `agy-inbound-ring-push-failed` (runbook below). The audit trail has
+     `Phone stopped ringing for inbound calls` (with why), ring accepted and declined, and the
+     devices' opt-in changes and removals.
+   - **Judge the pilot** on "Mode B pilot scorecard" below.
 
 
 **Automatic pauses.** Three reasons on a campaign's pause say its carrier account cannot dial. The
@@ -638,6 +667,22 @@ before anything was sent: no webhook base, a malformed number or caller ID, the 
 A steady `rate_limited` means the dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and
 retry on the next pacing tick. A steady `not_sent` is configuration or network: read the
 `Plivo dial not sent` log lines.
+
+### Mode B pilot scorecard
+
+**Proposed — pending Manas.** What decides whether the pilot account keeps Mode B, read weekly
+from the *Mode B* row (PromQL over the metrics named; `$s` stands for the dashboard's
+`deployment_environment` / `service_name` selector). The thresholds are proposals to agree before
+the pilot starts, not measured values.
+
+| Measure | How it is read | Proposed bar |
+|---|---|---|
+| Ring answer rate | `sum(increase(agency_inbound_rings_total{result="answered",$s}[7d])) / sum(increase(agency_inbound_rings_total{result!~"answered_elsewhere\|cancelled\|caller_left",$s}[7d]))`: rings the agent could have answered (a "Stop ringing" during a ring counts as `declined`, IQ83) | at least 0.5 |
+| Caller p90 wait, before and after | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_wait_seconds_bucket{result="connected",$s}[7d])))`, the week before the flag against each pilot week; `agency_inbound_answered_wait_seconds{channel}` splits the pilot weeks by station and push | no worse than before; push p90 within the route's maximum wait |
+| Overflow share | `agency_inbound_overflows_total` over `agency_inbound_calls_total`, before and after | lower than before |
+| `ring_missed` ends per agent per day | `increase(agency_away_ring_ended_total{reason="ring_missed",$s}[1d])` divided by the agents opted in (the devices with ringing on); the audit trail (`Phone stopped ringing for inbound calls`, why: missed rings) names them | at most 1; an agent above it most days is asked whether ringing suits them |
+| Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert pages above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
+| Bind headroom | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_ring_bind_seconds_bucket{$s}[7d])))` against the 15 s accept grace; `accept_lapsed` in `agency_inbound_rings_total` | p90 below 8 s; `accept_lapsed` below 0.05 of answered rings |
 
 ## Recordings
 
@@ -1033,6 +1078,20 @@ caller of a tenant (or of the deployment) from reaching anyone.
   calls (at least 10) reached nobody (overflow, over capacity, hung up waiting). Usually staffing or
   a route's limits, not a fault; a fault shows as offers ending `station_lost` / `lease_lost` on
   the dashboard. **Do:** tell the account's supervisors; the Missed list has every caller.
+- **`agy-inbound-ring-push-failed`**. **Means:** over 15 minutes, more than a fifth of the rings to
+  away agents' phones (at least 5) ended `push_failed` (Mode B, [`inbound.md`](inbound.md) "Ringing
+  an away phone"): each caller went back to the queue. A failed push is never a missed ring: an
+  `unregistered` token revokes the device and ends that agent's ringing; any other failure leaves
+  the agent ringable and pauses all ringing for `INBOUND_PUSH_RETRY_MS` (10 s) before the retry, so
+  during an outage callers wait for agents on screen rather than walking through every phone.
+  **Check:** the dashboard's *Mode B: ringing away phones* row,
+  push sends by result; the INFO "Push not delivered" names the device row. **Do:** `unconfigured`:
+  the FCM service account (`PUSH_FCM_SERVICE_ACCOUNT_JSON_B64`) is missing or unreadable after a
+  deploy; `unavailable` / `rate_limited`: FCM's status and our egress to `fcm.googleapis.com` and
+  `oauth2.googleapis.com` (an FCM 429 holds the phone until its `Retry-After`, and a held phone
+  pauses ringing again each time it is tried, as the 429 itself did: a long project quota shows as
+  repeated pauses, not as callers walked through the pool); `unregistered`: phones reinstalled or signed out (each revokes its
+  device; nothing to do unless it is many).
 
 ### `agy-reports-pending-too-long`
 

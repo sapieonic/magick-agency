@@ -13,6 +13,7 @@ import '../api/api_error.dart';
 /// POST   /proxy/agency/inbound/calls/:id/hangup        → { call }
 /// POST   /proxy/agency/inbound/calls/:id/disposition   → InboundCallDispositionResponse
 /// POST   /proxy/agency/inbound/calls/:id/dnc           → InboundCallDncResponse
+/// POST   /proxy/agency/inbound/calls/:id/ring/accept   → InboundRingAcceptResponse (Mode B)
 /// ```
 ///
 /// Every path is built by [InboundPaths]. None of these is behind the inbound flag: an agent
@@ -69,6 +70,20 @@ final class InboundCallApi {
     );
   }
 
+  /// `POST …/ring/accept` (Mode B, IQ71): take a ring the agent answered. [deviceId] is this
+  /// install's station device id (OS3); the answer carries the call and the station bootstrap to
+  /// attach with. Refusals: `ring_not_offered`, `ring_expired`, `already_accepted`.
+  Future<InboundResult<InboundRingAcceptResponse>> acceptRing(String callId, {required String offerToken, required String deviceId}) =>
+      _result(
+        InboundPaths.ringAccept(callId),
+        () => _client.post(
+          InboundPaths.ringAccept(callId),
+          body: InboundRingAcceptRequest(offerToken: offerToken, deviceId: deviceId).toJson(),
+          timeout: const Duration(seconds: 6),
+        ),
+        InboundRingAcceptResponse.fromJson,
+      );
+
   static InboundCall _call(Map<String, Object?> j) => InboundCallResponse.fromJson(j).call;
 
   Future<InboundResult<T>> _result<T>(
@@ -105,6 +120,7 @@ abstract final class InboundPaths {
   static String callHangup(String callId) => '${call(callId)}/hangup';
   static String callDisposition(String callId) => '${call(callId)}/disposition';
   static String callDnc(String callId) => '${call(callId)}/dnc';
+  static String ringAccept(String callId) => '${call(callId)}/ring/accept';
 }
 
 /// What an inbound call route answered.

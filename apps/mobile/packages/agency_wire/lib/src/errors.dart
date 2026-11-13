@@ -5,7 +5,8 @@
 /// Contract: `packages/contracts/src/errors.ts`, `AgencyActionErrorResponse`
 /// and `AgencySessionCampaignConflict` (`agency/`),
 /// `AgencySoftphoneErrorResponse` with its narrowed refusals (`agency/softphone.ts`),
-/// and `AgencyInboundErrorResponse` (`api/agency/inbound.ts`).
+/// `AgencyInboundErrorResponse` (`api/agency/inbound.ts`) and Mode B's
+/// `AgencyAwayRingRefusal` (`agency/push-devices.ts`).
 library;
 
 import 'package:meta/meta.dart';
@@ -15,6 +16,7 @@ import 'enums.dart';
 import 'equality.dart';
 import 'inbound.dart';
 import 'json.dart';
+import 'push_devices.dart';
 import 'softphone.dart';
 
 /// Why an agency route refused the agent. Key copy off this; show the body's
@@ -93,6 +95,11 @@ enum AgencyErrorCode implements WireEnum {
   /// 409 (OS1) on join or the soft-phone open: the agent is live in another organisation (tenant).
   /// Nothing here can end it. `message` names the workspace.
   sessionInOtherTenant('session_in_other_tenant'),
+
+  /// 409 (Mode B) on a supervisor's force-available: the agent is on `away_ring`, away from the
+  /// app with their phone ringing for inbound callers. Nothing changed. Never sent to the app
+  /// (a supervisor's route), listed because the contract's list is the whole union.
+  agentAwayRing('agent_away_ring'),
   unknown('');
 
   const AgencyErrorCode(this.wire);
@@ -139,6 +146,7 @@ final class ErrorBody {
        softphoneCode = SoftphoneErrorCode.fromWire(codeRaw),
        agentRetryCode = AgentRetryErrorCode.fromWire(codeRaw),
        inboundCode = InboundErrorCode.fromWire(codeRaw),
+       awayRingCode = AwayRingRefusalCode.fromWire(codeRaw),
        allowedCodes = allowedCodes == null ? null : List.unmodifiable(allowedCodes),
        details = details == null ? null : List.unmodifiable(details),
        raw = frozenMap(raw);
@@ -192,6 +200,11 @@ final class ErrorBody {
   /// absent or not an inbound code. Read this on the inbound call and Missed
   /// routes, and on the campaign session routes for `inbound_call_live`.
   final InboundErrorCode inboundCode;
+
+  /// [codeRaw] as a refusal of `POST /sessions/:id/break {reason:'away_ring'}`
+  /// (Mode B); [AwayRingRefusalCode.unknown] when absent or not one. On any of
+  /// them the app falls back to `device_away`.
+  final AwayRingRefusalCode awayRingCode;
 
   /// The values that ARE accepted; read against [code], never generically.
   final List<String>? allowedCodes;

@@ -204,16 +204,23 @@ export type AgencyActionErrorCode =
    * or the soft phone, in ANOTHER tenant. One live session per agent across every tenant. Body:
    * `AgencySessionInOtherTenantRefusal`.
    */
-  | 'session_in_other_tenant';
+  | 'session_in_other_tenant'
+  /**
+   * `POST /sessions/:id/force-available` refused (409, Mode B, IQ67): the agent is on `away_ring`,
+   * away from the app with their phone ringing for inbound callers. There is no station to make
+   * them available on (the release would write them `offline` and end their ringing). Nothing
+   * changed; force-break and sign-off work as before.
+   */
+  | 'agent_away_ring';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **28 members** — 16 before `session_on_other_campaign` and
+ * ⚠️ **29 members** — 16 before `session_on_other_campaign` and
  * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`, 20 before
  * the six wrap-up redial codes, 26 before `station_on_other_device` and
- * `session_in_other_tenant` (OS1, OS3).
+ * `session_in_other_tenant` (OS1, OS3), 28 before `agent_away_ring` (Mode B).
  * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
@@ -247,6 +254,7 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'redial_blocked',
   'station_on_other_device',
   'session_in_other_tenant',
+  'agent_away_ring',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**
@@ -603,7 +611,23 @@ export type AgencyInboundErrorCode =
    * 409. `POST /inbound/missed/:id/claim` (IQ49): the row is no longer unassigned: someone else
    * claimed it first, or a supervisor gave it to someone. Nothing changed; refresh the Team view.
    */
-  | 'inbound_missed_call_claimed';
+  | 'inbound_missed_call_claimed'
+  /**
+   * 404 (Mode B, IQ71). The ring routes (`…/ring/answering`, `…/ring/decline`, `…/ring/accept`):
+   * no ring on this call answers to that offer token (unknown, spent, expired, or the call is
+   * not ringing). Uniform on purpose, so a token-only route says nothing about a wrong token.
+   */
+  | 'ring_not_offered'
+  /**
+   * 409 (Mode B). `…/ring/accept` after the ring window and, once answered, the accept grace ran
+   * out (`AGENCY_INBOUND_RING_MS`, `AGENCY_INBOUND_ACCEPT_GRACE_MS`): the caller has moved on.
+   */
+  | 'ring_expired'
+  /**
+   * 409 (Mode B, N4). `…/ring/answering` or `…/ring/decline` after the ring was accepted: the
+   * station's hang-up is the way out from here.
+   */
+  | 'already_accepted';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -628,6 +652,9 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'inbound_missed_call_handled',
   'inbound_assignee_invalid',
   'inbound_missed_call_claimed',
+  'ring_not_offered',
+  'ring_expired',
+  'already_accepted',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

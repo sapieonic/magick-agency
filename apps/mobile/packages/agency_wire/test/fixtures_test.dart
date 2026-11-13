@@ -23,6 +23,8 @@ final Map<String, Map<String, Decoder>> decoders = {
       'ready_reconnect_wrapup',
       'ready_missed_release',
       'ready_device_away',
+      'agent_state_after_away_ring_return',
+      'ready_after_away_ring_return',
       'reserved',
       'countdown',
       'bridged',
@@ -57,6 +59,7 @@ final Map<String, Map<String, Decoder>> decoders = {
       'inbound_call_withheld',
       'customer_waiting',
       'customer_waiting_cleared',
+      'inbound_call_push_accepted',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -77,6 +80,12 @@ final Map<String, Map<String, Decoder>> decoders = {
     'session_state_device_away': SessionStateResponse.fromJson,
     'break_request_phone_call': (j) => SessionBreakRequest(j['reason']! as String),
     'session_state_phone_call': SessionStateResponse.fromJson,
+    'break_request_away_ring': (j) {
+      final r = SessionBreakRequest.awayRing();
+      if (r.reason != j['reason']) throw StateError('not away_ring');
+      return r;
+    },
+    'session_state_away_ring': SessionStateResponse.fromJson,
     'conflict_other_campaign': (j) => ErrorBody.fromJson(j).campaignConflict ?? (throw StateError('no conflict')),
     'conflict_softphone': (j) => ErrorBody.fromJson(j).softphoneConflict ?? (throw StateError('no conflict')),
   },
@@ -157,6 +166,31 @@ final Map<String, Map<String, Decoder>> decoders = {
     'refusal_call_live': (j) => ErrorBody.fromJson(j).inboundCallLive ?? (throw StateError('not inbound_call_live')),
     'refusal_inbound_disabled': ErrorBody.fromJson,
     'refusal_missed_call_claimed': ErrorBody.fromJson,
+    'refusal_ring_not_offered': ErrorBody.fromJson,
+    'refusal_already_accepted': ErrorBody.fromJson,
+    'refusal_ring_expired': ErrorBody.fromJson,
+  },
+  'push.json': {
+    'device_status_ringing': PushDeviceStatus.fromJson,
+    'device_status_unregistered': PushDeviceStatus.fromJson,
+    'device_status_failed_opted_out': PushDeviceStatus.fromJson,
+    'put_request': decodePutRequest,
+    'put_request_refresh': decodePutRequest,
+    'patch_request_stop_ringing': (j) => PushDevicePatchRequest(ringEnabled: j['ring_enabled']! as bool),
+    'push_ring': RingPush.fromJson,
+    'push_ring_cancel': RingPush.fromJson,
+    'push_ring_off': RingPush.fromJson,
+    'push_test_ring': RingPush.fromJson,
+    'ring_answering_request': (j) => InboundRingAnsweringRequest(offerToken: j['offer_token']! as String),
+    'ring_answering_response': InboundRingAnsweringResponse.fromJson,
+    'ring_decline_request': decodeDeclineRequest,
+    'ring_decline_request_busy': decodeDeclineRequest,
+    'ring_decline_response': InboundRingDeclineResponse.fromJson,
+    'ring_accept_request': (j) =>
+        InboundRingAcceptRequest(offerToken: j['offer_token']! as String, deviceId: j['device_id']! as String),
+    'ring_accept_response': InboundRingAcceptResponse.fromJson,
+    'refusal_ring_not_allowed': ErrorBody.fromJson,
+    'refusal_no_push_device': ErrorBody.fromJson,
   },
   'actions.json': {
     'hangup_response': HangupResponse.fromJson,
@@ -257,6 +291,21 @@ final Map<String, Map<String, Decoder>> decoders = {
 /// suite, `customer_search_number_test.dart`).
 const notSamples = {'literals.json', 'labels.json', 'customer-search-numbers.json'};
 
+/// A register body rebuilt through the Dart request type.
+PushDevicePutRequest decodePutRequest(Map<String, Object?> j) => PushDevicePutRequest(
+  platform: PushPlatform.fromWire(j['platform']! as String),
+  fcmToken: j['fcm_token'] as String?,
+  voipToken: j['voip_token'] as String?,
+  appBuild: j['app_build']! as String,
+  ringEnabled: j['ring_enabled'] as bool?,
+);
+
+/// A ring decline rebuilt through the Dart request type.
+InboundRingDeclineRequest decodeDeclineRequest(Map<String, Object?> j) => InboundRingDeclineRequest(
+  offerToken: j['offer_token']! as String,
+  reason: InboundRingDeclineReason.fromWire(j['reason']! as String),
+);
+
 /// `timeline_request` rebuilt through the Dart request type, so its
 /// `toJson()` is checked against the fixture.
 CustomerTimelineRequest decodeTimelineRequest(Map<String, Object?> j) {
@@ -305,6 +354,12 @@ Map<String, Object?>? encoded(Object o) => switch (o) {
   final InboundCallUpdateRequest r => r.toJson(),
   final InboundCallDispositionRequest r => r.toJson(),
   final InboundCallDncRequest r => r.toJson(),
+  final PushDevicePutRequest r => r.toJson(),
+  final PushDevicePatchRequest r => r.toJson(),
+  final RingPush p => p.toJson(),
+  final InboundRingAnsweringRequest r => r.toJson(),
+  final InboundRingDeclineRequest r => r.toJson(),
+  final InboundRingAcceptRequest r => r.toJson(),
   _ => null,
 };
 
@@ -342,6 +397,12 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final KeysetPage<InboundMissedCall> p => p.rows.expand(missedCallEnums),
   final InboundMissedCallResponse r => missedCallEnums(r.call),
   final InboundDispositionRefusal r => [r.rule],
+  final PushDeviceStatus s => [s.device?.platform, s.device?.lastFailureReason],
+  final PushDevicePutRequest r => [r.platform],
+  final RingPush p => [p.type, p.cancelReason, p.offReason],
+  final InboundRingDeclineRequest r => [r.reason],
+  final InboundRingDeclineResponse r => [r.ringResult],
+  final InboundRingAcceptResponse r => inboundCallEnums(r.call),
   final SessionBootstrap b => [
     b.state,
     b.campaignStatus,
@@ -358,6 +419,8 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   // `session_refusal` is a sign-in code, not an agency one.
   final ErrorBody e when e.codeRaw == null || SessionRefusalCode.fromWire(e.codeRaw) != SessionRefusalCode.unknown =>
     const [],
+  // An away-ring refusal is read through `awayRingCode`.
+  final ErrorBody e when e.awayRingCode != AwayRingRefusalCode.unknown => [e.awayRingCode],
   // An inbound refusal is read through `inboundCode`.
   final ErrorBody e when e.inboundCode != InboundErrorCode.unknown => [e.inboundCode],
   // A soft-phone refusal is read through `softphoneCode` (its `code` is an action code
@@ -459,6 +522,7 @@ Iterable<WireEnum?> manualCallEnums(ManualCall c) => [
 /// An inbound call's closed-vocabulary fields, its match and priors included.
 Iterable<WireEnum?> inboundCallEnums(InboundCall c) => [
   c.state,
+  c.offerChannel,
   c.outcome,
   c.catalogSource,
   c.sticky?.reason,

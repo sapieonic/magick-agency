@@ -4,7 +4,7 @@ import { uuidFor } from '../setup/factories.js';
 
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 
-const { agencyCampaignRepository, agencyAbandonmentRepository } = await import(
+const { agencyCampaignRepository, agencyAbandonmentRepository, agencyAgentSessionRepository } = await import(
   '../../../src/db/repositories/agency.repository.js'
 );
 const {
@@ -397,6 +397,29 @@ describe('agency supervisor stats — the agent floor (integration)', () => {
 
     expect(byUser[uuidFor('on-break')]).toMatchObject({ state: 'break', break_reason: 'lunch' });
     expect(byUser[uuidFor('returned')]).toMatchObject({ state: 'available', break_reason: null });
+  });
+
+  it('the floor signature moves on a state change that keeps state_since (away_ring → device_away, IQ76), and only on a change', async () => {
+    // Home's still memo is keyed by it: a switch that kept `state_since` and left the signature
+    // where it was would serve the board's "away, ringing" tile for a minute after it ended.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const absence = new Date('2026-11-13T09:00:00.000Z');
+    const session = await insertAgentSession(campaign.id as string, {
+      agent_user_id: uuidFor('away-ringing'), state: 'break', break_reason: 'away_ring', state_since: absence, away_ring_since: absence,
+    });
+    const signature = async () => (await agencyCampaignRepository.floorSignatures([campaign.id as string])).get(campaign.id as string);
+    const before = await signature();
+    expect(before).toBeDefined();
+    expect(await signature()).toBe(before);
+
+    expect(await agencyAgentSessionRepository.endAwayRing(session.id as string, 'break')).not.toBeNull();
+    const row = (await getTestPool().query('SELECT state, break_reason, state_since FROM agency_agent_sessions WHERE id = $1', [session.id])).rows[0];
+    // The switch kept the absence's start: `state_since` alone would not have moved.
+    expect(row).toMatchObject({ state: 'break', break_reason: 'device_away', state_since: absence });
+    const after = await signature();
+    expect(after).toBeDefined();
+    expect(after).not.toBe(before);
+    expect(await signature()).toBe(after);
   });
 
   it('an agent who left is off the floor, and out of every count beside it', async () => {

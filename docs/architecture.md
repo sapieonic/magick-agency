@@ -119,10 +119,12 @@ timers; completion notices drained up to 30 s); voice (the bridge ends live call
 (both audit buffers flushed last). Then Redis and the pool close. Pinned by
 `apps/server/test/integration/agency/runtime-boot-order.test.ts`.
 
-**Seams.** Two cross-module interfaces in `apps/server/src/seams/`, wired at boot:
+**Seams.** Cross-module interfaces in `apps/server/src/seams/`, wired at boot:
 `bridge-analysis-hooks.ts` (the bridge tells analysis that a call finalised or a recording is ready;
-a no-op by default) and `concurrency-control.ts` (super-admin concurrency writes reach the guards;
-throws until wired). The bridge members the dialer runtime calls are pinned by a type-level test.
+a no-op by default), `concurrency-control.ts` (super-admin concurrency writes reach the guards;
+throws until wired), `inbound-call-router.ts` (inbound carrier callbacks reach the agency inbound
+router) and `push-sender.ts` (Mode B: the agency area rings an away agent's phone through the
+platform's FCM and APNs senders; unconfigured until `bootstrap/platform.ts` registers them). The bridge members the dialer runtime calls are pinned by a type-level test.
 See [`seams.md`](seams.md).
 
 ## Public API layer and internal handler instance (B16)
@@ -210,9 +212,10 @@ every account the caller belongs to (CH2) where every internal handler is single
   `break`, and a `wrapup` the process vouches for (a wrap-up `WrapupManager` holds, or an inbound
   outcome owed: `heartbeatLeaseMs`, `station-socket.ts`). Leases detect liveness; they are never
   business timers. A lapsed lease
-  on reconnect puts the agent in `break` (`rehydrateAgent`). Two break codes are **reserved**
-  (`RESERVED_BREAK_REASONS`, `packages/contracts/src/agency/breaks.ts`): no campaign catalog may
-  list them (the campaign-config write refuses them, `resolveBreakReasons` drops them).
+  on reconnect puts the agent in `break` (`rehydrateAgent`). Four break codes are **reserved**
+  (`RESERVED_BREAK_REASONS`, `packages/contracts/src/agency/breaks.ts`: `soft_phone`,
+  `device_away`, `phone_call`, `away_ring`): no campaign catalog may list them (the campaign-config
+  write refuses them, `resolveBreakReasons` drops them).
   `soft_phone` is entered only through the soft-phone switch. `device_away` is what the mobile app
   sends on `POST /sessions/:id/break` the moment it is backgrounded (`api/routes/agency/device-away.ts`):
   from `available` it applies at once by CAS (a reservation that lands first wins, and the request
@@ -220,6 +223,13 @@ every account the caller belongs to (CH2) where every internal handler is single
   another break is already queued, which it never replaces; on any other break, `offline`, no
   lease, or a soft-phone session it changes nothing and answers the current state (200, and no
   audit row). The return is the ordinary `/available`; `break/cancel` withdraws a queued one.
+  `phone_call` (a cellular call while available, IQ51) follows the same rules. `away_ring` (Mode B,
+  [`inbound.md`](inbound.md) §6.1) is the app's away break when the agent opted in to having the
+  phone rung for inbound callers: the same rules plus its refusals, and the one lease that is not a
+  liveness detector (`ring = 1` on the agent hash, TTL'd to `AGENCY_AWAY_RING_MAX_MS`, never renewed
+  by a heartbeat, kept by the station close, re-seeded or ended by a reconcile at boot and every
+  60 s, `agency/away-ring.ts`). The inbound connector rings such an agent's phone as an offer on
+  channel `push`.
 - **Joining** (`POST /proxy/agency/sessions`, internal `api/routes/agency/sessions.ts`). One live
   session per agent across every tenant (`uq_agency_agent_live_agent`, 0035, OS1): `409
   session_on_other_campaign` (or `session_on_softphone`) in this tenant, `409

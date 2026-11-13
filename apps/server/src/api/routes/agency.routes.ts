@@ -10,6 +10,8 @@ import { registerInboundRoutes } from './agency/inbound.js';
 import { registerInboundCallRoutes } from './agency/inbound-calls.js';
 import { registerInboundClipRoutes } from './agency/inbound-clips.js';
 import { registerInboundMissedWorkRoutes } from './agency/inbound-missed-work.js';
+import { registerPushDeviceRoutes } from './agency/push-devices.js';
+import { registerInboundRingRoutes } from './agency/inbound-ring.js';
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // This module is the session and attempt handlers only, registered on the
@@ -40,5 +42,9 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     await registerInboundMissedWorkRoutes(sub);
     // The answered inbound call (docs/inbound.md §6): read, notes, hang up, the outcome, Mark DNC.
     await registerInboundCallRoutes(sub, runtime);
+    // Mode B: the agent app's push devices (register, opt in or out, revoke, test ring).
+    await registerPushDeviceRoutes(sub, runtime);
+    // Mode B: the ring of an away agent's phone (answering, decline, accept).
+    await registerInboundRingRoutes(sub, runtime);
   });
 }

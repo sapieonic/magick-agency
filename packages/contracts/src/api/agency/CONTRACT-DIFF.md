@@ -95,7 +95,11 @@ package root.
   `AgencyInboundCallSticky`), `AgencyInboundCallResponse`, the disposition and DNC responses, the
   `inbound_call` and `customer_waiting` station frames, the disposition and catalog sources and the
   constants (`AGENCY_INBOUND_CONNECT_DELAY_MS`, `AGENCY_INBOUND_OUTCOME_LAPSE_MS`,
-  `AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS`, `AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`).
+  `AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS`, `AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`), and Mode B's
+  ring vocabulary on the call (`AGENCY_INBOUND_OFFER_CHANNELS`, `AGENCY_INBOUND_RING_RESULTS`,
+  `AGENCY_INBOUND_RING_MS`, `AGENCY_INBOUND_ACCEPT_GRACE_MS`, `AGENCY_INBOUND_RING_MAX_MISSES`). The
+  push devices and the ring routes (`agency/push-devices.ts`, the `…/ring/*` bodies) are the app's
+  and have no console twin.
   `AgencyInboundErrorCode` / `AGENCY_INBOUND_ERROR_CODES` from `../../errors`. Console-only there:
   the route, number and clip DTOs (the recordings' upload and delete, their limits and refusal
   reasons, the route warnings), the standard recordings' words (`AGENCY_INBOUND_STANDARD_WORDS`,

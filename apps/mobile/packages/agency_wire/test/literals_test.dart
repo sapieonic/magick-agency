@@ -84,6 +84,15 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'inbound_closed_causes': InboundClosedCause.values,
   'inbound_error_codes': InboundErrorCode.values,
   'inbound_disposition_rules': InboundDispositionRule.values,
+  // Mode B: ringing an away agent's phone (`agency/inbound.ts`, `agency/push-devices.ts`).
+  'inbound_offer_channels': InboundOfferChannel.values,
+  'inbound_ring_results': InboundRingResult.values,
+  'inbound_ring_decline_reasons': InboundRingDeclineReason.values,
+  'push_platforms': PushPlatform.values,
+  'push_failure_reasons': PushFailureReason.values,
+  'ring_push_types': RingPushType.values,
+  'ring_off_reasons': RingOffReason.values,
+  'away_ring_refusal_codes': AwayRingRefusalCode.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -112,7 +121,7 @@ final Map<String, List<WireEnum>> appSends = {
     for (final o in AttemptOutcome.values)
       if (!o.isUnknown) o,
   ],
-  'reserved_break_codes': [ReservedBreakCode.deviceAway, ReservedBreakCode.phoneCall],
+  'reserved_break_codes': [ReservedBreakCode.deviceAway, ReservedBreakCode.phoneCall, ReservedBreakCode.awayRing],
   // `ManualCallsQuery.status` can filter on any of them.
   'manual_call_list_statuses': [
     for (final s in ManualCallListStatus.values)
@@ -146,6 +155,9 @@ final Map<String, List<WireEnum>> appSends = {
     for (final v in InboundMissedReason.values)
       if (!v.isUnknown) v,
   ],
+  // Mode B: the register's `platform` and the ring decline's `reason`.
+  'push_platforms': [PushPlatform.android, PushPlatform.ios],
+  'inbound_ring_decline_reasons': [InboundRingDeclineReason.declined, InboundRingDeclineReason.busyOnPhone],
 };
 
 String _camel(String screaming) {

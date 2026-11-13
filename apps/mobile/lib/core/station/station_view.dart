@@ -53,7 +53,7 @@ class BreakOption {
 /// The break the agent is on, or has queued for after this call.
 @immutable
 class BreakInfo {
-  const BreakInfo({required this.code, required this.label, this.since});
+  const BreakInfo({required this.code, required this.label, this.since, this.rang = false, this.noRing});
 
   final String code;
   final String label;
@@ -63,12 +63,31 @@ class BreakInfo {
 
   /// The reserved `device_away` break: the app paused the agent because it
   /// left the foreground. The UI shows "Paused · you left the app", not a break.
-  bool get isDeviceAway => code == 'device_away';
+  /// Mode B's `away_ring` is the same pause, with this phone rung for inbound callers.
+  bool get isDeviceAway => code == 'device_away' || isAwayRing;
+
+  /// Back from the app's own `away_ring`, which the server ends as `device_away` on the return:
+  /// this phone was ringing for inbound calls while the agent was away.
+  final bool rang;
+
+  /// On `device_away` though the agent turned ringing on for this phone: why it won't ring (the
+  /// end of a sentence, "notifications are off"). Null otherwise.
+  final String? noRing;
+
+  /// Mode B's `away_ring`: paused because they left the app, and this phone rings for inbound
+  /// callers meanwhile (or did, until they came back: [rang]).
+  bool get isAwayRing => code == 'away_ring' || rang;
 
   @override
-  bool operator ==(Object other) => other is BreakInfo && other.code == code && other.label == label && other.since == since;
+  bool operator ==(Object other) =>
+      other is BreakInfo &&
+      other.code == code &&
+      other.label == label &&
+      other.since == since &&
+      other.rang == rang &&
+      other.noRing == noRing;
   @override
-  int get hashCode => Object.hash(code, label, since);
+  int get hashCode => Object.hash(code, label, since, rang, noRing);
 }
 
 /// One contact field for the screen pop.

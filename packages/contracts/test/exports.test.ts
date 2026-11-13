@@ -23,6 +23,16 @@ import {
   RESERVED_BREAK_REASON_LABELS,
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
+  AGENCY_INBOUND_ACCEPT_GRACE_MS,
+  AGENCY_INBOUND_OFFER_CHANNELS,
+  AGENCY_INBOUND_RING_DECLINE_REASONS,
+  AGENCY_INBOUND_RING_MAX_MISSES,
+  AGENCY_INBOUND_RING_MS,
+  AGENCY_INBOUND_RING_RESULTS,
+  AGENCY_PUSH_FAILURE_REASONS,
+  AGENCY_PUSH_PLATFORMS,
+  AGENCY_RING_OFF_REASONS,
+  AGENCY_RING_PUSH_TYPES,
 } from '../src/agency';
 import {
   AGENCY_CALL_FIELD_TYPES,
@@ -223,13 +233,16 @@ describe('package surface', () => {
   it('declares the reserved break codes and the client kinds once (SNAPSHOT)', () => {
     expect(DEVICE_AWAY_BREAK_REASON).toBe('device_away');
     expect(DEVICE_AWAY_BREAK_REASON_LABEL).toBe('Away (app in background)');
-    expect([...RESERVED_BREAK_REASONS]).toEqual(['soft_phone', 'device_away', 'phone_call']);
+    expect([...RESERVED_BREAK_REASONS]).toEqual(['soft_phone', 'device_away', 'phone_call', 'away_ring']);
     expect(RESERVED_BREAK_REASON_LABELS).toEqual({
       soft_phone: 'Soft phone', device_away: 'Away (app in background)', phone_call: 'On a phone call',
+      away_ring: 'Away · rings for inbound',
     });
-    // IQ51: the app's own pauses, each run by the device-away rules.
-    expect([...AgencyApi.APP_PAUSE_BREAK_REASONS]).toEqual(['device_away', 'phone_call']);
+    // IQ51, IQ58: the app's own pauses, each run by the device-away rules.
+    expect([...AgencyApi.APP_PAUSE_BREAK_REASONS]).toEqual(['device_away', 'phone_call', 'away_ring']);
     expect(AgencyApi.PHONE_CALL_BREAK_REASON).toBe('phone_call');
+    expect(AgencyApi.AWAY_RING_BREAK_REASON).toBe('away_ring');
+    expect(AgencyApi.AWAY_RING_BREAK_REASON_LABEL).toBe('Away · rings for inbound');
     // IQ50: the app's return grace, which the server's could-take count shares.
     expect(DEVICE_AWAY_RETURN_GRACE_MS).toBe(30_000);
     expect(Object.isFrozen(RESERVED_BREAK_REASON_LABELS)).toBe(true);
@@ -237,6 +250,27 @@ describe('package surface', () => {
     // The console wire layer re-exports the same values rather than copies.
     expect(AgencyApi.DEVICE_AWAY_BREAK_REASON).toBe(DEVICE_AWAY_BREAK_REASON);
     expect(AgencyApi.RESERVED_BREAK_REASON_LABELS).toBe(RESERVED_BREAK_REASON_LABELS);
+  });
+
+  it('declares Mode B\'s ring constants and vocabularies once (SNAPSHOT, IQ59, IQ62, IQ66)', () => {
+    expect(AGENCY_INBOUND_RING_MS).toBe(20_000);
+    expect(AGENCY_INBOUND_ACCEPT_GRACE_MS).toBe(15_000);
+    expect(AGENCY_INBOUND_RING_MAX_MISSES).toBe(2);
+    expect([...AGENCY_INBOUND_OFFER_CHANNELS]).toEqual(['station', 'push']);
+    expect([...AGENCY_INBOUND_RING_RESULTS]).toEqual([
+      'answered', 'declined', 'expired', 'accept_lapsed', 'busy_on_phone', 'push_failed', 'caller_left',
+      'answered_elsewhere', 'cancelled',
+    ]);
+    expect([...AGENCY_INBOUND_RING_DECLINE_REASONS]).toEqual(['declined', 'busy_on_phone']);
+    expect([...AGENCY_PUSH_PLATFORMS]).toEqual(['android', 'ios']);
+    expect([...AGENCY_PUSH_FAILURE_REASONS]).toEqual(['unregistered', 'invalid', 'rate_limited', 'unavailable', 'unconfigured']);
+    expect([...AGENCY_RING_PUSH_TYPES]).toEqual(['ring', 'ring_cancel', 'ring_off', 'test_ring']);
+    expect([...AGENCY_RING_OFF_REASONS]).toEqual(['ring_missed', 'revoked', 'opted_out', 'flag_off', 'max_age', 'taken_over', 'left']);
+    // The decline reasons are ring results too (a decline is recorded as its own reason).
+    for (const r of AGENCY_INBOUND_RING_DECLINE_REASONS) expect(AGENCY_INBOUND_RING_RESULTS).toContain(r);
+    // The console wire layer re-exports the same values rather than copies.
+    expect(AgencyApi.AGENCY_INBOUND_RING_MS).toBe(AGENCY_INBOUND_RING_MS);
+    expect(AgencyApi.AGENCY_INBOUND_OFFER_CHANNELS).toBe(AGENCY_INBOUND_OFFER_CHANNELS);
   });
 
   it('declares both rate floors, side by side and different on purpose', () => {

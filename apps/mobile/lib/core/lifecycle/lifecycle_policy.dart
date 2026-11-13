@@ -26,6 +26,19 @@ import 'package:agency_wire/agency_wire.dart';
 /// one queued behind a call: the station controller decides that.
 bool autoReturnsFromAway(Duration pausedFor) => pausedFor < deviceAwayReturnGrace;
 
+/// The break leaving the app asks for (Mode B, IQ58): `away_ring` when the agent opted in to
+/// having this phone rung for inbound calls and it can ring ([ringOn], `ringAvailable`), else
+/// `device_away`. A 409 refusal of `away_ring` falls back to `device_away` (the station
+/// controller), so asking it is never riskier than not.
+String awayBreakFor({required bool ringOn}) =>
+    ringOn ? ReservedBreakCode.awayRing.wire : ReservedBreakCode.deviceAway.wire;
+
+/// One of the app's own away breaks: `device_away`, or Mode B's `away_ring`. Both mean "paused
+/// because you left the app", return on their own within [deviceAwayReturnGrace] (IQ50), and
+/// are cancelled on return when queued behind a call.
+bool isAwayBreak(String? code) =>
+    code == ReservedBreakCode.deviceAway.wire || code == ReservedBreakCode.awayRing.wire;
+
 /// What to ask the server for while the app is in the background.
 enum AwayAction {
   none,
@@ -61,6 +74,10 @@ enum AwayNotice { none, paused, wrapupDeadline }
 /// [outcomeDueAt]: a soft-phone call ended and owes its outcome by then (device
 /// clock). Away, the agent is told the same "Save the outcome by 11:28" as for
 /// a wrap-up.
+///
+/// [awayRing]: the pause asked for is `away_ring` (Mode B). Its own notification is native's
+/// ("Away · this phone rings for inbound calls", shown once it lands), so "You're paused" would say
+/// the opposite: none, unless the server refuses it and `device_away` is asked instead.
 AwayNotice awayNoticeFor(
   AgentState state, {
   required bool foreground,
@@ -68,10 +85,13 @@ AwayNotice awayNoticeFor(
   required bool pauseRequested,
   required DateTime? wrapupDeadline,
   DateTime? outcomeDueAt,
+  bool awayRing = false,
 }) {
   if (foreground) return AwayNotice.none;
   if (state == AgentState.wrapup) return wrapupDeadline != null ? AwayNotice.wrapupDeadline : AwayNotice.none;
   if (outcomeDueAt != null) return AwayNotice.wrapupDeadline;
+  if (state == AgentState.onBreak && breakCode == ReservedBreakCode.awayRing.wire) return AwayNotice.none;
+  if (awayRing && pauseRequested && state != AgentState.onBreak) return AwayNotice.none;
   if (state == AgentState.onBreak && breakCode == ReservedBreakCode.deviceAway.wire) return AwayNotice.paused;
   if ((state == AgentState.available || state == AgentState.offline) && pauseRequested) return AwayNotice.paused;
   return AwayNotice.none;

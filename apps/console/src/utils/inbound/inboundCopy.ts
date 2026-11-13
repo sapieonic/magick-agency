@@ -42,6 +42,10 @@ export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
   inbound_missed_call_handled: 'This call has already been handled, so there’s nothing to reassign.',
   inbound_assignee_invalid: 'That person can’t take this account’s missed calls any more. Choose someone else.',
   inbound_missed_call_claimed: 'Someone else has already taken this missed call.',
+  // Mode B's ring routes: the agent app answers them, never the console; words for completeness.
+  ring_not_offered: 'This call isn’t ringing for you any more.',
+  ring_expired: 'This call stopped ringing or someone else took it.',
+  already_accepted: 'You’ve already answered this call. Hang up from the call screen.',
 };
 
 /** Why an upload was refused, in the editor's words. */

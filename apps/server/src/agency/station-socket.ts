@@ -81,10 +81,14 @@ export function breakReasonFor(
  *    outcome. The claim is cleared by the outcome save or the lapse sweep, which return the agent.
  *
  * Every other state is renewed by its owner (`reserved`, `on_call`: the attempt's or the inbound
- * call's 5 s renewer) or by nothing (`offline`).
+ * call's 5 s renewer) or by nothing (`offline`, and `break` on `away_ring`: Mode B, N2).
  */
 export function heartbeatLeaseMs(live: AgentLiveState | null, holdsWrapup: boolean): number | null {
   if (!live) return null;
+  // Mode B (N2): `away_ring`'s key has the time left to `AGENCY_AWAY_RING_MAX_MS` as its TTL and
+  // nothing renews it. A station still attached in the moment before the app parks its socket must
+  // not cut that to the 45 s `break` lease with a ping.
+  if (live.ring) return null;
   if (live.state === 'available') return AGENT_LEASE_MS.available;
   if (live.state === 'break') return AGENT_LEASE_MS.break;
   if (live.state === 'wrapup' && (holdsWrapup || live.inboundCallId !== null)) return AGENT_LEASE_MS.wrapup;
@@ -545,8 +549,20 @@ export async function handleStationSocket(
   // it `ready` says what Redis says, and the return's own `agent_state` frame follows. A bound call
   // is not re-adopted (below) and stays `on_call` until the bridge's deferred hangup ends it.
   const inbound = runtime.inbound;
+  // The row as the rehydrate and `ready` read it: re-read after a let-go that ended a ring, which
+  // rewrote the break (Mode B: the absence ended as `device_away`; the ring's `reserved` had nulled
+  // the reason the attach read), so `ready` names the break the agent is on.
+  let attachedRow: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason' | 'away_ring_since'> = session;
   if (inbound && !canTakeInbound) {
+    const heldRing = inbound.holdsPushOffer(sessionId);
     await withTimeoutOr(inbound.onStationCannotTakeInbound(sessionId), STATION_INBOUND_LET_GO_WAIT_MS, undefined);
+    if (heldRing) {
+      const fresh = await agencyAgentSessionRepository.findById(sessionId).catch((err: unknown) => {
+        log.warn({ err, sessionId }, 'Could not re-read the session after a ring was let go');
+        return null;
+      });
+      if (fresh) attachedRow = { kind: fresh.kind, break_reason: fresh.break_reason, away_ring_since: fresh.away_ring_since };
+    }
   }
 
   // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
@@ -570,7 +586,7 @@ export async function handleStationSocket(
   // Redis, or `break` — never the DB row. The rule and
   // the reason live on the runtime; this is transport. Together with the queue read, which
   // never rejects, so a rehydrate failure surfaces exactly as before.
-  const [resumedState, queue] = await Promise.all([runtime.rehydrateAgent(sessionId, session), queueRead]);
+  const [resumedState, queue] = await Promise.all([runtime.rehydrateAgent(sessionId, attachedRow), queueRead]);
 
   // Re-adopt a call the previous socket dropped out of, if the window has not
   // lapsed. This is what makes a wifi blip survivable: the bridge disarms its
@@ -607,7 +623,7 @@ export async function handleStationSocket(
   // carries `bridged_at`, which is the authority for a resumed panel.
   // The break's code beside the state, so a client that lost the `agent_state` frame
   // naming it (the mobile app relaunched after the OS killed it while paused) can say why.
-  const breakReason = breakReasonFor(resumedState, session);
+  const breakReason = breakReasonFor(resumedState, attachedRow);
   const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
@@ -676,4 +692,7 @@ export async function handleStationSocket(
   if (!restored || !stillOurs()) return;
   if (restored.call) runtime.stations.send(sessionId, { event: 'inbound_call', call: restored.call }, socket);
   for (const frame of restored.waiting) runtime.stations.send(sessionId, frame, socket);
+  // Mode B: an accepted ring (or one this attach accepted, N5) binds now, after `ready` and its
+  // `inbound_call` frame, so the panel comes before any audio (IB1).
+  inbound.bindAcceptedRing(sessionId);
 }

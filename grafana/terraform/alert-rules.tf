@@ -418,6 +418,22 @@ locals {
         summary       = "An inbound Application has not been checkable for 45 minutes"
         description   = "The scheduled inbound health check on {{ $labels.service_name }} could not check a credential's Application for 45 minutes: unreachable (Plivo did not answer: their status page, our egress) or failed (Plivo refused the tenant's stored credentials, so the tenant rotated or closed the account; or the secret cannot be opened, agy-credential-keyring-missing-keys). A credential Plivo refuses still answers its calls with the closed message while its signature verifies, but cannot be re-pointed. The warn logs 'Inbound Application health check refused for a credential' name it (credentialId, code); rotate its secret on the super-admin page. Runbook: docs/operations.md, 'Alert runbooks', inbound."
       },
+      {
+        uid  = "agy-inbound-ring-push-failed"
+        name = "Rings to away agents' phones are failing to send"
+        # Mode B (docs/inbound.md "Ringing an away phone"): of the rings to away agents' phones over
+        # 15m, the share that ended push_failed (the carrier refused the push, or the sender has no
+        # credentials), above 20 %, with a floor of 5 rings (a quiet window's single failure proves
+        # nothing). Ratio of rates, the floor an `and` filter, as agy-inbound-unanswered-share.
+        expr          = "(sum by (service_name) (rate(agency_inbound_rings_total{result=\"push_failed\",${local.agency}}[15m])) / sum by (service_name) (rate(agency_inbound_rings_total{${local.agency}}[15m]))) and on (service_name) (sum by (service_name) (increase(agency_inbound_rings_total{${local.agency}}[15m])) >= 5)"
+        op            = "gt"
+        threshold     = 0.2
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "More than 20% of rings to away phones fail to send"
+        description   = "Over the last 15m on {{ $labels.service_name }}, more than a fifth of the rings to away agents' phones (at least 5) ended push_failed: the push never reached the carrier or the carrier refused it, so the caller went back to the queue (a failed push is never a missed ring: an unregistered token revokes the device and ends that agent's ringing; any other failure leaves the agent ringable and pauses all ringing for 10 s, so an outage does not walk a caller through every phone). Read agency_push_sends_total by result on the dashboard's Mode B row: unconfigured (PUSH_FCM_SERVICE_ACCOUNT_JSON_B64 missing or unreadable after a deploy), unavailable or rate_limited (FCM's status; our egress to fcm.googleapis.com and oauth2.googleapis.com), invalid (a token or payload FCM rejects), unregistered (phones reinstalled or signed out: each revokes its device). The info logs 'Push not delivered' name the device row. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
     ]
 
     "processes" = [

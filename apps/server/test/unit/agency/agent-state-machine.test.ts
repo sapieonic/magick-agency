@@ -32,8 +32,8 @@ function fakeRedis() {
     del: vi.fn(async (k: string) => { hashes.delete(k); ttls.delete(k); return 1; }),
     eval: vi.fn(async (script: string, _n: number, key: string, ...argv: any[]) => {
       const h = hashes.get(key);
-      if (script.includes('EXISTS')) {
-        // RENEW: never resurrects, and the state must still match.
+      if (script.includes('PEXPIRE') && !script.includes('HSET')) {
+        // RENEW (the one script that only extends a TTL): never resurrects, and the state must still match.
         if (!h) return 0;
         if (h.state !== String(argv[0])) return 0;
         ttls.set(key, Number(argv[1]));
@@ -212,7 +212,7 @@ describe('AgentStateMachine transitions', () => {
     await sm.set('s1', 'reserved', { attemptId: 'att-9' });
     expect(await sm.get('s1')).toEqual({
       state: 'reserved', attemptId: 'att-9', since: expect.any(Number), manualCallId: null, softphone: false,
-      inboundCallId: null,
+      inboundCallId: null, ring: false, pushOffer: false, breakReason: null,
     });
 
     await sm.set('s1', 'available');
@@ -260,9 +260,9 @@ describe('AgentStateMachine.getMany — one round trip for many agents', () => {
     });
     const sm = new AgentStateMachine(redis as any, '');
     expect(await sm.getMany(['a', 'b', 'c'])).toEqual([
-      { state: 'available', attemptId: null, since: 1700, manualCallId: null, softphone: false, inboundCallId: null },
+      { state: 'available', attemptId: null, since: 1700, manualCallId: null, softphone: false, inboundCallId: null, ring: false, pushOffer: false, breakReason: null },
       null, // lapsed lease
-      { state: 'on_call', attemptId: 'att-1', since: null, manualCallId: null, softphone: false, inboundCallId: null },
+      { state: 'on_call', attemptId: 'att-1', since: null, manualCallId: null, softphone: false, inboundCallId: null, ring: false, pushOffer: false, breakReason: null },
     ]);
     expect(redis.exec).toHaveBeenCalledTimes(1);
     expect(redis.hgetall).toHaveBeenCalledTimes(3);

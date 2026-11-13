@@ -104,6 +104,10 @@ String agentStateLabel(AgentState state, [String? raw]) => agentStateLabels[stat
 
 /// Labels for the server's reserved break codes, which no campaign lists.
 const deviceAwayBreakLabel = 'Away';
+
+/// Mode B's `away_ring`: away, and this phone rings for inbound callers. The app's one label for
+/// it, the same as the away notification's title (the console's supervisor floor has its own).
+const awayRingBreakLabel = 'Away · this phone rings for inbound calls';
 const softPhoneBreakLabel = 'Soft phone';
 const phoneCallBreakLabel = 'Phone call';
 
@@ -339,6 +343,12 @@ const notesChangedElsewhereCopy = 'These notes were also changed elsewhere.';
 
 const pausedNotificationTitle = 'You’re paused';
 const pausedNotificationBody = "You're paused. Open the app to take calls again.";
+
+/// Paused on leaving the app, though ringing is on for this phone: it won't ring, and [why].
+String pausedNoRingBody(String why) => 'You’re paused, and this phone won’t ring for inbound calls: $why. Open the app to take calls again.';
+
+/// "Stop ringing" on the away notification (this absence only).
+const pausedRingingStoppedBody = 'Ringing stopped. You’re paused. Open the app to take calls again.';
 const wrapupNotificationTitle = 'Wrap-up';
 
 /// The owed-outcome notice for a soft-phone call (its body is [wrapupNotificationBody]'s).

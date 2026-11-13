@@ -226,5 +226,16 @@
     "state": "break",
     "since": "2026-11-01T07:14:40.200Z",
     "break_reason": "phone_call"
+  },
+  "break_request_away_ring": {
+    "reason": "away_ring"
+  },
+  "session_state_away_ring": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "break",
+    "since": "2026-11-02T07:58:41.300Z",
+    "break_reason": "away_ring"
   }
 }

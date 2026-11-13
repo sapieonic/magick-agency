@@ -121,6 +121,12 @@ export interface AgencyReaperDeps {
   beforeSweep?: () => Promise<boolean>;
   /** Clear an agent's Redis lease, so they rehydrate into `break` ({@link AgencyReaper.reapSessions}). */
   clearAgent?: (sessionId: string) => Promise<void>;
+  /**
+   * Mode B: whether the session is on `away_ring` (Redis: `break`, `ring = 1`). Such a session has
+   * no station and no media in any worker (the app parked its socket), so a worker's death owns
+   * nothing of it and {@link AgencyReaper.reapSessions} leaves it alone. A read that fails is false.
+   */
+  onAwayRing?: (sessionId: string) => Promise<boolean>;
 }
 
 /**
@@ -248,7 +254,17 @@ export class AgencyReaper {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
       }, reapedRedialNotBefore(attempt));
     }
-    const sessionIds = (await agencyAgentSessionRepository.findLiveIds()).filter(isDead);
+    const sessionIds: string[] = [];
+    for (const sessionId of (await agencyAgentSessionRepository.findLiveIds()).filter(isDead)) {
+      // On `away_ring`: nothing of it was the dead worker's (no station, no media). Cleared and
+      // written `offline`, its phone stopped ringing with no `ring_off` until the reconcile re-seeded it.
+      const away = await (this.deps.onAwayRing?.(sessionId) ?? Promise.resolve(false)).catch(() => false);
+      if (away) {
+        log.info({ sessionId }, 'Slot reap: session on away-ring has no station or media there; left as it is');
+        continue;
+      }
+      sessionIds.push(sessionId);
+    }
     let manual: AgencyManualCallRecord[] = [];
     if (sessionIds.length > 0) {
       manual = await agencyManualCallRepository.reapOrphaned({ liveIds: [], sessionIds });

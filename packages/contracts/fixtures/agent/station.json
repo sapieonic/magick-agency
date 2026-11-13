@@ -73,6 +73,18 @@
     "state": "break",
     "break_reason": "device_away"
   },
+  "agent_state_after_away_ring_return": {
+    "event": "agent_state",
+    "state": "break",
+    "since": "2026-11-02T07:58:41.120Z",
+    "break_reason": "device_away"
+  },
+  "ready_after_away_ring_return": {
+    "event": "ready",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "state": "break",
+    "break_reason": "device_away"
+  },
   "reserved": {
     "event": "reserved",
     "attempt": {
@@ -505,6 +517,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": "2026-11-02T05:30:15.700Z",
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": null,
       "ended_at": null,
       "talk_seconds": null,
@@ -615,6 +630,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": null,
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": "2026-11-02T05:30:15.712Z",
       "ended_at": null,
       "talk_seconds": null,
@@ -725,6 +743,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": null,
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": "2026-11-02T05:30:15.712Z",
       "ended_at": "2026-11-02T05:34:02.500Z",
       "talk_seconds": 227,
@@ -835,6 +856,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": null,
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": "2026-11-02T05:30:15.712Z",
       "ended_at": "2026-11-02T05:34:02.500Z",
       "talk_seconds": 227,
@@ -888,6 +912,9 @@
       "waited_seconds": 41,
       "offered_at": "2026-11-02T07:11:03.000Z",
       "connects_at": "2026-11-02T07:11:04.500Z",
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": null,
       "ended_at": null,
       "talk_seconds": null,
@@ -914,5 +941,118 @@
     "match_name": "Rahul Deshpande",
     "waiting_since": "2026-11-02T05:30:00.180Z",
     "cleared": true
+  },
+  "inbound_call_push_accepted": {
+    "event": "inbound_call",
+    "call": {
+      "id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "state": "offered",
+      "outcome": null,
+      "from_e164": "+918765432109",
+      "to_e164": "+912071234500",
+      "route": {
+        "id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "name": "Pune customer line"
+      },
+      "caller_dnc": false,
+      "sticky": {
+        "reason": "owner",
+        "is_you": true
+      },
+      "match": {
+        "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "contact_state": "pending",
+        "context": {
+          "Name": "Rahul Deshpande",
+          "Policy No": "PL-2023-099120",
+          "Renewal Due": "2026-11-04",
+          "Premium (INR)": 22100.5,
+          "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+          "Opted in": true,
+          "Alt phone": null
+        },
+        "context_display": {
+          "hero": [
+            "Name",
+            "Policy No",
+            "Renewal Due"
+          ],
+          "hidden": [
+            "Alt phone"
+          ]
+        },
+        "prior_attempts": [
+          {
+            "attempt_number": 2,
+            "outcome": "connected",
+            "disposition_code": "callback",
+            "notes": "Asked us to call after 6pm.",
+            "ended_at": "2026-10-31T09:40:11.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-31T09:37:58.300Z"
+          },
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-29T06:12:40.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-29T06:12:02.100Z"
+          }
+        ]
+      },
+      "catalog_source": "campaign",
+      "disposition_catalog": [
+        {
+          "code": "interested",
+          "label": "Interested",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Call back later",
+          "requires_datetime": true
+        },
+        {
+          "code": "query_resolved",
+          "label": "Query resolved",
+          "is_success": true,
+          "terminal": true
+        },
+        {
+          "code": "complaint",
+          "label": "Complaint",
+          "requires_note": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true
+        }
+      ],
+      "recording": true,
+      "waited_seconds": 31,
+      "offered_at": "2026-11-02T08:02:10.000Z",
+      "connects_at": null,
+      "offer_channel": "push",
+      "ring_expires_at": null,
+      "accepted_at": "2026-11-02T08:02:16.400Z",
+      "bridged_at": null,
+      "ended_at": null,
+      "talk_seconds": null,
+      "outcome_due_at": null,
+      "disposition_code": null,
+      "notes": null,
+      "callback_at": null,
+      "dispositioned_by_user_id": null,
+      "dispositioned_on_behalf": false,
+      "settled_at": null
+    }
   }
 }

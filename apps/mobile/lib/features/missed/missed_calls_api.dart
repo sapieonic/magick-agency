@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
-import '../performance/performance_api.dart' show decodeBody;
+import '../../core/api/decode_body.dart';
 
 /// The Missed inbound list's routes (`docs/inbound.md` §7, §8.4), all through
 /// [ApiClient], so the bearer, the scope headers and the typed errors are the

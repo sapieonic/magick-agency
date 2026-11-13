@@ -27,6 +27,8 @@ import {
  */
 const INBOUND_SINGLE_PROCESS = 'inbound callers are connected only in one process (IB8, docs/inbound.md §2): the connector, its calls and the agents it took live in the process that answers every inbound call, where a `none` handler runs; with media workers nobody is connected, so no call has an agent to finish';
 
+const AWAY_RING_NO_STATION = 'the agent\'s own push devices (Postgres, the push sender) and the flag read; the opt-out and the removal end the device\'s `away_ring`, which is held with no station socket, so its end touches Redis and Postgres only (Mode B, IQ67)';
+
 const NONE_WITH_RUNTIME: Record<string, string> = {
   'POST /sessions': 'the join: rehydrates the Redis lease, writes the row and mints a Redis token; no station is attached to any process yet',
   'POST /softphone/sessions': 'the soft-phone join: the same rehydrate and Redis token mint as the campaign join',
@@ -36,6 +38,15 @@ const NONE_WITH_RUNTIME: Record<string, string> = {
   'POST /inbound/calls/:id/disposition': INBOUND_SINGLE_PROCESS,
   'POST /inbound/calls/:id/dnc': INBOUND_SINGLE_PROCESS,
   'GET /inbound/queue': INBOUND_SINGLE_PROCESS,
+  'GET /push-devices/:id': AWAY_RING_NO_STATION,
+  'PUT /push-devices/:id': AWAY_RING_NO_STATION,
+  'PATCH /push-devices/:id': AWAY_RING_NO_STATION,
+  'DELETE /push-devices/:id': AWAY_RING_NO_STATION,
+  'POST /push-devices/:id/test-ring': AWAY_RING_NO_STATION,
+  // Mode B: a ring has no station socket; the connector that holds it is the one inbound process (IB8).
+  'POST /inbound/calls/:id/ring/answering': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/ring/decline': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/ring/accept': INBOUND_SINGLE_PROCESS,
 };
 
 let core: FastifyInstance;

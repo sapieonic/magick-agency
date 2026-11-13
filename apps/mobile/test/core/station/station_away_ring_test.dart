@@ -1,0 +1,1028 @@
+import 'dart:convert';
+
+import 'package:agency_wire/agency_wire.dart';
+import 'package:agent_audio/agent_audio.dart' show PhoneCallChanged;
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/inbound/inbound_call_rules.dart';
+import 'package:magick_agency_agent/core/ring/ring_channel.dart';
+import 'package:magick_agency_agent/core/ring/ring_copy.dart';
+import 'package:magick_agency_agent/core/ring/ring_rules.dart' show RingBlocker;
+import 'package:magick_agency_agent/core/ring/station_ring.dart';
+import 'package:magick_agency_agent/core/station/away_return.dart';
+import 'package:magick_agency_agent/core/station/station_controller.dart';
+import 'package:magick_agency_agent/core/station/station_view.dart';
+
+import '../inbound/inbound_fixtures.dart';
+import '../ring/fake_ring_channel.dart';
+import 'controller_harness.dart';
+
+/// Mode B on the station core (IQ58–IQ74): leaving the app asks `away_ring` when this phone can
+/// ring; once it applies the socket parks and the on-duty service stops; coming back reopens
+/// them; a ring answered reopens the station on the accept's URL. Driven by the frames the
+/// server sends (the contract's samples), never an injected `agent_state` to move the screen.
+
+const _breakPath = '/proxy/agency/sessions/sess-1/break';
+const _availablePath = '/proxy/agency/sessions/sess-1/available';
+const _pushCallId = '7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64';
+
+/// The harness with Mode B's seam over a fake channel.
+final class _Ring {
+  _Ring(FakeAsync async, {bool ringOn = true}) {
+    ring.ringOn = ringOn;
+    app = App(async, overrides: [stationRingProvider.overrideWithValue(ring)]);
+  }
+
+  final channel = FakeRingChannel();
+  late final ring = FakeStationRing(channel);
+  late final App app;
+
+  /// On duty and available, with the break route answering as the server applies [reason].
+  void availableThenAway({void Function()? beforeAnswer}) {
+    app.start();
+    app.readyFrame('available');
+    app.agentStateFrame('available');
+    app.routes['POST $_breakPath'] = (r) {
+      final reason = (r.body! as Map<String, Object?>)['reason']! as String;
+      // The server states the break on the socket before it answers.
+      app.socket.serverText(jsonEncode({
+        'event': 'agent_state',
+        'state': 'break',
+        'since': '2026-11-01T09:00:00.000Z',
+        'break_reason': reason,
+      }));
+      beforeAnswer?.call();
+      return json(200, stateBody('break', breakReason: reason));
+    };
+    app.lifecycle.hide();
+    app.async.flushMicrotasks();
+  }
+}
+
+/// A push offer's frame as the server sends it once the station has attached after an accept
+/// (`connects_at` null, `accepted_at` set): the contract's sample, on the harness's session.
+Map<String, Object?> _pushFrame(String name, {Map<String, Object?> call = const {}}) => stationFrame(name, call: {
+      'id': _pushCallId,
+      'offered_at': '2026-11-01T09:00:10.000Z',
+      'offer_channel': 'push',
+      'connects_at': null,
+      'ring_expires_at': null,
+      'accepted_at': '2026-11-01T09:00:16.000Z',
+      ...call,
+    });
+
+/// `…/ring/accept`'s answer (the contract's sample), on the harness's session and campaign.
+InboundRingAcceptResponse _accept({String url = '/proxy/agency/station?token=accept1'}) {
+  final body = pushSample('ring_accept_response');
+  body['session_id'] = 'sess-1';
+  body['campaign_id'] = 'camp-1';
+  body['station_ws_url'] = url;
+  body['station_token_expires_at'] = '2026-11-01T09:05:00.000Z';
+  final call = body['call']! as Map<String, Object?>;
+  call['session_id'] = 'sess-1';
+  call['offered_at'] = '2026-11-01T09:00:10.000Z';
+  call['accepted_at'] = '2026-11-01T09:00:16.000Z';
+  return InboundRingAcceptResponse.fromJson(body);
+}
+
+/// The frames the server sends a station reattaching after `away_ring` (the contract's samples):
+/// `agent_state` break/device_away with the absence's start as `since`, then `ready` on the same
+/// break. [since]: the absence's start on the harness's clock.
+void backFromAwayRing(App app, {String since = '2026-11-01T09:00:00.000Z'}) {
+  app.frame(stationFrame('agent_state_after_away_ring_return')..['since'] = since);
+  app.frame(stationFrame('ready_after_away_ring_return')..['session_id'] = 'sess-1');
+  app.async.flushMicrotasks();
+}
+
+void main() {
+  group('leaving the app (IQ58, IQ67)', () {
+    test('ringing on: away_ring is asked; once it applies the socket parks, the on-duty service stops, '
+        'and the away notification shows instead of "You\'re paused"', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        expect(app.requests('POST', _breakPath).single.body, {'reason': 'away_ring'});
+        expect(app.socket.closed, isTrue, reason: 'parked: the server keeps an away_ring session with no socket');
+        expect(app.engine.calls, contains('fgs.stop'));
+        expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true']);
+        expect(r.channel.awayShownFor, (since: DateTime.utc(2026, 11, 1, 9), sessionId: 'sess-1'),
+            reason: 'the absence it shows, for native to tell a late ring_off from this one');
+        expect(app.notifier.calls, isNot(contains('paused')));
+        async.elapse(const Duration(minutes: 5));
+        expect(app.connector.attempts, 1, reason: 'never reconnected while away');
+        app.dispose();
+      });
+    });
+
+    test('ringing off: device_away, as without Mode B, and the socket stays', () {
+      fakeAsync((async) {
+        final r = _Ring(async, ringOn: false)..availableThenAway();
+        expect(r.app.requests('POST', _breakPath).single.body, {'reason': 'device_away'});
+        expect(r.app.socket.closed, isFalse);
+        expect(r.app.notifier.calls.last, 'paused');
+        expect(r.channel.named('showAwayNotification'), isEmpty);
+        r.app.dispose();
+      });
+    });
+
+    test('ringing on for this phone but notifications off: device_away, and the paused notification and the away card '
+        'say the phone won\'t ring and why', () {
+      fakeAsync((async) {
+        final r = _Ring(async, ringOn: false);
+        r.ring.fallbackBlocker = RingBlocker.notifications;
+        r.availableThenAway();
+        final app = r.app;
+        expect(app.requests('POST', _breakPath).single.body, {'reason': 'device_away'});
+        expect(app.notifier.pausedBodies.last,
+            'You’re paused, and this phone won’t ring for inbound calls: notifications are off. Open the app to take calls again.');
+        async.elapse(const Duration(minutes: 2));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.view!.onBreak!.noRing, 'notifications are off');
+        app.dispose();
+      });
+    });
+
+    test('ringing off and not expected (not opted in): the plain "You\'re paused"', () {
+      fakeAsync((async) {
+        final r = _Ring(async, ringOn: false)..availableThenAway();
+        expect(r.app.notifier.pausedBodies.last, "You're paused. Open the app to take calls again.");
+        expect(r.app.view!.onBreak?.noRing, isNull);
+        r.app.dispose();
+      });
+    });
+
+    test('away_ring refused 409 (an away-ring code): device_away at once, and the agent is told they are paused', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (req) => (req.body! as Map<String, Object?>)['reason'] == 'away_ring'
+            ? json(409, pushSample('refusal_no_push_device'))
+            : json(200, stateBody('break', breakReason: 'device_away'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath).map((s) => (s.body! as Map<String, Object?>)['reason']), ['away_ring', 'device_away']);
+        app.agentStateFrame('break', breakReason: 'device_away');
+        expect(app.socket.closed, isFalse);
+        expect(app.notifier.calls.last, 'paused');
+        expect(app.notifier.pausedBodies.last, contains('this phone won’t ring for inbound calls: this phone isn’t registered for ringing'),
+            reason: 'refused no_push_device: the agent is told why it will not ring');
+        expect(r.channel.named('showAwayNotification'), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('a pause queued in wrap-up queues away_ring; once it applies after the call, the socket parks', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app..start();
+        app.inWrapup('att-1');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('wrapup', breakReason: 'away_ring', pending: 'break'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath).single.body, {'reason': 'away_ring'});
+        expect(app.socket.closed, isFalse, reason: 'the wrap-up is still on');
+        app.agentStateFrame('break', breakReason: 'away_ring', since: '2026-11-01T09:00:05.000Z');
+        expect(app.socket.closed, isTrue);
+        expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true']);
+        app.dispose();
+      });
+    });
+
+    test('the phone_call pause still wins while the app is open: away_ring is not asked on top of it', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'phone_call'));
+        app.engine.emitEvent(const PhoneCallChanged(active: true));
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'phone_call');
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath).map((s) => (s.body! as Map<String, Object?>)['reason']), ['phone_call']);
+        expect(app.socket.closed, isFalse);
+        app.dispose();
+      });
+    });
+  });
+
+  group('coming back from away_ring', () {
+    test('the server\'s return frames are device_away, keeping the absence\'s start (the contract)', () {
+      final state = stationFrame('agent_state_after_away_ring_return');
+      final ready = stationFrame('ready_after_away_ring_return');
+      expect([state['state'], state['break_reason']], ['break', 'device_away']);
+      expect([ready['state'], ready['break_reason']], ['break', 'device_away']);
+      expect(ready.containsKey('since'), isFalse, reason: 'ready has no since: the agent_state before it says');
+    });
+
+    test('within 30 s: the notification goes, the on-duty service and the socket reopen, then /available (IQ50); no banner', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.routes['POST $_availablePath'] = (_) => json(200, stateBody('available'));
+        final starts = app.engine.calls.where((c) => c == 'fgs.start').length;
+        async.elapse(const Duration(seconds: 20));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true', 'showAwayNotification:false']);
+        expect(app.engine.calls.where((c) => c == 'fgs.start').length, starts + 1);
+        expect(app.connector.attempts, 2, reason: 'the socket reopens');
+        expect(app.requests('POST', _availablePath), isEmpty, reason: 'decided once the station says where the agent stands');
+        backFromAwayRing(app);
+        expect(app.requests('POST', _availablePath), hasLength(1));
+        expect(app.container.read(ringNoticeProvider), isNull, reason: 'the server answers every return with device_away: no news');
+        app.dispose();
+      });
+    });
+
+    test('a normal return after 30 s: the away card says this phone was ringing, waits for the tap, and no banner', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        async.elapse(const Duration(minutes: 2));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.requests('POST', _availablePath), isEmpty);
+        final onBreak = app.view!.onBreak!;
+        expect(onBreak.code, 'device_away', reason: 'the server\'s reason');
+        expect(onBreak.isDeviceAway, isTrue);
+        expect(onBreak.isAwayRing, isTrue, reason: 'the app itself asked away_ring for this absence');
+        expect(onBreak.label, 'Away · this phone rings for inbound calls');
+        expect(app.container.read(ringNoticeProvider), isNull);
+        expect(r.channel.named('takeRingOff'), hasLength(1), reason: 'read (and cleared) on every return');
+        app.dispose();
+      });
+    });
+
+    test('a 3-hour absence: no return without the tap, no banner, and the summary counts from the absence\'s start', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.ring.status = PushDeviceStatus.fromJson(pushSample('device_status_ringing'));
+        async.elapse(const Duration(hours: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('POST', _availablePath), isEmpty);
+        expect(app.container.read(ringNoticeProvider), isNull);
+        expect(app.container.read(awayReturnProvider)!.since, DateTime.utc(2026, 11, 1, 9), reason: 'from when the absence began');
+        expect(app.view!.onBreak!.since, DateTime.utc(2026, 11, 1, 9));
+        app.dispose();
+      });
+    });
+
+    test('away for the maximum age (4 h): the agent is told that is why it stopped', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        async.elapse(const Duration(hours: 4, minutes: 1));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: it stops after 4 hours away.');
+        app.dispose();
+      });
+    });
+
+    test('a ring_off native took for this absence (ring_missed): the banner says why', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        final push = pushSample('push_ring_off');
+        r.channel.ringOff = RingOffRecord(sessionId: 'sess-1', awaySince: DateTime.utc(2026, 11, 1, 9), reason: RingOffReason.fromWire(push['reason'] as String?));
+        async.elapse(const Duration(minutes: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: you missed two inbound calls.');
+        expect(r.ring.statusReads, 0, reason: 'the ring_off says why');
+        app.dispose();
+      });
+    });
+
+    test('a ring_off for an earlier absence says nothing about this one', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.ringOff = RingOffRecord(sessionId: 'sess-1', awaySince: DateTime.utc(2026, 11, 1, 8), reason: RingOffReason.ringMissed);
+        async.elapse(const Duration(minutes: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), isNull);
+        app.dispose();
+      });
+    });
+
+    test('two missed rings heard while away: the agent is told why', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.emit(RingEnded(_pushCallId, 'expired'));
+        r.channel.emit(RingEnded('other-call', 'accept_lapsed'));
+        async.elapse(const Duration(minutes: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), RingCopy.stopped(RingOffReason.ringMissed));
+        app.dispose();
+      });
+    });
+
+    test('ended for another reason: the device status read on return says which', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.ring.status = PushDeviceStatus.fromJson(pushSample('device_status_unregistered'));
+        r.channel.emit(RingEnded(_pushCallId, 'declined'));
+        async.elapse(const Duration(minutes: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(r.ring.statusReads, 1);
+        expect(app.container.read(ringNoticeProvider), RingCopy.stopped(RingOffReason.revoked));
+        app.dispose();
+      });
+    });
+  });
+
+  group('"Stop ringing" on the away notification (this absence only)', () {
+    /// The break route as the server answers `device_away` asked on `away_ring`: for
+    /// [ringInFlight] asks a ring is in flight, so the session is `reserved` for its push offer and
+    /// the pause is queued behind it ([reservedWhileRinging]; else the answer is still
+    /// `away_ring`), then switched.
+    void breakRoute(App app, {int ringInFlight = 0, bool reservedWhileRinging = false}) {
+      var asked = 0;
+      app.routes['POST $_breakPath'] = (r) {
+        final reason = (r.body! as Map<String, Object?>)['reason']! as String;
+        if (reason == 'away_ring') return json(200, stateBody('break', breakReason: 'away_ring'));
+        asked++;
+        if (asked <= ringInFlight) {
+          return json(200, reservedWhileRinging
+              ? stateBody('reserved', breakReason: 'device_away', pending: 'break')
+              : stateBody('break', breakReason: 'away_ring'));
+        }
+        return json(200, stateBody('break', breakReason: 'device_away'));
+      };
+    }
+
+    List<Object?> reasons(App app) => app.requests('POST', _breakPath).map((r) => (r.body! as Map<String, Object?>)['reason']).toList();
+
+    test('device_away before the station attaches, no return to calls, "Ringing stopped. You\'re paused.", and back '
+        'behind; hidden again, device_away (not away_ring) and the paused notification says ringing stopped', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app);
+        app.routes['POST $_availablePath'] = (_) => json(200, stateBody('available'));
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(r.channel.named('peekStopRinging'), hasLength(1));
+        expect(reasons(app), ['away_ring', 'device_away']);
+        expect(app.connector.attempts, 2, reason: 'attached only once device_away applied');
+        expect(app.socket.url.queryParameters['caps'], 'inbound', reason: 'paused: no ring can be un-answered now');
+        expect(r.channel.named('clearStopRinging'), hasLength(1), reason: 'native keeps the tap until device_away applied');
+        expect(r.channel.named('moveTaskToBack'), hasLength(1));
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        expect(app.requests('PATCH', '/proxy/agency/push-devices/a1b2c3d4e5f60718293a4b5c6d7e8f90'), isEmpty, reason: 'no opt-out: that is the Me card\'s');
+        backFromAwayRing(app);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.requests('POST', _availablePath), isEmpty, reason: 'no IQ50 return (back within 30 s): the agent stopped ringing to stay away');
+        expect(app.view!.onBreak!.isAwayRing, isFalse, reason: 'paused, not ringing');
+
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(reasons(app), ['away_ring', 'device_away'], reason: 'already on device_away: nothing asked, never away_ring');
+        expect(app.notifier.pausedBodies.last, 'Ringing stopped. You’re paused. Open the app to take calls again.');
+        expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true', 'showAwayNotification:false']);
+        // Still in this absence, the server drops the pause (the lease lapsed): paused again, as
+        // device_away, never away_ring.
+        app.agentStateFrame('offline', since: '2026-11-01T09:10:00.000Z');
+        async.flushMicrotasks();
+        expect(reasons(app), ['away_ring', 'device_away', 'device_away']);
+        app.dispose();
+      });
+    });
+
+    test('"Stop ringing" ends the return\'s check: two misses heard while away make no banner over "Ringing stopped"', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app);
+        r.channel.emit(RingEnded(_pushCallId, 'expired'));
+        r.channel.emit(RingEnded('other-call', 'accept_lapsed'));
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        backFromAwayRing(app);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.',
+            reason: 'the agent stopped ringing themselves: nothing to explain');
+        app.dispose();
+      });
+    });
+
+    test('a ring in flight keeps away_ring: device_away is asked again each second, and the station waits for it', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 2);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(reasons(app), ['away_ring', 'device_away']);
+        expect(app.connector.attempts, 1, reason: 'an attach now would answer the ring (N5)');
+        async.elapse(const Duration(seconds: 1));
+        expect(app.connector.attempts, 1);
+        async.elapse(const Duration(seconds: 1));
+        expect(reasons(app), ['away_ring', 'device_away', 'device_away', 'device_away']);
+        expect(app.connector.attempts, 2);
+        expect(app.mints, 1);
+        app.dispose();
+      });
+    });
+
+    test('a ring in flight holds the session reserved (the pause queued behind it): the station still waits', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1, reservedWhileRinging: true);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1, reason: 'reserved for the ring\'s offer: an attach would answer it (N5)');
+        async.elapse(const Duration(seconds: 1));
+        expect(reasons(app), ['away_ring', 'device_away', 'device_away']);
+        expect(app.connector.attempts, 2);
+        app.dispose();
+      });
+    });
+
+    test('device_away never applies: after 10 s the station attaches WITHOUT caps=inbound, which ends the ring rather '
+        'than answering it; once the station says the agent is paused, it declares inbound calls again and says so', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1000, reservedWhileRinging: true);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 9));
+        expect(app.connector.attempts, 1);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse,
+            reason: 'the last answer said reserved: an attach with caps=inbound would answer the ring (N5)');
+        expect(app.socket.url.queryParameters['client'], 'mobile');
+        expect(app.container.read(ringNoticeProvider), isNull, reason: 'not paused yet as far as the app knows');
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        expect(r.channel.named('clearStopRinging'), isEmpty);
+
+        // The attach without inbound calls ends away_ring as device_away (the contract's frames).
+        backFromAwayRing(app);
+        expect(app.connector.attempts, 3, reason: 'attached afresh to declare inbound calls');
+        expect(app.socket.url.queryParameters['caps'], 'inbound');
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        expect(r.channel.named('moveTaskToBack'), hasLength(1));
+        expect(r.channel.named('clearStopRinging'), hasLength(1));
+        // Declared once: the same frames again change nothing.
+        backFromAwayRing(app);
+        expect(app.connector.attempts, 3);
+        app.dispose();
+      });
+    });
+
+    test('attached without caps=inbound, a frame still on away_ring or reserved keeps it off', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1000);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(StationController.stopRingingBound);
+        expect(app.connector.attempts, 2);
+        app.readyFrame('break', extra: {'break_reason': 'away_ring'});
+        app.readyFrame('reserved');
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        // A drop's retry connects without it too.
+        app.socket.serverClose();
+        async.elapse(const Duration(seconds: 1));
+        expect(app.connector.attempts, 3);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        app.dispose();
+      });
+    });
+
+    test('device_away never applies and the station never says the agent is paused: "Couldn\'t stop ringing", '
+        'the app stays in front, and native keeps the tap', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1000);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(StationController.stopRingingBound * 2);
+        expect(app.container.read(ringNoticeProvider), 'Couldn’t stop ringing. Open your station to pause.');
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        expect(r.channel.named('clearStopRinging'), isEmpty);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        app.dispose();
+      });
+    });
+
+    test('a device_away refused outright (not worth retrying) attaches without caps=inbound too', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.routes['POST $_breakPath'] = (req) => json(422, {'error': 'invalid_state'});
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters.containsKey('caps'), isFalse);
+        app.dispose();
+      });
+    });
+
+    test('left and back again while Stop ringing waits for device_away: the socket still waits', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 3);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1, reason: 'an attach now would answer the ring still in flight (N5)');
+        expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true', 'showAwayNotification:false'],
+            reason: 'not parked for away_ring again: the agent stopped ringing for this absence');
+        expect(r.channel.named('peekStopRinging'), hasLength(1), reason: 'one Stop ringing, not a second');
+        async.elapse(const Duration(milliseconds: 500));
+        expect(app.connector.attempts, 1);
+        async.elapse(const Duration(seconds: 3));
+        expect(app.connector.attempts, 2, reason: 'device_away applied: the hold ends');
+        expect(app.socket.url.queryParameters['caps'], 'inbound');
+        app.dispose();
+      });
+    });
+
+    test('back in the pool, the next absence rings again (away_ring)', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app);
+        app.routes['POST $_availablePath'] = (_) => json(200, stateBody('available'));
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        app.run(app.controller.endBreak());
+        app.agentStateFrame('available', since: '2026-11-01T09:05:00.000Z');
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(reasons(app).last, 'away_ring');
+        app.dispose();
+      });
+    });
+
+    test('a launch that is not "Stop ringing" (a stale request for another session) is a normal return', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-0');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(reasons(app), ['away_ring']);
+        expect(app.connector.attempts, 2);
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('a cold start (no station here): device_away for the session the absence was in, the notice, back behind', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.routes['POST /proxy/agency/sessions/sess-9/break'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+        app.run(app.controller.stopRingingWithoutStation('sess-9'));
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-9/break').single.body, {'reason': 'device_away'});
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        expect(r.channel.named('moveTaskToBack'), hasLength(1));
+        expect(r.channel.named('clearStopRinging'), hasLength(1), reason: 'applied: native lets the tap go');
+        app.dispose();
+      });
+    });
+
+    test('a cold start whose device_away never applies: "Couldn\'t stop ringing", not "You\'re paused", the app stays '
+        'in front, and native keeps the tap for the next start', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.routes['POST /proxy/agency/sessions/sess-9/break'] =
+            (_) => json(200, stateBody('reserved', breakReason: 'device_away', pending: 'break'));
+        var done = false;
+        app.controller.stopRingingWithoutStation('sess-9').then((_) => done = true);
+        async.elapse(StationController.stopRingingBound + const Duration(seconds: 1));
+        expect(done, isTrue);
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-9/break').length, greaterThan(1), reason: 'asked again each second');
+        expect(app.container.read(ringNoticeProvider), 'Couldn’t stop ringing. Open your station to pause.');
+        expect(r.channel.named('moveTaskToBack'), isEmpty);
+        expect(r.channel.named('clearStopRinging'), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('a stale "Stop ringing" for another session is let go', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-0');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(r.channel.named('clearStopRinging'), hasLength(1));
+        app.dispose();
+      });
+    });
+  });
+
+  group('the server clock for a ring\'s timing', () {
+    test('parking for away_ring hands native the offset the socket measured, with when', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.socket.serverPong(serverOffsetMs: 7000);
+        async.elapse(const Duration(seconds: 2));
+        final measured = app.now().subtract(const Duration(seconds: 2));
+        app.routes['POST $_breakPath'] = (req) => json(200, stateBody('break', breakReason: 'away_ring'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'away_ring');
+        async.flushMicrotasks();
+        expect(app.socket.closed, isTrue);
+        expect(r.channel.serverClock, (offsetMs: 7000, measuredAt: measured));
+        app.dispose();
+      });
+    });
+
+    test('no pong yet: nothing is handed over (native falls back to the push\'s send time)', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        expect(r.app.socket.closed, isTrue);
+        expect(r.channel.named('setServerClock'), isEmpty);
+        r.app.dispose();
+      });
+    });
+  });
+
+  group('answered from a ring (resumeForRing)', () {
+    test('the station parked on away_ring: reopened on the accept\'s URL, the call on screen at once, '
+        'native told when it binds and when it ends', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        expect(app.socket.closed, isTrue);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1', reason: 'the accept minted the token');
+        expect(app.socket.url.queryParameters['caps'], 'inbound');
+        expect(app.mints, 0, reason: 'no second mint: it would replace the accept\'s token');
+        expect(r.channel.named('showAwayNotification').last, 'showAwayNotification:false');
+        expect(app.engine.calls.where((c) => c == 'fgs.start'), hasLength(2), reason: 'the on-duty service started again');
+        var v = app.view!;
+        expect(v.inbound!.stage, InboundStage.offered);
+        expect(app.signals.callActive, isTrue);
+
+        // The server's frames on the attach: ready (reserved), the push offer, then the bind.
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        expect(app.view!.inbound!.stage, InboundStage.offered, reason: 'ready says reserved: the offer is kept');
+        expect(app.engine.chimes, 0, reason: 'it rang as a phone call already');
+        app.frame(agentStateFrameJson('on_call', '2026-11-01T09:00:17.000Z'));
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        v = app.view!;
+        expect(v.inbound!.stage, InboundStage.connected);
+        expect(r.channel.named('reportBound'), ['reportBound:$_pushCallId']);
+        app.frame(agentStateFrameJson('wrapup', '2026-11-01T09:03:00.000Z'));
+        app.frame(_pushFrame('inbound_call_outcome_owed', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        expect(r.channel.named('reportEnded'), ['reportEnded:$_pushCallId:ended']);
+        expect(r.channel.named('holdOverLockScreen'), ['holdOverLockScreen:true'],
+            reason: 'the call ended, its outcome is owed: still over the lock screen');
+        // The outcome saved, the call leaves the station: the hold ends.
+        app.frame(agentStateFrameJson('available', '2026-11-01T09:04:00.000Z'));
+        app.frame(_pushFrame('inbound_call_settled', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        expect(app.view!.inbound, isNull);
+        expect(r.channel.named('holdOverLockScreen'), ['holdOverLockScreen:true', 'holdOverLockScreen:false']);
+        app.dispose();
+      });
+    });
+
+    test('nothing hosted (a cold start): a station opens from the accept, and is filled in by a join once the call is done', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.engine.calls, contains('fgs.start'), reason: 'from the foreground');
+        expect(app.view!.inbound!.stage, InboundStage.offered);
+        expect(app.view!.campaignId, 'camp-1');
+        expect(app.requests('POST', '/proxy/agency/sessions'), isEmpty, reason: 'no join while the call is on');
+
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        app.frame(agentStateFrameJson('on_call', '2026-11-01T09:00:17.000Z'));
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        app.frame(agentStateFrameJson('wrapup', '2026-11-01T09:03:00.000Z'));
+        app.frame(_pushFrame('inbound_call_outcome_owed', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        expect(app.requests('POST', '/proxy/agency/sessions'), isEmpty);
+        app.frame(agentStateFrameJson('available', '2026-11-01T09:04:00.000Z'));
+        app.frame(_pushFrame('inbound_call_settled', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        async.flushMicrotasks();
+        final join = app.requests('POST', '/proxy/agency/sessions').single;
+        expect((join.body! as Map<String, Object?>)['take_over'], isFalse, reason: 'a rehydrate, never a take-over');
+        expect(app.view!.dispositions, isNotEmpty, reason: 'the campaign\'s catalog, from the join');
+        expect(app.view!.campaignName, 'Renewals');
+        expect(app.socket.closed, isFalse, reason: 'the socket is kept');
+        app.dispose();
+      });
+    });
+  });
+
+  group('a ring answered while the app is alive (the answer brings it to the front)', () {
+    test('answer first: back in the app, the parked socket waits for the accept\'s URL, '
+        'and opens on it with no mint of its own', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        expect(app.connector.attempts, 1, reason: 'an attach of its own would answer the ring (N5) ahead of the accept');
+        expect(app.mints, 0);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('back first, answered while native is asked whether it was "Stop ringing" (the lock screen\'s Answer on a '
+        'warm app): the return does not reopen the parked socket on a mint; the accept\'s URL does', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        // The answer reaches Dart before peekStopRinging has answered.
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(r.channel.named('peekStopRinging'), hasLength(1));
+        async.elapse(const Duration(seconds: 5));
+        expect(app.connector.attempts, 1, reason: 'an attach of its own would answer the ring (N5) ahead of the accept');
+        expect(app.mints, 0);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('back first, answered while native is asked, and the launch was "Stop ringing": moot, no device_away, no attach', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        final reasons = app.requests('POST', _breakPath).map((r) => (r.body! as Map<String, Object?>)['reason']);
+        expect(reasons, ['away_ring'], reason: 'the agent answered: not paused');
+        expect(app.connector.attempts, 1);
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('back first, answered while native is asked, then the accept failed: the socket reopens as usual', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1);
+        app.controller.releaseRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2, reason: 'the return\'s hold went with the answer: nothing keeps the socket parked');
+        expect(app.mints, 1);
+        app.dispose();
+      });
+    });
+
+    test('"Stop ringing" waiting for device_away, then a ring answered: device_away applying does not reopen the socket', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        var asked = 0;
+        app.routes['POST $_breakPath'] = (req) {
+          final reason = (req.body! as Map<String, Object?>)['reason']! as String;
+          if (reason == 'away_ring') return json(200, stateBody('break', breakReason: 'away_ring'));
+          asked++;
+          return json(200, stateBody('break', breakReason: asked == 1 ? 'away_ring' : 'device_away'));
+        };
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(asked, 1, reason: 'still away_ring: asked again in a second');
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.elapse(const Duration(seconds: 2));
+        expect(asked, 2);
+        expect(app.connector.attempts, 1, reason: 'an attach of its own would answer the ring (N5) ahead of the accept');
+        expect(app.mints, 0);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('answered on the way back: the return\'s check ends with the answer (native\'s ring_off is not read, no banner)', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.emit(RingEnded('other-call', 'expired'));
+        r.channel.emit(RingEnded('another-call', 'expired'));
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        async.flushMicrotasks();
+        expect(r.channel.named('takeRingOff'), isEmpty);
+        expect(app.container.read(ringNoticeProvider), isNull);
+        app.dispose();
+      });
+    });
+
+    test('a hold nobody ends is bounded: the socket reopens as usual', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1);
+        async.elapse(StationController.ringAnswerHoldMax);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.mints, 1);
+        app.dispose();
+      });
+    });
+
+    test('a failed accept releases the hold: the socket reopens as usual', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.controller.releaseRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        app.dispose();
+      });
+    });
+
+    test('back in the app first: its own socket attached (N5); the station holds the call when its frame comes, '
+        'and the accept\'s answer keeps that socket', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.mints, 1);
+        app.controller.holdForRingAnswer(_pushCallId);
+        bool? held;
+        app.controller.holdsRingCall(_pushCallId, const Duration(seconds: 5)).then((v) => held = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(held, isNull, reason: 'not on the station yet');
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        async.flushMicrotasks();
+        expect(held, isTrue);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2, reason: 'the server binds on the socket already here');
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        expect(r.channel.named('reportBound'), ['reportBound:$_pushCallId']);
+        app.dispose();
+      });
+    });
+
+    test('the station never shows the call: holdsRingCall answers false once the window ends', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        bool? held;
+        app.controller.holdsRingCall(_pushCallId, const Duration(seconds: 5)).then((v) => held = v);
+        backFromAwayRing(app);
+        async.elapse(const Duration(seconds: 5));
+        expect(held, isFalse);
+        app.dispose();
+      });
+    });
+  });
+
+  group('hung up on the phone while the call connected (after the accept)', () {
+    test('the station hangs the call up once it connects', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        const hangupPath = '/proxy/agency/inbound/calls/$_pushCallId/hangup';
+        app.routes['POST $hangupPath'] = (_) => json(200, {
+              'call': _pushFrame('inbound_call_outcome_owed', call: {'bridged_at': '2026-11-01T09:00:17.000Z'})['call'],
+            });
+        app.run(app.controller.resumeForRing(_accept()));
+        app.controller.hangUpRingCall(_pushCallId);
+        async.flushMicrotasks();
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        expect(app.requests('POST', hangupPath), isEmpty, reason: 'not before it connects');
+        app.frame(agentStateFrameJson('on_call', '2026-11-01T09:00:17.000Z'));
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        async.flushMicrotasks();
+        expect(app.requests('POST', hangupPath), hasLength(1));
+        app.frame(_pushFrame('inbound_call_connected', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        async.flushMicrotasks();
+        expect(app.requests('POST', hangupPath), hasLength(1), reason: 'once');
+        app.dispose();
+      });
+    });
+  });
+
+  group('the offer backstop and a push offer', () {
+    test('the rule: a push offer is stale only past the accept grace; never before accept', () {
+      final station = inboundCall('inbound_call_offered');
+      expect(inboundOfferStaleAt(station, StationController.offerStaleAfter), station.connectsAt!.add(const Duration(seconds: 10)));
+      final push = InboundCall.fromJson(_pushFrame('inbound_call_push_accepted')['call']! as Map<String, Object?>);
+      expect(push.connectsAt, isNull);
+      expect(inboundOfferStaleAt(push, StationController.offerStaleAfter), DateTime.utc(2026, 11, 1, 9, 0, 41));
+      final unanswered = InboundCall.fromJson(
+        _pushFrame('inbound_call_push_accepted', call: {'accepted_at': null})['call']! as Map<String, Object?>,
+      );
+      expect(inboundOfferStaleAt(unanswered, StationController.offerStaleAfter), isNull);
+    });
+
+    test('an accepted push offer is kept through the grace (a slow cold start), then retired if nothing settles it', () {
+      fakeAsync((async) {
+        final r = _Ring(async);
+        final app = r.app;
+        app.run(app.controller.resumeForRing(_accept()));
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        // Accepted at 09:00:16: stale at 09:00:41 (the grace, then the backstop's 10 s).
+        async.elapse(const Duration(seconds: 40));
+        expect(app.view!.inbound?.stage, InboundStage.offered, reason: '15 s grace + 10 s: not yet');
+        async.elapse(const Duration(seconds: 2));
+        expect(app.view!.inbound, isNull);
+        expect(r.channel.named('reportEnded'), ['reportEnded:$_pushCallId:cancelled']);
+        app.dispose();
+      });
+    });
+  });
+}

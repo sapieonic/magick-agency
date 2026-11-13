@@ -172,6 +172,7 @@
   "reserved_break_codes": {
     "source": "packages/contracts/src/agency/breaks.ts#RESERVED_BREAK_REASONS",
     "values": [
+      "away_ring",
       "device_away",
       "phone_call",
       "soft_phone"
@@ -207,7 +208,8 @@
       "redial_blocked_calling_hours",
       "redial_blocked",
       "station_on_other_device",
-      "session_in_other_tenant"
+      "session_in_other_tenant",
+      "agent_away_ring"
     ]
   },
   "roles": {
@@ -658,7 +660,10 @@
       "inbound_clip_storage_unavailable",
       "inbound_missed_call_handled",
       "inbound_assignee_invalid",
-      "inbound_missed_call_claimed"
+      "inbound_missed_call_claimed",
+      "ring_not_offered",
+      "ring_expired",
+      "already_accepted"
     ]
   },
   "inbound_disposition_rules": {
@@ -668,6 +673,81 @@
       "note_required",
       "datetime_required",
       "invalid_callback_at"
+    ]
+  },
+  "inbound_offer_channels": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_OFFER_CHANNELS",
+    "values": [
+      "station",
+      "push"
+    ]
+  },
+  "inbound_ring_results": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_RING_RESULTS",
+    "values": [
+      "answered",
+      "declined",
+      "expired",
+      "accept_lapsed",
+      "busy_on_phone",
+      "push_failed",
+      "caller_left",
+      "answered_elsewhere",
+      "cancelled"
+    ]
+  },
+  "inbound_ring_decline_reasons": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_RING_DECLINE_REASONS",
+    "values": [
+      "declined",
+      "busy_on_phone"
+    ]
+  },
+  "push_platforms": {
+    "source": "packages/contracts/src/agency/push-devices.ts#AGENCY_PUSH_PLATFORMS",
+    "values": [
+      "android",
+      "ios"
+    ]
+  },
+  "push_failure_reasons": {
+    "source": "packages/contracts/src/agency/push-devices.ts#AGENCY_PUSH_FAILURE_REASONS",
+    "values": [
+      "unregistered",
+      "invalid",
+      "rate_limited",
+      "unavailable",
+      "unconfigured"
+    ]
+  },
+  "ring_push_types": {
+    "source": "packages/contracts/src/agency/push-devices.ts#AGENCY_RING_PUSH_TYPES",
+    "values": [
+      "ring",
+      "ring_cancel",
+      "ring_off",
+      "test_ring"
+    ]
+  },
+  "ring_off_reasons": {
+    "source": "packages/contracts/src/agency/push-devices.ts#AGENCY_RING_OFF_REASONS",
+    "values": [
+      "ring_missed",
+      "revoked",
+      "opted_out",
+      "flag_off",
+      "max_age",
+      "taken_over",
+      "left"
+    ]
+  },
+  "away_ring_refusal_codes": {
+    "source": "packages/contracts/src/agency/push-devices.ts#AGENCY_AWAY_RING_REFUSAL_CODES",
+    "values": [
+      "ring_not_allowed",
+      "push_unavailable",
+      "no_push_device",
+      "ring_disabled"
     ]
   }
 }

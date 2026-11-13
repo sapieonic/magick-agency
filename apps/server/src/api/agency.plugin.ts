@@ -21,6 +21,8 @@ import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
 import { proxyAgencyReportsRoutes } from './routes/proxy-agency-reports.routes.js';
 import { proxyAgencyInboundRoutes } from './routes/proxy-agency-inbound.routes.js';
+import { proxyAgencyPushDeviceRoutes } from './routes/proxy-agency-push-devices.routes.js';
+import { proxyAgencyInboundRingRoutes } from './routes/proxy-agency-inbound-ring.routes.js';
 import { inboundRefusalBody } from './routes/agency/inbound-answer.js';
 import { reportRenderedWebhookRoutes } from './routes/webhooks/report-rendered.js';
 import { agencyConfigSchema } from '../config/blocks/agency.js';
@@ -197,6 +199,22 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
       { onlyUnder: `${P.proxyAgency}/inbound/calls/` },
     ));
     await scope.register(proxyAgencyInboundRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── The ring of an away agent's phone (Mode B; `proxy-agency-inbound-ring.routes.ts`) ─────
+  // Its own scope: `answering` and `decline` carry only the offer token (no Firebase session), and
+  // every refusal there, a malformed id included, is the uniform 404 `ring_not_offered`.
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyInboundRingRoutes, {
+      prefix: P.proxyAgency,
+      ringTenancy: (callId: string) => getAgencyRuntime()?.inbound?.ringTenancy(callId) ?? null,
+    });
+  });
+
+  // ── The agent app's push devices (Mode B; `proxy-agency-push-devices.routes.ts`) ─────────
+  // Its own 404 for a malformed `:deviceId` (OS3's station device id pattern); no uuid cast.
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyPushDeviceRoutes, { prefix: P.proxyAgency });
   });
 
   // ── Call-analysis profiles ─────────────────────────────────────────────────────────

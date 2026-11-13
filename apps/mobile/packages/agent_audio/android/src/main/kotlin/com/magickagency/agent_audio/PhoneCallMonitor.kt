@@ -10,7 +10,8 @@ import android.os.Handler
  * permission (never READ_PHONE_STATE): a cellular call shows as the audio mode switching to a
  * telephony mode (RINGTONE, IN_CALL, CALL_SCREENING, CALL_REDIRECT:
  * [AudioSessionController.isTelephonyMode]), and the app's own calls use MODE_IN_COMMUNICATION,
- * which is not one, so our own call never reads as a phone call. On API 31+
+ * which is not one, so our own call never reads as a phone call; nor does the ringtone mode while
+ * the app's own ring is live ([OwnRing]). On API 31+
  * `OnModeChangedListener` tells us; below that the mode is read once a second, only while
  * monitoring is on (the app turns it on while the agent waits for calls). Main thread only;
  * the dedupe is [PhoneCallTracker]'s.

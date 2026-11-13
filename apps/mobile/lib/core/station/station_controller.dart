@@ -16,6 +16,10 @@ import '../inbound/inbound_call_rules.dart';
 import '../inbound/inbound_copy.dart';
 import '../lifecycle/app_lifecycle.dart';
 import '../lifecycle/lifecycle_policy.dart';
+import '../ring/ring_channel.dart';
+import '../ring/ring_copy.dart';
+import '../ring/ring_rules.dart';
+import '../ring/station_ring.dart';
 import '../softphone/call_labels.dart' show formatDialNumber;
 import '../softphone/call_state.dart';
 import '../softphone/refusal_copy.dart' show refusalBodyOf, softphoneErrorCopy;
@@ -67,7 +71,9 @@ final List<Override> stationOverrides = [
 final class _Session {
   _Session(this.hosted);
 
-  final HostedSession hosted;
+  /// Replaced once, when a station opened from a ring ([HostedSession.ring]) is filled in by
+  /// its rehydrating join.
+  HostedSession hosted;
   late final StationSocket socket;
   late final AudioOrchestrator audio;
   late final NotesAutosave notes;
@@ -75,6 +81,7 @@ final class _Session {
   /// The inbound call's notes (`PATCH /inbound/calls/:id`, kept under `inbound:<id>`).
   late final CallAutosave<InboundCall, InboundCallUpdateRequest> inboundNotes;
   StreamSubscription<List<ConnectivityResult>>? network;
+  StreamSubscription<RingEvent>? ring;
   AppLifecycleSource? lifecycle;
 
   /// OS3: the next token mint takes the station over from another device. Armed only by the
@@ -88,6 +95,8 @@ final class _Session {
     lifecycle?.detach();
     unawaited(network?.cancel());
     network = null;
+    unawaited(ring?.cancel());
+    ring = null;
   }
 }
 
@@ -254,12 +263,41 @@ class StationController extends Notifier<StationView?>
   /// The cellular call ended: the return from its pause waits until this
   /// (device clock) for the app to be on screen and the pause to show.
   DateTime? _phoneCallReturnBy;
+  // Mode B: ringing this phone while away (IQ58–IQ74).
+  /// What Mode B holds for the agent's absence from the app ([_AwayPeriod]): what was asked, where
+  /// `away_ring` stands, the return's check, "Stop ringing".
+  _AwayPeriod _absence = _AwayPeriod();
+
+  /// When the last pong sample was measured (this phone's clock): the server clock offset handed
+  /// to native for a ring's timing is as old as this. Null before the first.
+  DateTime? _clockMeasuredAt;
+
+  /// The push offer on the station (a call answered from a ring), as told to native.
+  _RingCall? _ringCall;
+
+  /// A ring answered on this phone whose `…/ring/accept` is in flight (its call id): the accept's
+  /// URL is then the station's only attach ([holdForRingAnswer]).
+  String? _ringAnswerHold;
+  Timer? _ringAnswerHoldExpiry;
+
+  /// A call answered from a ring that the agent hung up on the phone before it bound
+  /// ([hangUpRingCall]): hung up here once it connects.
+  String? _ringHangUp;
+
+  /// Asked whether the station holds a call ([holdsRingCall]), not answered yet.
+  final List<_InboundWaiter> _inboundWaiters = [];
+
+  /// A station opened from a ring is being filled in by its join ([_maybeFillRingStation]).
+  bool _ringJoinInFlight = false;
+  DateTime? _ringJoinRetryAt;
+
   int _awayRetries = 0;
   Timer? _awayRetry;
   Timer? _awayDeadline;
   AwayNotice _notice = AwayNotice.none;
   DateTime? _noticeDeadline;
   bool _noticeSoftphone = false;
+  String? _noticeBody;
   bool? _wakeLockOn;
 
   late final StationApi _api = StationApi(
@@ -291,6 +329,12 @@ class StationController extends Notifier<StationView?>
   late WakeLock _wakeLock;
   late StationNotifier _notifier;
 
+  /// Mode B's seam ([StationRing.none] where nothing rings).
+  late StationRing _ring;
+
+  /// The ring channel, for what the station tells native and reads from it.
+  RingChannel get _native => _ring.channel;
+
   /// The inbound call routes. Made here, not on first use: the first use can be the notes'
   /// flush in teardown (`_closeSession(disposing: true)`), inside `onDispose`.
   late InboundCallApi _inboundApi;
@@ -300,8 +344,16 @@ class StationController extends Notifier<StationView?>
     _now = ref.read(stationNowProvider);
     _wakeLock = ref.read(wakeLockProvider);
     _notifier = ref.read(stationNotifierProvider);
+    _ring = ref.read(stationRingProvider);
     _inboundApi = InboundCallApi(ref.read(apiClientProvider), onUnauthorized: _reportUnauthorized);
-    ref.onDispose(() => unawaited(_closeSession(disposing: true)));
+    ref.onDispose(() {
+      _clearRingAnswerHold();
+      for (final w in List.of(_inboundWaiters)) {
+        w.settle(false);
+      }
+      _inboundWaiters.clear();
+      unawaited(_closeSession(disposing: true));
+    });
     return null;
   }
 
@@ -520,6 +572,7 @@ class StationController extends Notifier<StationView?>
     _foreground = lifecycle.isForeground;
     lifecycle.attach(onHide: _onHide, onShow: _onShow);
     s.network = ref.read(networkMonitorProvider).changes().listen(s.socket.networkChanged, onError: (Object _) {});
+    s.ring = _native.events.listen((event) => _onRingEvent(s, event), onError: (Object _) {});
 
     // While the app is on screen: Android starts the on-duty service only from the foreground.
     s.audio.open(_onDutyNotification());
@@ -552,6 +605,7 @@ class StationController extends Notifier<StationView?>
     _s = null;
     s.socket.dispose();
     s.stopListening();
+    _releaseRing();
     await s.notes.persistNow();
     await s.inboundNotes.persistNow();
     // The last seconds of typing are sent, not dropped with the debounce: the campaign call's
@@ -642,6 +696,13 @@ class StationController extends Notifier<StationView?>
     _awayLanded = false;
     _awayClosed = false;
     _awayAskedNowAt = null;
+    _absence.cancelStopConfirm();
+    _absence = _AwayPeriod();
+    _clockMeasuredAt = null;
+    _ringCall = null;
+    _ringHangUp = null;
+    _ringJoinInFlight = false;
+    _ringJoinRetryAt = null;
     _cancelAwayTimers();
     _cancelAutoReturn();
     _resetPhoneCall();
@@ -690,6 +751,9 @@ class StationController extends Notifier<StationView?>
         if (active != null) _carryNotes(active);
         final first = !_readySeen;
         _readySeen = true;
+        // Back from `away_ring`: this is the snapshot that says whether the server kept it.
+        final check = _absence.ringOffCheck;
+        if (check != null) _absence.ringOffCheck = (back: check.back, absenceStart: check.absenceStart, ready: true);
         final hosted = _s?.hosted;
         _dispatch(ReadyAction(
           frame,
@@ -698,6 +762,7 @@ class StationController extends Notifier<StationView?>
           breakReason: frame.breakReason ??
               (first && hosted != null && hosted.initialState == AgentState.onBreak ? hosted.initialBreakReason : null),
         ));
+        _maybeRestoreInbound();
         // Back after a drop with a soft-phone call held: the server sends its
         // copy right after `ready` only while the call is unsettled, so one
         // that settled meanwhile sends nothing and would stay "live" here.
@@ -730,6 +795,7 @@ class StationController extends Notifier<StationView?>
           _awayAskedNowAt = null;
         }
         _dispatch(AgentStateAction(frame));
+        _maybeRestoreInbound();
       case WrapupFrame(:final wrapup):
         // A redial that failed before it rang: its wrap-up is the first the station hears of it.
         final carry = _redialCarry;
@@ -835,6 +901,7 @@ class StationController extends Notifier<StationView?>
     if (ts != null) {
       _estimator = _estimator.push(ts: ts, serverTs: frame.serverTs, receivedAt: receivedAtMs);
       offset = _estimator.offsetMs;
+      _clockMeasuredAt = _now();
     }
     _dispatch(PongAction(offset));
   }
@@ -886,6 +953,7 @@ class StationController extends Notifier<StationView?>
   /// again); otherwise the socket and the listeners go too and the notes held
   /// are sent. [dismiss] or the next start closes the rest.
   void _letGo(_Session s, {required bool keepSocket}) {
+    _releaseRing();
     _cancelAwayTimers();
     _cancelAutoReturn();
     _resetPhoneCall();
@@ -972,10 +1040,20 @@ class StationController extends Notifier<StationView?>
     );
     final inbound = _station.inboundOnScreen;
     s.inboundNotes.callChanged(inbound?.id, serverNotes: inbound?.notes, accepting: inbound != null);
+    _syncRingCall();
+    _settleInboundWaiters();
     _applyLifecycle(s);
+    final onAwayPause = _station.effectiveState == AgentState.onBreak && isAwayBreak(_station.breakReasonCode);
+    if (!onAwayPause) _absence.rang = false;
+    // Out of the pause (or never in it: a call took it over): the "won't ring" note goes with it.
+    if (_foreground && !onAwayPause) _absence.noRing = null;
+    // "Stop ringing" held for this absence: over once the agent is back in the pool.
+    if (_foreground && _station.effectiveState == AgentState.available) _absence.ringStopped = false;
+    _maybeExplainRingOff(s);
     _maybeAnnounceReturn(s);
     _maybeAutoReturn(s);
     _syncPhoneCall(s);
+    _maybeFillRingStation(s);
     _emit();
   }
 
@@ -1034,6 +1112,8 @@ class StationController extends Notifier<StationView?>
       redialPlaced: _redialPlacedHere,
       inboundHangupFailure: inbound != null && _inboundHangupFailure?.callId == inbound.id ? _inboundHangupFailure!.text : null,
       inboundNotice: _inboundNotice,
+      awayRang: _absence.rang,
+      awayNoRing: _absence.noRing == null || _absence.ringStopped ? null : RingCopy.blockerWhy(_absence.noRing!),
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -1231,8 +1311,7 @@ class StationController extends Notifier<StationView?>
     final inbound = _terminal ? null : _station.inboundOnScreen;
     final inboundPhaseNow = inboundPhase(inbound);
     final away = state == AgentState.onBreak &&
-        (_station.breakReasonCode ?? (_awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null)) ==
-            ReservedBreakCode.deviceAway.wire;
+        isAwayBreak(_station.breakReasonCode ?? (_awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null));
     final text = switch (state) {
       _ when inboundPhaseNow == InboundPhase.offered => inboundOfferedNotificationText,
       _ when inboundPhaseNow == InboundPhase.connected => inboundOnCallNotificationText,
@@ -1300,6 +1379,8 @@ class StationController extends Notifier<StationView?>
   void _onHide() {
     _foreground = false;
     _announceOnReturn = false;
+    // A new away period: `away_ring` is worth asking again.
+    _absence.hidden();
     // Gone again before the return was decided: the next return decides afresh.
     _cancelAutoReturn();
     // First, before anything else: the pause must leave while the OS still lets it.
@@ -1315,6 +1396,15 @@ class StationController extends Notifier<StationView?>
     final s = _s;
     if (s == null) return;
     _cancelAwayTimers();
+    // Back from `away_ring` (Mode B): the away notification goes, the on-duty service and the
+    // audio start again (from the foreground, as Android requires), and the socket reopens
+    // below. Whether the server kept `away_ring` meanwhile is the next `ready`'s to say.
+    final ring = _absence.shown(back: _now(), absenceStart: _awayRingSince);
+    // Back from a parked away_ring (not brought up by a ring's answer): the launch may be the away
+    // notification's "Stop ringing", which native knows and Dart asks first ([_afterParkedReturn]).
+    final parkedReturn = ring == _AwayRing.parked && _ringAnswerHold == null && !s.hosted.isSoftphone;
+    if (ring == _AwayRing.parked) unawaited(_native.showAwayNotification(false));
+    final reopenAudio = ring == _AwayRing.parked;
     final queuedFor = _awayQueuedFor;
     // Asked for, never confirmed, and the socket was not closed for it: the
     // server may still say `available` with the lease long lapsed (app pings
@@ -1336,19 +1426,37 @@ class StationController extends Notifier<StationView?>
       // Bounded: a station that says nothing for this long is left to the tap.
       _autoReturnExpiry = Timer(deviceAwayReturnGrace, _cancelAutoReturn);
     }
-    if (queuedFor != null &&
-        _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
-        isCallPhase(_station.effectiveState)) {
+    if (queuedFor != null && isAwayBreak(_pendingBreakCode) && isCallPhase(_station.effectiveState)) {
       // Back before the call ended: the pause queued for after it is not wanted.
       _cancelAwayQueue(s);
     }
     // Android starts the on-duty service only from the foreground: one that
     // failed (the join finished after the agent switched apps) starts now.
-    s.audio.resumed();
+    if (reopenAudio) {
+      s.audio.open(_onDutyNotification());
+    } else {
+      s.audio.resumed();
+    }
     final c = _station.connection;
-    // A give-up is the agent's to undo (Reconnect), except a silent one:
-    // that is worth one clean try, as when the network comes back.
-    if (c == StationConnection.reconnecting ||
+    if (parkedReturn) {
+      _absence.returnHold = true;
+      unawaited(_native.peekStopRinging().then(
+        (stop) => _afterParkedReturn(s, stop),
+        onError: (Object e) {
+          _log.warn('reading Stop ringing failed', {'error': e.runtimeType.toString()});
+          _afterParkedReturn(s, null);
+        },
+      ));
+    } else if (_ringAnswerHold != null && c == StationConnection.reconnecting) {
+      // Brought to the front by a ring's answer: the accept's URL reopens the socket
+      // ([resumeForRing]); a mint of its own now would answer the ring by attaching (N5).
+      _log.info('back during a ring answer: the socket waits for the accept', {'call_id': _ringAnswerHold});
+    } else if (_absence.returnHold) {
+      // Back again while "Stop ringing" waits for device_away (or while native is asked whether
+      // the launch was it): the hold's end reopens the socket ([_releaseReturnHold]). An attach
+      // now would answer a ring still in flight (N5).
+      _log.info('back during Stop ringing: the socket waits for device_away');
+    } else if (c == StationConnection.reconnecting ||
         (c == StationConnection.disconnected && s.socket.gaveUpCause == 'heartbeat')) {
       s.socket.reconnect();
     } else if (unconfirmed &&
@@ -1361,6 +1469,170 @@ class StationController extends Notifier<StationView?>
       }, onError: (Object e) => _log.warn('re-asserting available failed', {'error': e.runtimeType.toString()})));
     }
     _afterChange();
+  }
+
+  /// How long "Stop ringing" keeps asking `device_away` (a ring in flight keeps `away_ring` on the
+  /// server until it ends) before the station attaches anyway, without `caps=inbound`; and then how
+  /// long it waits for the station to say the agent is paused before saying it did not work.
+  static const stopRingingBound = Duration(seconds: 10);
+
+  /// Back from a parked `away_ring`, once native said whether the launch was "Stop ringing"
+  /// ([stop]). Not: the socket reopens as for any return. Was: "Stop ringing" for this absence.
+  void _afterParkedReturn(_Session s, RingStopRequest? stop) {
+    if (!identical(_s, s)) return;
+    if (_ringAnswerHold != null) {
+      // A ring answered while native was asked: the lock screen's Answer on a warm app brings it
+      // to the front before the answer reaches Dart, so the return can start ahead of
+      // [holdForRingAnswer]. The accept's URL is now the station's only attach ([resumeForRing];
+      // a mint here would answer the ring first, N5, and the accept would be refused), and a
+      // "Stop ringing" is moot. The return's hold goes; the socket stays parked.
+      _log.info('back during a ring answer: the socket waits for the accept', {'call_id': _ringAnswerHold});
+      _releaseReturnHold(s);
+      return;
+    }
+    if (stop != null && !_terminal && (stop.sessionId == null || stop.sessionId == s.id)) {
+      _stopRingingHere(s);
+      return;
+    }
+    // Another session's: moot here.
+    if (stop != null) unawaited(_native.clearStopRinging());
+    _releaseReturnHold(s);
+  }
+
+  /// The return's hold ends: the parked socket reopens, unless a ring's accept is in flight
+  /// ([holdForRingAnswer]), whose URL reopens it (or whose release does, through the keep-alive).
+  void _releaseReturnHold(_Session s) {
+    _absence.returnHold = false;
+    if (_foreground && _ringAnswerHold == null && _station.connection == StationConnection.reconnecting) {
+      s.socket.reconnect();
+    }
+    _afterChange();
+  }
+
+  /// "Stop ringing" on the away notification, the app warm: this absence only. Native declined a
+  /// ring ringing at the tap (and declines one arriving in the next ring window); the station asks
+  /// `device_away` over HTTP before it attaches, since an attach with `caps=inbound` during an
+  /// un-answered ring would answer it (N5). Once it applied, the socket reopens as usual, native
+  /// lets the tap go, the agent is told "Ringing stopped. You're paused." and the app goes back
+  /// behind what they were doing. Not applied within [stopRingingBound] (the answer still said
+  /// `reserved` or `away_ring`, or it failed): the socket reopens WITHOUT `caps=inbound`, which
+  /// ends an un-answered ring instead of answering it, and declares it again once the station says
+  /// where the agent stands ([_maybeRestoreInbound]); the notice waits for that. No opt-out (that
+  /// is the Me card's), no IQ50 return, and hidden again in this absence the app asks
+  /// `device_away`, until the agent is back in the pool.
+  void _stopRingingHere(_Session s) {
+    _log.info('Stop ringing: device_away before the station attaches');
+    _absence.stopRinging();
+    // Whatever opens the socket from here, nothing attaches with caps=inbound until device_away
+    // applied ([_AwayPeriod.returnHold] keeps it parked meanwhile; this covers any connect that
+    // slips past).
+    s.socket.declareInbound = false;
+    _announceOnReturn = false;
+    _cancelAutoReturn();
+    // Whatever native kept of this absence's end is moot now.
+    unawaited(_native.takeRingOff().then((_) {}, onError: (Object _) {}));
+    unawaited(() async {
+      final landed = await _askDeviceAwayUntil(s.id, _now().add(stopRingingBound), () => identical(_s, s));
+      if (!identical(_s, s)) return;
+      if (landed) {
+        s.socket.declareInbound = true;
+        unawaited(_native.clearStopRinging());
+        _releaseReturnHold(s);
+        _afterStopRinging(landed: true);
+        return;
+      }
+      _log.warn('Stop ringing: device_away did not apply in time; the station attaches without inbound calls');
+      _absence.inboundWithheld = true;
+      _absence.cancelStopConfirm();
+      _absence.stopConfirm = Timer(stopRingingBound, () {
+        if (!identical(_s, s)) return;
+        _absence.stopConfirm = null;
+        _log.warn('Stop ringing: the station never said the agent is paused');
+        _afterStopRinging(landed: false);
+      });
+      _releaseReturnHold(s);
+    }());
+    _afterChange();
+  }
+
+  /// After a frame stated where the agent stands: a socket "Stop ringing" opened without
+  /// `caps=inbound` declares it again once the agent is on a pause that is not `away_ring`, or
+  /// available (no ring can be un-answered then), by attaching afresh. A "Stop ringing" still
+  /// unconfirmed is then done: paused, the agent is told and the app goes back.
+  void _maybeRestoreInbound() {
+    final s = _s;
+    if (s == null || !_absence.inboundWithheld) return;
+    final st = _station.agentState;
+    final paused = st == AgentState.onBreak && _station.breakReasonCode != ReservedBreakCode.awayRing.wire;
+    if (!paused && st != AgentState.available) return;
+    _log.info('Stop ringing: the agent is ${paused ? 'paused' : 'available'}; inbound calls declared again');
+    _absence.inboundWithheld = false;
+    s.socket.declareInbound = true;
+    if (_absence.stopUnconfirmed) {
+      _absence.cancelStopConfirm();
+      unawaited(_native.clearStopRinging());
+      if (paused) _afterStopRinging(landed: true);
+    }
+    // Not from inside the frame's own handling: the attach replaces the socket that sent it.
+    scheduleMicrotask(() {
+      if (identical(_s, s) && s.socket.declareInbound) s.socket.reconnect();
+    });
+  }
+
+  /// "Stop ringing" on a cold start (no station here, [RingAnswerStation.stopRinging]): the same
+  /// `device_away` for the session the absence was in, then the notice. Native's record of the tap
+  /// is cleared only once it applied, so a process that dies first asks again on its next start.
+  Future<void> stopRingingWithoutStation(String sessionId) async {
+    final s = _s;
+    if (s != null) {
+      // A station is here after all: its return decides (it reads native's own record).
+      _log.info('Stop ringing with a station here: left to its return', {'session_id': sessionId});
+      return;
+    }
+    _log.info('Stop ringing on a cold start: device_away', {'session_id': sessionId});
+    final landed = await _askDeviceAwayUntil(sessionId, _now().add(stopRingingBound), () => ref.mounted);
+    if (!ref.mounted) return;
+    if (landed) {
+      unawaited(_native.clearStopRinging());
+    } else {
+      _log.warn('Stop ringing on a cold start: device_away did not apply in time');
+    }
+    _afterStopRinging(landed: landed);
+  }
+
+  /// The agent is told how "Stop ringing" went. [landed]: paused, and the app goes back behind
+  /// what they were doing. Not: the app stays in front, saying ringing did not stop.
+  void _afterStopRinging({required bool landed}) {
+    if (!ref.mounted) return;
+    ref.read(ringNoticeProvider.notifier).show(landed ? RingCopy.ringingStopped : RingCopy.stopRingingFailed);
+    if (landed && (_foreground || _s == null)) unawaited(_native.moveTaskToBack());
+  }
+
+  /// `device_away` for [sessionId] until it applies (true): answered `reserved` (a ring in flight:
+  /// the pause is queued behind it until native's decline releases it) or still on `away_ring`, or
+  /// failed in a way worth retrying, it is asked again after 1 s, until [deadline] (false). False
+  /// at once on a failure not worth retrying, or once [stillWanted] says the ask is moot.
+  Future<bool> _askDeviceAwayUntil(String sessionId, DateTime deadline, bool Function() stillWanted) async {
+    while (true) {
+      try {
+        final r = await _api.takeBreak(sessionId, ReservedBreakCode.deviceAway.wire, timeout: const Duration(seconds: 5));
+        if (!stillWanted()) return false;
+        // A ring in flight holds the session `reserved` for its push offer (the device_away is
+        // queued behind it, applied once the decline releases it); an answer still on `away_ring`
+        // is the same ring's end not reached yet. Either way an attach now would answer it (N5).
+        final ringInFlight = r != null &&
+            (r.state == AgentState.reserved ||
+                (r.state == AgentState.onBreak && r.breakReason == ReservedBreakCode.awayRing.wire));
+        if (!ringInFlight) return true;
+      } catch (e) {
+        if (!stillWanted()) return false;
+        _log.warn('Stop ringing: device_away failed', {'error': e.runtimeType.toString()});
+        if (!_awayRetryable(e)) return false;
+      }
+      if (!_now().isBefore(deadline)) return false;
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!stillWanted()) return false;
+    }
   }
 
   void _cancelAwayQueue(_Session s) {
@@ -1405,11 +1677,12 @@ class StationController extends Notifier<StationView?>
       return;
     }
     if (_station.connection != StationConnection.open || _awayInFlight) return;
+    // Back from `away_ring` on a parked socket: what the station held is from before it parked,
+    // so the reopened socket's `ready` decides ([_maybeExplainRingOff] goes first).
+    if (_absence.ringOffCheck != null) return;
     final st = _station.effectiveState;
     if (st == AgentState.available) return;
-    if (st != AgentState.onBreak ||
-        _station.breakReasonCode != ReservedBreakCode.deviceAway.wire ||
-        _pendingBreakCode != null) {
+    if (st != AgentState.onBreak || !isAwayBreak(_station.breakReasonCode) || _pendingBreakCode != null) {
       _cancelAutoReturn();
       return;
     }
@@ -1603,8 +1876,11 @@ class StationController extends Notifier<StationView?>
       return;
     }
     if (_station.connection != StationConnection.open || _awayInFlight) return;
+    // Back from `away_ring` on a parked socket: the reopened socket's `ready` says when the
+    // absence began (the server keeps its start as `since`).
+    if (_absence.ringOffCheck != null) return;
     final st = _station.effectiveState;
-    if (st == AgentState.onBreak && _station.breakReasonCode == ReservedBreakCode.deviceAway.wire) {
+    if (st == AgentState.onBreak && isAwayBreak(_station.breakReasonCode)) {
       _announceOnReturn = false;
       _onBackFromAway(_station.agentStateSince ?? _serverInstant(_autoReturn?.asked ?? _now()), AwayKind.app);
       return;
@@ -1634,7 +1910,14 @@ class StationController extends Notifier<StationView?>
     final manual = _terminal ? null : _station.manualCall;
     final manualHeld = isCallUnsettled(manual);
     s.socket.setAppPings(appPingsWanted(foreground: _foreground, state: st, manualCall: manualHeld) && !_terminal);
-    s.socket.setKeepAlive(keepAliveWanted(foreground: _foreground, state: st, manualCall: manualHeld));
+    // A ring answer's accept in flight: the socket waits for the accept's URL ([holdForRingAnswer]).
+    // Back from a parked away_ring and not yet decided, or pausing for "Stop ringing": parked
+    // ([_AwayPeriod.returnHold]).
+    s.socket.setKeepAlive(
+      keepAliveWanted(foreground: _foreground, state: st, manualCall: manualHeld) &&
+          _ringAnswerHold == null &&
+          !_absence.returnHold,
+    );
     if (!_foreground) _maybeSendAway();
     _setWakeLock(wakeLockWanted(
       onDuty: !_terminal,
@@ -1656,8 +1939,11 @@ class StationController extends Notifier<StationView?>
             st,
             foreground: _foreground,
             breakCode: _station.breakReasonCode ??
-                (st == AgentState.onBreak && _awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null),
+                (st == AgentState.onBreak && _awayPauseRequested
+                    ? (_absence.codeAsked ?? ReservedBreakCode.deviceAway.wire)
+                    : null),
             pauseRequested: _awayPauseRequested,
+            awayRing: _absence.ring == _AwayRing.parked || _absence.codeAsked == ReservedBreakCode.awayRing.wire,
             // A placed redial stopped the wrap-up's clock: no save-by time.
             wrapupDeadline: wrapupDue,
             outcomeDueAt: outcomeDue,
@@ -1669,6 +1955,7 @@ class StationController extends Notifier<StationView?>
       notice == AwayNotice.wrapupDeadline ? (wrapup ? wrapupDue : outcomeDue) : null,
       softphoneOutcome: notice == AwayNotice.wrapupDeadline && !wrapup,
     );
+    _maybeParkForRing(s);
   }
 
   /// While away, asks for the `device_away` pause (now, or queued behind a
@@ -1714,19 +2001,36 @@ class StationController extends Notifier<StationView?>
       _awayQueuedFor = _callOnStationId ?? '';
       _awayQueueFailed = false;
     }
-    _log.info('left the app: pausing', {'state': st.wire, 'queued': action == AwayAction.queuePause});
-    unawaited(_api
-        .takeBreak(s.id, ReservedBreakCode.deviceAway.wire, timeout: const Duration(seconds: 5))
-        .then((response) {
+    // Mode B: `away_ring` when this phone can ring for inbound calls, unless the server refused
+    // it in this away period (then `device_away`, as without Mode B).
+    // Nor after "Stop ringing" in this absence (until the agent is back in the pool).
+    final a = _absence;
+    final code = awayBreakFor(ringOn: !a.ringRefused && !a.ringStopped && _readRing('availability', () => _ring.ringOn, false));
+    a.codeAsked = code;
+    // Paused, not rung, though ringing is on for this phone: the agent is told why.
+    if (code == ReservedBreakCode.deviceAway.wire && !a.ringStopped && !a.ringRefused) {
+      a.noRing = _readRing('blocker', () => _ring.fallbackBlocker, null);
+    }
+    _log.info('left the app: pausing', {'state': st.wire, 'queued': action == AwayAction.queuePause, 'reason': code});
+    unawaited(_api.takeBreak(s.id, code, timeout: const Duration(seconds: 5)).then((response) {
       _awayInFlight = false;
       if (!identical(_s, s)) return;
       if (action == AwayAction.pauseNow) {
         _awayLanded = true;
         _cancelAwayTimers();
       }
+      // `away_ring` applied (not queued behind a call): the socket parks next ([_maybeParkForRing]).
+      if (code == ReservedBreakCode.awayRing.wire &&
+          response != null &&
+          response.pendingState == null &&
+          response.state == AgentState.onBreak &&
+          _absence.ring == _AwayRing.none) {
+        // Parked already (the station said so first) stays parked.
+        _absence.ring = _AwayRing.held;
+      }
       if (response != null) {
         if (response.pendingState != null) {
-          _writeQueue(response.breakReason ?? ReservedBreakCode.deviceAway.wire);
+          _writeQueue(response.breakReason ?? code);
           // Queued, whichever ask it was (a pause asked for at once lands
           // queued when a call was reserved meanwhile): coming back cancels it.
           _awayQueuedFor = _callOnStationId ?? '';
@@ -1744,7 +2048,22 @@ class StationController extends Notifier<StationView?>
     }, onError: (Object e) {
       _awayInFlight = false;
       if (!identical(_s, s)) return;
-      _log.warn('device_away pause failed', {'error': e.runtimeType.toString(), 'queued': action == AwayAction.queuePause});
+      if (code == ReservedBreakCode.awayRing.wire && _isAwayRingRefusal(e)) {
+        // The server will not ring this phone (IQ58's checks): `device_away` at once, as if
+        // Mode B were off. Not a failed pause: no retry is spent on it, and the bound runs on.
+        _log.info('away_ring refused: pausing with device_away', {'code': errorBodyOf(e)?.codeRaw ?? ''});
+        final refusal = ringBlockerOfRefusal(errorBodyOf(e)?.awayRingCode ?? AwayRingRefusalCode.unknown);
+        _absence
+          ..ringRefused = true
+          ..codeAsked = ReservedBreakCode.deviceAway.wire
+          ..noRing = ringBlockerIsNews(refusal) ? refusal : null;
+        _awayKey = null;
+        if (action == AwayAction.queuePause) _awayQueueFailed = true;
+        _maybeSendAway();
+        _afterChange();
+        return;
+      }
+      _log.warn('away pause failed', {'error': e.runtimeType.toString(), 'queued': action == AwayAction.queuePause, 'reason': code});
       if (action == AwayAction.queuePause) {
         // Asked for again on the next change. Its marker stays: a request
         // that timed out may still have landed, and coming back must cancel it.
@@ -1770,6 +2089,24 @@ class StationController extends Notifier<StationView?>
         _maybeSendAway();
       });
     }));
+  }
+
+  /// The ring layer's reading of [what] ([StationRing.ringOn]: whether the app asks `away_ring`
+  /// now, `ringAvailable`; [StationRing.fallbackBlocker]: why leaving the app will not ring this
+  /// phone though ringing is on for it), or [otherwise] when it cannot be read.
+  T _readRing<T>(String what, T Function() read, T otherwise) {
+    try {
+      return read();
+    } catch (e) {
+      _log.warn('ring $what unreadable', {'error': e.runtimeType.toString()});
+      return otherwise;
+    }
+  }
+
+  /// A 409 refusal of `away_ring` (an `AwayRingRefusalCode`).
+  static bool _isAwayRingRefusal(Object e) {
+    final body = errorBodyOf(e);
+    return body != null && (e as ApiHttpError).status == 409 && body.awayRingCode != AwayRingRefusalCode.unknown;
   }
 
   static bool _awayRetryable(Object e) =>
@@ -1800,17 +2137,331 @@ class StationController extends Notifier<StationView?>
     }));
   }
 
+  /// "You're paused"'s words: after "Stop ringing", that ringing stopped.
+  /// Asked `device_away` though ringing is on for this phone: that it won't ring, and why.
+  String get _pausedBody {
+    if (_absence.ringStopped) return pausedRingingStoppedBody;
+    final b = _absence.noRing;
+    return b == null ? pausedNotificationBody : pausedNoRingBody(RingCopy.blockerWhy(b));
+  }
+
   void _setNotice(AwayNotice notice, DateTime? deadline, {bool softphoneOutcome = false}) {
-    if (notice == _notice && deadline == _noticeDeadline && softphoneOutcome == _noticeSoftphone) return;
+    final body = notice == AwayNotice.paused ? _pausedBody : null;
+    if (notice == _notice && deadline == _noticeDeadline && softphoneOutcome == _noticeSoftphone && body == _noticeBody) return;
+    _noticeBody = body;
     _notice = notice;
     _noticeDeadline = deadline;
     _noticeSoftphone = softphoneOutcome;
     unawaited(switch (notice) {
       AwayNotice.none => _notifier.cancel(),
-      AwayNotice.paused => _notifier.showPaused(),
+      AwayNotice.paused => _notifier.showPaused(body: body!),
       AwayNotice.wrapupDeadline when softphoneOutcome => _notifier.showSoftphoneOutcomeDeadline(deadline!),
       AwayNotice.wrapupDeadline => _notifier.showWrapupDeadline(deadline!),
     });
+  }
+
+  // ─── Ringing this phone while away (Mode B, IQ58–IQ74) ──────────────────
+
+  /// IQ67: once `away_ring` applies with the app away and nothing on the line, the station
+  /// socket is parked (the server keeps an `away_ring` session without one: its TTL'd key is
+  /// the exception to "a lease is a liveness detector") and the on-duty service and the audio
+  /// stop, so the phone holds no microphone service while it waits to be rung. Native's ongoing
+  /// "Away · this phone rings for inbound calls" notification takes the station's place. Undone on
+  /// return ([_onShow]) or when a ring is answered ([resumeForRing]).
+  void _maybeParkForRing(_Session s) {
+    // "Stop ringing" in this absence: the station's `away_ring` is stale (the socket is parked,
+    // device_away on its way), and parking again would show the away notification anew.
+    final a = _absence;
+    if (a.ring == _AwayRing.parked || a.ringStopped || _foreground || _terminal || s.hosted.isSoftphone) return;
+    final st = _station.effectiveState;
+    final onRing = st == AgentState.onBreak
+        ? _station.breakReasonCode == ReservedBreakCode.awayRing.wire
+        : a.ring == _AwayRing.held && (st == AgentState.available || st == AgentState.offline);
+    if (!onRing) return;
+    if (isCallPhase(st) || _station.inboundOnScreen != null || isCallUnsettled(_station.manualCall)) return;
+    a
+      ..ring = _AwayRing.parked
+      ..misses = 0;
+    _cancelAwayTimers();
+    _log.info('away_ring: parking the station until the app is back or a ring is answered');
+    s.socket.park(reason: 'away_ring');
+    unawaited(s.audio.close());
+    // The server's clock as measured on this socket, so native times a ring on it rather than on
+    // this phone's clock, which can run fast or slow.
+    final measuredAt = _clockMeasuredAt;
+    if (measuredAt != null) unawaited(_native.setServerClock(offsetMs: _mapper.appliedOffsetMs, measuredAt: measuredAt));
+    // The absence's start on the server's clock (the break's `since`), so native can tell a late
+    // `ring_off` for an earlier absence from one for this.
+    unawaited(_native.showAwayNotification(true, since: _awayRingSince(), sessionId: s.id));
+  }
+
+  /// When this absence on `away_ring` began, on the server's clock: the break's `since` while the
+  /// station shows it, else when the pause was asked for.
+  DateTime _awayRingSince() =>
+      (_station.effectiveState == AgentState.onBreak ? _station.agentStateSince : null) ?? _serverInstant(_awayAskedNowAt ?? _now());
+
+  /// The station stops here (closed, 4404, 4409): nothing of Mode B may outlive it. A parked
+  /// `away_ring` is still held (the server's, until the agent is back), but no longer parked: the
+  /// away notification goes, and the on-duty service and the audio, which [_letGo] closes, are not
+  /// opened again on return.
+  void _releaseRing() {
+    if (_absence.ring == _AwayRing.parked) {
+      unawaited(_native.showAwayNotification(false));
+      _absence.ring = _AwayRing.held;
+    }
+    final call = _ringCall;
+    if (call != null && !call.ended) unawaited(_native.reportEnded(call.callId, call.bound ? RingEndReason.ended : RingEndReason.cancelled));
+    if (call != null) unawaited(_native.holdOverLockScreen(false));
+    _ringCall = null;
+  }
+
+  void _onRingEvent(_Session s, RingEvent event) {
+    if (!identical(_s, s)) return;
+    if (event is RingEnded && isMissedRing(event.reason) && _absence.ring != _AwayRing.none) _absence.misses++;
+  }
+
+  /// A push offer on the station (a call answered from a ring): native's Telecom connection
+  /// follows it. Active once the audio binds; ended once the call ends (`ended`), or when the
+  /// offer leaves the station before it bound (`cancelled`: requeued, the caller gone).
+  void _syncRingCall() {
+    final call = _terminal ? null : _station.inboundOnScreen;
+    final tracked = _ringCall;
+    if (tracked != null && call?.id != tracked.callId) {
+      if (!tracked.ended) unawaited(_native.reportEnded(tracked.callId, tracked.bound ? RingEndReason.ended : RingEndReason.cancelled));
+      // Its outcome saved, or it left the station: the app need not stay over the lock screen.
+      unawaited(_native.holdOverLockScreen(false));
+      _ringCall = null;
+    }
+    if (call == null || !call.isPushOffer) return;
+    if (_ringCall == null) {
+      _ringCall = _RingCall(call.id);
+      // Over the lock screen until its outcome is saved: native's own hold ends with the call.
+      unawaited(_native.holdOverLockScreen(true));
+    }
+    final t = _ringCall!;
+    final phase = inboundPhase(call);
+    if (_ringHangUp == call.id && phase == InboundPhase.connected) {
+      // The agent hung up on the phone while it was connecting: not inside the frame that
+      // connected it.
+      _ringHangUp = null;
+      _log.info('hanging up a call the agent hung up on the phone while it connected', {'call_id': call.id});
+      scheduleMicrotask(() {
+        final now = _station.inboundOnScreen;
+        if (now != null && now.id == call.id) unawaited(_hangUpInbound(now));
+      });
+    }
+    if (!t.bound && (phase == InboundPhase.connected || call.bridgedAt != null)) {
+      t.bound = true;
+      unawaited(_native.reportBound(call.id));
+    }
+    if (!t.ended && phase == InboundPhase.outcome) {
+      t.ended = true;
+      unawaited(_native.reportEnded(call.id, RingEndReason.ended));
+    }
+  }
+
+  /// Back from `away_ring`, once the reopened socket's `ready` says where the agent stands: the
+  /// server answers every return with `device_away` (IQ67, the absence's start kept as `since`),
+  /// so that says nothing about whether the phone stopped ringing meanwhile. The agent is told why
+  /// it stopped only on a concrete reason ([ringOffReasonOnReturn]): the `ring_off` native took for
+  /// this absence, else two misses heard while away, the device status read now (revoked, opted
+  /// out, the flag off), or an absence as long as the server's maximum. No reason, no banner.
+  void _maybeExplainRingOff(_Session s) {
+    final check = _absence.ringOffCheck;
+    if (check == null) return;
+    if (!_foreground || _terminal) {
+      _absence.ringOffCheck = null;
+      return;
+    }
+    if (!check.ready || _station.connection != StationConnection.open) return;
+    _absence.ringOffCheck = null;
+    final misses = _absence.misses;
+    _absence.misses = 0;
+    // Read (and cleared) whatever the state: a ring_off left unread would be the next return's.
+    final ringOff = _native.takeRingOff();
+    if (_station.agentState != AgentState.onBreak || !isAwayBreak(_station.breakReasonCode)) return;
+    // The absence's start: the return's `since` (the server keeps it), else as it was before the park.
+    final absenceStart = _station.agentStateSince ?? check.absenceStart;
+    final awayFor = absenceStart == null ? null : _serverInstant(check.back).difference(absenceStart);
+    unawaited(() async {
+      RingOffRecord? off;
+      try {
+        off = await ringOff;
+      } catch (e) {
+        _log.warn('reading the ring_off failed', {'error': e.runtimeType.toString()});
+      }
+      if (off != null && !ringOffEndsAbsence(off, sessionId: s.id, absenceStart: absenceStart)) {
+        _log.info('a ring_off for another absence: ignored', {'reason': off.reason.wire});
+        off = null;
+      }
+      PushDeviceStatus? status;
+      if (off == null && misses < inboundRingMaxMisses) {
+        try {
+          status = await _ring.readStatus();
+        } catch (e) {
+          _log.warn('reading the device status on return failed', {'error': e.runtimeType.toString()});
+        }
+      }
+      if (!identical(_s, s) || !ref.mounted) return;
+      final reason = ringOffReasonOnReturn(ringOff: off, missesWhileAway: misses, status: status, awayFor: awayFor);
+      _log.info('back from away_ring', {
+        'misses': misses,
+        'ring_off': off?.reason.wire ?? '',
+        'reason': reason?.wire ?? '',
+        'away_s': awayFor?.inSeconds ?? -1,
+      });
+      if (reason != null) ref.read(ringNoticeProvider.notifier).show(RingCopy.stopped(reason));
+    }());
+  }
+
+  /// How long a station opened from a ring waits before asking for its join again.
+  static const ringJoinRetry = Duration(seconds: 30);
+
+  /// A station opened from a ring ([HostedSession.ring]) has no join answer: no campaign
+  /// catalog, break reasons or roster display. Once the call has left the station and the
+  /// socket is open, the station rejoins its own campaign without taking anything over (the
+  /// rehydrate a reload or a resume does, OS3: this phone already holds the station), and takes
+  /// the session's facts from the answer. The socket stays as it is.
+  void _maybeFillRingStation(_Session s) {
+    if (!s.hosted.awaitsJoin || _ringJoinInFlight || _terminal) return;
+    if (_station.connection != StationConnection.open || !_readySeen) return;
+    if (_station.inboundOnScreen != null || isCallPhase(_station.effectiveState)) return;
+    final retryAt = _ringJoinRetryAt;
+    if (retryAt != null && _now().isBefore(retryAt)) return;
+    final campaignId = s.hosted.campaignId;
+    if (campaignId == null) return;
+    _ringJoinInFlight = true;
+    unawaited(_api.join(campaignId, accountId: s.hosted.accountId, takeOver: false).then((bootstrap) {
+      _ringJoinInFlight = false;
+      if (!identical(_s, s)) return;
+      if (bootstrap.sessionId != s.id) {
+        _log.warn('the ring station rejoin answered another session', {'session_id': bootstrap.sessionId});
+        return;
+      }
+      s.hosted = HostedSession.campaign(bootstrap, campaignName: bootstrap.campaignName, accountId: s.hosted.accountId);
+      _catalog = s.hosted.catalog;
+      _breakReasons = s.hosted.breakReasons;
+      final queue = bootstrap.queue;
+      if (queue != null) _station = stationReducer(_station, QueueAction(queue));
+      _afterChange();
+    }, onError: (Object e) {
+      _ringJoinInFlight = false;
+      if (!identical(_s, s)) return;
+      _log.warn('the ring station rejoin failed', {'error': e.runtimeType.toString()});
+      _ringJoinRetryAt = _now().add(ringJoinRetry);
+    }));
+  }
+
+  /// Mode B: the agent answered a ring and `…/ring/accept` answered [accept] (the call as
+  /// offered and a station token for this device). The station attaches on the returned URL
+  /// (`client=mobile&media=alaw8&caps=inbound`, as every connect) and holds the call from the
+  /// accept's copy, so the Mode A screens take over at once; the server binds the audio once
+  /// the socket has attached and restates the call as frames.
+  ///
+  /// * The station already hosted here (the app was alive, parked on `away_ring`): the same
+  ///   session, its socket reopened on the accept's URL, the on-duty service and the audio
+  ///   started again.
+  /// * Nothing hosted (a cold start from the full-screen intent): a station is opened from the
+  ///   accept alone ([HostedSession.ring]), from the foreground, so Android lets the on-duty
+  ///   service start.
+  Future<void> resumeForRing(InboundRingAcceptResponse accept) async {
+    final call = accept.call;
+    _clearRingAnswerHold();
+    final s = _s;
+    if (s != null && s.id == accept.sessionId && !s.hosted.isSoftphone && !_terminal) {
+      _log.info('answered from a ring: reopening the station', {'call_id': call.id});
+      final wasParked = _absence.answered() == _AwayRing.parked;
+      if (wasParked) {
+        unawaited(_native.showAwayNotification(false));
+        s.audio.open(_onDutyNotification());
+      }
+      // The agent answered: inbound calls are wanted on this socket whatever "Stop ringing" held.
+      final withheld = !s.socket.declareInbound;
+      s.socket.declareInbound = true;
+      // The socket first: the call adopted next makes a parked socket wanted again, and that
+      // connect must use the accept's token (another mint would replace it). A socket already
+      // open (back in the app before the answer) is kept: the server binds on it (the accept's
+      // "a station is already here"), unless it attached without inbound calls.
+      if (!s.socket.isOpen || withheld) {
+        s.socket.useUrlOnce(accept.stationWsUrl, accept.stationTokenExpiresAt);
+        s.socket.reconnect();
+      }
+      adoptInboundCall(call);
+      _afterChange();
+      return;
+    }
+    _log.info('answered from a ring: opening the station', {'call_id': call.id});
+    final match = call.match;
+    final name = match != null && match.campaignId == accept.campaignId ? match.campaignName : null;
+    await _open(HostedSession.ring(accept, campaignName: name, accountId: _api.accountId));
+    adoptInboundCall(call);
+  }
+
+  /// The longest a ring answer holds the socket ([holdForRingAnswer]): past the accept and its
+  /// one retry, so a coordinator that never comes back cannot leave the station shut.
+  static const ringAnswerHoldMax = Duration(seconds: 20);
+
+  /// Mode B: the agent answered [callId] on this phone and its `…/ring/accept` is in flight. Until
+  /// [resumeForRing] (or [releaseRingAnswer]) the accept's URL is the station's only attach: a
+  /// return to the app ([_onShow], the answer brings it to the front) does not reopen the parked
+  /// socket, and a dropped socket does not reconnect on a mint of its own. The server takes an
+  /// attach during a ring as the answer (N5): a socket of its own would win the race, bind the
+  /// call, and the accept would then be refused `already_accepted`.
+  void holdForRingAnswer(String callId) {
+    _ringAnswerHold = callId;
+    _ringAnswerHoldExpiry?.cancel();
+    _ringAnswerHoldExpiry = Timer(ringAnswerHoldMax, () {
+      _log.warn('a ring answer held the station too long: released', {'call_id': callId});
+      releaseRingAnswer(callId);
+    });
+  }
+
+  /// The ring answer for [callId] is over without [resumeForRing] (the accept failed, or the
+  /// call was found on the station): the socket is wanted as usual again.
+  void releaseRingAnswer(String callId) {
+    if (_ringAnswerHold != callId) return;
+    _clearRingAnswerHold();
+    _afterChange();
+  }
+
+  void _clearRingAnswerHold() {
+    _ringAnswerHold = null;
+    _ringAnswerHoldExpiry?.cancel();
+    _ringAnswerHoldExpiry = null;
+  }
+
+  /// Whether the station holds the inbound call [callId] on screen, now or once a frame brings it
+  /// within [within]: a ring's accept refused `already_accepted` because this phone's own socket
+  /// attached first (N5) is then no failure.
+  Future<bool> holdsRingCall(String callId, Duration within) {
+    if (_holdsInbound(callId)) return Future.value(true);
+    final waiter = _InboundWaiter(callId);
+    _inboundWaiters.add(waiter);
+    waiter.timer = Timer(within, () {
+      _inboundWaiters.remove(waiter);
+      waiter.settle(false);
+    });
+    return waiter.done.future;
+  }
+
+  /// The agent hung up [callId] on the phone (the "Connecting the call…" notification, a headset
+  /// or a car) after its accept went through: native's token-only decline is refused once
+  /// accepted (N4), so the call still binds here. It is hung up through the station once it
+  /// connects (now, if it has).
+  void hangUpRingCall(String callId) {
+    _ringHangUp = callId;
+    _afterChange();
+  }
+
+  bool _holdsInbound(String callId) => _s != null && !_terminal && _station.inboundOnScreen?.id == callId;
+
+  void _settleInboundWaiters() {
+    if (_inboundWaiters.isEmpty) return;
+    for (final w in List.of(_inboundWaiters)) {
+      if (!_holdsInbound(w.callId)) continue;
+      _inboundWaiters.remove(w);
+      w.settle(true);
+    }
   }
 
   // ─── Actions ────────────────────────────────────────────────────────────
@@ -2289,7 +2940,8 @@ class StationController extends Notifier<StationView?>
     } catch (e) {
       _log.warn('sounds preference unreadable', {'error': e.runtimeType.toString()});
     }
-    if (sounds) s.audio.chime();
+    // A call answered from a ring (Mode B) has rung already, as a phone call.
+    if (sounds && !call.isPushOffer) s.audio.chime();
   }
 
   /// The catalog the outcome is saved against: the call's own, or the one rebuilt from a
@@ -2529,12 +3181,14 @@ class StationController extends Notifier<StationView?>
   /// frame having replaced that snapshot, it is retired as a requeue, so the microphone, CallKit,
   /// the notification and the away rules stop holding a call that is not there. Never sooner
   /// than [offerStaleAfter] after the offer first reached this phone.
+  ///
+  /// A push offer (Mode B) has no `connects_at`: its bind is due within the accept grace of
+  /// `accepted_at` ([inboundOfferStaleAt]), so it is never retired while a cold start may still
+  /// be attaching.
   void _armOfferBackstop() {
     final held = _station.inboundOnScreen;
-    final connectsAt = held?.connectsAt;
-    final key = held != null && connectsAt != null && inboundPhase(held) == InboundPhase.offered
-        ? inboundSnapshotKey(held)
-        : null;
+    final staleAt = held == null ? null : inboundOfferStaleAt(held, offerStaleAfter);
+    final key = staleAt != null ? inboundSnapshotKey(held!) : null;
     if (key == _offerBackstopKey) return;
     _cancelOfferBackstop();
     if (key == null) return;
@@ -2542,7 +3196,7 @@ class StationController extends Notifier<StationView?>
     // Never sooner than [offerStaleAfter] after this phone first saw the offer: before the
     // first pong the offset is unknown, and a phone clock running ahead would otherwise read a
     // fresh offer as long past.
-    final byServer = connectsAt!.add(offerStaleAfter);
+    final byServer = staleAt!;
     final bySight = _serverNow.add(offerStaleAfter);
     _scheduleOfferBackstop(byServer.isAfter(bySight) ? byServer : bySight);
   }
@@ -2891,5 +3545,148 @@ class StationController extends Notifier<StationView?>
   void dismissMissedRelease() {
     _dismissedMissed = _station.missedRelease;
     _emit();
+  }
+}
+
+/// One [StationController.holdsRingCall] waiting for its call.
+final class _InboundWaiter {
+  _InboundWaiter(this.callId);
+  final String callId;
+  final done = Completer<bool>();
+  Timer? timer;
+
+  void settle(bool held) {
+    timer?.cancel();
+    if (!done.isCompleted) done.complete(held);
+  }
+}
+
+/// The push offer on the station, as told to native (Mode B). Native was asked to keep the app
+/// over the lock screen for it as it was tracked.
+final class _RingCall {
+  _RingCall(this.callId);
+  final String callId;
+  bool bound = false;
+  bool ended = false;
+}
+
+/// Where `away_ring` stands in this away period.
+enum _AwayRing {
+  /// Not applied, or the agent is back.
+  none,
+
+  /// `away_ring` applied (its HTTP answer, or the station said so).
+  held,
+
+  /// Held, with the socket parked and the on-duty service and the audio stopped (IQ67): the audio
+  /// is opened again on return or when a ring is answered.
+  parked,
+}
+
+/// Back from `away_ring`: once the station's next `ready` says where the agent stands ([ready]),
+/// the agent is told why the phone stopped ringing meanwhile, when something says it did
+/// ([StationController._maybeExplainRingOff]). The server answers every return with
+/// `device_away`, so that alone says nothing. [back]: when the agent came back (device clock);
+/// [absenceStart]: when that absence began (server clock, as the break's `since` said before the
+/// socket parked; null when unknown).
+typedef _RingOffCheck = ({DateTime back, DateTime? absenceStart, bool ready});
+
+/// Mode B for the agent's absence from the app (IQ58–IQ83). Each transition below says what it
+/// resets and what it keeps; a new station starts a new one.
+final class _AwayPeriod {
+  /// The break this away period's pause asks for ([awayBreakFor]): `away_ring` or `device_away`.
+  String? codeAsked;
+
+  /// The server refused `away_ring` in this away period (409): `device_away` is asked instead.
+  bool ringRefused = false;
+
+  _AwayRing ring = _AwayRing.none;
+
+  /// The return's check of why ringing stopped, until it is decided.
+  _RingOffCheck? ringOffCheck;
+
+  /// Leaving the app asked `device_away` though the agent turned ringing on here: why the phone
+  /// won't ring (the 409 refusal's reason, else the ring layer's reading). The paused notification
+  /// and the away card say so. Cleared once the agent leaves that pause.
+  RingBlocker? noRing;
+
+  /// The away notification's "Stop ringing" for this absence: `device_away`, not `away_ring`, is
+  /// asked when the app is hidden again, until the agent is back in the pool (available).
+  bool ringStopped = false;
+
+  /// Back from a parked `away_ring`: the socket stays parked while the app asks native whether
+  /// the launch was "Stop ringing" ([StationController._afterParkedReturn]), and, if it was, until
+  /// `device_away` has applied over HTTP: an attach during a ring would answer it (N5).
+  bool returnHold = false;
+
+  /// "Stop ringing" attached without `caps=inbound` (`device_away` never applied over HTTP, so an
+  /// un-answered ring may still hold the session): the socket declares it again once a frame says
+  /// the agent is on a pause that is not `away_ring`, or available
+  /// ([StationController._maybeRestoreInbound]).
+  bool inboundWithheld = false;
+
+  /// "Stop ringing" whose `device_away` never applied over HTTP: the agent is told once the
+  /// station's own frames say they are paused, or when this runs out
+  /// ([StationController.stopRingingBound]) that it did not work. Unconfirmed while it runs.
+  Timer? stopConfirm;
+
+  /// The app's own `away_ring` applied in the absence the agent is back from: the away card says
+  /// this phone was ringing for inbound calls, though the server reports `device_away` on return.
+  /// Cleared once the agent leaves that pause.
+  bool rang = false;
+
+  /// Rings that ended unanswered on this phone while on `away_ring` (native's `ringEnded`).
+  int misses = 0;
+
+  bool get stopUnconfirmed => stopConfirm?.isActive ?? false;
+
+  void cancelStopConfirm() {
+    stopConfirm?.cancel();
+    stopConfirm = null;
+  }
+
+  /// Hidden (again): a new away period, so `away_ring` is worth asking again, and a return still
+  /// being decided is moot. Kept: what was asked and held, the misses, the "won't ring" note and
+  /// "Stop ringing" (until the agent leaves the pause or is back in the pool).
+  void hidden() {
+    ringOffCheck = null;
+    rang = false;
+    ringRefused = false;
+  }
+
+  /// Back in the app at [back]: an `away_ring` held meanwhile starts the return's check (from
+  /// [absenceStart], read only then) and marks the away card; what was asked and held goes.
+  /// Answers where `away_ring` stood. Kept: everything about "Stop ringing", the note, the misses.
+  _AwayRing shown({required DateTime back, required DateTime Function() absenceStart}) {
+    final was = ring;
+    if (was != _AwayRing.none) {
+      ringOffCheck = (back: back, absenceStart: absenceStart(), ready: false);
+      rang = true;
+    }
+    ring = _AwayRing.none;
+    codeAsked = null;
+    ringRefused = false;
+    return was;
+  }
+
+  /// "Stop ringing" here: held for this absence, the return held for `device_away`, and nothing of
+  /// a return to explain or mark. Kept: what was asked and held, the note, the misses.
+  void stopRinging() {
+    ringStopped = true;
+    returnHold = true;
+    ringOffCheck = null;
+    rang = false;
+  }
+
+  /// A ring answered: `away_ring` is over (answers where it stood), with the return's check and
+  /// whatever "Stop ringing" withheld. Kept: what was asked, "Stop ringing" itself, the note, the
+  /// misses.
+  _AwayRing answered() {
+    final was = ring;
+    ring = _AwayRing.none;
+    ringOffCheck = null;
+    inboundWithheld = false;
+    cancelStopConfirm();
+    return was;
   }
 }

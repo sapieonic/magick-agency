@@ -170,8 +170,17 @@ export function agencyCrossBlockIssues(config: {
   return issues;
 }
 
+/**
+ * `awayRingMaxMs` (`AGENCY_AWAY_RING_MAX_MS`, default 4 h; Mode B, IQ67): how long one absence on
+ * the `away_ring` break may last, measured from `agency_agent_sessions.away_ring_since` (kept
+ * across the rings and the returns to `away_ring` within it). It is the Redis key's TTL, and the
+ * reconcile ends an absence past it (`device_away`, a `ring_off` push with `max_age`). 1 min–24 h.
+ */
+export const AGENCY_AWAY_RING_MAX_MS_DEFAULT = 4 * 60 * 60 * 1000;
+
 const agencySchema = z.object({
   rosterReplaceEnabled: envBoolean.default(false),
+  awayRingMaxMs: z.coerce.number().int().min(60_000).max(24 * 3_600_000).default(AGENCY_AWAY_RING_MAX_MS_DEFAULT),
   insightsRollup: insightsRollupSchema.default({}),
   customerHistory: customerHistorySchema.default({}),
   reports: reportsSchema.default({}),
@@ -185,6 +194,7 @@ export function readAgencyEnv(env: Env): Record<string, unknown> {
   return {
     agency: {
       rosterReplaceEnabled: env['AGENCY_ROSTER_REPLACE_ENABLED'],
+      awayRingMaxMs: env['AGENCY_AWAY_RING_MAX_MS'],
       insightsRollup: {
         intervalMs: env['AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS'],
         batchSize: env['AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE'],

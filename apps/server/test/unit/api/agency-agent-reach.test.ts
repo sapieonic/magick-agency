@@ -187,7 +187,32 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/reports/:id/files/:format',
   'POST /proxy/agency/reports',
   'POST /proxy/agency/reports/:id/retry',
+  // Mode B: the agent app's own push devices (`agency.station.connect`, floored at `agent`). The
+  // actor is always the signed-in user: another agent's device id is simply theirs, not found.
+  'GET /proxy/agency/push-devices/:deviceId',
+  'PUT /proxy/agency/push-devices/:deviceId',
+  'PATCH /proxy/agency/push-devices/:deviceId',
+  'DELETE /proxy/agency/push-devices/:deviceId',
+  'POST /proxy/agency/push-devices/:deviceId/test-ring',
+  // Mode B: the ring of the agent's own phone. `accept` is `agency.station.connect` (the agent the
+  // call rings for); `answering` and `decline` carry no session at all (the offer token is their
+  // authority: TOKEN_ONLY_ROUTES below).
+  'POST /proxy/agency/inbound/calls/:id/ring/answering',
+  'POST /proxy/agency/inbound/calls/:id/ring/decline',
+  'POST /proxy/agency/inbound/calls/:id/ring/accept',
 ].sort();
+
+/**
+ * Mode B (IQ71): native Android code posts these at the tap, with the offer token as their only
+ * authority (no Firebase session). They are the agency's only HTTP routes without a session, and the
+ * only public routes that read the runtime (the connector's `ringTenancy`) before `callCore`
+ * (docs/seams.md §4; pinned in `routes/proxy-agency-inbound-ring.routes.test.ts`). Each
+ * answers anything but a live ring's token with the uniform 404 `ring_not_offered`, pinned below.
+ */
+const TOKEN_ONLY_ROUTES = [
+  'POST /proxy/agency/inbound/calls/:id/ring/answering',
+  'POST /proxy/agency/inbound/calls/:id/ring/decline',
+];
 
 /**
  * WebSocket routes are not HTTP surfaces: a browser `WebSocket` cannot send the Firebase
@@ -309,9 +334,24 @@ describe('agency route table — the agent invariant', () => {
     }
   });
 
+  it('the token-only ring routes answer a caller with no session and no ring the uniform 404 ring_not_offered', async () => {
+    const tokenOnly = agencyRoutes().filter((r) => TOKEN_ONLY_ROUTES.includes(r.key)).map((r) => r.key).sort();
+    expect(tokenOnly).toEqual([...TOKEN_ONLY_ROUTES].sort());
+    for (const key of TOKEN_ONLY_ROUTES) {
+      const [method, url] = key.split(' ') as [string, string];
+      for (const payload of [{}, { offer_token: 'AAAAAAAAAAAAAAAAAAAAAA', reason: 'declined' }]) {
+        const res = await app.inject({
+          method: method as 'POST', url: concrete(url), headers: { 'content-type': 'application/json' }, payload: JSON.stringify(payload),
+        });
+        expect(res.statusCode, key).toBe(404);
+        expect(JSON.parse(res.body), key).toMatchObject({ code: 'ring_not_offered' });
+      }
+    }
+  });
+
   it('every agency route needs a session: no route answers an unauthenticated caller', async () => {
     const open: string[] = [];
-    for (const r of agencyRoutes()) {
+    for (const r of agencyRoutes().filter((x) => !TOKEN_ONLY_ROUTES.includes(x.key))) {
       const res = await app.inject({
         method: r.method as 'GET',
         url: concrete(r.url),

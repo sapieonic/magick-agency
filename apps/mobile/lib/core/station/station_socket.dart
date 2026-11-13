@@ -117,6 +117,7 @@ class StationSocket {
   int _unansweredSince = 0;
   bool _provedLive = false;
   bool _initialSpent = false;
+  ({String url, DateTime? expiresAt})? _onceUrl;
   bool _hasOpened = false;
   bool _pingsEnabled = true;
   bool _keepAlive = true;
@@ -141,6 +142,14 @@ class StationSocket {
 
   /// The ID token was refreshed elsewhere just now (the controller warms it at join).
   void markIdTokenFresh() => _idTokenRefreshedAt = _now();
+
+  /// A URL with a fresh single-use token minted elsewhere (Mode B: `…/ring/accept` answers
+  /// one), for the next connect only, instead of minting. Taken as the bootstrap's own is: unused
+  /// once it is about to lapse.
+  void useUrlOnce(String url, DateTime? expiresAt) {
+    if (_disposed) return;
+    _onceUrl = (url: url, expiresAt: expiresAt);
+  }
 
   /// Opens the first connection.
   void start() {
@@ -249,7 +258,12 @@ class StationSocket {
     _setConnection(_retryCount == 0 && !_hasOpened ? StationConnection.connecting : StationConnection.reconnecting);
 
     final String url;
-    if (!_initialSpent && _initialUsable()) {
+    final once = _onceUrl;
+    _onceUrl = null;
+    if (once != null && _usable(once.expiresAt)) {
+      _initialSpent = true;
+      url = once.url;
+    } else if (!_initialSpent && _initialUsable()) {
       _initialSpent = true;
       url = _initialUrl;
     } else {
@@ -311,11 +325,10 @@ class StationSocket {
     _onOpen(gen);
   }
 
-  bool _initialUsable() {
-    final expires = _initialUrlExpiresAt;
-    // A token about to lapse would fail the upgrade with 4401 and cost a step.
-    return expires == null || _now().isBefore(expires.subtract(const Duration(seconds: 5)));
-  }
+  bool _initialUsable() => _usable(_initialUrlExpiresAt);
+
+  // A token about to lapse would fail the upgrade with 4401 and cost a step.
+  bool _usable(DateTime? expires) => expires == null || _now().isBefore(expires.subtract(const Duration(seconds: 5)));
 
   /// The mint under [tokenMintTimeout], on a timer [dispose] can cancel
   /// (`Future.timeout`'s cannot be).
@@ -356,14 +369,19 @@ class StationSocket {
   }
 
   /// What this build takes beyond its session's own work, declared on every upgrade
-  /// (`caps=inbound`): without it the server offers this station no inbound calls and sends it
-  /// neither `inbound_call` nor `customer_waiting`.
+  /// (`caps=inbound`) unless [declareInbound] is off: without it the server offers this station no
+  /// inbound calls and sends it neither `inbound_call` nor `customer_waiting`.
   static const capabilities = [StationCapability.inbound];
+
+  /// Whether the next connect declares [capabilities]. Off only while an attach must not answer
+  /// a ring (N5: the server takes an attach with `caps=inbound` during an un-answered ring as its
+  /// answer; one without it ends the ring instead). Read at every connect, whoever starts it.
+  bool declareInbound = true;
 
   Uri _withQuery(Uri url) => url.replace(
         queryParameters: StationCapability.withQuery(
           <String, String>{...url.queryParameters, 'client': 'mobile', 'media': _media.wire},
-          capabilities,
+          declareInbound ? capabilities : const <StationCapability>[],
         ),
       );
 

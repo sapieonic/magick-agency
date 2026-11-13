@@ -168,6 +168,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/retry.ts',
       'api/routes/proxy-agency-campaigns/spine.ts',
       'api/routes/proxy-agency-campaigns/stats.ts',
+      'api/routes/proxy-agency-inbound-ring.routes.ts', // Mode B: the ring of an away agent's phone
       'api/routes/proxy-agency-inbound/calls.ts',
       'api/routes/proxy-agency-inbound/clips.ts',
       'api/routes/proxy-agency-inbound/missed-work.ts',
@@ -176,6 +177,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-inbound/shared.ts', // the `CoreCallResult` type only; calls nothing
       'api/routes/proxy-agency-performance/floor.ts',
       'api/routes/proxy-agency-performance/per-agent.ts',
+      'api/routes/proxy-agency-push-devices.routes.ts', // Mode B: the agent app's push devices
       'api/routes/proxy-agency-softphone/calls.ts',
       'api/routes/proxy-agency-softphone/reads.ts',
       'api/routes/proxy-agency-softphone/sessions.ts',

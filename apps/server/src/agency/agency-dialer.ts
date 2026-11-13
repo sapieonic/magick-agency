@@ -27,7 +27,12 @@ import {
   releaseReasonFor,
   requiresDisposition,
 } from './outcome-classifier.js';
-import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
+  AWAY_RING_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON,
+  SOFTPHONE_BREAK_REASON,
+} from '@magick-agency/contracts/agency';
 import { carrierCancelsRinging } from '../telephony/carrier-ringing.js';
 import type {
   AgencyActiveAttempt,
@@ -70,6 +75,22 @@ import {
 export interface AgentReleaseResult {
   state: 'available' | 'break' | 'offline' | 'reserved';
   result: AgentSetResult;
+}
+
+/**
+ * The away-ring release hook (Mode B, `AwayRingService.applyQueued`): apply a queued `away_ring`
+ * from whatever state the release found; null when it cannot (the caller applies `device_away`).
+ */
+export interface AwayRingReleaseHook {
+  applyQueued(sessionId: string): Promise<{ state: 'break'; since: string } | null>;
+}
+
+/** The queued break `device_away`, as a release applies it in place of an `away_ring` that cannot apply. */
+const DEVICE_AWAY_QUEUED = { code: DEVICE_AWAY_BREAK_REASON } as const;
+
+/** A queued break, with `away_ring` read as `device_away` (a path on which the phone may not ring). */
+function withoutAwayRing<T extends { code: string }>(queued: T | null): T | { code: string } | null {
+  return queued?.code === AWAY_RING_BREAK_REASON ? DEVICE_AWAY_QUEUED : queued;
 }
 
 /**
@@ -256,6 +277,8 @@ export class AgencyDialer {
   private unsubscribeLifecycle: (() => void) | null = null;
   /** {@link registerInboundTake}: the inbound connector's release hook, while one runs. */
   private inboundTake: InboundReleaseHook | null = null;
+  /** {@link registerAwayRing}: applies a queued `away_ring` (Mode B), wired by the runtime. */
+  private awayRing: AwayRingReleaseHook | null = null;
 
   constructor(
     private readonly bridge: WebRtcBridgeManager,
@@ -277,6 +300,15 @@ export class AgencyDialer {
    */
   registerInboundTake(hook: InboundReleaseHook | null): void {
     this.inboundTake = hook;
+  }
+
+  /**
+   * Install the away-ring release hook (Mode B, `AwayRingService.applyQueued`): {@link releaseAgent}
+   * applies a queued `away_ring` through it, socket or none. Without it (a unit harness) a queued
+   * `away_ring` applies as `device_away`, the break the app falls back to.
+   */
+  registerAwayRing(hook: AwayRingReleaseHook | null): void {
+    this.awayRing = hook;
   }
 
   /** Subscribe to bridge lifecycle. Call once at wiring time. */
@@ -890,8 +922,10 @@ export class AgencyDialer {
   async releaseOwingOutcome(sessionId: string): Promise<AgentReleaseResult> {
     this.wrapup.endRedialSetup(sessionId);
     if (!this.stations.isLocallyOwned(sessionId)) return this.releaseAgent(sessionId);
-    const queuedBreak = this.breaks.take(sessionId);
-    const set = await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
+    // A queued `away_ring` cannot apply while an outcome is owed (the phone may not be rung for a
+    // session that owes one): held as `device_away`, the break the app falls back to.
+    const queuedBreak = withoutAwayRing(this.breaks.take(sessionId));
+    const set = await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break, breakReason: queuedBreak?.code ?? null });
     await mirrored(
       agencyAgentSessionRepository.setState(sessionId, 'break', queuedBreak?.code ?? null),
       sessionId, 'Could not mirror held agent state',
@@ -2036,21 +2070,46 @@ export class AgencyDialer {
     // audited and replica-local, which was false for exactly the caller that
     // matters and made the site look safer than it is.
     const stillHere = this.stations.isLocallyOwned(sessionId);
+    // Mode B (IQ67): a queued `away_ring` is the one break that applies with or without a socket:
+    // the phone rings for inbound callers with none. Applied here, before anything else, by the
+    // away-ring hook; when it cannot apply (refused meanwhile, or no hook), it is `device_away`.
+    let queuedAwayRing = false;
+    if (this.breaks.peek(sessionId)?.code === AWAY_RING_BREAK_REASON) {
+      this.breaks.take(sessionId);
+      queuedAwayRing = true;
+      const applied = await Promise.resolve(this.awayRing?.applyQueued(sessionId) ?? null).catch((err: unknown) => {
+        log.error({ err, sessionId }, 'Queued away-ring break failed to apply — applying device_away');
+        return null;
+      });
+      if (applied) {
+        log.info({ sessionId }, 'Queued away-ring break applied');
+        return { state: 'break', result: 'ok' };
+      }
+    }
     // An agent whose socket is gone must NOT return to `available` — the tick
     // would dial into them immediately and produce an abandoned call. A pending
     // break for a departed agent is dropped with them; `offline` already keeps them
     // out of the pool, and they rehydrate into `break` anyway.
+    //
+    // Mode B: written by the station close's script, so a session on `away_ring` (which has no
+    // socket by design) is kept, not knocked `offline` by a release that reached it.
     if (!stillHere) {
       this.breaks.cancel(sessionId);
-      const set = await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
+      const wrote = await this.agents.setOfflineUnlessAway(sessionId, false);
+      if (wrote.outcome === 'kept') {
+        // Kept on `away_ring` (`break`), or reserved for a push offer (`reserved`): the state the
+        // script kept.
+        return { state: wrote.state === 'reserved' ? 'reserved' : 'break', result: 'ok' };
+      }
       await mirrored(agencyAgentSessionRepository.setState(sessionId, 'offline'), sessionId, 'Could not mirror released agent state');
-      return { state: 'offline', result: set };
+      return { state: 'offline', result: wrote.outcome === 'offline' ? 'ok' : 'unavailable' };
     }
 
     // Consumed, not peeked: a queued break applies exactly once, so an agent who
     // takes a break and later goes available is not silently pulled back out of the
-    // pool on their next call's release.
-    const queuedBreak = this.breaks.take(sessionId);
+    // pool on their next call's release. A queued `away_ring` that could not apply above
+    // applies as `device_away`.
+    const queuedBreak = queuedAwayRing ? DEVICE_AWAY_QUEUED : this.breaks.take(sessionId);
     // ── A waiting inbound caller first (docs/inbound.md §2, "Sticky agent in wrap-up") ──────
     // Before any `available` write, so an agent coming out of a call or a wrap-up is offered a
     // caller with no `available` instant pacing could reserve them in (WR5: an outcome owed is
@@ -2080,6 +2139,7 @@ export class AgencyDialer {
     const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
       announce: false,
+      breakReason: queuedBreak?.code ?? null,
     });
     // The soft phone's guard (docs/softphone.md §4.1): `available` is refused while
     // the session holds a soft-phone call or is a soft-phone session. The agent
