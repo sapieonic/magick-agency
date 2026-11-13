@@ -931,7 +931,12 @@ each other's answers).
 **Declining (IQ70, N4).** `decline {offer_token, reason}` (token only; `reason` `declined` or
 `busy_on_phone`) is valid until `accept`: the ring ends with that result, never a miss; the caller
 goes back to the head of the queue and is never rung by that agent again; the agent goes back to
-`away_ring`. Audited `agency_inbound_call.ring_declined` with the agent the ring was for as the
+`away_ring`. A `device_away` the app asks for while the ring holds the session `reserved` (the
+away notification's "Stop ringing", IQ79) is queued behind it and not applied by the decline (nor by
+any other end that returns the agent to `away_ring`): `releaseRungAgent` returns the agent to `away_ring`
+(`AwayRingService.releaseInbound`, which never reads the break queue), and the app's next
+`device_away`, asked each second for up to 10 s, finds `away_ring` and switches it to `device_away`.
+Audited `agency_inbound_call.ring_declined` with the agent the ring was for as the
 actor (the token was theirs), ids only. After `accept` it is `already_accepted`, and the agent's
 hang-up on the station is the way out: an offer not yet bound is declined (`declined`, not a miss).
 Android declines `busy_on_phone` by itself when a cellular call is on (IQ70); the server never rings
@@ -1003,23 +1008,24 @@ see one pause.
 The server's ends send Android a `ring_off` push with the reason and `away_since` (the absence's
 start; held at most 10 minutes at the carrier, so a late one can rarely meet the next absence, and
 the app drops one older than the absence it shows) and are audited `agency_session.away_ring_ended`
-("Phone stopped ringing for inbound calls", `details.reason`, the system as the actor; "Stop
-ringing" and a removal are also audited on the device, with the agent as the actor). A failure
-ending the absence after "Stop ringing" or a removal never fails that request: the change is
+("Phone stopped ringing for inbound calls", `details.reason`, the system as the actor; an opt-out
+on the Me card and a removal are also audited on the device, with the agent as the actor). A failure
+ending the absence after an opt-out or a removal never fails that request: the change is
 committed, and the next reconcile ends the absence:
 
 | Reason | When |
 |---|---|
 | `ring_missed` | the second missed ring in a row (or the reconcile finding an absence at the maximum whose own end was lost) |
 | `revoked` | the device removed (`DELETE`), or its token refused for good by FCM or APNs (`unregistered`, `invalid`) |
-| `opted_out` | "Stop ringing" (`PATCH ring_enabled=false`) |
+| `opted_out` | the agent turned ringing off for this phone on the Me card (`PATCH ring_enabled=false`), the only opt-out. The away notification's "Stop ringing" is not one: it ends this absence through the app's `device_away` (the switch, below; IQ79) |
 | `flag_off` | the reconcile finds a flag off for the account |
 | `max_age` | the absence past `AGENCY_AWAY_RING_MAX_MS` |
 | `taken_over` | another device took the station (OS3): the claim clears `away_ring_since` and rewrites `break/away_ring` to `device_away` in the same statement, Redis's `ring` is cleared, and the old device is told. Also sent, with no audit, when the session itself ends under a parked phone: `POST /sessions/:id/leave` from another device (a ring in flight refuses the leave first), and OS7's `endIdleSessionElsewhere` ending the session in another tenant (Redis `ring = 1`, or the row's `away_ring_since` set when the key has lapsed). OS7 still counts `away_ring` as idle: the agent is at a station in this tenant now, and keeping the absence would lock them out for up to `AGENCY_AWAY_RING_MAX_MS`; a ring in flight holds the session (`reserved`, `findCallForSession`). Without the push the phone's "rings this phone" notification would outlive the session |
 
 Two ends send nothing and are not audited: the agent's return (a station attach or a join over
 `break, ring = 1`: `device_away` on screen, and the app's `/available` follows) and the app asking
-`device_away` while on `away_ring` (the switch). A ring in flight is never ended by a state write
+`device_away` while on `away_ring` (the switch; this is how the away notification's "Stop ringing"
+ends the absence, IQ79, with no route of its own). A ring in flight is never ended by a state write
 (N1): the end goes through the connector's `cancelRingForAwayRingEnd` on the call's chain, which
 cancels a ring not yet answered (`cancelled`; `answered_elsewhere` for a take-over) and then ends the
 absence; an answered ring runs to its end and the next reconcile ends the absence, except on a
@@ -1800,7 +1806,7 @@ the reconcile clears `away_ring_since` only for the absence it read; the token-o
 per IP and ringing call (IQ77); the answered ring's writes, `ring_cancel` and `ring_off` are tracked
 and awaited at shutdown (`AwayRingService.stop`); the push-device register runs in
 `withTransaction` and never rethrows the token's unique violation, and a failed end never fails
-"Stop ringing" or a removal; new metrics, three dashboard panels and a proposed pilot scorecard
+an opt-out or a removal; new metrics, three dashboard panels and a proposed pilot scorecard
 ([`operations.md`](operations.md)); the rollback past 0036 in `DEPLOYMENT.md`; deterministic ring
 tests and regression tests for the races the QA review probed (§6.1 "Tests").
 
