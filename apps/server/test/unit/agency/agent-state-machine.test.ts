@@ -32,8 +32,8 @@ function fakeRedis() {
     del: vi.fn(async (k: string) => { hashes.delete(k); ttls.delete(k); return 1; }),
     eval: vi.fn(async (script: string, _n: number, key: string, ...argv: any[]) => {
       const h = hashes.get(key);
-      if (script.includes('EXISTS')) {
-        // RENEW: never resurrects, and the state must still match.
+      if (script.includes('PEXPIRE') && !script.includes('HSET')) {
+        // RENEW (the one script that only extends a TTL): never resurrects, and the state must still match.
         if (!h) return 0;
         if (h.state !== String(argv[0])) return 0;
         ttls.set(key, Number(argv[1]));
