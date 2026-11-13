@@ -102,6 +102,9 @@ abstract final class StationCopy {
       ? 'You switched to another app, so we paused you, and this phone rings for inbound calls while you’re away.'
       : 'At $at you switched to another app, so we paused you, and this phone rings for inbound calls while you’re away.';
 
+  /// Paused rather than rung, though ringing is on for this phone.
+  static String awayNoRing(String why) => 'This phone won’t ring for inbound calls: $why.';
+
   /// IQ50: under the away card's detail. The window is the controller's own.
   static final awayAutoReturnHint = 'Come back within ${deviceAwayReturnGrace.inSeconds} seconds and you’re '
       'returned to calls without a tap.';

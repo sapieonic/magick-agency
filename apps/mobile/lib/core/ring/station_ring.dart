@@ -4,6 +4,7 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'ring_channel.dart';
+import 'ring_rules.dart' show RingBlocker;
 
 /// What the station core needs of Mode B, behind one seam so the station is tested with a fake
 /// and runs unchanged where nothing rings (the default: [StationRing.none]). The ring layer
@@ -11,6 +12,10 @@ import 'ring_channel.dart';
 abstract interface class StationRing {
   /// Leaving the app asks `away_ring` rather than `device_away` ([ringAvailable]).
   bool get ringOn;
+
+  /// Why leaving the app will not ring this phone though the agent turned ringing on for it
+  /// ([RingSettings.fallbackBlocker]); null when it rings, or was not expected to.
+  RingBlocker? get fallbackBlocker;
 
   /// What native tells Dart (the station counts the misses while away).
   Stream<RingEvent> get events;
@@ -49,6 +54,9 @@ final class _NoRing implements StationRing {
 
   @override
   bool get ringOn => false;
+
+  @override
+  RingBlocker? get fallbackBlocker => null;
 
   @override
   Stream<RingEvent> get events => const Stream<RingEvent>.empty();

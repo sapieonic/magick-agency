@@ -6,6 +6,7 @@ import '../../core/ring/ring_channel.dart';
 import '../../core/ring/ring_copy.dart';
 import '../../core/ring/ring_overrides.dart';
 import '../../core/ring/ring_registration.dart';
+import '../../core/ring/ring_rules.dart' show RingBlocker;
 import '../../ui/primitives.dart';
 
 /// Me → Inbound calls (Mode B): "Ring this phone for inbound calls". Shown only where the
@@ -41,7 +42,47 @@ class RingSettingsCard extends ConsumerWidget {
     final registration = ref.read(ringRegistrationProvider.notifier);
     final text = Theme.of(context).textTheme;
     final t = context.tokens;
-    final status = settings.status!;
+    final status = settings.status;
+    if (!settings.supported) {
+      // iOS today (IQ64): the account rings phones, this one can't yet.
+      return Card(
+        key: const Key('ring-settings'),
+        child: Padding(
+          padding: const EdgeInsets.all(Space.lg),
+          child: Text(RingCopy.unsupportedPlatform, key: const Key('ring-unsupported'), style: text.bodyMedium),
+        ),
+      );
+    }
+    if (status == null) {
+      return Card(
+        key: const Key('ring-settings'),
+        child: Padding(
+          padding: const EdgeInsets.all(Space.lg),
+          child: settings.loadFailed && !settings.loading
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(RingCopy.loadFailed, key: const Key('ring-load-failed'), style: text.bodyMedium!.copyWith(color: t.danger)),
+                    const SizedBox(height: Space.sm),
+                    OutlinedButton(
+                      key: const Key('ring-retry'),
+                      onPressed: registration.register,
+                      child: const Text(RingCopy.tryAgain),
+                    ),
+                  ],
+                )
+              : Row(
+                  key: const Key('ring-loading'),
+                  children: [
+                    const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                    const SizedBox(width: Space.md),
+                    Expanded(child: Text(RingCopy.loading, style: text.bodyMedium!.copyWith(color: t.textSecondary))),
+                  ],
+                ),
+        ),
+      );
+    }
+    final headlineBlocker = settings.blocker;
     final blocker = !status.pushConfigured
         ? RingCopy.notConfigured
         : (settings.token == null ? RingCopy.noPush : null);
@@ -52,6 +93,7 @@ class RingSettingsCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _Headline(blocker: headlineBlocker),
           SwitchListTile(
             key: const Key('ring-toggle'),
             value: settings.optIn,
@@ -82,6 +124,39 @@ class RingSettingsCard extends ConsumerWidget {
             _TestRing(phase: settings.testRing, onSend: registration.sendTestRing),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Whether leaving the app rings this phone now, and if not, the first thing in the way.
+class _Headline extends StatelessWidget {
+  const _Headline({required this.blocker});
+  final RingBlocker? blocker;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final b = blocker;
+    final ok = b == null;
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Space.lg, Space.lg, Space.lg, 0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(ok ? Icons.ring_volume_outlined : Icons.notifications_off_outlined, color: ok ? t.success : t.warning, size: 20),
+            const SizedBox(width: Space.sm),
+            Expanded(
+              child: Text(
+                ok ? RingCopy.headlineReady : RingCopy.headlineBlocked(b),
+                key: const Key('ring-headline'),
+                style: Theme.of(context).textTheme.titleSmall!.copyWith(color: ok ? t.success : t.warning),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

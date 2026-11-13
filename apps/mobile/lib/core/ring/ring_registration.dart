@@ -72,8 +72,20 @@ final class RingSettings {
   /// Leaving the app asks `away_ring` ([ringAvailable]).
   bool get ringOn => supported && ringAvailable(status: status, optIn: optIn, token: token, checklist: checklist);
 
-  /// The Me card shows only when the account allows ringing.
-  bool get showCard => supported && (status?.accountAllowsRing ?? false);
+  /// What stops this phone ringing when the agent leaves the app (the card's headline); null when
+  /// it rings. A platform that does not ring has none to tell ([supported]).
+  RingBlocker? get blocker => supported ? ringBlockerOf(status: status, optIn: optIn, token: token, checklist: checklist) : null;
+
+  /// Why leaving the app will not ring this phone, for the paused notification and the away card:
+  /// only when the agent turned ringing on here ([ringBlockerIsNews]).
+  RingBlocker? get fallbackBlocker {
+    final b = blocker;
+    return ringBlockerIsNews(b) && optIn ? b : null;
+  }
+
+  /// The Me card shows when the account allows ringing (on iOS too, to say ringing isn't
+  /// available on the phone yet), and while its first load is on its way or failed.
+  bool get showCard => (status?.accountAllowsRing ?? false) || (supported && status == null && (loading || loadFailed));
 
   RingSettings copyWith({
     PushDeviceStatus? status,
@@ -121,6 +133,10 @@ final ringPlatformProvider = Provider<PushPlatform?>(
   (ref) => !kIsWeb && defaultTargetPlatform == TargetPlatform.android ? PushPlatform.android : null,
 );
 
+/// A platform that does not ring yet but reads the device status, so the Me card can say ringing
+/// isn't available on this phone (iOS today, IQ64) where the account allows it.
+final ringStatusOnlyProvider = Provider<bool>((ref) => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS);
+
 /// The registration's own lifecycle source: one source keeps one listener, so it never shares
 /// the station's.
 final ringLifecycleSourceProvider = Provider<AppLifecycleSource>((ref) => FlutterAppLifecycleSource());
@@ -140,6 +156,9 @@ class RingRegistration extends Notifier<RingSettings> {
   late RingChannel _channel;
   late PushDeviceApi _api;
   PushPlatform? _platform;
+
+  /// A platform that does not ring: the status is read (never registered), for the card's note.
+  bool _statusOnly = false;
   int _gen = 0;
   bool _ready = false;
   Timer? _testTimer;
@@ -147,12 +166,17 @@ class RingRegistration extends Notifier<RingSettings> {
   @override
   RingSettings build() {
     _platform = ref.read(ringPlatformProvider);
-    if (_platform == null) return const RingSettings(supported: false);
-    _channel = ref.read(ringChannelProvider);
+    _statusOnly = _platform == null && ref.read(ringStatusOnlyProvider);
+    if (_platform == null && !_statusOnly) return const RingSettings(supported: false);
     _api = PushDeviceApi(
       ref.read(apiClientProvider),
       onUnauthorized: (e) => ref.read(appGateProvider.notifier).reportError(e),
     );
+    if (_statusOnly) {
+      ref.listen<AppGate>(appGateProvider, (prev, next) => _gateChanged(prev, next), fireImmediately: true);
+      return const RingSettings(supported: false);
+    }
+    _channel = ref.read(ringChannelProvider);
     final events = _channel.events.listen(_onEvent);
     final lifecycle = ref.read(ringLifecycleSourceProvider);
     lifecycle.attach(onHide: () {}, onShow: () {
@@ -174,7 +198,7 @@ class RingRegistration extends Notifier<RingSettings> {
       _gen++;
       if (wasReady) {
         scheduleMicrotask(() {
-          if (ref.mounted && !_ready) state = const RingSettings();
+          if (ref.mounted && !_ready) state = RingSettings(supported: _platform != null);
         });
       }
       return;
@@ -209,6 +233,7 @@ class RingRegistration extends Notifier<RingSettings> {
   /// Registers (or refreshes) this device and reads the checklist. Without a token (push
   /// unavailable) only reads the status, so the card can say why.
   Future<void> register() async {
+    if (_statusOnly) return _readStatusOnly();
     final platform = _platform;
     if (platform == null || !_ready) return;
     final gen = ++_gen;
@@ -243,6 +268,24 @@ class RingRegistration extends Notifier<RingSettings> {
       loading: false,
       loadFailed: false,
     );
+  }
+
+  /// A platform that does not ring: the status alone (whether the account allows ringing), so the
+  /// card can say it isn't available on this phone.
+  Future<void> _readStatusOnly() async {
+    if (!_ready) return;
+    final gen = ++_gen;
+    state = state.copyWith(loading: true);
+    try {
+      final status = await _api.status(await _deviceId());
+      if (gen != _gen || !ref.mounted) return;
+      state = state.copyWith(status: status, loading: false, loadFailed: false);
+    } catch (e) {
+      if (gen != _gen || !ref.mounted) return;
+      _log.warn('push device status read failed', {'error': e.runtimeType.toString()});
+      // Nothing to fix from a phone that does not ring: no card rather than "Try again".
+      state = state.copyWith(loading: false);
+    }
   }
 
   /// Opt in or out on this phone. A device the server has never seen is registered with the

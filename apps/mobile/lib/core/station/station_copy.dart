@@ -344,6 +344,9 @@ const notesChangedElsewhereCopy = 'These notes were also changed elsewhere.';
 const pausedNotificationTitle = 'You’re paused';
 const pausedNotificationBody = "You're paused. Open the app to take calls again.";
 
+/// Paused on leaving the app, though ringing is on for this phone: it won't ring, and [why].
+String pausedNoRingBody(String why) => 'You’re paused, and this phone won’t ring for inbound calls: $why. Open the app to take calls again.';
+
 /// "Stop ringing" on the away notification (this absence only).
 const pausedRingingStoppedBody = 'Ringing stopped. You’re paused. Open the app to take calls again.';
 const wrapupNotificationTitle = 'Wrap-up';

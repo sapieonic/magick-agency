@@ -152,6 +152,46 @@ void main() {
       expect(RingOffRecord.tryRead(null), isNull);
     });
 
+    test('ringBlockerOf: the first thing in the way, in order; none when ringAvailable', () {
+      final ok = _status('device_status_ringing');
+      const all = RingChecklist({
+        RingChecklistItem.notifications: true,
+        RingChecklistItem.fullScreen: false,
+        RingChecklistItem.batteryExempt: false,
+        RingChecklistItem.microphone: true,
+        RingChecklistItem.phoneAccount: true,
+        RingChecklistItem.dndAllowsCalls: false,
+      });
+      RingBlocker? b({PushDeviceStatus? status, bool optIn = true, String? token = 't', RingChecklist? list = all, bool noStatus = false}) =>
+          ringBlockerOf(status: noStatus ? null : (status ?? ok), optIn: optIn, token: token, checklist: list);
+      expect(b(), isNull, reason: 'advice items (full screen, battery, DND) never block');
+      expect(b(noStatus: true), RingBlocker.statusUnknown);
+      expect(b(status: _status('device_status_ringing', top: {'account_allows_ring': false})), RingBlocker.notAllowed);
+      expect(b(status: _status('device_status_ringing', top: {'push_configured': false})), RingBlocker.notConfigured);
+      expect(b(optIn: false), RingBlocker.optedOut);
+      expect(b(token: null), RingBlocker.noPush);
+      expect(b(status: _status('device_status_unregistered')), RingBlocker.notRegistered);
+      expect(b(list: null), RingBlocker.checklistUnknown);
+      expect(b(list: RingChecklist({...all.items, RingChecklistItem.notifications: false, RingChecklistItem.microphone: false})), RingBlocker.notifications);
+      expect(b(list: RingChecklist({...all.items, RingChecklistItem.phoneAccount: false})), RingBlocker.phoneAccount);
+      expect(b(list: RingChecklist({...all.items, RingChecklistItem.microphone: false})), RingBlocker.microphone);
+      expect(ringAvailable(status: ok, optIn: true, token: 't', checklist: all), isTrue);
+    });
+
+    test('a 409 refusal reads as a blocker; only what goes wrong on an opted-in phone is news', () {
+      expect(ringBlockerOfRefusal(AwayRingRefusalCode.noPushDevice), RingBlocker.notRegistered);
+      expect(ringBlockerOfRefusal(AwayRingRefusalCode.pushUnavailable), RingBlocker.notConfigured);
+      expect(ringBlockerIsNews(RingBlocker.notRegistered), isTrue);
+      expect(ringBlockerIsNews(RingBlocker.notifications), isTrue);
+      for (final quiet in [RingBlocker.optedOut, RingBlocker.notAllowed, RingBlocker.statusUnknown, null]) {
+        expect(ringBlockerIsNews(quiet), isFalse, reason: '$quiet');
+      }
+      for (final b in RingBlocker.values) {
+        expect(RingCopy.headlineBlocked(b), startsWith('Won’t ring: '));
+        expect(RingCopy.blockerWhy(b), isNot(contains('_')), reason: 'words, never a code');
+      }
+    });
+
     test('every reason is said in words, never as a code', () {
       for (final r in [...RingOffReason.values, null]) {
         final text = RingCopy.stopped(r);

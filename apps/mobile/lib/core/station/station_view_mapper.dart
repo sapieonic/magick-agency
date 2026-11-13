@@ -106,6 +106,7 @@ class StationViewMapper {
     String? inboundHangupFailure,
     String? inboundNotice,
     bool awayRang = false,
+    String? awayNoRing,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -124,7 +125,14 @@ class StationViewMapper {
       // Back from the app's own `away_ring`: the server reports `device_away`, but the phone was
       // ringing for inbound calls while the agent was away, and the card says so.
       final rang = awayRang && code == wire.ReservedBreakCode.deviceAway.wire;
-      onBreak = BreakInfo(code: code, label: rang ? awayRingBreakLabel : breakLabel(code, breakReasons), since: phaseSince, rang: rang);
+      onBreak = BreakInfo(
+        code: code,
+        label: rang ? awayRingBreakLabel : breakLabel(code, breakReasons),
+        since: phaseSince,
+        rang: rang,
+        // Paused rather than rung, though ringing is on for this phone: why it won't ring.
+        noRing: !rang && code == wire.ReservedBreakCode.deviceAway.wire ? awayNoRing : null,
+      );
     }
     final queued = pendingBreakCode == null
         ? null

@@ -8,6 +8,7 @@ import '../auth/app_gate.dart' show pushDeviceTeardownProvider;
 import 'ring_answer_coordinator.dart';
 import 'ring_channel.dart';
 import 'ring_registration.dart';
+import 'ring_rules.dart' show RingBlocker;
 import 'station_ring.dart';
 
 /// Starts Mode B's services for the app's life: the push device's registration and the ring
@@ -44,6 +45,9 @@ final class _RegistrationStationRing implements StationRing {
 
   @override
   bool get ringOn => _ref.read(ringRegistrationProvider).ringOn;
+
+  @override
+  RingBlocker? get fallbackBlocker => _ref.read(ringRegistrationProvider).fallbackBlocker;
 
   @override
   Stream<RingEvent> get events => _channel.events;

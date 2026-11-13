@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:agency_wire/agency_wire.dart';
 import 'package:magick_agency_agent/core/ring/ring_channel.dart';
+import 'package:magick_agency_agent/core/ring/ring_rules.dart' show RingBlocker;
 import 'package:magick_agency_agent/core/ring/station_ring.dart';
 
 /// The ring channel with no native side: the test plays native. Every Dart → native call is
@@ -111,6 +112,9 @@ class FakeStationRing implements StationRing {
 
   @override
   bool ringOn = true;
+
+  @override
+  RingBlocker? fallbackBlocker;
 
   PushDeviceStatus? status;
   int statusReads = 0;

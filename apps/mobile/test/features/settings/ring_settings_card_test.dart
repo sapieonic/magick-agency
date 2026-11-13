@@ -31,16 +31,28 @@ void main() {
   late Map<String, Object?> status;
   late List<http.Request> requests;
 
+  /// The device routes answer 503 while true.
+  var failStatus = false;
+
+  /// The device routes answer after a second while true.
+  var slow = false;
+
   setUp(() {
+    failStatus = false;
+    slow = false;
     channel = FakeRingChannel();
     status = pushSample('device_status_ringing');
     requests = [];
   });
 
-  Future<void> pump(WidgetTester tester) async {
+  /// [platform]: the ringing platform (null: one that does not ring, read for its status only,
+  /// as iOS).
+  Future<void> pump(WidgetTester tester, {PushPlatform? platform = PushPlatform.android, bool statusOnly = false, bool settle = true}) async {
     final client = MockClient((request) async {
       requests.add(request);
       final key = '${request.method} ${request.url.path}';
+      if (slow) await Future<void>.delayed(const Duration(seconds: 1));
+      if (failStatus) return http.Response('{"error":"Service Unavailable"}', 503, headers: {'content-type': 'application/json'});
       if (key == 'PATCH $devicePath') {
         final on = (jsonDecode(request.body) as Map)['ring_enabled'];
         status = {...status, 'device': {...(status['device']! as Map<String, Object?>), 'ring_enabled': on}};
@@ -60,7 +72,8 @@ void main() {
             ..accountId = 'acc-1'),
           appGateProvider.overrideWith(() => RingGate(ready)),
           ringChannelProvider.overrideWithValue(channel),
-          ringPlatformProvider.overrideWithValue(PushPlatform.android),
+          ringPlatformProvider.overrideWithValue(platform),
+          ringStatusOnlyProvider.overrideWithValue(statusOnly),
           ringLifecycleSourceProvider.overrideWithValue(FakeLifecycle()),
           stationDeviceIdsProvider.overrideWithValue(
             StationDeviceIds(() => MemoryStore({StationDeviceIds.storeKey: ringDeviceId})),
@@ -73,7 +86,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    if (settle) await tester.pumpAndSettle();
   }
 
   testWidgets('the account does not allow ringing: no card', (tester) async {
@@ -156,5 +169,59 @@ void main() {
     await pump(tester);
     expect(tester.widget<SwitchListTile>(find.byKey(const Key('ring-toggle'))).onChanged, isNull);
     expect(find.text('This phone can’t receive rings: push messages aren’t available on it.'), findsOneWidget);
+  });
+
+  testWidgets('the headline: ready when leaving the app rings this phone', (tester) async {
+    await pump(tester);
+    expect(find.text('Ready: this phone rings when you leave the app'), findsOneWidget);
+  });
+
+  testWidgets('the headline: won\'t ring, and the first thing in the way', (tester) async {
+    channel.list = const RingChecklist({
+      RingChecklistItem.notifications: false,
+      RingChecklistItem.fullScreen: true,
+      RingChecklistItem.batteryExempt: true,
+      RingChecklistItem.microphone: false,
+      RingChecklistItem.phoneAccount: true,
+      RingChecklistItem.dndAllowsCalls: true,
+    });
+    await pump(tester);
+    expect(find.text('Won’t ring: notifications are off'), findsOneWidget);
+  });
+
+  testWidgets('the headline: off on this phone says so', (tester) async {
+    status = {...status, 'device': {...(status['device']! as Map<String, Object?>), 'ring_enabled': false}};
+    await pump(tester);
+    expect(find.text('Won’t ring: ringing is turned off on this phone'), findsOneWidget);
+  });
+
+  testWidgets('loading, then a failed load says so with Try again, which loads again', (tester) async {
+    failStatus = true;
+    slow = true;
+    await pump(tester, settle: false);
+    await tester.pump();
+    expect(find.byKey(const Key('ring-loading')), findsOneWidget);
+    expect(find.text('Loading this phone’s ringing settings…'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    slow = false;
+    expect(find.text('Couldn’t load this phone’s ringing settings.'), findsOneWidget);
+    failStatus = false;
+    await tester.tap(find.byKey(const Key('ring-retry')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ring this phone for inbound calls'), findsOneWidget);
+  });
+
+  testWidgets('a phone that does not ring yet (iOS): the card says so where the account rings phones', (tester) async {
+    await pump(tester, platform: null, statusOnly: true);
+    expect(find.text('Ringing for inbound calls isn’t available on this phone yet.'), findsOneWidget);
+    expect(find.text('Ring this phone for inbound calls'), findsNothing);
+    expect(requests.where((r) => r.method == 'PUT'), isEmpty, reason: 'nothing registered');
+  });
+
+  testWidgets('a phone that does not ring yet, on an account that does not ring phones: no card', (tester) async {
+    status['account_allows_ring'] = false;
+    await pump(tester, platform: null, statusOnly: true);
+    expect(find.byKey(const Key('ring-settings')), findsNothing);
   });
 }

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/inbound/inbound_call_rules.dart';
 import 'package:magick_agency_agent/core/ring/ring_channel.dart';
 import 'package:magick_agency_agent/core/ring/ring_copy.dart';
+import 'package:magick_agency_agent/core/ring/ring_rules.dart' show RingBlocker;
 import 'package:magick_agency_agent/core/ring/station_ring.dart';
 import 'package:magick_agency_agent/core/station/away_return.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
@@ -124,6 +125,33 @@ void main() {
       });
     });
 
+    test('ringing on for this phone but notifications off: device_away, and the paused notification and the away card '
+        'say the phone won\'t ring and why', () {
+      fakeAsync((async) {
+        final r = _Ring(async, ringOn: false);
+        r.ring.fallbackBlocker = RingBlocker.notifications;
+        r.availableThenAway();
+        final app = r.app;
+        expect(app.requests('POST', _breakPath).single.body, {'reason': 'device_away'});
+        expect(app.notifier.pausedBodies.last,
+            'You’re paused, and this phone won’t ring for inbound calls: notifications are off. Open the app to take calls again.');
+        async.elapse(const Duration(minutes: 2));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.view!.onBreak!.noRing, 'notifications are off');
+        app.dispose();
+      });
+    });
+
+    test('ringing off and not expected (not opted in): the plain "You\'re paused"', () {
+      fakeAsync((async) {
+        final r = _Ring(async, ringOn: false)..availableThenAway();
+        expect(r.app.notifier.pausedBodies.last, "You're paused. Open the app to take calls again.");
+        expect(r.app.view!.onBreak?.noRing, isNull);
+        r.app.dispose();
+      });
+    });
+
     test('away_ring refused 409 (an away-ring code): device_away at once, and the agent is told they are paused', () {
       fakeAsync((async) {
         final r = _Ring(async);
@@ -139,6 +167,8 @@ void main() {
         app.agentStateFrame('break', breakReason: 'device_away');
         expect(app.socket.closed, isFalse);
         expect(app.notifier.calls.last, 'paused');
+        expect(app.notifier.pausedBodies.last, contains('this phone won’t ring for inbound calls: this phone isn’t registered for ringing'),
+            reason: 'refused no_push_device: the agent is told why it will not ring');
         expect(r.channel.named('showAwayNotification'), isEmpty);
         app.dispose();
       });

@@ -1,6 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 
 import 'ring_channel.dart';
+import 'ring_rules.dart' show RingBlocker;
 
 /// Mode B's words on the phone, British English. Wire codes are never shown.
 abstract final class RingCopy {
@@ -23,6 +24,25 @@ abstract final class RingCopy {
   // ── Answering from a ring ──
   static const acceptFailed = 'This call stopped ringing or someone else took it.';
   static const dismiss = 'Dismiss';
+
+  // ── Whether this phone rings (the card's headline, the paused notification) ──
+  static const headlineReady = 'Ready: this phone rings when you leave the app';
+  static String headlineBlocked(RingBlocker blocker) => 'Won’t ring: ${blockerWhy(blocker)}';
+  static const loading = 'Loading this phone’s ringing settings…';
+
+  /// Why the phone won't ring, as the end of a sentence.
+  static String blockerWhy(RingBlocker blocker) => switch (blocker) {
+        RingBlocker.statusUnknown => 'this phone’s ringing settings couldn’t be read',
+        RingBlocker.notAllowed => 'ringing isn’t switched on for your account',
+        RingBlocker.notConfigured => 'ringing phones isn’t set up on the server',
+        RingBlocker.optedOut => 'ringing is turned off on this phone',
+        RingBlocker.noPush => 'push messages aren’t available on this phone',
+        RingBlocker.notRegistered => 'this phone isn’t registered for ringing',
+        RingBlocker.checklistUnknown => 'this phone couldn’t say whether it can ring',
+        RingBlocker.notifications => 'notifications are off',
+        RingBlocker.phoneAccount => 'phone calling permission is off',
+        RingBlocker.microphone => 'the microphone isn’t allowed',
+      };
 
   // ── The settings card (Me) ──
   static const section = 'Inbound calls';

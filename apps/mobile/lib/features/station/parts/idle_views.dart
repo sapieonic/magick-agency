@@ -280,6 +280,7 @@ class AwayView extends ConsumerWidget {
     final since = ref.watch(stationViewProvider.select((v) => v?.onBreak?.since ?? v?.phaseSince));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
     final ringing = ref.watch(stationViewProvider.select((v) => v?.onBreak?.isAwayRing ?? false));
+    final noRing = ref.watch(stationViewProvider.select((v) => v?.onBreak?.noRing));
     final now = ref.watch(stationClockProvider);
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
@@ -304,6 +305,14 @@ class AwayView extends ConsumerWidget {
                 ringing ? StationCopy.awayRingDetail(at) : StationCopy.awayDetail(at),
                 style: text.bodyMedium!.copyWith(color: t.textSecondary),
               ),
+              if (noRing != null) ...[
+                const SizedBox(height: Space.sm),
+                Text(
+                  StationCopy.awayNoRing(noRing),
+                  key: const Key('away-no-ring'),
+                  style: text.bodyMedium!.copyWith(color: t.warning),
+                ),
+              ],
               const SizedBox(height: Space.sm),
               Text(
                 StationCopy.awayAutoReturnHint,

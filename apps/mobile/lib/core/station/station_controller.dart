@@ -290,6 +290,11 @@ class StationController extends Notifier<StationView?>
   /// clock, as the break's `since` said before the socket parked; null when unknown).
   ({DateTime back, DateTime? absenceStart})? _ringReturn;
 
+  /// Leaving the app asked `device_away` though the agent turned ringing on here: why the phone
+  /// won't ring (the 409 refusal's reason, else the ring layer's reading). The paused notification
+  /// and the away card say so. Cleared once the agent leaves that pause.
+  RingBlocker? _awayNoRing;
+
   /// The away notification's "Stop ringing" for this absence: `device_away`, not `away_ring`, is
   /// asked when the app is hidden again, until the agent is back in the pool (available).
   bool _ringStopped = false;
@@ -739,6 +744,7 @@ class StationController extends Notifier<StationView?>
     _awayRang = false;
     _ringStopped = false;
     _returnHold = false;
+    _awayNoRing = null;
     _ringMissesWhileAway = 0;
     _ringCall = null;
     _ringHangUp = null;
@@ -1080,7 +1086,10 @@ class StationController extends Notifier<StationView?>
     _syncRingCall();
     _settleInboundWaiters();
     _applyLifecycle(s);
-    if (_awayRang && !(_station.effectiveState == AgentState.onBreak && isAwayBreak(_station.breakReasonCode))) _awayRang = false;
+    final onAwayPause = _station.effectiveState == AgentState.onBreak && isAwayBreak(_station.breakReasonCode);
+    if (_awayRang && !onAwayPause) _awayRang = false;
+    // Out of the pause (or never in it: a call took it over): the "won't ring" note goes with it.
+    if (_awayNoRing != null && _foreground && !onAwayPause) _awayNoRing = null;
     // "Stop ringing" held for this absence: over once the agent is back in the pool.
     if (_ringStopped && _foreground && _station.effectiveState == AgentState.available) _ringStopped = false;
     _maybeExplainRingOff(s);
@@ -1147,6 +1156,7 @@ class StationController extends Notifier<StationView?>
       inboundHangupFailure: inbound != null && _inboundHangupFailure?.callId == inbound.id ? _inboundHangupFailure!.text : null,
       inboundNotice: _inboundNotice,
       awayRang: _awayRang,
+      awayNoRing: _awayNoRing == null || _ringStopped ? null : RingCopy.blockerWhy(_awayNoRing!),
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -1995,6 +2005,8 @@ class StationController extends Notifier<StationView?>
     // Nor after "Stop ringing" in this absence (until the agent is back in the pool).
     final code = awayBreakFor(ringOn: !_awayRingRefused && !_ringStopped && _ringOn);
     _awayCodeAsked = code;
+    // Paused, not rung, though ringing is on for this phone: the agent is told why.
+    if (code == ReservedBreakCode.deviceAway.wire && !_ringStopped && !_awayRingRefused) _awayNoRing = _fallbackBlocker;
     _log.info('left the app: pausing', {'state': st.wire, 'queued': action == AwayAction.queuePause, 'reason': code});
     unawaited(_api.takeBreak(s.id, code, timeout: const Duration(seconds: 5)).then((response) {
       _awayInFlight = false;
@@ -2036,6 +2048,8 @@ class StationController extends Notifier<StationView?>
         _log.info('away_ring refused: pausing with device_away', {'code': errorBodyOf(e)?.codeRaw ?? ''});
         _awayRingRefused = true;
         _awayCodeAsked = ReservedBreakCode.deviceAway.wire;
+        final refusal = ringBlockerOfRefusal(errorBodyOf(e)?.awayRingCode ?? AwayRingRefusalCode.unknown);
+        _awayNoRing = ringBlockerIsNews(refusal) ? refusal : null;
         _awayKey = null;
         if (action == AwayAction.queuePause) _awayQueueFailed = true;
         _maybeSendAway();
@@ -2080,6 +2094,16 @@ class StationController extends Notifier<StationView?>
     }
   }
 
+  /// Why leaving the app will not ring this phone though ringing is on for it (the ring layer).
+  RingBlocker? get _fallbackBlocker {
+    try {
+      return _ring.fallbackBlocker;
+    } catch (e) {
+      _log.warn('ring blocker unreadable', {'error': e.runtimeType.toString()});
+      return null;
+    }
+  }
+
   /// A 409 refusal of `away_ring` (an `AwayRingRefusalCode`).
   static bool _isAwayRingRefusal(Object e) {
     final body = errorBodyOf(e);
@@ -2115,7 +2139,12 @@ class StationController extends Notifier<StationView?>
   }
 
   /// "You're paused"'s words: after "Stop ringing", that ringing stopped.
-  String get _pausedBody => _ringStopped ? pausedRingingStoppedBody : pausedNotificationBody;
+  /// Asked `device_away` though ringing is on for this phone: that it won't ring, and why.
+  String get _pausedBody {
+    if (_ringStopped) return pausedRingingStoppedBody;
+    final b = _awayNoRing;
+    return b == null ? pausedNotificationBody : pausedNoRingBody(RingCopy.blockerWhy(b));
+  }
 
   void _setNotice(AwayNotice notice, DateTime? deadline, {bool softphoneOutcome = false}) {
     final body = notice == AwayNotice.paused ? _pausedBody : null;
