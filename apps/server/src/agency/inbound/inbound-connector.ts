@@ -20,8 +20,10 @@ import { createChildLogger } from '@magick-agency/observability';
 import {
   trackInboundCallEnded,
   trackInboundOffer,
+  trackInboundAnsweredWait,
   trackInboundRing,
   trackInboundRingAnswer,
+  trackInboundRingBind,
   trackInboundOverflow,
   trackInboundQueueWaiting,
   trackInboundWait,
@@ -1407,6 +1409,8 @@ export class InboundConnector {
     held.ring = null;
     held.boundRingToken = ring.token;
     trackInboundRing('answered');
+    // The cold start's headroom inside the accept grace: answered on the phone → bound.
+    if (ring.answeredAt !== null) trackInboundRingBind((this.now() - ring.answeredAt) / 1000);
     // Not awaited (this runs inside the bind), but tracked: `drain()` and the shutdown wait for them.
     void this.trackBackground(agencyInboundCallRepository.setRingResult(held.id, 'answered')
       .catch((err: unknown) => log.warn({ err, inboundCallId: held.id }, 'Could not write an answered ring')));
@@ -1442,7 +1446,9 @@ export class InboundConnector {
     held.phase = 'connected';
     this.stopLease(held);
     trackInboundOffer('connected', held.offeredClient, held.channel);
-    trackInboundWait('connected', (at.getTime() - (held.record.queued_at ?? held.record.arrived_at).getTime()) / 1000);
+    const waited = (at.getTime() - (held.record.queued_at ?? held.record.arrived_at).getTime()) / 1000;
+    trackInboundWait('connected', waited);
+    trackInboundAnsweredWait(held.channel, waited);
     this.queue.remove(held.id);
     if (!await this.deps.agents.transition(sessionId, 'reserved', 'on_call', { leaseMs: AGENT_LEASE_MS.on_call })) {
       log.warn({ inboundCallId: held.id, sessionId }, 'Inbound call bridged with the agent no longer reserved for it');

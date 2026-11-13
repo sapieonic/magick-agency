@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { AGENCY_INBOUND_RING_MAX_MISSES } from '@magick-agency/contracts/agency';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, insertTenant } from '../setup/factories.js';
@@ -43,6 +43,7 @@ const { AgencyInboundCallRouter } = await import('../../../src/agency/inbound/in
 const { AwayRingService } = await import('../../../src/agency/away-ring.js');
 const { parseInboundRouteCreate } = await import('../../../src/agency/inbound/route-config.js');
 const { setPushSender, resetPushSender } = await import('../../../src/seams/push-sender.js');
+const { agencyInboundRingBindSeconds, agencyInboundAnsweredWaitSeconds } = await import('@magick-agency/observability/metrics/agency');
 type Connector = InstanceType<typeof InboundConnector>;
 type CallRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundCallRecord;
 type RouteRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundRouteRecord;
@@ -274,6 +275,9 @@ afterAll(async () => {
 
 describe('a ring and its answer', () => {
   it('ring → answering → accept → attach → bind: the push carries ids only, the spine says push, the agent talks, misses reset, the absence over', async () => {
+    const bindSeconds = vi.spyOn(agencyInboundRingBindSeconds, 'observe');
+    const answeredWait = vi.spyOn(agencyInboundAnsweredWaitSeconds, 'observe');
+    onTestFinished(() => { bindSeconds.mockRestore(); answeredWait.mockRestore(); });
     const c = connector();
     const away = await awayAgent();
     await pool().query('UPDATE agency_agent_sessions SET ring_misses = 1 WHERE id = $1', [away.sessionId]);
@@ -327,6 +331,12 @@ describe('a ring and its answer', () => {
     // Past accept: a repeated accept is `already_accepted`.
     expect(await c.ringAccept(call.id, token, { agentUserId: away.userId, deviceId: away.deviceId })).toEqual({ ok: false, code: 'already_accepted' });
     expect(pushes('ring_cancel')).toEqual([]);
+    // The cold start's headroom (answered → bound, inside the 15 s grace), and the caller's wait by
+    // the channel that connected them.
+    expect(bindSeconds).toHaveBeenCalledTimes(1);
+    expect(bindSeconds.mock.calls[0]![0]).toBeGreaterThanOrEqual(0);
+    expect(bindSeconds.mock.calls[0]![0]).toBeLessThan(15);
+    expect(answeredWait).toHaveBeenCalledWith({ channel: 'push' }, expect.any(Number));
   });
 
   it('a repeated accept from the same agent and device answers the call again; another device is already_accepted, another agent ring_not_offered', async () => {

@@ -22,6 +22,7 @@
  * offer for it) is never ended here: its end is the connector's, on the call's own chain (N1).
  */
 import { createChildLogger } from '@magick-agency/observability';
+import { trackAwayRingEnded } from '@magick-agency/observability/metrics/agency';
 import {
   AWAY_RING_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON,
@@ -369,6 +370,9 @@ export class AwayRingService {
     const ended = await agencyAgentSessionRepository.endAwayRing(sessionId, offline ? 'offline' : 'break');
     if (!ended) return { outcome: 'not_away_ring' };
     const awaySince = ended.away_since ?? absenceSince;
+    // `taken_over` is counted where its `ring_off` is sent ({@link sendRingOff}): the take-over and
+    // the leaves end the absence outside this method.
+    if (reason !== 'taken_over') trackAwayRingEnded(reason ?? 'returned');
     const since = offline ? undefined : (awaySince ?? new Date()).toISOString();
     if (since) {
       this.deps.stations.send(sessionId, { event: 'agent_state', state: 'break', since, break_reason: DEVICE_AWAY_BREAK_REASON });
@@ -505,6 +509,9 @@ export class AwayRingService {
     reason: AgencyRingOffReason,
     awaySince: Date | null,
   ): void {
+    // The take-over and the leaves end an absence outside `end` and tell the phone here: counted
+    // here, once per absence, device or none.
+    if (reason === 'taken_over') trackAwayRingEnded('taken_over');
     if (!deviceId) return;
     this.track((async () => {
       const device = await agencyPushDeviceRepository.find(agentUserId, deviceId);

@@ -20,6 +20,7 @@ const { agencyAgentSessionRepository: sessions, agencyPushDeviceRepository: devi
   await import('../../../src/db/repositories/agency.repository.js');
 const { setPushSender, resetPushSender } = await import('../../../src/seams/push-sender.js');
 const { AWAY_RING_BREAK } = await import('@magick-agency/domain/break-manager');
+const { agencyAwayRingEndedTotal } = await import('@magick-agency/observability/metrics/agency');
 
 /*
  * Mode B's `away_ring` (IQ66, IQ67, N1, N2, N5) against REAL Redis running the REAL Lua and REAL
@@ -752,6 +753,34 @@ describe('AwayRingService', () => {
     release();
     await stopping;
     expect(await pass).toMatchObject({ cleared: 1 });
+  });
+
+  it('every end of an absence is counted once, by why: the server\'s reasons, the take-over, the return', async () => {
+    const ended = vi.spyOn(agencyAwayRingEndedTotal, 'inc');
+    try {
+      await device();
+      const missed = await onAwayRing();
+      expect(await service().svc.end(missed.id, 'ring_missed')).toBe('ended');
+      // A second end of the same absence finds nothing to end, and counts nothing.
+      expect(await service().svc.end(missed.id, 'ring_missed')).toBe('not_away_ring');
+      expect(ended.mock.calls).toEqual([[{ reason: 'ring_missed' }]]);
+      await sessions.leave(missed.id);
+
+      ended.mockClear();
+      const back = await onAwayRing();
+      expect(await service({ attached: new Set([back.id]) }).svc.endOnReturn(back.id)).toBe('ended');
+      expect(ended.mock.calls).toEqual([[{ reason: 'returned' }]]);
+      await sessions.leave(back.id);
+
+      ended.mockClear();
+      const taken = await onAwayRing();
+      const claim = await sessions.claimStationDevice(taken.id, { deviceId: 'laptop-bbbb-2', takeOver: true });
+      if (!claim.ok || !claim.endedAwayRing) throw new Error('no end');
+      await service().svc.endOnTakeOver(taken.id, user, 'phone-aaaa-1', claim.endedAwayRing.awaySince);
+      expect(ended.mock.calls).toEqual([[{ reason: 'taken_over' }]]);
+    } finally {
+      ended.mockRestore();
+    }
   });
 
   it('a push the carrier says is unregistered revokes the device', async () => {

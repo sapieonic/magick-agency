@@ -956,6 +956,30 @@ export const agencyInboundRingAnswerSeconds = histogram(meter, 'agency_inbound_r
   buckets: [1, 2, 4, 6, 8, 10, 12, 15, 20],
 });
 
+export const agencyInboundRingBindSeconds = histogram(meter, 'agency_inbound_ring_bind_seconds', {
+  description: 'Seconds from the agent answering a ring on the phone to the call binding to the app\'s station (Mode B; the accept grace is 15 s): the cold start\'s headroom',
+  unit: 's',
+  buckets: [0.5, 1, 2, 3, 4, 6, 8, 10, 12, 15],
+});
+
+export const agencyInboundAnsweredWaitSeconds = histogram<'channel'>(meter, 'agency_inbound_answered_wait_seconds', {
+  description: 'Seconds a connected inbound caller waited in the queue (from first queueing), by the channel of the offer that connected them: station (the station socket) or push (a ring to an away phone)',
+  unit: 's',
+  buckets: [1, 5, 10, 20, 30, 60, 120, 300, 600],
+});
+
+/**
+ * Why an away agent's `away_ring` ended (`agency_away_ring_ended_total`): the server's reasons
+ * (the contract's `AgencyRingOffReason`, the `ring_off` push's), or `returned`, the agent back in
+ * the app (a station attaching, the app's own `device_away`).
+ */
+export type AwayRingEndedReason =
+  | 'ring_missed' | 'revoked' | 'opted_out' | 'flag_off' | 'max_age' | 'taken_over' | 'returned';
+
+export const agencyAwayRingEndedTotal = counter<'reason'>(meter, 'agency_away_ring_ended_total', {
+  description: 'Absences on away_ring (an away agent\'s phone rung for inbound callers, Mode B) that ended, by why: ring_missed, revoked, opted_out, flag_off, max_age, taken_over (another device took the station, or the session was left from one) or returned (the agent came back to the app)',
+});
+
 export const agencyInboundOverflowsTotal = counter<'reason'>(meter, 'agency_inbound_overflows_total', {
   description: 'Inbound callers overflowed from the queue (the route\'s overflow action), by why: max_wait (waited the route\'s maximum), over_cap (over max_waiting with nobody free) or no_agents (nobody in the pool could take them)',
 });
@@ -995,6 +1019,21 @@ export function trackInboundRing(result: InboundRingMetricResult): void {
 /** A ring was answered on the phone (`…/ring/answering`, or an attach mid-ring): seconds since it started. */
 export function trackInboundRingAnswer(seconds: number): void {
   agencyInboundRingAnswerSeconds.observe(Math.max(0, seconds));
+}
+
+/** An answered ring bound to the app's station: seconds since it was answered (the grace's headroom). */
+export function trackInboundRingBind(seconds: number): void {
+  agencyInboundRingBindSeconds.observe(Math.max(0, seconds));
+}
+
+/** A queued inbound caller was connected: their wait, by the channel of the offer that connected them. */
+export function trackInboundAnsweredWait(channel: InboundOfferChannel, seconds: number): void {
+  agencyInboundAnsweredWaitSeconds.observe({ channel }, Math.max(0, seconds));
+}
+
+/** One `away_ring` absence ended, once per absence. */
+export function trackAwayRingEnded(reason: AwayRingEndedReason): void {
+  agencyAwayRingEndedTotal.inc({ reason });
 }
 
 // ─── Inbound operations (docs/inbound.md §3.2, §8.1; `telephony/credentials/inbound-monitor.ts`) ─

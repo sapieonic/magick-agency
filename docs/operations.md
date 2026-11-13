@@ -620,9 +620,11 @@ fallback XML hosted off the deployment and `PLIVO_INBOUND_FALLBACK_ANSWER_URL` s
      or the overflow; two missed rings in a row stop that phone ringing ("Your phone stopped ringing
      for inbound calls").
    - **Watch:** the dashboard's *Mode B: ringing away phones* row (rings by result, ring to answer,
-     push sends by result) and `agy-inbound-ring-push-failed` (runbook below). The audit trail has
+     push sends by result, away-ring ends by reason, answer to bind, connected callers' wait by
+     channel) and `agy-inbound-ring-push-failed` (runbook below). The audit trail has
      `Phone stopped ringing for inbound calls` (with why), ring accepted and declined, and the
      devices' opt-in changes and removals.
+   - **Judge the pilot** on "Mode B pilot scorecard" below.
 
 
 **Automatic pauses.** Three reasons on a campaign's pause say its carrier account cannot dial. The
@@ -665,6 +667,22 @@ before anything was sent: no webhook base, a malformed number or caller ID, the 
 A steady `rate_limited` means the dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and
 retry on the next pacing tick. A steady `not_sent` is configuration or network: read the
 `Plivo dial not sent` log lines.
+
+### Mode B pilot scorecard
+
+**Proposed — pending Manas.** What decides whether the pilot account keeps Mode B, read weekly
+from the *Mode B* row (PromQL over the metrics named; `$s` stands for the dashboard's
+`deployment_environment` / `service_name` selector). The thresholds are proposals to agree before
+the pilot starts, not measured values.
+
+| Measure | How it is read | Proposed bar |
+|---|---|---|
+| Ring answer rate | `sum(increase(agency_inbound_rings_total{result="answered",$s}[7d])) / sum(increase(agency_inbound_rings_total{result!~"answered_elsewhere\|cancelled\|caller_left",$s}[7d]))`: rings the agent could have answered | at least 0.5 |
+| Caller p90 wait, before and after | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_wait_seconds_bucket{result="connected",$s}[7d])))`, the week before the flag against each pilot week; `agency_inbound_answered_wait_seconds{channel}` splits the pilot weeks by station and push | no worse than before; push p90 within the route's maximum wait |
+| Overflow share | `agency_inbound_overflows_total` over `agency_inbound_calls_total`, before and after | lower than before |
+| `ring_missed` ends per agent per day | `increase(agency_away_ring_ended_total{reason="ring_missed",$s}[1d])` divided by the agents opted in (the devices with ringing on); the audit trail (`Phone stopped ringing for inbound calls`, why: missed rings) names them | at most 1; an agent above it most days is asked whether ringing suits them |
+| Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert pages above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
+| Bind headroom | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_ring_bind_seconds_bucket{$s}[7d])))` against the 15 s accept grace; `accept_lapsed` in `agency_inbound_rings_total` | p90 below 8 s; `accept_lapsed` below 0.05 of answered rings |
 
 ## Recordings
 

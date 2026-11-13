@@ -3,6 +3,7 @@ import { AsyncResource } from 'node:async_hooks';
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
+import { trackAwayRingEnded } from '@magick-agency/observability/metrics/agency';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
@@ -395,6 +396,7 @@ export class AgencyRuntime {
     // back as `device_away` (the agent is on screen, and `break` with no `ring` is not `away_ring`),
     // keeping the absence's start as `since`, as every end of `away_ring` does.
     const absenceSince = !softphoneFlavoured ? row?.away_ring_since ?? null : null;
+    if (absenceSince) trackAwayRingEnded('returned');
     await this.agents.set(sessionId, 'break', {
       leaseMs: AGENT_LEASE_MS.break,
       ...(absenceSince ? { sinceMs: absenceSince.getTime() } : {}),
