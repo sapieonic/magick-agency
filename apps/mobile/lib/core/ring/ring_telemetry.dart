@@ -21,7 +21,8 @@ abstract final class RingTelemetry {
   static void expired(String callId, {required String reason, String? code}) =>
       Telemetry.event('agency_inbound_ring_expired', {'call_id': callId, 'reason': reason, 'code': ?code});
 
-  /// The agent turned ringing on or off on this phone ([source]: `settings`, `notification`).
+  /// The agent turned ringing on or off on this phone ([source]: `settings`, the Me card, the only
+  /// place it changes).
   static void optInChanged({required bool on, required String source}) =>
       Telemetry.event('agency_ring_optin_changed', {'on': on, 'source': source});
 }

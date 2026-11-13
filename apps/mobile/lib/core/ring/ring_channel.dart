@@ -203,11 +203,9 @@ final class RingChecklist {
   /// Without these the phone cannot ring, or the agent cannot talk once they answer: a
   /// notification to ring with, the calling account Telecom rings through, and the microphone.
   /// Full-screen calls, battery optimisation and Do Not Disturb make a ring easier to miss, not
-  /// impossible, so they are advice ([allOk]).
+  /// impossible, so they are advice.
   bool get essentialsOk =>
       ok(RingChecklistItem.notifications) && ok(RingChecklistItem.phoneAccount) && ok(RingChecklistItem.microphone);
-
-  bool get allOk => RingChecklistItem.values.every(ok);
 
   @override
   bool operator ==(Object other) =>

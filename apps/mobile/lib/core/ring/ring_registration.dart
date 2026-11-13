@@ -290,7 +290,7 @@ class RingRegistration extends Notifier<RingSettings> {
 
   /// Opt in or out on this phone. A device the server has never seen is registered with the
   /// choice (it needs a token to be registered at all).
-  Future<void> setOptIn(bool on, {String source = 'settings'}) async {
+  Future<void> setOptIn(bool on) async {
     final platform = _platform;
     if (platform == null || state.saving) return;
     final device = state.status?.device;
@@ -311,18 +311,11 @@ class RingRegistration extends Notifier<RingSettings> {
       }
       if (!ref.mounted) return;
       state = state.copyWith(status: status, saving: false);
-      RingTelemetry.optInChanged(on: on, source: source);
+      RingTelemetry.optInChanged(on: on, source: 'settings');
     } catch (e) {
       _log.warn('ring opt-in change failed', {'on': on, 'error': e.runtimeType.toString()});
       if (ref.mounted) state = state.copyWith(saving: false, error: RingCopy.optInFailed);
     }
-  }
-
-  /// The checklist again (after the agent fixed something in the system settings).
-  Future<void> refreshChecklist() async {
-    if (_platform == null) return;
-    final checklist = await _channel.checklist();
-    if (ref.mounted && checklist != null) state = state.copyWith(checklist: checklist);
   }
 
   Future<void> openSettings(RingChecklistItem item) => _channel.openSettings(item);

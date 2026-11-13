@@ -9,7 +9,7 @@ import '../inbound/inbound_fixtures.dart' show pushSample;
 import 'ring_harness.dart';
 
 /// The push device's registration (Mode B): PUT once the gate is ready, on a new token and on
-/// every return; opt-in by PATCH (the Me card, "Stop ringing"); DELETE on sign-out; the test
+/// every return; opt-in by PATCH (the Me card); DELETE on sign-out; the test
 /// ring. The device id is the station device id.
 void main() {
   test('nothing before the gate is ready; then PUT with the token and this build, and the checklist read', () {

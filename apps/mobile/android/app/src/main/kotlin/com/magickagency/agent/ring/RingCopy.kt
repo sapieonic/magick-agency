@@ -42,7 +42,7 @@ object RingCopy {
 
     /**
      * The `ring_off` notice's text for [reason] (`AGENCY_RING_OFF_REASONS`); null for `opted_out`,
-     * which the agent did themselves ("Stop ringing"), so there is nothing to tell them.
+     * which the agent did themselves (the Me card's toggle), so there is nothing to tell them.
      */
     fun ringOffText(reason: String?): String? = when (reason) {
         "ring_missed" -> "You missed two inbound calls. Open the app to turn it back on."

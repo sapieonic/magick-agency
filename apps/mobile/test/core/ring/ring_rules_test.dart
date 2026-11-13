@@ -241,7 +241,7 @@ void main() {
       expect(RingEndReason.values.map((r) => r.wire), ['ended', 'accept_failed', 'cancelled']);
       final read = RingChecklist.tryRead({'notifications': true, 'microphone': true, 'phone_account': true})!;
       expect(read.essentialsOk, isTrue);
-      expect(read.allOk, isFalse, reason: 'a key native did not send reads false');
+      expect(read.ok(RingChecklistItem.fullScreen), isFalse, reason: 'a key native did not send reads false');
       expect(RingChecklist.tryRead('nope'), isNull);
     });
 
