@@ -35,13 +35,12 @@ internal class RingApi(context: Context) {
     /** [budgetMs]: the whole send (attempts and the wait between) stays inside it; null for none. [onDone] always runs. */
     private fun send(budgetMs: Long?, onDone: ((RingApiOutcome) -> Unit)?, build: (String, String, String) -> RingHttpRequest?) {
         val origin = app.getString(R.string.magick_api_origin)
-        val client = clientHeader()
         executor.execute {
             val start = SystemClock.elapsedRealtime()
             val left = { budgetMs?.let { it - (SystemClock.elapsedRealtime() - start) } }
             var outcome = RingApiOutcome.NETWORK
             try {
-                val request = build(origin, client, UUID.randomUUID().toString())
+                val request = build(origin, clientHeader, UUID.randomUUID().toString())
                 outcome = if (request == null) {
                     Log.w(TAG, "No request: the build's API origin is not an http(s) origin")
                     RingApiOutcome.CLIENT_ERROR
@@ -77,9 +76,8 @@ internal class RingApi(context: Context) {
     /** One attempt. [timeoutMs]: connect and read, each; 0 sends nothing. */
     private fun execute(request: RingHttpRequest, timeoutMs: Int): Answer {
         if (timeoutMs <= 0) return Answer(null)
-        var conn: HttpURLConnection? = null
         return try {
-            conn = (URI(request.url).toURL().openConnection() as HttpURLConnection).apply {
+            val conn = (URI(request.url).toURL().openConnection() as HttpURLConnection).apply {
                 requestMethod = request.method
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
@@ -91,7 +89,9 @@ internal class RingApi(context: Context) {
             conn.setFixedLengthStreamingMode(bytes.size)
             conn.outputStream.use { it.write(bytes) }
             val status = conn.responseCode
-            // Drain so the connection can be reused; the body carries nothing native needs.
+            // Drained and closed, not disconnected: HttpURLConnection keeps the socket for the next
+            // request (a retry, the decline after an answering) only once its body was read to the
+            // end. The body carries nothing native needs.
             runCatching { (if (status >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
             Answer(status, conn.getHeaderField("Retry-After"))
         } catch (e: IOException) {
@@ -100,13 +100,11 @@ internal class RingApi(context: Context) {
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "$request not sent: ${e.javaClass.simpleName}")
             Answer(null)
-        } finally {
-            conn?.disconnect()
         }
     }
 
-    /** `X-Client`, as Dart's `ClientIdentity.header`. */
-    private fun clientHeader(): String {
+    /** `X-Client`, as Dart's `ClientIdentity.header`: read from the package once, on first use. */
+    private val clientHeader: String by lazy {
         val (version, build) = try {
             val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 app.packageManager.getPackageInfo(app.packageName, PackageManager.PackageInfoFlags.of(0))
@@ -118,7 +116,7 @@ internal class RingApi(context: Context) {
         } catch (e: PackageManager.NameNotFoundException) {
             "unknown" to "0"
         }
-        return RingRequests.clientHeader(version, build, Build.VERSION.RELEASE ?: "", "${Build.MANUFACTURER} ${Build.MODEL}")
+        RingRequests.clientHeader(version, build, Build.VERSION.RELEASE ?: "", "${Build.MANUFACTURER} ${Build.MODEL}")
     }
 
     private companion object {

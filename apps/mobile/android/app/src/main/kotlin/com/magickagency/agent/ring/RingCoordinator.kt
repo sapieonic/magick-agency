@@ -84,20 +84,27 @@ internal object RingCoordinator {
 
     // ─── Entry points ────────────────────────────────────────────────────────
 
-    /** An FCM data message ([RingMessagingService], a worker thread); [sentAtMs]: FCM's send time, null when unknown. */
+    /**
+     * An FCM data message ([RingMessagingService], a worker thread); [sentAtMs]: FCM's send time,
+     * null when unknown. The push is parsed, and the ring's preferences (with the server clock
+     * offset Dart measured) are loaded, here on FCM's worker, so the main thread never waits on the
+     * disk; what reads the phone's call state and the state machine stay on main.
+     */
     fun onPush(context: Context, data: Map<String, String>, sentAtMs: Long?) {
         val push = RingPushParser.parse(data)
         if (push == null) {
             Log.w(TAG, "Ignored a push that is not a ring push (type=${data["type"]})")
             return
         }
+        // The first read of the preferences file loads it from disk; init on main then finds it loaded.
+        val clock = RingStore(context.applicationContext).serverClock
         onMain {
             val a = init(context)
             // What the phone says about calls; whether our own ring explains it is the state machine's call.
             val phone = if (push is RingPush.Ring || push is RingPush.Test) RingTelecom.phoneSignals(a) else PhoneSignals.IDLE
             val now = System.currentTimeMillis()
             // The server's present, from the offset Dart measured, while it is fresh.
-            val offset = store?.serverClock?.takeIf { it.isFresh(now) }?.offsetMs
+            val offset = clock?.takeIf { it.isFresh(now) }?.offsetMs
             dispatch(RingEvent.Push(push, now, phone, sentAtMs, offset))
         }
     }

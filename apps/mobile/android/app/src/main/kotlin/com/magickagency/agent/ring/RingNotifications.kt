@@ -112,7 +112,12 @@ internal object RingNotifications {
 
     private fun nm(context: Context): NotificationManager = context.getSystemService(NotificationManager::class.java)
 
+    /** The channels were made (or found) in this process: they persist, so once is enough. */
+    @Volatile
+    private var channelsEnsured = false
+
     fun ensureChannels(context: Context) {
+        if (channelsEnsured) return
         val nm = nm(context)
         if (nm.getNotificationChannel(CHANNEL_RING) == null) {
             val ring = NotificationChannel(CHANNEL_RING, RingCopy.CHANNEL_RING, NotificationManager.IMPORTANCE_HIGH).apply {
@@ -154,6 +159,7 @@ internal object RingNotifications {
                 },
             )
         }
+        channelsEnsured = true
     }
 
     fun canPost(context: Context): Boolean =
