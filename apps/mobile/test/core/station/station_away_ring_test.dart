@@ -412,6 +412,26 @@ void main() {
       });
     });
 
+    test('"Stop ringing" ends the return\'s check: two misses heard while away make no banner over "Ringing stopped"', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app);
+        r.channel.emit(RingEnded(_pushCallId, 'expired'));
+        r.channel.emit(RingEnded('other-call', 'accept_lapsed'));
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.');
+        backFromAwayRing(app);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.container.read(ringNoticeProvider), 'Ringing stopped. You’re paused.',
+            reason: 'the agent stopped ringing themselves: nothing to explain');
+        app.dispose();
+      });
+    });
+
     test('a ring in flight keeps away_ring: device_away is asked again each second, and the station waits for it', () {
       fakeAsync((async) {
         final r = _Ring(async)..availableThenAway();
@@ -767,6 +787,26 @@ void main() {
         expect(app.connector.attempts, 2);
         expect(app.socket.url.queryParameters['token'], 'accept1');
         expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('answered on the way back: the return\'s check ends with the answer (native\'s ring_off is not read, no banner)', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.emit(RingEnded('other-call', 'expired'));
+        r.channel.emit(RingEnded('another-call', 'expired'));
+        app.controller.holdForRingAnswer(_pushCallId);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        app.readyFrame('reserved');
+        app.frame(_pushFrame('inbound_call_push_accepted'));
+        async.flushMicrotasks();
+        expect(r.channel.named('takeRingOff'), isEmpty);
+        expect(app.container.read(ringNoticeProvider), isNull);
         app.dispose();
       });
     });
