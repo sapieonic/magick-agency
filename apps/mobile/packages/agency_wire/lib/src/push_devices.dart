@@ -56,6 +56,9 @@ enum PushPlatform implements WireEnum {
 enum PushFailureReason implements WireEnum {
   /// The token is gone: the device was revoked; register again.
   unregistered('unregistered'),
+
+  /// The carrier refused this token for good: the device was revoked;
+  /// register again.
   invalid('invalid'),
   rateLimited('rate_limited'),
   unavailable('unavailable'),

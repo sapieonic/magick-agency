@@ -46,7 +46,7 @@ export type MockPushAnswer =
   | { kind: 'ok' }
   /** FCM 404 `NOT_FOUND`/`UNREGISTERED`; APNs 410 `Unregistered`. */
   | { kind: 'unregistered' }
-  /** FCM 400 `INVALID_ARGUMENT`; APNs 400 `DeviceTokenNotForTopic`. */
+  /** FCM 400 `INVALID_ARGUMENT` on the token (`message.token`); APNs 400 `DeviceTokenNotForTopic`. */
   | { kind: 'invalid' }
   /** 429 (FCM `QUOTA_EXCEEDED`, APNs `TooManyRequests`), with `Retry-After` when given. */
   | { kind: 'rate_limited'; retryAfterSeconds?: number }
@@ -375,12 +375,17 @@ export class MockPushCarrier {
     }
     if (answer.kind === 'hang') return new Promise<Response>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
     if (answer.kind === 'network' || answer.kind === 'refused') throw new TypeError('fetch failed');
-    const fcmError = (status: number, canonical: string, errorCode: string, extra: Record<string, string> = {}) => {
+    const fcmError = (status: number, canonical: string, errorCode: string, extra: Record<string, string> = {}, tokenField = false) => {
       recorded.status = status;
       return Response.json({
         error: {
           code: status, message: canonical, status: canonical,
-          details: [{ '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode }],
+          details: [
+            { '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode },
+            ...(tokenField
+              ? [{ '@type': 'type.googleapis.com/google.rpc.BadRequest', fieldViolations: [{ field: 'message.token', description: 'Invalid registration token' }] }]
+              : []),
+          ],
         },
       }, { status, headers: extra });
     };
@@ -389,7 +394,7 @@ export class MockPushCarrier {
         recorded.status = 200;
         return Response.json({ name: `projects/${this.config.fcm.projectId}/messages/${randomBytes(8).toString('hex')}` });
       case 'unregistered': return fcmError(404, 'NOT_FOUND', 'UNREGISTERED');
-      case 'invalid': return fcmError(400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT');
+      case 'invalid': return fcmError(400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT', {}, true);
       case 'rate_limited':
         return fcmError(429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED',
           answer.retryAfterSeconds !== undefined ? { 'retry-after': String(answer.retryAfterSeconds) } : {});

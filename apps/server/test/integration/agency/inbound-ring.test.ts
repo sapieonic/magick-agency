@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENCY_INBOUND_RING_MAX_MISSES } from '@magick-agency/contracts/agency';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { DEFAULTS, insertTenant } from '../setup/factories.js';
+import { DEFAULTS, OTHER_ACCOUNT, insertTenant } from '../setup/factories.js';
 import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js';
 import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
 import { FakeBridge, FakeStations, gate, sleep, until, type FakeStationEntry } from './inbound-connector-fakes.js';
@@ -89,7 +89,7 @@ interface SentPush { deviceRowId: string; payload: Record<string, unknown> }
 const sender = {
   sent: [] as SentPush[],
   /** The next answers, in order; then `{ ok: true }`. */
-  answers: [] as Array<{ ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' | 'rate_limited' | 'invalid' }>,
+  answers: [] as Array<{ ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' | 'rate_limited' | 'invalid'; scope?: 'device' | 'service' }>,
 };
 
 function awayRingFor(getConnector: () => Connector | null) {
@@ -152,10 +152,12 @@ async function member(): Promise<string> {
 let deviceSeq = 0;
 
 /** An agent on `away_ring`: a campaign session whose phone (registered, opted in) is its station device; no station here. */
-async function awayAgent(opts: { userId?: string } = {}): Promise<{ sessionId: string; userId: string; deviceId: string; deviceRowId: string }> {
+async function awayAgent(opts: { userId?: string; campaignId?: string; accountId?: string } = {}): Promise<{ sessionId: string; userId: string; deviceId: string; deviceRowId: string }> {
   const userId = opts.userId ?? await member();
   const deviceId = `phone-ring-${String(++deviceSeq).padStart(4, '0')}`;
-  const row = await insertAgentSession(campaignId, { agent_user_id: userId, station_device_id: deviceId, client_kind: 'mobile' });
+  const row = await insertAgentSession(opts.campaignId ?? campaignId, {
+    agent_user_id: userId, station_device_id: deviceId, client_kind: 'mobile', ...(opts.accountId ? { account_id: opts.accountId } : {}),
+  });
   const device = await devices.register({
     tenantId: T, userId, deviceId, platform: 'android', token: `fcm-${randomUUID()}`, appBuild: '1.4.0+40', ringEnabled: true,
   });
@@ -188,10 +190,10 @@ async function caller(c: Connector, over: Partial<Parameters<typeof calls.insert
 }
 
 /** A route of the account (sticky off unless told). */
-async function makeRoute(over: Record<string, unknown> = {}): Promise<RouteRecord> {
+async function makeRoute(over: Record<string, unknown> = {}, accountId: string = A): Promise<RouteRecord> {
   const parsed = parseInboundRouteCreate({ name: `R-${randomUUID().slice(0, 8)}`, timezone: 'UTC', weekly_hours: [], sticky_mode: 'off', ...over });
   if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
-  const created = await routes.create({ tenantId: T, accountId: A, createdBy: null, config: parsed.config });
+  const created = await routes.create({ tenantId: T, accountId, createdBy: null, config: parsed.config });
   if (!created.ok) throw new Error('route');
   return created.route;
 }
@@ -545,6 +547,53 @@ describe('the ends of a ring', () => {
     // After the pause the republish rings again (the service is back after three failures).
     await until('rung again', () => (pushes('ring').length >= 2 ? true : null));
     for (const p of phones) expect(await sessionRow(p.sessionId)).toMatchObject({ ring_misses: 0 });
+  });
+
+  it('a sticky phone the carrier refuses (invalid) is revoked, not rung again for that caller, and the team phone is rung next', async () => {
+    const strict = await makeRoute({ sticky_mode: 'strict' });
+    // A pause would hold the team's ring for a minute: the next ring coming at once shows there is none.
+    const c = connector({ pushRetryMs: 60_000 });
+    const sticky = await awayAgent();
+    const team = await awayAgent();
+    sender.answers.push({ ok: false, reason: 'invalid' });
+    const { call } = await caller(c, { routeId: strict.id, identification: { match: null, callerDnc: false, sticky: { userId: sticky.userId, reason: 'owner' } } }, strict);
+    await ringPush(team.deviceRowId, call.id);
+    expect(await row(call.id)).toMatchObject({ state: 'offered', session_id: team.sessionId, ring_count: 2 });
+    expect(pushes('ring', sticky.deviceRowId)).toHaveLength(1);
+    // Revoked like an unregistered token: the absence ends `revoked`, no miss.
+    expect(await devices.find(sticky.userId, sticky.deviceId)).toMatchObject({ last_failure_reason: 'invalid' });
+    expect((await devices.find(sticky.userId, sticky.deviceId))!.revoked_at).not.toBeNull();
+    expect(await sessionRow(sticky.sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null, ring_misses: 0 });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'agency_session.away_ring_ended', resource_id: sticky.sessionId, details: expect.objectContaining({ reason: 'revoked' }) }));
+  });
+
+  it('a phone held back alone (its own rate limit) is not rung again for that caller: the team phone next, the phone still ringable', async () => {
+    const strict = await makeRoute({ sticky_mode: 'strict' });
+    const c = connector({ pushRetryMs: 60_000 });
+    const sticky = await awayAgent();
+    const team = await awayAgent();
+    sender.answers.push({ ok: false, reason: 'rate_limited', scope: 'device' });
+    const { call } = await caller(c, { routeId: strict.id, identification: { match: null, callerDnc: false, sticky: { userId: sticky.userId, reason: 'owner' } } }, strict);
+    await ringPush(team.deviceRowId, call.id);
+    expect(pushes('ring', sticky.deviceRowId)).toHaveLength(1);
+    expect((await devices.find(sticky.userId, sticky.deviceId))!.revoked_at).toBeNull();
+    await expectAwayRing(sticky.sessionId);
+    expect(await sessionRow(sticky.sessionId)).toMatchObject({ ring_misses: 0 });
+  });
+
+  it('one device refused (invalid) pauses nobody else: another account\'s caller is rung at once', async () => {
+    const c = connector({ pushRetryMs: 60_000 });
+    const here = await awayAgent();
+    const otherCampaign = (await insertAgencyCampaign({ tenant_id: T, account_id: OTHER_ACCOUNT, status: 'running' })).id as string;
+    const there = await awayAgent({ campaignId: otherCampaign, accountId: OTHER_ACCOUNT });
+    const otherRoute = await makeRoute({}, OTHER_ACCOUNT);
+    sender.answers.push({ ok: false, reason: 'invalid' });
+    const { call: first } = await caller(c);
+    await until('push_failed', async () => (await row(first.id)).ring_result === 'push_failed');
+    const { call: second } = await caller(c, { accountId: OTHER_ACCOUNT, routeId: otherRoute.id }, otherRoute);
+    await ringPush(there.deviceRowId, second.id);
+    expect(await row(second.id)).toMatchObject({ state: 'offered', session_id: there.sessionId });
+    expect((await devices.find(here.userId, here.deviceId))!.revoked_at).not.toBeNull();
   });
 
   it('an unregistered token revokes the device and ends away_ring (revoked)', async () => {

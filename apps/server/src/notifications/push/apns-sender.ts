@@ -19,9 +19,11 @@
  *    `apns-expiration` the end of `ttlMs` (epoch seconds; `0` sends once and stores nothing).
  *  - Errors (`AgencyPushFailureReason`): 410, `BadDeviceToken`, `Unregistered`, `ExpiredToken` →
  *    `unregistered` (a sandbox token sent to production is refused `BadDeviceToken` too: set
- *    `PUSH_APNS_ENV` to match the build); 429 → `rate_limited` (held back, never retried in a
- *    ring); other 4xx except 403 → `invalid`; 403 (our provider token or topic), 5xx, a network
- *    error and the {@link PUSH_REQUEST_TIMEOUT_MS} timeout → `unavailable`.
+ *    `PUSH_APNS_ENV` to match the build); `DeviceTokenNotForTopic` → `invalid` (both revoke the
+ *    device); 429 (`TooManyRequests`, per token) → `rate_limited` with scope `device` (held back,
+ *    never retried in a ring); 403 (our provider token or topic), 5xx, any other 4xx (a request
+ *    refused as malformed), a network error and the {@link PUSH_REQUEST_TIMEOUT_MS} timeout →
+ *    `unavailable`.
  */
 import http2, { type ClientHttp2Session, type ClientHttp2Stream } from 'node:http2';
 import { logger } from '@magick-agency/observability';
@@ -74,9 +76,12 @@ export function mapApnsAnswer(status: number, reason: string | undefined): PushS
   if (status === 410 || reason === 'BadDeviceToken' || reason === 'Unregistered' || reason === 'ExpiredToken') {
     return { ok: false, reason: 'unregistered' };
   }
-  if (status === 429) return { ok: false, reason: 'rate_limited' };
-  if (status === 403 || status >= 500) return { ok: false, reason: 'unavailable' };
-  if (status >= 400) return { ok: false, reason: 'invalid' };
+  // A token for another app (topic): this token can never be pushed to by this sender.
+  if (reason === 'DeviceTokenNotForTopic') return { ok: false, reason: 'invalid' };
+  // `TooManyRequests` is per device token.
+  if (status === 429) return { ok: false, reason: 'rate_limited', scope: 'device' };
+  // 403 (our provider token or topic), 5xx, and any other 4xx (a request refused as malformed:
+  // ours, every device alike).
   return { ok: false, reason: 'unavailable' };
 }
 
@@ -141,7 +146,8 @@ export class ApnsSender implements PlatformPushSender {
     if (!APNS_SENT_TYPES.has(payload.type)) return { result: { ok: true }, skipped: true };
     const token = device.voip_token;
     if (!token || !DEVICE_TOKEN.test(token)) return { result: { ok: false, reason: 'invalid' }, code: 'no_token' };
-    if (this.#gate.blocked(device.id)) return { result: { ok: false, reason: 'rate_limited' }, code: 'retry_after' };
+    // Held by this device's own Retry-After: this device's trouble, not the service's.
+    if (this.#gate.blocked(device.id)) return { result: { ok: false, reason: 'rate_limited', scope: 'device' }, code: 'retry_after' };
 
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;

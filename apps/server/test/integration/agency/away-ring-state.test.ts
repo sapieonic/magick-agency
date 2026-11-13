@@ -315,10 +315,15 @@ describe('the push-device repository (real Postgres)', () => {
     expect(old.id).not.toBe(mine.id);
   });
 
-  it('revoke is idempotent; a failure is recorded, and only unregistered revokes', async () => {
+  it('revoke is idempotent; a failure is recorded, and only a token refused for good (unregistered, invalid) revokes', async () => {
     const d = await device();
-    expect(await devices.recordFailure(d.id, 'unavailable')).toEqual({ revoked: false });
-    expect(await devices.find(user, 'phone-aaaa-1')).toMatchObject({ last_failure_reason: 'unavailable', revoked_at: null });
+    for (const reason of ['unavailable', 'rate_limited', 'unconfigured'] as const) {
+      expect(await devices.recordFailure(d.id, reason)).toEqual({ revoked: false });
+      expect(await devices.find(user, 'phone-aaaa-1')).toMatchObject({ last_failure_reason: reason, revoked_at: null });
+    }
+    expect(await devices.recordFailure(d.id, 'invalid')).toEqual({ revoked: true });
+    expect((await devices.find(user, 'phone-aaaa-1'))!.revoked_at).not.toBeNull();
+    await device();
     expect((await devices.revoke(user, 'phone-aaaa-1'))!.id).toBe(d.id);
     expect(await devices.revoke(user, 'phone-aaaa-1')).toBeNull();
     expect(await devices.recordFailure(d.id, 'unregistered')).toEqual({ revoked: false });

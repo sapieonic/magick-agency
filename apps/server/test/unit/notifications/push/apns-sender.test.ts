@@ -163,9 +163,9 @@ describe('ApnsSender: errors', () => {
     ['410 ExpiredToken', 'unregistered', { kind: 'status', status: 410, body: { reason: 'ExpiredToken' } }],
     ['400 BadDeviceToken', 'unregistered', { kind: 'status', status: 400, body: { reason: 'BadDeviceToken' } }],
     ['400 DeviceTokenNotForTopic', 'invalid', { kind: 'invalid' }],
-    ['400 BadExpirationDate', 'invalid', { kind: 'status', status: 400, body: { reason: 'BadExpirationDate' } }],
-    ['413 PayloadTooLarge', 'invalid', { kind: 'status', status: 413, body: { reason: 'PayloadTooLarge' } }],
-    ['429 TooManyRequests', 'rate_limited', { kind: 'rate_limited' }],
+    // A request refused as malformed is ours, every device alike: the service's trouble.
+    ['400 BadExpirationDate', 'unavailable', { kind: 'status', status: 400, body: { reason: 'BadExpirationDate' } }],
+    ['413 PayloadTooLarge', 'unavailable', { kind: 'status', status: 413, body: { reason: 'PayloadTooLarge' } }],
     ['403 InvalidProviderToken', 'unavailable', { kind: 'status', status: 403, body: { reason: 'InvalidProviderToken' } }],
     ['500 InternalServerError', 'unavailable', { kind: 'status', status: 500, body: { reason: 'InternalServerError' } }],
     ['503 ServiceUnavailable', 'unavailable', { kind: 'unavailable' }],
@@ -178,12 +178,20 @@ describe('ApnsSender: errors', () => {
     expect(metrics.trackPushSend).toHaveBeenCalledWith('ios', reason, expect.any(Number));
   });
 
+  it('429 TooManyRequests → rate_limited, this device\'s alone (APNs limits per token)', async () => {
+    carrier.answer(device.voip_token!, { kind: 'rate_limited' });
+    expect(await apns().send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
+  });
+
   it('mapApnsAnswer: by status, then reason', () => {
     expect(mapApnsAnswer(200, undefined)).toEqual({ ok: true });
     expect(mapApnsAnswer(410, undefined)).toEqual({ ok: false, reason: 'unregistered' });
     expect(mapApnsAnswer(400, 'Unregistered')).toEqual({ ok: false, reason: 'unregistered' });
-    expect(mapApnsAnswer(400, undefined)).toEqual({ ok: false, reason: 'invalid' });
-    expect(mapApnsAnswer(405, 'MethodNotAllowed')).toEqual({ ok: false, reason: 'invalid' });
+    expect(mapApnsAnswer(400, 'BadDeviceToken')).toEqual({ ok: false, reason: 'unregistered' });
+    expect(mapApnsAnswer(400, 'DeviceTokenNotForTopic')).toEqual({ ok: false, reason: 'invalid' });
+    expect(mapApnsAnswer(400, undefined)).toEqual({ ok: false, reason: 'unavailable' });
+    expect(mapApnsAnswer(405, 'MethodNotAllowed')).toEqual({ ok: false, reason: 'unavailable' });
+    expect(mapApnsAnswer(429, 'TooManyRequests')).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
     expect(mapApnsAnswer(403, 'TopicDisallowed')).toEqual({ ok: false, reason: 'unavailable' });
     expect(mapApnsAnswer(204, undefined)).toEqual({ ok: false, reason: 'unavailable' });
   });
@@ -225,9 +233,9 @@ describe('ApnsSender: errors', () => {
   it('429: never retried, the device is held back until its Retry-After', async () => {
     carrier.answer(device.voip_token!, { kind: 'rate_limited', retryAfterSeconds: 20 });
     const sender = apns();
-    expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
     now += 19_999;
-    expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
     expect(carrier.sends).toHaveLength(1);
     now += 1;
     expect(await sender.send(device, RING, { ttlMs: 20_000 })).toEqual({ ok: true });

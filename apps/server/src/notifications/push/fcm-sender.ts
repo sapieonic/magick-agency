@@ -10,11 +10,13 @@
  *  - The message: `data` (every value a string, IQ61's fields only), `android.priority: HIGH` (a
  *    ring must wake a dozing phone) and `android.ttl` the ring window in whole seconds (rounded
  *    up): a phone that comes online after it is not rung for a caller who has gone.
- *  - Errors (`AgencyPushFailureReason`): 404 or `UNREGISTERED` → `unregistered`; 429 or
- *    `QUOTA_EXCEEDED` → `rate_limited`, and the device is held back until its `Retry-After` (never
- *    retried inside a ring); `SENDER_ID_MISMATCH` (a token of another Firebase project) and any
- *    other 4xx (400 `INVALID_ARGUMENT`: a malformed token or message) → `invalid`; 401/403 (our
- *    credentials), 5xx, a network error, a timeout or a failed token exchange → `unavailable`.
+ *  - Errors (`AgencyPushFailureReason`, {@link mapFcmAnswer}): `UNREGISTERED` → `unregistered`;
+ *    `SENDER_ID_MISMATCH` (a token of another Firebase project) and `INVALID_ARGUMENT` on the token
+ *    itself (`message.token`) → `invalid` (both revoke the device); 429 or `QUOTA_EXCEEDED` →
+ *    `rate_limited`, and the device is held back until its `Retry-After` (never retried inside a
+ *    ring; while held, a send answers `rate_limited` with scope `device`); 401/403 (our
+ *    credentials), a bare 404, 5xx, any other 4xx (a message refused as malformed), a network
+ *    error, a timeout or a failed token exchange → `unavailable`.
  *  - Hosts are fixed ({@link FCM_OAUTH_TOKEN_URL}, {@link FCM_API_ORIGIN}); tests swap the
  *    transport (`fetchImpl`, or `setPushTransportsForTests` in `push-sender.ts`), never the host.
  */
@@ -68,23 +70,42 @@ export function fcmTtl(ttlMs: number): string {
 }
 
 /** The FCM error's `errorCode` (from `details`), else its canonical `status`. */
-function fcmErrorCode(body: string): string | undefined {
+/** What an FCM error body says: its `errorCode` (else `status`), and whether it refused the token itself. */
+export function fcmErrorDetail(body: string): { code: string | undefined; tokenRefused: boolean } {
   try {
-    const error = (JSON.parse(body) as { error?: { status?: string; details?: Array<{ errorCode?: string }> } }).error;
-    return error?.details?.find((d) => typeof d?.errorCode === 'string')?.errorCode ?? error?.status;
+    const error = (JSON.parse(body) as {
+      error?: {
+        status?: string;
+        message?: string;
+        details?: Array<{ errorCode?: string; fieldViolations?: Array<{ field?: string }> }>;
+      };
+    }).error;
+    const code = error?.details?.find((d) => typeof d?.errorCode === 'string')?.errorCode ?? error?.status;
+    const tokenField = error?.details?.some((d) => d?.fieldViolations?.some((v) => v?.field === 'message.token')) ?? false;
+    const tokenMessage = typeof error?.message === 'string' && /registration token/i.test(error.message);
+    return { code, tokenRefused: tokenField || tokenMessage };
   } catch {
-    return undefined;
+    return { code: undefined, tokenRefused: false };
   }
 }
 
-/** An FCM answer as the seam's result. Exported for the mapping tests. */
-export function mapFcmAnswer(status: number, code: string | undefined): PushSendResult {
+/**
+ * An FCM answer as the seam's result. Exported for the mapping tests.
+ *
+ *  - `UNREGISTERED` (FCM v1 always sends it with its 404) → `unregistered`. A bare 404 names no
+ *    token (a wrong project or path, a proxy): `unavailable`, never a revoke;
+ *  - `SENDER_ID_MISMATCH`, or `INVALID_ARGUMENT` on the token itself (`message.token`) → `invalid`:
+ *    this token can never be pushed to by this sender (the device is revoked);
+ *  - 429 / `QUOTA_EXCEEDED` → `rate_limited`, the push service's (no scope: see `PushFailureScope`);
+ *  - 401, 403, 404, 5xx, and any other 4xx (a message refused as malformed: ours, every device
+ *    alike) → `unavailable`.
+ */
+export function mapFcmAnswer(status: number, code: string | undefined, opts: { tokenRefused?: boolean } = {}): PushSendResult {
   if (status >= 200 && status < 300) return { ok: true };
-  if (status === 404 || code === 'UNREGISTERED') return { ok: false, reason: 'unregistered' };
+  if (code === 'UNREGISTERED') return { ok: false, reason: 'unregistered' };
   if (status === 429 || code === 'QUOTA_EXCEEDED') return { ok: false, reason: 'rate_limited' };
   if (code === 'SENDER_ID_MISMATCH') return { ok: false, reason: 'invalid' };
-  if (status === 401 || status === 403 || status >= 500) return { ok: false, reason: 'unavailable' };
-  if (status >= 400) return { ok: false, reason: 'invalid' };
+  if (code === 'INVALID_ARGUMENT' && opts.tokenRefused) return { ok: false, reason: 'invalid' };
   return { ok: false, reason: 'unavailable' };
 }
 
@@ -123,7 +144,8 @@ export class FcmSender implements PlatformPushSender {
   async #send(device: PushSenderDevice, payload: AgencyRingPush, { ttlMs }: PushSendOptions): Promise<SendOutcome> {
     const token = device.fcm_token;
     if (!token) return { result: { ok: false, reason: 'invalid' }, code: 'no_token' };
-    if (this.#gate.blocked(device.id)) return { result: { ok: false, reason: 'rate_limited' }, code: 'retry_after' };
+    // Held by this device's own Retry-After: this device's trouble, not the service's.
+    if (this.#gate.blocked(device.id)) return { result: { ok: false, reason: 'rate_limited', scope: 'device' }, code: 'retry_after' };
 
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
@@ -158,8 +180,9 @@ export class FcmSender implements PlatformPushSender {
     if (!answer || answer.kind === 'failed') {
       return { result: { ok: false, reason: 'unavailable' }, code: answer?.code ?? 'network', seconds: seconds() };
     }
-    const code = answer.status >= 300 ? fcmErrorCode(answer.body) : undefined;
-    const result = mapFcmAnswer(answer.status, code);
+    const detail = answer.status >= 300 ? fcmErrorDetail(answer.body) : { code: undefined, tokenRefused: false };
+    const code = detail.code;
+    const result = mapFcmAnswer(answer.status, code, { tokenRefused: detail.tokenRefused });
     if (!result.ok && result.reason === 'rate_limited') {
       this.#gate.hold(device.id, parseRetryAfter(answer.retryAfter, this.#now()));
     }

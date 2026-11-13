@@ -2,8 +2,11 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AgencyPushFailureReason, AgencyPushPlatform, AgencyRingPush } from '@magick-agency/contracts/agency';
 import {
   getPushSender,
+  pushFailureRevokes,
+  pushFailureScope,
   resetPushSender,
   setPushSender,
+  type PushFailureScope,
   type PushSendOptions,
   type PushSendResult,
   type PushSender,
@@ -29,10 +32,24 @@ describe('the push-sender seam', () => {
     expectTypeOf<PushSender['configured']>().parameters.toEqualTypeOf<[AgencyPushPlatform]>();
     expectTypeOf<PushSender['configured']>().returns.toEqualTypeOf<boolean>();
     expectTypeOf<PushSendOptions>().toEqualTypeOf<{ ttlMs: number }>();
-    expectTypeOf<PushSendResult>().toEqualTypeOf<{ ok: true } | { ok: false; reason: AgencyPushFailureReason }>();
+    expectTypeOf<PushSendResult>().toEqualTypeOf<{ ok: true } | { ok: false; reason: AgencyPushFailureReason; scope?: PushFailureScope }>();
+    expectTypeOf<PushFailureScope>().toEqualTypeOf<'device' | 'service'>();
     expectTypeOf<AgencyPushFailureReason>().toEqualTypeOf<'unregistered' | 'invalid' | 'rate_limited' | 'unavailable' | 'unconfigured'>();
     // A sender reads only where to send and the row id; never the agent or the tenant.
     expectTypeOf<keyof PushSenderDevice>().toEqualTypeOf<'id' | 'platform' | 'fcm_token' | 'voip_token'>();
+  });
+
+  it('whose trouble a failure is: a refused token is the device\'s and revokes it; the rest is the service\'s unless the sender says', () => {
+    for (const reason of ['unregistered', 'invalid'] as const) {
+      expect(pushFailureRevokes(reason)).toBe(true);
+      expect(pushFailureScope({ ok: false, reason })).toBe('device');
+    }
+    for (const reason of ['rate_limited', 'unavailable', 'unconfigured'] as const) {
+      expect(pushFailureRevokes(reason)).toBe(false);
+      expect(pushFailureScope({ ok: false, reason })).toBe('service');
+    }
+    // A sender that held one device back (its Retry-After, an APNs 429) says it is that device's.
+    expect(pushFailureScope({ ok: false, reason: 'rate_limited', scope: 'device' })).toBe('device');
   });
 
   it('unwired: every send answers unconfigured and no platform is configured', async () => {

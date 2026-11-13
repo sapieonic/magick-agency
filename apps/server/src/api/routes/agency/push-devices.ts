@@ -28,7 +28,7 @@ import {
 import { pushTokenOf, type PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { agencyPushDeviceRepository, toWirePushDevice } from '../../../db/repositories/agency.repository.js';
-import { getPushSender } from '../../../seams/push-sender.js';
+import { getPushSender, pushFailureRevokes } from '../../../seams/push-sender.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { awayRingRefusalBody, TEST_RING_PUSH_TTL_MS } from '../../../agency/away-ring.js';
 import { sendActionError } from './helpers.js';
@@ -214,7 +214,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
       return reply.code(409).send(awayRingRefusalBody('push_unavailable'));
     }
     const sent = await runtime.awayRing.send(device, { type: 'test_ring' }, TEST_RING_PUSH_TTL_MS);
-    if (!sent.ok) return reply.code(409).send(awayRingRefusalBody(sent.reason === 'unregistered' ? 'no_push_device' : 'push_unavailable'));
+    if (!sent.ok) return reply.code(409).send(awayRingRefusalBody(pushFailureRevokes(sent.reason) ? 'no_push_device' : 'push_unavailable'));
     return reply.code(202).send({ sent: true });
   });
 }

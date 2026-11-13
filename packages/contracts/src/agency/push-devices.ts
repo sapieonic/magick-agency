@@ -37,9 +37,11 @@ export type AgencyPushPlatform = (typeof AGENCY_PUSH_PLATFORMS)[number];
  *
  *  - `unregistered`: the carrier says the token is gone (FCM `UNREGISTERED`, APNs 410); the device
  *    is revoked and its agent leaves `away_ring`;
- *  - `invalid`: the carrier refused the token or the message as malformed;
+ *  - `invalid`: the carrier refused this token for good (FCM `SENDER_ID_MISMATCH` or a malformed
+ *    token, APNs `DeviceTokenNotForTopic`); revoked as for `unregistered`;
  *  - `rate_limited`: the carrier asked us to slow down;
- *  - `unavailable`: the carrier could not be reached, or answered a server error;
+ *  - `unavailable`: the carrier could not be reached, answered a server error, refused our
+ *    credentials, or refused the message itself as malformed;
  *  - `unconfigured`: this deployment has no credentials for the platform.
  */
 export const AGENCY_PUSH_FAILURE_REASONS = ['unregistered', 'invalid', 'rate_limited', 'unavailable', 'unconfigured'] as const;

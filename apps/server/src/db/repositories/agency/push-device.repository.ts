@@ -153,20 +153,21 @@ export class AgencyPushDeviceRepository {
   }
 
   /**
-   * A send to the device failed (`AgencyPushFailureReason`): the failure recorded, and an
-   * `unregistered` token (FCM `UNREGISTERED`, APNs 410) revokes the row, so it is never rung again
-   * until the app registers a new token. Keyed on the row id, as the sender knows it. Returns
-   * whether this write revoked it.
+   * A send to the device failed (`AgencyPushFailureReason`): the failure recorded, and a token the
+   * carrier refused for good (`unregistered`: FCM `UNREGISTERED`, APNs 410; `invalid`: FCM
+   * `SENDER_ID_MISMATCH` or a malformed token, APNs `DeviceTokenNotForTopic`; `pushFailureRevokes`)
+   * revokes the row, so it is never rung again until the app registers a new token. Keyed on the
+   * row id, as the sender knows it. Returns whether this write revoked it.
    */
   async recordFailure(id: string, reason: AgencyPushFailureReason): Promise<{ revoked: boolean }> {
     const { rows } = await getPool().query<{ revoked: boolean }>(
       `UPDATE agency_push_devices d
           SET last_failure_at = now(),
               last_failure_reason = $2::varchar,
-              revoked_at = CASE WHEN $2::varchar = 'unregistered' THEN COALESCE(d.revoked_at, now()) ELSE d.revoked_at END
+              revoked_at = CASE WHEN $2::varchar IN ('unregistered', 'invalid') THEN COALESCE(d.revoked_at, now()) ELSE d.revoked_at END
          FROM (SELECT id, revoked_at FROM agency_push_devices WHERE id = $1 FOR UPDATE) prev
         WHERE d.id = prev.id
-        RETURNING ($2::varchar = 'unregistered' AND prev.revoked_at IS NULL) AS revoked`,
+        RETURNING ($2::varchar IN ('unregistered', 'invalid') AND prev.revoked_at IS NULL) AS revoked`,
       [id, reason],
     );
     return { revoked: rows[0]?.revoked ?? false };

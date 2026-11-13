@@ -40,7 +40,7 @@ import {
   type AgencyRingableSession,
 } from '../../db/repositories/agency.repository.js';
 import type { PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
-import { getPushSender } from '../../seams/push-sender.js';
+import { getPushSender, pushFailureRevokes, pushFailureScope } from '../../seams/push-sender.js';
 import type { AwayRingService } from '../away-ring.js';
 import type { InboundHoldResult, WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../core/webrtc-bridge-manager.js';
 import type { StationDetached, StationRegistry } from '../station-registry.js';
@@ -201,10 +201,12 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  *    attached here) and puts the caller back at the head of the queue. An expiry or a lapse is a
  *    miss (IQ62): the second in a row ends `away_ring` (`ring_missed`), and an agent with that many
  *    misses is never rung again (`findRingableInAccount`; a ring that slipped in before the end
- *    landed ends it when it ends). A failed push is no miss: an unregistered token revokes the
- *    device and ends the absence (`revoked`); any other failure (the push service unavailable,
- *    rate-limited, refusing the message, or unconfigured) is the carrier's trouble, not the
- *    agent's, so the agent stays ringable for this caller, and no phone is rung for
+ *    landed ends it when it ends). A failed push is no miss, and is classed by whose trouble it is
+ *    (`pushFailureScope`): a token the carrier refused for good (`unregistered`, `invalid`)
+ *    revokes the device and ends the absence (`revoked`); one device held back for now (its own
+ *    `rate_limited`) is never rung again for this caller, whose search goes on to the next phone;
+ *    the push service's trouble (unavailable, unconfigured, an FCM 429) is not the agent's, so the
+ *    agent stays ringable for this caller, and no phone is rung for
  *    {@link INBOUND_PUSH_RETRY_MS} (no new search either), so an outage never walks a caller
  *    through the whole pool; the republish after that retries.
  *  - IQ73 (N3): a station agent who frees up while a ring is not yet answered is reserved for that
@@ -421,8 +423,9 @@ export type InboundRingRefusal = 'ring_not_offered' | 'ring_expired' | 'already_
 const MISSES: ReadonlySet<AgencyInboundRingResult> = new Set(['expired', 'accept_lapsed']);
 /**
  * Ring results after which this caller never rings that agent again (`InboundCallerView.declinedSessionIds`).
- * Not `push_failed`: an unregistered token revokes the device (never ringable again anyway), and
- * any other failure is the carrier's, retried after {@link INBOUND_PUSH_RETRY_MS}.
+ * Not `push_failed` as such: a failure that is the device's adds the session itself
+ * (`neverAgain`, {@link InboundConnector.sendRing}), and one that is the push service's is retried
+ * after {@link INBOUND_PUSH_RETRY_MS}.
  */
 const NEVER_AGAIN: ReadonlySet<AgencyInboundRingResult> = new Set(['declined', 'busy_on_phone', 'expired', 'accept_lapsed']);
 
@@ -1843,11 +1846,17 @@ export class InboundConnector {
 
   /**
    * The `ring` push (IQ61: ids, the token and the deadline only). A failure ends the ring
-   * `push_failed`, never a miss (IQ62 counts only the agent's own): an unregistered token revokes
-   * the device and ends the absence (`revoked`); any other failure is the push service's trouble,
-   * so the agent may be rung for this caller again, no new search is run, and no phone is rung
-   * for {@link pushRetryMs} (the republish after it retries): an outage never walks one caller
-   * through the whole pool.
+   * `push_failed`, never a miss (IQ62 counts only the agent's own), and is classed by whose
+   * trouble it is (`pushFailureScope`):
+   *  - this device's, for good (`unregistered`, `invalid`: the carrier refused its token): the
+   *    device is revoked (`AwayRingService.send`) and the absence ends (`revoked`);
+   *  - this device's, for now (a `rate_limited` held for this device alone): this caller never
+   *    rings that phone again and the search goes on (the team's phones next); the agent stays
+   *    ringable for other callers;
+   *  - the push service's (`unavailable`, `unconfigured`, an FCM 429): every phone would fail
+   *    alike, so the agent may be rung for this caller again, no new search is run, and no phone is
+   *    rung for {@link pushRetryMs} (the republish after it retries): an outage never walks one
+   *    caller through the whole pool.
    */
   private async sendRing(held: HeldCall, ring: RingState): Promise<void> {
     const awayRing = this.deps.awayRing!;
@@ -1865,9 +1874,15 @@ export class InboundConnector {
     await this.serial(held.id, async () => {
       if (held.ring !== ring || ring.answering) return;
       log.info({ inboundCallId: held.id, sessionId: ring.sessionId, reason: result.reason }, 'The ring push failed — the ring ends');
-      if (result.reason === 'unregistered') {
-        // An unregistered token revoked the device (`AwayRingService.send`): the absence ends `revoked`.
+      if (pushFailureRevokes(result.reason)) {
+        // The carrier refused the token for good: the device was revoked (`AwayRingService.send`),
+        // and the absence ends `revoked`.
         await this.endRing(held, ring.sessionId, 'push_failed', { awayRingEnd: 'revoked', neverAgain: true });
+        return;
+      }
+      if (pushFailureScope(result) === 'device') {
+        // This phone alone cannot be pushed to just now: this caller moves on to the next phone.
+        await this.endRing(held, ring.sessionId, 'push_failed', { neverAgain: true });
         return;
       }
       // The push service's trouble: ringing paused before the caller goes back to the queue, so

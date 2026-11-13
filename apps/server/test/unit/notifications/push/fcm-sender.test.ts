@@ -55,11 +55,18 @@ function harness(opts: {
   };
 }
 
-function fcmError(status: number, canonical: string, errorCode?: string, headers: Record<string, string> = {}): Response {
+function fcmError(status: number, canonical: string, errorCode?: string, headers: Record<string, string> = {}, tokenField = false): Response {
   return Response.json({
     error: {
       code: status, message: 'x', status: canonical,
-      ...(errorCode ? { details: [{ '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode }] } : {}),
+      ...(errorCode || tokenField ? {
+        details: [
+          ...(errorCode ? [{ '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode }] : []),
+          ...(tokenField
+            ? [{ '@type': 'type.googleapis.com/google.rpc.BadRequest', fieldViolations: [{ field: 'message.token', description: 'Invalid registration token' }] }]
+            : []),
+        ],
+      } : {}),
     },
   }, { status, headers });
 }
@@ -215,20 +222,25 @@ describe('FcmSender: the message', () => {
 
 describe('FcmSender: errors', () => {
   it.each([
-    [404, 'NOT_FOUND', 'UNREGISTERED', 'unregistered'],
-    [404, 'NOT_FOUND', undefined, 'unregistered'],
-    [400, 'INVALID_ARGUMENT', 'UNREGISTERED', 'unregistered'],
-    [400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT', 'invalid'],
-    [400, 'INVALID_ARGUMENT', undefined, 'invalid'],
-    [403, 'PERMISSION_DENIED', 'SENDER_ID_MISMATCH', 'invalid'],
-    [403, 'PERMISSION_DENIED', undefined, 'unavailable'],
-    [429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', 'rate_limited'],
-    [500, 'INTERNAL', 'INTERNAL', 'unavailable'],
-    [503, 'UNAVAILABLE', 'UNAVAILABLE', 'unavailable'],
-    [502, 'UNKNOWN', undefined, 'unavailable'],
-    [413, 'INVALID_ARGUMENT', undefined, 'invalid'],
-  ] as const)('%i %s %s → %s', async (status, canonical, errorCode, reason) => {
-    const h = harness({ send: () => fcmError(status, canonical, errorCode) });
+    [404, 'NOT_FOUND', 'UNREGISTERED', false, 'unregistered'],
+    // A bare 404 names no token (a wrong project or path, a proxy): never a revoke.
+    [404, 'NOT_FOUND', undefined, false, 'unavailable'],
+    [400, 'INVALID_ARGUMENT', 'UNREGISTERED', false, 'unregistered'],
+    // INVALID_ARGUMENT on the token itself: this token never works (revoked).
+    [400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT', true, 'invalid'],
+    [400, 'INVALID_ARGUMENT', undefined, true, 'invalid'],
+    // ...on the message: ours, every device alike.
+    [400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT', false, 'unavailable'],
+    [400, 'INVALID_ARGUMENT', undefined, false, 'unavailable'],
+    [403, 'PERMISSION_DENIED', 'SENDER_ID_MISMATCH', false, 'invalid'],
+    [403, 'PERMISSION_DENIED', undefined, false, 'unavailable'],
+    [429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', false, 'rate_limited'],
+    [500, 'INTERNAL', 'INTERNAL', false, 'unavailable'],
+    [503, 'UNAVAILABLE', 'UNAVAILABLE', false, 'unavailable'],
+    [502, 'UNKNOWN', undefined, false, 'unavailable'],
+    [413, 'INVALID_ARGUMENT', undefined, false, 'unavailable'],
+  ] as const)('%i %s %s (token field %s) → %s', async (status, canonical, errorCode, tokenField, reason) => {
+    const h = harness({ send: () => fcmError(status, canonical, errorCode, {}, tokenField) });
     expect(await h.send()).toEqual({ ok: false, reason });
     expect(h.sendCalls).toHaveLength(1);
     expect(metrics.trackPushSend).toHaveBeenCalledWith('android', reason, expect.any(Number));
@@ -236,7 +248,12 @@ describe('FcmSender: errors', () => {
 
   it('mapFcmAnswer: 2xx ok; a code without a body still maps by status', () => {
     expect(mapFcmAnswer(200, undefined)).toEqual({ ok: true });
-    expect(mapFcmAnswer(404, undefined)).toEqual({ ok: false, reason: 'unregistered' });
+    // UNREGISTERED alone revokes; a 404 without it is the service's trouble.
+    expect(mapFcmAnswer(404, 'UNREGISTERED')).toEqual({ ok: false, reason: 'unregistered' });
+    expect(mapFcmAnswer(404, undefined)).toEqual({ ok: false, reason: 'unavailable' });
+    expect(mapFcmAnswer(404, 'NOT_FOUND')).toEqual({ ok: false, reason: 'unavailable' });
+    expect(mapFcmAnswer(400, 'INVALID_ARGUMENT', { tokenRefused: true })).toEqual({ ok: false, reason: 'invalid' });
+    expect(mapFcmAnswer(400, 'INVALID_ARGUMENT')).toEqual({ ok: false, reason: 'unavailable' });
     expect(mapFcmAnswer(429, undefined)).toEqual({ ok: false, reason: 'rate_limited' });
     expect(mapFcmAnswer(500, 'QUOTA_EXCEEDED')).toEqual({ ok: false, reason: 'rate_limited' });
     expect(mapFcmAnswer(302, undefined)).toEqual({ ok: false, reason: 'unavailable' });
@@ -278,7 +295,8 @@ describe('FcmSender: errors', () => {
     expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited' });
     expect(h.sendCalls).toHaveLength(1);
     h.advance(29_999);
-    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited' });
+    // Held back by its own Retry-After, unsent: this device's trouble alone (no process-wide pause).
+    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
     expect(h.sendCalls).toHaveLength(1);
     expect(metrics.trackPushSend).toHaveBeenLastCalledWith('android', 'rate_limited', undefined);
     // Another device is not held back.
@@ -292,7 +310,7 @@ describe('FcmSender: errors', () => {
     const h = harness({ send: (n) => (n === 1 ? fcmError(429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED') : Response.json({ name: 'm' })) });
     await h.send();
     h.advance(9_999);
-    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
     h.advance(1);
     expect(await h.send()).toEqual({ ok: true });
   });

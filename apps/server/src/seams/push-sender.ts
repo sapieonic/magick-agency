@@ -29,12 +29,45 @@ export interface PushSendOptions {
   ttlMs: number;
 }
 
-export type PushSendResult = { ok: true } | { ok: false; reason: AgencyPushFailureReason };
+/**
+ * Whose trouble a failed send is:
+ *
+ *  - `device`: this device's alone. The others can still be pushed to. `unregistered` and `invalid`
+ *    (the carrier refused this token: gone, another sender's, malformed) are permanent, and the
+ *    device is revoked ({@link pushFailureRevokes}); a `rate_limited` the sender answers for one
+ *    device (its own Retry-After hold on that device, or an APNs 429, which is per token) passes;
+ *  - `service`: the push service's, so every device would fail alike: `unavailable` (5xx, 401/403,
+ *    a timeout, a network error, a message the service refused as malformed), `unconfigured`, and
+ *    an FCM 429 (`QUOTA_EXCEEDED` names no scope: treated as the project's quota).
+ */
+export type PushFailureScope = 'device' | 'service';
+
+export type PushSendResult =
+  | { ok: true }
+  | {
+    ok: false;
+    reason: AgencyPushFailureReason;
+    /** Set by a sender that knows better than the reason's default ({@link pushFailureScope}). */
+    scope?: PushFailureScope;
+  };
+
+/** The failures that revoke the device: the carrier refused its token for good. */
+export function pushFailureRevokes(reason: AgencyPushFailureReason): boolean {
+  return reason === 'unregistered' || reason === 'invalid';
+}
+
+/** Whose trouble a failed send is ({@link PushFailureScope}): the sender's `scope`, else the reason's. */
+export function pushFailureScope(result: Extract<PushSendResult, { ok: false }>): PushFailureScope {
+  if (result.scope) return result.scope;
+  return pushFailureRevokes(result.reason) ? 'device' : 'service';
+}
 
 export interface PushSender {
   /**
    * Send `payload` (IQ61: never a name or a number) to `device`. Resolves once the carrier has
-   * accepted or refused it; never throws. iOS is sent `ring` only (a VoIP push must be a call).
+   * accepted or refused it; never throws. iOS is sent `ring` and `test_ring` only (a VoIP push must
+   * be a call, and the test ring is one the phone shows); `ring_cancel` and `ring_off` answer
+   * `{ ok: true }` unsent.
    */
   send(device: PushSenderDevice, payload: AgencyRingPush, opts: PushSendOptions): Promise<PushSendResult>;
   /** Whether this deployment can send to `platform` at all (its credentials are set). */
