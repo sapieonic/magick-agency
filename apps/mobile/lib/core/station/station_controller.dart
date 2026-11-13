@@ -2172,6 +2172,7 @@ class StationController extends Notifier<StationView?>
     _awayRingParked = false;
     final call = _ringCall;
     if (call != null && !call.ended) _ring.reportEnded(call.callId, call.bound ? RingEndReason.ended : RingEndReason.cancelled);
+    if (call != null) _ring.holdOverLockScreen(false);
     _ringCall = null;
   }
 
@@ -2190,10 +2191,17 @@ class StationController extends Notifier<StationView?>
     final tracked = _ringCall;
     if (tracked != null && call?.id != tracked.callId) {
       if (!tracked.ended) _ring.reportEnded(tracked.callId, tracked.bound ? RingEndReason.ended : RingEndReason.cancelled);
+      // Its outcome saved, or it left the station: the app need not stay over the lock screen.
+      _ring.holdOverLockScreen(false);
       _ringCall = null;
     }
     if (call == null || !call.isPushOffer) return;
     final t = _ringCall ??= _RingCall(call.id);
+    if (!t.lockHeld) {
+      // Over the lock screen until its outcome is saved: native's own hold ends with the call.
+      t.lockHeld = true;
+      _ring.holdOverLockScreen(true);
+    }
     final phase = inboundPhase(call);
     if (_ringHangUp == call.id && phase == InboundPhase.connected) {
       // The agent hung up on the phone while it was connecting: not inside the frame that
@@ -3527,4 +3535,7 @@ final class _RingCall {
   final String callId;
   bool bound = false;
   bool ended = false;
+
+  /// Native was asked to keep the app over the lock screen for it.
+  bool lockHeld = false;
 }

@@ -59,6 +59,9 @@ final class _RegistrationStationRing implements StationRing {
   void reportEnded(String callId, RingEndReason reason) => _channel.reportEnded(callId, reason);
 
   @override
+  void holdOverLockScreen(bool on) => unawaited(_channel.holdOverLockScreen(on));
+
+  @override
   Future<PushDeviceStatus?> readStatus() => _ref.read(ringRegistrationProvider.notifier).readStatus();
 
   @override

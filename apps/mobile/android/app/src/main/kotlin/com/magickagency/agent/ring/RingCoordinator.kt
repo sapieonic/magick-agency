@@ -54,6 +54,21 @@ internal object RingCoordinator {
 
     val state: RingState get() = machine.state
 
+    /**
+     * Dart holds the app over the lock screen (`holdOverLockScreen`): a call answered from a ring is
+     * on its station until its outcome is saved or it leaves, past the ring's Answered state (which
+     * ends when the call does). Main thread; listeners hear the change.
+     */
+    var lockScreenHeld: Boolean = false
+        private set
+
+    fun holdOverLockScreen(on: Boolean) = onMain {
+        if (lockScreenHeld == on) return@onMain
+        lockScreenHeld = on
+        val s = machine.state
+        for (l in listeners.toList()) l(s)
+    }
+
     /** Main thread. [RingActivity] and [com.magickagency.agent.MainActivity] follow the ring with this. */
     fun addListener(listener: (RingState) -> Unit) {
         listeners += listener

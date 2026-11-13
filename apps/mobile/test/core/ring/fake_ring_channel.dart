@@ -70,6 +70,9 @@ class FakeRingChannel implements RingChannel {
   @override
   Future<void> showMissedRing() async => calls.add('showMissedRing');
 
+  @override
+  Future<void> holdOverLockScreen(bool on) async => calls.add('holdOverLockScreen:$on');
+
   /// What `takeStopRinging` answers next (then null: cleared on read).
   RingStopRequest? stop;
 
@@ -124,6 +127,9 @@ class FakeStationRing implements StationRing {
 
   @override
   void reportEnded(String callId, RingEndReason reason) => channel.reportEnded(callId, reason);
+
+  @override
+  void holdOverLockScreen(bool on) => channel.holdOverLockScreen(on);
 
   @override
   Future<PushDeviceStatus?> readStatus() async {

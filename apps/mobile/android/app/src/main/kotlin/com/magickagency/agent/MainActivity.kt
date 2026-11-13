@@ -12,9 +12,13 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
-    /** The window shows over the lock screen only while a ring the agent answered is live. */
+    /**
+     * The window shows over the lock screen only while a ring the agent answered is live, and then
+     * while Dart holds it ([RingCoordinator.lockScreenHeld]: the call is on the station until its
+     * outcome is saved), so the outcome screen does not fall behind a secure lock screen.
+     */
     private val followRing: (RingState) -> Unit = { s ->
-        if (s !is RingState.Answering && s !is RingState.Answered) showOverLockScreen(false)
+        if (s !is RingState.Answering && s !is RingState.Answered && !RingCoordinator.lockScreenHeld) showOverLockScreen(false)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

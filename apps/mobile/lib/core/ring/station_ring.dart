@@ -25,6 +25,10 @@ abstract interface class StationRing {
   /// A push offer left the station, or its call ended.
   void reportEnded(String callId, RingEndReason reason);
 
+  /// A call answered from a ring is on the station ([on]) until its outcome is saved or it leaves:
+  /// the app stays over the lock screen meanwhile ([RingChannel.holdOverLockScreen]).
+  void holdOverLockScreen(bool on);
+
   /// The device's status read again, for why the server ended `away_ring` (null when unknown).
   Future<PushDeviceStatus?> readStatus();
 
@@ -57,6 +61,9 @@ final class _NoRing implements StationRing {
 
   @override
   void reportEnded(String callId, RingEndReason reason) {}
+
+  @override
+  void holdOverLockScreen(bool on) {}
 
   @override
   Future<PushDeviceStatus?> readStatus() async => null;

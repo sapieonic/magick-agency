@@ -489,6 +489,13 @@ void main() {
         app.frame(agentStateFrameJson('wrapup', '2026-11-01T09:03:00.000Z'));
         app.frame(_pushFrame('inbound_call_outcome_owed', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
         expect(r.channel.named('reportEnded'), ['reportEnded:$_pushCallId:ended']);
+        expect(r.channel.named('holdOverLockScreen'), ['holdOverLockScreen:true'],
+            reason: 'the call ended, its outcome is owed: still over the lock screen');
+        // The outcome saved, the call leaves the station: the hold ends.
+        app.frame(agentStateFrameJson('available', '2026-11-01T09:04:00.000Z'));
+        app.frame(_pushFrame('inbound_call_settled', call: {'bridged_at': '2026-11-01T09:00:17.000Z'}));
+        expect(app.view!.inbound, isNull);
+        expect(r.channel.named('holdOverLockScreen'), ['holdOverLockScreen:true', 'holdOverLockScreen:false']);
         app.dispose();
       });
     });

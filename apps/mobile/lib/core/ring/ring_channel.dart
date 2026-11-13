@@ -45,6 +45,10 @@ abstract interface class RingChannel {
   /// Posts the local "Missed inbound call" notification (no name, no number).
   Future<void> showMissedRing();
 
+  /// Keeps the app over the lock screen ([on]) while a call answered from a ring is on the
+  /// station, through its outcome; native otherwise lets go once the call ends.
+  Future<void> holdOverLockScreen(bool on);
+
   /// The away notification's "Stop ringing" that Dart has not taken yet, or null. Cleared on
   /// read; a new absence drops one never read. Native has already declined a ring ringing then
   /// (and declines one arriving in the next ring window): the station must ask `device_away`
@@ -366,6 +370,9 @@ final class MethodRingChannel implements RingChannel {
 
   @override
   Future<void> showMissedRing() => _invoke<void>('showMissedRing');
+
+  @override
+  Future<void> holdOverLockScreen(bool on) => _invoke<void>('holdOverLockScreen', {'on': on});
 
   @override
   Future<RingOffRecord?> takeRingOff() async => RingOffRecord.tryRead(await _invoke<Object?>('takeRingOff'));

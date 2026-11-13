@@ -119,6 +119,15 @@ internal object RingChannel {
                 },
             )
             "moveTaskToBack" -> result.success(activity?.get()?.moveTaskToBack(true) ?: false)
+            "holdOverLockScreen" -> {
+                val on = call.argument<Boolean>("on")
+                if (on == null) {
+                    result.error("bad_args", "holdOverLockScreen needs on", null)
+                } else {
+                    RingCoordinator.holdOverLockScreen(on)
+                    result.success(null)
+                }
+            }
             "showMissedRing" -> {
                 RingNotifications.showMissed(context)
                 result.success(null)
