@@ -15,6 +15,7 @@ abstract final class RingCopy {
         RingOffReason.flagOff => '$stoppedPrefix: ringing was switched off for this account.',
         RingOffReason.maxAge => '$stoppedPrefix: it stops after 4 hours away.',
         RingOffReason.takenOver => '$stoppedPrefix: your station moved to another device.',
+        RingOffReason.left => '$stoppedPrefix: you left the session.',
         RingOffReason.unknown || null => '$stoppedPrefix.',
       };
 

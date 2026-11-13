@@ -95,6 +95,7 @@ class RingPushParserTest {
         for (r in RingWire.RING_OFF_REASONS) {
             assertEquals(RingPush.Off(null, r), RingPushParser.parse(mapOf("type" to "ring_off", "reason" to r)))
         }
+        assertEquals(RingPush.Off(null, "left"), RingPushParser.parse(mapOf("type" to "ring_off", "reason" to "left")))
     }
 
     @Test

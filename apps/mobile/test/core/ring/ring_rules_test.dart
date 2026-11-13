@@ -210,6 +210,10 @@ void main() {
         expect(text, isNot(contains('_')));
       }
       expect(RingCopy.stopped(RingOffReason.ringMissed), 'Your phone stopped ringing for inbound calls: you missed two inbound calls.');
+      // The agent's own Leave (or the idle session's end), not another device's take-over.
+      expect(RingOffReason.fromWire('left'), RingOffReason.left);
+      expect(RingCopy.stopped(RingOffReason.left), 'Your phone stopped ringing for inbound calls: you left the session.');
+      expect(RingCopy.stopped(RingOffReason.left), isNot(RingCopy.stopped(RingOffReason.takenOver)));
     });
   });
 

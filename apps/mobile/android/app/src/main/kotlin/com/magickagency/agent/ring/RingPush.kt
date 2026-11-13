@@ -68,7 +68,7 @@ object RingWire {
     )
 
     /** `AGENCY_RING_OFF_REASONS`: a `ring_off`'s `reason`. */
-    val RING_OFF_REASONS = listOf("ring_missed", "revoked", "opted_out", "flag_off", "max_age", "taken_over")
+    val RING_OFF_REASONS = listOf("ring_missed", "revoked", "opted_out", "flag_off", "max_age", "taken_over", "left")
 
     /** `AGENCY_RING_PUSH_TYPES`. */
     val PUSH_TYPES = listOf("ring", "ring_cancel", "ring_off", "test_ring")

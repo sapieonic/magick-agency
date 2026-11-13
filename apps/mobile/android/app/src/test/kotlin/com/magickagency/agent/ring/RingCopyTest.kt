@@ -16,6 +16,8 @@ class RingCopyTest {
         assertNotNull(RingCopy.ringOffText(null), "an unknown reason still says something")
         assertEquals("You missed two inbound calls. Open the app to turn it back on.", RingCopy.ringOffText("ring_missed"))
         assertTrue(RingCopy.ringOffText("max_age")!!.contains("4 hours"), "the limit is stated")
+        // The agent's own Leave (or the idle session's end), not another device's take-over.
+        assertEquals("You left the session.", RingCopy.ringOffText("left"))
     }
 
     @Test

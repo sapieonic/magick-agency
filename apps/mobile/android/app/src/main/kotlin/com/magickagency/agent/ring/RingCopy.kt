@@ -51,6 +51,7 @@ object RingCopy {
         "flag_off" -> "Ringing for inbound calls was switched off for your account."
         "max_age" -> "It stops after 4 hours away. Open the app to go back to calls."
         "taken_over" -> "Your station was opened on another device."
+        "left" -> "You left the session."
         else -> "Open the app to see why."
     }
 }
