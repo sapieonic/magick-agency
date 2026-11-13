@@ -31,6 +31,12 @@ object RingCopy {
     const val CHANNEL_NOTICES = "Missed inbound calls"
     const val CHANNEL_NOTICES_DESCRIPTION = "Rings you missed, and when your phone stops ringing for inbound calls."
 
+    /** TalkBack's reading of the lock-screen ring ([RingActivity]), said as it opens. */
+    const val RING_SCREEN_A11Y = "Inbound call. Double-tap Answer."
+    const val TEST_RING_SCREEN_A11Y = "Test ring. Double-tap Answer or Decline to stop it."
+    const val ANSWER_A11Y = "Answer the inbound call"
+    const val DECLINE_A11Y = "Decline the inbound call"
+
     const val ACCOUNT_LABEL = "Magick Agency"
     const val ACCOUNT_DESCRIPTION = "Inbound calls for agents who are away from the app"
 
@@ -88,4 +94,36 @@ object RingRules {
             DndFilter.PRIORITY -> priorityCallsFromAnyone || channelBypassesDnd
             DndFilter.ALARMS, DndFilter.NONE -> false
         }
+}
+
+/**
+ * The lock-screen ring's colours (`0xRRGGBB`), white text on each. Chosen for WCAG AA (4.5:1 or
+ * more for the buttons' text, [RingContrast]); the JVM test checks them.
+ */
+object RingScreenColours {
+    const val BACKGROUND = 0x111827
+    const val TEXT = 0xFFFFFF
+
+    /** Green 700: 5.0:1 with white (green 600, 0x16A34A, was 3.3:1). */
+    const val ANSWER = 0x15803D
+
+    /** Red 600: 4.8:1 with white. */
+    const val DECLINE = 0xDC2626
+}
+
+/** WCAG 2's contrast ratio between two `0xRRGGBB` colours. */
+object RingContrast {
+    fun ratio(a: Int, b: Int): Double {
+        val la = luminance(a)
+        val lb = luminance(b)
+        return (maxOf(la, lb) + 0.05) / (minOf(la, lb) + 0.05)
+    }
+
+    private fun luminance(rgb: Int): Double {
+        fun channel(c: Int): Double {
+            val s = c / 255.0
+            return if (s <= 0.03928) s / 12.92 else Math.pow((s + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel((rgb shr 16) and 0xff) + 0.7152 * channel((rgb shr 8) and 0xff) + 0.0722 * channel(rgb and 0xff)
+    }
 }

@@ -6,6 +6,7 @@ import android.graphics.Typeface
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
@@ -49,12 +50,15 @@ class RingActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.rgb(0x11, 0x18, 0x27))
+            setBackgroundColor(opaque(RingScreenColours.BACKGROUND))
             setPadding(dp(24), dp(48), dp(24), dp(48))
             addView(
                 TextView(this@RingActivity).apply {
                     text = if (test) RingCopy.TEST_TITLE else RingCopy.INCOMING_TITLE
-                    setTextColor(Color.WHITE)
+                    // TalkBack says what this is and what to do, once, as the screen opens.
+                    contentDescription = if (test) RingCopy.TEST_RING_SCREEN_A11Y else RingCopy.RING_SCREEN_A11Y
+                    accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE
+                    setTextColor(opaque(RingScreenColours.TEXT))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
@@ -62,20 +66,28 @@ class RingActivity : Activity() {
                 LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(48) },
             )
             addView(
-                button(RingCopy.ANSWER, Color.rgb(0x16, 0xA3, 0x4A)) { onAnswer() },
-                LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { bottomMargin = dp(16) },
+                button(RingCopy.ANSWER, RingCopy.ANSWER_A11Y, RingScreenColours.ANSWER) { onAnswer() },
+                LinearLayout.LayoutParams(MATCH_PARENT, dp(64)).apply { bottomMargin = dp(16) },
             )
-            addView(button(RingCopy.DECLINE, Color.rgb(0xDC, 0x26, 0x26)) { onDecline() }, LinearLayout.LayoutParams(MATCH_PARENT, dp(56)))
+            addView(
+                button(RingCopy.DECLINE, RingCopy.DECLINE_A11Y, RingScreenColours.DECLINE) { onDecline() },
+                LinearLayout.LayoutParams(MATCH_PARENT, dp(64)),
+            )
         }
     }
 
-    private fun button(label: String, colour: Int, onClick: () -> Unit) = Button(this).apply {
+    /** White text on [colour] (WCAG AA, [RingScreenColours]), bold and large. */
+    private fun button(label: String, description: String, colour: Int, onClick: () -> Unit) = Button(this).apply {
         text = label
-        setTextColor(Color.WHITE)
-        setBackgroundColor(colour)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+        contentDescription = description
+        setTextColor(opaque(RingScreenColours.TEXT))
+        setBackgroundColor(opaque(colour))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        typeface = Typeface.DEFAULT_BOLD
         setOnClickListener { onClick() }
     }
+
+    private fun opaque(rgb: Int): Int = Color.rgb((rgb shr 16) and 0xff, (rgb shr 8) and 0xff, rgb and 0xff)
 
     private fun onAnswer() {
         val id = callId ?: return finish()

@@ -56,4 +56,22 @@ class RingCopyTest {
             assertFalse(RingRules.dndAllowsCalls(f, priorityCallsFromAnyone = true, channelBypassesDnd = true), "$f")
         }
     }
+
+    @Test
+    fun theLockScreenRingsButtonsMeetWcagAa() {
+        val white = RingScreenColours.TEXT
+        assertTrue(RingContrast.ratio(white, RingScreenColours.ANSWER) >= 4.5, "Answer ${RingContrast.ratio(white, RingScreenColours.ANSWER)}")
+        assertTrue(RingContrast.ratio(white, RingScreenColours.DECLINE) >= 4.5, "Decline ${RingContrast.ratio(white, RingScreenColours.DECLINE)}")
+        assertTrue(RingContrast.ratio(white, RingScreenColours.BACKGROUND) >= 4.5)
+        // The old green, for the record: below AA.
+        assertTrue(RingContrast.ratio(white, 0x16A34A) < 4.5)
+        assertEquals(21.0, RingContrast.ratio(0x000000, 0xFFFFFF), 0.001)
+    }
+
+    @Test
+    fun theLockScreenRingSaysWhatToDo() {
+        assertEquals("Inbound call. Double-tap Answer.", RingCopy.RING_SCREEN_A11Y)
+        assertTrue(RingCopy.ANSWER_A11Y.contains("Answer"))
+        assertTrue(RingCopy.DECLINE_A11Y.contains("Decline"))
+    }
 }
