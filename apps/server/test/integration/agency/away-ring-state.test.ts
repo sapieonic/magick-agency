@@ -14,7 +14,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: audit }));
 
 const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/agent-state-machine.js');
-const { AwayRingService } = await import('../../../src/agency/away-ring.js');
+const { AwayRingService, RING_OFF_PUSH_TTL_MS } = await import('../../../src/agency/away-ring.js');
 const { AgencyRuntime } = await import('../../../src/agency/runtime.js');
 const { agencyAgentSessionRepository: sessions, agencyPushDeviceRepository: devices } =
   await import('../../../src/db/repositories/agency.repository.js');
@@ -48,10 +48,14 @@ const key = (sid: string) => `agency:agent:${sid}:state`;
 
 interface FakeSender {
   sent: Array<{ deviceRowId: string; payload: Record<string, unknown> }>;
+  /** The carrier TTL each send asked for, in order. */
+  ttls: number[];
   configured: boolean;
   next: { ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' };
+  /** When set, every send waits for it before it is recorded. */
+  hold: Promise<void> | null;
 }
-const sender: FakeSender = { sent: [], configured: true, next: { ok: true } };
+const sender: FakeSender = { sent: [], ttls: [], configured: true, next: { ok: true }, hold: null };
 
 let user: string;
 let campaignId: string;
@@ -64,11 +68,15 @@ beforeEach(async () => {
   user = (await insertUser()).id as string;
   campaignId = (await insertAgencyCampaign()).id as string;
   sender.sent = [];
+  sender.ttls = [];
   sender.configured = true;
   sender.next = { ok: true };
+  sender.hold = null;
   setPushSender({
-    async send(device, payload) {
+    async send(device, payload, opts) {
+      if (sender.hold) await sender.hold;
       sender.sent.push({ deviceRowId: device.id, payload: payload as unknown as Record<string, unknown> });
+      sender.ttls.push(opts.ttlMs);
       return sender.next;
     },
     configured: () => sender.configured,
@@ -656,6 +664,60 @@ describe('AwayRingService', () => {
     expect(await pushes(1)).toEqual([{
       deviceRowId: d.id, payload: { type: 'ring_off', session_id: s.id, reason: 'taken_over', away_since: absence.toISOString() },
     }]);
+  });
+
+  it('a ring_off is held by the carrier ten minutes at most: a later one could end the next absence', async () => {
+    await device();
+    const s = await onAwayRing();
+    expect(await service().svc.end(s.id, 'opted_out')).toBe('ended');
+    await pushes(1);
+    expect(RING_OFF_PUSH_TTL_MS).toBe(10 * 60 * 1000);
+    expect(sender.ttls).toEqual([RING_OFF_PUSH_TTL_MS]);
+  });
+
+  it('stop: no new reconcile pass, and it waits for the pass and the ring_off pushes in flight', async () => {
+    await device();
+    const s = await onAwayRing();
+    let release!: () => void;
+    sender.hold = new Promise<void>((r) => { release = r; });
+    const { svc } = service();
+    expect(await svc.end(s.id, 'opted_out')).toBe('ended');
+    // The ring_off is in flight (held at the carrier): stop waits for it.
+    let stopped = false;
+    const stopping = svc.stop().then(() => { stopped = true; });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stopped).toBe(false);
+    expect(sender.sent).toEqual([]);
+    release();
+    await stopping;
+    expect(sender.sent.map((p) => p.payload['type'])).toEqual(['ring_off']);
+    // Stopped: a pass asked for afterwards does nothing, and the timer never starts.
+    await sessions.enterAwayRing(s.id, new Date(Date.now() - MAX_AGE - 1_000));
+    expect(await svc.reconcile()).toMatchObject({ candidates: 0, ended: 0 });
+    svc.startReconcile(5);
+    await new Promise((r) => setTimeout(r, 30));
+    expect((await row(s.id)).away_ring_since).not.toBeNull();
+  });
+
+  it('stop waits for a reconcile pass in flight', async () => {
+    await device();
+    const s = await onAwayRing();
+    await sm().set(s.id, 'available');
+    const machine = sm();
+    const realGet = machine.get.bind(machine);
+    let release!: () => void;
+    const gateOpen = new Promise<void>((r) => { release = r; });
+    machine.get = async (id: string) => { await gateOpen; return realGet(id); };
+    const { svc } = service({ agents: machine });
+    const pass = svc.reconcile();
+    await new Promise((r) => setTimeout(r, 20));
+    let stopped = false;
+    const stopping = svc.stop().then(() => { stopped = true; });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(await pass).toMatchObject({ cleared: 1 });
   });
 
   it('a push the carrier says is unregistered revokes the device', async () => {

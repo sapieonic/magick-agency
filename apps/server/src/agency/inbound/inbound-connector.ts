@@ -1406,10 +1406,11 @@ export class InboundConnector {
     held.ring = null;
     held.boundRingToken = ring.token;
     trackInboundRing('answered');
-    void agencyInboundCallRepository.setRingResult(held.id, 'answered')
-      .catch((err: unknown) => log.warn({ err, inboundCallId: held.id }, 'Could not write an answered ring'));
-    void agencyAgentSessionRepository.ringAnswered(sessionId)
-      .catch((err: unknown) => log.warn({ err, sessionId }, 'Could not reset the missed rings and the absence'));
+    // Not awaited (this runs inside the bind), but tracked: `drain()` and the shutdown wait for them.
+    void this.trackBackground(agencyInboundCallRepository.setRingResult(held.id, 'answered')
+      .catch((err: unknown) => log.warn({ err, inboundCallId: held.id }, 'Could not write an answered ring')));
+    void this.trackBackground(agencyAgentSessionRepository.ringAnswered(sessionId)
+      .catch((err: unknown) => log.warn({ err, sessionId }, 'Could not reset the missed rings and the absence')));
     log.info({ inboundCallId: held.id, sessionId }, 'Inbound ring answered and bound');
   }
 
@@ -2090,12 +2091,12 @@ export class InboundConnector {
     }
   }
 
-  /** `ring_cancel` to the rung phone (Android only; fire and forget). */
+  /** `ring_cancel` to the rung phone (Android only; not awaited, but tracked: `drain()` waits for it). */
   private sendRingCancel(ring: RingState, callId: string, result: AgencyInboundRingResult): void {
     const awayRing = this.deps.awayRing;
     if (!awayRing || ring.device.platform !== 'android') return;
-    void awayRing.send(ring.device, { type: 'ring_cancel', call_id: callId, session_id: ring.sessionId, reason: result }, this.ringMs)
-      .catch((err: unknown) => log.warn({ err, inboundCallId: callId }, 'Could not send ring_cancel'));
+    void this.trackBackground(awayRing.send(ring.device, { type: 'ring_cancel', call_id: callId, session_id: ring.sessionId, reason: result }, this.ringMs)
+      .catch((err: unknown) => log.warn({ err, inboundCallId: callId }, 'Could not send ring_cancel')));
   }
 
   /**

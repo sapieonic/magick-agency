@@ -143,14 +143,9 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // re-seeds a key that lapsed, and ends an absence past its age, the flags or its device) and then
   // every minute. Non-fatal: a pass that fails is logged and the next one tries again.
   agencyRuntime.awayRing.configure({ maxAgeMs: ctx.config.agency.awayRingMaxMs });
-  const reconcileAwayRing = (): void => {
-    void agencyRuntime.awayRing.reconcile().catch((err: unknown) =>
-      logger.warn({ err }, 'Away-ring reconcile failed — the next pass will retry'));
-  };
   await agencyRuntime.awayRing.reconcile().catch((err: unknown) =>
     logger.warn({ err }, 'Away-ring reconcile at boot failed — the next pass will retry'));
-  const awayRingReconcile = setInterval(reconcileAwayRing, AWAY_RING_RECONCILE_MS);
-  awayRingReconcile.unref?.();
+  agencyRuntime.awayRing.startReconcile(AWAY_RING_RECONCILE_MS);
 
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
@@ -161,7 +156,8 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
-    clearInterval(awayRingReconcile);
+    // Mode B: no new reconcile pass from here (its timer stops before any await).
+    const awayRingStopped = agencyRuntime.awayRing.stop();
     // First, synchronously: an arriving call now hears the fallback message rather than reaching
     // a stopping runtime. Its calls still held are then ended and settled (bounded) while the
     // runtime and the database are still up, before the runtime stops below.
@@ -173,6 +169,10 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
     const reportsStopped = reports.stop();
     const rest = (async () => {
       await inboundStopped;
+      // The reconcile pass in flight, then every `ring_off` still in flight (the connector's stop
+      // above may have ended absences), while the push sender and the pool are still up.
+      await awayRingStopped;
+      await agencyRuntime.awayRing.drain();
       // The batch in flight commits or rolls back; marks left over are the next boot's.
       await insightsRollup.stop();
       // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents

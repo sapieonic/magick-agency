@@ -48,8 +48,13 @@ import type { InboundConnector } from './inbound/inbound-connector.js';
 
 const log = createChildLogger({ component: 'agency-away-ring' });
 
-/** How long a `ring_off` push may wait at the carrier for a phone that is offline. */
-export const RING_OFF_PUSH_TTL_MS = 60 * 60 * 1000;
+/**
+ * How long a `ring_off` push may wait at the carrier for a phone that is offline. Short: a late
+ * one could reach the phone after its NEXT absence began (it carries `away_since`, so the app
+ * drops one older than the absence it shows), and a phone offline for longer finds out on its
+ * next open anyway (its `ready` is not `away_ring`).
+ */
+export const RING_OFF_PUSH_TTL_MS = 10 * 60 * 1000;
 /** How long a `test_ring` push may wait at the carrier: a test nobody sees within a minute is moot. */
 export const TEST_RING_PUSH_TTL_MS = 60 * 1000;
 /** The reconcile's period (IQ67): at boot, then every minute. */
@@ -144,6 +149,11 @@ async function flagsAllowRing(tenantId: string, accountId: string): Promise<bool
 export class AwayRingService {
   private maxAge = AGENCY_AWAY_RING_MAX_MS_DEFAULT;
   private reconciling: Promise<AwayRingReconcileSummary> | null = null;
+  /** The reconcile's timer ({@link startReconcile}); null when not running. */
+  private reconcileTimer: NodeJS.Timeout | null = null;
+  private stopped = false;
+  /** Work started and not awaited (the `ring_off` pushes): {@link drain} and {@link stop} wait for it. */
+  private readonly background = new Set<Promise<unknown>>();
   private readonly ringAllowedFn: (tenantId: string, accountId: string) => Promise<boolean>;
 
   constructor(private readonly deps: AwayRingServiceDeps) {
@@ -482,9 +492,11 @@ export class AwayRingService {
   }
 
   /**
-   * Send `ring_off` to the device (fire and forget, never throws): Android only (iOS is sent `ring`
-   * alone, IQ64), and only to a row with a token, revoked or not (a removed device still drops its
-   * notification). A failure is recorded on the row (`unregistered` revokes it).
+   * Send `ring_off` to the device (not awaited, never throws; tracked, so {@link drain} and
+   * {@link stop} wait for it): Android only (iOS gets no push that is not a call, IQ64), and only
+   * to a row with a token, revoked or not (a removed device still drops its notification). It
+   * names the absence it ends (`away_since`), and the carrier holds it {@link RING_OFF_PUSH_TTL_MS}
+   * at most. A failure is recorded on the row (a refused token revokes it).
    */
   sendRingOff(
     agentUserId: string,
@@ -494,7 +506,7 @@ export class AwayRingService {
     awaySince: Date | null,
   ): void {
     if (!deviceId) return;
-    void (async () => {
+    this.track((async () => {
       const device = await agencyPushDeviceRepository.find(agentUserId, deviceId);
       if (!device || device.platform !== 'android' || pushTokenOf(device) === null) return;
       await this.send(device, {
@@ -503,7 +515,40 @@ export class AwayRingService {
         reason,
         ...(awaySince ? { away_since: awaySince.toISOString() } : {}),
       }, RING_OFF_PUSH_TTL_MS);
-    })().catch((err: unknown) => log.warn({ err, sessionId, reason }, 'Could not send ring_off'));
+    })().catch((err: unknown) => log.warn({ err, sessionId, reason }, 'Could not send ring_off')));
+  }
+
+  /** Keep `work` (which never rejects) until it settles, so {@link drain} waits for it. */
+  private track(work: Promise<unknown>): void {
+    this.background.add(work);
+    void work.finally(() => this.background.delete(work));
+  }
+
+  /** Wait for the work started and not awaited (the `ring_off` pushes in flight). */
+  async drain(): Promise<void> {
+    for (let i = 0; i < 10 && this.background.size > 0; i++) await Promise.allSettled([...this.background]);
+  }
+
+  /** Run the reconcile every {@link AWAY_RING_RECONCILE_MS} (the bootstrap, after the boot pass). */
+  startReconcile(periodMs = AWAY_RING_RECONCILE_MS): void {
+    if (this.reconcileTimer || this.stopped) return;
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcile().catch((err: unknown) => log.warn({ err }, 'Away-ring reconcile failed — the next pass will retry'));
+    }, periodMs);
+    this.reconcileTimer.unref?.();
+  }
+
+  /**
+   * Shutdown: no new reconcile pass (the timer stops at once, before any await), then the pass in
+   * flight and the pushes in flight are awaited. Before the runtime and the platform stop, so the
+   * push sender and the pool are still there for them.
+   */
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    this.reconcileTimer = null;
+    await this.reconciling?.catch(() => undefined);
+    await this.drain();
   }
 
   /** Send one push to `device`, recording a failure on its row. Resolves with the sender's answer. */
@@ -541,6 +586,9 @@ export class AwayRingService {
    * Passes never overlap: a call while one runs gets that pass's summary.
    */
   reconcile(now = Date.now()): Promise<AwayRingReconcileSummary> {
+    if (this.stopped && !this.reconciling) {
+      return Promise.resolve({ candidates: 0, ended: 0, reseeded: 0, restored: 0, skippedInFlight: 0, cleared: 0 });
+    }
     if (!this.reconciling) {
       this.reconciling = this.reconcileOnce(now).finally(() => { this.reconciling = null; });
     }
