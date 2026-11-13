@@ -392,6 +392,26 @@ describe('a ring and its answer', () => {
     expect(c.holdsPushOffer(away.sessionId)).toBe(false);
   });
 
+  it('N5: an attach without caps=inbound during a ring not yet answered ends it cancelled (not a miss) and returns the agent as Mode A does', async () => {
+    const c = connector();
+    await deskAgent('on_call'); // keeps the caller waiting once the ring ends
+    const away = await awayAgent();
+    const { call } = await caller(c);
+    await ringPush(away.deviceRowId);
+    // The app attaches without declaring it can take inbound calls: never an answer.
+    stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', canTakeInbound: false });
+    await c.onStationCannotTakeInbound(away.sessionId);
+    await drain();
+    expect(await row(call.id)).toMatchObject({ state: 'queued', session_id: null, ring_result: 'cancelled', accepted_at: null });
+    expect(await until('ring_cancel', () => pushes('ring_cancel', away.deviceRowId)[0] ?? null))
+      .toEqual({ type: 'ring_cancel', call_id: call.id, session_id: away.sessionId, reason: 'cancelled' });
+    // Its station is open here: Mode A's release (`releaseAgent`), so the pool, not `away_ring`.
+    expect(await agents.get(away.sessionId)).toMatchObject({ state: 'available', ring: false, inboundCallId: null, pushOffer: false });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0 });
+    expect(pushes('ring_off')).toEqual([]);
+    expect(c.holdsPushOffer(away.sessionId)).toBe(false);
+  });
+
   it('a socket dropped inside the accept grace does not cancel the offer: the re-attach binds', async () => {
     const c = connector();
     const away = await awayAgent();
