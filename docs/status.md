@@ -1393,9 +1393,10 @@ public access blocked, TLS only, `prevent_destroy`. Both modules now need Terraf
 
 Evidence, local, 2026-11-13: `terraform validate` on `aws/state`, `aws/terraform` and
 `grafana/terraform` (`init -backend=false`); `aws/terraform` `terraform test` 11 passed;
-`pnpm test:grafana` 33 passed. **Not verified:** nothing has run against AWS: the state bucket is
-not created and the existing local state (the `default` workspace on Manas's machine) is not
-migrated yet.
+`pnpm test:grafana` 33 passed. On AWS, 2026-11-13: `aws/state` applied (the bucket exists) and
+`aws/terraform`'s `default` workspace moved into it with `terraform init -migrate-state` from
+Manas's machine. **Not verified:** a no-change plan from a second machine; the Grafana module has
+never been applied, so its key is empty until its first apply.
 
 ## Test counts
 
