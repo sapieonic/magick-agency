@@ -1,3 +1,4 @@
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -21,11 +22,12 @@ val allowDebugSigning = providers.gradleProperty("allowDebugSigning").orNull == 
 // The build's --dart-define(-from-file) values, which Flutter hands to Gradle as -Pdart-defines:
 // comma-separated, each base64("KEY=VALUE"). Native code needs some of what Dart reads from them
 // (lib/core/env.dart): the API origin, for the ring's token-only routes, and the Firebase client
-// config, for FCM (Mode B, docs/mobile.md "The ring channel (Mode B)").
+// config, for FCM (Mode B, docs/mobile.md "The ring channel (Mode B)"). Base64 is imported: in a
+// Gradle Kotlin script a bare `java` is the project's java extension, not the package.
 val dartDefines: Map<String, String> = providers.gradleProperty("dart-defines").orNull.orEmpty()
     .split(',')
     .filter { it.isNotBlank() }
-    .mapNotNull { runCatching { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull() }
+    .mapNotNull { runCatching { String(Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull() }
     .mapNotNull { pair -> pair.indexOf('=').takeIf { it > 0 }?.let { pair.substring(0, it) to pair.substring(it + 1) } }
     .toMap()
 
@@ -80,12 +82,6 @@ android {
             resValue("string", "google_api_key", firebaseApiKey)
             resValue("string", "project_id", firebaseProjectId)
             if (firebaseSenderId != null) resValue("string", "gcm_defaultSenderId", firebaseSenderId)
-        }
-    }
-
-    sourceSets {
-        getByName("test") {
-            java.srcDirs("src/test/kotlin")
         }
     }
 
@@ -161,7 +157,8 @@ dependencies {
     implementation("androidx.core:core:1.17.0")
     // The ring's pure-JVM parts (the state machine, the push parser, the request builders;
     // src/test/kotlin). JUnit 5 named explicitly, as agent_audio's; no version: it follows the
-    // build's Kotlin.
+    // build's Kotlin. No sourceSets entry: the Kotlin Android plugin (applied by Flutter's, with
+    // android.builtInKotlin=false) compiles src/<set>/kotlin already, as it does src/main/kotlin.
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 }
 
