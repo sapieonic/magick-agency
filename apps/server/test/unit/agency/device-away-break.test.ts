@@ -109,6 +109,8 @@ function world(state: AgencyAgentState | null, opts: { unannounced?: boolean } =
     breaks: w.breaks,
     stations: { send: vi.fn((_id: string, frame: unknown) => { w.sent.push(frame); return true; }) },
     dialer: { hasUnannouncedAttempt: vi.fn(() => w.unannounced) },
+    // No push offer here: a `reserved` is a pacing reservation (Mode B's ring has its own cases).
+    awayRing: { holdsPushOffer: vi.fn(() => false), takeQueuedAwayPause: vi.fn(() => null) },
   } as unknown as AgencyRuntime;
   return w;
 }
@@ -369,6 +371,14 @@ describe('runDeviceAway — away_ring', () => {
         ring = false;
         return { outcome: 'ended', since: ABSENCE_START };
       }),
+      holdsPushOffer: vi.fn(() => false),
+      takeQueuedAwayPause: vi.fn((id: string) => {
+        const code = w.breaks.peek(id)?.code;
+        if (code !== 'device_away' && code !== 'away_ring') return null;
+        w.breaks.take(id);
+        return code;
+      }),
+      declineRingForDeviceAway: vi.fn(async (): Promise<'declined' | 'answered' | 'none'> => 'none'),
     };
     (w.runtime as unknown as { awayRing: typeof awayRing }).awayRing = awayRing;
     return { w, awayRing, ring: () => ring };
@@ -441,8 +451,50 @@ describe('runDeviceAway — away_ring', () => {
     const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'away_ring' }), 'device_away');
     // One pause: answered with the start of the absence it ends, not now.
     expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away', since: ABSENCE_START }) });
-    expect(awayRing.endKeepingSince).toHaveBeenCalledWith('sess-1', null, { offline: false });
+    expect(awayRing.endKeepingSince).toHaveBeenCalledWith('sess-1', null, { offline: false, countAs: 'returned' });
     expect(ring()).toBe(false);
+  });
+
+  it('the switch to device_away takes an away pause still queued (a ring left it): none outlives the absence', async () => {
+    const { w } = ringWorld('break', { ring: true });
+    w.breaks.queue('sess-1', { code: 'device_away', label: 'Away' });
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'away_ring' }), 'device_away');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away', since: ABSENCE_START }) });
+    expect(w.breaks.peek('sess-1')).toBeNull();
+  });
+
+  it('device_away during a ring not yet answered: the ring is declined through the away break, answered applied with the absence`s start, nothing queued', async () => {
+    const { w, awayRing } = ringWorld('reserved');
+    awayRing.holdsPushOffer.mockReturnValue(true);
+    const absence = Date.parse(ABSENCE_START);
+    awayRing.declineRingForDeviceAway.mockImplementation(async () => {
+      // The ring's end: back on away_ring for a moment, then ended as device_away keeping `since`.
+      w.lease = { state: 'break', since: absence };
+      return 'declined';
+    });
+    const res = await runDeviceAway(w.runtime, session({ state: 'reserved' }), 'device_away');
+    expect(awayRing.declineRingForDeviceAway).toHaveBeenCalledWith('sess-1');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away', since: ABSENCE_START }) });
+    expect(res.ok && BREAK_UNCHANGED_KEY in res.body).toBe(false);
+    expect(w.breaks.peek('sess-1')).toBeNull();
+    expect(w.transition).not.toHaveBeenCalled();
+  });
+
+  it('device_away during an answered ring: the agent took the call, so the pause queues behind it', async () => {
+    const { w, awayRing } = ringWorld('reserved');
+    awayRing.holdsPushOffer.mockReturnValue(true);
+    awayRing.declineRingForDeviceAway.mockResolvedValue('answered');
+    const res = await runDeviceAway(w.runtime, session({ state: 'reserved' }), 'device_away');
+    expect(res.ok && res.body).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'device_away' });
+    expect(w.breaks.peek('sess-1')?.code).toBe('device_away');
+  });
+
+  it('away_ring asked during a ring never declines it: queued as before', async () => {
+    const { w, awayRing } = ringWorld('reserved');
+    awayRing.holdsPushOffer.mockReturnValue(true);
+    const res = await runDeviceAway(w.runtime, session({ state: 'reserved' }), 'away_ring');
+    expect(awayRing.declineRingForDeviceAway).not.toHaveBeenCalled();
+    expect(res.ok && res.body).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'away_ring' });
   });
 
   it('awayRingRefusal is the typed 409 body, and device_away still applies (the app\'s fallback)', async () => {
