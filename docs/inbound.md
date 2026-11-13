@@ -795,7 +795,15 @@ carriers are the platform area's, behind `seams/push-sender.ts` ([`seams.md`](se
   once by CAS (`enterAwayRing`), queued behind a reservation, a call or a wrap-up (a queued
   `device_away` and a queued `away_ring` replace each other: the latest says what the phone can do
   now), and `device_away ↔ away_ring` is a break-to-break switch on `break`, never from another
-  break, so a named break or the soft phone's never gains it. A queued `away_ring` is applied by
+  break, so a named break or the soft phone's never gains it. Which break that is is Redis's: the
+  agent hash records the break's code (`reason`) with every write of `break` (the set and the CAS
+  take it; the away-ring scripts write `away_ring` and, on the end, `device_away`) and every other
+  state write clears it. The route decides from it, never from the session row it read at the start
+  of the request (a mirror write that failed, or a supervisor's break after that read, would
+  otherwise be replaced), and the entry script checks it again in the same step as its write: from
+  `break` only with `reason = device_away`. A `break` written with no reason (the connector's hold
+  of a session it found busy, an owed inbound call's rehydrate, a key written before the field
+  existed) fails safe: the switch is refused, and the agent stays paused and is not rung. A queued `away_ring` is applied by
   the release with or without a socket (`AgencyDialer.releaseAgent` through
   `AwayRingService.applyQueued`, re-checked first; `device_away` when it can no longer apply; a
   release that leaves a campaign outcome owed always applies `device_away`, IQ72). It applies from
@@ -817,6 +825,10 @@ carriers are the platform area's, behind `seams/push-sender.ts` ([`seams.md`](se
   (`setOfflineUnlessAway`, one Lua script that is still `releaseStationOnClose`'s first await: it
   writes `offline` unless `ring = 1`, or `inbound` is held with the `push` field or the connector's
   synchronous `holdsPushOffer`), and so does `releaseAgent`'s path for a station not owned here.
+  A reason-less `offline` mirror write (the close or that release when their Redis write could not
+  answer, a dead media worker's slot reap) is presence, not an end: it keeps `away_ring_since`, as
+  the startup reaper's `markAllOffline` does, and the reconcile decides. The slot reap leaves a
+  session on `away_ring` alone altogether: it has no station or media in any worker.
 - **The supervisor.** The floor shows "Away · rings for inbound". Force-available is refused
   `409 agent_away_ring` ("They're away from the app; their phone rings for inbound calls."): there
   is no station to put them in the pool on. Force-break and sign-off work as for any break.
@@ -832,7 +844,14 @@ reconcile (which ends an absence the rule refuses, with the matching `ring_off` 
 admitted to `away_ring` is one the search rings, and one the search no longer rings is ended.
 
 **Who is rung (IQ60, IQ63, IQ68, IQ69; `eligibility.ts`).** Every search reads the account's
-ringable sessions first (`AwayRingService.ringableSessions`): both flags on, then one statement
+ringable sessions first (`AwayRingService.ringableSessions`). An account this process knows has
+nobody away reads nothing (`mayHaveAway`: the sessions on an absence per account, in memory, added
+on every entry before its Redis write and on a ring's return to `away_ring`, taken out on the ends
+the service runs, and rebuilt from the database by every reconcile pass, keeping the entries made
+while the pass read; until the first pass has run, every search reads). A stale "someone" (an end
+the service did not see: a leave, a ring that binds) costs a read until the next pass. A stale
+"nobody" (an absence entered behind the service's back; no path does so today) misses a ringable
+agent for at most the reconcile interval, 60 s. Otherwise: both flags on, then one statement
 (`findAwayRingCandidates` scoped to the account: the live sessions with `away_ring_since` set, with
 their station's push device and missed rings, on 0037's partial index
 `idx_agency_agent_sessions_away_ring`), then the ring rule; a failed read rings nobody that search. Such an agent is ringable for a caller (`ringIneligibility`) when every
@@ -1037,8 +1056,9 @@ see one pause.
 The server's ends send Android a `ring_off` push with the reason and `away_since` (the absence's
 start; held at most 10 minutes at the carrier, so a late one can rarely meet the next absence, and
 the app drops one older than the absence it shows) and are audited `agency_session.away_ring_ended`
-("Phone stopped ringing for inbound calls", `details.reason`, the system as the actor; an opt-out
-on the Me card and a removal are also audited on the device, with the agent as the actor). A failure
+("Phone stopped ringing for inbound calls", `details.reason`; the actor is the system, except for
+an opt-out on the Me card or a removal, where it is the agent who acted, a ring cancelled for it
+included; those two are also audited on the device, with the agent as the actor). A failure
 ending the absence after an opt-out or a removal never fails that request: the change is
 committed, and the next reconcile ends the absence:
 
@@ -1049,11 +1069,15 @@ committed, and the next reconcile ends the absence:
 | `opted_out` | the agent turned ringing off for this phone on the Me card (`PATCH ring_enabled=false`), the only opt-out. The away notification's "Stop ringing" is not one: it ends this absence through the app's `device_away` (the switch, or a ring not yet answered declined first, below; IQ79, IQ83) |
 | `flag_off` | the reconcile finds a flag off for the account |
 | `max_age` | the absence past `AGENCY_AWAY_RING_MAX_MS` |
-| `taken_over` | another device took the station (OS3): the claim clears `away_ring_since` and rewrites `break/away_ring` to `device_away` in the same statement, Redis's `ring` is cleared, and the old device is told. Also sent, with no audit, when the session itself ends under a parked phone: `POST /sessions/:id/leave` from another device (a ring in flight refuses the leave first), and OS7's `endIdleSessionElsewhere` ending the session in another tenant (Redis `ring = 1`, or the row's `away_ring_since` set when the key has lapsed). OS7 still counts `away_ring` as idle: the agent is at a station in this tenant now, and keeping the absence would lock them out for up to `AGENCY_AWAY_RING_MAX_MS`; a ring in flight holds the session (`reserved`, `findCallForSession`). Without the push the phone's "rings this phone" notification would outlive the session |
+| `taken_over` | another device took the station (OS3): the claim clears `away_ring_since` and rewrites `break/away_ring` to `device_away` in the same statement, Redis's `ring` is cleared, and the old device is told |
+| `left` | the session itself ended under a parked phone, with no audit: `POST /sessions/:id/leave` from another device (a ring in flight refuses the leave first), and OS7's `endIdleSessionElsewhere` ending the session in another tenant (Redis `ring = 1`, or the row's `away_ring_since` set when the key has lapsed). Neither is a take-over: no other device claimed the station. OS7 still counts `away_ring` as idle: the agent is at a station in this tenant now, and keeping the absence would lock them out for up to `AGENCY_AWAY_RING_MAX_MS`; a ring in flight holds the session (`reserved`, `findCallForSession`). Without the push the phone's "rings this phone" notification would outlive the session |
 
 Three ends send nothing and are not audited, each counted `returned`: the agent's return (a station
 attach or a join over `break, ring = 1`, or an attach without `caps=inbound` during a ring:
-`device_away` on screen, and the app's `/available` follows), the app asking `device_away` while on
+`device_away` on screen, and the app's `/available` follows; when that end does not happen, Redis
+not answering or a ring getting there first, the rehydrate answers from Redis read again, still
+`away_ring` or a ring's `reserved` for the connector's attach path, N5, and the caller's row is not
+told the agent is back), the app asking `device_away` while on
 `away_ring` (the switch; this is how the away notification's "Stop ringing" ends the absence, IQ79,
 with no route of its own), and the app asking `device_away` during a ring not yet answered (the ring
 declined first, IQ83). A ring in flight is never ended by a state write
@@ -1085,7 +1109,8 @@ value), `agency_inbound_ring_answer_seconds` (the ring's start to `answering`),
 `agency_inbound_offers_total{result,client,channel}` (`channel` `station` or `push`; a ring's
 offer ends `connected`, `declined` (`busy_on_phone` too), `unanswered` (`expired`, `accept_lapsed`,
 `push_failed`), `caller_left`, `answered_elsewhere` or `cancelled`),
-`agency_away_ring_ended_total{reason}` (every end of an absence: the `ring_off` reasons, and
+`agency_away_ring_ended_total{reason}` (every end of an absence: the `ring_off` reasons, `left`
+included, and
 `returned` for the agent's return and the app's own `device_away`; an end no label says truly, the
 reconcile's non-campaign end or a stale call row's, is not counted), `agency_inbound_ring_bind_seconds` (answered on the phone to bound: the cold start's
 headroom inside the 15 s grace), `agency_inbound_answered_wait_seconds{channel}` (a connected
@@ -1874,6 +1899,21 @@ of passing held phones over, IQ75). An absence's end with
 no reason is counted `returned` only for the return and the app's own `device_away`. Home's floor
 signature moves on a state change that keeps `state_since` (the switch, IQ76). §6.1 "`device_away`
 during a ring".
+
+**Third review round, server** (2026-11-13, IQ67 and IQ76 as-built notes; server, contracts,
+`agency_wire`, observability and Grafana): which break an agent is on is Redis's (the agent hash's
+`reason`, written with every `break` and cleared by every other state write), and the switch to
+`away_ring` is decided from it and checked in the entry script (from `break` only with
+`device_away`), so a named break the mirror missed is never replaced; the return from `away_ring`
+tells the caller's row the agent is back only when the end happened, else answers from Redis; the
+opt-out's and the removal's end of an absence is audited as the agent, a ring cancelled for it
+included; a push the sender held for the whole service is not recorded on the device; a
+reason-less `offline` mirror write keeps `away_ring_since` and the reconcile decides, and a dead
+media worker's slot reap leaves a session on `away_ring` alone; the inbound search reads no
+away-ring candidates for an account this process knows has nobody away (rebuilt by every reconcile
+pass; a missed entry heals within 60 s); the leave and OS7 tell a parked phone `ring_off` `left`
+(a new reason in `AGENCY_RING_OFF_REASONS` and `agency_wire`'s `RingOffReason`; the app's copy is
+[`mobile.md`](mobile.md)'s), not `taken_over`, and count it as `left`. §6.1.
 
 **The fix pass is done** (two rounds, 2026-11-09, on top of P1 and P2): every finding of the
 independent engineering, product and QA reviews of P1 and P2, then of a review of the first round,
