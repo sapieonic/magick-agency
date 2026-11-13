@@ -10,6 +10,7 @@
  */
 import { getPool } from '@magick-agency/db';
 import { isUniqueViolation } from '@magick-agency/db/pg-errors';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { pushTokenOf, type PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
 import type {
   AgencyPushDevice,
@@ -81,44 +82,44 @@ export class AgencyPushDeviceRepository {
     const voip = input.platform === 'ios' ? input.token : null;
     const tokenColumn = input.platform === 'android' ? 'fcm_token' : 'voip_token';
     for (let attempt = 1; ; attempt++) {
-      const client = await getPool().connect();
       try {
-        await client.query('BEGIN');
-        await client.query(
-          `UPDATE agency_push_devices
-              SET revoked_at = now()
-            WHERE ${tokenColumn} = $1 AND revoked_at IS NULL
-              AND NOT (user_id = $2 AND device_id = $3)`,
-          [input.token, input.userId, input.deviceId],
-        );
-        const { rows } = await client.query<PushDeviceRecord>(
-          `INSERT INTO agency_push_devices
-             (tenant_id, user_id, device_id, platform, fcm_token, voip_token, app_build, ring_enabled, last_seen_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::boolean, false), now())
-           ON CONFLICT (user_id, device_id) DO UPDATE
-             SET tenant_id = EXCLUDED.tenant_id,
-                 platform = EXCLUDED.platform,
-                 fcm_token = EXCLUDED.fcm_token,
-                 voip_token = EXCLUDED.voip_token,
-                 app_build = EXCLUDED.app_build,
-                 ring_enabled = COALESCE($8::boolean, agency_push_devices.ring_enabled),
-                 last_seen_at = now(),
-                 revoked_at = NULL,
-                 last_failure_at = NULL,
-                 last_failure_reason = NULL
-           RETURNING *`,
-          [input.tenantId, input.userId, input.deviceId, input.platform, fcm, voip, input.appBuild,
-            input.ringEnabled ?? null],
-        );
-        await client.query('COMMIT');
-        return rows[0]!;
+        return await withTransaction(async (client) => {
+          await client.query(
+            `UPDATE agency_push_devices
+                SET revoked_at = now()
+              WHERE ${tokenColumn} = $1 AND revoked_at IS NULL
+                AND NOT (user_id = $2 AND device_id = $3)`,
+            [input.token, input.userId, input.deviceId],
+          );
+          const { rows } = await client.query<PushDeviceRecord>(
+            `INSERT INTO agency_push_devices
+               (tenant_id, user_id, device_id, platform, fcm_token, voip_token, app_build, ring_enabled, last_seen_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::boolean, false), now())
+             ON CONFLICT (user_id, device_id) DO UPDATE
+               SET tenant_id = EXCLUDED.tenant_id,
+                   platform = EXCLUDED.platform,
+                   fcm_token = EXCLUDED.fcm_token,
+                   voip_token = EXCLUDED.voip_token,
+                   app_build = EXCLUDED.app_build,
+                   ring_enabled = COALESCE($8::boolean, agency_push_devices.ring_enabled),
+                   last_seen_at = now(),
+                   revoked_at = NULL,
+                   last_failure_at = NULL,
+                   last_failure_reason = NULL
+             RETURNING *`,
+            [input.tenantId, input.userId, input.deviceId, input.platform, fcm, voip, input.appBuild,
+              input.ringEnabled ?? null],
+          );
+          return rows[0]!;
+        }, { pool: getPool() });
       } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
         const tokenRace = isUniqueViolation(err, 'uq_agency_push_devices_fcm_token')
           || isUniqueViolation(err, 'uq_agency_push_devices_voip_token');
-        if (!tokenRace || attempt >= REGISTER_ATTEMPTS) throw err;
-      } finally {
-        client.release();
+        if (!tokenRace) throw err;
+        // Never rethrow the lost race itself: pg's `detail` names the conflicting key, the token.
+        if (attempt >= REGISTER_ATTEMPTS) {
+          throw new Error(`Could not register the push device: its token was taken by another register ${REGISTER_ATTEMPTS} times`);
+        }
       }
     }
   }

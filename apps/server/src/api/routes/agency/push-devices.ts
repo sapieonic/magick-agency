@@ -19,6 +19,7 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { createChildLogger } from '@magick-agency/observability';
 import {
   AGENCY_PUSH_PLATFORMS,
   AGENCY_STATION_DEVICE_ID_PATTERN,
@@ -32,8 +33,11 @@ import { getPushSender, pushFailureRevokes } from '../../../seams/push-sender.js
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { awayRingRefusalBody, TEST_RING_PUSH_TTL_MS } from '../../../agency/away-ring.js';
 import { sendActionError } from './helpers.js';
+import { UUID_RE } from '../../../utils/uuid.js';
+import type { AuditActorFields } from '../../../audit/platform/audit-actor.js';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const log = createChildLogger({ component: 'agency-push-device-routes' });
+
 /** A push token's ceiling: FCM tokens are about 160 characters, APNs ones 64 hex; this is generous. */
 const PUSH_TOKEN_MAX = 4096;
 
@@ -101,10 +105,35 @@ function actorFrom(request: FastifyRequest, reply: FastifyReply, source: 'body' 
   return { tenantId: getTenantId(request), accountId: getAccountId(request) || undefined, userId: raw };
 }
 
-function deviceIdOr404(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): string | null {
-  if (isPushDeviceId(request.params.id)) return request.params.id;
+/**
+ * The path's device id, or null with the 404 sent (a malformed id is answered as an unknown
+ * device). Both layers use it: the public routes (`proxy-agency-push-devices.routes.ts`) and these.
+ */
+export function pushDeviceIdOr404(raw: unknown, reply: FastifyReply): string | null {
+  if (isPushDeviceId(raw)) return raw;
   void reply.code(404).send({ error: 'Not Found', message: 'No such device.' });
   return null;
+}
+
+function deviceIdOr404(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): string | null {
+  return pushDeviceIdOr404(request.params.id, reply);
+}
+
+/**
+ * End this device's `away_ring` after a write that already took effect (opt-out, revoke). Never
+ * fails the request: the change is committed, and an absence left running is ended by the next
+ * reconcile, which finds the device opted out or revoked (N1).
+ */
+async function endAwayRingForDevice(
+  runtime: AgencyRuntime,
+  agentUserId: string,
+  deviceId: string,
+  reason: 'opted_out' | 'revoked',
+  actor?: AuditActorFields,
+): Promise<void> {
+  await runtime.awayRing.endForDevice(agentUserId, deviceId, reason, actor).catch((err: unknown) => {
+    log.warn({ err, agentUserId, deviceId, reason }, 'Could not end the device\'s away-ring; the reconcile ends it');
+  });
 }
 
 async function statusOf(runtime: AgencyRuntime, actor: PushActor, device: PushDeviceRecord | null, platform?: AgencyPushPlatform): Promise<AgencyPushDeviceStatus> {
@@ -150,9 +179,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     });
     const changed = (before?.ring_enabled ?? false) !== device.ring_enabled;
     // A register that turns ringing off ends this device's `away_ring`, as the PATCH does.
-    if (changed && !device.ring_enabled) {
-      await runtime.awayRing.endForDevice(actor.userId, deviceId, 'opted_out');
-    }
+    if (changed && !device.ring_enabled) await endAwayRingForDevice(runtime, actor.userId, deviceId, 'opted_out');
     const audit: PushDeviceAudit = {
       id: device.id, device_id: deviceId, ...(changed ? { ring_enabled_changed: device.ring_enabled } : {}),
     };
@@ -174,7 +201,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     if (!device) return reply.code(404).send({ error: 'Not Found', message: 'This phone is not registered. Open the app on it first.' });
     // "Stop ringing": this device's `away_ring` ends now (`device_away`, `ring_off`). A ring in
     // flight is the connector's; the reconcile ends the absence after it.
-    if (!device.ring_enabled) await runtime.awayRing.endForDevice(actor.userId, deviceId, 'opted_out');
+    if (!device.ring_enabled) await endAwayRingForDevice(runtime, actor.userId, deviceId, 'opted_out');
     const changed = before?.ring_enabled !== device.ring_enabled;
     const audit: PushDeviceAudit = {
       id: device.id, device_id: deviceId, ...(changed ? { ring_enabled_changed: device.ring_enabled } : {}),
@@ -190,7 +217,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     if (!deviceId) return reply;
     const revoked = await agencyPushDeviceRepository.revoke(actor.userId, deviceId);
     // Idempotent: an unknown or already revoked device is a 204 too, and audits nothing.
-    await runtime.awayRing.endForDevice(actor.userId, deviceId, 'revoked');
+    await endAwayRingForDevice(runtime, actor.userId, deviceId, 'revoked');
     if (!revoked) return reply.code(204).send();
     const audit: PushDeviceAudit = { id: revoked.id, device_id: deviceId, revoked: true };
     // 200 with only the marker; the public layer answers 204 once it has audited.

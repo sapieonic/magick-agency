@@ -343,6 +343,26 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(sent.find((s) => s.payload['type'] === 'ring_off')!.payload).toEqual({ type: 'ring_off', session_id: sessionId, reason: 'opted_out', away_since: awaySince });
   });
 
+  it('"Stop ringing" and a removed device answer as committed even when ending the absence fails: the reconcile ends it', async () => {
+    const { agent, sessionId, station } = await onDuty();
+    await goAwayRinging(agent, sessionId, station);
+    const end = vi.spyOn(runtime.awayRing, 'endForDevice').mockRejectedValue(new Error('redis went away'));
+    try {
+      const stop = await send('PATCH', `/proxy/agency/push-devices/${PHONE}`, agent, { ring_enabled: false });
+      expect(stop.statusCode, stop.body).toBe(200);
+      expect(stop.json().device).toMatchObject({ ring_enabled: false });
+      const del = await send('DELETE', `/proxy/agency/push-devices/${PHONE}`, agent);
+      expect(del.statusCode, del.body).toBe(204);
+      expect(end).toHaveBeenCalledTimes(2);
+    } finally {
+      end.mockRestore();
+    }
+    // The change took effect; the next reconcile ends the absence it left running.
+    expect((await row(sessionId)).away_ring_since).not.toBeNull();
+    await runtime.awayRing.reconcile();
+    expect(await row(sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
+  });
+
   it('the silent-station sweep drops a phone still attached on away_ring, and the close keeps it', async () => {
     const { agent, sessionId } = await onDuty();
     const res = await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'away_ring' });

@@ -7,7 +7,7 @@ import { callCore } from '../core-dispatch.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
 import { sendCoreRefusal } from './proxy-agency-softphone/shared.js';
-import { isPushDeviceId, takePushDeviceAudit, type PushDeviceAudit } from './agency/push-devices.js';
+import { pushDeviceIdOr404, takePushDeviceAudit, type PushDeviceAudit } from './agency/push-devices.js';
 
 /*
  * The agent app's push devices (Mode B, IQ58–IQ74; `@magick-agency/contracts/agency`
@@ -30,9 +30,7 @@ import { isPushDeviceId, takePushDeviceAudit, type PushDeviceAudit } from './age
 export const TEST_RING_RATE_LIMIT = { max: 1, timeWindow: 10_000 } as const;
 
 function deviceIdOr404(request: FastifyRequest<{ Params: { deviceId: string } }>, reply: FastifyReply): string | null {
-  if (isPushDeviceId(request.params.deviceId)) return request.params.deviceId;
-  void reply.code(404).send({ error: 'Not Found', message: 'No such device.' });
-  return null;
+  return pushDeviceIdOr404(request.params.deviceId, reply);
 }
 
 function actorId(request: FastifyRequest, reply: FastifyReply): string | null {

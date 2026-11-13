@@ -314,6 +314,30 @@ describe('the push-device repository (real Postgres)', () => {
     expect(again).toMatchObject({ id: first.id, ring_enabled: true, fcm_token: 'tok-2', revoked_at: null, last_failure_at: null, last_failure_reason: null });
   });
 
+  it('a register that keeps losing the token race gives up with a plain error that never carries the token', async () => {
+    const other = (await insertUser()).id as string;
+    await device({ userId: other, deviceId: 'phone-old-02', token: 'contested-token-0123456789' });
+    // Another register keeps taking the token back: here, a trigger that undoes the revoke, so
+    // every attempt's insert trips the unique index, as a register losing each race would.
+    await getTestPool().query(`
+      CREATE FUNCTION test_keep_token_live() RETURNS trigger AS $$
+      BEGIN NEW.revoked_at := NULL; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER test_keep_token_live BEFORE UPDATE ON agency_push_devices
+        FOR EACH ROW WHEN (OLD.fcm_token = 'contested-token-0123456789') EXECUTE FUNCTION test_keep_token_live();`);
+    try {
+      const err = await device({ deviceId: 'phone-new-02', token: 'contested-token-0123456789' }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/taken by another register 3 times/);
+      expect(JSON.stringify(err)).not.toContain('contested-token');
+      expect(String((err as Error).message)).not.toContain('contested-token');
+      expect((err as { detail?: unknown }).detail).toBeUndefined();
+      // Nothing was left half-written: the transaction of each attempt rolled back.
+      expect(await devices.find(user, 'phone-new-02')).toBeNull();
+    } finally {
+      await getTestPool().query('DROP TRIGGER test_keep_token_live ON agency_push_devices; DROP FUNCTION test_keep_token_live();');
+    }
+  });
+
   it('hands a token to one live row: the older row holding it is revoked, whoever it belongs to', async () => {
     const other = (await insertUser()).id as string;
     const old = await device({ userId: other, deviceId: 'phone-old-01', token: 'shared-token' });
