@@ -18,7 +18,7 @@ import {
   type AgencyAgentState,
 } from '@magick-agency/contracts/agency';
 import { StationRegistry, stationGraceFor } from './station-registry.js';
-import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
+import { AgentStateMachine, AGENT_LEASE_MS, type AgentLiveState } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
 import { CarrierRefusalBreaker } from './carrier-refusal-breaker.js';
 import { LocalDialDispatcher, type DialDispatcher } from './dial-dispatcher.js';
@@ -383,13 +383,33 @@ export class AgencyRuntime {
     // absence is over, so `away_ring` ends as `device_away` (the station is about to show it; the
     // app's return sends `/available`). Only on `break`: an attach during a ring or an accepted
     // ring finds `reserved` (the reservation cleared `ring`), and that is the connector's.
+    //
+    // The caller's row is told the agent is back only when the end happened. Any other outcome
+    // (Redis did not answer, a ring got there first, something else moved the key) leaves the
+    // answer to Redis, read again: the session may still be on `away_ring` (and the row says so,
+    // so the agent is not told otherwise), or a ring holds it (`reserved`: the connector's attach
+    // path decides, N5). `since` is Redis's either way: the end keeps the absence's start (IQ76).
+    let current: AgentLiveState | null = live;
     if (live?.state === 'break' && live.ring) {
-      await this.awayRing.endOnReturn(sessionId, row?.away_ring_since).catch((err: unknown) =>
-        log.warn({ err, sessionId }, 'Could not end away-ring on the agent\'s return'));
-      returnFromAwayRing(row);
-      return 'break';
+      const ended = await this.awayRing.endOnReturn(sessionId, row?.away_ring_since).catch((err: unknown) => {
+        log.warn({ err, sessionId }, 'Could not end away-ring on the agent\'s return');
+        return 'unavailable' as const;
+      });
+      if (ended === 'ended') {
+        returnFromAwayRing(row);
+        return 'break';
+      }
+      current = await this.agents.get(sessionId);
+      log.info({ sessionId, outcome: ended, state: current?.state ?? null, ring: current?.ring ?? null },
+        'Away-ring not ended on the agent\'s return; answered from Redis');
+      if (current) {
+        // Something else ended the absence meanwhile (a break with no `ring`): the agent is back.
+        if (current.state === 'break' && !current.ring) returnFromAwayRing(row);
+        return current.state;
+      }
+      // No key now: the lapsed-lease rule below, as for a key that was never there.
     }
-    if (live && !orphanedWrapup) return live.state;
+    if (current && !orphanedWrapup) return current.state;
 
     // A row still on an absence whose key lapsed (its maximum age, or a re-seed not run yet) comes
     // back as `device_away` (the agent is on screen, and `break` with no `ring` is not `away_ring`),

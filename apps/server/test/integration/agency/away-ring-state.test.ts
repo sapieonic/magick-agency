@@ -1021,6 +1021,45 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
     expect(await row(s.id)).toMatchObject({ break_reason: 'device_away', away_ring_since: null, state_since: absence2 });
   });
 
+  it("the agent's return whose end does not happen answers from Redis: the row is not told they are back while Redis still rings", async () => {
+    const rt = runtime();
+    // Redis did not answer the end (or it threw): still on away_ring, and the agent is not told otherwise.
+    const s = await awayRingFor(rt);
+    const rec = (await sessions.findById(s.id))!;
+    const absence = rec.away_ring_since!;
+    const end = vi.spyOn(rt.awayRing, 'endOnReturn').mockResolvedValueOnce('unavailable').mockRejectedValueOnce(new Error('redis went away'));
+    expect(await rt.rehydrateAgent(s.id, rec)).toBe('break');
+    expect(rec.break_reason).toBe('away_ring');
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: true });
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring', away_ring_since: absence });
+    expect(await rt.rehydrateAgent(s.id, rec)).toBe('break');
+    expect(rec.break_reason).toBe('away_ring');
+    expect(await row(s.id)).toMatchObject({ break_reason: 'away_ring', away_ring_since: absence });
+
+    // A ring got there first: the session is reserved for it, which the connector's attach decides (N5).
+    end.mockImplementationOnce(async () => {
+      await rt.agents.reserveForInbound(s.id, 'ib-ring', ['break']);
+      return 'ring_in_flight';
+    });
+    const rec2 = (await sessions.findById(s.id))!;
+    expect(await rt.rehydrateAgent(s.id, rec2)).toBe('reserved');
+    expect(rec2.break_reason).toBe('away_ring');
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'reserved', inboundCallId: 'ib-ring' });
+    expect(await row(s.id)).toMatchObject({ away_ring_since: absence });
+
+    // Something else ended the absence meanwhile (Redis on break with no ring): the agent is back.
+    await rt.agents.releaseInboundToAwayRing(s.id, 'ib-ring', MAX_AGE);
+    end.mockImplementationOnce(async () => {
+      await rt.agents.endAwayRing(s.id, { offline: false, absenceSinceMs: absence.getTime() });
+      return 'not_away_ring';
+    });
+    const rec3 = (await sessions.findById(s.id))!;
+    expect(await rt.rehydrateAgent(s.id, rec3)).toBe('break');
+    expect(rec3.break_reason).toBe('device_away');
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: false, since: absence.getTime() });
+    end.mockRestore();
+  });
+
   it('a queued away_ring applies at the release with no socket at all; refused meanwhile, it is device_away', async () => {
     const rt = runtime();
     await device();
