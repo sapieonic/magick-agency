@@ -109,7 +109,7 @@
   {
     "name": "agency_away_ring_ended_total",
     "kind": "Counter",
-    "description": "Absences on away_ring (an away agent's phone rung for inbound callers, Mode B) that ended, by why: ring_missed, revoked, opted_out, flag_off, max_age, taken_over (another device took the station, or the session was left from one) or returned (the agent came back to the app)",
+    "description": "Absences on away_ring (an away agent's phone rung for inbound callers, Mode B) that ended, by why: ring_missed, revoked, opted_out, flag_off, max_age, taken_over (another device took the station, or the session was left from one) or returned (the agent came back to the app, or the app paused itself as away)",
     "attributes": [
       "reason"
     ]
