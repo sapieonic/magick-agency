@@ -166,7 +166,6 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation failed', message: parsed.error.issues.map((i) => i.message).join('; ') });
     }
-    const before = await agencyPushDeviceRepository.find(actor.userId, deviceId);
     const body = parsed.data;
     const device = await agencyPushDeviceRepository.register({
       tenantId: actor.tenantId,
@@ -177,7 +176,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
       appBuild: body.app_build,
       ...(body.ring_enabled !== undefined ? { ringEnabled: body.ring_enabled } : {}),
     });
-    const changed = (before?.ring_enabled ?? false) !== device.ring_enabled;
+    const changed = (device.prev_ring_enabled ?? false) !== device.ring_enabled;
     // A register that turns ringing off ends this device's `away_ring`, as the PATCH does.
     if (changed && !device.ring_enabled) await endAwayRingForDevice(runtime, actor.userId, deviceId, 'opted_out');
     const audit: PushDeviceAudit = {
@@ -196,13 +195,12 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation failed', message: 'ring_enabled (true or false) is required' });
     }
-    const before = await agencyPushDeviceRepository.find(actor.userId, deviceId);
     const device = await agencyPushDeviceRepository.setRingEnabled(actor.userId, deviceId, parsed.data.ring_enabled);
     if (!device) return reply.code(404).send({ error: 'Not Found', message: 'This phone is not registered. Open the app on it first.' });
     // The opt-out (the Me toggle): this device's `away_ring` ends now (`device_away`, `ring_off`). A ring in
     // flight is the connector's; the reconcile ends the absence after it.
     if (!device.ring_enabled) await endAwayRingForDevice(runtime, actor.userId, deviceId, 'opted_out');
-    const changed = before?.ring_enabled !== device.ring_enabled;
+    const changed = device.prev_ring_enabled !== device.ring_enabled;
     const audit: PushDeviceAudit = {
       id: device.id, device_id: deviceId, ...(changed ? { ring_enabled_changed: device.ring_enabled } : {}),
     };

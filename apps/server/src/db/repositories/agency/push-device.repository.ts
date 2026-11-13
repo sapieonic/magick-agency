@@ -17,6 +17,14 @@ import type {
   AgencyPushFailureReason,
   AgencyPushPlatform,
 } from '@magick-agency/contracts/agency';
+import { pushFailureRevokes } from '../../../seams/push-sender.js';
+
+/**
+ * A device row as a register or an opt-in write left it, with the opt-in it had before that write
+ * (`prev_ring_enabled`; null when the write created the row). Read in the write's own statement, so
+ * the routes audit a change without a read ahead of it.
+ */
+export type PushDeviceWritten = PushDeviceRecord & { prev_ring_enabled: boolean | null };
 
 /** A register (`PUT /push-devices/:deviceId`), as the route validated it. */
 export interface PushDeviceRegisterInput {
@@ -72,7 +80,7 @@ export class AgencyPushDeviceRepository {
    * for two rows. Two registers racing for one token: the loser's insert trips the index and the
    * whole transaction is tried again.
    */
-  async register(input: PushDeviceRegisterInput): Promise<PushDeviceRecord> {
+  async register(input: PushDeviceRegisterInput): Promise<PushDeviceWritten> {
     const fcm = input.platform === 'android' ? input.token : null;
     const voip = input.platform === 'ios' ? input.token : null;
     const tokenColumn = input.platform === 'android' ? 'fcm_token' : 'voip_token';
@@ -86,8 +94,11 @@ export class AgencyPushDeviceRepository {
                 AND NOT (user_id = $2 AND device_id = $3)`,
             [input.token, input.userId, input.deviceId],
           );
-          const { rows } = await client.query<PushDeviceRecord>(
-            `INSERT INTO agency_push_devices
+          const { rows } = await client.query<PushDeviceWritten>(
+            `WITH prev AS (
+               SELECT ring_enabled FROM agency_push_devices WHERE user_id = $2 AND device_id = $3 FOR UPDATE
+             )
+             INSERT INTO agency_push_devices
                (tenant_id, user_id, device_id, platform, fcm_token, voip_token, app_build, ring_enabled, last_seen_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::boolean, false), now())
              ON CONFLICT (user_id, device_id) DO UPDATE
@@ -101,7 +112,7 @@ export class AgencyPushDeviceRepository {
                    revoked_at = NULL,
                    last_failure_at = NULL,
                    last_failure_reason = NULL
-             RETURNING *`,
+             RETURNING *, (SELECT ring_enabled FROM prev) AS prev_ring_enabled`,
             [input.tenantId, input.userId, input.deviceId, input.platform, fcm, voip, input.appBuild,
               input.ringEnabled ?? null],
           );
@@ -123,11 +134,16 @@ export class AgencyPushDeviceRepository {
    * Opt in or out (`PATCH`). Only a live (not revoked) row: a revoked device is registered again
    * first. Null when there is no live row.
    */
-  async setRingEnabled(userId: string, deviceId: string, ringEnabled: boolean): Promise<PushDeviceRecord | null> {
-    const { rows } = await getPool().query<PushDeviceRecord>(
-      `UPDATE agency_push_devices SET ring_enabled = $3
-        WHERE user_id = $1 AND device_id = $2 AND revoked_at IS NULL
-        RETURNING *`,
+  async setRingEnabled(userId: string, deviceId: string, ringEnabled: boolean): Promise<PushDeviceWritten | null> {
+    const { rows } = await getPool().query<PushDeviceWritten>(
+      `WITH prev AS (
+         SELECT id, ring_enabled FROM agency_push_devices
+          WHERE user_id = $1 AND device_id = $2 AND revoked_at IS NULL FOR UPDATE
+       )
+       UPDATE agency_push_devices d SET ring_enabled = $3
+         FROM prev
+        WHERE d.id = prev.id
+        RETURNING d.*, prev.ring_enabled AS prev_ring_enabled`,
       [userId, deviceId, ringEnabled],
     );
     return rows[0] ?? null;
@@ -160,11 +176,11 @@ export class AgencyPushDeviceRepository {
       `UPDATE agency_push_devices d
           SET last_failure_at = now(),
               last_failure_reason = $2::varchar,
-              revoked_at = CASE WHEN $2::varchar IN ('unregistered', 'invalid') THEN COALESCE(d.revoked_at, now()) ELSE d.revoked_at END
+              revoked_at = CASE WHEN $3::boolean THEN COALESCE(d.revoked_at, now()) ELSE d.revoked_at END
          FROM (SELECT id, revoked_at FROM agency_push_devices WHERE id = $1 FOR UPDATE) prev
         WHERE d.id = prev.id
-        RETURNING ($2::varchar IN ('unregistered', 'invalid') AND prev.revoked_at IS NULL) AS revoked`,
-      [id, reason],
+        RETURNING ($3::boolean AND prev.revoked_at IS NULL) AS revoked`,
+      [id, reason, pushFailureRevokes(reason)],
     );
     return { revoked: rows[0]?.revoked ?? false };
   }
