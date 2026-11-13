@@ -503,7 +503,8 @@ export async function floorSignatures(campaignIds: readonly string[]): Promise<M
   const { rows } = await getPool().query<{ campaign_id: string; signature: string }>(
     `SELECT s.campaign_id::text AS campaign_id,
             count(*)::text || '/' || max(s.state_since)::text || '/' || max(s.joined_at)::text || '/'
-              || md5(string_agg(s.id::text || ':' || s.state || ':' || coalesce(s.break_reason, ''), ',' ORDER BY s.id)) AS signature
+              || encode(sha256(convert_to(
+                   string_agg(s.id::text || ':' || s.state || ':' || coalesce(s.break_reason, ''), ',' ORDER BY s.id), 'UTF8')), 'hex') AS signature
        FROM agency_agent_sessions s
       WHERE s.campaign_id = ANY($1::uuid[]) AND s.left_at IS NULL
       GROUP BY s.campaign_id`,
