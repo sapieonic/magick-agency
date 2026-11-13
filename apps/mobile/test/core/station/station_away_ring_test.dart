@@ -381,7 +381,7 @@ void main() {
         final app = r.app;
         breakRoute(app);
         app.routes['POST $_availablePath'] = (_) => json(200, stateBody('available'));
-        r.channel.stop = RingStopRequest(sessionId: 'sess-1', since: DateTime.utc(2026, 11, 1, 9));
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
         async.elapse(const Duration(seconds: 10));
         app.lifecycle.show();
         async.flushMicrotasks();

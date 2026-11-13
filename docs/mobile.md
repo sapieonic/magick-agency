@@ -700,8 +700,9 @@ verified yet").
   "Your phone stopped ringing for inbound calls: …" only on a concrete reason
   (`ringOffReasonOnReturn`): the `ring_off` native took for this absence (`takeRingOff`, matched to
   the session and the absence's start), else two misses heard while away, the device status read
-  then (revoked, or a last push failure the server revokes on: `unregistered` or `invalid`; opted out, the flag off, no push), or an absence of 4 hours (the
-  server's default maximum age). No reason, no banner.
+  then (revoked, or a last push failure the server revokes on: `unregistered` or `invalid`; opted
+  out, the flag off, no push), or an absence of 4 hours (the server's default maximum age). No
+  reason, no banner.
 - **The ring** (Android, `android/app/src/main/kotlin/com/magickagency/agent/ring/`). FCM without a
   Flutter plugin: `firebase-messaging` in the app module (Firebase BoM 34.19.0, the one
   `firebase_core` 4.15.2 builds against), and Firebase's default app built natively at process start
@@ -852,7 +853,10 @@ the same commit. Changed 2026-11-13 (the review fixes): `showAwayNotification` n
 `testRingReceived` says whether the call was shown, and `takeRingOff`, `takeStopRinging`,
 `moveTaskToBack` and `holdOverLockScreen` were added; `stopRingingTapped` was removed (Dart takes
 the tap instead). Changed again 2026-11-13: `takeStopRinging` became `peekStopRinging` (not
-cleared on read) with `clearStopRinging`, and `setServerClock` was added.
+cleared on read) with `clearStopRinging`, and `setServerClock` was added. Changed 2026-11-13
+(cleanup): `peekStopRinging` answers `{session_id}` only; its `since` (the absence's start) was
+never read by Dart, so native no longer keeps it with the tap. A tap is dropped by its own age (the
+tap time native keeps), as before.
 
 One `MethodChannel` named **`magick_agency/ring`**, standard codec, used in both directions. Every
 argument and result is a map with string keys (or `null`, a string, a bool); ids and tokens are
@@ -872,7 +876,7 @@ logged on either side.
 | `showAwayNotification` | `{on, since?, session_id?}`: `since` the absence's start (the break's `since`), both optional | `null`: shows or removes the ongoing "Away · this phone rings for inbound calls" notification (actions "Back to calls", "Stop ringing"). On: native keeps the absence (across a process start) to drop a late `ring_off` for an earlier one, and drops a `ring_off` or "Stop ringing" never taken |
 | `showMissedRing` | none | `null`: posts the local "Missed inbound call" notification (no name, no number) |
 | `takeRingOff` | none | `{session_id, away_since, reason}` (each may be `null`) or `null`: the `ring_off` native took for the absence it showed. **Cleared on read** |
-| `peekStopRinging` | none | `{session_id, since}` (each may be `null`) or `null`: the away notification's "Stop ringing" Dart has not cleared, with the absence it was tapped in. **Not cleared on read**: Dart clears it once `device_away` applied, so a process that dies first reads it again. Native drops one tapped more than 35 s ago (one ring window plus the accept grace), or when a new absence shows, and answers `null` for it |
+| `peekStopRinging` | none | `{session_id}` (`session_id` may be `null`) or `null`: the away notification's "Stop ringing" Dart has not cleared, with the session of the absence it was tapped in. **Not cleared on read**: Dart clears it once `device_away` applied, so a process that dies first reads it again. Native drops one tapped more than 35 s ago (one ring window plus the accept grace), or when a new absence shows, and answers `null` for it |
 | `clearStopRinging` | none | `null`: the "Stop ringing" `peekStopRinging` read is done with (`device_away` applied, or nothing to pause) |
 | `setServerClock` | `{offset_ms, measured_at}`: `offset_ms` an int, how far the server's clock reads ahead of the phone's (negative: behind); `measured_at` when the station measured it (the phone's clock, ISO 8601 UTC) | `null`: native keeps it (across a process start) and times a ring on the server's clock with it while it is no more than 24 h old |
 | `moveTaskToBack` | none | `bool`: the app's task went to the back |

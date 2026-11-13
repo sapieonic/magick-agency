@@ -104,10 +104,10 @@ data class ServerClockOffset(val offsetMs: Long, val measuredAtMs: Long) {
 }
 
 /**
- * The away notification's "Stop ringing" Dart has not cleared yet: the absence it was tapped in
- * and when ([tappedAtMs], this phone's clock).
+ * The away notification's "Stop ringing" Dart has not cleared yet: the session of the absence it
+ * was tapped in (null when unknown) and when ([tappedAtMs], this phone's clock).
  */
-data class StopRingingRecord(val absence: AwayAbsence, val tappedAtMs: Long) {
+data class StopRingingRecord(val sessionId: String?, val tappedAtMs: Long) {
     /** Tapped no more than [RingWire.STOP_RINGING_KEEP_MS] ago: older, it is dropped unread. */
     fun isFresh(nowMs: Long): Boolean = nowMs >= tappedAtMs && nowMs - tappedAtMs <= RingWire.STOP_RINGING_KEEP_MS
 }

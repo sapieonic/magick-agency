@@ -928,13 +928,13 @@ class RingStateMachineTest {
 
     @Test
     fun aStopRingingTapIsKeptForOneRingWindowPlusTheGrace() {
-        val stop = StopRingingRecord(AwayAbsence("sess-1", absenceA), tappedAtMs = t0)
+        val stop = StopRingingRecord("sess-1", tappedAtMs = t0)
         assertEquals(35_000L, RingWire.STOP_RINGING_KEEP_MS)
         assertTrue(stop.isFresh(t0))
         assertTrue(stop.isFresh(t0 + 35_000))
         assertFalse(stop.isFresh(t0 + 35_001), "older: dropped unread, so it never pauses a later absence")
         assertFalse(stop.isFresh(t0 - 1))
-        assertFalse(StopRingingRecord(AwayAbsence(null, null), tappedAtMs = 0).isFresh(t0), "a record with no tap time")
+        assertFalse(StopRingingRecord(null, tappedAtMs = 0).isFresh(t0), "a record with no tap time")
     }
 
     @Test

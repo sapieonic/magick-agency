@@ -262,22 +262,22 @@ internal object RingCoordinator {
         init(context)
         val now = System.currentTimeMillis()
         dispatch(RingEvent.StopRingingTapped(now))
-        val absence = machine.away?.takeIf { it.shown } ?: AwayAbsence(null, null)
-        store?.saveStopRinging(StopRingingRecord(absence, now), machine.declineUntilMs)
+        val sessionId = machine.away?.takeIf { it.shown }?.sessionId
+        store?.saveStopRinging(StopRingingRecord(sessionId, now), machine.declineUntilMs)
     }
 
     /**
      * `peekStopRinging`: the "Stop ringing" tap Dart has not cleared, left in place. One older than
      * [RingWire.STOP_RINGING_KEEP_MS] is dropped and not returned. Main thread.
      */
-    fun peekStopRinging(context: Context): AwayAbsence? {
+    fun peekStopRinging(context: Context): StopRingingRecord? {
         init(context)
         val stop = store?.stopRinging ?: return null
         if (!stop.isFresh(System.currentTimeMillis())) {
             store?.clearStopRinging()
             return null
         }
-        return stop.absence
+        return stop
     }
 
     /** `clearStopRinging`: Dart's `device_away` applied, so the tap is done with. Main thread. */

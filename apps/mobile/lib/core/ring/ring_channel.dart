@@ -109,34 +109,29 @@ final class RingAnswer {
   String toString() => 'RingAnswer($callId, <token>)';
 }
 
-/// "Stop ringing" tapped on the away notification, for the absence that began at [since] in
-/// [sessionId] (each null when native did not know it).
+/// "Stop ringing" tapped on the away notification, in the absence of [sessionId] (null when native
+/// did not know it).
 @immutable
 final class RingStopRequest {
-  const RingStopRequest({this.sessionId, this.since});
+  const RingStopRequest({this.sessionId});
 
-  /// Reads `{session_id, since}`; null when it is not a map.
+  /// Reads `{session_id}`; null when it is not a map.
   static RingStopRequest? tryRead(Object? raw) {
     if (raw is! Map) return null;
     final session = raw['session_id'];
-    final since = raw['since'];
-    return RingStopRequest(
-      sessionId: session is String && session.isNotEmpty ? session : null,
-      since: since is String ? DateTime.tryParse(since)?.toUtc() : null,
-    );
+    return RingStopRequest(sessionId: session is String && session.isNotEmpty ? session : null);
   }
 
   final String? sessionId;
-  final DateTime? since;
 
   @override
-  bool operator ==(Object other) => other is RingStopRequest && other.sessionId == sessionId && other.since == since;
+  bool operator ==(Object other) => other is RingStopRequest && other.sessionId == sessionId;
 
   @override
-  int get hashCode => Object.hash(sessionId, since);
+  int get hashCode => sessionId.hashCode;
 
   @override
-  String toString() => 'RingStopRequest($sessionId, $since)';
+  String toString() => 'RingStopRequest($sessionId)';
 }
 
 /// A `ring_off` native took: the server ended `away_ring` for the absence that began at

@@ -60,10 +60,10 @@ void main() {
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(const MethodChannel(MethodRingChannel.channelName), (call) async {
       calls.add(call);
-      return call.method == 'peekStopRinging' ? {'session_id': 'sess-1', 'since': '2026-11-02T07:58:41.120Z'} : null;
+      return call.method == 'peekStopRinging' ? {'session_id': 'sess-1'} : null;
     });
     final channel = MethodRingChannel();
-    expect(await channel.peekStopRinging(), RingStopRequest(sessionId: 'sess-1', since: DateTime.utc(2026, 11, 2, 7, 58, 41, 120)));
+    expect(await channel.peekStopRinging(), const RingStopRequest(sessionId: 'sess-1'));
     await channel.clearStopRinging();
     await channel.setServerClock(offsetMs: -4200, measuredAt: DateTime.utc(2026, 11, 2, 7, 50));
     expect(calls.map((c) => c.method), ['peekStopRinging', 'clearStopRinging', 'setServerClock']);

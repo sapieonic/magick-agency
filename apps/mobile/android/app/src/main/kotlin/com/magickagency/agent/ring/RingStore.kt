@@ -20,18 +20,15 @@ internal class RingStore(context: Context) {
 
     /**
      * The away notification's "Stop ringing" Dart has not cleared yet (`peekStopRinging`, cleared
-     * by `clearStopRinging` once `device_away` applied): the absence it was tapped in (its fields
-     * null when unknown) and when, or null when there is none. A record from a build that did not
-     * keep the tap's time reads as tapped at 0, so it is never fresh.
+     * by `clearStopRinging` once `device_away` applied): the session of the absence it was tapped
+     * in (null when unknown) and when, or null when there is none. A record from a build that did
+     * not keep the tap's time reads as tapped at 0, so it is never fresh.
      */
     val stopRinging: StopRingingRecord?
         get() {
             if (!prefs.getBoolean(KEY_STOP_RINGING, false)) return null
             return StopRingingRecord(
-                absence = AwayAbsence(
-                    sessionId = prefs.getString(KEY_STOP_SESSION, null),
-                    sinceMs = prefs.getLong(KEY_STOP_SINCE, -1L).takeIf { it >= 0 },
-                ),
+                sessionId = prefs.getString(KEY_STOP_SESSION, null),
                 tappedAtMs = prefs.getLong(KEY_STOP_AT, 0L),
             )
         }
@@ -43,12 +40,11 @@ internal class RingStore(context: Context) {
      * the window when it starts again. One commit covers both.
      */
     fun saveStopRinging(record: StopRingingRecord, declineUntilMs: Long) {
-        val e = prefs.edit().remove(KEY_STOP_SESSION).remove(KEY_STOP_SINCE)
+        val e = prefs.edit().remove(KEY_STOP_SESSION)
             .putBoolean(KEY_STOP_RINGING, true)
             .putLong(KEY_STOP_AT, record.tappedAtMs)
             .putLong(KEY_DECLINE_UNTIL, declineUntilMs)
-        record.absence.sessionId?.let { e.putString(KEY_STOP_SESSION, it) }
-        record.absence.sinceMs?.let { e.putLong(KEY_STOP_SINCE, it) }
+        record.sessionId?.let { e.putString(KEY_STOP_SESSION, it) }
         e.commit()
     }
 
@@ -57,7 +53,7 @@ internal class RingStore(context: Context) {
      * is [RingWire.STOP_RINGING_KEEP_MS] old, and asking `device_away` again meanwhile is harmless.
      */
     fun clearStopRinging() {
-        prefs.edit().remove(KEY_STOP_RINGING).remove(KEY_STOP_SESSION).remove(KEY_STOP_SINCE).remove(KEY_STOP_AT).apply()
+        prefs.edit().remove(KEY_STOP_RINGING).remove(KEY_STOP_SESSION).remove(KEY_STOP_AT).apply()
     }
 
     /** Until then (this phone's clock) a ring is declined at once ("Stop ringing"); 0 when none was kept. */
@@ -161,7 +157,6 @@ internal class RingStore(context: Context) {
         const val KEY_TOKEN = "fcm_token"
         const val KEY_STOP_RINGING = "stop_ringing_pending"
         const val KEY_STOP_SESSION = "stop_ringing_session_id"
-        const val KEY_STOP_SINCE = "stop_ringing_away_since"
         const val KEY_STOP_AT = "stop_ringing_tapped_at"
         const val KEY_DECLINE_UNTIL = "stop_ringing_decline_until"
         const val KEY_CLOCK_OFFSET = "server_clock_offset_ms"

@@ -112,12 +112,7 @@ internal object RingChannel {
             }
             "takeRingOff" -> result.success(RingCoordinator.takeRingOff(context)?.toChannelMap())
             "peekStopRinging" -> result.success(
-                RingCoordinator.peekStopRinging(context)?.let { stop ->
-                    mapOf(
-                        "session_id" to stop.sessionId,
-                        "since" to stop.sinceMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
-                    )
-                },
+                RingCoordinator.peekStopRinging(context)?.let { stop -> mapOf("session_id" to stop.sessionId) },
             )
             "clearStopRinging" -> {
                 RingCoordinator.clearStopRinging(context)
