@@ -18,14 +18,12 @@ import {
 import {
   agencyAgentSessionRepository,
   agencyInboundCallRepository,
-  agencyPushDeviceRepository,
-  pushDeviceRingable,
   type AgencyInboundCallRecord,
   type AgencyInboundRouteRecord,
   type AgencyRingableSession,
 } from '../../db/repositories/agency.repository.js';
 import type { PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
-import { getPushSender, pushFailureRevokes, pushFailureScope } from '../../seams/push-sender.js';
+import { pushFailureRevokes, pushFailureScope } from '../../seams/push-sender.js';
 import type { AwayRingService } from '../away-ring.js';
 import type { AgentStateMachine } from '../agent-state-machine.js';
 import type { StationRegistry } from '../station-registry.js';
@@ -104,8 +102,14 @@ export const INBOUND_PUSH_RETRY_MS = 10_000;
 /** A refusal of the ring routes, typed as the contract's inbound codes. */
 export type InboundRingRefusal = 'ring_not_offered' | 'ring_expired' | 'already_accepted';
 
-/** What the connector reaches of the runtime's away break (`AwayRingService`). */
-export type InboundAwayRing = Pick<AwayRingService, 'releaseInbound' | 'end' | 'endAfterRing' | 'send' | 'ringAllowed'>;
+/**
+ * What the ring reaches of the runtime's away break (`AwayRingService`): every Mode B dependency of
+ * the inbound connector goes through it. Who may be rung (`ringableSessions`, `ringableDevice`), the
+ * pushes (`send`), the return to `away_ring` after an unanswered ring (`releaseInbound`) and the
+ * ends of the absence (`end`, `endAfterRing`).
+ */
+export type InboundAwayRing = Pick<AwayRingService,
+  'ringableSessions' | 'ringableDevice' | 'releaseInbound' | 'end' | 'endAfterRing' | 'send'>;
 
 /**
  * Ring results that are a miss (IQ62): the second in a row ends `away_ring`. Only the agent's own
@@ -294,14 +298,8 @@ export class RingOffers {
     this.acceptGraceMs = deps.acceptGraceMs ?? AGENCY_INBOUND_ACCEPT_GRACE_MS;
     this.pushRetryMs = deps.pushRetryMs ?? INBOUND_PUSH_RETRY_MS;
     const awayRing = deps.awayRing;
-    this.ringablesFn = deps.ringables ?? (awayRing
-      ? async (tenantId, accountId) => {
-        if (!(await awayRing.ringAllowed(tenantId, accountId))) return [];
-        const rows = await agencyAgentSessionRepository.findRingableInAccount(tenantId, accountId);
-        const sender = getPushSender();
-        return rows.filter((r) => sender.configured(r.device_platform));
-      }
-      : async () => []);
+    this.ringablesFn = deps.ringables
+      ?? (awayRing ? (tenantId, accountId) => awayRing.ringableSessions(tenantId, accountId) : async () => []);
   }
 
   // ─── Reads (the connector's branch points) ─────────────────────────────────
@@ -526,11 +524,11 @@ export class RingOffers {
     // IQ69: a ring starts only with a whole ring window of the caller's wait left.
     const entry = this.host.queueEntry(call.id);
     if (entry && !ringWindowLeft(entry, this.deps.now(), this.ringMs)) return 'call_gone';
-    const device = await agencyPushDeviceRepository.findForSession(sessionId).catch((err: unknown) => {
+    const device = await this.deps.awayRing.ringableDevice(sessionId).catch((err: unknown) => {
       log.warn({ err, sessionId }, 'Could not read the session\'s push device to ring it');
       return null;
     });
-    if (!device || !pushDeviceRingable(device) || !getPushSender().configured(device.platform)) return 'not_ringable';
+    if (!device) return 'not_ringable';
     if (!this.host.stillWaiting(call)) return 'call_gone';
     const at = new Date(this.deps.now());
     const res = await agencyInboundCallRepository.offer(call.id, sessionId, { at, channel: 'push' });

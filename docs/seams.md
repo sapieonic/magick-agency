@@ -340,7 +340,9 @@ at load, so a broken credential fails boot naming the env key, never its value):
 **The agency side** reaches the seam only through `getPushSender()`: `AwayRingService`
 (`agency/away-ring.ts`: `configured` in the `away_ring` refusals, `send` for `ring_off` and the test
 ring, recording a failure on the device row, which revokes it on `unregistered` or `invalid`), the inbound
-connector (`ring` and `ring_cancel`, `configured` before a ring) and the push-device routes
+ring (`agency/inbound/inbound-ring.ts`: `ring` and `ring_cancel`; it never calls the seam itself, every
+Mode B dependency of the inbound connector goes through `AwayRingService` as its `InboundAwayRing`
+port, which also answers who may be rung, `configured` included) and the push-device routes
 (`push_configured` in the device status). What it sends is the contract's `AgencyRingPush`; the
 device rows are `agency_push_devices` (`0036_inbound_ring.sql`, read through
 `db/repositories/agency/push-device.repository.ts`, the model in `@magick-agency/db`).

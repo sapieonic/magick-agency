@@ -35,7 +35,9 @@ import { pushTokenOf, type PushDeviceRecord } from '@magick-agency/db/models/pus
 import {
   agencyAgentSessionRepository,
   agencyPushDeviceRepository,
+  pushDeviceRingable,
   type AgencyAwayRingCandidate,
+  type AgencyRingableSession,
 } from '../db/repositories/agency.repository.js';
 import { isCampaignSession, type AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { getPushSender } from '../seams/push-sender.js';
@@ -182,6 +184,30 @@ export class AwayRingService {
       log.warn({ err, tenantId, accountId }, 'Could not read the ring flags; treating ringing as off');
       return false;
     });
+  }
+
+  /**
+   * The inbound search's read (`InboundConnectorDeps.ringables`' default): the account's sessions
+   * whose phone may be rung now, as far as the database and the flags tell. Both flags on, then
+   * `findRingableInAccount` (one statement), then the sender configured for the platform.
+   */
+  async ringableSessions(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
+    if (!(await this.ringAllowed(tenantId, accountId))) return [];
+    const rows = await agencyAgentSessionRepository.findRingableInAccount(tenantId, accountId);
+    const sender = getPushSender();
+    return rows.filter((r) => sender.configured(r.device_platform));
+  }
+
+  /**
+   * The device to ring for the session, read again as a ring starts (the search read the session
+   * ringable a moment ago): the push device that holds its station, if it may be rung (registered,
+   * not revoked, opted in, with a token, the sender configured for its platform); null otherwise.
+   * A failed read rejects.
+   */
+  async ringableDevice(sessionId: string): Promise<PushDeviceRecord | null> {
+    const device = await agencyPushDeviceRepository.findForSession(sessionId);
+    if (!device || !pushDeviceRingable(device) || !getPushSender().configured(device.platform)) return null;
+    return device;
   }
 
   /**

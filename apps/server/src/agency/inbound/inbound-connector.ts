@@ -243,15 +243,15 @@ export interface InboundConnectorDeps {
    */
   awayPauses?: (sessionIds: readonly string[], withinMs: number) => Promise<Map<string, number>>;
   /**
-   * Mode B: the runtime's away break (`runtime.awayRing`): the return to `away_ring` after an
-   * unanswered ring, the end of it (two misses, a revoked device), and the pushes. Without it no
-   * phone is ever rung (a media worker, the connector's older suites).
+   * Mode B: the runtime's away break (`runtime.awayRing`), the port every Mode B dependency goes
+   * through (`InboundAwayRing`): who may be rung, the pushes, the return to `away_ring` after an
+   * unanswered ring and the end of it (two misses, a revoked device). Without it no phone is ever
+   * rung (a media worker, the connector's older suites).
    */
   awayRing?: InboundAwayRing;
   /**
    * Mode B: the account's sessions whose phone may be rung now, as far as the database and the
-   * flags tell (`InboundAgentView.ringable`). Default with {@link awayRing}: both flags on, then
-   * `findRingableInAccount` (one statement), then the sender configured for the platform.
+   * flags tell (`InboundAgentView.ringable`). Default with {@link awayRing}: its `ringableSessions`.
    */
   ringables?: (tenantId: string, accountId: string) => Promise<AgencyRingableSession[]>;
   /** IQ59: `AGENCY_INBOUND_RING_MS` (tests: shorter). */
