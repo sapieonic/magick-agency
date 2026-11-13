@@ -51,11 +51,6 @@ export function toWirePushDevice(row: PushDeviceRecord): AgencyPushDevice {
   };
 }
 
-/** Whether a device can be rung: registered, not revoked, opted in, with a token for its platform. */
-export function pushDeviceRingable(row: PushDeviceRecord | null): boolean {
-  return !!row && row.revoked_at === null && row.ring_enabled && pushTokenOf(row) !== null;
-}
-
 export class AgencyPushDeviceRepository {
   /** The agent's own device, revoked or not; null when it never registered. */
   async find(userId: string, deviceId: string): Promise<PushDeviceRecord | null> {

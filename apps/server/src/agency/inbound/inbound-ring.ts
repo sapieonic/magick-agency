@@ -38,10 +38,10 @@ const log = createChildLogger({ component: 'agency-inbound-ring' });
  *
  * An agent on `away_ring` has parked their station socket; their phone is rung by a data push
  * instead (IQ66: a ring IS an offer, on channel `push`). The inbound connector reads such sessions
- * beside its stations ({@link RingOffers.ringables}) and
- * its search tries them in IQ63's order (`eligibility.ts`), one phone per caller at a time, and only
- * with a ring window of the caller's wait left (IQ69). This module owns every ring from its start to
- * its end: the ring's state (the offer token, held only here and never logged, audited or
+ * beside its stations ({@link RingOffers.ringables}: `AwayRingService.ringableSessions`, the ring
+ * rule) and its search tries them in IQ63's order (`eligibility.ts`), one phone per caller at a
+ * time, and only with a ring window of the caller's wait left (IQ69). This module owns every ring
+ * from its start to its end: the ring's state (the offer token, held only here and never logged, audited or
  * persisted; the token of the call's last ring that ended unanswered, and of the ring that bound),
  * the ring and accept timers, the pause after a push service failure, the ring and `ring_cancel`
  * pushes, the ring routes' entry points, and the ONE end of every ring ({@link RingOffers.end}).
@@ -75,8 +75,9 @@ const log = createChildLogger({ component: 'agency-inbound-ring' });
  *    (`AwayRingService.releaseInbound`; Mode A's return only when an OPEN station is attached
  *    here) and, unless the caller left, puts the caller back at the head of the queue. An expiry or
  *    a lapse is a miss (IQ62): the second in a row ends `away_ring` (`ring_missed`), and an agent
- *    with that many misses is never rung again (`findRingableInAccount`; a ring that slipped
- *    in before the end landed ends it when it ends, whatever its end). A failed push is no miss, and
+ *    with that many misses is never rung again (`AwayRingService`'s ring rule, by which the
+ *    reconcile also ends such an absence; a ring that slipped in before the end landed ends it when
+ *    it ends, whatever its end). A failed push is no miss, and
  *    is classed by whose trouble it is (`pushFailureScope`, IQ75): a token the carrier refused for
  *    good (`unregistered`, `invalid`) revokes the device and ends the absence (`revoked`); one
  *    device held back for now (its own `rate_limited`) is never rung again for this caller, whose
@@ -831,7 +832,8 @@ export class RingOffers {
    * (IQ62), and the absence ended (`ring_missed`) once the misses reach the maximum. Asked after
    * every ring's end, not only a miss: the end owed by an earlier miss is lost if another caller's
    * search rang the agent between that ring's release and its end (`ring_in_flight`), so the next
-   * ring's end ends it (`findRingableInAccount` rings no such agent again after that). Never throws.
+   * ring's end ends it (the ring rule rings no such agent again after that, and the reconcile ends an
+   * absence whose owed end was lost all the same). Never throws.
    */
   private async noteMiss(sessionId: string, missed: boolean): Promise<void> {
     try {

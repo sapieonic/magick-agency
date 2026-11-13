@@ -8,7 +8,6 @@ import type {
   AgencyStationAttachRecord,
 } from '../../models/agency.model.js';
 import {
-  AGENCY_INBOUND_RING_MAX_MISSES,
   AWAY_RING_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
@@ -184,9 +183,10 @@ function sessionTransitionSql(input: { prevWhere: string; set: string; where?: s
 
 /**
  * A live session on `away_ring` or ringing from it (`away_ring_since IS NOT NULL`, N1), as the
- * reconcile reads it (`AwayRingService.reconcile`), with the push device that holds its station
- * (`agency_push_devices` on `(agent_user_id, station_device_id)`; every `device_*` NULL when none).
- * Never a token: only whether one is registered.
+ * reconcile and the inbound search read it (`AwayRingService.reconcile`, `ringableSessions`), with
+ * the push device that holds its station (`agency_push_devices` on `(agent_user_id,
+ * station_device_id)`; every `device_*` NULL when none) and its missed rings: the facts
+ * `AwayRingService`'s ring rule is applied to. Never a token: only whether one is registered.
  */
 export interface AgencyAwayRingCandidate {
   id: string;
@@ -204,13 +204,15 @@ export interface AgencyAwayRingCandidate {
   device_ring_enabled: boolean | null;
   device_revoked: boolean | null;
   device_has_token: boolean | null;
+  /** Missed rings in a row (IQ62). */
+  ring_misses: number;
 }
 
 /**
  * A live campaign session of one account on `away_ring` (or ringing from it) whose station's push
- * device can be rung: registered, not revoked, opted in, with a token for its platform (IQ58,
- * IQ60, IQ65). What the inbound connector reads at each search (`InboundConnector`'s agent views,
- * one statement). Never a token.
+ * device may be rung now by `AwayRingService`'s ring rule (IQ58, IQ60, IQ62, IQ65, IQ67): what the
+ * inbound connector reads at each search (`AwayRingService.ringableSessions`, beside its agent
+ * views). Never a token.
  */
 export interface AgencyRingableSession {
   id: string;
@@ -988,11 +990,16 @@ export class AgencyAgentSessionRepository {
     return (rowCount ?? 0) > 0;
   }
 
-  /** Every live session on `away_ring` or ringing from it, with its station's push device (N1). */
-  async findAwayRingCandidates(): Promise<AgencyAwayRingCandidate[]> {
+  /**
+   * Every live session on `away_ring` or ringing from it, with its station's push device and its
+   * missed rings (N1): the reconcile's read, and, with `scope`, one account's (the inbound search's,
+   * `AwayRingService.ringableSessions`). On 0037's partial index `idx_agency_agent_sessions_away_ring`.
+   * Who of them may be rung is `AwayRingService`'s ring rule, never this statement's.
+   */
+  async findAwayRingCandidates(scope?: { tenantId: string; accountId: string }): Promise<AgencyAwayRingCandidate[]> {
     const { rows } = await getPool().query<AgencyAwayRingCandidate>(
       `SELECT s.id, s.tenant_id, s.account_id, s.campaign_id, s.kind, s.agent_user_id, s.state, s.break_reason,
-              s.state_since, s.away_ring_since, s.station_device_id,
+              s.state_since, s.away_ring_since, s.station_device_id, s.ring_misses,
               d.platform AS device_platform,
               d.ring_enabled AS device_ring_enabled,
               CASE WHEN d.id IS NULL THEN NULL ELSE d.revoked_at IS NOT NULL END AS device_revoked,
@@ -1001,31 +1008,9 @@ export class AgencyAgentSessionRepository {
          FROM agency_agent_sessions s
          LEFT JOIN agency_push_devices d ON d.user_id = s.agent_user_id AND d.device_id = s.station_device_id
         WHERE s.away_ring_since IS NOT NULL AND s.left_at IS NULL
+          ${scope ? 'AND s.tenant_id = $1 AND s.account_id = $2' : ''}
         ORDER BY s.away_ring_since`,
-    );
-    return rows;
-  }
-
-  /**
-   * The account's sessions whose phone may be rung for an inbound caller (Mode B, docs/inbound.md
-   * "Ringing an away phone"): live campaign sessions on an absence (`away_ring_since` set, N1)
-   * joined to the push device that holds their station, usable for a ring, and short of
-   * {@link AGENCY_INBOUND_RING_MAX_MISSES} missed rings (IQ62: one that reached it is ending, and is
-   * never rung meanwhile). One statement, on `idx_agency_agent_sessions_away_ring` (0037); whether
-   * Redis says `break, ring = 1` (or the ring in flight) is the caller's read.
-   */
-  async findRingableInAccount(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
-    const { rows } = await getPool().query<AgencyRingableSession>(
-      `SELECT s.id, s.agent_user_id, s.campaign_id, d.platform AS device_platform
-         FROM agency_agent_sessions s
-         JOIN agency_push_devices d ON d.user_id = s.agent_user_id AND d.device_id = s.station_device_id
-        WHERE s.tenant_id = $1 AND s.account_id = $2
-          AND s.away_ring_since IS NOT NULL AND s.left_at IS NULL
-          AND s.kind = 'campaign' AND s.campaign_id IS NOT NULL
-          AND s.ring_misses < $3
-          AND d.revoked_at IS NULL AND d.ring_enabled
-          AND (CASE WHEN d.platform = 'android' THEN d.fcm_token ELSE d.voip_token END) IS NOT NULL`,
-      [tenantId, accountId, AGENCY_INBOUND_RING_MAX_MISSES],
+      scope ? [scope.tenantId, scope.accountId] : [],
     );
     return rows;
   }

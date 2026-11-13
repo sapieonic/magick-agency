@@ -24,18 +24,19 @@
 import { createChildLogger } from '@magick-agency/observability';
 import { trackAwayRingEnded } from '@magick-agency/observability/metrics/agency';
 import {
+  AGENCY_INBOUND_RING_MAX_MISSES,
   AWAY_RING_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON,
   type AgencyAgentState,
   type AgencyAwayRingRefusal,
   type AgencyAwayRingRefusalCode,
+  type AgencyPushPlatform,
   type AgencyRingOffReason,
 } from '@magick-agency/contracts/agency';
 import { pushTokenOf, type PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
 import {
   agencyAgentSessionRepository,
   agencyPushDeviceRepository,
-  pushDeviceRingable,
   type AgencyAwayRingCandidate,
   type AgencyRingableSession,
 } from '../db/repositories/agency.repository.js';
@@ -84,6 +85,67 @@ const REFUSAL_MESSAGES: Readonly<Record<AgencyAwayRingRefusalCode, string>> = {
 export function awayRingRefusalBody(code: AgencyAwayRingRefusalCode): AgencyAwayRingRefusal {
   return { error: 'Conflict', code, message: REFUSAL_MESSAGES[code] };
 }
+
+/**
+ * Why the ring rule says a session's phone may not be rung ({@link AwayRingService.ringBlocks}), in
+ * the order of the remedies (`AgencyAwayRingRefusalCode`, IQ65):
+ *  - `not_campaign`: not a campaign session (IQ58);
+ *  - `no_device`: no push device holds the session's station, or it is revoked, or it has no token
+ *    for its platform;
+ *  - `opted_out`: the agent has not turned ringing on for that device (IQ65);
+ *  - `push_unconfigured`: the sender has no credentials for its platform;
+ *  - `max_age`: the absence is past `AGENCY_AWAY_RING_MAX_MS` (IQ67);
+ *  - `missed`: `AGENCY_INBOUND_RING_MAX_MISSES` missed rings in a row (IQ62), until a ring binds or
+ *    the agent goes `available`.
+ * The account's flags (IQ65) are the rule's other half, read once per account
+ * ({@link AwayRingService.ringAllowed}).
+ */
+export type RingBlock = 'not_campaign' | 'no_device' | 'opted_out' | 'push_unconfigured' | 'max_age' | 'missed';
+
+/** The session's side of the ring rule (a session row, or a reconcile candidate). */
+export interface RingSessionFacts {
+  campaign_id: string | null;
+  /** The absence's start (null: not on one yet, as when entering). */
+  away_ring_since: Date | null;
+  ring_misses: number;
+}
+
+/** The device's side of the ring rule: the push device that holds the session's station. */
+export interface RingDeviceFacts {
+  platform: AgencyPushPlatform;
+  revoked: boolean;
+  ringEnabled: boolean;
+  hasToken: boolean;
+}
+
+/** A device row's side of the ring rule (null: no device holds the station). */
+export function ringDeviceOf(device: PushDeviceRecord | null): RingDeviceFacts | null {
+  if (!device) return null;
+  return { platform: device.platform, revoked: device.revoked_at !== null, ringEnabled: device.ring_enabled, hasToken: pushTokenOf(device) !== null };
+}
+
+/** A reconcile candidate's device, as the rule reads it (null: none holds the station). */
+function ringDeviceOfCandidate(row: AgencyAwayRingCandidate): RingDeviceFacts | null {
+  if (row.device_platform === null) return null;
+  return {
+    platform: row.device_platform,
+    revoked: row.device_revoked === true,
+    ringEnabled: row.device_ring_enabled === true,
+    hasToken: row.device_has_token === true,
+  };
+}
+
+/** The `away_ring` refusal for each block of the ring rule (IQ65's codes; the app pauses `device_away` on any). */
+const REFUSAL_OF_BLOCK: Readonly<Record<RingBlock, AgencyAwayRingRefusalCode>> = {
+  not_campaign: 'ring_not_allowed',
+  no_device: 'no_push_device',
+  opted_out: 'ring_disabled',
+  push_unconfigured: 'push_unavailable',
+  max_age: 'ring_not_allowed',
+  // The agent was told why the phone stopped (`ring_off`, `ring_missed`); asking again before going
+  // `available` is refused as ringing that is not available, with no news for the app to show.
+  missed: 'ring_not_allowed',
+};
 
 /** How an end of `away_ring` came out ({@link AwayRingService.end}). */
 export type AwayRingEndOutcome =
@@ -186,28 +248,62 @@ export class AwayRingService {
     });
   }
 
+  // ─── The ring rule (IQ58, IQ62, IQ65, IQ67): who may be rung, in ONE place ───────────
+  //
+  // The session's and the device's side is {@link ringBlocks}; the account's flags are
+  // {@link ringAllowed}. Every reader applies both: the `away_ring` entry ({@link refusalFor}), the
+  // inbound search ({@link ringableSessions}), the ring as it starts ({@link ringableDevice}) and the
+  // reconcile ({@link reconcile}), so a session admitted to `away_ring` is one the search rings, and
+  // one the search will not ring any more is ended by the reconcile.
+
+  /**
+   * Every reason the rule refuses to ring the session's phone, in the order of the remedies
+   * ({@link RingBlock}); empty: it may be rung, as far as the session and its device tell.
+   */
+  ringBlocks(session: RingSessionFacts, device: RingDeviceFacts | null, now = Date.now()): RingBlock[] {
+    const blocks: RingBlock[] = [];
+    if (session.campaign_id === null) blocks.push('not_campaign');
+    if (!device || device.revoked || !device.hasToken) blocks.push('no_device');
+    else if (!device.ringEnabled) blocks.push('opted_out');
+    if (device && !getPushSender().configured(device.platform)) blocks.push('push_unconfigured');
+    if (this.ttlLeft(session.away_ring_since, now) <= 0) blocks.push('max_age');
+    if (session.ring_misses >= AGENCY_INBOUND_RING_MAX_MISSES) blocks.push('missed');
+    return blocks;
+  }
+
+  /** The rule's session-and-device half lets the session's phone be rung ({@link ringBlocks} is empty). */
+  canRing(session: RingSessionFacts, device: RingDeviceFacts | null, now = Date.now()): boolean {
+    return this.ringBlocks(session, device, now).length === 0;
+  }
+
   /**
    * The inbound search's read (`InboundConnectorDeps.ringables`' default): the account's sessions
-   * whose phone may be rung now, as far as the database and the flags tell. Both flags on, then
-   * `findRingableInAccount` (one statement), then the sender configured for the platform.
+   * on an absence whose phone the rule lets ring now. Both flags on, then the account's candidates
+   * (`findAwayRingCandidates`, one statement), then {@link canRing}.
    */
   async ringableSessions(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
     if (!(await this.ringAllowed(tenantId, accountId))) return [];
-    const rows = await agencyAgentSessionRepository.findRingableInAccount(tenantId, accountId);
-    const sender = getPushSender();
-    return rows.filter((r) => sender.configured(r.device_platform));
+    const rows = await agencyAgentSessionRepository.findAwayRingCandidates({ tenantId, accountId });
+    const now = Date.now();
+    return rows.flatMap((r): AgencyRingableSession[] => {
+      if (r.campaign_id === null || r.device_platform === null || !this.canRing(r, ringDeviceOfCandidate(r), now)) return [];
+      return [{ id: r.id, agent_user_id: r.agent_user_id, campaign_id: r.campaign_id, device_platform: r.device_platform }];
+    });
   }
 
   /**
    * The device to ring for the session, read again as a ring starts (the search read the session
-   * ringable a moment ago): the push device that holds its station, if it may be rung (registered,
-   * not revoked, opted in, with a token, the sender configured for its platform); null otherwise.
-   * A failed read rejects.
+   * ringable a moment ago): the push device that holds its station if the rule ({@link canRing}) still
+   * lets it ring; null otherwise. The flags are the search's read of a moment ago (a flag turned
+   * off ends the absence at the reconcile, which cancels the ring, N1). A failed read rejects.
    */
   async ringableDevice(sessionId: string): Promise<PushDeviceRecord | null> {
-    const device = await agencyPushDeviceRepository.findForSession(sessionId);
-    if (!device || !pushDeviceRingable(device) || !getPushSender().configured(device.platform)) return null;
-    return device;
+    const [session, device] = await Promise.all([
+      agencyAgentSessionRepository.findById(sessionId),
+      agencyPushDeviceRepository.findForSession(sessionId),
+    ]);
+    if (!session || session.left_at || !device) return null;
+    return this.canRing(session, ringDeviceOf(device)) ? device : null;
   }
 
   /**
@@ -219,11 +315,12 @@ export class AwayRingService {
   }
 
   /**
-   * Why `away_ring` is refused for `session`, or null: it may enter. The order of the checks is
-   * the order of the remedies (IQ58, IQ65; `AgencyAwayRingRefusalCode`): not a campaign session or
-   * the flags off (`ring_not_allowed`); no usable registration for the station's device (none,
-   * revoked, no token: `no_push_device`); not opted in (`ring_disabled`); the sender has no
-   * credentials for the platform (`push_unavailable`). An absence already past its maximum age is
+   * Why `away_ring` is refused for `session`, or null: it may enter. The ring rule's first block
+   * ({@link ringBlocks}), in the order of the remedies (IQ58, IQ65; `AgencyAwayRingRefusalCode`): not
+   * a campaign session or the flags off (`ring_not_allowed`); no usable registration for the
+   * station's device (none, revoked, no token: `no_push_device`); not opted in (`ring_disabled`);
+   * the sender has no credentials for the platform (`push_unavailable`). An absence already past its
+   * maximum age, or an agent at the maximum missed rings (IQ62: until they go `available`), is
    * `ring_not_allowed` too: the app pauses as `device_away` instead.
    */
   async refusalFor(session: AgencyAgentSessionRecord): Promise<AgencyAwayRingRefusalCode | null> {
@@ -232,11 +329,8 @@ export class AwayRingService {
     const device = session.station_device_id
       ? await agencyPushDeviceRepository.find(session.agent_user_id, session.station_device_id)
       : null;
-    if (!device || device.revoked_at !== null || pushTokenOf(device) === null) return 'no_push_device';
-    if (!device.ring_enabled) return 'ring_disabled';
-    if (!getPushSender().configured(device.platform)) return 'push_unavailable';
-    if (this.ttlLeft(session.away_ring_since) <= 0) return 'ring_not_allowed';
-    return null;
+    const block = this.ringBlocks(session, ringDeviceOf(device))[0];
+    return block ? REFUSAL_OF_BLOCK[block] : null;
   }
 
   /**
@@ -608,8 +702,9 @@ export class AwayRingService {
    *    unless the absence must end (below) while the connector holds the ring: then the ring is
    *    cancelled on the call's chain (`InboundConnector.cancelRingForAwayRingEnd`) and the absence
    *    ended there (an answered ring runs to its end and the next pass ends the absence);
-   *  - past the maximum age, the flags off, the device gone, revoked or without a token, or opted
-   *    out: ended (`max_age`, `flag_off`, `revoked`, `opted_out`), `ring_off` sent;
+   *  - the ring rule refusing it (past the maximum age, the flags off, the device gone, revoked or
+   *    without a token, opted out, the maximum missed rings): ended (`max_age`, `flag_off`,
+   *    `revoked`, `opted_out`, `ring_missed`), `ring_off` sent;
    *  - otherwise live but its Redis key gone (a restart that outlived the lease, a crash mid-ring
    *    whose `reserved` lease lapsed): re-seeded, create-if-absent, and the mirror restored;
    *  - on `away_ring` in Redis while the mirror says otherwise (the startup reaper's
@@ -665,7 +760,7 @@ export class AwayRingService {
     }
     if (row.kind !== 'campaign') {
       // Unreachable: `away_ring` is refused to a non-campaign session (`refusalFor`), a live row
-      // never changes its kind, and such a session is never rung (`findRingableInAccount`). Ended
+      // never changes its kind, and such a session is never rung (the ring rule). Ended
       // all the same, with no `ring_off`: no reason the app words would be true (`flag_off` would
       // tell the agent the account switched ringing off).
       log.warn({ sessionId: row.id, kind: row.kind }, 'A non-campaign session was on away-ring; ending it');
@@ -698,13 +793,21 @@ export class AwayRingService {
     if (await agencyAgentSessionRepository.clearAwayRingSince(row.id, row.away_ring_since)) summary.cleared++;
   }
 
-  /** Why the reconcile ends this absence, or null: it may go on. */
+  /**
+   * Why the reconcile ends this absence, or null: it may go on. The ring rule ({@link ringBlocks}
+   * and the flags), with the `ring_off` reason each block ends it with: past its age first, then a
+   * flag off, then the device (gone, revoked or tokenless; opted out), then the misses (IQ62: an
+   * end owed by a miss and lost, a ring in flight then or Redis away). A sender with no credentials
+   * for the platform ends nobody: it is the deployment's, no `ring_off` reason says it, and the
+   * absence ends at its maximum age.
+   */
   private async endReasonFor(
     row: AgencyAwayRingCandidate,
     now: number,
     allowed: Map<string, Promise<boolean>>,
   ): Promise<AgencyRingOffReason | null> {
-    if (this.ttlLeft(row.away_ring_since, now) <= 0) return 'max_age';
+    const blocks = this.ringBlocks(row, ringDeviceOfCandidate(row), now);
+    if (blocks.includes('max_age')) return 'max_age';
     const flagKey = `${row.tenant_id}:${row.account_id}`;
     let ok = allowed.get(flagKey);
     if (!ok) {
@@ -716,8 +819,9 @@ export class AwayRingService {
       allowed.set(flagKey, ok);
     }
     if (!(await ok)) return 'flag_off';
-    if (row.device_platform === null || row.device_revoked || !row.device_has_token) return 'revoked';
-    if (!row.device_ring_enabled) return 'opted_out';
+    if (blocks.includes('no_device')) return 'revoked';
+    if (blocks.includes('opted_out')) return 'opted_out';
+    if (blocks.includes('missed')) return 'ring_missed';
     return null;
   }
 }

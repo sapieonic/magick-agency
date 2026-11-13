@@ -36,7 +36,6 @@ export type {
 export {
   AgencyPushDeviceRepository,
   agencyPushDeviceRepository,
-  pushDeviceRingable,
   toWirePushDevice,
 } from './agency/push-device.repository.js';
 export type { PushDeviceRegisterInput } from './agency/push-device.repository.js';

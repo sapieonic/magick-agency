@@ -21,6 +21,7 @@ const { agencyAgentSessionRepository: sessions, agencyPushDeviceRepository: devi
 const { setPushSender, resetPushSender } = await import('../../../src/seams/push-sender.js');
 const { AWAY_RING_BREAK } = await import('@magick-agency/domain/break-manager');
 const { agencyAwayRingEndedTotal } = await import('@magick-agency/observability/metrics/agency');
+const { AGENCY_INBOUND_RING_MAX_MISSES } = await import('@magick-agency/contracts/agency');
 
 /*
  * Mode B's `away_ring` (IQ66, IQ67, N1, N2, N5) against REAL Redis running the REAL Lua and REAL
@@ -468,6 +469,56 @@ describe('AwayRingService', () => {
     expect(await service().svc.refusalFor((await sessions.findById(other.id))!)).toBe('no_push_device');
   });
 
+  it('IQ62: refuses away_ring at the maximum missed rings (ring_not_allowed, the app pauses device_away) until the misses reset', async () => {
+    await device();
+    const s = await session();
+    const rec = async () => (await sessions.findById(s.id))!;
+    expect(await service().svc.refusalFor(await rec())).toBeNull();
+    await getTestPool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [s.id, AGENCY_INBOUND_RING_MAX_MISSES]);
+    expect(await service().svc.refusalFor(await rec())).toBe('ring_not_allowed');
+    // A device problem is still named first (the order of the remedies).
+    await devices.setRingEnabled(user, 'phone-aaaa-1', false);
+    expect(await service().svc.refusalFor(await rec())).toBe('ring_disabled');
+    await devices.setRingEnabled(user, 'phone-aaaa-1', true);
+    // Going available resets them.
+    await sessions.setState(s.id, 'available');
+    expect(await service().svc.refusalFor(await rec())).toBeNull();
+  });
+
+  it('one ring rule: the search, the ring and the entry refuse the same sessions (flags, device, opt-in, sender, maximum age, misses)', async () => {
+    const d = await device();
+    const s = await onAwayRing();
+    const { svc } = service();
+    const ringable = async (over: { allowed?: boolean } = {}) =>
+      (await service(over).svc.ringableSessions(DEFAULTS.tenantId, DEFAULTS.accountId)).map((r) => r.id);
+    const rule = async () => ({
+      search: (await ringable()).includes(s.id),
+      ring: (await svc.ringableDevice(s.id))?.id ?? null,
+      entry: await svc.refusalFor((await sessions.findById(s.id))!),
+    });
+    expect(await rule()).toEqual({ search: true, ring: d.id, entry: null });
+    expect(await ringable({ allowed: false })).toEqual([]);
+
+    await getTestPool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [s.id, AGENCY_INBOUND_RING_MAX_MISSES]);
+    expect(await rule()).toEqual({ search: false, ring: null, entry: 'ring_not_allowed' });
+    await getTestPool().query('UPDATE agency_agent_sessions SET ring_misses = 0 WHERE id = $1', [s.id]);
+
+    await getTestPool().query(`UPDATE agency_agent_sessions SET away_ring_since = now() - interval '5 hours' WHERE id = $1`, [s.id]);
+    expect(await rule()).toEqual({ search: false, ring: null, entry: 'ring_not_allowed' });
+    await getTestPool().query(`UPDATE agency_agent_sessions SET away_ring_since = now() WHERE id = $1`, [s.id]);
+
+    sender.configured = false;
+    expect(await rule()).toEqual({ search: false, ring: null, entry: 'push_unavailable' });
+    sender.configured = true;
+
+    await devices.setRingEnabled(user, 'phone-aaaa-1', false);
+    expect(await rule()).toEqual({ search: false, ring: null, entry: 'ring_disabled' });
+    await devices.setRingEnabled(user, 'phone-aaaa-1', true);
+
+    await devices.revoke(user, 'phone-aaaa-1');
+    expect(await rule()).toEqual({ search: false, ring: null, entry: 'no_push_device' });
+  });
+
   it('enter: Redis away_ring with the time left, the mirror on away_ring with the absence stamped', async () => {
     await device();
     const s = await onAwayRing();
@@ -565,6 +616,20 @@ describe('AwayRingService', () => {
     expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null });
     expect(frames).toEqual([expect.objectContaining({ event: 'agent_state', state: 'break', break_reason: 'device_away' })]);
     expect((await pushes(1))[0]!.payload).toMatchObject({ type: 'ring_off', reason });
+  });
+
+  it('IQ62: reconcile ends an absence at the maximum missed rings whose own end was lost (ring_missed, ring_off, audited)', async () => {
+    const d = await device();
+    const s = await onAwayRing();
+    // The second miss counted, its end lost (a ring in flight then, or Redis away): never rung, so
+    // no ring's end is left to send it.
+    await getTestPool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [s.id, AGENCY_INBOUND_RING_MAX_MISSES]);
+    expect(await service().svc.reconcile()).toMatchObject({ ended: 1 });
+    expect(await row(s.id)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
+    expect(await pushes(1)).toEqual([{ deviceRowId: d.id, payload: expect.objectContaining({ type: 'ring_off', reason: 'ring_missed' }) }]);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'agency_session.away_ring_ended', resource_id: s.id, details: expect.objectContaining({ reason: 'ring_missed' }),
+    }));
   });
 
   it('a server-ended absence keeps its start: Redis, the frame, the mirror and the ring_off all name the instant away_ring began', async () => {

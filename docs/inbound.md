@@ -786,8 +786,9 @@ carriers are the platform area's, behind `seams/push-sender.ts` ([`seams.md`](se
   and `agency_push_device.revoked`.
 - **Entering.** The app asks `POST /sessions/:id/break {reason: 'away_ring'}` on leaving the app
   instead of `device_away`. Checked before anything is read from Redis or written
-  (`AwayRingService.refusalFor`), refused 409 in this order: `ring_not_allowed` (not a campaign
-  session, a flag off, or this absence already past its maximum age), `no_push_device` (no row for
+  (`AwayRingService.refusalFor`, the ring rule below), refused 409 in this order: `ring_not_allowed`
+  (not a campaign session, a flag off, this absence already past its maximum age, or the agent at
+  the maximum missed rings until they go `available`, IQ78), `no_push_device` (no row for
   the station's device, revoked, or no token for its platform), `ring_disabled` (not opted in),
   `push_unavailable` (the sender has no credentials for the platform); the app then asks
   `device_away`. Otherwise the device-away rules apply (§6 "Mobile stations"): from `available` at
@@ -820,12 +821,21 @@ carriers are the platform area's, behind `seams/push-sender.ts` ([`seams.md`](se
   `409 agent_away_ring` ("They're away from the app; their phone rings for inbound calls."): there
   is no station to put them in the pool on. Force-break and sign-off work as for any break.
 
+**The ring rule (IQ58, IQ62, IQ65, IQ67, IQ78; `AwayRingService`).** Who may be rung is decided in
+one place: the account's flags (`ringAllowed`, both on) and the session's and its device's side
+(`ringBlocks`): a campaign session; a push device holding its station (joined on agent and station
+device), not revoked, with a token for its platform, opted in, and the sender configured for that
+platform; the absence within `AGENCY_AWAY_RING_MAX_MS`; fewer than `AGENCY_INBOUND_RING_MAX_MISSES`
+missed rings in a row. Every reader applies it: the entry (`refusalFor`, its first block as the
+refusal code), the search (`ringableSessions`), the ring as it starts (`ringableDevice`) and the
+reconcile (which ends an absence the rule refuses, with the matching `ring_off` reason). So an agent
+admitted to `away_ring` is one the search rings, and one the search no longer rings is ended.
+
 **Who is rung (IQ60, IQ63, IQ68, IQ69; `eligibility.ts`).** Every search reads the account's
-ringable sessions first: both flags on, then one statement (`findRingableInAccount`: live campaign
-sessions with `away_ring_since` set and fewer than `AGENCY_INBOUND_RING_MAX_MISSES` missed rings,
-joined on (agent, station device) to a push device that is not revoked, opted in and has a token; on
-0037's partial index `idx_agency_agent_sessions_away_ring`), then the sender configured for the platform; a failed read rings
-nobody that search. Such an agent is ringable for a caller (`ringIneligibility`) when every
+ringable sessions first (`AwayRingService.ringableSessions`): both flags on, then one statement
+(`findAwayRingCandidates` scoped to the account: the live sessions with `away_ring_since` set, with
+their station's push device and missed rings, on 0037's partial index
+`idx_agency_agent_sessions_away_ring`), then the ring rule; a failed read rings nobody that search. Such an agent is ringable for a caller (`ringIneligibility`) when every
 station rule holds but the station and the state: the call's account, a campaign in the pool, an
 active member who sees the account, Redis `break` with `ring = 1` holding nothing, and not a session
 this caller already declined or missed. `candidatesFor` tags each candidate `station` or `push`, in
@@ -848,7 +858,7 @@ shared steps), which owns the ring's state, tokens, timers and pushes. On the ca
 
 1. the search's CAS `break (ring = 1) → reserved` (`reserveForInbound`'s `break` arm, which refuses
    any other break) writes `inbound` and `push = 1` in the same script;
-2. the device and IQ69 are checked again; the spine is `offered` with `offer_channel = push`,
+2. the ring rule (`ringableDevice`, on fresh rows) and IQ69 are checked again; the spine is `offered` with `offer_channel = push`,
    `ringing_at`, `ring_count + 1` (the previous ring's `accepted_at` and `ring_result` cleared);
 3. with no await between: phase `offered`, `held.channel = 'push'`, a fresh offer token (128 random
    bits, held only in memory: never logged, audited or persisted), the `reserved` lease renewed by
@@ -945,10 +955,11 @@ spine then reads `offered` to that session, so later offers of the caller are re
 caller leaves at their maximum wait, whose settle ends the row. **Misses (IQ62):** only `expired`
 and `accept_lapsed` add one to `ring_misses` (never `push_failed`, never a decline); the second in a
 row ends `away_ring` (`ring_missed`). An agent at `ring_misses >= AGENCY_INBOUND_RING_MAX_MISSES` is
-not ringable (`findRingableInAccount` filters them), and every ring's end that returns the agent to
+not ringable (the ring rule) and is refused `away_ring` until they go `available` (IQ78), and every ring's end that returns the agent to
 `away_ring` asks the count again, not only a miss: a ring another caller's search started between a
 miss's release and its end (`ring_in_flight`) would otherwise leave the owed `ring_missed` end
-unsent, so that ring's end sends it. After `declined`, `busy_on_phone`, `expired` or
+unsent, so that ring's end sends it (whatever its end, the caller's hang-up included); an owed end
+lost all the same (Redis away when it was sent) is the reconcile's. After `declined`, `busy_on_phone`, `expired` or
 `accept_lapsed`, or a `push_failed` that was the device's (above), that caller never rings that
 agent again; after a `push_failed` that was the service's they may.
 
@@ -999,7 +1010,7 @@ committed, and the next reconcile ends the absence:
 
 | Reason | When |
 |---|---|
-| `ring_missed` | the second missed ring in a row |
+| `ring_missed` | the second missed ring in a row (or the reconcile finding an absence at the maximum whose own end was lost) |
 | `revoked` | the device removed (`DELETE`), or its token refused for good by FCM or APNs (`unregistered`, `invalid`) |
 | `opted_out` | "Stop ringing" (`PATCH ring_enabled=false`) |
 | `flag_off` | the reconcile finds a flag off for the account |
@@ -1019,8 +1030,10 @@ fails their calls). `AwayRingService.reconcile` runs at boot, after the startup 
 inbound sweep, then every 60 s (`bootstrap/agency.ts`), over every live session with
 `away_ring_since` set (never keyed on `break_reason`, which a ring's `reserved` nulls): a ring in
 flight is skipped (unless its absence must end, then cancelled through the connector); an absence
-past its age, with a flag off (a flag read that fails ends nobody), or whose device is gone, revoked,
-tokenless or opted out is ended with its reason; a live absence whose Redis key is gone (a restart
+past its age, with a flag off (a flag read that fails ends nobody), whose device is gone, revoked,
+tokenless or opted out, or at the maximum missed rings (`ring_missed`, IQ78) is ended with its reason
+(the ring rule; a sender with no credentials for the platform ends nobody: the absence runs to its
+maximum age); a live absence whose Redis key is gone (a restart
 that outlived it, a crash mid-ring whose `reserved` lease lapsed) is re-seeded with a create-if-absent
 script and its mirror restored; a mirror the startup reaper wrote `offline` is restored; Redis off
 `away_ring` with nothing in flight only clears the mirror's key, and only while it is still the
@@ -1677,7 +1690,8 @@ to an older server, but carries a break code it cannot word (below, "Going back 
   `packages/db/test/integration/db/away-ring-sessions-index-migration.test.ts`):
   `idx_agency_agent_sessions_away_ring (tenant_id, account_id) WHERE away_ring_since IS NOT NULL AND
   left_at IS NULL`, partial, so it holds only the agents away right now, for the connector's search
-  of an account (`findRingableInAccount`) and the reconcile (`findAwayRingCandidates`), which
+  of an account and the reconcile (both `findAwayRingCandidates` since IQ78's ring rule; the
+  migration's comment names the search's read by its earlier name, `findRingableInAccount`), which
   otherwise scanned every session row. The down drops it.
 
 ## 10. Restart and failure
@@ -1789,6 +1803,18 @@ and awaited at shutdown (`AwayRingService.stop`); the push-device register runs 
 "Stop ringing" or a removal; new metrics, three dashboard panels and a proposed pilot scorecard
 ([`operations.md`](operations.md)); the rollback past 0036 in `DEPLOYMENT.md`; deterministic ring
 tests and regression tests for the races the QA review probed (§6.1 "Tests").
+
+**The ring as its own module, and one ring rule** (2026-11-13, IQ78 **pending Manas**; server only):
+the ring moved out of the connector into `inbound-ring.ts` (`RingOffers` behind `RingHost`, as the
+hand-over's `HandoverHost`), with one end for every ring: a ring whose caller hung up now goes
+through it too, which fixed a lost `ring_missed` end (a ring that slipped in after the second miss
+and whose caller then hung up left the agent on `away_ring`, never rung and never ended). Who may
+be rung is one rule in `AwayRingService` (§6.1 "The ring rule"), read by the entry, the search, the
+ring and the reconcile alike; the inbound ring reaches it, the device and the pushes only through
+the `InboundAwayRing` port. Drift it fixed: an agent at the maximum misses was admitted to
+`away_ring` and then neither rung nor ended (now refused `ring_not_allowed`, and ended by the
+reconcile), and the search counted a session past its maximum age as ringable until the reconcile
+ran.
 
 **The fix pass is done** (two rounds, 2026-11-09, on top of P1 and P2): every finding of the
 independent engineering, product and QA reviews of P1 and P2, then of a review of the first round,
