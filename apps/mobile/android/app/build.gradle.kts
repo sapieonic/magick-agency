@@ -93,7 +93,6 @@ android {
         unitTests {
             all {
                 it.useJUnitPlatform()
-                it.outputs.upToDateWhen { false }
                 it.testLogging {
                     events("passed", "skipped", "failed")
                 }

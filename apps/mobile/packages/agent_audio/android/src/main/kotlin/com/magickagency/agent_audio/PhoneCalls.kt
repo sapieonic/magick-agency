@@ -44,8 +44,11 @@ object OwnRing {
     var live: Boolean = false
 }
 
-/** An audio mode, as far as "a phone call that is not ours" goes. */
-internal enum class CallModeKind {
+/**
+ * An audio mode, as far as "a phone call that is not ours" goes. Public: the app module's ring
+ * (Mode B's busy check) reads the phone with the same rule ([callModeKindOf]).
+ */
+enum class CallModeKind {
     /** The ringtone mode: a cellular call ringing, or our own ring. */
     RINGTONE,
 
@@ -56,8 +59,31 @@ internal enum class CallModeKind {
     OTHER,
 }
 
+/**
+ * [mode] (`AudioManager.getMode()`) on a phone running API [sdk], classified. Pure, so it is
+ * unit-tested: the `AudioManager.MODE_*` and `Build.VERSION_CODES` values are the platform's own
+ * constants, written out ([AudioModes]).
+ */
+fun callModeKindOf(mode: Int, sdk: Int): CallModeKind = when {
+    mode == AudioModes.RINGTONE -> CallModeKind.RINGTONE
+    mode == AudioModes.IN_CALL ||
+        (sdk >= AudioModes.SDK_R && mode == AudioModes.CALL_SCREENING) ||
+        (sdk >= AudioModes.SDK_TIRAMISU && mode == AudioModes.CALL_REDIRECT) -> CallModeKind.CELLULAR
+    else -> CallModeKind.OTHER
+}
+
+/** The platform constants [callModeKindOf] reads (`AudioManager.MODE_*`, `Build.VERSION_CODES`). */
+object AudioModes {
+    const val RINGTONE = 1
+    const val IN_CALL = 2
+    const val CALL_SCREENING = 4
+    const val CALL_REDIRECT = 5
+    const val SDK_R = 30
+    const val SDK_TIRAMISU = 33
+}
+
 /** Whether a reading of [kind] is a phone call that is not ours; pure, so it is unit-tested. */
-internal fun isOthersPhoneCall(kind: CallModeKind, ownRingLive: Boolean): Boolean = when (kind) {
+fun isOthersPhoneCall(kind: CallModeKind, ownRingLive: Boolean): Boolean = when (kind) {
     CallModeKind.CELLULAR -> true
     CallModeKind.RINGTONE -> !ownRingLive
     CallModeKind.OTHER -> false

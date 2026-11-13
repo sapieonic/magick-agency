@@ -21,7 +21,9 @@ internal class RingStore(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_STOP_RINGING, value).apply()
 
     fun savePendingAnswer(answer: PendingAnswer) {
-        // commit, not apply: the process may be gone before Flutter starts and reads it.
+        // commit, not apply: the only write that must be on disk before this returns. The answer
+        // is the one thing a cold start needs from here, and the process may be gone (the system
+        // reclaims it while MainActivity starts) before apply's background write would land.
         prefs.edit()
             .putString(KEY_PA_CALL, answer.callId)
             .putString(KEY_PA_TOKEN, answer.offerToken)
@@ -37,8 +39,12 @@ internal class RingStore(context: Context) {
         return PendingAnswer(call, token, session, prefs.getLong(KEY_PA_AT, 0L))
     }
 
+    /**
+     * apply, not commit: a clear that is lost with the process leaves an answer whose grace has
+     * lapsed by the next start ([PendingAnswer.isFresh] drops it), so nothing waits on the disk.
+     */
     fun clearPendingAnswer() {
-        prefs.edit().remove(KEY_PA_CALL).remove(KEY_PA_TOKEN).remove(KEY_PA_SESSION).remove(KEY_PA_AT).commit()
+        prefs.edit().remove(KEY_PA_CALL).remove(KEY_PA_TOKEN).remove(KEY_PA_SESSION).remove(KEY_PA_AT).apply()
     }
 
     private companion object {

@@ -55,4 +55,16 @@ class OwnRingTest {
         assertFalse(isOthersPhoneCall(CallModeKind.OTHER, ownRingLive = false))
         assertFalse(isOthersPhoneCall(CallModeKind.OTHER, ownRingLive = true))
     }
+
+    @Test
+    fun audioModesAreClassifiedAsThePlatformHasThem() {
+        assertEquals(CallModeKind.RINGTONE, callModeKindOf(AudioModes.RINGTONE, sdk = 28))
+        assertEquals(CallModeKind.CELLULAR, callModeKindOf(AudioModes.IN_CALL, sdk = 28))
+        assertEquals(CallModeKind.OTHER, callModeKindOf(3, sdk = 34), "MODE_IN_COMMUNICATION: our own VoIP")
+        assertEquals(CallModeKind.OTHER, callModeKindOf(0, sdk = 34), "MODE_NORMAL")
+        assertEquals(CallModeKind.OTHER, callModeKindOf(AudioModes.CALL_SCREENING, sdk = 29), "no call screening before R")
+        assertEquals(CallModeKind.CELLULAR, callModeKindOf(AudioModes.CALL_SCREENING, sdk = AudioModes.SDK_R))
+        assertEquals(CallModeKind.OTHER, callModeKindOf(AudioModes.CALL_REDIRECT, sdk = 32), "no call redirect before Tiramisu")
+        assertEquals(CallModeKind.CELLULAR, callModeKindOf(AudioModes.CALL_REDIRECT, sdk = AudioModes.SDK_TIRAMISU))
+    }
 }

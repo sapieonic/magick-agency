@@ -14,6 +14,8 @@ import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.util.Log
+import com.magickagency.agent_audio.CallModeKind
+import com.magickagency.agent_audio.callModeKindOf
 
 /**
  * The ring's self-managed Telecom calling account (`MANAGE_OWN_CALLS`): Android treats the ring
@@ -31,6 +33,17 @@ internal object RingTelecom {
 
     private fun telecom(context: Context): TelecomManager? = context.getSystemService(TelecomManager::class.java)
 
+    /** The account went through [register] in this process: a ring push need not ask Telecom again. */
+    @Volatile
+    private var registered = false
+
+    /**
+     * [register] once per process: Telecom keeps the account across process starts, so a ring push
+     * (on its hot path) does not make the `registerPhoneAccount` IPC each time. The checklist
+     * ([accountUsable]) still refreshes it whenever the card reads it.
+     */
+    fun ensureRegistered(context: Context): Boolean = registered || register(context)
+
     /** Registers (or refreshes) the account; idempotent. False when Telecom refused it. */
     fun register(context: Context): Boolean = try {
         // CAPABILITY_SELF_MANAGED is deprecated as of API 37 (the transactional calling API is
@@ -41,8 +54,9 @@ internal object RingTelecom {
             .setShortDescription(RingCopy.ACCOUNT_DESCRIPTION)
             .addSupportedUriScheme(PhoneAccount.SCHEME_SIP)
             .build()
-        telecom(context)?.registerPhoneAccount(account)
-        telecom(context) != null
+        val tm = telecom(context)
+        tm?.registerPhoneAccount(account)
+        (tm != null).also { registered = it }
     } catch (e: RuntimeException) {
         Log.w(TAG, "Registering the calling account failed: ${e.javaClass.simpleName}")
         false
@@ -67,21 +81,23 @@ internal object RingTelecom {
      */
     fun phoneSignals(context: Context): PhoneSignals {
         val am = context.getSystemService(AudioManager::class.java)
-        val mode = am?.mode ?: AudioManager.MODE_NORMAL
-        val cellular = mode == AudioManager.MODE_IN_CALL ||
-            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && mode == AudioManager.MODE_CALL_SCREENING) ||
-            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && mode == AudioManager.MODE_CALL_REDIRECT)
-        val notPermitted = register(context) && try {
+        // agent_audio's own classification of the audio mode (its `phone_call` pause reads the same).
+        val kind = callModeKindOf(am?.mode ?: AudioManager.MODE_NORMAL, Build.VERSION.SDK_INT)
+        val notPermitted = ensureRegistered(context) && try {
             telecom(context)?.isIncomingCallPermitted(handle(context)) == false
         } catch (e: RuntimeException) {
             false
         }
-        return PhoneSignals(inCellularCall = cellular, ringtoneMode = mode == AudioManager.MODE_RINGTONE, incomingNotPermitted = notPermitted)
+        return PhoneSignals(
+            inCellularCall = kind == CallModeKind.CELLULAR,
+            ringtoneMode = kind == CallModeKind.RINGTONE,
+            incomingNotPermitted = notPermitted,
+        )
     }
 
     /** Asks Telecom for the incoming call; false when it could not be asked (the ring then shows by notification alone). */
     fun addIncoming(context: Context, callId: String): Boolean {
-        if (!register(context)) return false
+        if (!ensureRegistered(context)) return false
         val extras = Bundle().apply {
             putString(EXTRA_CALL_ID, callId)
             putBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, Bundle().apply { putString(EXTRA_CALL_ID, callId) })

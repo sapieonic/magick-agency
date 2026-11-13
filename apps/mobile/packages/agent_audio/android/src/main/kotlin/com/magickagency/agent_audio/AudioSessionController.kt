@@ -502,14 +502,7 @@ internal class AudioSessionController(
         /** A phone call that is not ours: a cellular call's mode, or the ringtone's while our own ring is not live ([OwnRing]). */
         fun isTelephonyMode(mode: Int): Boolean = isOthersPhoneCall(callModeKind(mode), OwnRing.live)
 
-        fun callModeKind(mode: Int): CallModeKind = when {
-            mode == AudioManager.MODE_RINGTONE -> CallModeKind.RINGTONE
-            mode == AudioManager.MODE_IN_CALL ||
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && mode == AudioManager.MODE_CALL_SCREENING) ||
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && mode == AudioManager.MODE_CALL_REDIRECT) ->
-                CallModeKind.CELLULAR
-            else -> CallModeKind.OTHER
-        }
+        fun callModeKind(mode: Int): CallModeKind = callModeKindOf(mode, Build.VERSION.SDK_INT)
 
         fun kindOf(d: AudioDeviceInfo): String? = when (d.type) {
             AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "earpiece"
