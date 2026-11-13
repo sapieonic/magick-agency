@@ -53,7 +53,7 @@ interface FakeSender {
   /** The carrier TTL each send asked for, in order. */
   ttls: number[];
   configured: boolean;
-  next: { ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' };
+  next: { ok: true } | { ok: false; reason: 'unregistered' | 'unavailable' | 'rate_limited'; scope?: 'device' | 'service' };
   /** When set, every send waits for it before it is recorded. */
   hold: Promise<void> | null;
 }
@@ -927,6 +927,19 @@ describe('AwayRingService', () => {
     expect(await service().svc.send(d, { type: 'test_ring' }, 1_000)).toEqual({ ok: false, reason: 'unregistered' });
     expect(await devices.find(user, 'phone-aaaa-1')).toMatchObject({ last_failure_reason: 'unregistered' });
     expect((await devices.find(user, 'phone-aaaa-1'))!.revoked_at).not.toBeNull();
+  });
+
+  it("a send the sender held for the whole push service is not this device's failure: nothing recorded on its row", async () => {
+    const d = await device();
+    // The sender answered locally from a service-scope Retry-After hold (one project quota 429 holds
+    // every device): no carrier saw this push, and the device did nothing wrong.
+    sender.next = { ok: false, reason: 'rate_limited', scope: 'service' };
+    expect(await service().svc.send(d, { type: 'test_ring' }, 1_000)).toEqual({ ok: false, reason: 'rate_limited', scope: 'service' });
+    expect(await devices.find(user, 'phone-aaaa-1')).toMatchObject({ last_failure_reason: null, last_failure_at: null, revoked_at: null });
+    // A failure that is this device's (a per-token 429) is still recorded.
+    sender.next = { ok: false, reason: 'rate_limited', scope: 'device' };
+    await service().svc.send(d, { type: 'test_ring' }, 1_000);
+    expect(await devices.find(user, 'phone-aaaa-1')).toMatchObject({ last_failure_reason: 'rate_limited', revoked_at: null });
   });
 });
 

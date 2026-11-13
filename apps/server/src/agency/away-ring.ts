@@ -781,14 +781,20 @@ export class AwayRingService {
     await this.drain();
   }
 
-  /** Send one push to `device`, recording a failure on its row. Resolves with the sender's answer. */
+  /**
+   * Send one push to `device`, recording a failure on its row. Resolves with the sender's answer.
+   * Not recorded: `unconfigured` (the deployment's), and a failure the sender says is the push
+   * service's (`scope: 'service'`: answered locally from a service-wide Retry-After hold, with no
+   * carrier contacted), which would otherwise stamp every device sent to while one project quota
+   * 429 holds.
+   */
   async send(
     device: PushDeviceRecord,
     payload: Parameters<ReturnType<typeof getPushSender>['send']>[1],
     ttlMs: number,
   ): ReturnType<ReturnType<typeof getPushSender>['send']> {
     const result = await getPushSender().send(device, payload, { ttlMs });
-    if (!result.ok && result.reason !== 'unconfigured') {
+    if (!result.ok && result.reason !== 'unconfigured' && result.scope !== 'service') {
       await agencyPushDeviceRepository.recordFailure(device.id, result.reason).catch((err: unknown) =>
         log.warn({ err, deviceRowId: device.id }, 'Could not record a push failure'));
     }
