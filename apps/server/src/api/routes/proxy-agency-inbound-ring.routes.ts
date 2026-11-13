@@ -24,7 +24,9 @@ import { rewriteStationWsUrl } from './proxy-agency-station.routes.js';
  *  - `POST …/ring/answering {offer_token}` and `POST …/ring/decline {offer_token, reason}`: native
  *    Android code posts them at the tap, without Flutter or a Firebase token. The offer token is
  *    their only authority (128 bits, bound to the call and the session, compared in constant time,
- *    never logged, audited or persisted). Rate-limited per IP ({@link RING_TOKEN_RATE_LIMIT}). An
+ *    never logged, audited or persisted). Rate-limited per IP AND call ({@link RING_TOKEN_RATE_LIMIT},
+ *    {@link ringTokenRateKey}): agents behind one carrier NAT share an IP, and a decline refused 429
+ *    for a call of its own would lapse into an expiry, a miss that was not the agent's. An
  *    unknown, spent or expired token, a malformed id or a call this process does not hold is the
  *    uniform 404 `ring_not_offered`, so a wrong token tells the caller nothing.
  *  - `POST …/ring/accept {offer_token, device_id}`: the agent's Firebase session, the tenant
@@ -37,18 +39,22 @@ import { rewriteStationWsUrl } from './proxy-agency-station.routes.js';
  * and `agency_inbound_call.ring_accepted`, both filed under the inbound call, ids only.
  */
 
-/** The token-only routes' limit, per IP (a phone posts each once at a tap, retried once). */
+/** The token-only routes' limit per bucket ({@link ringTokenRateKey}): a phone posts each once at a tap, retried once. */
 export const RING_TOKEN_RATE_LIMIT = { max: 30, timeWindow: 60_000 } as const;
 
 /** Where the connector holds a call (`InboundConnector.ringTenancy`); null for a call not held here. */
 export type RingTenancyLookup = (callId: string) => { tenantId: string; accountId: string } | null;
 
-const tokenOnlyLimit = {
-  rateLimit: {
-    ...RING_TOKEN_RATE_LIMIT,
-    keyGenerator: (request: FastifyRequest) => `ring:${request.ip}`,
-  },
-} as const;
+/**
+ * The token-only routes' bucket: the IP and the call, for a call this process is ringing, so the
+ * agents behind one carrier NAT never spend each other's answers; one per IP for every other id
+ * (unknown, malformed, ended), which is the flood cap: whoever guesses at ids shares one bucket,
+ * and cannot name a ringing call without the id the push carried.
+ */
+export function ringTokenRateKey(ip: string, rawCallId: unknown, ringTenancy: RingTenancyLookup): string {
+  const id = typeof rawCallId === 'string' ? rawCallId.toLowerCase() : '';
+  return UUID_RE.test(id) && ringTenancy(id) ? `ring:${ip}:${id}` : `ring:${ip}`;
+}
 
 /** Bodies: unknown keys stripped. The token's shape is checked by the internal handler (uniform 404). */
 const answeringSchema = z.object({ offer_token: z.string().min(1).max(128) }).strip();
@@ -68,6 +74,14 @@ function notOffered(reply: FastifyReply): FastifyReply {
 
 export async function proxyAgencyInboundRingRoutes(app: FastifyInstance, opts: { ringTenancy: RingTenancyLookup }): Promise<void> {
   app.addHook('preHandler', rejectPathEscapingParams());
+
+  const tokenOnlyLimit = {
+    rateLimit: {
+      ...RING_TOKEN_RATE_LIMIT,
+      keyGenerator: (request: FastifyRequest) =>
+        ringTokenRateKey(request.ip, (request.params as { id?: unknown } | undefined)?.id, opts.ringTenancy),
+    },
+  } as const;
 
   /** The tenancy of the ringing call `:id`, or the uniform 404. */
   const tenancyOr404 = (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {

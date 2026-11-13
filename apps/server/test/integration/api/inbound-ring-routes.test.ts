@@ -361,4 +361,19 @@ describe('Mode B ring routes over HTTP (integration)', () => {
     expect(limited).toBeGreaterThanOrEqual(0);
     expect(limited).toBeLessThanOrEqual(limit);
   });
+
+  it('a ringing call has a bucket of its own per IP: a phone behind the same NAT still answers and declines its own ring', async () => {
+    // The IP's shared bucket (ids it is not ringing) is spent...
+    for (let i = 0; i <= RING_TOKEN_RATE_LIMIT.max; i++) await ring(randomUUID(), 'decline', null, { offer_token: 'AAAAAAAAAAAAAAAAAAAAAA', reason: 'declined' });
+    expect((await ring(randomUUID(), 'answering', null, { offer_token: 'AAAAAAAAAAAAAAAAAAAAAA' })).statusCode).toBe(429);
+    // ...and a ring this process holds is still answered from that IP: a 429 here would let the
+    // ring expire, a miss that was not the agent's.
+    const away = await awayAgent();
+    const { callId, token } = await caller();
+    const declined = await ring(callId, 'decline', null, { offer_token: token, reason: 'declined' });
+    expect(declined.statusCode, declined.body).toBe(200);
+    expect(declined.json()).toEqual({ call_id: callId, ring_result: 'declined' });
+    await waitFor('back on away_ring', async () => (await runtime.agents.get(away.sessionId))?.ring === true);
+    await connector.drain();
+  });
 });
