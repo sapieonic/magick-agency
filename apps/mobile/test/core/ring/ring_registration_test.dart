@@ -1,3 +1,4 @@
+import 'package:agency_wire/agency_wire.dart' show PushDeviceStatus;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
@@ -9,7 +10,7 @@ import '../inbound/inbound_fixtures.dart' show pushSample;
 import 'ring_harness.dart';
 
 /// The push device's registration (Mode B): PUT once the gate is ready, on a new token and on
-/// every return; opt-in by PATCH (the Me card); DELETE on sign-out; the test
+/// a return unless a recent PUT stands; opt-in by PATCH (the Me card); DELETE on sign-out; the test
 /// ring. The device id is the station device id.
 void main() {
   test('nothing before the gate is ready; then PUT with the token and this build, and the checklist read', () {
@@ -28,16 +29,89 @@ void main() {
     });
   });
 
-  test('a new token registers again; so does every return to the app', () {
+  test('a new token registers again; so does a return to the app once the last register is 6 h old', () {
     fakeAsync((async) {
       final h = RingHarness(async, gate: ready)..start();
       expect(h.requests('PUT', devicePath), hasLength(1));
       h.channel.token = 'fcm-token-2';
       h.emit(const RingTokenChanged('fcm-token-2'));
       expect(h.requests('PUT', devicePath).last.body, containsPair('fcm_token', 'fcm-token-2'));
+      async.elapse(RingRegistration.registerFreshFor);
       h.lifecycle.show();
       async.flushMicrotasks();
       expect(h.requests('PUT', devicePath), hasLength(3));
+      h.dispose();
+    });
+  });
+
+  test('a return soon after a register, nothing changed: no PUT, the status kept, the checklist read again', () {
+    fakeAsync((async) {
+      final h = RingHarness(async, gate: ready)..start();
+      final status = h.settings.status;
+      async.elapse(const Duration(hours: 5, minutes: 59));
+      h.channel.list = const RingChecklist({RingChecklistItem.notifications: false});
+      h.lifecycle.show();
+      async.flushMicrotasks();
+      expect(h.requests('PUT', devicePath), hasLength(1));
+      expect(h.requests('GET', devicePath), isEmpty);
+      expect(h.settings.status, status);
+      expect(h.channel.named('checklist'), hasLength(2));
+      expect(h.settings.ringOn, isFalse, reason: 'leaving the app reads the checklist as it is now');
+      h.dispose();
+    });
+  });
+
+  test('a return after the opt-in changed, or after a status saying the server lost the device, registers again', () {
+    fakeAsync((async) {
+      final h = RingHarness(async, gate: ready)..start();
+      h.registration.setOptIn(false);
+      async.flushMicrotasks();
+      h.lifecycle.show();
+      async.flushMicrotasks();
+      expect(h.requests('PUT', devicePath), hasLength(2), reason: 'the opt-in changed since the last PUT');
+      h.lifecycle.show();
+      async.flushMicrotasks();
+      expect(h.requests('PUT', devicePath), hasLength(2));
+      h.status = pushSample('device_status_unregistered');
+      h.registration.readStatus();
+      async.flushMicrotasks();
+      h.lifecycle.show();
+      async.flushMicrotasks();
+      expect(h.requests('PUT', devicePath), hasLength(3), reason: 'the server no longer holds it');
+      h.dispose();
+    });
+  });
+
+  test('a new agent on the same phone registers at once', () {
+    fakeAsync((async) {
+      final h = RingHarness(async, gate: ready)..start();
+      h.setGate(const GateReady(userId: 'u2', displayName: 'Ravi S', email: 'ravi@example.test', tenantId: 'ten-1', accountId: 'acc-1', accountName: 'Chennai'));
+      expect(h.requests('PUT', devicePath), hasLength(2));
+      h.dispose();
+    });
+  });
+
+  test('the station\'s status read on return reuses the return\'s own register (in flight or answered); '
+      'with no register sent, it reads', () {
+    fakeAsync((async) {
+      final h = RingHarness(async, gate: ready)..start();
+      async.elapse(RingRegistration.registerFreshFor);
+      h.lifecycle.show();
+      PushDeviceStatus? read;
+      h.registration.readStatus().then((s) => read = s);
+      async.flushMicrotasks();
+      expect(h.requests('PUT', devicePath), hasLength(2));
+      expect(h.requests('GET', devicePath), isEmpty, reason: 'the PUT in flight answers it');
+      expect(read, isNotNull);
+      h.registration.readStatus();
+      async.flushMicrotasks();
+      expect(h.requests('GET', devicePath), isEmpty, reason: 'the PUT answered since this return');
+      h.lifecycle.show();
+      async.flushMicrotasks();
+      expect(h.requests('PUT', devicePath), hasLength(2), reason: 'nothing changed: no PUT');
+      h.registration.readStatus();
+      async.flushMicrotasks();
+      expect(h.requests('GET', devicePath), hasLength(1), reason: 'nothing asked since this return');
       h.dispose();
     });
   });

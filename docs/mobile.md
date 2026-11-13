@@ -673,7 +673,9 @@ verified yet").
   for inbound calls isn't available on this phone yet."
 - **Registration** (`lib/core/ring/ring_registration.dart`): `PUT /push-devices/:deviceId` (the
   station device id, the FCM token, the app build) once the gate is ready, on a new token and on
-  every return to the app, reading the checklist each time; `DELETE` at sign-out, before Firebase
+  a return to the app, reading the checklist on every return (a return within 6 h of the last PUT,
+  with the token, the app build and the opt-in unchanged, sends none and keeps its status);
+  `DELETE` at sign-out, before Firebase
   signs out (bounded at 3 s), so the next person signed in on the phone is never rung for the last
   one's callers.
 - **Leaving the app** asks `away_ring` instead of `device_away` when `ringAvailable` holds (no
@@ -940,8 +942,14 @@ always Dart's.
 **Dart's side** (`lib/core/ring/`, the station controller; WP4):
 
 - **Registration** (`ring_registration.dart`): `PUT /push-devices/:deviceId` (the station device
-  id) once the gate is ready, on `token` and on every return to the app, reading `checklist` each
-  time; opt-in is `PATCH` (the Me card only); sign-out sends `DELETE` through the gate's
+  id) once the gate is ready, on `token` and on a return to the app, reading `checklist` on every
+  return (leaving the app reads it synchronously, so it must be current). The PUT is skipped on a
+  return within 6 h of the last one when the token, the app build and the opt-in are unchanged
+  (`registerFreshFor`); another agent, sign-out, or a status saying the server holds no live
+  registration sends it again. The station's status read on a return from `away_ring`
+  (`readStatus`) reuses the status the return's own register asked for, in flight or answered,
+  and reads it only when none was asked. `getToken`, `checklist` and the device id are read in
+  parallel. Opt-in is `PATCH` (the Me card only); sign-out sends `DELETE` through the gate's
   `pushDeviceTeardownProvider`, before Firebase signs out. Android only (`ringPlatformProvider`); iOS
   registers nothing (IQ64) and reads the status for the card's note.
 - **Leaving the app** asks `away_ring` when `ringAvailable` (no `ringBlockerOf`), else

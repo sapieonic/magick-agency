@@ -15,6 +15,7 @@ import 'package:magick_agency_agent/core/ring/ring_channel.dart';
 import 'package:magick_agency_agent/core/ring/ring_overrides.dart';
 import 'package:magick_agency_agent/core/ring/ring_registration.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
+import 'package:magick_agency_agent/core/station/station_deps.dart' show stationNowProvider;
 import 'package:magick_agency_agent/core/station/station_device.dart';
 
 import '../inbound/inbound_fixtures.dart' show pushSample;
@@ -118,6 +119,7 @@ class RingHarness {
           StationDeviceIds(() => MemoryStore({StationDeviceIds.storeKey: ringDeviceId})),
         ),
         ringAnswerStationProvider.overrideWithValue(station),
+        stationNowProvider.overrideWithValue(async.getClock(DateTime.utc(2026, 11, 1, 9)).now),
         ...ringOverrides,
         ...overrides,
       ],

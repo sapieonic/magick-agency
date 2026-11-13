@@ -8,6 +8,7 @@ import '../../app/providers.dart';
 import '../api/api_error.dart';
 import '../auth/app_gate.dart';
 import '../lifecycle/app_lifecycle.dart';
+import '../station/station_deps.dart' show stationNowProvider;
 import '../station/station_device.dart';
 import '../telemetry/log.dart';
 import 'push_device_api.dart';
@@ -142,8 +143,10 @@ final ringStatusOnlyProvider = Provider<bool>((ref) => !kIsWeb && defaultTargetP
 final ringLifecycleSourceProvider = Provider<AppLifecycleSource>((ref) => FlutterAppLifecycleSource());
 
 /// Registers this phone's push device (Mode B): `PUT /push-devices/:deviceId` once the gate is
-/// ready, on a new token (`token`) and on every return to the app (the checklist is read again
-/// then too: the agent may have just fixed something in the system settings). The device id is
+/// ready, on a new token (`token`) and on a return to the app (the checklist is read again on
+/// every return: the agent may have just fixed something in the system settings). A return within
+/// [registerFreshFor] of the last PUT, with the token, the app build and the opt-in as they were,
+/// sends none and keeps the status it answered ([_registered]). The device id is
 /// the station device id (OS3). Opt-in is the agent's (`PATCH`, the Me card only: the away
 /// notification's "Stop ringing" is for one absence, the station's); the test ring is the card's. Signing out removes the device
 /// (`DELETE`, [unregister], run by the gate while the sign-in still works).
@@ -152,6 +155,9 @@ class RingRegistration extends Notifier<RingSettings> {
 
   /// How long the card waits for the test ring to reach the phone.
   static const testRingTimeout = Duration(seconds: 30);
+
+  /// How long a register stands for a return with nothing changed: no PUT meanwhile.
+  static const registerFreshFor = Duration(hours: 6);
 
   late RingChannel _channel;
   late PushDeviceApi _api;
@@ -162,10 +168,24 @@ class RingRegistration extends Notifier<RingSettings> {
   int _gen = 0;
   bool _ready = false;
   Timer? _testTimer;
+  late DateTime Function() _now;
+
+  /// What the last successful PUT registered, and when (this phone's clock); null when the next
+  /// register must send one (none yet, another agent, a status saying the server lost it).
+  ({String token, String appBuild, bool optIn, DateTime at})? _registered;
+
+  /// Returns to the app so far.
+  int _shows = 0;
+
+  /// The last status asked of the server (a register's, or [readStatus]'s) and the return it was
+  /// asked in: [readStatus] reuses one asked since the latest return, in flight or answered. Null
+  /// when it was not asked (a register with nothing to send) or failed.
+  ({int show, Future<PushDeviceStatus?> status})? _lastRead;
 
   @override
   RingSettings build() {
     _platform = ref.read(ringPlatformProvider);
+    _now = ref.read(stationNowProvider);
     _statusOnly = _platform == null && ref.read(ringStatusOnlyProvider);
     if (_platform == null && !_statusOnly) return const RingSettings(supported: false);
     _api = PushDeviceApi(
@@ -180,6 +200,7 @@ class RingRegistration extends Notifier<RingSettings> {
     final events = _channel.events.listen(_onEvent);
     final lifecycle = ref.read(ringLifecycleSourceProvider);
     lifecycle.attach(onHide: () {}, onShow: () {
+      _shows++;
       if (_ready) unawaited(register());
     });
     ref.onDispose(() {
@@ -196,6 +217,7 @@ class RingRegistration extends Notifier<RingSettings> {
     _ready = next is GateReady;
     if (!_ready) {
       _gen++;
+      _registered = null;
       if (wasReady) {
         scheduleMicrotask(() {
           if (ref.mounted && !_ready) state = RingSettings(supported: _platform != null);
@@ -206,6 +228,7 @@ class RingRegistration extends Notifier<RingSettings> {
     final changed = prev is! GateReady ||
         prev.userId != (next as GateReady).userId ||
         prev.accountId != next.accountId;
+    if (changed) _registered = null;
     if (!wasReady || changed) scheduleMicrotask(() => unawaited(register()));
   }
 
@@ -231,24 +254,43 @@ class RingRegistration extends Notifier<RingSettings> {
   Future<String> _deviceId() => ref.read(stationDeviceIdsProvider).id();
 
   /// Registers (or refreshes) this device and reads the checklist. Without a token (push
-  /// unavailable) only reads the status, so the card can say why.
+  /// unavailable) only reads the status, so the card can say why. Nothing changed since a recent
+  /// register ([registerFreshFor]): no PUT, and the status it answered stands.
   Future<void> register() async {
     if (_statusOnly) return _readStatusOnly();
     final platform = _platform;
     if (platform == null || !_ready) return;
     final gen = ++_gen;
+    final run = _register(platform, gen);
+    _lastRead = (show: _shows, status: run);
+    await run;
+  }
+
+  /// [register]'s work: the status the server answered, or null (nothing sent, failed, stale).
+  Future<PushDeviceStatus?> _register(PushPlatform platform, int gen) async {
     state = state.copyWith(loading: true);
-    final deviceId = await _deviceId();
-    final token = await _channel.getToken();
-    final checklist = await _channel.checklist();
-    if (gen != _gen || !ref.mounted) return;
+    final (deviceId, token, checklist) = await (_deviceId(), _channel.getToken(), _channel.checklist()).wait;
+    if (gen != _gen || !ref.mounted) return null;
+    final appBuild = _appBuild;
+    final last = _registered;
+    if (token != null &&
+        last != null &&
+        state.status != null &&
+        last.token == token &&
+        last.appBuild == appBuild &&
+        last.optIn == state.optIn &&
+        _now().difference(last.at) < registerFreshFor) {
+      // Nothing the server holds would change: the status the last PUT answered stands.
+      state = state.copyWith(token: token, checklist: checklist, loading: false, loadFailed: false);
+      return null;
+    }
     PushDeviceStatus status;
     try {
       status = token == null
           ? await _api.status(deviceId)
-          : await _api.register(deviceId, PushDevicePutRequest(platform: platform, fcmToken: token, appBuild: _appBuild));
+          : await _api.register(deviceId, PushDevicePutRequest(platform: platform, fcmToken: token, appBuild: appBuild));
     } catch (e) {
-      if (gen != _gen || !ref.mounted) return;
+      if (gen != _gen || !ref.mounted) return null;
       _log.warn('push device register failed', {'error': e.runtimeType.toString(), 'has_token': token != null});
       state = state.copyWith(
         token: token,
@@ -257,9 +299,11 @@ class RingRegistration extends Notifier<RingSettings> {
         loading: false,
         loadFailed: state.status == null,
       );
-      return;
+      return null;
     }
-    if (gen != _gen || !ref.mounted) return;
+    if (gen != _gen || !ref.mounted) return null;
+    _registered = token == null ? null : (token: token, appBuild: appBuild, optIn: status.device?.ringEnabled ?? false, at: _now());
+    _sawStatus(status);
     state = state.copyWith(
       status: status,
       token: token,
@@ -268,6 +312,14 @@ class RingRegistration extends Notifier<RingSettings> {
       loading: false,
       loadFailed: false,
     );
+    return status;
+  }
+
+  /// A status that says the server holds no live registration for this phone: the next register
+  /// sends its PUT whatever it last sent.
+  void _sawStatus(PushDeviceStatus status) {
+    final device = status.device;
+    if (device == null || !device.pushRegistered || device.revokedAt != null) _registered = null;
   }
 
   /// A platform that does not ring: the status alone (whether the account allows ringing), so the
@@ -344,11 +396,25 @@ class RingRegistration extends Notifier<RingSettings> {
     });
   }
 
-  /// The device's status read again (the station's "why it stopped ringing", on return).
+  /// The device's status read again (the station's "why it stopped ringing", on return). One asked
+  /// since the latest return (the return's own register, in flight or answered) is the answer;
+  /// else it is read now.
   Future<PushDeviceStatus?> readStatus() async {
     if (_platform == null || !_ready) return null;
+    final last = _lastRead;
+    if (last != null && last.show == _shows) {
+      final status = await last.status.catchError((Object _) => null);
+      if (status != null) return status;
+    }
+    final read = _readStatusNow();
+    _lastRead = (show: _shows, status: read);
+    return read;
+  }
+
+  Future<PushDeviceStatus?> _readStatusNow() async {
     try {
       final status = await _api.status(await _deviceId());
+      _sawStatus(status);
       if (ref.mounted) state = state.copyWith(status: status);
       return status;
     } catch (e) {
@@ -362,6 +428,7 @@ class RingRegistration extends Notifier<RingSettings> {
   Future<void> unregister() async {
     if (_platform == null || !_ready) return;
     _gen++;
+    _registered = null;
     try {
       await _api.remove(await _deviceId());
     } catch (e) {
