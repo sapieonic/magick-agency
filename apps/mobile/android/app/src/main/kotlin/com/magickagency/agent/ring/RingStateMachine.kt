@@ -148,6 +148,9 @@ sealed class RingEvent {
 
     /** `reportEnded(call_id, reason)` from Dart: `ended`, `accept_failed` or `cancelled`. */
     data class EndedByApp(val callId: String, val reason: String) : RingEvent()
+
+    /** The ringing notification for [callId] was handed to the system: [posted] false when it was refused (notifications off). */
+    data class IncomingShown(val callId: String, val posted: Boolean) : RingEvent()
 }
 
 /** How a Telecom connection ends; the coordinator maps it to `android.telecom.DisconnectCause`. */
@@ -200,8 +203,11 @@ sealed class RingEffect {
     /** `ringEnded {call_id, reason}` to Dart; [missedIfUnheard]: post "Missed inbound call" when no Dart handler took it. */
     data class EmitEnded(val callId: String, val reason: String, val missedIfUnheard: Boolean) : RingEffect()
 
-    /** `testRingReceived` to Dart. */
-    data object EmitTestRing : RingEffect()
+    /**
+     * `testRingReceived {shown}` to Dart, once per test ring: [shown] once its notification was
+     * posted, false when it could not be (refused, or the ring ended first).
+     */
+    data class EmitTestRing(val shown: Boolean) : RingEffect()
 
     /** A `ring_off`: drop the away notification and say why ([reason] null when unknown). */
     data class RingOff(val reason: String?) : RingEffect()
@@ -222,6 +228,9 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     private val ended = LinkedHashSet<String>()
     private var testSeq = 0
 
+    /** The test ring whose outcome Dart has been told ([RingEffect.EmitTestRing]). */
+    private var testReported: String? = null
+
     fun handle(event: RingEvent): List<RingEffect> = when (event) {
         is RingEvent.Push -> onPush(event)
         is RingEvent.AnswerTapped -> onAnswer(event)
@@ -232,6 +241,7 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         is RingEvent.GraceLapsed -> onGraceLapsed(event.callId)
         is RingEvent.Bound -> onBound(event.callId)
         is RingEvent.EndedByApp -> onEndedByApp(event.callId, event.reason)
+        is RingEvent.IncomingShown -> onShown(event.callId, event.posted)
     }
 
     /** The call a ring is live for (ringing, answering or answered), if any. */
@@ -311,11 +321,26 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         val call = RingCall(callId = "$TEST_CALL_PREFIX$testSeq", offerToken = "", sessionId = "", test = true)
         val deadline = now + RingWire.RING_MS
         state = RingState.Ringing(call, deadline)
+        // Dart hears of it once its notification is up ([onShown]): a push that arrived but could
+        // not be shown is not "ringing works".
         return listOf(
             RingEffect.StartRinging(call, deadline),
             RingEffect.ScheduleTimer(TimerKind.RING, call.callId, deadline),
-            RingEffect.EmitTestRing,
         )
+    }
+
+    private fun onShown(callId: String, posted: Boolean): List<RingEffect> {
+        val s = state
+        if (s !is RingState.Ringing || s.call.callId != callId || !s.call.test || testReported == callId) return emptyList()
+        testReported = callId
+        return listOf(RingEffect.EmitTestRing(shown = posted))
+    }
+
+    /** A test ring ending before its notification was ever up: Dart is told it could not be shown. */
+    private fun testUnshown(call: RingCall): List<RingEffect> {
+        if (!call.test || testReported == call.callId) return emptyList()
+        testReported = call.callId
+        return listOf(RingEffect.EmitTestRing(shown = false))
     }
 
     private fun onCancel(cancel: RingPush.Cancel): List<RingEffect> {
@@ -401,7 +426,7 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         // Our previous ring's call still held Telecom's one ringing self-managed call: not a busy
         // phone. The new ring rings by its notification instead (no headset or car answer).
         if (s.replacedOwn) return listOf(RingEffect.RingByNotification(s.call, s.deadlineMs))
-        if (s.call.test) return end(s.call, TEST_REASON, EndCause.BUSY, TimerKind.RING, emit = false, missedIfUnheard = false)
+        if (s.call.test) return testUnshown(s.call) + end(s.call, TEST_REASON, EndCause.BUSY, TimerKind.RING, emit = false, missedIfUnheard = false)
         return listOf(RingEffect.PostDecline(callId, s.call.offerToken, DeclineReason.BUSY_ON_PHONE)) +
             end(s.call, DeclineReason.BUSY_ON_PHONE.wire, EndCause.BUSY, TimerKind.RING, emit = true, missedIfUnheard = false)
     }
@@ -411,7 +436,7 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     private fun onRingTimeout(callId: String): List<RingEffect> {
         val s = state
         if (s !is RingState.Ringing || s.call.callId != callId) return listOf(RingEffect.Dropped(DropReason.STALE))
-        return end(s.call, if (s.call.test) TEST_REASON else "expired", EndCause.MISSED, timer = null,
+        return testUnshown(s.call) + end(s.call, if (s.call.test) TEST_REASON else "expired", EndCause.MISSED, timer = null,
             emit = !s.call.test, missedIfUnheard = true)
     }
 

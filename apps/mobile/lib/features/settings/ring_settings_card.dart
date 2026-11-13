@@ -145,6 +145,7 @@ class _TestRing extends StatelessWidget {
       TestRingPhase.sending => (RingCopy.testSending, t.textSecondary),
       TestRingPhase.waiting => (RingCopy.testWaiting, t.textSecondary),
       TestRingPhase.received => (RingCopy.testReceived, t.success),
+      TestRingPhase.notShown => (RingCopy.testNotShown, t.warning),
       TestRingPhase.timedOut => (RingCopy.testTimedOut, t.warning),
       TestRingPhase.tooSoon => (RingCopy.testTooSoon, t.warning),
       TestRingPhase.failed => (RingCopy.testFailed, t.danger),

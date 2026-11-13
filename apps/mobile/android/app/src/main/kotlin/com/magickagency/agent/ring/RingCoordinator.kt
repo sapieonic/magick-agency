@@ -128,7 +128,7 @@ internal object RingCoordinator {
         uiFallbacks.remove(callId)?.let(main::removeCallbacks)
         val s = machine.state
         if (s is RingState.Ringing && s.call.callId == callId) {
-            RingNotifications.showIncoming(a, s.call, s.deadlineMs, silent = callId in silenced)
+            showIncoming(a, s.call, s.deadlineMs, silent = callId in silenced)
         }
     }
 
@@ -152,7 +152,7 @@ internal object RingCoordinator {
         val a = app ?: return@onMain
         silenced += callId
         val s = machine.state
-        if (s is RingState.Ringing && s.call.callId == callId) RingNotifications.showIncoming(a, s.call, s.deadlineMs, silent = true)
+        if (s is RingState.Ringing && s.call.callId == callId) showIncoming(a, s.call, s.deadlineMs, silent = true)
     }
 
     fun reportBound(callId: String) = onMain { dispatch(RingEvent.Bound(callId)) }
@@ -238,7 +238,7 @@ internal object RingCoordinator {
             is RingEffect.StartRinging -> startRinging(a, effect.call, effect.deadlineMs)
             is RingEffect.RingByNotification -> {
                 Log.i(TAG, "Telecom refused a ring that replaced ours; ringing by the notification")
-                RingNotifications.showIncoming(a, effect.call, effect.deadlineMs, silent = effect.call.callId in silenced)
+                showIncoming(a, effect.call, effect.deadlineMs, silent = effect.call.callId in silenced)
             }
             is RingEffect.PostAnswering -> api?.answering(effect.callId, effect.offerToken)
             is RingEffect.PostDecline -> {
@@ -307,7 +307,7 @@ internal object RingCoordinator {
             is RingEffect.EmitEnded -> RingChannel.invoke(
                 "ringEnded", mapOf("call_id" to effect.callId, "reason" to effect.reason),
             ) { heard -> if (!heard && effect.missedIfUnheard) RingNotifications.showMissed(a) }
-            RingEffect.EmitTestRing -> RingChannel.invoke("testRingReceived", null)
+            is RingEffect.EmitTestRing -> RingChannel.invoke("testRingReceived", mapOf("shown" to effect.shown))
             is RingEffect.RingOff -> RingNotifications.showRingOff(a, effect.reason)
             is RingEffect.Dropped -> Log.i(TAG, "Ring event dropped: ${effect.reason}")
         }
@@ -322,14 +322,20 @@ internal object RingCoordinator {
                 val s = machine.state
                 if (s is RingState.Ringing && s.call.callId == call.callId) {
                     Log.w(TAG, "Telecom did not ask for the ring's UI; showing it anyway")
-                    RingNotifications.showIncoming(a, s.call, s.deadlineMs, silent = call.callId in silenced)
+                    showIncoming(a, s.call, s.deadlineMs, silent = call.callId in silenced)
                 }
             }
             uiFallbacks[call.callId] = fallback
             main.postDelayed(fallback, SHOW_UI_FALLBACK_MS)
         } else {
-            RingNotifications.showIncoming(a, call, deadlineMs, silent = false)
+            showIncoming(a, call, deadlineMs, silent = false)
         }
+    }
+
+    /** Posts the ringing notification and tells the state machine whether it went up (a test ring's result). */
+    private fun showIncoming(a: Context, call: RingCall, deadlineMs: Long, silent: Boolean) {
+        val posted = RingNotifications.showIncoming(a, call, deadlineMs, silent)
+        dispatch(RingEvent.IncomingShown(call.callId, posted))
     }
 
     private fun releaseConnection(callId: String, cause: EndCause) {

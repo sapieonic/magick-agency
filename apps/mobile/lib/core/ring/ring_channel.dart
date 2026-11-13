@@ -37,7 +37,7 @@ abstract interface class RingChannel {
   /// Native disconnects the Telecom connection for [callId] and drops its notification.
   Future<void> reportEnded(String callId, RingEndReason reason);
 
-  /// Shows or removes the ongoing "Away · inbound calls ring this phone" notification.
+  /// Shows or removes the ongoing "Away · this phone rings for inbound calls" notification.
   Future<void> showAwayNotification(bool on);
 
   /// Posts the local "Missed inbound call" notification (no name, no number).
@@ -165,9 +165,11 @@ final class RingEnded extends RingEvent {
   final InboundRingResult reason;
 }
 
-/// A `test_ring` push arrived and rang locally.
+/// A `test_ring` push arrived and rang locally. [shown]: its notification went up; false when
+/// the push reached the phone but the call could not be shown (notifications off).
 final class RingTestReceived extends RingEvent {
-  const RingTestReceived();
+  const RingTestReceived({this.shown = true});
+  final bool shown;
 }
 
 /// The away notification's "Stop ringing".
@@ -191,7 +193,7 @@ RingEvent? ringEventOf(String method, Object? arguments) {
       final reason = args['reason'];
       return callId is String && callId.isNotEmpty ? RingEnded(callId, reason is String ? reason : '') : null;
     case 'testRingReceived':
-      return const RingTestReceived();
+      return RingTestReceived(shown: args['shown'] != false);
     case 'stopRingingTapped':
       return const RingStopTapped();
     default:

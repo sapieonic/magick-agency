@@ -99,8 +99,8 @@ abstract final class StationCopy {
   // Mode B's `away_ring`: the same pause, with this phone rung for inbound callers.
   static const awayRingHeadline = 'Away · this phone rings for inbound calls';
   static String awayRingDetail(String? at) => at == null
-      ? 'You switched to another app, so we paused you and rang this phone for inbound calls instead.'
-      : 'At $at you switched to another app, so we paused you and rang this phone for inbound calls instead.';
+      ? 'You switched to another app, so we paused you, and this phone rings for inbound calls while you’re away.'
+      : 'At $at you switched to another app, so we paused you, and this phone rings for inbound calls while you’re away.';
 
   /// IQ50: under the away card's detail. The window is the controller's own.
   static final awayAutoReturnHint = 'Come back within ${deviceAwayReturnGrace.inSeconds} seconds and you’re '

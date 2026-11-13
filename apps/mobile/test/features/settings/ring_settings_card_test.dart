@@ -95,12 +95,12 @@ void main() {
     await pump(tester);
     expect(find.text('INBOUND CALLS'), findsOneWidget);
     expect(find.text('Ring this phone for inbound calls'), findsOneWidget);
-    for (final label in ['Notifications', 'Full-screen calls', 'Battery optimisation', 'Microphone', 'Calling account', 'Do Not Disturb']) {
+    for (final label in ['Notifications', 'Full-screen calls', 'Battery optimisation', 'Microphone', 'Phone calling permission', 'Do Not Disturb']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
     expect(
       find.text(
-        'If you miss two calls in a row, this phone stops ringing until you open the app again, so callers aren’t kept '
+        'If you miss two inbound calls, this phone stops ringing until you open the app again, so callers aren’t kept '
         'waiting for you.',
       ),
       findsOneWidget,
@@ -138,6 +138,17 @@ void main() {
     channel.emit(const RingTestReceived());
     await tester.pumpAndSettle();
     expect(find.text('Your phone rang. Ringing works on this phone.'), findsOneWidget);
+  });
+
+  testWidgets('a test ring that reached the phone but could not be shown says to check notifications', (tester) async {
+    await pump(tester);
+    await tester.ensureVisible(find.byKey(const Key('ring-test')));
+    await tester.tap(find.byKey(const Key('ring-test')));
+    await tester.pumpAndSettle();
+    channel.emit(const RingTestReceived(shown: false));
+    await tester.pumpAndSettle();
+    expect(find.text('The test ring reached this phone, but it couldn’t show the call. Check notifications.'), findsOneWidget);
+    expect(find.text('Your phone rang. Ringing works on this phone.'), findsNothing);
   });
 
   testWidgets('no push on this phone: the toggle is off-limits and the card says why', (tester) async {

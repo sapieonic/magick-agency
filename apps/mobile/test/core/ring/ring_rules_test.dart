@@ -137,7 +137,7 @@ void main() {
         expect(text, startsWith('Your phone stopped ringing for inbound calls'));
         expect(text, isNot(contains('_')));
       }
-      expect(RingCopy.stopped(RingOffReason.ringMissed), 'Your phone stopped ringing for inbound calls: you missed two in a row.');
+      expect(RingCopy.stopped(RingOffReason.ringMissed), 'Your phone stopped ringing for inbound calls: you missed two inbound calls.');
     });
   });
 
@@ -152,7 +152,8 @@ void main() {
       final ended = ringEventOf('ringEnded', {'call_id': 'c1', 'reason': 'expired'})! as RingEnded;
       expect(ended.reason, InboundRingResult.expired);
       expect((ringEventOf('ringEnded', {'call_id': 'c1', 'reason': 'something_new'})! as RingEnded).reason, InboundRingResult.unknown);
-      expect(ringEventOf('testRingReceived', null), isA<RingTestReceived>());
+      expect((ringEventOf('testRingReceived', null)! as RingTestReceived).shown, isTrue, reason: 'an older native side');
+      expect((ringEventOf('testRingReceived', {'shown': false})! as RingTestReceived).shown, isFalse);
       expect(ringEventOf('stopRingingTapped', null), isA<RingStopTapped>());
       expect(ringEventOf('ringOff', {'reason': 'ring_missed'}), isNull, reason: 'not in the frozen channel');
     });

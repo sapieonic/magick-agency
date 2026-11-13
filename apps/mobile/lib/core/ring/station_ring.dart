@@ -15,7 +15,7 @@ abstract interface class StationRing {
   /// What native tells Dart (the station counts the misses while away).
   Stream<RingEvent> get events;
 
-  /// The ongoing "Away · inbound calls ring this phone" notification.
+  /// The ongoing "Away · this phone rings for inbound calls" notification.
   void showAwayNotification(bool on);
 
   /// A push offer's audio bound on the station.

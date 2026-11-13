@@ -76,7 +76,7 @@ enum AwayNotice { none, paused, wrapupDeadline }
 /// a wrap-up.
 ///
 /// [awayRing]: the pause asked for is `away_ring` (Mode B). Its own notification is native's
-/// ("Away · inbound calls ring this phone", shown once it lands), so "You're paused" would say
+/// ("Away · this phone rings for inbound calls", shown once it lands), so "You're paused" would say
 /// the opposite: none, unless the server refuses it and `device_away` is asked instead.
 AwayNotice awayNoticeFor(
   AgentState state, {

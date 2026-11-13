@@ -167,7 +167,7 @@ internal object RingNotifications {
      * so the silent copy replaces it: the ringing one is cancelled, and the copy posted on the
      * soundless channel.
      */
-    fun showIncoming(context: Context, call: RingCall, deadlineMs: Long, silent: Boolean) {
+    fun showIncoming(context: Context, call: RingCall, deadlineMs: Long, silent: Boolean): Boolean {
         val title = if (call.test) RingCopy.TEST_TITLE else RingCopy.INCOMING_TITLE
         val caller = Person.Builder().setName(title).setImportant(true).build()
         val fullScreen = RingIntents.fullScreen(context, call.callId)
@@ -194,7 +194,7 @@ internal object RingNotifications {
         if (call.test) builder.setContentText(RingCopy.TEST_TEXT)
         val n = builder.build()
         if (!silent) n.flags = n.flags or Notification.FLAG_INSISTENT
-        post(context, call.callId, ID_CALL, n)
+        return post(context, call.callId, ID_CALL, n)
     }
 
     /**
@@ -281,17 +281,20 @@ internal object RingNotifications {
         post(context, null, ID_RING_OFF, n)
     }
 
-    private fun post(context: Context, tag: String?, id: Int, n: Notification) {
+    /** Whether the notification was handed to the system. */
+    private fun post(context: Context, tag: String?, id: Int, n: Notification): Boolean {
         ensureChannels(context)
         if (!canPost(context)) {
             Log.w(TAG, "Notifications are off; notification $id not shown")
-            return
+            return false
         }
-        try {
+        return try {
             nm(context).notify(tag, id, n)
+            true
         } catch (e: RuntimeException) {
             // e.g. a CallStyle refused by the system.
             Log.w(TAG, "Notification $id refused: ${e.javaClass.simpleName}: ${e.message}")
+            false
         }
     }
 }

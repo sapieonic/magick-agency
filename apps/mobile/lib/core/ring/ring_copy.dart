@@ -8,11 +8,11 @@ abstract final class RingCopy {
   static const stoppedPrefix = 'Your phone stopped ringing for inbound calls';
 
   static String stopped(RingOffReason? reason) => switch (reason) {
-        RingOffReason.ringMissed => '$stoppedPrefix: you missed two in a row.',
+        RingOffReason.ringMissed => '$stoppedPrefix: you missed two inbound calls.',
         RingOffReason.revoked => '$stoppedPrefix: this phone is no longer registered. Open Me to set it up again.',
         RingOffReason.optedOut => '$stoppedPrefix: ringing is turned off on this phone.',
         RingOffReason.flagOff => '$stoppedPrefix: ringing was switched off for this account.',
-        RingOffReason.maxAge => '$stoppedPrefix: you were away for too long.',
+        RingOffReason.maxAge => '$stoppedPrefix: it stops after 4 hours away.',
         RingOffReason.takenOver => '$stoppedPrefix: your station moved to another device.',
         RingOffReason.unknown || null => '$stoppedPrefix.',
       };
@@ -25,10 +25,10 @@ abstract final class RingCopy {
   static const section = 'Inbound calls';
   static const toggle = 'Ring this phone for inbound calls';
   static const explain =
-      'When you leave the app while you’re available, a customer who rings in can ring this phone like a phone '
-      'call. Answer it to take the call in the app.';
+      'When you leave the app while available, inbound callers ring this phone like a normal call. Answer to take '
+      'the call in the app. You won’t get campaign calls while you’re away.';
   static const missRule =
-      'If you miss two calls in a row, this phone stops ringing until you open the app again, so callers aren’t '
+      'If you miss two inbound calls, this phone stops ringing until you open the app again, so callers aren’t '
       'kept waiting for you.';
   static const checklistTitle = 'What this phone needs';
   static const fix = 'Fix';
@@ -47,7 +47,7 @@ abstract final class RingCopy {
         RingChecklistItem.fullScreen => 'Full-screen calls',
         RingChecklistItem.batteryExempt => 'Battery optimisation',
         RingChecklistItem.microphone => 'Microphone',
-        RingChecklistItem.phoneAccount => 'Calling account',
+        RingChecklistItem.phoneAccount => 'Phone calling permission',
         RingChecklistItem.dndAllowsCalls => 'Do Not Disturb',
       };
 
@@ -65,6 +65,7 @@ abstract final class RingCopy {
   static const testSending = 'Sending a test ring…';
   static const testWaiting = 'Waiting for the test ring…';
   static const testReceived = 'Your phone rang. Ringing works on this phone.';
+  static const testNotShown = 'The test ring reached this phone, but it couldn’t show the call. Check notifications.';
   static const testTimedOut = 'No test ring arrived. Check the list above, then try again.';
   static const testTooSoon = 'You just sent one. Wait a few seconds, then try again.';
   static const testFailed = 'The test ring couldn’t be sent. Try again.';

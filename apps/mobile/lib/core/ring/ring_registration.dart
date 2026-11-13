@@ -17,7 +17,18 @@ import 'ring_rules.dart';
 import 'ring_telemetry.dart';
 
 /// The settings card's test ring, as it goes.
-enum TestRingPhase { idle, sending, waiting, received, timedOut, tooSoon, failed }
+enum TestRingPhase {
+  idle,
+  sending,
+  waiting,
+  received,
+
+  /// The test ring reached the phone, but its call could not be shown (notifications off).
+  notShown,
+  timedOut,
+  tooSoon,
+  failed,
+}
 
 /// This phone's push device and what lets it ring (Mode B), as [RingRegistration] knows them.
 @immutable
@@ -181,10 +192,10 @@ class RingRegistration extends Notifier<RingSettings> {
     switch (event) {
       case RingTokenChanged():
         if (_ready) unawaited(register());
-      case RingTestReceived():
+      case RingTestReceived(:final shown):
         if (state.testRing == TestRingPhase.waiting || state.testRing == TestRingPhase.sending) {
           _testTimer?.cancel();
-          state = state.copyWith(testRing: TestRingPhase.received);
+          state = state.copyWith(testRing: shown ? TestRingPhase.received : TestRingPhase.notShown);
         }
       case RingStopTapped():
         unawaited(stopRinging());

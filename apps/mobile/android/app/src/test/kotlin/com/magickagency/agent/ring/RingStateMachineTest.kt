@@ -624,16 +624,35 @@ class RingStateMachineTest {
     // ─── Test ring ───────────────────────────────────────────────────────────
 
     @Test
-    fun aTestRingRingsLocallyAndTellsDart() {
+    fun aTestRingRingsLocallyAndTellsDartOnceItsNotificationIsUp() {
         val m = RingStateMachine()
         val fx = m.handle(push(RingPush.Test))
         val s = assertIs<RingState.Ringing>(m.state)
         assertTrue(s.call.test)
         assertEquals("", s.call.offerToken)
         assertEquals(
-            listOf(StartRinging(s.call, t0 + RingWire.RING_MS), ScheduleTimer(TimerKind.RING, s.call.callId, t0 + RingWire.RING_MS), EmitTestRing),
+            listOf(StartRinging(s.call, t0 + RingWire.RING_MS), ScheduleTimer(TimerKind.RING, s.call.callId, t0 + RingWire.RING_MS)),
             fx,
+            "not on arrival: only a ring the agent could see is a success",
         )
+        assertEquals(listOf(EmitTestRing(shown = true)), m.handle(RingEvent.IncomingShown(s.call.callId, posted = true)))
+        assertEquals(emptyList(), m.handle(RingEvent.IncomingShown(s.call.callId, posted = true)), "once")
+    }
+
+    @Test
+    fun aTestRingWhoseNotificationCouldNotBePostedSaysSo() {
+        val m = RingStateMachine()
+        m.handle(push(RingPush.Test))
+        val id = m.activeCall!!.callId
+        assertEquals(listOf(EmitTestRing(shown = false)), m.handle(RingEvent.IncomingShown(id, posted = false)))
+        // Never up at all, and rung out: told it could not be shown.
+        val m2 = RingStateMachine()
+        m2.handle(push(RingPush.Test))
+        val id2 = m2.activeCall!!.callId
+        assertEquals(EmitTestRing(shown = false), m2.handle(RingEvent.RingTimedOut(id2)).first())
+        // A real ring's notification tells Dart nothing.
+        val m3 = ringing()
+        assertEquals(emptyList(), m3.handle(RingEvent.IncomingShown("call-a", posted = true)))
     }
 
     @Test
@@ -667,12 +686,18 @@ class RingStateMachineTest {
 
     @Test
     fun aTestRingRunningOutIsQuiet() {
+        // Shown, then rung out: no miss, no second word to Dart.
         val m = testRinging()
         val id = m.activeCall!!.callId
+        m.handle(RingEvent.IncomingShown(id, posted = true))
         assertEquals(listOf(Disconnect(id, EndCause.MISSED)), m.handle(RingEvent.RingTimedOut(id)))
+        // Refused by Telecom before it was ever shown: Dart hears it could not be shown.
         val refused = testRinging()
         val id2 = refused.activeCall!!.callId
-        assertEquals(listOf(CancelTimer(TimerKind.RING, id2), Disconnect(id2, EndCause.BUSY)), refused.handle(RingEvent.IncomingRefused(id2)))
+        assertEquals(
+            listOf(EmitTestRing(shown = false), CancelTimer(TimerKind.RING, id2), Disconnect(id2, EndCause.BUSY)),
+            refused.handle(RingEvent.IncomingRefused(id2)),
+        )
     }
 
     @Test

@@ -1969,7 +1969,7 @@ class StationController extends Notifier<StationView?>
   /// socket is parked (the server keeps an `away_ring` session without one: its TTL'd key is
   /// the exception to "a lease is a liveness detector") and the on-duty service and the audio
   /// stop, so the phone holds no microphone service while it waits to be rung. Native's ongoing
-  /// "Away · inbound calls ring this phone" notification takes the station's place. Undone on
+  /// "Away · this phone rings for inbound calls" notification takes the station's place. Undone on
   /// return ([_onShow]) or when a ring is answered ([resumeForRing]).
   void _maybeParkForRing(_Session s) {
     if (_awayRingParked || _foreground || _terminal || s.hosted.isSoftphone) return;

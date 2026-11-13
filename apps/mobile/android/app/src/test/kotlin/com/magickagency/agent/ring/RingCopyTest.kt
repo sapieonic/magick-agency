@@ -14,7 +14,8 @@ class RingCopyTest {
             if (r == "opted_out") assertNull(RingCopy.ringOffText(r)) else assertNotNull(RingCopy.ringOffText(r), r)
         }
         assertNotNull(RingCopy.ringOffText(null), "an unknown reason still says something")
-        assertTrue(RingCopy.ringOffText("ring_missed")!!.contains("two in a row"))
+        assertEquals("You missed two inbound calls. Open the app to turn it back on.", RingCopy.ringOffText("ring_missed"))
+        assertTrue(RingCopy.ringOffText("max_age")!!.contains("4 hours"), "the limit is stated")
     }
 
     @Test
@@ -28,7 +29,8 @@ class RingCopyTest {
             for (us in listOf("canceled", "dialed", "color", "optimiz")) assertFalse(s.contains(us), "\"$s\" has \"$us\"")
         }
         assertEquals("Inbound call · Magick Agency", RingCopy.INCOMING_TITLE)
-        assertEquals("Away · inbound calls ring this phone", RingCopy.AWAY_TITLE)
+        assertEquals("Away · this phone rings for inbound calls", RingCopy.AWAY_TITLE)
+        assertEquals("You didn’t answer an inbound call. It went back to the queue.", RingCopy.MISSED_TEXT)
         assertEquals("Missed inbound call", RingCopy.MISSED_TITLE)
     }
 

@@ -144,6 +144,17 @@ void main() {
       });
     });
 
+    test('it reached the phone but could not be shown: not a success', () {
+      fakeAsync((async) {
+        final h = RingHarness(async, gate: ready)..start();
+        h.registration.sendTestRing();
+        async.flushMicrotasks();
+        h.emit(const RingTestReceived(shown: false));
+        expect(h.settings.testRing, TestRingPhase.notShown);
+        h.dispose();
+      });
+    });
+
     test('nothing arrives in 30 s: timed out; a 429 is "too soon"', () {
       fakeAsync((async) {
         final h = RingHarness(async, gate: ready)..start();

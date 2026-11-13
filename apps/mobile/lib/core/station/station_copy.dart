@@ -105,8 +105,9 @@ String agentStateLabel(AgentState state, [String? raw]) => agentStateLabels[stat
 /// Labels for the server's reserved break codes, which no campaign lists.
 const deviceAwayBreakLabel = 'Away';
 
-/// Mode B's `away_ring`: away, and this phone rings for inbound callers (the console's label).
-const awayRingBreakLabel = 'Away · rings for inbound';
+/// Mode B's `away_ring`: away, and this phone rings for inbound callers. The app's one label for
+/// it, the same as the away notification's title (the console's supervisor floor has its own).
+const awayRingBreakLabel = 'Away · this phone rings for inbound calls';
 const softPhoneBreakLabel = 'Soft phone';
 const phoneCallBreakLabel = 'Phone call';
 

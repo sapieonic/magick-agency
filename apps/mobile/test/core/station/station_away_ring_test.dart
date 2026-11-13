@@ -203,7 +203,7 @@ void main() {
         final onBreak = app.view!.onBreak!;
         expect(onBreak.isDeviceAway, isTrue);
         expect(onBreak.isAwayRing, isTrue);
-        expect(onBreak.label, 'Away · rings for inbound');
+        expect(onBreak.label, 'Away · this phone rings for inbound calls');
         app.dispose();
       });
     });
@@ -220,7 +220,7 @@ void main() {
         app.readyFrame('break', extra: {'break_reason': 'device_away'});
         async.flushMicrotasks();
         expect(app.container.read(ringNoticeProvider), RingCopy.stopped(RingOffReason.ringMissed));
-        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: you missed two in a row.');
+        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: you missed two inbound calls.');
         app.dispose();
       });
     });

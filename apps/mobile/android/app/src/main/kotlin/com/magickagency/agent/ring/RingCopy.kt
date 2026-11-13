@@ -6,28 +6,28 @@ package com.magickagency.agent.ring
 object RingCopy {
     const val INCOMING_TITLE = "Inbound call · Magick Agency"
     const val TEST_TITLE = "Test ring · Magick Agency"
-    const val TEST_TEXT = "This is how an inbound call rings while you are away."
+    const val TEST_TEXT = "This is how an inbound call rings while you’re away."
     const val ANSWERING_TEXT = "Connecting the call…"
     const val ANSWER = "Answer"
     const val DECLINE = "Decline"
     const val HANG_UP = "Hang up"
 
-    const val AWAY_TITLE = "Away · inbound calls ring this phone"
+    const val AWAY_TITLE = "Away · this phone rings for inbound calls"
     const val AWAY_TEXT = "Open the app to take calls on screen again."
     const val BACK_TO_CALLS = "Back to calls"
     const val STOP_RINGING = "Stop ringing"
 
     const val MISSED_TITLE = "Missed inbound call"
-    const val MISSED_TEXT = "Your phone rang for an inbound caller and the call was not answered."
+    const val MISSED_TEXT = "You didn’t answer an inbound call. It went back to the queue."
 
     const val RING_OFF_TITLE = "Your phone stopped ringing for inbound calls"
 
     const val CHANNEL_RING = "Inbound calls"
-    const val CHANNEL_RING_DESCRIPTION = "Rings this phone for inbound callers while you are away from the app."
+    const val CHANNEL_RING_DESCRIPTION = "Rings this phone for inbound callers while you’re away from the app."
     const val CHANNEL_RING_QUIET = "Inbound calls, silenced or connecting"
     const val CHANNEL_RING_QUIET_DESCRIPTION = "An inbound call you silenced, or one you answered while it connects."
     const val CHANNEL_AWAY = "Away status"
-    const val CHANNEL_AWAY_DESCRIPTION = "Shows that inbound calls ring this phone while you are away."
+    const val CHANNEL_AWAY_DESCRIPTION = "Shows that this phone rings for inbound calls while you’re away."
     const val CHANNEL_NOTICES = "Missed inbound calls"
     const val CHANNEL_NOTICES_DESCRIPTION = "Rings you missed, and when your phone stops ringing for inbound calls."
 
@@ -45,11 +45,11 @@ object RingCopy {
      * which the agent did themselves ("Stop ringing"), so there is nothing to tell them.
      */
     fun ringOffText(reason: String?): String? = when (reason) {
-        "ring_missed" -> "You missed two in a row. Open the app to turn it back on."
+        "ring_missed" -> "You missed two inbound calls. Open the app to turn it back on."
         "revoked" -> "This phone was removed from ringing for inbound calls."
         "opted_out" -> null
         "flag_off" -> "Ringing for inbound calls was switched off for your account."
-        "max_age" -> "You were away for too long. Open the app to go back to calls."
+        "max_age" -> "It stops after 4 hours away. Open the app to go back to calls."
         "taken_over" -> "Your station was opened on another device."
         else -> "Open the app to see why."
     }
