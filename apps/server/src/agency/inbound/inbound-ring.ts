@@ -26,6 +26,7 @@ import type { PushDeviceRecord } from '@magick-agency/db/models/push-device.mode
 import { pushFailureRevokes, pushFailureScope } from '../../seams/push-sender.js';
 import { AWAY_RING_RETURN_END, type AwayRingService } from '../away-ring.js';
 import type { AgentStateMachine } from '../agent-state-machine.js';
+import type { AuditActorFields } from '../../audit/platform/audit-actor.js';
 import type { StationRegistry } from '../station-registry.js';
 import { ringWindowLeft, type InboundCallerView } from './eligibility.js';
 import { inboundCallToWire, type InboundPanelContext } from './inbound-call-wire.js';
@@ -290,7 +291,7 @@ export interface RingOffersDeps {
  */
 export type RingAbsenceEnd =
   | { kind: 'keep' }
-  | { kind: 'end'; reason: AgencyRingOffReason | null }
+  | { kind: 'end'; reason: AgencyRingOffReason | null; actor?: AuditActorFields }
   | { kind: 'asReturn' }
   | { kind: 'endedBy'; since: Date | null };
 
@@ -508,7 +509,8 @@ export class RingOffers {
   async cancelForAwayRingEnd(
     sessionId: string,
     reason: AgencyRingOffReason,
-    opts: { absenceSince?: Date | null } = {},
+    /** `actor`: who the absence's end is audited as (default the system's). */
+    opts: { absenceSince?: Date | null; actor?: AuditActorFields } = {},
   ): Promise<'cancelled' | 'answered' | 'none'> {
     return this.onPushOfferOf(sessionId, async (call, ring): Promise<'cancelled' | 'answered'> => {
       const takenOver = reason === 'taken_over';
@@ -518,7 +520,9 @@ export class RingOffers {
         // The take-over's claim already ended the absence in the mirror, and its caller sends the
         // old device `ring_off`: the agent is left on a plain break for the new device's attach,
         // `since` kept at the absence's start (`opts.absenceSince`, the claim's).
-        absence: takenOver ? { kind: 'endedBy', since: opts.absenceSince ?? null } : { kind: 'end', reason },
+        absence: takenOver
+          ? { kind: 'endedBy', since: opts.absenceSince ?? null }
+          : { kind: 'end', reason, ...(opts.actor ? { actor: opts.actor } : {}) },
       });
       return 'cancelled';
     });
@@ -842,7 +846,7 @@ export class RingOffers {
           case 'keep':
             return released.absence ? { outcome: 'away_ring', absence: released.absence } : { outcome: 'away_ring' };
           case 'end':
-            await awayRing.end(sessionId, absence.reason, since);
+            await awayRing.end(sessionId, absence.reason, { ...since, ...(absence.actor ? { actor: absence.actor } : {}) });
             return { outcome: 'ended' };
           case 'asReturn':
             await awayRing.end(sessionId, null, { ...AWAY_RING_RETURN_END, ...since });

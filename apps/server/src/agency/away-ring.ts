@@ -713,7 +713,8 @@ export class AwayRingService {
   ): Promise<AwayRingEndOutcome> {
     const connector = this.deps.inbound();
     if (connector && this.holdsPushOffer(sessionId)) {
-      const out = await connector.rings.cancelForAwayRingEnd(sessionId, reason);
+      // The actor goes with the cancel: the absence's end there writes the audit row.
+      const out = await connector.rings.cancelForAwayRingEnd(sessionId, reason, { ...(opts.actor ? { actor: opts.actor } : {}) });
       return out === 'cancelled' ? 'ended' : out === 'answered' ? 'ring_in_flight' : this.end(sessionId, reason, opts);
     }
     return this.end(sessionId, reason, opts);

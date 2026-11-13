@@ -1110,16 +1110,23 @@ describe('the away break around a ring (N1)', () => {
       .toMatchObject({ reason: 'taken_over', away_since: absence.toISOString() });
   });
 
-  it('the opt-out (the Me toggle) during a ring cancels it and ends the absence (opted_out)', async () => {
+  it('the opt-out (the Me toggle) during a ring cancels it and ends the absence (opted_out), audited as the agent', async () => {
     const c = connector();
     await deskAgent('on_call');
     const away = await awayAgent();
     const { call } = await caller(c);
     await ringPush(away.deviceRowId);
     await devices.setRingEnabled(away.userId, away.deviceId, false);
-    expect(await awayRing.endForDevice(away.userId, away.deviceId, 'opted_out')).toBe('ended');
+    audit.log.mockClear();
+    const actor = { actor_type: 'human', user_id: away.userId } as const;
+    expect(await awayRing.endForDevice(away.userId, away.deviceId, 'opted_out', actor)).toBe('ended');
     await drain();
     expect(await row(call.id)).toMatchObject({ state: 'queued', ring_result: 'cancelled' });
     expect(await sessionRow(away.sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
+    // The end ran on the ring's cancel path, and still names who acted: the agent, not the system.
+    const ended = audit.log.mock.calls.map((c) => c[0]).filter((r) => r.action === 'agency_session.away_ring_ended');
+    expect(ended).toEqual([expect.objectContaining({
+      actor_type: 'human', user_id: away.userId, resource_id: away.sessionId, details: expect.objectContaining({ reason: 'opted_out' }),
+    })]);
   });
 });

@@ -372,6 +372,20 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(await row(sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
     await waitFor('ring_off', () => sent.find((s) => s.payload['type'] === 'ring_off'));
     expect(sent.find((s) => s.payload['type'] === 'ring_off')!.payload).toEqual({ type: 'ring_off', session_id: sessionId, reason: 'opted_out', away_since: awaySince });
+    // The agent's own opt-out: audited as them, not as the system.
+    expect((await auditRows('agency_session.away_ring_ended')).filter((r) => r.resource_id === sessionId))
+      .toEqual([expect.objectContaining({ actor_type: 'human', user_id: agent.id })]);
+  });
+
+  it('removing the device (sign-out) ends away_ring, audited as the agent who removed it', async () => {
+    const { agent, sessionId, station } = await onDuty();
+    await goAwayRinging(agent, sessionId, station);
+    const del = await send('DELETE', `/proxy/agency/push-devices/${PHONE}`, agent);
+    expect(del.statusCode, del.body).toBe(204);
+    expect(await row(sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
+    const ended = (await auditRows('agency_session.away_ring_ended')).filter((r) => r.resource_id === sessionId);
+    expect(ended).toEqual([expect.objectContaining({ actor_type: 'human', user_id: agent.id })]);
+    expect(ended[0]!.details).toMatchObject({ reason: 'revoked' });
   });
 
   it('the opt-out (the Me toggle) and a removed device answer as committed even when ending the absence fails: the reconcile ends it', async () => {
