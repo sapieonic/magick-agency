@@ -35,6 +35,10 @@ abstract interface class RingAnswerStation {
   /// The agent hung up [callId] on the phone while it connected: the station hangs it up once it
   /// binds ([StationController.hangUpRingCall]).
   void hangUp(String callId);
+
+  /// "Stop ringing" on a cold start, for the session the absence was in
+  /// ([StationController.stopRingingWithoutStation]).
+  Future<void> stopRinging(String sessionId);
 }
 
 final class _ControllerStation implements RingAnswerStation {
@@ -57,6 +61,9 @@ final class _ControllerStation implements RingAnswerStation {
 
   @override
   void hangUp(String callId) => _station.hangUpRingCall(callId);
+
+  @override
+  Future<void> stopRinging(String sessionId) => _station.stopRingingWithoutStation(sessionId);
 }
 
 final ringAnswerStationProvider = Provider<RingAnswerStation>(_ControllerStation.new);
@@ -144,7 +151,15 @@ class RingAnswerCoordinator extends Notifier<String?> {
     }
     // Cleared on read: a cold start's answer is taken once.
     final pending = await _channel.pendingAnswer();
-    if (pending == null || !ref.mounted) return;
+    if (!ref.mounted) return;
+    if (pending == null) {
+      // A cold start from the away notification's "Stop ringing": the station is not here to read
+      // it on its return, so the session it was for is paused (device_away) from here.
+      final stop = await _channel.takeStopRinging();
+      final session = stop?.sessionId;
+      if (session != null && ref.mounted) await ref.read(ringAnswerStationProvider).stopRinging(session);
+      return;
+    }
     _received(pending.callId, 'pending_answer');
     await answer(pending, coldStart: true);
   }
@@ -173,7 +188,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
             ref.read(ringAnswerStationProvider).hangUp(callId);
           }
         }
-      case RingTokenChanged() || RingTestReceived() || RingStopTapped():
+      case RingTokenChanged() || RingTestReceived():
         break;
     }
   }

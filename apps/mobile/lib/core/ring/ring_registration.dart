@@ -128,8 +128,8 @@ final ringLifecycleSourceProvider = Provider<AppLifecycleSource>((ref) => Flutte
 /// Registers this phone's push device (Mode B): `PUT /push-devices/:deviceId` once the gate is
 /// ready, on a new token (`token`) and on every return to the app (the checklist is read again
 /// then too: the agent may have just fixed something in the system settings). The device id is
-/// the station device id (OS3). Opt-in is the agent's (`PATCH`, the Me card or the away
-/// notification's "Stop ringing"); the test ring is the card's. Signing out removes the device
+/// the station device id (OS3). Opt-in is the agent's (`PATCH`, the Me card only: the away
+/// notification's "Stop ringing" is for one absence, the station's); the test ring is the card's. Signing out removes the device
 /// (`DELETE`, [unregister], run by the gate while the sign-in still works).
 class RingRegistration extends Notifier<RingSettings> {
   static final _log = Log('ring.registration');
@@ -143,9 +143,6 @@ class RingRegistration extends Notifier<RingSettings> {
   int _gen = 0;
   bool _ready = false;
   Timer? _testTimer;
-
-  /// "Stop ringing" tapped before the gate was ready (a cold start from the notification).
-  bool _stopWhenReady = false;
 
   @override
   RingSettings build() {
@@ -197,8 +194,6 @@ class RingRegistration extends Notifier<RingSettings> {
           _testTimer?.cancel();
           state = state.copyWith(testRing: shown ? TestRingPhase.received : TestRingPhase.notShown);
         }
-      case RingStopTapped():
-        unawaited(stopRinging());
       case RingAnswered() || RingEnded():
         break;
     }
@@ -248,19 +243,6 @@ class RingRegistration extends Notifier<RingSettings> {
       loading: false,
       loadFailed: false,
     );
-    if (_stopWhenReady) {
-      _stopWhenReady = false;
-      unawaited(stopRinging());
-    }
-  }
-
-  /// The away notification's "Stop ringing": opt out on this phone, which ends its `away_ring`.
-  Future<void> stopRinging() async {
-    if (!_ready || state.status == null) {
-      _stopWhenReady = true;
-      return;
-    }
-    await setOptIn(false, source: 'notification');
   }
 
   /// Opt in or out on this phone. A device the server has never seen is registered with the

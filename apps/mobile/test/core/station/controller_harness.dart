@@ -16,6 +16,7 @@ import 'package:magick_agency_agent/core/lifecycle/app_lifecycle.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
+import 'package:magick_agency_agent/core/station/station_copy.dart' show pausedNotificationBody;
 import 'package:magick_agency_agent/core/station/station_deps.dart';
 import 'package:magick_agency_agent/core/station/station_device.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
@@ -101,8 +102,14 @@ class FakeNotifier implements StationNotifier {
   @override
   Future<void> cancel() async => calls.add('cancel');
 
+  /// The words of each "You're paused" shown.
+  final List<String> pausedBodies = [];
+
   @override
-  Future<void> showPaused() async => calls.add('paused');
+  Future<void> showPaused({String body = pausedNotificationBody}) async {
+    calls.add('paused');
+    pausedBodies.add(body);
+  }
 
   @override
   Future<void> showWrapupDeadline(DateTime deadline) async => calls.add('wrapup:${deadline.toIso8601String()}');

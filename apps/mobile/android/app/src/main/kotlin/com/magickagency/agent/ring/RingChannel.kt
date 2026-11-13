@@ -1,17 +1,20 @@
 package com.magickagency.agent.ring
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.lang.ref.WeakReference
 
 /**
  * The frozen `magick_agency/ring` method channel (`docs/mobile.md` "The ring channel (Mode B)"):
  * one MethodChannel, standard codec, both directions. Registered on MainActivity's FlutterEngine;
  * native → Dart calls go through [invoke] and report whether Dart's handler took them, so what Dart
- * has not heard is kept (`pendingAnswer`, a "Stop ringing" tap) or posted natively (a missed ring).
+ * has not heard is kept (`pendingAnswer`) or posted natively (a missed ring). What Dart reads when
+ * it is ready (`takeRingOff`, `takeStopRinging`) is kept until read.
  * Main thread only.
  */
 @SuppressLint("StaticFieldLeak") // Holds the application context only.
@@ -22,7 +25,11 @@ internal object RingChannel {
     private var channel: MethodChannel? = null
     private var messenger: BinaryMessenger? = null
 
+    /** The activity the engine runs in, for `moveTaskToBack`; weak, so the channel never keeps it. */
+    private var activity: WeakReference<Activity>? = null
+
     fun attach(messenger: BinaryMessenger, context: Context) {
+        activity = (context as? Activity)?.let(::WeakReference)
         val a = context.applicationContext
         channel?.setMethodCallHandler(null)
         this.messenger = messenger
@@ -35,6 +42,7 @@ internal object RingChannel {
         channel?.setMethodCallHandler(null)
         channel = null
         this.messenger = null
+        activity = null
     }
 
     /**
@@ -64,7 +72,6 @@ internal object RingChannel {
     }
 
     private fun handle(context: Context, call: MethodCall, result: MethodChannel.Result) {
-        RingCoordinator.onDartCalled(context)
         when (call.method) {
             "getToken" -> RingCoordinator.token(context) { result.success(it) }
             "pendingAnswer" -> result.success(RingCoordinator.takePendingAnswer(context)?.toChannelMap())
@@ -103,6 +110,15 @@ internal object RingChannel {
                 }
             }
             "takeRingOff" -> result.success(RingCoordinator.takeRingOff(context)?.toChannelMap())
+            "takeStopRinging" -> result.success(
+                RingCoordinator.takeStopRinging(context)?.let { stop ->
+                    mapOf(
+                        "session_id" to stop.sessionId,
+                        "since" to stop.sinceMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+                    )
+                },
+            )
+            "moveTaskToBack" -> result.success(activity?.get()?.moveTaskToBack(true) ?: false)
             "showMissedRing" -> {
                 RingNotifications.showMissed(context)
                 result.success(null)

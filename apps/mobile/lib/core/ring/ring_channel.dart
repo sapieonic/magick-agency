@@ -45,12 +45,21 @@ abstract interface class RingChannel {
   /// Posts the local "Missed inbound call" notification (no name, no number).
   Future<void> showMissedRing();
 
+  /// The away notification's "Stop ringing" that Dart has not taken yet, or null. Cleared on
+  /// read; a new absence drops one never read. Native has already declined a ring ringing then
+  /// (and declines one arriving in the next ring window): the station must ask `device_away`
+  /// before it attaches, or an attach during a ring would answer it (N5).
+  Future<RingStopRequest?> takeStopRinging();
+
+  /// Sends the app's task to the back (Android's `moveTaskToBack`): after "Stop ringing" the
+  /// agent goes back to what they were doing. False when native could not.
+  Future<bool> moveTaskToBack();
+
   /// The `ring_off` push native took for the absence it showed (the server ended `away_ring`
   /// while the agent was away), or null. Cleared on read; a new absence drops one never read.
   Future<RingOffRecord?> takeRingOff();
 
-  /// What native tells Dart: `token`, `ringAnswered`, `ringEnded`, `testRingReceived`,
-  /// `stopRingingTapped`. Broadcast. An event nobody listens to is answered with an error, so
+  /// What native tells Dart: `token`, `ringAnswered`, `ringEnded`, `testRingReceived`. Broadcast. An event nobody listens to is answered with an error, so
   /// native knows Dart did not take it (and keeps an answer for `pendingAnswer`).
   Stream<RingEvent> get events;
 }
@@ -84,6 +93,36 @@ final class RingAnswer {
 
   @override
   String toString() => 'RingAnswer($callId, <token>)';
+}
+
+/// "Stop ringing" tapped on the away notification, for the absence that began at [since] in
+/// [sessionId] (each null when native did not know it).
+@immutable
+final class RingStopRequest {
+  const RingStopRequest({this.sessionId, this.since});
+
+  /// Reads `{session_id, since}`; null when it is not a map.
+  static RingStopRequest? tryRead(Object? raw) {
+    if (raw is! Map) return null;
+    final session = raw['session_id'];
+    final since = raw['since'];
+    return RingStopRequest(
+      sessionId: session is String && session.isNotEmpty ? session : null,
+      since: since is String ? DateTime.tryParse(since)?.toUtc() : null,
+    );
+  }
+
+  final String? sessionId;
+  final DateTime? since;
+
+  @override
+  bool operator ==(Object other) => other is RingStopRequest && other.sessionId == sessionId && other.since == since;
+
+  @override
+  int get hashCode => Object.hash(sessionId, since);
+
+  @override
+  String toString() => 'RingStopRequest($sessionId, $since)';
 }
 
 /// A `ring_off` native took: the server ended `away_ring` for the absence that began at
@@ -212,11 +251,6 @@ final class RingTestReceived extends RingEvent {
   final bool shown;
 }
 
-/// The away notification's "Stop ringing".
-final class RingStopTapped extends RingEvent {
-  const RingStopTapped();
-}
-
 /// Decodes one native → Dart call; null for a method or arguments this build does not read.
 @visibleForTesting
 RingEvent? ringEventOf(String method, Object? arguments) {
@@ -234,8 +268,6 @@ RingEvent? ringEventOf(String method, Object? arguments) {
       return callId is String && callId.isNotEmpty ? RingEnded(callId, reason is String ? reason : '') : null;
     case 'testRingReceived':
       return RingTestReceived(shown: args['shown'] != false);
-    case 'stopRingingTapped':
-      return const RingStopTapped();
     default:
       return null;
   }
@@ -337,6 +369,12 @@ final class MethodRingChannel implements RingChannel {
 
   @override
   Future<RingOffRecord?> takeRingOff() async => RingOffRecord.tryRead(await _invoke<Object?>('takeRingOff'));
+
+  @override
+  Future<RingStopRequest?> takeStopRinging() async => RingStopRequest.tryRead(await _invoke<Object?>('takeStopRinging'));
+
+  @override
+  Future<bool> moveTaskToBack() async => await _invoke<bool>('moveTaskToBack') ?? false;
 }
 
 /// The one channel for the process (it owns the native handler). Tests override it with a fake.

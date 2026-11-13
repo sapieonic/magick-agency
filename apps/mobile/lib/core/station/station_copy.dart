@@ -343,6 +343,9 @@ const notesChangedElsewhereCopy = 'These notes were also changed elsewhere.';
 
 const pausedNotificationTitle = 'You’re paused';
 const pausedNotificationBody = "You're paused. Open the app to take calls again.";
+
+/// "Stop ringing" on the away notification (this absence only).
+const pausedRingingStoppedBody = 'Ringing stopped. You’re paused. Open the app to take calls again.';
 const wrapupNotificationTitle = 'Wrap-up';
 
 /// The owed-outcome notice for a soft-phone call (its body is [wrapupNotificationBody]'s).

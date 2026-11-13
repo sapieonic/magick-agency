@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -61,4 +63,10 @@ final class _RegistrationStationRing implements StationRing {
 
   @override
   Future<RingOffRecord?> takeRingOff() => _channel.takeRingOff();
+
+  @override
+  Future<RingStopRequest?> takeStopRinging() => _channel.takeStopRinging();
+
+  @override
+  void moveTaskToBack() => unawaited(_channel.moveTaskToBack());
 }

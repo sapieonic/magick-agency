@@ -55,7 +55,7 @@ void main() {
     });
   });
 
-  test('opt-in by PATCH; "Stop ringing" from the away notification turns it off', () {
+  test('opt-in by PATCH, from the Me card', () {
     fakeAsync((async) {
       final h = RingHarness(async, gate: ready)..start();
       h.registration.setOptIn(false);
@@ -66,20 +66,7 @@ void main() {
       h.registration.setOptIn(true);
       async.flushMicrotasks();
       expect(h.settings.optIn, isTrue);
-      h.emit(const RingStopTapped());
-      expect(h.requests('PATCH', devicePath).last.body, {'ring_enabled': false});
-      expect(h.settings.optIn, isFalse);
-      h.dispose();
-    });
-  });
-
-  test('"Stop ringing" on a cold start, before the gate is ready, waits for the registration', () {
-    fakeAsync((async) {
-      final h = RingHarness(async)..start();
-      h.emit(const RingStopTapped());
-      expect(h.requests('PATCH', devicePath), isEmpty);
-      h.setGate(ready);
-      expect(h.requests('PATCH', devicePath).single.body, {'ring_enabled': false});
+      expect(h.requests('PATCH', devicePath).last.body, {'ring_enabled': true});
       h.dispose();
     });
   });

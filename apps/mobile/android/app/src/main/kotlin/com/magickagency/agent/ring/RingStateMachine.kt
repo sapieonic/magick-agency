@@ -157,6 +157,13 @@ sealed class RingEvent {
     /** `reportEnded(call_id, reason)` from Dart: `ended`, `accept_failed` or `cancelled`. */
     data class EndedByApp(val callId: String, val reason: String) : RingEvent()
 
+    /**
+     * The away notification's "Stop ringing" ([nowMs], this phone's clock): a ring ringing now is
+     * declined (an app opening during a ring would answer it, N5), and so is one arriving within
+     * [RingWire.STOP_RINGING_HOLD_MS]. Not a miss.
+     */
+    data class StopRingingTapped(val nowMs: Long) : RingEvent()
+
     /** Dart showed the away notification for an absence ([AwayAbsence], shown), or took it down (null [absence]). */
     data class AwayChanged(val absence: AwayAbsence?) : RingEvent()
 
@@ -245,6 +252,9 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
     /** The test ring whose outcome Dart has been told ([RingEffect.EmitTestRing]). */
     private var testReported: String? = null
 
+    /** Until then (this phone's clock), a ring is declined at once: the agent tapped "Stop ringing". */
+    private var declineUntilMs = 0L
+
     /** The latest absence the away notification was shown for; null when the phone knows of none. */
     var away: AwayAbsence? = null
         private set
@@ -265,6 +275,7 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
         is RingEvent.Bound -> onBound(event.callId)
         is RingEvent.EndedByApp -> onEndedByApp(event.callId, event.reason)
         is RingEvent.IncomingShown -> onShown(event.callId, event.posted)
+        is RingEvent.StopRingingTapped -> onStopRinging(event.nowMs)
         is RingEvent.AwayChanged -> {
             // Taken down: kept as the latest absence, no longer shown.
             away = event.absence ?: away?.copy(shown = false)
@@ -302,6 +313,16 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
             return listOf(RingEffect.Dropped(DropReason.EXPIRED))
         }
         val call = RingCall.of(ring)
+        if (now < declineUntilMs && state !is RingState.Answering && state !is RingState.Answered) {
+            // "Stop ringing" was just tapped: the app is opening to leave away_ring, and must not
+            // answer a ring by attaching (N5). Declined, as the agent would.
+            remember(call.callId)
+            state = RingState.Ended(call.callId, DeclineReason.DECLINED.wire)
+            return listOf(
+                RingEffect.PostDecline(call.callId, call.offerToken, DeclineReason.DECLINED),
+                RingEffect.EmitEnded(call.callId, DeclineReason.DECLINED.wire, missedIfUnheard = false),
+            )
+        }
         val out = mutableListOf<RingEffect>()
         val replacing = state is RingState.Ringing
         when (val s = state) {
@@ -449,6 +470,15 @@ class RingStateMachine(private val rememberEnded: Int = 32) {
             s is RingState.Answered && s.call.callId == callId -> listOf(RingEffect.Dropped(DropReason.BOUND))
             else -> listOf(RingEffect.Dropped(DropReason.STALE))
         }
+    }
+
+    private fun onStopRinging(now: Long): List<RingEffect> {
+        declineUntilMs = now + RingWire.STOP_RINGING_HOLD_MS
+        val s = state
+        if (s !is RingState.Ringing) return emptyList()
+        if (s.call.test) return end(s.call, TEST_REASON, EndCause.REJECTED, TimerKind.RING, emit = false, missedIfUnheard = false)
+        return listOf(RingEffect.PostDecline(s.call.callId, s.call.offerToken, DeclineReason.DECLINED)) +
+            end(s.call, DeclineReason.DECLINED.wire, EndCause.REJECTED, TimerKind.RING, emit = true, missedIfUnheard = false)
     }
 
     private fun onRefused(callId: String): List<RingEffect> {

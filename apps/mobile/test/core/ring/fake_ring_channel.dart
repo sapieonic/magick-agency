@@ -70,6 +70,23 @@ class FakeRingChannel implements RingChannel {
   @override
   Future<void> showMissedRing() async => calls.add('showMissedRing');
 
+  /// What `takeStopRinging` answers next (then null: cleared on read).
+  RingStopRequest? stop;
+
+  @override
+  Future<RingStopRequest?> takeStopRinging() async {
+    calls.add('takeStopRinging');
+    final r = stop;
+    stop = null;
+    return r;
+  }
+
+  @override
+  Future<bool> moveTaskToBack() async {
+    calls.add('moveTaskToBack');
+    return true;
+  }
+
   /// What `takeRingOff` answers next (then null: cleared on read).
   RingOffRecord? ringOff;
 
@@ -116,4 +133,10 @@ class FakeStationRing implements StationRing {
 
   @override
   Future<RingOffRecord?> takeRingOff() => channel.takeRingOff();
+
+  @override
+  Future<RingStopRequest?> takeStopRinging() => channel.takeStopRinging();
+
+  @override
+  void moveTaskToBack() => channel.moveTaskToBack();
 }

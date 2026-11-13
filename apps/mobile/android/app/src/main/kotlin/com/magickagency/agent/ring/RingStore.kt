@@ -7,7 +7,7 @@ import android.content.SharedPreferences
  * What the ring keeps across a process start: the FCM token, the ring the agent answered before
  * Flutter was running (`pendingAnswer`, for a cold start from the full-screen intent; cleared on
  * read, on bind and on any end, and dropped once the grace has lapsed), a "Stop ringing" tap
- * Dart has not heard yet, the absence the away notification shows, and the `ring_off` that ended
+ * Dart has not taken yet, the absence the away notification shows, and the `ring_off` that ended
  * it (for Dart's `takeRingOff`). App-private preferences; the app allows no backup.
  */
 internal class RingStore(context: Context) {
@@ -17,9 +17,30 @@ internal class RingStore(context: Context) {
         get() = prefs.getString(KEY_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_TOKEN, value).apply()
 
-    var stopRingingUnheard: Boolean
-        get() = prefs.getBoolean(KEY_STOP_RINGING, false)
-        set(value) = prefs.edit().putBoolean(KEY_STOP_RINGING, value).apply()
+    /**
+     * The away notification's "Stop ringing" Dart has not taken yet (`takeStopRinging`): the absence
+     * it was tapped in (its fields null when unknown), or null when there is none.
+     */
+    var stopRinging: AwayAbsence?
+        get() {
+            if (!prefs.getBoolean(KEY_STOP_RINGING, false)) return null
+            return AwayAbsence(
+                sessionId = prefs.getString(KEY_STOP_SESSION, null),
+                sinceMs = prefs.getLong(KEY_STOP_SINCE, -1L).takeIf { it >= 0 },
+            )
+        }
+        set(value) {
+            val e = prefs.edit().remove(KEY_STOP_SESSION).remove(KEY_STOP_SINCE)
+            if (value == null) {
+                e.remove(KEY_STOP_RINGING)
+            } else {
+                e.putBoolean(KEY_STOP_RINGING, true)
+                value.sessionId?.let { e.putString(KEY_STOP_SESSION, it) }
+                value.sinceMs?.let { e.putLong(KEY_STOP_SINCE, it) }
+            }
+            // commit: the tap's launch may be a cold start that reads it in a new process.
+            e.commit()
+        }
 
     fun savePendingAnswer(answer: PendingAnswer) {
         // commit, not apply: the only write that must be on disk before this returns. The answer
@@ -96,7 +117,9 @@ internal class RingStore(context: Context) {
     private companion object {
         const val FILE = "magick_agency_ring"
         const val KEY_TOKEN = "fcm_token"
-        const val KEY_STOP_RINGING = "stop_ringing_unheard"
+        const val KEY_STOP_RINGING = "stop_ringing_pending"
+        const val KEY_STOP_SESSION = "stop_ringing_session_id"
+        const val KEY_STOP_SINCE = "stop_ringing_away_since"
         const val KEY_PA_CALL = "pending_answer_call_id"
         const val KEY_PA_TOKEN = "pending_answer_offer_token"
         const val KEY_PA_SESSION = "pending_answer_session_id"

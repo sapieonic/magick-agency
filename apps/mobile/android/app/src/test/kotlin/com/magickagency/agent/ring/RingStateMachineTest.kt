@@ -823,4 +823,42 @@ class RingStateMachineTest {
         val restored = RingStateMachine().also { it.restoreAway(AwayAbsence("sess-1", absenceB)) }
         assertEquals(listOf(Dropped(DropReason.STALE_RING_OFF)), restored.handle(push(RingPush.Off("sess-1", "ring_missed", absenceA))), "a process start keeps the absence")
     }
+
+    // ─── "Stop ringing" (this absence only) ──────────────────────────────────
+
+    @Test
+    fun stopRingingDeclinesTheRingRingingNow() {
+        val m = ringing()
+        assertEquals(
+            listOf(
+                PostDecline("call-a", "token-a", DeclineReason.DECLINED),
+                CancelTimer(TimerKind.RING, "call-a"),
+                Disconnect("call-a", EndCause.REJECTED),
+                EmitEnded("call-a", "declined", missedIfUnheard = false),
+            ),
+            m.handle(RingEvent.StopRingingTapped(t0 + 2_000)),
+            "the app opening must not answer it by attaching (N5)",
+        )
+        assertEnded(m, "call-a", "declined")
+    }
+
+    @Test
+    fun aRingArrivingJustAfterStopRingingIsDeclinedNotRung() {
+        val m = RingStateMachine()
+        assertEquals(emptyList(), m.handle(RingEvent.StopRingingTapped(t0)))
+        assertEquals(
+            listOf(PostDecline("call-b", "token-b", DeclineReason.DECLINED), EmitEnded("call-b", "declined", missedIfUnheard = false)),
+            m.handle(push(ringB, now = t0 + 3_000)),
+        )
+        // Past the hold, rings ring again (the agent may be away_ring again by then).
+        val later = RingPush.Ring("call-c", "token-c", "sess-1", t0 + RingWire.STOP_RINGING_HOLD_MS + RingWire.RING_MS)
+        assertIs<StartRinging>(m.handle(push(later, now = t0 + RingWire.STOP_RINGING_HOLD_MS))[0])
+    }
+
+    @Test
+    fun stopRingingNeverDeclinesACallTheAgentAnswered() {
+        val m = answering()
+        assertEquals(emptyList(), m.handle(RingEvent.StopRingingTapped(t0 + 4_000)))
+        assertIs<RingState.Answering>(m.state)
+    }
 }

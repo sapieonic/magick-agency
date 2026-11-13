@@ -31,6 +31,12 @@ abstract interface class StationRing {
   /// The `ring_off` native took while away ([RingChannel.takeRingOff]), once.
   Future<RingOffRecord?> takeRingOff();
 
+  /// The away notification's "Stop ringing" not yet taken ([RingChannel.takeStopRinging]), once.
+  Future<RingStopRequest?> takeStopRinging();
+
+  /// The app's task to the back ([RingChannel.moveTaskToBack]).
+  void moveTaskToBack();
+
   static const StationRing none = _NoRing();
 }
 
@@ -57,6 +63,12 @@ final class _NoRing implements StationRing {
 
   @override
   Future<RingOffRecord?> takeRingOff() async => null;
+
+  @override
+  Future<RingStopRequest?> takeStopRinging() async => null;
+
+  @override
+  void moveTaskToBack() {}
 }
 
 final stationRingProvider = Provider<StationRing>((ref) => StationRing.none);

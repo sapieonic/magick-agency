@@ -61,6 +61,19 @@ void main() {
     });
   });
 
+  test('a cold start from "Stop ringing": once the gate is ready, the station pauses that session (device_away)', () {
+    fakeAsync((async) {
+      final h = harness(async, signedIn: false);
+      h.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+      h.start();
+      expect(h.station.calls, isEmpty);
+      h.setGate(ready);
+      expect(h.station.calls, ['stopRinging:sess-1']);
+      expect(h.requests('POST', _acceptPath), isEmpty);
+      h.dispose();
+    });
+  });
+
   test('answered with the app running: accepted at once', () {
     fakeAsync((async) {
       final h = harness(async)..start();

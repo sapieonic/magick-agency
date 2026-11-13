@@ -17,6 +17,9 @@ abstract final class RingCopy {
         RingOffReason.unknown || null => '$stoppedPrefix.',
       };
 
+  /// The away notification's "Stop ringing" (this absence only).
+  static const ringingStopped = 'Ringing stopped. You’re paused.';
+
   // ── Answering from a ring ──
   static const acceptFailed = 'This call stopped ringing or someone else took it.';
   static const dismiss = 'Dismiss';

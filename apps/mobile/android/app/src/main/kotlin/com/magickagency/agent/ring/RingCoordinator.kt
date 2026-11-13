@@ -211,7 +211,11 @@ internal object RingCoordinator {
     fun showAway(context: Context, on: Boolean, sinceMs: Long?, sessionId: String?) {
         val a = init(context)
         RingNotifications.showAway(a, on)
-        if (on) store?.ringOff = null
+        // A new absence: a ring_off or a "Stop ringing" Dart never took was for an earlier one.
+        if (on) {
+            store?.ringOff = null
+            store?.stopRinging = null
+        }
         dispatch(RingEvent.AwayChanged(if (on) AwayAbsence(sessionId, sinceMs) else null))
         store?.away = machine.away
     }
@@ -224,21 +228,25 @@ internal object RingCoordinator {
         return off
     }
 
-    /** The away notification's "Stop ringing" ([com.magickagency.agent.MainActivity]). Main thread. */
+    /**
+     * The away notification's "Stop ringing" ([com.magickagency.agent.MainActivity], before Flutter
+     * hears of the launch): for this absence only. A ring ringing now is declined, and one arriving
+     * in the next ring window too, so the app opening to leave `away_ring` never answers one by
+     * attaching (N5). Kept for Dart (`takeStopRinging`), which asks `device_away` before its
+     * station attaches. Main thread.
+     */
     fun stopRingingTapped(context: Context) {
         init(context)
-        store?.stopRingingUnheard = true
-        flushStopRinging()
+        store?.stopRinging = machine.away?.takeIf { it.shown } ?: AwayAbsence(null, null)
+        dispatch(RingEvent.StopRingingTapped(System.currentTimeMillis()))
     }
 
-    /** Dart called in: its handler is up, so what it has not heard yet goes now. Main thread. */
-    fun onDartCalled(context: Context) {
+    /** `takeStopRinging`: the "Stop ringing" tap Dart has not taken, once (cleared on read). Main thread. */
+    fun takeStopRinging(context: Context): AwayAbsence? {
         init(context)
-        if (store?.stopRingingUnheard == true) flushStopRinging()
-    }
-
-    private fun flushStopRinging() {
-        RingChannel.invoke("stopRingingTapped", null) { heard -> if (heard) store?.stopRingingUnheard = false }
+        val stop = store?.stopRinging
+        if (stop != null) store?.stopRinging = null
+        return stop
     }
 
     // ─── The state machine and its effects ───────────────────────────────────

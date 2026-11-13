@@ -23,7 +23,7 @@ object RingIntents {
     const val EXTRA_RING = "com.magickagency.agent.ring.EXTRA_RING"
     const val EXTRA_CALL_ID = "com.magickagency.agent.ring.EXTRA_CALL_ID"
 
-    /** The away notification's "Stop ringing": Dart hears `stopRingingTapped`. */
+    /** The away notification's "Stop ringing" (this absence only): native declines a ring, Dart takes it (`takeStopRinging`). */
     const val EXTRA_STOP_RINGING = "com.magickagency.agent.ring.EXTRA_STOP_RINGING"
 
     const val ACTION_ANSWER = "com.magickagency.agent.ring.ANSWER"

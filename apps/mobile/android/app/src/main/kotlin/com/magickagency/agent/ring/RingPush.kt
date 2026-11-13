@@ -36,6 +36,14 @@ object RingWire {
      */
     const val RING_OFF_TOLERANCE_MS = 2_000L
 
+    /**
+     * After the away notification's "Stop ringing", how long a ring that arrives anyway is declined
+     * at once: the app asks `device_away` over HTTP before its station attaches (an attach during a
+     * ring would answer it, N5), and a ring already in flight on the server keeps `away_ring` until
+     * it ends. One ring window covers the app's ask and its retries.
+     */
+    const val STOP_RINGING_HOLD_MS = RING_MS
+
     /** `AGENCY_INBOUND_RING_RESULTS`: a `ring_cancel`'s `reason`, and `ringEnded`'s. */
     val RING_RESULTS = listOf(
         "answered", "declined", "expired", "accept_lapsed", "busy_on_phone", "push_failed", "caller_left",

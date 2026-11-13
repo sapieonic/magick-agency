@@ -77,6 +77,9 @@ class FakeRingAnswerStation implements RingAnswerStation {
   void hangUp(String callId) => calls.add('hangUp:$callId');
 
   @override
+  Future<void> stopRinging(String sessionId) async => calls.add('stopRinging:$sessionId');
+
+  @override
   Future<bool> holdsCall(String callId, Duration within) async {
     calls.add('holdsCall:$callId');
     if (holds.contains(callId)) return true;
