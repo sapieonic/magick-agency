@@ -2284,7 +2284,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Absences on away_ring that ended, by why: returned (the agent came back to the app), ring_missed (two missed rings in a row), revoked, opted_out, flag_off, max_age or taken_over. Many ring_missed ends per agent mean agents are rung while they cannot answer; the pilot scorecard (docs/operations.md) tracks it per agent per day.",
+      "description": "Absences on away_ring that ended, by why: returned (the agent came back to the app), ring_missed (two missed rings in a row), revoked, opted_out, flag_off, max_age, taken_over (another device took the station) or left (the session was left with the phone parked on it). Many ring_missed ends per agent mean agents are rung while they cannot answer; the pilot scorecard (docs/operations.md) tracks it per agent per day.",
       "fieldConfig": {
         "defaults": {
           "color": {

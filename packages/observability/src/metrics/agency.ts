@@ -976,10 +976,10 @@ export const agencyInboundAnsweredWaitSeconds = histogram<'channel'>(meter, 'age
  * never ringable, a stale call row) is not counted.
  */
 export type AwayRingEndedReason =
-  | 'ring_missed' | 'revoked' | 'opted_out' | 'flag_off' | 'max_age' | 'taken_over' | 'returned';
+  | 'ring_missed' | 'revoked' | 'opted_out' | 'flag_off' | 'max_age' | 'taken_over' | 'left' | 'returned';
 
 export const agencyAwayRingEndedTotal = counter<'reason'>(meter, 'agency_away_ring_ended_total', {
-  description: 'Absences on away_ring (an away agent\'s phone rung for inbound callers, Mode B) that ended, by why: ring_missed, revoked, opted_out, flag_off, max_age, taken_over (another device took the station, or the session was left from one) or returned (the agent came back to the app, or the app paused itself as away)',
+  description: 'Absences on away_ring (an away agent\'s phone rung for inbound callers, Mode B) that ended, by why: ring_missed, revoked, opted_out, flag_off, max_age, taken_over (another device took the station), left (the session was left with the phone parked on it: Leave from another device, or ended as idle by a join in another tenant) or returned (the agent came back to the app, or the app paused itself as away)',
 });
 
 export const agencyInboundOverflowsTotal = counter<'reason'>(meter, 'agency_inbound_overflows_total', {

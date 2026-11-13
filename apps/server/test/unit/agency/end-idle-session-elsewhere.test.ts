@@ -40,13 +40,13 @@ describe('endIdleSessionElsewhere (OS7)', () => {
     expect(rt.stations.detach).toHaveBeenCalledWith('sess-there');
   });
 
-  it('Mode B: ends a session on away_ring (its phone parked) and tells that phone taken_over; a plain break sends nothing', async () => {
+  it('Mode B: ends a session on away_ring (its phone parked) and tells that phone left (not a take-over); a plain break sends nothing', async () => {
     rt.agents.get.mockResolvedValueOnce({ state: 'break', ring: true });
     const away = { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: new Date() };
     expect(await endIdleSessionElsewhere(rt, away, leave)).toBe(true);
     expect(leave).toHaveBeenCalledWith('sess-there');
     // The ring_off names the absence it ends (`away_since`).
-    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over', away.away_ring_since);
+    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'left', away.away_ring_since);
 
     rt.awayRing.sendRingOff.mockClear();
     expect(await endIdleSessionElsewhere(rt, { ...away, away_ring_since: null }, leave)).toBe(true);
@@ -57,7 +57,7 @@ describe('endIdleSessionElsewhere (OS7)', () => {
     rt.agents.get.mockResolvedValueOnce(null);
     const since = new Date();
     expect(await endIdleSessionElsewhere(rt, { ...SESSION, agent_user_id: 'agent-1', station_device_id: 'phone-1', away_ring_since: since }, leave)).toBe(true);
-    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'taken_over', since);
+    expect(rt.awayRing.sendRingOff).toHaveBeenCalledWith('agent-1', 'phone-1', 'sess-there', 'left', since);
   });
 
   it('ends one with no lease at all, or an offline one', async () => {

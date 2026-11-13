@@ -19,7 +19,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *     supervisor's force-available is refused `agent_away_ring`; the opt-out (the Me toggle, PATCH) ends it
  *     (`device_away`, then `offline` with no socket, a `ring_off` push); the agent's return (a
  *     station attaching) ends it as `device_away`; another device taking the station over ends it
- *     (`ring_off`, `taken_over`, to the old device).
+ *     (`ring_off`, `taken_over`, to the old device); the session left from another device tells the
+ *     parked phone `left`.
  */
 
 const mocks = vi.hoisted(() => {
@@ -418,7 +419,7 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(avail.statusCode).toBe(200);
   });
 
-  it('the session left from another device while away ringing tells the parked phone (ring_off, taken_over)', async () => {
+  it('the session left from another device while away ringing tells the parked phone (ring_off, left: not a take-over)', async () => {
     const { agent, sessionId, station } = await onDuty();
     const awaySince = await goAwayRinging(agent, sessionId, station);
     const leave = await app.inject({
@@ -429,7 +430,7 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect((await row(sessionId)).left_at).not.toBeNull();
     await waitFor('ring_off', () => sent.find((s) => s.payload['type'] === 'ring_off'));
     expect(sent.filter((s) => s.payload['type'] === 'ring_off').map((s) => s.payload))
-      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'taken_over', away_since: awaySince }]);
+      .toEqual([{ type: 'ring_off', session_id: sessionId, reason: 'left', away_since: awaySince }]);
   });
 
   it('another device taking the station over ends away_ring and tells the old device taken_over', async () => {

@@ -512,9 +512,10 @@ type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
 /**
  * Leave `session` (its lease `lease`, as the caller just read it): the lease cleared, the row left,
  * the station detached. A session on `away_ring` (`ring = 1`, or an absence in the row: its phone
- * parked, so whoever leaves it is not on that phone) tells that phone (`ring_off`, `taken_over`), so
- * its "rings this phone" notification does not outlive the session. The agent's own `leave` and
- * {@link endIdleSessionElsewhere} both end a session this way.
+ * parked, so whoever leaves it is not on that phone) tells that phone (`ring_off`, `left`), so its
+ * "rings this phone" notification does not outlive the session. The agent's own `leave` and
+ * {@link endIdleSessionElsewhere} both end a session this way; neither is a take-over (no other
+ * device claimed the station), so neither says `taken_over`.
  */
 export async function leaveSession(
   runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing'>,
@@ -528,7 +529,7 @@ export async function leaveSession(
   await leave(session.id);
   await runtime.stations.detach(session.id);
   if (awayRinging && session.agent_user_id) {
-    runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'taken_over', awaySince);
+    runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'left', awaySince);
   }
 }
 
@@ -547,8 +548,8 @@ export async function leaveSession(
  *
  * A session on `away_ring` (Mode B: `break` with `ring = 1`, no socket by design) counts as idle
  * here: the agent is at a station in this tenant now, and keeping the absence would lock them out
- * for up to `AGENCY_AWAY_RING_MAX_MS`. Its phone is told (`ring_off`, `taken_over`: the station
- * moved), so its "rings this phone" notification does not outlive the session. A ring in flight
+ * for up to `AGENCY_AWAY_RING_MAX_MS`. Its phone is told (`ring_off`, `left`: the session it was
+ * parked on is gone), so its "rings this phone" notification does not outlive the session. A ring in flight
  * holds the session (`findCallForSession`, and the lease is `reserved`).
  *
  * Total: any read or write that fails leaves the session alone (false).

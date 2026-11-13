@@ -827,7 +827,7 @@ describe('AwayRingService', () => {
     expect(await pass).toMatchObject({ cleared: 1 });
   });
 
-  it('every end of an absence is counted once, by why: the server\'s reasons, the take-over, the return', async () => {
+  it('every end of an absence is counted once, by why: the server\'s reasons, the take-over, the leave, the return', async () => {
     const ended = vi.spyOn(agencyAwayRingEndedTotal, 'inc');
     try {
       await device();
@@ -850,6 +850,13 @@ describe('AwayRingService', () => {
       if (!claim.ok || !claim.endedAwayRing) throw new Error('no end');
       await service().svc.endOnTakeOver(taken.id, user, 'phone-aaaa-1', claim.endedAwayRing.awaySince);
       expect(ended.mock.calls).toEqual([[{ reason: 'taken_over' }]]);
+      await sessions.leave(taken.id);
+
+      // The session left under the parked phone (the leaves): its own label, never `taken_over`.
+      ended.mockClear();
+      const left = await onAwayRing();
+      service().svc.sendRingOff(user, 'phone-aaaa-1', left.id, 'left', new Date());
+      expect(ended.mock.calls).toEqual([[{ reason: 'left' }]]);
     } finally {
       ended.mockRestore();
     }

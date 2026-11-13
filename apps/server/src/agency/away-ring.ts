@@ -269,6 +269,15 @@ async function flagsAllowRing(tenantId: string, accountId: string): Promise<bool
   return flags.isEnabled(FLAGS.agency_inbound_ring_enabled) && flags.isEnabled(FLAGS.agency_inbound_enabled);
 }
 
+/**
+ * The ends counted by {@link AwayRingService.sendRingOff} rather than {@link AwayRingService.end}:
+ * the take-over (`taken_over`) and the session left under a parked phone (`left`: the agent's own
+ * Leave, OS7) end the absence outside `end` and only tell the phone.
+ */
+function countedAtRingOff(reason: AgencyRingOffReason): reason is 'taken_over' | 'left' {
+  return reason === 'taken_over' || reason === 'left';
+}
+
 export class AwayRingService {
   private maxAge = AGENCY_AWAY_RING_MAX_MS_DEFAULT;
   private reconciling: Promise<AwayRingReconcileSummary> | null = null;
@@ -580,10 +589,10 @@ export class AwayRingService {
     const ended = await agencyAgentSessionRepository.endAwayRing(sessionId, offline ? 'offline' : 'break');
     if (!ended) return { outcome: 'not_away_ring' };
     const awaySince = ended.away_since ?? absenceSince;
-    // `taken_over` is counted where its `ring_off` is sent ({@link sendRingOff}): the take-over and
-    // the leaves end the absence outside this method. An end with no reason counts as its caller
-    // says (`countAs`), or not at all.
-    if (reason !== null && reason !== 'taken_over') trackAwayRingEnded(reason);
+    // `taken_over` and `left` are counted where their `ring_off` is sent ({@link sendRingOff}): the
+    // take-over and the leaves end the absence outside this method. An end with no reason counts as
+    // its caller says (`countAs`), or not at all.
+    if (reason !== null && !countedAtRingOff(reason)) trackAwayRingEnded(reason);
     else if (reason === null && opts.countAs) trackAwayRingEnded(opts.countAs);
     const since = offline ? undefined : (awaySince ?? new Date()).toISOString();
     if (since) {
@@ -724,7 +733,7 @@ export class AwayRingService {
   ): void {
     // The take-over and the leaves end an absence outside `end` and tell the phone here: counted
     // here, once per absence, device or none.
-    if (reason === 'taken_over') trackAwayRingEnded('taken_over');
+    if (countedAtRingOff(reason)) trackAwayRingEnded(reason);
     if (!deviceId) return;
     void this.background.track((async () => {
       const device = await agencyPushDeviceRepository.find(agentUserId, deviceId);
