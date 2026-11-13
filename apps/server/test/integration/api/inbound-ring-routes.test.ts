@@ -24,6 +24,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *     start, nothing queued, the caller rung on the next phone; an answered ring queues it behind
  *     the call, applied at its release; and a pause queued behind an answered ring that then ends
  *     unbound applies at the ring's end, never at the release after the agent's next call.
+ *  5. A station attaching without `caps=inbound` during a ring not yet answered (the app past its
+ *     "Stop ringing" bound) ends the ring `cancelled`, never answered: the agent on `device_away`
+ *     from the absence's start, the `agent_state` frame before `ready`, both naming it.
  */
 
 const mocks = vi.hoisted(() => {
@@ -508,6 +511,37 @@ describe('Mode B ring routes over HTTP (integration)', () => {
     expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'available' });
     // Out of the pool again for the later cases' callers.
     expect((await deviceAway(away.agent, away.sessionId)).json()).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    station.ws.close();
+    await station.closed;
+  });
+
+  it('an attach without caps=inbound during a ring not yet answered ends it (cancelled, never answered): device_away keeping the absence`s start, told before ready', async () => {
+    await quietFloor();
+    const away = await awayAgent();
+    const absence = ((await sessionRow(away.sessionId)).away_ring_since as Date).toISOString();
+    const { callId } = await caller();
+    expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'reserved', inboundCallId: callId });
+    // The app past its "Stop ringing" bound (IQ79): its station attaches without declaring inbound.
+    const mint = await send('POST', `/proxy/agency/sessions/${away.sessionId}/station-token`, away.agent, { device_id: away.deviceId });
+    expect(mint.statusCode, mint.body).toBe(200);
+    const station = await connect(mint.json().station_ws_url as string, '&client=mobile');
+    await connector.drain();
+    expect(await agencyInboundCallRepository.findByIdAnyTenant(callId)).toMatchObject({ state: 'queued', session_id: null, ring_result: 'cancelled', accepted_at: null });
+    expect(await waitFor('ring_cancel', () => pushesOf('ring_cancel', callId)[0])).toMatchObject({ reason: 'cancelled' });
+    // Off away_ring and out of the pool: device_away, from the absence's start (IQ76).
+    expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'break', ring: false, inboundCallId: null, since: Date.parse(absence) });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null, ring_misses: 0 });
+    const ready = station.frames.find((f) => f['event'] === 'ready')!;
+    expect(ready).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    expect(ready).not.toHaveProperty('pending_state');
+    const states = station.frames.filter((f) => f['event'] === 'agent_state');
+    expect(states[0]).toEqual({ event: 'agent_state', state: 'break', since: absence, break_reason: 'device_away' });
+    expect(station.frames.indexOf(states[0]!)).toBeLessThan(station.frames.indexOf(ready));
+    expect(station.frames.filter((f) => f['event'] === 'inbound_call')).toEqual([]);
+    expect(runtime.breaks.peek(away.sessionId)).toBeNull();
+    expect(sent.filter((p) => p.payload['type'] === 'ring_off' && p.payload['session_id'] === away.sessionId)).toEqual([]);
+    bridge.end(callId);
+    await connector.drain();
     station.ws.close();
     await station.closed;
   });

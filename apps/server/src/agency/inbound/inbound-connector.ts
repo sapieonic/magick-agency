@@ -903,11 +903,15 @@ export class InboundConnector {
     if (!held) return;
     let returnAgent = false;
     if (this.ring.isPushOffer(held)) {
-      // Mode B: a ring (or an accepted one) for a session an older app build took over: it can
-      // never show the call. Ended `cancelled`; the agent, whose station is open here, is returned
-      // to the pool by the end itself (Mode A's release), counted in the returns awaited below.
+      // Mode B: a station that cannot take inbound calls attached during a ring (or an accepted
+      // one): it can never show the call, and it is no answer (the app attaches without
+      // `caps=inbound` once its "Stop ringing" could not pause it, IQ79). Ended `cancelled`, never
+      // a miss; the attach is the agent's return, so the absence ends as `device_away` keeping its
+      // start (IQ76; the `agent_state` frame to this station before its `ready`), never the pool.
       log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during a ring — ending it');
-      await this.serial(held.id, () => this.ring.end(held, sessionId, 'cancelled', { offerResult: 'station_lost' }));
+      await this.serial(held.id, () => this.ring.end(held, sessionId, 'cancelled', {
+        offerResult: 'station_lost', awayRingEnd: null, awayRingEndOpts: { offline: false, countAs: 'returned' },
+      }));
     } else if (held.phase === 'offered' && !held.bound) {
       log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during an offer — cancelling it');
       returnAgent = await this.serial(held.id, async () => {
@@ -1235,10 +1239,11 @@ export class InboundConnector {
       return;
     }
     if (!station.canTakeInbound && push) {
-      // An older app build took the session over since the accept (IQ46): it can never show the
-      // call. Its end returns the agent (Mode A's release: the station is open), counted in the
-      // session's returns in flight.
-      await this.ring.end(held, sessionId, 'cancelled', { offerResult: 'station_lost' });
+      // A station that cannot take inbound calls attached since the accept (IQ46): it can never
+      // show the call. Ended as the attach's own let-go ends it: the absence over as `device_away`.
+      await this.ring.end(held, sessionId, 'cancelled', {
+        offerResult: 'station_lost', awayRingEnd: null, awayRingEndOpts: { offline: false, countAs: 'returned' },
+      });
       return;
     }
     if (!station.canTakeInbound) {

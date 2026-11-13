@@ -809,8 +809,8 @@ export class RingOffers {
 
   /**
    * Return a rung agent after their push offer ended unbound (IQ67). With an OPEN station here (an
-   * accepted ring whose station attached), Mode A's: the field cleared and `releaseAgent`
-   * (`station`). Otherwise back to `away_ring` (`AwayRingService.releaseInbound`); with
+   * accepted ring whose station attached) and no end of the absence asked, Mode A's: the field
+   * cleared and `releaseAgent` (`station`). Otherwise back to `away_ring` (`AwayRingService.releaseInbound`); with
    * `endReason` the absence then ends with it (`ended`; null: its cause already ended it in the
    * mirror, so the agent is left on `device_away` with `since` kept at `absenceSince`,
    * `AwayRingService.endAfterRing`; `endOpts`: how the absence is ended). A session no longer on an
@@ -826,7 +826,10 @@ export class RingOffers {
     try {
       const station = this.deps.stations.get(sessionId);
       const awayRing = this.deps.awayRing;
-      if ((station && station.ws.readyState === 1) || !awayRing) {
+      // Mode A's return with an OPEN station here, unless this end also ends the absence
+      // (`endReason`): then the absence's end, whatever is attached (an attach that cannot take
+      // the call is the agent's return: `device_away`, never the pool).
+      if ((station && station.ws.readyState === 1 && endReason === undefined) || !awayRing) {
         await this.deps.agents.releaseInbound(sessionId, callId);
         void this.host.returnAgent(sessionId);
         return station ? 'station' : 'returned';

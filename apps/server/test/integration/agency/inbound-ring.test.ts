@@ -392,22 +392,25 @@ describe('a ring and its answer', () => {
     expect(c.holdsPushOffer(away.sessionId)).toBe(false);
   });
 
-  it('N5: an attach without caps=inbound during a ring not yet answered ends it cancelled (not a miss) and returns the agent as Mode A does', async () => {
+  it('N5: an attach without caps=inbound during a ring not yet answered ends it cancelled (not a miss): the agent`s return, device_away keeping the absence`s start', async () => {
     const c = connector();
     await deskAgent('on_call'); // keeps the caller waiting once the ring ends
     const away = await awayAgent();
+    const absence = (await sessionRow(away.sessionId)).away_ring_since as Date;
     const { call } = await caller(c);
     await ringPush(away.deviceRowId);
     // The app attaches without declaring it can take inbound calls: never an answer.
-    stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', canTakeInbound: false });
+    const entry = stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', canTakeInbound: false });
     await c.onStationCannotTakeInbound(away.sessionId);
     await drain();
     expect(await row(call.id)).toMatchObject({ state: 'queued', session_id: null, ring_result: 'cancelled', accepted_at: null });
     expect(await until('ring_cancel', () => pushes('ring_cancel', away.deviceRowId)[0] ?? null))
       .toEqual({ type: 'ring_cancel', call_id: call.id, session_id: away.sessionId, reason: 'cancelled' });
-    // Its station is open here: Mode A's release (`releaseAgent`), so the pool, not `away_ring`.
-    expect(await agents.get(away.sessionId)).toMatchObject({ state: 'available', ring: false, inboundCallId: null, pushOffer: false });
-    expect(await sessionRow(away.sessionId)).toMatchObject({ ring_misses: 0 });
+    // The agent's return: off `away_ring` and out of the pool, on `device_away` from the absence's start (IQ76).
+    expect(await agents.get(away.sessionId)).toMatchObject({ state: 'break', ring: false, inboundCallId: null, pushOffer: false, since: absence.getTime() });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null, ring_misses: 0, state_since: absence });
+    expect(entry.ws.sent.filter((f) => f['event'] === 'agent_state'))
+      .toEqual([{ event: 'agent_state', state: 'break', since: absence.toISOString(), break_reason: 'device_away' }]);
     expect(pushes('ring_off')).toEqual([]);
     expect(c.holdsPushOffer(away.sessionId)).toBe(false);
   });
