@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.19.0](https://github.com/sapieonic/magick-agency/compare/db-v0.18.0...db-v0.19.0) (2026-11-13)
+
+
+### Features
+
+* **server,mobile:** ring an away agent's phone for inbound calls (Mode B) ([#80](https://github.com/sapieonic/magick-agency/issues/80)) ([f3e2e53](https://github.com/sapieonic/magick-agency/commit/f3e2e53fd7ccbfb31c15de120f84fe01a4d06fdc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.21.0
+    * @magick-agency/domain bumped to 0.11.0
+    * @magick-agency/observability bumped to 0.12.0
+
 ## [0.18.0](https://github.com/sapieonic/magick-agency/compare/db-v0.17.0...db-v0.18.0) (2026-11-12)
 
 

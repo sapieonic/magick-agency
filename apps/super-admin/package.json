@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/super-admin",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Tenants, users, numbers, limits, settings, flags, usage counts.",
   "type": "module",
