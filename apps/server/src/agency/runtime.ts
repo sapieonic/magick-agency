@@ -193,6 +193,10 @@ export class AgencyRuntime {
         forget: (attemptIds) => this.dialer.forgetUnrecordedEnds(attemptIds),
       },
       clearAgent: (sessionId) => this.agents.clear(sessionId),
+      onAwayRing: async (sessionId) => {
+        const live = await this.agents.get(sessionId);
+        return live?.state === 'break' && live.ring;
+      },
       ...options.reaper,
     });
     this.tokens = new StationTokenStore(redis, keyPrefix);

@@ -876,13 +876,19 @@ export class AgencyAgentSessionRepository {
   ): Promise<void> {
     const keepReason = state === 'offline' && breakReason === undefined;
     // Mode B (N1, IQ62): `away_ring_since` is the reconcile's key, so every real end of `away_ring`
-    // clears it here, in the same write: `available`, `offline`, and any break but `away_ring`
-    // itself. A ring's own moves (`reserved`, then `on_call` and `wrapup` once answered) keep it:
-    // the ring's end returns the session to `away_ring` (`restoreAwayRing`) or its release to
-    // `available` ends it. `break/away_ring` stamps it once per absence (COALESCE: a return to
+    // clears it here, in the same write: `available`, `offline` with a reason, and any break but
+    // `away_ring` itself. A ring's own moves (`reserved`, then `on_call` and `wrapup` once answered)
+    // keep it: the ring's end returns the session to `away_ring` (`restoreAwayRing`) or its release
+    // to `available` ends it. `break/away_ring` stamps it once per absence (COALESCE: a return to
     // `away_ring` keeps the absence's start). `available` also resets the missed rings.
+    //
+    // A reason-less `offline` (the keep-reason write: a station close or a release whose Redis
+    // write could not say, a dead media worker's sessions) is presence, not an end: it keeps
+    // `away_ring_since`, as `markAllOffline` does, and the reconcile decides from Redis and the
+    // ring rule (re-seeds, restores the mirror, or ends the absence with its `ring_off`). Cleared
+    // here, it ended the absence with no Redis end, no `ring_off`, no audit and no metric.
     const awayRingSince = keepReason
-      ? 'NULL'
+      ? 's.away_ring_since'
       : `CASE WHEN $2::varchar = 'break' AND $3::varchar = '${AWAY_RING_BREAK_REASON}' THEN COALESCE(s.away_ring_since, now())
               WHEN $2::varchar IN ('reserved', 'on_call', 'wrapup') THEN s.away_ring_since
               ELSE NULL END`;

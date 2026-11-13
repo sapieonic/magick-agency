@@ -450,7 +450,7 @@ describe('the session mirror of away_ring (real Postgres)', () => {
     await sessions.setState(s.id, 'break', 'away_ring');
     expect((await row(s.id)).away_ring_since).toEqual(since);
 
-    for (const [state, reason] of [['available', null], ['break', 'lunch'], ['break', 'device_away'], ['offline', undefined]] as const) {
+    for (const [state, reason] of [['available', null], ['break', 'lunch'], ['break', 'device_away'], ['offline', null], ['offline', 'device_away']] as const) {
       await sessions.setState(s.id, 'break', 'away_ring');
       await getTestPool().query('UPDATE agency_agent_sessions SET ring_misses = 1 WHERE id = $1', [s.id]);
       await sessions.setState(s.id, state, reason);
@@ -458,6 +458,13 @@ describe('the session mirror of away_ring (real Postgres)', () => {
       expect(r.away_ring_since, `${state}/${reason}`).toBeNull();
       expect(r.ring_misses, `${state}/${reason}`).toBe(state === 'available' ? 0 : 1);
     }
+    // A reason-less offline (presence, not an end: a station close, a dead worker's reap) keeps it,
+    // as `markAllOffline` does; the reconcile decides.
+    await sessions.setState(s.id, 'break', 'away_ring');
+    const kept = (await row(s.id)).away_ring_since as Date;
+    await sessions.setState(s.id, 'offline');
+    expect(await row(s.id)).toMatchObject({ state: 'offline', break_reason: 'away_ring', away_ring_since: kept });
+    await sessions.setState(s.id, 'offline', null);
     expect(await sessions.restoreAwayRing(s.id)).toBeNull();
     await sessions.setState(s.id, 'break', 'away_ring');
     await sessions.leave(s.id);
@@ -953,8 +960,10 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
   function runtime(opts: { allowed?: boolean } = {}) {
     const rt = new AgencyRuntime({} as never, getTestRedis(), '');
     rt.awayRing.configure({ maxAgeMs: MAX_AGE });
-    // The flags, as the account has them (the service reads the flag service otherwise).
+    // The flags, as the account has them (the service reads the flag service otherwise), for the
+    // entry and the reconcile alike.
     rt.awayRing.ringAllowed = async () => opts.allowed ?? true;
+    (rt.awayRing as unknown as { ringAllowedFn: () => Promise<boolean> }).ringAllowedFn = async () => opts.allowed ?? true;
     return rt;
   }
 
@@ -967,6 +976,53 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
     await sessions.setState(s.id, 'break', 'away_ring');
     return s;
   }
+
+  it('a reason-less offline mirror write keeps the absence: the reconcile decides, from Redis and the ring rule', async () => {
+    const rt = runtime();
+    const s = await awayRingFor(rt);
+    const absence = (await row(s.id)).away_ring_since as Date;
+    // As a station close or a release whose Redis write could not say, or a dead worker's reap.
+    await sessions.setState(s.id, 'offline');
+    expect(await row(s.id)).toMatchObject({ state: 'offline', away_ring_since: absence });
+    // Redis still rings: the reconcile restores the mirror rather than ending the absence silently.
+    expect(await rt.awayRing.reconcile()).toMatchObject({ restored: 1, ended: 0, cleared: 0 });
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring', away_ring_since: absence });
+    // An offline with a reason (the away-ring end's own write) is an end, and clears it.
+    await sessions.setState(s.id, 'offline', 'device_away');
+    expect((await row(s.id)).away_ring_since).toBeNull();
+  });
+
+  it("a media worker's slot reap leaves a session on away_ring alone (no station, no media there); a plain break is reaped", async () => {
+    const rt = runtime();
+    const s = await awayRingFor(rt);
+    const absence = (await row(s.id)).away_ring_since as Date;
+    const plain = await insertAgentSession(campaignId, { state: 'break', break_reason: 'lunch' }) as { id: string };
+    await rt.agents.set(plain.id, 'break', { breakReason: 'lunch' });
+    const report = await rt.reaper.reapSessions((id) => id === s.id || id === plain.id);
+    expect(report.sessions).toBe(1);
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: true });
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring', away_ring_since: absence });
+    expect(await rt.agents.get(plain.id)).toBeNull();
+    expect(await row(plain.id)).toMatchObject({ state: 'offline' });
+  });
+
+  it('a slot reap that cannot tell (the away-ring read failed) still leaves the absence for the reconcile, which re-seeds it', async () => {
+    const rt = runtime();
+    const s = await awayRingFor(rt);
+    const absence = (await row(s.id)).away_ring_since as Date;
+    const read = vi.spyOn(rt.agents, 'get').mockResolvedValueOnce(null);
+    try {
+      expect((await rt.reaper.reapSessions((id) => id === s.id)).sessions).toBe(1);
+    } finally {
+      read.mockRestore();
+    }
+    // Reaped: the key cleared and the row written offline, but the absence kept.
+    expect(await rt.agents.get(s.id)).toBeNull();
+    expect(await row(s.id)).toMatchObject({ state: 'offline', away_ring_since: absence });
+    expect(await rt.awayRing.reconcile()).toMatchObject({ reseeded: 1, ended: 0 });
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: true });
+    expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring', away_ring_since: absence });
+  });
 
   it('the station close keeps away_ring: nothing written, in Redis or the mirror', async () => {
     const rt = runtime();
