@@ -1436,6 +1436,17 @@ real caller. The Play Console full-screen-intent declaration is not filed. iOS i
 
 ## Test counts
 
+**Mode B second review round, 2026-11-13 (server, contracts, `agency_wire`, observability,
+Grafana).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`, run on `257c582` and its docs commits
+(IQ75–IQ77, `inbound.md` §6.1, §12). Each package from inside its directory, on the local Postgres 16
+and Redis 7 on the agency ports with no other integration run sharing them, 4 workers. `pnpm lint`
+clean; `pnpm test:grafana` 33 and `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to
+date (70 vocabularies). `packages/contracts` 530 (15 files); `packages/observability` 21 (5 files);
+`apps/server` unit 9967 passed + 1 expected fail (501 files), rest lane 2830 passed, 9 expected
+fail, 2 skipped (257 files passed, 2 skipped), wall-clock lane 26 (6 files); `agency_wire` 670
+(`dart test`). `packages/db` was not touched in this round. The app's own counts are in
+[`mobile.md`](mobile.md).
+
 **Mode B, 2026-11-12 (final).** Branch `claude-mgkvc/gracious-faraday-rw6nnx` on `main` `b3894d2`,
 run on `0dac982` (the last commit that is not docs: this entry's commit changes docs only). Each
 package from inside its directory, on a local Postgres 16 and Redis 7 on the agency ports with no
