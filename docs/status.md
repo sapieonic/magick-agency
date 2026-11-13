@@ -1436,10 +1436,11 @@ real caller. The Play Console full-screen-intent declaration is not filed. iOS i
 
 ## Test counts
 
-**Mode B, 2026-11-13 (final).** Branch `claude-mgkvc/gracious-faraday-rw6nnx` on `main` `b3894d2`,
-run on `4f1fac6` (the last commit that is not docs is `ea0f5ba`; this entry's commit changes docs
-only). Each package from inside its directory, one suite at a time, on the local Postgres 16 (test
-databases `UTF8`) and Redis 7 on the agency ports with no other run sharing them, integration with 4
+**Mode B, 2026-11-13 (final, after the cleanup pass).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`
+on `main` `b3894d2`, run on `d6ec1a0`, after the Mode B cleanup pass (`47edcfd`–`d6ec1a0`: dead
+code dropped, one read per step, shared helpers; this entry's commit changes docs only). Each
+package from inside its directory, one suite at a time, on the local Postgres 16 (test databases
+`UTF8`) and Redis 7 on the agency ports with no other run sharing them, integration with 4
 workers. `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and
 `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to date (70 vocabularies, 2 label
 maps). No flakes and no reruns. Not run: the Gradle build and its unit tests (no Android SDK).
@@ -1451,12 +1452,12 @@ maps). No flakes and no reruns. Not run: the Gradle build and its unit tests (no
 | `packages/db` | 436 (27 files) | 765 (80 files) |
 | `packages/observability` | 21 (5 files) | — |
 | `packages/web-ui` | 240 (20 files) | — |
-| `apps/server` | 9972 passed + 1 expected fail (501 files) | rest lane 2841 passed, 9 expected fail, 2 skipped (257 files passed, 2 skipped); wall-clock lane 26 (6 files) |
+| `apps/server` | 9977 passed + 1 expected fail (501 files) | rest lane 2841 passed, 9 expected fail, 2 skipped (257 files passed, 2 skipped); wall-clock lane 26 (6 files) |
 | `apps/console` | 6870 (368 files) | — |
 | `apps/super-admin` | 506 (37 files) | — |
 | `apps/report-renderer` | 90 passed, 2 skipped (12 files, 1 skipped) | — |
-| `apps/mobile` | `flutter analyze` clean; 1899 (`flutter test`); `agency_wire` 670 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
-| Android Kotlin (JVM, `kotlinc` and JUnit outside Gradle) | ring logic 115; `agent_audio` `PhoneCalls` 7; the app module's Kotlin compiled against the framework jar (98 classes, no errors) | — |
+| `apps/mobile` | `flutter analyze` clean; 1905 (`flutter test`); `agency_wire` 670 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
+| Android Kotlin (JVM, `kotlinc` and JUnit outside Gradle) | ring logic 115; `agent_audio` `PhoneCalls` 7; the app module's Kotlin compiled against the framework jar (105 classes, no errors) | — |
 
 **Mode B "Stop ringing" on the server, 2026-11-13 (server, observability).** Branch
 `claude-mgkvc/gracious-faraday-rw6nnx`, run on `d47f78b` (IQ83, the amended IQ75, IQ79 and N5;
