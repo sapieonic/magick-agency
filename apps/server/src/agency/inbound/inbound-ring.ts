@@ -24,7 +24,7 @@ import {
 } from '../../db/repositories/agency.repository.js';
 import type { PushDeviceRecord } from '@magick-agency/db/models/push-device.model';
 import { pushFailureRevokes, pushFailureScope } from '../../seams/push-sender.js';
-import type { AwayRingEndOptions, AwayRingService } from '../away-ring.js';
+import { AWAY_RING_RETURN_END, type AwayRingService } from '../away-ring.js';
 import type { AgentStateMachine } from '../agent-state-machine.js';
 import type { StationRegistry } from '../station-registry.js';
 import { ringWindowLeft, type InboundCallerView } from './eligibility.js';
@@ -150,6 +150,9 @@ function offerResultOfRing(result: AgencyInboundRingResult): InboundOfferResult 
   }
 }
 
+const NOT_OFFERED = { ok: false, code: 'ring_not_offered' } as const;
+const ALREADY_ACCEPTED = { ok: false, code: 'already_accepted' } as const;
+
 /** Constant-time comparison of two offer tokens (hashed first, so the lengths match). */
 function tokenEquals(a: string, b: string): boolean {
   const ha = createHash('sha256').update(a).digest();
@@ -167,8 +170,10 @@ interface RingState {
   startedAt: number;
   /** Ends the ring unanswered (`expired`); null once answered or fired. */
   ringTimer: NodeJS.Timeout | null;
-  /** The agent tapped Answer (`…/ring/answering`, an accept, or an attach): IQ73 cannot take the caller now. */
-  answering: boolean;
+  /**
+   * When the agent tapped Answer (`…/ring/answering`, an accept, or an attach), epoch ms; null until
+   * then. Once set, IQ73 cannot take the caller.
+   */
   answeredAt: number | null;
   /** Ends the offer if it has not bound by the grace's end (`accept_lapsed`). */
   acceptTimer: NodeJS.Timeout | null;
@@ -271,16 +276,32 @@ export interface RingOffersDeps {
   pushRetryMs?: number;
 }
 
+/**
+ * What a ring's end does to the rung agent's absence ({@link RingEndOptions.absence}):
+ *  - `keep`: back to `away_ring`, and an end owed by the misses is sent ({@link RingOffers.end});
+ *  - `end`: back to `away_ring`, then the absence ends with `reason` (`AwayRingService.end`; null:
+ *    no `ring_off`, and the end is not counted);
+ *  - `asReturn`: the agent's own return (the app on screen, or its own `device_away`): the absence
+ *    ends as `device_away` on `break`, counted `returned` (`AWAY_RING_RETURN_END`);
+ *  - `endedBy`: what ended the ring already ended the absence in the mirror (the take-over's claim):
+ *    the agent is left on `device_away`, `since` kept at the absence's start (`since`).
+ * Every kind but `keep` ends the absence, and a session no longer on one is left on `device_away`
+ * as `endedBy` leaves it.
+ */
+export type RingAbsenceEnd =
+  | { kind: 'keep' }
+  | { kind: 'end'; reason: AgencyRingOffReason | null }
+  | { kind: 'asReturn' }
+  | { kind: 'endedBy'; since: Date | null };
+
+const KEEP_ABSENCE: RingAbsenceEnd = { kind: 'keep' };
+
 /** {@link RingOffers.end}'s options. */
 export interface RingEndOptions {
   /** False: the caller is not searched for again (IQ73's take-over offers them itself). */
   search?: boolean;
-  /** The absence ends with this reason once the agent is back (null: ended by its caller already). */
-  awayRingEnd?: AgencyRingOffReason | null;
-  /** With `awayRingEnd: null`: the start of the absence its cause ended, kept as `since`. */
-  absenceSince?: Date | null;
-  /** With `awayRingEnd`: how the absence is ended (`AwayRingService.end`'s `offline` and `countAs`). */
-  awayRingEndOpts?: Pick<AwayRingEndOptions, 'offline' | 'countAs'>;
+  /** What the end does to the agent's absence ({@link RingAbsenceEnd}); default `keep`. */
+  absence?: RingAbsenceEnd;
   /** The offer metric's result, when not the ring result's. */
   offerResult?: InboundOfferResult;
   /** This caller never rings the session again, whatever the result. */
@@ -332,7 +353,7 @@ export class RingOffers {
   /** A ring IQ73 may still take the caller from: on offer by push, not yet answered. */
   preemptible(call: RingCall): boolean {
     const ring = this.ringOf(call.id);
-    return this.isPushOffer(call) && !!ring && !ring.answering && !ring.accepted;
+    return this.isPushOffer(call) && !!ring && ring.answeredAt === null && !ring.accepted;
   }
 
   /** When the call's current ring started (epoch ms), if it has one. */
@@ -382,21 +403,15 @@ export class RingOffers {
   async answering(callId: string, token: string): Promise<
     { ok: true; callId: string; acceptBy: Date } | { ok: false; code: 'ring_not_offered' | 'already_accepted' }
   > {
-    const notOffered = { ok: false as const, code: 'ring_not_offered' as const };
-    if (!this.ringFor(callId, token)) return notOffered;
-    const call = this.host.call(callId)!;
-    return await this.host.serial(callId, async () => {
-      const ring = this.ringFor(callId, token);
-      if (!ring) return notOffered;
-      if (ring.accepted) return { ok: false as const, code: 'already_accepted' as const };
+    return this.onUnacceptedRing(callId, token, async (call, ring) => {
       let answeredAt = ring.answeredAt;
-      if (!ring.answering || answeredAt === null) {
+      if (answeredAt === null) {
         // The ring timer fired (its expiry is queued behind this step): too late.
-        if (!ring.ringTimer) return notOffered;
+        if (!ring.ringTimer) return NOT_OFFERED;
         answeredAt = await this.markAnswering(call, ring);
       }
       return { ok: true as const, callId, acceptBy: new Date(answeredAt + this.acceptGraceMs) };
-    }) ?? notOffered;
+    });
   }
 
   /**
@@ -407,20 +422,14 @@ export class RingOffers {
   async decline(callId: string, token: string, reason: 'declined' | 'busy_on_phone'): Promise<
     { ok: true; callId: string; sessionId: string; agentUserId: string | null; tenantId: string; accountId: string } | { ok: false; code: 'ring_not_offered' | 'already_accepted' }
   > {
-    const notOffered = { ok: false as const, code: 'ring_not_offered' as const };
-    if (!this.ringFor(callId, token)) return notOffered;
-    const call = this.host.call(callId)!;
-    return await this.host.serial(callId, async () => {
-      const ring = this.ringFor(callId, token);
-      if (!ring) return notOffered;
-      if (ring.accepted) return { ok: false as const, code: 'already_accepted' as const };
+    return this.onUnacceptedRing(callId, token, async (call, ring) => {
       const agentUserId = call.agentUserId;
       await this.end(call, ring.sessionId, reason);
       return {
         ok: true as const, callId, sessionId: ring.sessionId, agentUserId,
         tenantId: call.record.tenant_id, accountId: call.route.account_id,
       };
-    }) ?? notOffered;
+    });
   }
 
   /**
@@ -465,7 +474,7 @@ export class RingOffers {
         if (ring.acceptedDevice !== null && ring.acceptedDevice !== by.deviceId) return { ok: false, code: 'already_accepted' };
         return { ok: true, sessionId: ring.sessionId, bindNow: false };
       }
-      if (!ring.answering) {
+      if (ring.answeredAt === null) {
         if (!ring.ringTimer) return { ok: false, code: 'ring_expired' };
         await this.markAnswering(call, ring);
       }
@@ -501,22 +510,18 @@ export class RingOffers {
     reason: AgencyRingOffReason,
     opts: { absenceSince?: Date | null } = {},
   ): Promise<'cancelled' | 'answered' | 'none'> {
-    const call = this.host.callFor(sessionId);
-    if (!call || !this.isPushOffer(call)) return 'none';
-    return await this.host.serial(call.id, async (): Promise<'cancelled' | 'answered' | 'none'> => {
-      const ring = this.ringOf(call.id);
-      if (call.sessionId !== sessionId || !this.isPushOffer(call) || !ring) return 'none';
+    return this.onPushOfferOf(sessionId, async (call, ring): Promise<'cancelled' | 'answered'> => {
       const takenOver = reason === 'taken_over';
-      if (ring.answering && !takenOver) return 'answered';
-      await this.end(call, sessionId, takenOver && !ring.answering ? 'answered_elsewhere' : 'cancelled', {
+      const answered = ring.answeredAt !== null;
+      if (answered && !takenOver) return 'answered';
+      await this.end(call, sessionId, takenOver && !answered ? 'answered_elsewhere' : 'cancelled', {
         // The take-over's claim already ended the absence in the mirror, and its caller sends the
         // old device `ring_off`: the agent is left on a plain break for the new device's attach,
         // `since` kept at the absence's start (`opts.absenceSince`, the claim's).
-        awayRingEnd: takenOver ? null : reason,
-        ...(opts.absenceSince !== undefined ? { absenceSince: opts.absenceSince } : {}),
+        absence: takenOver ? { kind: 'endedBy', since: opts.absenceSince ?? null } : { kind: 'end', reason },
       });
       return 'cancelled';
-    }) ?? 'none';
+    });
   }
 
   /**
@@ -529,16 +534,12 @@ export class RingOffers {
    * run, and the pause queues behind it as behind any call. `none`: no push offer for the session.
    */
   async declineForDeviceAway(sessionId: string): Promise<'declined' | 'answered' | 'none'> {
-    const call = this.host.callFor(sessionId);
-    if (!call || !this.isPushOffer(call)) return 'none';
-    return await this.host.serial(call.id, async (): Promise<'declined' | 'answered' | 'none'> => {
-      const ring = this.ringOf(call.id);
-      if (call.sessionId !== sessionId || !this.isPushOffer(call) || !ring) return 'none';
-      if (ring.answering || ring.accepted) return 'answered';
+    return this.onPushOfferOf(sessionId, async (call, ring): Promise<'declined' | 'answered'> => {
+      if (ring.answeredAt !== null || ring.accepted) return 'answered';
       log.info({ inboundCallId: call.id, sessionId }, 'The app paused as away during a ring — declined');
-      await this.end(call, sessionId, 'declined', { awayRingEnd: null, awayRingEndOpts: { offline: false, countAs: 'returned' } });
+      await this.end(call, sessionId, 'declined', { absence: { kind: 'asReturn' } });
       return 'declined';
-    }) ?? 'none';
+    });
   }
 
   // ─── The ring ─────────────────────────────────────────────────────────────────
@@ -572,7 +573,6 @@ export class RingOffers {
       device,
       startedAt: at.getTime(),
       ringTimer: null,
-      answering: false,
       answeredAt: null,
       acceptTimer: null,
       accepted: false,
@@ -583,7 +583,7 @@ export class RingOffers {
     ring.ringTimer = setTimeout(() => {
       ring.ringTimer = null;
       void this.host.serial(call.id, async () => {
-        if (this.ringOf(call.id) !== ring || ring.answering) return;
+        if (this.ringOf(call.id) !== ring || ring.answeredAt !== null) return;
         await this.end(call, sessionId, 'expired');
       });
     }, this.ringMs);
@@ -624,12 +624,12 @@ export class RingOffers {
     });
     if (result.ok) return;
     await this.host.serial(call.id, async () => {
-      if (this.ringOf(call.id) !== ring || ring.answering) return;
+      if (this.ringOf(call.id) !== ring || ring.answeredAt !== null) return;
       log.info({ inboundCallId: call.id, sessionId: ring.sessionId, reason: result.reason }, 'The ring push failed — the ring ends');
       if (pushFailureRevokes(result.reason)) {
         // The carrier refused the token for good: the device was revoked (`AwayRingService.send`),
         // and the absence ends `revoked`.
-        await this.end(call, ring.sessionId, 'push_failed', { awayRingEnd: 'revoked', neverAgain: true });
+        await this.end(call, ring.sessionId, 'push_failed', { absence: { kind: 'end', reason: 'revoked' }, neverAgain: true });
         return;
       }
       if (pushFailureScope(result) === 'device') {
@@ -651,7 +651,6 @@ export class RingOffers {
   private async markAnswering(call: RingCall, ring: RingState): Promise<number> {
     if (ring.ringTimer) clearTimeout(ring.ringTimer);
     ring.ringTimer = null;
-    ring.answering = true;
     const answeredAt = this.deps.now();
     ring.answeredAt = answeredAt;
     trackInboundRingAnswer((answeredAt - ring.startedAt) / 1000);
@@ -676,7 +675,7 @@ export class RingOffers {
   async acceptOnAttach(call: RingCall, sessionId: string): Promise<void> {
     const ring = this.ringOf(call.id);
     if (!ring || call.sessionId !== sessionId || !this.isPushOffer(call) || ring.accepted) return;
-    if (!ring.answering) {
+    if (ring.answeredAt === null) {
       if (!ring.ringTimer) return; // expired: its end is next on this chain
       await this.markAnswering(call, ring);
       log.info({ inboundCallId: call.id, sessionId }, 'The app opened during a ring — answered there');
@@ -733,8 +732,8 @@ export class RingOffers {
   /**
    * End a push offer that has not bound (see the header, "Every other end"), on the call's chain:
    * the one end of every ring, the caller's hang-up included. The agent goes back to `away_ring`
-   * ({@link releaseRungAgent}); with `awayRingEnd` the absence then ends with that reason (null:
-   * ended by its caller already), else an owed `ring_missed` end is sent ({@link noteMiss}). The
+   * ({@link releaseRungAgent}), and the absence then goes as `opts.absence` says ({@link RingAbsenceEnd});
+   * kept, an owed `ring_missed` end is sent ({@link noteMiss}). The
    * caller goes back to the head of the queue (and the account is searched again unless `search`
    * is false: IQ73's take-over offers the caller itself), except for `caller_left`: the bridge's
    * `ended` has settled the call, which the connector then lets go. Null when the call is not on a
@@ -784,8 +783,9 @@ export class RingOffers {
     this.host.unseat(call, sessionId);
     trackInboundRing(result);
     if (ring && result !== 'push_failed') this.sendRingCancel(ring, call.id, result);
-    const released = await this.releaseRungAgent(call.id, sessionId, opts.awayRingEnd, opts.absenceSince ?? null, opts.awayRingEndOpts);
-    if (released === 'away_ring' && opts.awayRingEnd === undefined) await this.noteMiss(sessionId, MISSES.has(result));
+    const absence = opts.absence ?? KEEP_ABSENCE;
+    const released = await this.releaseRungAgent(call.id, sessionId, absence);
+    if (released === 'away_ring' && absence.kind === 'keep') await this.noteMiss(sessionId, MISSES.has(result));
     if (callEnded) {
       trackInboundOffer('caller_left', 'mobile', 'push');
       return null;
@@ -809,42 +809,50 @@ export class RingOffers {
 
   /**
    * Return a rung agent after their push offer ended unbound (IQ67). With an OPEN station here (an
-   * accepted ring whose station attached) and no end of the absence asked, Mode A's: the field
-   * cleared and `releaseAgent` (`station`). Otherwise back to `away_ring` (`AwayRingService.releaseInbound`); with
-   * `endReason` the absence then ends with it (`ended`; null: its cause already ended it in the
-   * mirror, so the agent is left on `device_away` with `since` kept at `absenceSince`,
-   * `AwayRingService.endAfterRing`; `endOpts`: how the absence is ended). A session no longer on an
-   * absence goes back as Mode A's (`returned`). Never throws.
+   * accepted ring whose station attached) and the absence kept, Mode A's: the field cleared and
+   * `releaseAgent` (`station`). Otherwise back to `away_ring` (`AwayRingService.releaseInbound`), and
+   * the absence then goes as `absence` says ({@link RingAbsenceEnd}; `ended` unless kept). A session
+   * no longer on an absence goes back as Mode A's (`returned`) when it is kept, else is left on
+   * `device_away` (`AwayRingService.endAfterRing`). Never throws.
    */
   private async releaseRungAgent(
     callId: string,
     sessionId: string,
-    endReason?: AgencyRingOffReason | null,
-    absenceSince: Date | null = null,
-    endOpts: Pick<AwayRingEndOptions, 'offline' | 'countAs'> = {},
+    absence: RingAbsenceEnd,
   ): Promise<'station' | 'away_ring' | 'ended' | 'returned' | 'not_held'> {
     try {
       const station = this.deps.stations.get(sessionId);
       const awayRing = this.deps.awayRing;
-      // Mode A's return with an OPEN station here, unless this end also ends the absence
-      // (`endReason`): then the absence's end, whatever is attached (an attach that cannot take
-      // the call is the agent's return: `device_away`, never the pool).
-      if ((station && station.ws.readyState === 1 && endReason === undefined) || !awayRing) {
+      const ending = absence.kind !== 'keep';
+      // Mode A's return with an OPEN station here, unless this end also ends the absence: then the
+      // absence's end, whatever is attached (an attach that cannot take the call is the agent's
+      // return: `device_away`, never the pool).
+      if ((station && station.ws.readyState === 1 && !ending) || !awayRing) {
         await this.deps.agents.releaseInbound(sessionId, callId);
         void this.host.returnAgent(sessionId);
         return station ? 'station' : 'returned';
       }
-      const out = await awayRing.releaseInbound(sessionId, callId, { ending: endReason !== undefined });
+      const out = await awayRing.releaseInbound(sessionId, callId, { ending });
       if (out === 'away_ring') {
-        if (endReason === undefined) return 'away_ring';
-        await awayRing.end(sessionId, endReason, endOpts);
-        return 'ended';
+        switch (absence.kind) {
+          case 'keep':
+            return 'away_ring';
+          case 'end':
+            await awayRing.end(sessionId, absence.reason);
+            return 'ended';
+          case 'asReturn':
+            await awayRing.end(sessionId, null, AWAY_RING_RETURN_END);
+            return 'ended';
+          case 'endedBy':
+            await awayRing.end(sessionId, null);
+            return 'ended';
+        }
       }
       if (out === 'not_away_ring') {
-        if (endReason !== undefined) {
+        if (ending) {
           // The absence was ended by what ended this ring (the take-over's claim): `device_away`,
           // which the new station's attach shows, `since` kept at the absence's start.
-          await awayRing.endAfterRing(sessionId, callId, absenceSince);
+          await awayRing.endAfterRing(sessionId, callId, absence.kind === 'endedBy' ? absence.since : null);
           return 'ended';
         }
         await this.deps.agents.releaseInbound(sessionId, callId);
@@ -898,12 +906,46 @@ export class RingOffers {
     // A session the spine says holds another unsettled inbound call (a stale row a restart left)
     // is never rung again: its absence ends (`device_away`), as Mode A puts such a session on a
     // break, so no search reserves it again every republish.
-    const endReason = why === 'session_busy' ? null : undefined;
+    const absence: RingAbsenceEnd = why === 'session_busy' ? { kind: 'end', reason: null } : KEEP_ABSENCE;
     if (why === 'session_busy') log.warn({ sessionId, callId }, 'Session reserved for a ring while it holds another inbound call — its away break ends');
-    return this.host.noteReturn(sessionId, this.releaseRungAgent(callId, sessionId, endReason).then(() => undefined));
+    return this.host.noteReturn(sessionId, this.releaseRungAgent(callId, sessionId, absence).then(() => undefined));
   }
 
   // ─── Plumbing ─────────────────────────────────────────────────────────────────
+
+  /**
+   * A token-only route's step ({@link answering}, {@link decline}): `fn` on the call's chain, with the
+   * ring for `token` re-checked there (N3: a take-over queued first wins). `ring_not_offered` when
+   * there is no such ring, `already_accepted` once it was accepted.
+   */
+  private async onUnacceptedRing<T>(
+    callId: string,
+    token: string,
+    fn: (call: RingCall, ring: RingState) => Promise<T>,
+  ): Promise<T | typeof NOT_OFFERED | typeof ALREADY_ACCEPTED> {
+    if (!this.ringFor(callId, token)) return NOT_OFFERED;
+    const call = this.host.call(callId)!;
+    return await this.host.serial(callId, async () => {
+      const ring = this.ringFor(callId, token);
+      if (!ring) return NOT_OFFERED;
+      if (ring.accepted) return ALREADY_ACCEPTED;
+      return fn(call, ring);
+    }) ?? NOT_OFFERED;
+  }
+
+  /**
+   * A step on the session's push offer ({@link cancelForAwayRingEnd}, {@link declineForDeviceAway}):
+   * `fn` on the call's chain, with the push offer re-checked there. `none`: the session holds none.
+   */
+  private async onPushOfferOf<T>(sessionId: string, fn: (call: RingCall, ring: RingState) => Promise<T>): Promise<T | 'none'> {
+    const call = this.host.callFor(sessionId);
+    if (!call || !this.isPushOffer(call)) return 'none';
+    return await this.host.serial(call.id, async (): Promise<T | 'none'> => {
+      const ring = this.ringOf(call.id);
+      if (call.sessionId !== sessionId || !this.isPushOffer(call) || !ring) return 'none';
+      return fn(call, ring);
+    }) ?? 'none';
+  }
 
   /** The current ring of `callId` if `token` is its offer token (constant time); null otherwise. */
   private ringFor(callId: string, token: string): RingState | null {

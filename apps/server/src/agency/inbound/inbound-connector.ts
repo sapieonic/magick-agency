@@ -910,7 +910,7 @@ export class InboundConnector {
       // start (IQ76; the `agent_state` frame to this station before its `ready`), never the pool.
       log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during a ring — ending it');
       await this.serial(held.id, () => this.ring.end(held, sessionId, 'cancelled', {
-        offerResult: 'station_lost', awayRingEnd: null, awayRingEndOpts: { offline: false, countAs: 'returned' },
+        offerResult: 'station_lost', absence: { kind: 'asReturn' },
       }));
     } else if (held.phase === 'offered' && !held.bound) {
       log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during an offer — cancelling it');
@@ -1242,7 +1242,7 @@ export class InboundConnector {
       // A station that cannot take inbound calls attached since the accept (IQ46): it can never
       // show the call. Ended as the attach's own let-go ends it: the absence over as `device_away`.
       await this.ring.end(held, sessionId, 'cancelled', {
-        offerResult: 'station_lost', awayRingEnd: null, awayRingEndOpts: { offline: false, countAs: 'returned' },
+        offerResult: 'station_lost', absence: { kind: 'asReturn' },
       });
       return;
     }
@@ -2031,9 +2031,9 @@ export class InboundConnector {
         this.stopLease(held);
         if (state !== 'reserved') return;
         void this.serial(held.id, async () => {
-          // Held for a superseding call through its preamble: let go; else the offer is cancelled.
+          // Held for a superseding call through its preamble: let go; else the offer is cancelled
+          // (a push offer through its ring's end: `cancelOffer` hands it on).
           if (held.phase === 'preamble' && this.handovers.isHeldFor(held.id, sessionId)) await this.handovers.release(held.id, { returnAgent: true });
-          else if (this.ring.isPushOffer(held)) await this.ring.end(held, sessionId, 'cancelled', { offerResult: 'lease_lost' });
           else await this.cancelOffer(held, sessionId, 'lease_lost');
         });
       });
