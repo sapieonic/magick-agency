@@ -368,16 +368,17 @@ return {1, next}
  * before the ring's compare-and-swap was answered still sees the push offer the CAS wrote.
  *
  * The ARGV are the plain set's (ARGV[1] = 'offline', ARGV[2] = '' attempt, ARGV[3] = lease ms,
- * ARGV[4] = now) plus ARGV[5]. Returns 1 `offline` written, 0 kept (nothing written).
+ * ARGV[4] = now) plus ARGV[5]. Returns `{1, ''}` `offline` written, `{0, state}` kept (nothing
+ * written; `state` the state kept, so the caller needs no read of its own).
  */
 const OFFLINE_UNLESS_AWAY_SCRIPT = `
 local f = redis.call('HMGET', KEYS[1], 'state', 'ring', 'inbound', 'push')
-if f[1] == 'break' and f[2] == '1' then return 0 end
-if f[3] and f[3] ~= '' and (ARGV[5] == '1' or f[4] == '1') then return 0 end
+if f[1] == 'break' and f[2] == '1' then return {0, f[1]} end
+if f[3] and f[3] ~= '' and (ARGV[5] == '1' or f[4] == '1') then return {0, f[1] or ''} end
 redis.call('HSET', KEYS[1], 'state', ARGV[1], 'attempt', ARGV[2], 'since', ARGV[4])
 redis.call('HDEL', KEYS[1], 'ring', 'push')
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
-return 1
+return {1, ''}
 `;
 
 /**
@@ -488,6 +489,13 @@ export type AwayRingEnterResult =
   /** The `available` guard: a soft-phone call, a soft-phone session, an inbound call. Nothing written. */
   | { ok: false; reason: 'manual_call_live' | 'softphone_session' | 'inbound_call_owed'; state: AgencyAgentState | null }
   | { ok: false; reason: 'unavailable' };
+
+/** What {@link AgentStateMachine.setOfflineUnlessAway} did. */
+export type OfflineUnlessAwayResult =
+  | { outcome: 'offline' }
+  /** On `away_ring`, or holding a push offer: nothing written; `state` is the state kept. */
+  | { outcome: 'kept'; state: AgencyAgentState | null }
+  | { outcome: 'unavailable' };
 
 /** What {@link AgentStateMachine.endAwayRing} did. */
 export type AwayRingEndResult =
@@ -945,19 +953,21 @@ export class AgentStateMachine {
   /**
    * The station close's presence write (see {@link OFFLINE_UNLESS_AWAY_SCRIPT}): `offline`, unless
    * the session is on `away_ring` or holds a push offer (`holdsPushOffer`, read synchronously by
-   * the caller). `offline` written, `kept`, or `unavailable` (Redis failed; logged).
+   * the caller). `offline` written, `kept` (with the state kept: `break` on `away_ring`, else the
+   * push offer's, `reserved`; null if the key had none), or `unavailable` (Redis failed; logged).
    */
-  async setOfflineUnlessAway(sessionId: string, holdsPushOffer: boolean): Promise<'offline' | 'kept' | 'unavailable'> {
-    if (!this.redis) return 'unavailable';
+  async setOfflineUnlessAway(sessionId: string, holdsPushOffer: boolean): Promise<OfflineUnlessAwayResult> {
+    if (!this.redis) return { outcome: 'unavailable' };
     try {
-      const res = await this.redis.eval(
+      const [code, state] = await this.redis.eval(
         OFFLINE_UNLESS_AWAY_SCRIPT, 1, this.key(sessionId),
         'offline', '', AGENT_LEASE_MS.available, Date.now().toString(), holdsPushOffer ? '1' : '0',
-      );
-      return res === 1 ? 'offline' : 'kept';
+      ) as [number, string];
+      if (code === 1) return { outcome: 'offline' };
+      return { outcome: 'kept', state: state ? (state as AgencyAgentState) : null };
     } catch (err) {
       log.error({ err, sessionId }, 'Agent offline write failed');
-      return 'unavailable';
+      return { outcome: 'unavailable' };
     }
   }
 

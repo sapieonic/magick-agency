@@ -384,7 +384,7 @@ export class AgencyRuntime {
     // app's return sends `/available`). Only on `break`: an attach during a ring or an accepted
     // ring finds `reserved` (the reservation cleared `ring`), and that is the connector's.
     if (live?.state === 'break' && live.ring) {
-      await this.awayRing.endOnReturn(sessionId).catch((err: unknown) =>
+      await this.awayRing.endOnReturn(sessionId, row?.away_ring_since).catch((err: unknown) =>
         log.warn({ err, sessionId }, 'Could not end away-ring on the agent\'s return'));
       returnFromAwayRing(row);
       return 'break';
@@ -519,7 +519,7 @@ export class AgencyRuntime {
     // the write.
     const holdsPushOffer = this.inbound?.holdsPushOffer(sessionId) ?? false;
     const wrote = await this.agents.setOfflineUnlessAway(sessionId, holdsPushOffer);
-    if (wrote === 'kept') return false;
+    if (wrote.outcome === 'kept') return false;
     await agencyAgentSessionRepository.setState(sessionId, 'offline')
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror offline agent state'));
     return true;

@@ -302,7 +302,7 @@ describe('a ring and its answer', () => {
     expect(c.holdsPushOffer(away.sessionId)).toBe(true);
     expect(c.findCallForSession(away.sessionId)).toEqual({ callId: call.id, phase: 'offered' });
     // The station close's decision keeps the session: a push offer, no socket.
-    expect(await agents.setOfflineUnlessAway(away.sessionId, c.holdsPushOffer(away.sessionId))).toBe('kept');
+    expect(await agents.setOfflineUnlessAway(away.sessionId, c.holdsPushOffer(away.sessionId))).toMatchObject({ outcome: 'kept' });
 
     const answering = await c.ringAnswering(call.id, token);
     expect(answering).toMatchObject({ ok: true, callId: call.id });
@@ -427,7 +427,7 @@ describe('a ring and its answer', () => {
     c.bindAcceptedRing(away.sessionId);
     await stations.close(away.sessionId, async () => {
       c.onStationClosed(away.sessionId);
-      expect(await agents.setOfflineUnlessAway(away.sessionId, c.holdsPushOffer(away.sessionId))).toBe('kept');
+      expect(await agents.setOfflineUnlessAway(away.sessionId, c.holdsPushOffer(away.sessionId))).toMatchObject({ outcome: 'kept' });
     });
     await drain();
     expect(await row(call.id)).toMatchObject({ state: 'offered', session_id: away.sessionId });

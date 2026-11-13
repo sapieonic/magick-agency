@@ -47,7 +47,7 @@ import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { SYSTEM_AUDIT_ACTOR, type AuditActorFields } from '../audit/platform/audit-actor.js';
 import { AGENCY_AWAY_RING_MAX_MS_DEFAULT } from '../config/blocks/agency.js';
-import { AGENT_LEASE_MS, type AgentStateMachine } from './agent-state-machine.js';
+import { AGENT_LEASE_MS, type AgentLiveState, type AgentStateMachine } from './agent-state-machine.js';
 import { InFlight } from './pacing/in-flight.js';
 import type { StationRegistry } from './station-registry.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
@@ -220,6 +220,16 @@ export type AwayRingReleaseOutcome =
   /** The call does not hold the session: nothing written. */
   | 'not_held';
 
+/** How {@link AwayRingService.releaseInbound} came out, with the absence it restored. */
+export interface AwayRingRelease {
+  outcome: AwayRingReleaseOutcome;
+  /**
+   * With `away_ring`: the absence as the restore left it (its start, and the missed rings in a row),
+   * so the ring's end reads neither again (pass `since` on as `AwayRingEndOptions.absenceSince`).
+   */
+  absence?: { since: Date; misses: number };
+}
+
 /** What one reconcile pass did ({@link AwayRingService.reconcile}). */
 export interface AwayRingReconcileSummary {
   candidates: number;
@@ -254,12 +264,9 @@ export interface AwayRingServiceDeps {
 }
 
 async function flagsAllowRing(tenantId: string, accountId: string): Promise<boolean> {
-  const flags = getFeatureFlagService();
-  const [ring, inbound] = await Promise.all([
-    flags.isEnabled(FLAGS.agency_inbound_ring_enabled, { tenantId, accountId }),
-    flags.isEnabled(FLAGS.agency_inbound_enabled, { tenantId, accountId }),
-  ]);
-  return ring && inbound;
+  // Both gates from one global+tenant read.
+  const flags = await getFeatureFlagService().snapshot({ tenantId, accountId });
+  return flags.isEnabled(FLAGS.agency_inbound_ring_enabled) && flags.isEnabled(FLAGS.agency_inbound_enabled);
 }
 
 export class AwayRingService {
@@ -324,12 +331,14 @@ export class AwayRingService {
 
   /**
    * The inbound search's read (`InboundConnectorDeps.ringables`' default): the account's sessions
-   * on an absence whose phone the rule lets ring now. Both flags on, then the account's candidates
-   * (`findAwayRingCandidates`, one statement), then {@link canRing}.
+   * on an absence whose phone the rule lets ring now. The account's candidates
+   * (`findAwayRingCandidates`, one statement), then, only when there are any, both flags on, then
+   * {@link canRing}. It runs on every search, under the account's lock: an account with nobody
+   * away reads no flags.
    */
   async ringableSessions(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
-    if (!(await this.ringAllowed(tenantId, accountId))) return [];
     const rows = await agencyAgentSessionRepository.findAwayRingCandidates({ tenantId, accountId });
+    if (rows.length === 0 || !(await this.ringAllowed(tenantId, accountId))) return [];
     const now = Date.now();
     return rows.flatMap((r): AgencyRingableSession[] => {
       if (r.campaign_id === null || r.device_platform === null || !this.canRing(r, ringDeviceOfCandidate(r), now)) return [];
@@ -340,16 +349,14 @@ export class AwayRingService {
   /**
    * The device to ring for the session, read again as a ring starts (the search read the session
    * ringable a moment ago): the push device that holds its station if the rule ({@link canRing}) still
-   * lets it ring; null otherwise. The flags are the search's read of a moment ago (a flag turned
-   * off ends the absence at the reconcile, which cancels the ring, N1). A failed read rejects.
+   * lets it ring; null otherwise. One statement reads the live session and its device. The flags are
+   * the search's read of a moment ago (a flag turned off ends the absence at the reconcile, which
+   * cancels the ring, N1). A failed read rejects.
    */
   async ringableDevice(sessionId: string): Promise<PushDeviceRecord | null> {
-    const [session, device] = await Promise.all([
-      agencyAgentSessionRepository.findById(sessionId),
-      agencyPushDeviceRepository.findForSession(sessionId),
-    ]);
-    if (!session || session.left_at || !device) return null;
-    return this.canRing(session, ringDeviceOf(device)) ? device : null;
+    const found = await agencyPushDeviceRepository.findForLiveSession(sessionId);
+    if (!found) return null;
+    return this.canRing(found.session, ringDeviceOf(found.device)) ? found.device : null;
   }
 
   /**
@@ -478,29 +485,31 @@ export class AwayRingService {
    * ends the absence as `device_away`, keeping its start (IQ76; no `ring_off`: the app asked),
    * unless the caller ends it with a reason of its own (`opts.ending`).
    */
-  async releaseInbound(sessionId: string, inboundCallId: string, opts: AwayRingReleaseOptions = {}): Promise<AwayRingReleaseOutcome> {
+  async releaseInbound(sessionId: string, inboundCallId: string, opts: AwayRingReleaseOptions = {}): Promise<AwayRingRelease> {
     const session = await agencyAgentSessionRepository.findById(sessionId);
-    if (!session || session.left_at || !session.away_ring_since) return 'not_away_ring';
+    if (!session || session.left_at || !session.away_ring_since) return { outcome: 'not_away_ring' };
     const ttl = this.ttlLeft(session.away_ring_since);
     // Past the maximum age mid-ring: back to `away_ring` for a moment (a 1 s key), then ended
     // `max_age` like any other end, so there is one path that writes an end.
-    if (!(await this.deps.agents.releaseInboundToAwayRing(sessionId, inboundCallId, Math.max(ttl, 1000)))) return 'not_held';
+    if (!(await this.deps.agents.releaseInboundToAwayRing(sessionId, inboundCallId, Math.max(ttl, 1000)))) return { outcome: 'not_held' };
     const queued = this.takeQueuedAwayPause(sessionId);
-    if (!(await agencyAgentSessionRepository.restoreAwayRing(sessionId))) {
+    const restored = await agencyAgentSessionRepository.restoreAwayRing(sessionId);
+    if (!restored) {
       // The absence ended between the read above and here (a take-over cleared its key).
       await this.end(sessionId, null);
-      return 'ended';
+      return { outcome: 'ended' };
     }
+    const absenceSince = restored.away_ring_since;
     if (ttl <= 0) {
-      await this.end(sessionId, 'max_age');
-      return 'ended';
+      await this.end(sessionId, 'max_age', { absenceSince });
+      return { outcome: 'ended' };
     }
     if (queued === DEVICE_AWAY_BREAK_REASON && !opts.ending) {
       log.info({ sessionId, inboundCallId }, 'A device_away queued behind a ring applies at its end');
-      await this.end(sessionId, null, AWAY_RING_RETURN_END);
-      return 'ended';
+      await this.end(sessionId, null, { ...AWAY_RING_RETURN_END, absenceSince });
+      return { outcome: 'ended' };
     }
-    return 'away_ring';
+    return { outcome: 'away_ring', absence: { since: absenceSince, misses: restored.ring_misses } };
   }
 
   /**
@@ -630,10 +639,11 @@ export class AwayRingService {
   /**
    * The agent came back to the app (a station attach, or a join, rehydrating a `break, ring = 1`
    * key: N5's "clears ring only when the state is break"): `device_away`, the station about to
-   * show it. No `ring_off`: the app is on screen and drops its own notification.
+   * show it. No `ring_off`: the app is on screen and drops its own notification. `absenceSince`:
+   * the absence's start when the caller holds the row (default: read from it).
    */
-  async endOnReturn(sessionId: string): Promise<AwayRingEndOutcome> {
-    return this.end(sessionId, null, AWAY_RING_RETURN_END);
+  async endOnReturn(sessionId: string, absenceSince?: Date | null): Promise<AwayRingEndOutcome> {
+    return this.end(sessionId, null, { ...AWAY_RING_RETURN_END, ...(absenceSince !== undefined ? { absenceSince } : {}) });
   }
 
   /**
@@ -688,7 +698,7 @@ export class AwayRingService {
   async endOrCancelRing(
     sessionId: string,
     reason: AgencyRingOffReason,
-    opts: { actor?: AuditActorFields } = {},
+    opts: Pick<AwayRingEndOptions, 'actor' | 'absenceSince'> = {},
   ): Promise<AwayRingEndOutcome> {
     const connector = this.deps.inbound();
     if (connector && this.holdsPushOffer(sessionId)) {
@@ -808,10 +818,12 @@ export class AwayRingService {
     const summary: AwayRingReconcileSummary = { candidates: 0, ended: 0, reseeded: 0, restored: 0, skippedInFlight: 0, cleared: 0 };
     const rows = await agencyAgentSessionRepository.findAwayRingCandidates();
     summary.candidates = rows.length;
+    // Every candidate's key, in one Redis round trip (a key that cannot be read is null, as `get`'s).
+    const lives = rows.length > 0 ? await this.deps.agents.getMany(rows.map((r) => r.id)) : [];
     const allowed = new Map<string, Promise<boolean>>();
-    for (const row of rows) {
+    for (const [i, row] of rows.entries()) {
       try {
-        await this.reconcileOne(row, now, allowed, summary);
+        await this.reconcileOne(row, lives[i] ?? null, now, allowed, summary);
       } catch (err) {
         log.warn({ err, sessionId: row.id }, 'Away-ring reconcile failed for a session');
       }
@@ -824,17 +836,19 @@ export class AwayRingService {
 
   private async reconcileOne(
     row: AgencyAwayRingCandidate,
+    live: AgentLiveState | null,
     now: number,
     allowed: Map<string, Promise<boolean>>,
     summary: AwayRingReconcileSummary,
   ): Promise<void> {
+    // The absence's start as this pass read it: no end below reads the row for it again.
+    const absenceSince = row.away_ring_since;
     if (this.holdsPushOffer(row.id)) {
       const reason = await this.endReasonFor(row, now, allowed);
-      if (reason && (await this.endOrCancelRing(row.id, reason)) === 'ended') summary.ended++;
+      if (reason && (await this.endOrCancelRing(row.id, reason, { absenceSince })) === 'ended') summary.ended++;
       else summary.skippedInFlight++;
       return;
     }
-    const live = await this.deps.agents.get(row.id);
     if (live?.inboundCallId) {
       summary.skippedInFlight++;
       return;
@@ -845,12 +859,12 @@ export class AwayRingService {
       // all the same, with no `ring_off`: no reason the app words would be true (`flag_off` would
       // tell the agent the account switched ringing off), and not counted: no label says it.
       log.warn({ sessionId: row.id, kind: row.kind }, 'A non-campaign session was on away-ring; ending it');
-      if ((await this.end(row.id, null)) === 'ended') summary.ended++;
+      if ((await this.end(row.id, null, { absenceSince })) === 'ended') summary.ended++;
       return;
     }
     const reason = await this.endReasonFor(row, now, allowed);
     if (reason) {
-      if ((await this.end(row.id, reason)) === 'ended') summary.ended++;
+      if ((await this.end(row.id, reason, { absenceSince })) === 'ended') summary.ended++;
       return;
     }
     const mirrorOnIt = row.state === 'break' && row.break_reason === AWAY_RING_BREAK_REASON;

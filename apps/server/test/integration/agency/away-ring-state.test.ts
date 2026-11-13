@@ -203,7 +203,7 @@ describe('the away_ring Lua (real Redis)', () => {
     expect((await sm().get(station))!.pushOffer).toBe(false);
     await sm().set(s, 'on_call');
     expect(await sm().get(s)).toMatchObject({ state: 'on_call', inboundCallId: 'ib-1', pushOffer: false });
-    expect(await sm().setOfflineUnlessAway(s, false)).toBe('offline');
+    expect(await sm().setOfflineUnlessAway(s, false)).toEqual({ outcome: 'offline' });
   });
 
   it('an unanswered push offer goes back to away_ring, only by the call that holds the session', async () => {
@@ -272,28 +272,28 @@ describe('the away_ring Lua (real Redis)', () => {
     const away = randomUUID();
     await sm().set(away, 'available');
     await sm().enterAwayRing(away, { ttlMs: 60_000, fromStates: ['available'] });
-    expect(await sm().setOfflineUnlessAway(away, false)).toBe('kept');
+    expect(await sm().setOfflineUnlessAway(away, false)).toEqual({ outcome: 'kept', state: 'break' });
     expect(await sm().get(away)).toMatchObject({ state: 'break', ring: true });
 
     const plain = randomUUID();
     await sm().set(plain, 'break');
-    expect(await sm().setOfflineUnlessAway(plain, false)).toBe('offline');
+    expect(await sm().setOfflineUnlessAway(plain, false)).toEqual({ outcome: 'offline' });
 
     // A station offer the connector says is a push offer (its synchronous answer) is kept; a
     // station offer it does not hold is not.
     const offered = randomUUID();
     await sm().set(offered, 'available');
     await sm().reserveForInbound(offered, 'ib-1', ['available']);
-    expect(await sm().setOfflineUnlessAway(offered, true)).toBe('kept');
+    expect(await sm().setOfflineUnlessAway(offered, true)).toEqual({ outcome: 'kept', state: 'reserved' });
     expect(await sm().get(offered)).toMatchObject({ state: 'reserved', inboundCallId: 'ib-1' });
-    expect(await sm().setOfflineUnlessAway(offered, false)).toBe('offline');
+    expect(await sm().setOfflineUnlessAway(offered, false)).toEqual({ outcome: 'offline' });
 
     // A ring (reserved from away_ring): kept on the field alone, whatever the connector answered.
     const ringing = randomUUID();
     await sm().set(ringing, 'available');
     await sm().enterAwayRing(ringing, { ttlMs: 60_000, fromStates: ['available'] });
     await sm().reserveForInbound(ringing, 'ib-3', ['break']);
-    expect(await sm().setOfflineUnlessAway(ringing, false)).toBe('kept');
+    expect(await sm().setOfflineUnlessAway(ringing, false)).toEqual({ outcome: 'kept', state: 'reserved' });
     expect(await sm().get(ringing)).toMatchObject({ state: 'reserved', inboundCallId: 'ib-3', pushOffer: true });
   });
 });
@@ -382,7 +382,7 @@ describe('the session mirror of away_ring (real Postgres)', () => {
     expect(since).toBeInstanceOf(Date);
     await sessions.setState(s.id, 'reserved');
     expect((await row(s.id)).away_ring_since).toEqual(since);
-    expect(await sessions.restoreAwayRing(s.id)).toBe(true);
+    expect(await sessions.restoreAwayRing(s.id)).not.toBeNull();
     expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring', away_ring_since: since });
     await sessions.setState(s.id, 'break', 'away_ring');
     expect((await row(s.id)).away_ring_since).toEqual(since);
@@ -395,7 +395,7 @@ describe('the session mirror of away_ring (real Postgres)', () => {
       expect(r.away_ring_since, `${state}/${reason}`).toBeNull();
       expect(r.ring_misses, `${state}/${reason}`).toBe(state === 'available' ? 0 : 1);
     }
-    expect(await sessions.restoreAwayRing(s.id)).toBe(false);
+    expect(await sessions.restoreAwayRing(s.id)).toBeNull();
     await sessions.setState(s.id, 'break', 'away_ring');
     await sessions.leave(s.id);
     expect((await row(s.id)).away_ring_since).toBeNull();
@@ -647,7 +647,7 @@ describe('AwayRingService', () => {
     await sm().reserveForInbound(s.id, 'ib-1', ['break']);
     await sessions.setState(s.id, 'reserved');
     await new Promise((r) => setTimeout(r, 20));
-    expect(await svc.releaseInbound(s.id, 'ib-1')).toBe('away_ring');
+    expect((await svc.releaseInbound(s.id, 'ib-1')).outcome).toBe('away_ring');
     expect((await sm().get(s.id))!.since).toBeGreaterThan(Date.parse(entered.since));
     // Two misses (or any server end) with the app's station here: device_away, `since` kept.
     frames.length = 0;
@@ -721,16 +721,16 @@ describe('AwayRingService', () => {
     await sm().set(s.id, 'available');
     // ...and, while the pass awaits Redis, the agent goes away ringing again (a fresh start).
     const machine = sm();
-    const realGet = machine.get.bind(machine);
+    const realGetMany = machine.getMany.bind(machine);
     const fresh = new Date(Date.now() + 5_000);
     let entered = false;
-    machine.get = async (id: string) => {
-      const live = await realGet(id);
-      if (id === s.id && !entered) {
+    machine.getMany = async (ids: readonly string[]) => {
+      const lives = await realGetMany(ids);
+      if (ids.includes(s.id) && !entered) {
         entered = true;
         await getTestPool().query('UPDATE agency_agent_sessions SET away_ring_since = $2 WHERE id = $1', [s.id, fresh]);
       }
-      return live;
+      return lives;
     };
     expect(await service({ agents: machine }).svc.reconcile()).toMatchObject({ candidates: 1, cleared: 0 });
     expect((await row(s.id)).away_ring_since).toEqual(fresh);
@@ -746,15 +746,15 @@ describe('AwayRingService', () => {
     await sm().reserveForInbound(s.id, 'ib-1', ['break']);
     await sessions.setState(s.id, 'reserved');
     const { svc } = service();
-    expect(await svc.releaseInbound(s.id, 'ib-other')).toBe('not_held');
-    expect(await svc.releaseInbound(s.id, 'ib-1')).toBe('away_ring');
+    expect((await svc.releaseInbound(s.id, 'ib-other')).outcome).toBe('not_held');
+    expect((await svc.releaseInbound(s.id, 'ib-1')).outcome).toBe('away_ring');
     expect(await sm().get(s.id)).toMatchObject({ state: 'break', ring: true, inboundCallId: null });
     expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring', away_ring_since: since });
 
     // The absence ended under the ring (a take-over): Redis is not put back on away_ring.
     await sm().reserveForInbound(s.id, 'ib-2', ['break']);
     await sessions.claimStationDevice(s.id, { deviceId: 'laptop-bbbb-2', takeOver: true });
-    expect(await svc.releaseInbound(s.id, 'ib-2')).toBe('not_away_ring');
+    expect((await svc.releaseInbound(s.id, 'ib-2')).outcome).toBe('not_away_ring');
     expect(await sm().get(s.id)).toMatchObject({ state: 'reserved', inboundCallId: 'ib-2' });
   });
 
@@ -811,10 +811,10 @@ describe('AwayRingService', () => {
     const s = await onAwayRing();
     await sm().set(s.id, 'available');
     const machine = sm();
-    const realGet = machine.get.bind(machine);
+    const realGetMany = machine.getMany.bind(machine);
     let release!: () => void;
     const gateOpen = new Promise<void>((r) => { release = r; });
-    machine.get = async (id: string) => { await gateOpen; return realGet(id); };
+    machine.getMany = async (ids: readonly string[]) => { await gateOpen; return realGetMany(ids); };
     const { svc } = service({ agents: machine });
     const pass = svc.reconcile();
     await new Promise((r) => setTimeout(r, 20));

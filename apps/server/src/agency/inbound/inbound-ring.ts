@@ -759,9 +759,10 @@ export class RingOffers {
     if (callEnded) {
       // The call is settled already (the router's, from the bridge's `ended`): the ring's result is
       // written on the ended row, and the session's last frame of the call says it ended.
-      await agencyInboundCallRepository.setRingResult(call.id, 'caller_left')
-        .catch((err: unknown) => log.warn({ err, inboundCallId: call.id }, 'Could not write a ring the caller left'));
-      const ended = await agencyInboundCallRepository.findByIdAnyTenant(call.id).catch(() => null);
+      const ended = await agencyInboundCallRepository.setRingResult(call.id, 'caller_left').catch((err: unknown) => {
+        log.warn({ err, inboundCallId: call.id }, 'Could not write a ring the caller left');
+        return null;
+      });
       if (ended) call.record = ended;
       await this.host.sendFrame(call);
     } else {
@@ -785,7 +786,7 @@ export class RingOffers {
     if (ring && result !== 'push_failed') this.sendRingCancel(ring, call.id, result);
     const absence = opts.absence ?? KEEP_ABSENCE;
     const released = await this.releaseRungAgent(call.id, sessionId, absence);
-    if (released === 'away_ring' && absence.kind === 'keep') await this.noteMiss(sessionId, MISSES.has(result));
+    if (released.outcome === 'away_ring' && released.absence) await this.noteMiss(sessionId, MISSES.has(result), released.absence);
     if (callEnded) {
       trackInboundOffer('caller_left', 'mobile', 'push');
       return null;
@@ -819,7 +820,7 @@ export class RingOffers {
     callId: string,
     sessionId: string,
     absence: RingAbsenceEnd,
-  ): Promise<'station' | 'away_ring' | 'ended' | 'returned' | 'not_held'> {
+  ): Promise<{ outcome: 'station' | 'away_ring' | 'ended' | 'returned' | 'not_held'; absence?: { since: Date; misses: number } }> {
     try {
       const station = this.deps.stations.get(sessionId);
       const awayRing = this.deps.awayRing;
@@ -830,40 +831,43 @@ export class RingOffers {
       if ((station && station.ws.readyState === 1 && !ending) || !awayRing) {
         await this.deps.agents.releaseInbound(sessionId, callId);
         void this.host.returnAgent(sessionId);
-        return station ? 'station' : 'returned';
+        return { outcome: station ? 'station' : 'returned' };
       }
-      const out = await awayRing.releaseInbound(sessionId, callId, { ending });
-      if (out === 'away_ring') {
+      const released = await awayRing.releaseInbound(sessionId, callId, { ending });
+      if (released.outcome === 'away_ring') {
+        // The absence's start, as the restore left it: the end below reads no row for it.
+        const absenceSince = released.absence?.since;
+        const since = absenceSince !== undefined ? { absenceSince } : {};
         switch (absence.kind) {
           case 'keep':
-            return 'away_ring';
+            return released.absence ? { outcome: 'away_ring', absence: released.absence } : { outcome: 'away_ring' };
           case 'end':
-            await awayRing.end(sessionId, absence.reason);
-            return 'ended';
+            await awayRing.end(sessionId, absence.reason, since);
+            return { outcome: 'ended' };
           case 'asReturn':
-            await awayRing.end(sessionId, null, AWAY_RING_RETURN_END);
-            return 'ended';
+            await awayRing.end(sessionId, null, { ...AWAY_RING_RETURN_END, ...since });
+            return { outcome: 'ended' };
           case 'endedBy':
-            await awayRing.end(sessionId, null);
-            return 'ended';
+            await awayRing.end(sessionId, null, since);
+            return { outcome: 'ended' };
         }
       }
-      if (out === 'not_away_ring') {
+      if (released.outcome === 'not_away_ring') {
         if (ending) {
           // The absence was ended by what ended this ring (the take-over's claim): `device_away`,
           // which the new station's attach shows, `since` kept at the absence's start.
           await awayRing.endAfterRing(sessionId, callId, absence.kind === 'endedBy' ? absence.since : null);
-          return 'ended';
+          return { outcome: 'ended' };
         }
         await this.deps.agents.releaseInbound(sessionId, callId);
         void this.host.returnAgent(sessionId);
-        return 'returned';
+        return { outcome: 'returned' };
       }
-      return out;
+      return { outcome: released.outcome };
     } catch (err) {
       // The reserved lease is no longer renewed: it lapses, and the reconcile re-seeds `away_ring`.
       log.error({ err, inboundCallId: callId, sessionId }, 'Could not return a rung agent — the lease lapses and the reconcile restores away_ring');
-      return 'not_held';
+      return { outcome: 'not_held' };
     }
   }
 
@@ -873,16 +877,15 @@ export class RingOffers {
    * every ring's end, not only a miss: the end owed by an earlier miss is lost if another caller's
    * search rang the agent between that ring's release and its end (`ring_in_flight`), so the next
    * ring's end ends it (the ring rule rings no such agent again after that, and the reconcile ends an
-   * absence whose owed end was lost all the same). Never throws.
+   * absence whose owed end was lost all the same). `absence`: the absence as the agent's return to
+   * it left it (its start and its misses), so only a miss writes. Never throws.
    */
-  private async noteMiss(sessionId: string, missed: boolean): Promise<void> {
+  private async noteMiss(sessionId: string, missed: boolean, absence: { since: Date; misses: number }): Promise<void> {
     try {
-      const misses = missed
-        ? await agencyAgentSessionRepository.noteRingMiss(sessionId)
-        : await agencyAgentSessionRepository.ringMisses(sessionId);
+      const misses = missed ? await agencyAgentSessionRepository.noteRingMiss(sessionId) : absence.misses;
       if (misses >= AGENCY_INBOUND_RING_MAX_MISSES) {
         log.info({ sessionId, misses }, 'Missed rings in a row — the phone stops ringing');
-        await this.deps.awayRing?.end(sessionId, 'ring_missed');
+        await this.deps.awayRing?.end(sessionId, 'ring_missed', { absenceSince: absence.since });
       }
     } catch (err) {
       log.warn({ err, sessionId }, 'Could not count a missed ring');

@@ -853,7 +853,7 @@ describe('AgencyDialer queued break ', () => {
     const stations = new StationRegistry(null, '', 'r1');
     const agents = reservedAgents();
     // Written by the station close's script (Mode B: it keeps a session on `away_ring`).
-    const offlineSpy = vi.spyOn(agents, 'setOfflineUnlessAway').mockResolvedValue('offline');
+    const offlineSpy = vi.spyOn(agents, 'setOfflineUnlessAway').mockResolvedValue({ outcome: 'offline' });
     const breaks = fakeBreaks({ code: 'lunch', label: 'Lunch' });
     const dialer = new AgencyDialer(
       fakeBridge() as any, stations, agents, fakeWrapup() as any, breaks as any,

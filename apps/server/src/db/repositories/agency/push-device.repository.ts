@@ -186,6 +186,34 @@ export class AgencyPushDeviceRepository {
   }
 
   /**
+   * A live session's side of the ring rule and the push device that holds its station (IQ60), in
+   * one statement: what a ring re-reads as it starts (`AwayRingService.ringableDevice`). Null when
+   * the session is gone or has left, names no device, or the device never registered.
+   */
+  async findForLiveSession(sessionId: string): Promise<{
+    session: { campaign_id: string | null; away_ring_since: Date | null; ring_misses: number };
+    device: PushDeviceRecord;
+  } | null> {
+    const { rows } = await getPool().query<PushDeviceRecord & {
+      session_campaign_id: string | null; session_away_ring_since: Date | null; session_ring_misses: number;
+    }>(
+      `SELECT d.*, s.campaign_id AS session_campaign_id, s.away_ring_since AS session_away_ring_since,
+              s.ring_misses AS session_ring_misses
+         FROM agency_agent_sessions s
+         JOIN agency_push_devices d ON d.user_id = s.agent_user_id AND d.device_id = s.station_device_id
+        WHERE s.id = $1 AND s.left_at IS NULL`,
+      [sessionId],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const { session_campaign_id, session_away_ring_since, session_ring_misses, ...device } = row;
+    return {
+      session: { campaign_id: session_campaign_id, away_ring_since: session_away_ring_since, ring_misses: session_ring_misses },
+      device,
+    };
+  }
+
+  /**
    * The push device that holds a session's station (IQ60): the agent's row for the session's
    * `station_device_id`, revoked or not; null when the session names no device or it never
    * registered.

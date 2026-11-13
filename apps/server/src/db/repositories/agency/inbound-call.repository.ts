@@ -536,14 +536,16 @@ export class AgencyInboundCallRepository {
 
   /**
    * Mode B: how the latest ring ended, where no requeue writes it (an answered ring that bound, a
-   * caller who left while it rang). Only on a row whose latest offer was a push. True: written.
+   * caller who left while it rang). Only on a row whose latest offer was a push. The row as written;
+   * null when nothing was.
    */
-  async setRingResult(id: string, result: AgencyInboundRingResult, deps: { client?: Db } = {}): Promise<boolean> {
-    const { rowCount } = await (deps.client ?? getPool()).query(
-      `UPDATE agency_inbound_calls SET ring_result = $2::varchar WHERE id = $1::uuid AND offer_channel = 'push'`,
+  async setRingResult(id: string, result: AgencyInboundRingResult, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c SET ring_result = $2::varchar WHERE c.id = $1::uuid AND c.offer_channel = 'push'
+        RETURNING ${CALL_COLUMNS}`,
       [id, result],
     );
-    return (rowCount ?? 0) > 0;
+    return rows[0] ?? null;
   }
 
   /**

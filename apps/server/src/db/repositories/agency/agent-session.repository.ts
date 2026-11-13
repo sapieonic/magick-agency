@@ -181,6 +181,14 @@ function sessionTransitionSql(input: { prevWhere: string; set: string; where?: s
                  ${TRANSITION_AT_SQL}`;
 }
 
+/** The absence a ring's end restored `away_ring` on ({@link AgencyAgentSessionRepository.restoreAwayRing}). */
+export interface AgencyAwayRingRestored {
+  /** The absence's start. */
+  away_ring_since: Date;
+  /** The missed rings in a row (IQ62). */
+  ring_misses: number;
+}
+
 /**
  * A live session on `away_ring` or ringing from it (`away_ring_since IS NOT NULL`, N1), as the
  * reconcile and the inbound search read it (`AwayRingService.reconcile`, `ringableSessions`), with
@@ -898,18 +906,20 @@ export class AgencyAgentSessionRepository {
    * A ring that ended unanswered restores the mirror (N1): `break/away_ring` again, only while the
    * session is live and still on its absence (`away_ring_since` set: nothing ended it meanwhile).
    * The ring's `setState('reserved')` nulled the reason; `releaseInboundToAwayRing` (Redis) and this
-   * are the pair `AwayRingService.releaseInbound` runs. True: written.
+   * are the pair `AwayRingService.releaseInbound` runs. Written: the absence as it stands (its start,
+   * and the missed rings in a row), so the ring's end reads neither again; null: not written.
    */
-  async restoreAwayRing(id: string): Promise<boolean> {
-    const { rows } = await getPool().query<AgencySessionTransitionRow>(
-      sessionTransitionSql({
+  async restoreAwayRing(id: string): Promise<AgencyAwayRingRestored | null> {
+    const { rows } = await getPool().query<AgencySessionTransitionRow & AgencyAwayRingRestored>(
+      `${sessionTransitionSql({
         prevWhere: 'id = $1 AND left_at IS NULL AND away_ring_since IS NOT NULL',
         set: `state = 'break', break_reason = $2::varchar, state_since = now(), updated_at = now()`,
-      }),
+      })}, s.away_ring_since, s.ring_misses`,
       [id, AWAY_RING_BREAK_REASON],
     );
     await this.recordTransitions(rows);
-    return rows.length > 0;
+    const row = rows[0];
+    return row ? { away_ring_since: row.away_ring_since, ring_misses: row.ring_misses } : null;
   }
 
   /**
@@ -1023,15 +1033,6 @@ export class AgencyAgentSessionRepository {
     const { rows } = await getPool().query<{ ring_misses: number }>(
       `UPDATE agency_agent_sessions SET ring_misses = ring_misses + 1, updated_at = now()
         WHERE id = $1 AND left_at IS NULL RETURNING ring_misses`,
-      [id],
-    );
-    return rows[0]?.ring_misses ?? 0;
-  }
-
-  /** The missed rings in a row now (IQ62); 0 when the session is gone or has left. */
-  async ringMisses(id: string): Promise<number> {
-    const { rows } = await getPool().query<{ ring_misses: number }>(
-      'SELECT ring_misses FROM agency_agent_sessions WHERE id = $1 AND left_at IS NULL',
       [id],
     );
     return rows[0]?.ring_misses ?? 0;
