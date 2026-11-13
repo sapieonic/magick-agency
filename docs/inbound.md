@@ -802,7 +802,10 @@ carriers are the platform area's, behind `seams/push-sender.ts` ([`seams.md`](se
   the wrap-up was written `offline`), and over no key at all (that `offline` lease lapsed during a
   long wrap-up: the key is created only if still absent, by the reconcile's create-if-absent
   script).
-- **Its state.** Redis: `state = break` and `ring = 1` on the agent hash, a fresh `since`, and a
+- **Its state.** Redis: `state = break` and `ring = 1` on the agent hash, a fresh `since` (the
+  server's instant, the same one the mirror stamps as `away_ring_since` and the `agent_state` frame
+  and the HTTP answer carry, so the app and a later `ring_off`'s `away_since` name one instant; an
+  absence already running keeps its start, and the frame says so), and a
   TTL of the time left to `AGENCY_AWAY_RING_MAX_MS` (4 h) from `away_ring_since`. Nothing renews it:
   `heartbeatLeaseMs` answers null while `ring = 1` (N2), and the renew script (`RENEW_SCRIPT`)
   itself refuses a key with `ring = 1`, so a heartbeat that read `break` (`device_away`) just before
@@ -856,17 +859,34 @@ No `inbound_call` frame (there is no socket) and no 1.5 s bind timer. On the wir
 `offer_channel` is `push`, `connects_at` null, `ring_expires_at` the deadline until it is answered.
 A send that fails ends the ring `push_failed`, which is **never a miss** (IQ62 counts only the
 agent's own: a failed push is the carrier's): the caller goes back to the head of the queue and no
-`ring_cancel` is sent. An `unregistered` token revokes the device and ends the absence `revoked`
-(that caller never rings the agent again; nobody does, the device is gone). Any other failure (the
-push service unavailable, rate-limited, refusing the message, or unconfigured) leaves the agent on
-`away_ring` and ringable for this caller too, runs no new search, and pauses all ringing in this
-connector for `INBOUND_PUSH_RETRY_MS` (10 s): searches meanwhile skip every `push` candidate (a
-station agent is still offered), and the republish after the pause retries. An outage of the push
-service therefore never walks one caller through the whole pool in milliseconds, nor costs anyone
-a miss.
+`ring_cancel` is sent. What happens next depends on whose trouble the failure is (IQ75,
+`pushFailureScope`, [`seams.md`](seams.md) §3.6):
+
+- **This device's, for good:** a token the carrier refused (`unregistered`: FCM `UNREGISTERED`, APNs
+  410, `BadDeviceToken`, `Unregistered`, `ExpiredToken`; `invalid`: FCM `SENDER_ID_MISMATCH` or
+  `INVALID_ARGUMENT` on the token itself, APNs `DeviceTokenNotForTopic`). The device is revoked and
+  the absence ends `revoked`; that caller never rings the agent again (nobody does, the device is
+  gone), and the search goes on to the next phone at once.
+- **This device's, for now:** a `rate_limited` the sender scoped to the device (its own hold after
+  the device's `Retry-After`, or an APNs 429, which is per token). That caller never rings this
+  phone again and the search goes on to the next phone; the agent stays on `away_ring`, ringable
+  for other callers once the hold ends.
+- **The push service's:** `unavailable` (5xx, 401/403, a bare 404, a timeout, a network error, a
+  message refused as malformed), `unconfigured`, and an FCM 429 (`QUOTA_EXCEEDED` does not say
+  whether the device's or the project's quota was hit, so it is taken as the project's). Every
+  phone would fail alike, so the agent stays on `away_ring` and ringable for this caller too, no new
+  search runs, and all ringing in this connector pauses for `INBOUND_PUSH_RETRY_MS` (10 s): searches
+  meanwhile skip every `push` candidate (a station agent is still offered), and the republish after
+  the pause retries. An outage of the push service therefore never walks one caller through the
+  whole pool in milliseconds, nor costs anyone a miss, and one phone the carrier refuses never
+  pauses anyone else's ringing.
 
 **Answering, accepting and binding (IQ71, N5; `api/routes/agency/inbound-ring.ts`).** The routes are
 `/proxy/agency/inbound/calls/:id/ring/{answering,decline,accept}` (`proxy-agency-inbound-ring.routes.ts`).
+The two token-only ones carry no session: the public layer asks the connector which tenant holds the
+call (`ringTenancy`, [`seams.md`](seams.md) §4), and limits them to 30 a minute per IP and ringing
+call, with one bucket per IP for every other id (IQ77: agents behind one carrier NAT never spend
+each other's answers).
 
 - **`answering {offer_token}`** (token only; native Android posts it at the tap): on the call's
   chain, the ring re-checked there (N3), the ring timer stops, `accepted_at` is stamped, the accept
@@ -925,8 +945,8 @@ not ringable (`findRingableInAccount` filters them), and every ring's end that r
 `away_ring` asks the count again, not only a miss: a ring another caller's search started between a
 miss's release and its end (`ring_in_flight`) would otherwise leave the owed `ring_missed` end
 unsent, so that ring's end sends it. After `declined`, `busy_on_phone`, `expired` or
-`accept_lapsed`, or a `push_failed` for an unregistered token, that caller never rings that agent
-again; after any other `push_failed` they may.
+`accept_lapsed`, or a `push_failed` that was the device's (above), that caller never rings that
+agent again; after a `push_failed` that was the service's they may.
 
 **On screen first, mid-ring (IQ73, N3).** When a station agent becomes available (the
 `onAgentAvailable` search, or the release hook `takeOnRelease`) after a caller's ring began and
@@ -948,15 +968,35 @@ are ringable again), except an agent this caller declined or missed.
 (`AwayRingService.end`: Redis first, by a script that acts only on `break, ring = 1`, then the mirror
 with `away_ring_since` cleared; the mirror's write matches a row with `away_ring_since` set or still
 reading `break/away_ring`, so a reconcile that cleared the key between the two writes cannot strand
-the row on `away_ring` with no `ring_off` and no audit). The server's ends send Android a `ring_off` push with the reason
-(held an hour at the carrier) and are audited `agency_session.away_ring_ended` ("Phone stopped
-ringing for inbound calls", `details.reason`, the system as the actor; "Stop ringing" and a removal
-are also audited on the device, with the agent as the actor):
+the row on `away_ring` with no `ring_off` and no audit).
+
+**One absence, one `since` (IQ76).** `away_ring → device_away` is a break-to-break switch inside one
+absence, so the `device_away` keeps the absence's start (`away_ring_since`) as its `since`: in
+Redis, in the station's `agent_state` frame (sent before `ready` on a return; `ready` stays on the
+same break, so the app keeps it), in the device-away route's answer, and as the mirror's
+`state_since`. The app measures its 30 s return (IQ50) and "N customers rang while you were away"
+from it; a fresh `since` made every return look seconds old. Every end path keeps it: the return,
+the server's ends below, the take-over (the claim keeps `state_since` and answers the start, which
+`endOnTakeOver` and a ring the take-over cancelled, `AwayRingService.endAfterRing`, write to Redis),
+and a return over a lapsed key (the rehydrate's plain path). Only the `offline` arm (no socket here)
+starts a new state, at now. Reports are unaffected: time per state and per break reason is read
+from the transition log (`agency_agent_session_events`), whose `away_ring → device_away` event
+carries its own instant, so the away part still counts as `away_ring` and the rest as
+`device_away`; `state_since` feeds only the floor's "since" and IQ50's recent-pause read, which now
+see one pause.
+
+The server's ends send Android a `ring_off` push with the reason and `away_since` (the absence's
+start; held at most 10 minutes at the carrier, so a late one can rarely meet the next absence, and
+the app drops one older than the absence it shows) and are audited `agency_session.away_ring_ended`
+("Phone stopped ringing for inbound calls", `details.reason`, the system as the actor; "Stop
+ringing" and a removal are also audited on the device, with the agent as the actor). A failure
+ending the absence after "Stop ringing" or a removal never fails that request: the change is
+committed, and the next reconcile ends the absence:
 
 | Reason | When |
 |---|---|
 | `ring_missed` | the second missed ring in a row |
-| `revoked` | the device removed (`DELETE`), or its token reported unregistered by FCM or APNs |
+| `revoked` | the device removed (`DELETE`), or its token refused for good by FCM or APNs (`unregistered`, `invalid`) |
 | `opted_out` | "Stop ringing" (`PATCH ring_enabled=false`) |
 | `flag_off` | the reconcile finds a flag off for the account |
 | `max_age` | the absence past `AGENCY_AWAY_RING_MAX_MS` |
@@ -979,17 +1019,27 @@ past its age, with a flag off (a flag read that fails ends nobody), or whose dev
 tokenless or opted out is ended with its reason; a live absence whose Redis key is gone (a restart
 that outlived it, a crash mid-ring whose `reserved` lease lapsed) is re-seeded with a create-if-absent
 script and its mirror restored; a mirror the startup reaper wrote `offline` is restored; Redis off
-`away_ring` with nothing in flight only clears the mirror's key. Passes never overlap.
+`away_ring` with nothing in flight only clears the mirror's key, and only while it is still the
+absence the pass read (a new absence entered while the pass awaited is kept). A non-campaign
+session found on an absence (unreachable: `away_ring` is refused to one and a live row never changes
+its kind) is ended with no `ring_off`. Passes never overlap. The shutdown stops the timer first,
+then waits for the pass and the `ring_off` pushes in flight (`AwayRingService.stop`), before the
+runtime stops.
 
 **Metrics and the alert.** `agency_inbound_rings_total{result}` (every `AGENCY_INBOUND_RING_RESULTS`
 value), `agency_inbound_ring_answer_seconds` (the ring's start to `answering`),
 `agency_inbound_offers_total{result,client,channel}` (`channel` `station` or `push`; a ring's
 offer ends `connected`, `declined` (`busy_on_phone` too), `unanswered` (`expired`, `accept_lapsed`,
-`push_failed`), `caller_left`, `answered_elsewhere` or `cancelled`), and the platform's `agency_push_sends_total{platform,result}` and
-`agency_push_send_seconds{platform}`. The alert `agy-inbound-ring-push-failed` fires when more than
+`push_failed`), `caller_left`, `answered_elsewhere` or `cancelled`),
+`agency_away_ring_ended_total{reason}` (every end of an absence: the `ring_off` reasons and
+`returned`), `agency_inbound_ring_bind_seconds` (answered on the phone to bound: the cold start's
+headroom inside the 15 s grace), `agency_inbound_answered_wait_seconds{channel}` (a connected
+caller's wait, by the channel that connected them), and the platform's
+`agency_push_sends_total{platform,result}` and `agency_push_send_seconds{platform}`. The alert `agy-inbound-ring-push-failed` fires when more than
 a fifth of the rings in 15 minutes (at least 5) ended `push_failed` ([`operations.md`](operations.md),
 the inbound runbooks); the dashboard has a row "Mode B: ringing away phones" (rings by result, ring
-to answer p50/p90, push sends by result).
+to answer p50/p90, push sends by result, away-ring ends by reason, answer to bind p50/p90, connected
+callers' wait by channel); [`operations.md`](operations.md) proposes the pilot's scorecard.
 
 **Tests.** Unit: `inbound-eligibility.test.ts` (ringable, the order, IQ68, IQ69),
 `device-away-break.test.ts` (the switch, the refusals), `agent-state-machine.test.ts` and
@@ -998,8 +1048,11 @@ to answer p50/p90, push sends by result).
 real Redis, the mirror, the take-over, the close and its race with a ring, the reconcile),
 `agency/inbound-ring.test.ts` (ring → answering → accept → attach → bind and every end, misses, the
 order, IQ73 both ways and a take-over whose ring ended mid-search, a failed push that is no miss, a
-push outage that pauses ringing instead of walking the pool, a requeue that throws, an agent at the
-maximum misses, a crash mid-ring and a reconcile tick during a ring), `away-ring-state.test.ts` also
+push outage that pauses ringing instead of walking the pool (on the connector's own clock), a
+refused token that revokes and moves on with no pause for anyone, a phone held back alone, a
+requeue that throws, an agent at the maximum misses, the maximum wait inside an answered grace, a
+device removed mid-ring, a tap behind the ring timer, a caller leaving inside the grace, a crash
+mid-ring and a reconcile tick during a ring), `away-ring-state.test.ts` also
 pins the renew that never touches `away_ring`, an end the reconcile half-saw, and a queued
 `away_ring` applied from `offline` and over no key; `end-idle-session-elsewhere.test.ts` (unit) the
 OS7 `ring_off`,
@@ -1586,7 +1639,7 @@ Inventory: `packages/db/BASELINE.md` "0032", "0033".
 Inventory and the CHECKs: `packages/db/BASELINE.md` "0036"; pinned by
 `packages/db/test/integration/db/inbound-ring-migration.test.ts` (each CHECKed list held equal to its
 contract list). The down drops it all; a session left on `break/away_ring` reads as an ordinary break
-to an older server.
+to an older server, but carries a break code it cannot word (below, "Going back past 0036").
 
 - **`agency_push_devices`** (new): one row per agent and device, `UNIQUE (user_id, device_id)`
   (the register's upsert arbiter and the ring's join from a session on `(agent_user_id,
@@ -1611,7 +1664,11 @@ to an older server.
   `break/away_ring`, kept across the rings in it, cleared when a ring binds (`ringAnswered`: the
   agent is back in the app, on the call), by every other state, by the take-over's claim and by
   leaving; the reconcile's key, N1, because each ring rewrites `state_since` and nulls
-  `break_reason`).
+  `break_reason`). The enter stamps it with the server's instant, the one Redis's `since` and the
+  station's frame carry; the end that switches to `device_away` writes it into `state_since` before
+  clearing it (IQ76), and the reconcile clears it only when it still holds the absence the pass read.
+- **Going back past 0036**: its down leaves `break/away_ring` rows and Redis agent keys with
+  `ring = 1`; `DEPLOYMENT.md` §12 ("Going back past Mode B") says what to run, and in which order.
 - **0037** (`0037_away_ring_sessions_index.sql`; `packages/db/BASELINE.md` "0037", pinned by
   `packages/db/test/integration/db/away-ring-sessions-index-migration.test.ts`):
   `idx_agency_agent_sessions_away_ring (tenant_id, account_id) WHERE away_ring_since IS NOT NULL AND
@@ -1715,6 +1772,19 @@ Play Console full-screen-intent declaration is not filed; iOS is a design only (
 compile, an Apple account and an APNs key). The field test (the Telecom answer from a headset or a
 car, Android 14/15's background activity starts, battery killers and a force-stop that drops FCM)
 is the next step; the two-miss rule bounds what a phone that cannot ring costs callers.
+
+**Second review round** (2026-11-13, IQ75–IQ77, **pending Manas**; server, contracts, `agency_wire`,
+observability and Grafana; the app's half is [`mobile.md`](mobile.md)'s): an `away_ring` end keeps
+the absence's start as `since` on every path (IQ76), and every `ring_off` names its absence
+(`away_since`) and is held 10 minutes at most; a push failure is the device's or the service's, and
+only the service's pauses ringing (IQ75; a bare FCM 404 no longer revokes, a refused token does);
+the reconcile clears `away_ring_since` only for the absence it read; the token-only ring routes limit
+per IP and ringing call (IQ77); the answered ring's writes, `ring_cancel` and `ring_off` are tracked
+and awaited at shutdown (`AwayRingService.stop`); the push-device register runs in
+`withTransaction` and never rethrows the token's unique violation, and a failed end never fails
+"Stop ringing" or a removal; new metrics, three dashboard panels and a proposed pilot scorecard
+([`operations.md`](operations.md)); the rollback past 0036 in `DEPLOYMENT.md`; deterministic ring
+tests and regression tests for the races the QA review probed (§6.1 "Tests").
 
 **The fix pass is done** (two rounds, 2026-11-09, on top of P1 and P2): every finding of the
 independent engineering, product and QA reviews of P1 and P2, then of a review of the first round,
