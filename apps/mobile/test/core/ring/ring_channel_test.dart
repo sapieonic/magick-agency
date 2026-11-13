@@ -1,0 +1,43 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/ring/ring_channel.dart';
+
+/// The method channel's native → Dart side: an event is taken only while something in Dart
+/// listens; otherwise native is answered with an error, so it keeps what Dart has not heard (an
+/// answer stays in `pendingAnswer`).
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const codec = StandardMethodCodec();
+  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+  /// Native calls Dart; the envelope Dart answered with, decoded (throws on an error envelope).
+  Future<Object?> nativeCalls(String method, Object? args) async {
+    final reply = Completer<ByteData?>();
+    await messenger.handlePlatformMessage(MethodRingChannel.channelName, codec.encodeMethodCall(MethodCall(method, args)), reply.complete);
+    final data = await reply.future;
+    return codec.decodeEnvelope(data!);
+  }
+
+  const answer = {'call_id': 'call-1', 'offer_token': 'tok', 'session_id': 'sess-1'};
+
+  tearDown(() => messenger.setMockMethodCallHandler(const MethodChannel(MethodRingChannel.channelName), null));
+
+  test('an answer with nobody listening is refused, so native keeps it; once listened to, it is taken', () async {
+    messenger.setMockMethodCallHandler(const MethodChannel(MethodRingChannel.channelName), (call) async => null);
+    final channel = MethodRingChannel();
+    // A Dart → native call sets the native handler before anything listens.
+    await channel.getToken();
+    await expectLater(nativeCalls('ringAnswered', answer), throwsA(isA<PlatformException>().having((e) => e.code, 'code', 'no_listener')));
+
+    final events = <RingEvent>[];
+    final sub = channel.events.listen(events.add);
+    expect(await nativeCalls('ringAnswered', answer), isNull);
+    await Future<void>.delayed(Duration.zero);
+    expect(events.single, isA<RingAnswered>().having((e) => e.answer.callId, 'call id', 'call-1'));
+
+    await sub.cancel();
+    await expectLater(nativeCalls('ringEnded', {'call_id': 'call-1', 'reason': 'expired'}), throwsA(isA<PlatformException>()));
+  });
+}

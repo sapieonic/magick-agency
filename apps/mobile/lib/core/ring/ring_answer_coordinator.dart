@@ -156,7 +156,7 @@ class RingAnswerCoordinator extends Notifier<String?> {
         if (_ready) {
           unawaited(this.answer(answer, coldStart: false));
         } else {
-          _waiting = answer;
+          _wait(answer);
         }
       case RingEnded(:final callId, :final reason, :final reasonRaw):
         _received(callId, 'ended');
@@ -176,6 +176,19 @@ class RingAnswerCoordinator extends Notifier<String?> {
       case RingTokenChanged() || RingTestReceived() || RingStopTapped():
         break;
     }
+  }
+
+  /// Holds [answer] until the gate is ready. One ring rings at a time, so an answer for another
+  /// call means the one held is over on the phone: it is reported ended (`accept_failed`: it was
+  /// answered and never accepted) rather than dropped silently, so native lets its call go.
+  void _wait(RingAnswer answer) {
+    final held = _waiting;
+    _waiting = answer;
+    if (held == null || held.callId == answer.callId) return;
+    _log.warn('a held ring answer was replaced before the gate was ready', {'call_id': held.callId, 'by': answer.callId});
+    if (_taken.add(held.callId) && _taken.length > 32) _taken.remove(_taken.first);
+    RingTelemetry.expired(held.callId, reason: 'accept_failed');
+    unawaited(_channel.reportEnded(held.callId, RingEndReason.acceptFailed));
   }
 
   void _received(String callId, String via) {

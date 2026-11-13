@@ -44,7 +44,8 @@ abstract interface class RingChannel {
   Future<void> showMissedRing();
 
   /// What native tells Dart: `token`, `ringAnswered`, `ringEnded`, `testRingReceived`,
-  /// `stopRingingTapped`. Broadcast; an event nobody listens to is dropped.
+  /// `stopRingingTapped`. Broadcast. An event nobody listens to is answered with an error, so
+  /// native knows Dart did not take it (and keeps an answer for `pendingAnswer`).
   Stream<RingEvent> get events;
 }
 
@@ -231,6 +232,12 @@ final class MethodRingChannel implements RingChannel {
     if (event == null) {
       _log.warn('ring channel call not read', {'method': call.method});
       return null;
+    }
+    if (!_events.hasListener) {
+      // Nobody would hear it: an error tells native it was not taken, so it keeps what it keeps
+      // (an answer stays in `pendingAnswer`, an unheard miss is posted natively).
+      _log.warn('ring channel event with no listener', {'method': call.method});
+      throw PlatformException(code: 'no_listener', message: '${call.method}: nothing in Dart is listening yet');
     }
     _log.info('ring channel event', {'method': call.method});
     _events.add(event);

@@ -45,6 +45,22 @@ void main() {
     });
   });
 
+  test('two answers before the gate is ready: the first is reported ended, only the second is accepted', () {
+    fakeAsync((async) {
+      final h = harness(async, signedIn: false);
+      const other = RingAnswer(callId: 'call-0', offerToken: 'old-token', sessionId: 'sess-1');
+      h.start();
+      h.emit(const RingAnswered(other));
+      h.emit(const RingAnswered(_answer));
+      expect(h.channel.named('reportEnded'), ['reportEnded:call-0:accept_failed'], reason: 'native lets the replaced call go');
+      h.setGate(ready);
+      expect(h.requests('POST', _acceptPath), hasLength(1));
+      expect(h.requests('POST', '/proxy/agency/inbound/calls/call-0/ring/accept'), isEmpty);
+      expect(h.resumed.single.call.id, _callId);
+      h.dispose();
+    });
+  });
+
   test('answered with the app running: accepted at once', () {
     fakeAsync((async) {
       final h = harness(async)..start();
