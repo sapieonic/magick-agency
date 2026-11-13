@@ -887,6 +887,46 @@ previous image joins on, so going back past it needs no `migrate:down`; the one 
 an agent live in another tenant is then refused with a 500 rather than the named 409 until they
 leave there (the database still holds them to one live session).
 
+**Going back past Mode B** (`0036_inbound_ring.sql` and `0037_away_ring_sessions_index.sql`, ringing
+away agents' phones, 8.7). Their downs drop the push devices, the ring columns and the absence's
+start, but leave two things an older image does not know: session rows on `break` with
+`break_reason = 'away_ring'` (a break code the older console and app cannot word), and agent keys
+in Redis carrying `ring = 1` (and `push = 1` beside a ring in flight). In this order:
+
+1. Switch `agency_inbound_ring_enabled` off everywhere (Feature Flags: every account and tenant
+   override, and the global default) and wait two minutes: the reconcile (every 60 s) ends every
+   absence (`flag_off`), each phone gets its `ring_off` and drops its "rings this phone" notice,
+   and a ring in flight runs to its end first.
+2. Stop the server (`docker compose -f docker/docker-compose.prod.yml stop server`).
+3. From a checkout of **this** release (the older one has no down for these files), run the downs
+   twice, newest first, with the database's URL (`docs/operations.md` "Migrations"):
+
+   ```bash
+   cd packages/db
+   DATABASE_URL=postgresql://... pnpm migrate:down   # 0037
+   DATABASE_URL=postgresql://... pnpm migrate:down   # 0036
+   ```
+
+4. Rewrite what the downs leave, so the older image sees a plain pause:
+
+   ```sql
+   UPDATE agency_agent_sessions SET break_reason = 'device_away', updated_at = now()
+    WHERE left_at IS NULL AND break_reason = 'away_ring';
+   ```
+
+   ```bash
+   # REDIS_KEY_PREFIX as in docker/.env (empty by default); -a/-h/-p as for your Redis.
+   redis-cli --scan --pattern "${REDIS_KEY_PREFIX}agency:agent:*:state" \
+     | xargs -r -I{} redis-cli HDEL {} ring push
+   ```
+
+   A key without the fields is left as it was.
+5. Check out the older release and start it. Agents who were away come back on a break and press
+   Available, as after any deploy.
+
+Skipping step 1 leaves phones showing that they ring for inbound calls when nothing will ring
+them, until the agent opens the app.
+
 ### Changing configuration
 
 - A server setting (`docker/.env`):
