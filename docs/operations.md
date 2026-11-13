@@ -677,7 +677,7 @@ the pilot starts, not measured values.
 
 | Measure | How it is read | Proposed bar |
 |---|---|---|
-| Ring answer rate | `sum(increase(agency_inbound_rings_total{result="answered",$s}[7d])) / sum(increase(agency_inbound_rings_total{result!~"answered_elsewhere\|cancelled\|caller_left",$s}[7d]))`: rings the agent could have answered | at least 0.5 |
+| Ring answer rate | `sum(increase(agency_inbound_rings_total{result="answered",$s}[7d])) / sum(increase(agency_inbound_rings_total{result!~"answered_elsewhere\|cancelled\|caller_left",$s}[7d]))`: rings the agent could have answered (a "Stop ringing" during a ring counts as `declined`, IQ83) | at least 0.5 |
 | Caller p90 wait, before and after | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_wait_seconds_bucket{result="connected",$s}[7d])))`, the week before the flag against each pilot week; `agency_inbound_answered_wait_seconds{channel}` splits the pilot weeks by station and push | no worse than before; push p90 within the route's maximum wait |
 | Overflow share | `agency_inbound_overflows_total` over `agency_inbound_calls_total`, before and after | lower than before |
 | `ring_missed` ends per agent per day | `increase(agency_away_ring_ended_total{reason="ring_missed",$s}[1d])` divided by the agents opted in (the devices with ringing on); the audit trail (`Phone stopped ringing for inbound calls`, why: missed rings) names them | at most 1; an agent above it most days is asked whether ringing suits them |
@@ -1088,7 +1088,9 @@ caller of a tenant (or of the deployment) from reaching anyone.
   push sends by result; the INFO "Push not delivered" names the device row. **Do:** `unconfigured`:
   the FCM service account (`PUSH_FCM_SERVICE_ACCOUNT_JSON_B64`) is missing or unreadable after a
   deploy; `unavailable` / `rate_limited`: FCM's status and our egress to `fcm.googleapis.com` and
-  `oauth2.googleapis.com`; `unregistered`: phones reinstalled or signed out (each revokes its
+  `oauth2.googleapis.com` (an FCM 429 holds the phone until its `Retry-After`, and a held phone
+  pauses ringing again each time it is tried, as the 429 itself did: a long project quota shows as
+  repeated pauses, not as callers walked through the pool); `unregistered`: phones reinstalled or signed out (each revokes its
   device; nothing to do unless it is many).
 
 ### `agy-reports-pending-too-long`

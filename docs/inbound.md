@@ -879,13 +879,16 @@ agent's own: a failed push is the carrier's): the caller goes back to the head o
   `INVALID_ARGUMENT` on the token itself, APNs `DeviceTokenNotForTopic`). The device is revoked and
   the absence ends `revoked`; that caller never rings the agent again (nobody does, the device is
   gone), and the search goes on to the next phone at once.
-- **This device's, for now:** a `rate_limited` the sender scoped to the device (its own hold after
-  the device's `Retry-After`, or an APNs 429, which is per token). That caller never rings this
+- **This device's, for now:** a `rate_limited` the sender scoped to the device (an APNs 429, which
+  is per token, or a send held back by the `Retry-After` such a 429 set). That caller never rings this
   phone again and the search goes on to the next phone; the agent stays on `away_ring`, ringable
   for other callers once the hold ends.
 - **The push service's:** `unavailable` (5xx, 401/403, a bare 404, a timeout, a network error, a
   message refused as malformed), `unconfigured`, and an FCM 429 (`QUOTA_EXCEEDED` does not say
-  whether the device's or the project's quota was hit, so it is taken as the project's). Every
+  whether the device's or the project's quota was hit, so it is taken as the project's), including
+  a send held back by the `Retry-After` an FCM 429 set (a sender's hold answers the scope of the 429
+  that set it, so a project quota whose `Retry-After` outlives the pause pauses again, rather than
+  walking the caller through every held phone). Every
   phone would fail alike, so the agent stays on `away_ring` and ringable for this caller too, no new
   search runs, and all ringing in this connector pauses for `INBOUND_PUSH_RETRY_MS` (10 s): searches
   meanwhile skip every `push` candidate (a station agent is still offered), and the republish after
@@ -917,8 +920,12 @@ each other's answers).
   `accepted_at` set) after `ready`, then the bind once accepted (`bindAcceptedRing`). The state
   stays `reserved` throughout (no `ring` cleared, no reason rewritten, no `ring_off`). An attach with
   `caps=inbound` during a ring not yet answered (the agent opened the app by its icon) is an
-  implicit answer and accept: it binds at once and the phone is sent `ring_cancel`. An attach by a
-  build without `caps=inbound` ends the ring `cancelled` and returns the agent as Mode A does.
+  implicit answer and accept: it binds at once and the phone is sent `ring_cancel`. An attach
+  without `caps=inbound` (an older build, or the app past its "Stop ringing" bound, IQ79) during a
+  ring, answered or not, never answers it: the ring ends `cancelled` (never a miss, `ring_cancel`
+  sent), and the attach is the agent's return, so the absence ends as `device_away` keeping its start
+  (IQ76, IQ83), never Mode A's return to the pool: the station gets that `agent_state` frame before
+  its `ready`, and `ready` says `break`/`device_away` (the row re-read after the let-go).
 - **A socket close inside the grace** does not cancel an accepted ring: it waits for a re-attach
   until the grace ends (`accept_lapsed`). `holdsPushOffer` is true from the ring until the bind.
 - **The bind:** `ring_result = answered`, the missed rings reset and the absence over
@@ -931,16 +938,35 @@ each other's answers).
 **Declining (IQ70, N4).** `decline {offer_token, reason}` (token only; `reason` `declined` or
 `busy_on_phone`) is valid until `accept`: the ring ends with that result, never a miss; the caller
 goes back to the head of the queue and is never rung by that agent again; the agent goes back to
-`away_ring`. A `device_away` the app asks for while the ring holds the session `reserved` (the
-away notification's "Stop ringing", IQ79) is queued behind it and not applied by the decline (nor by
-any other end that returns the agent to `away_ring`): `releaseRungAgent` returns the agent to `away_ring`
-(`AwayRingService.releaseInbound`, which never reads the break queue), and the app's next
-`device_away`, asked each second for up to 10 s, finds `away_ring` and switches it to `device_away`.
-Audited `agency_inbound_call.ring_declined` with the agent the ring was for as the
+`away_ring`. Audited `agency_inbound_call.ring_declined` with the agent the ring was for as the
 actor (the token was theirs), ids only. After `accept` it is `already_accepted`, and the agent's
 hang-up on the station is the way out: an offer not yet bound is declined (`declined`, not a miss).
 Android declines `busy_on_phone` by itself when a cellular call is on (IQ70); the server never rings
 a `phone_call` break.
+
+**`device_away` during a ring (IQ83; the device-away route, `api/routes/agency/device-away.ts`).**
+The app asks `POST /sessions/:id/break {reason: 'device_away'}` for the away notification's "Stop
+ringing" (IQ79), each second for up to 10 s, before its station attaches. While a push offer holds
+the session `reserved`:
+
+- **Not yet answered:** the agent saying no to that ring. The route asks the away break
+  (`AwayRingService.declineRingForDeviceAway`), which asks the connector
+  (`declineRingForDeviceAway` → `RingOffers.declineForDeviceAway`, on the call's chain): the ring
+  ends through `RingOffers.end` as `declined`, exactly as the token-only decline (never a miss,
+  `ring_cancel` sent, the caller back at the head of the queue, searched for again and never rung on
+  this phone again), and the absence then ends as `device_away` keeping its start (`offline: false`;
+  no `ring_off`: the app asked; counted `returned`). The route answers applied: `break`/`device_away`
+  with the absence's start as `since`, nothing queued. Not audited as a decline (the route's
+  `agency_session.break_started` row records the ask).
+- **Answered or accepted:** the agent taking the call. The pause is queued behind it as behind any
+  call (`pending_state: 'break'`) and applies at the release after the call's outcome.
+- **A pause still queued when a ring ends unbound** (one asked after `answering`, then the ring
+  declined or lapsed) is settled by that end, not by the release after the agent's next call:
+  `AwayRingService.releaseInbound` takes an away pause queued for the session; a queued
+  `device_away` ends the absence as `device_away` keeping its start (unless the end ends it with a
+  reason of its own), and a queued `away_ring` is what the agent is back on. The switch
+  `away_ring → device_away` takes any left. So a queued `device_away` never survives `/available`
+  (which leaves the queue alone) to ride on every `ready` and pause the agent after their next call.
 
 **Every other end of a ring (`RingOffers.end`, the one end of every ring).** `expired` (the ring timer), `accept_lapsed` (accepted or
 answered, not bound within the grace), `push_failed`, `caller_left`, the lease lost,
@@ -952,7 +978,9 @@ session, then the mirror `restoreAwayRing`), and puts the caller back at the hea
 searched again (or leaving at the maximum wait); `caller_left` (the bridge's `ended`, after the
 call is settled) takes the same end, with the ring's result written on the ended row and nothing
 requeued. With an OPEN station attached here (an accepted
-ring whose station came), Mode A's `releaseAgent` runs instead. A ring that ends past the absence's
+ring whose station came), Mode A's `releaseAgent` runs instead, unless the end also ends the
+absence (the take-over, an attach without `caps=inbound`): then the absence's end, whatever is
+attached. A ring that ends past the absence's
 maximum age returns the agent and then ends the absence `max_age`. A session the spine says holds
 another unsettled call is never rung again: its absence ends. A requeue whose write throws still
 releases the agent and requeues the caller in memory (never a push offer left with no timer); the
@@ -1017,15 +1045,17 @@ committed, and the next reconcile ends the absence:
 |---|---|
 | `ring_missed` | the second missed ring in a row (or the reconcile finding an absence at the maximum whose own end was lost) |
 | `revoked` | the device removed (`DELETE`), or its token refused for good by FCM or APNs (`unregistered`, `invalid`) |
-| `opted_out` | the agent turned ringing off for this phone on the Me card (`PATCH ring_enabled=false`), the only opt-out. The away notification's "Stop ringing" is not one: it ends this absence through the app's `device_away` (the switch, below; IQ79) |
+| `opted_out` | the agent turned ringing off for this phone on the Me card (`PATCH ring_enabled=false`), the only opt-out. The away notification's "Stop ringing" is not one: it ends this absence through the app's `device_away` (the switch, or a ring not yet answered declined first, below; IQ79, IQ83) |
 | `flag_off` | the reconcile finds a flag off for the account |
 | `max_age` | the absence past `AGENCY_AWAY_RING_MAX_MS` |
 | `taken_over` | another device took the station (OS3): the claim clears `away_ring_since` and rewrites `break/away_ring` to `device_away` in the same statement, Redis's `ring` is cleared, and the old device is told. Also sent, with no audit, when the session itself ends under a parked phone: `POST /sessions/:id/leave` from another device (a ring in flight refuses the leave first), and OS7's `endIdleSessionElsewhere` ending the session in another tenant (Redis `ring = 1`, or the row's `away_ring_since` set when the key has lapsed). OS7 still counts `away_ring` as idle: the agent is at a station in this tenant now, and keeping the absence would lock them out for up to `AGENCY_AWAY_RING_MAX_MS`; a ring in flight holds the session (`reserved`, `findCallForSession`). Without the push the phone's "rings this phone" notification would outlive the session |
 
-Two ends send nothing and are not audited: the agent's return (a station attach or a join over
-`break, ring = 1`: `device_away` on screen, and the app's `/available` follows) and the app asking
-`device_away` while on `away_ring` (the switch; this is how the away notification's "Stop ringing"
-ends the absence, IQ79, with no route of its own). A ring in flight is never ended by a state write
+Three ends send nothing and are not audited, each counted `returned`: the agent's return (a station
+attach or a join over `break, ring = 1`, or an attach without `caps=inbound` during a ring:
+`device_away` on screen, and the app's `/available` follows), the app asking `device_away` while on
+`away_ring` (the switch; this is how the away notification's "Stop ringing" ends the absence, IQ79,
+with no route of its own), and the app asking `device_away` during a ring not yet answered (the ring
+declined first, IQ83). A ring in flight is never ended by a state write
 (N1): the end goes through the connector's `cancelRingForAwayRingEnd` on the call's chain, which
 cancels a ring not yet answered (`cancelled`; `answered_elsewhere` for a take-over) and then ends the
 absence; an answered ring runs to its end and the next reconcile ends the absence, except on a
@@ -1045,7 +1075,7 @@ script and its mirror restored; a mirror the startup reaper wrote `offline` is r
 `away_ring` with nothing in flight only clears the mirror's key, and only while it is still the
 absence the pass read (a new absence entered while the pass awaited is kept). A non-campaign
 session found on an absence (unreachable: `away_ring` is refused to one and a live row never changes
-its kind) is ended with no `ring_off`. Passes never overlap. The shutdown stops the timer first,
+its kind) is ended with no `ring_off`, and not counted (no label says it). Passes never overlap. The shutdown stops the timer first,
 then waits for the pass and the `ring_off` pushes in flight (`AwayRingService.stop`), before the
 runtime stops.
 
@@ -1054,8 +1084,9 @@ value), `agency_inbound_ring_answer_seconds` (the ring's start to `answering`),
 `agency_inbound_offers_total{result,client,channel}` (`channel` `station` or `push`; a ring's
 offer ends `connected`, `declined` (`busy_on_phone` too), `unanswered` (`expired`, `accept_lapsed`,
 `push_failed`), `caller_left`, `answered_elsewhere` or `cancelled`),
-`agency_away_ring_ended_total{reason}` (every end of an absence: the `ring_off` reasons and
-`returned`), `agency_inbound_ring_bind_seconds` (answered on the phone to bound: the cold start's
+`agency_away_ring_ended_total{reason}` (every end of an absence: the `ring_off` reasons, and
+`returned` for the agent's return and the app's own `device_away`; an end no label says truly, the
+reconcile's non-campaign end or a stale call row's, is not counted), `agency_inbound_ring_bind_seconds` (answered on the phone to bound: the cold start's
 headroom inside the 15 s grace), `agency_inbound_answered_wait_seconds{channel}` (a connected
 caller's wait, by the channel that connected them), and the platform's
 `agency_push_sends_total{platform,result}` and `agency_push_send_seconds{platform}`. The alert `agy-inbound-ring-push-failed` fires when more than
@@ -1075,12 +1106,19 @@ push outage that pauses ringing instead of walking the pool (on the connector's 
 refused token that revokes and moves on with no pause for anyone, a phone held back alone, a
 requeue that throws, an agent at the maximum misses, the maximum wait inside an answered grace, a
 device removed mid-ring, a tap behind the ring timer, a caller leaving inside the grace, a crash
-mid-ring and a reconcile tick during a ring), `away-ring-state.test.ts` also
+mid-ring, a reconcile tick during a ring, and an attach without `caps=inbound` mid-ring ending the
+absence as `device_away`), `away-ring-state.test.ts` also
 pins the renew that never touches `away_ring`, an end the reconcile half-saw, and a queued
 `away_ring` applied from `offline` and over no key; `end-idle-session-elsewhere.test.ts` (unit) the
 OS7 `ring_off`,
 `api/away-ring-routes.test.ts` and `api/inbound-ring-routes.test.ts` (the routes, refusals, the
-uniform 404, the rate limits, the audits, the leave that tells a parked phone), `packages/db`
+uniform 404, the rate limits, the audits, the leave that tells a parked phone; IQ83: `device_away`
+during a ring not yet answered declines it, during an answered one queues behind the call, a pause
+queued behind a ring that ends unbound applies at its end so the next call's release is to
+`available`, the switch leaves nothing queued, and a real station socket attaching without
+`caps=inbound` mid-ring gets `device_away` before `ready`), `device-away-break.test.ts` (unit: the
+route's decline, queue and take), `agency-campaign-stats.test.ts` (the floor signature moving on a
+switch that keeps `state_since`), `packages/db`
 `inbound-ring-migration.test.ts` and `away-ring-sessions-index-migration.test.ts` (0037).
 Wall-clock lane: `telephony/inbound-ring-e2e.test.ts` (mock Plivo, the mock push carrier and a real
 station socket: answered with audio both ways, declined, expired on the real 20 s window).
@@ -1821,6 +1859,19 @@ the `InboundAwayRing` port. Drift it fixed: an agent at the maximum misses was a
 `away_ring` and then neither rung nor ended (now refused `ring_not_allowed`, and ended by the
 reconcile), and the search counted a session past its maximum age as ringable until the reconcile
 ran.
+
+**"Stop ringing" on the server** (2026-11-13, IQ83 **pending Manas**; server, observability): a
+`device_away` asked during a ring not yet answered declines it through the ring's one end (not a
+miss) and ends the absence as `device_away`, answered applied; during an answered ring it queues
+behind the call. A pause queued behind a ring is settled when the ring ends unbound, and the switch
+takes any left: before, a queued `device_away` outlived the ring and `/available` and paused the agent
+after their next call. An attach without `caps=inbound` during a ring ends it `cancelled` and the
+absence as `device_away` (the agent's return), not Mode A's return to the pool, and `ready` names
+that break. A sender's `Retry-After` hold answers the scope of the 429 that set it (an FCM quota is
+the service's, so the ring pauses instead of passing held phones over, IQ75). An absence's end with
+no reason is counted `returned` only for the return and the app's own `device_away`. Home's floor
+signature moves on a state change that keeps `state_since` (the switch, IQ76). §6.1 "`device_away`
+during a ring".
 
 **The fix pass is done** (two rounds, 2026-11-09, on top of P1 and P2): every finding of the
 independent engineering, product and QA reviews of P1 and P2, then of a review of the first round,
