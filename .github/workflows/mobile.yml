@@ -26,7 +26,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # One pinned SDK for CI and every developer (apps/mobile/README.md).
+  # One pinned SDK for CI and every developer (apps/mobile/README.md). mobile-release.yml reads
+  # it from here (keep it on its own line, `FLUTTER_VERSION: X.Y.Z`).
   FLUTTER_VERSION: 3.47.7
 
 jobs:
@@ -133,6 +134,42 @@ jobs:
       - name: App Kotlin unit tests
         working-directory: apps/mobile/android
         run: ./gradlew :app:testDevDebugUnitTest --no-daemon
+
+  # The release build mobile-release.yml publishes (R8 minify and resource shrinking), compiled on
+  # main before a release is tagged, so a shrinker problem is found while it can still be fixed in
+  # the release. Debug-signed on purpose and not kept: only the compile is checked. Main only, as
+  # it adds a full build. The placeholder env is enough to compile.
+  android-release:
+    name: Android release build (staging, debug-signed)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: analyze-test
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Android platform 37
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" > /dev/null
+          [ -e "$ANDROID_HOME/platforms/android-37" ] || ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
+      - run: >-
+          flutter build apk --release --flavor staging
+          --dart-define-from-file=env/staging.json
+          --build-number=${{ github.run_number }}
+        env:
+          ORG_GRADLE_PROJECT_allowDebugSigning: 'true'
 
   ios:
     name: iOS build (no signing)

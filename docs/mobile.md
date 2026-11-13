@@ -1147,11 +1147,12 @@ packages/
 
 ## Builds and releases
 
-- **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml`.
+- **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml` (`mobile-release.yml` reads it from there).
 - **CI:**
   - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart).
   - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`) and the app's own (Mode B's ring logic, `./gradlew :app:testDevDebugUnitTest`).
   - An unsigned iOS build on `main`.
+  - On `main`, a release build of the `staging` flavour (R8 minify and resource shrinking, debug-signed, not kept): the build the release APK uses, compiled before a release is tagged.
   - A signed `staging` release APK on every `mobile` release, attached to its GitHub Release ("The release APK" below).
 - **Android:**
   - minSdk 28, compileSdk 37 (`permission_handler_android` requires it), targetSdk Flutter's default.
@@ -1170,32 +1171,65 @@ When release-please publishes a `mobile-vX.Y.Z` release, `.github/workflows/rele
 calls `.github/workflows/mobile-release.yml`, which builds a release-signed APK of the `staging`
 flavour (`com.magickagency.agent.staging`, "MA Agent Staging") and attaches
 `magick-agency-agent-staging-X.Y.Z.apk` and its `.sha256` to that GitHub Release (also kept as a
-workflow artifact for 90 days). Anyone with access to the repository downloads it from the
-release page and installs it (Android asks to allow installs from that source once). To build an
-existing release, or rebuild one: Actions → "Mobile release APK" → Run workflow, with the tag;
-a rebuild replaces the release's APK.
+workflow artifact for 90 days, or less if the repository's retention setting is lower). To find
+it, open the repository's Releases and pick the newest `mobile-v…` one: in this multi-component
+repository the "Latest" release is often another component's. Android asks once to allow installs
+from the browser or file manager it was opened from.
 
+- **By hand:** Actions → "Mobile release APK" → Run workflow, with the tag, builds an existing
+  release or rebuilds one (its APK is replaced). If the job fails inside a release-please run, use
+  "Re-run failed jobs" (it keeps that run's outputs) or run it by hand: "Re-run all jobs" re-runs
+  release-please, which releases nothing the second time, so the APK job is skipped.
 - **Version:** `versionName` is the tag's version; `versionCode` is `major × 1 000 000 + minor ×
   1 000 + patch` (0.12.0 is 12000), so it rises with every release and each APK installs over the
-  one before. The job refuses a tag whose `pubspec.yaml` version differs.
-- **Config:** the committed `env/staging.json` holds placeholders, so the build reads
-  `MOBILE_ENV_STAGING` (an Actions secret, or else a variable): the whole env JSON, with the same
-  keys as `env/staging.json`. The job refuses one without `"FLAVOR": "staging"` and a real
-  `https://` `API_ORIGIN`, and warns for each missing key. Without the Firebase values sign-in and
-  push do not work.
-- **Signing:** Actions secrets `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.jks`),
-  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, written to
-  `android/key.properties` for the build and removed after it. Keep the keystore safe: an APK
-  signed with another key cannot be installed over one signed with this. The job refuses a
-  debug-signed APK and puts the signer's certificate SHA-256 in its summary. If Google sign-in is
-  on, that SHA-256 needs adding to the Android app in the Firebase project.
-- **Invite links:** the `staging` flavour's `appLinkHost` is still `staging.agency.example.invalid`
-  (`android/app/build.gradle.kts`), so invite links open the browser, not this APK, until it is set.
+  one before; a rebuild of a tag keeps its code. The `+N` release-please keeps in `pubspec.yaml` is
+  not used. Keep this scheme for any later staging or production build: a build numbered by the
+  `+N` (14, 15, …) could not be installed over these. The job refuses a tag whose `pubspec.yaml`
+  version differs, and a version the scheme cannot hold (major above 2099, minor or patch above 999).
+- **SDK:** the Flutter version is read from `FLUTTER_VERSION` in `mobile.yml` at the tag, so there is
+  one pin and an older tag builds with the SDK it was tested on.
+- **Config:** the committed `env/staging.json` holds placeholders, so the build reads the Actions
+  **variable** `MOBILE_ENV_STAGING` (a secret of that name works too, but GitHub advises against
+  JSON secrets and nothing in it is secret: the values ship inside the APK). It is the whole env
+  JSON, with the keys of `env/staging.json` and the values of `apps/mobile/dev-setup.md`
+  ("Configure the app"), on one line or several. `FIREBASE_APP_ID_ANDROID` is the App ID of an
+  Android app registered for `com.magickagency.agent.staging` in the Firebase project. The job
+  refuses it without `"FLAVOR": "staging"`, a real `https://host[:port]` `API_ORIGIN`, or any of
+  `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID_ANDROID` (without them the APK
+  signs nobody in), and warns without `FIREBASE_MESSAGING_SENDER_ID` (no ring push while away),
+  `GOOGLE_SERVER_CLIENT_ID` (no Google sign-in) or `POSTHOG_KEY` (no telemetry).
+- **Signing:** Actions secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+  `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` (printable ASCII, no leading space), passed to
+  the build by name, never inherited. The job opens the keystore with them before the build, so a
+  wrong one fails in seconds; it writes `android/key.properties` only for the build and removes it
+  after, and refuses a debug-signed APK. Make the key once and keep it safe: an APK signed with
+  another key cannot be installed over one signed with this.
+
+  ```bash
+  keytool -genkeypair -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias release
+  base64 -w0 release.jks   # macOS: base64 -i release.jks
+  ```
+
+- **Fingerprints:** the job's summary prints the signing certificate's SHA-1 and SHA-256. Google
+  sign-in needs the **SHA-1** added to the `com.magickagency.agent.staging` Android app in Firebase
+  (as `dev-setup.md` says for the debug key). App Links need the **SHA-256** on the staging console
+  host (`MOBILE_ANDROID_PACKAGE=com.magickagency.agent.staging`, `MOBILE_ANDROID_CERT_SHA256`,
+  `docker/mobile-app-links.sh`) and the staging flavour's `appLinkHost`, which is still
+  `staging.agency.example.invalid` (`android/app/build.gradle.kts`): until both are set, invite
+  links open the browser, not this APK.
+- **Concurrency:** the build runs inside the release-please run and holds its concurrency group
+  (10–20 minutes), so release-PR updates for pushes in that time wait for it.
 
 ## Not verified yet
 
 - **iOS has not compiled yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. The Firebase pin ("Builds and releases", iOS) fixes the resolution: SwiftPM reproduced the conflict with the plugins' constraints and resolved them with the pin. That check ran on Linux, so no Swift or Objective-C was compiled. The next `main` build is the first compile, and the Swift engine and CallKit code (the Swift ringback written to the shared vectors and CallKit for soft-phone calls included) is reviewed against the SDK headers only until it passes.
 - **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written, reviewed and then fixed (the filters sheet, the copy button, the options read, the three wire additions) in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (run on changes to `apps/mobile`, `packages/contracts` and `packages/domain/src/customer-search-number.ts`) is the first run.
+- **The release APK pipeline has not run (2026-11-13).** `mobile-release.yml` and the release
+  build on `main` were written and their scripts tested locally (the tag, secret and config checks;
+  the keystore check and `key.properties` read back through `java.util.Properties`), but no release
+  (R8-minified) build of the app has run anywhere, nor the upload. The first push to `main` after
+  merging runs the release build; the first APK needs `MOBILE_ENV_STAGING` and the signing secrets,
+  then a run by hand for `mobile-v0.12.0` or the next mobile release.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
   with the contract's sample frames and answers, played in the server's own frame order, not

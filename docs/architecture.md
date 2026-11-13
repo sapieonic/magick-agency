@@ -1069,4 +1069,7 @@ package is not in scope skips its steps.
 `.github/workflows/pr-title.yml` fails a PR whose title is not a Conventional Commit, and
 `.github/workflows/release-please.yml` runs release-please on every push to `main`: one release PR
 with each component's next version and changelog, and tags plus GitHub Releases once it is merged
-(B24; [`operations.md`](operations.md), "Releases and versioning").
+(B24; [`operations.md`](operations.md), "Releases and versioning"). `.github/workflows/mobile.yml`
+analyses, tests and builds the Flutter app (`apps/mobile`), and on a mobile release
+`release-please.yml` calls `.github/workflows/mobile-release.yml`, which attaches a signed staging
+APK to that GitHub Release ([`mobile.md`](mobile.md), "The release APK").

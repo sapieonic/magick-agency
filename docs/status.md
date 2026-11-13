@@ -1454,6 +1454,28 @@ Evidence, local, 2026-11-13: `terraform validate` on `aws/state`, `aws/terraform
 Manas's machine. **Not verified:** a no-change plan from a second machine; the Grafana module has
 never been applied, so its key is empty until its first apply.
 
+### Mobile release APK 2026-11-13
+
+Manas: after a mobile release, CI should publish an APK anyone can download and install. On each
+`mobile-vX.Y.Z` release, `release-please.yml` now calls `mobile-release.yml`, which builds a
+release-signed `staging` APK and attaches it, with its SHA-256, to the GitHub Release (and keeps it
+as a 90-day workflow artifact); it also runs by hand for an existing tag. `versionCode` comes from
+the version (`major × 1 000 000 + minor × 1 000 + patch`). The build config comes from the Actions
+variable `MOBILE_ENV_STAGING` and signing from four `ANDROID_KEY*` secrets; the job refuses a
+missing or placeholder config, an APK without Firebase, a keystore that does not open, and a
+debug-signed APK. `mobile.yml` now also compiles that release build (R8, debug-signed) on `main`,
+before a release is tagged. Detail: [`mobile.md`](mobile.md), "The release APK".
+
+Evidence, local, 2026-11-13: `actionlint` clean on every workflow; `pnpm test:tooling` 16 and
+`pnpm test:release` 10 pass; the job's scripts run against test cases (tags with leading zeros,
+out-of-range and injected tags refused; each config rule; a keystore with a backslash, `:`, `=`,
+`#` and `\u` in its password read back exactly through `java.util.Properties`; a wrong password,
+alias, base64 or keystore refused). **Not verified:** any run on GitHub Actions, so no release
+(R8-minified) build of the app has run anywhere yet, nor the signature check or the upload. Open:
+set `MOBILE_ENV_STAGING` and the signing secrets ([`operations.md`](operations.md), "Repository
+settings it needs"), then run "Mobile release APK" by hand for `mobile-v0.12.0`; add the key's
+SHA-1 to a Firebase Android app for `com.magickagency.agent.staging`.
+
 ## Test counts
 
 **Mode B, 2026-11-13 (final, after the cleanup pass).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`
