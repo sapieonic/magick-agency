@@ -630,6 +630,15 @@ export class AwayRingService {
       summary.skippedInFlight++;
       return;
     }
+    if (row.kind !== 'campaign') {
+      // Unreachable: `away_ring` is refused to a non-campaign session (`refusalFor`), a live row
+      // never changes its kind, and such a session is never rung (`findRingableInAccount`). Ended
+      // all the same, with no `ring_off`: no reason the app words would be true (`flag_off` would
+      // tell the agent the account switched ringing off).
+      log.warn({ sessionId: row.id, kind: row.kind }, 'A non-campaign session was on away-ring; ending it');
+      if ((await this.end(row.id, null)) === 'ended') summary.ended++;
+      return;
+    }
     const reason = await this.endReasonFor(row, now, allowed);
     if (reason) {
       if ((await this.end(row.id, reason)) === 'ended') summary.ended++;
@@ -673,7 +682,7 @@ export class AwayRingService {
       });
       allowed.set(flagKey, ok);
     }
-    if (!(await ok) || row.kind !== 'campaign') return 'flag_off';
+    if (!(await ok)) return 'flag_off';
     if (row.device_platform === null || row.device_revoked || !row.device_has_token) return 'revoked';
     if (!row.device_ring_enabled) return 'opted_out';
     return null;

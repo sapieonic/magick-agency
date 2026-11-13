@@ -623,6 +623,16 @@ describe('AwayRingService', () => {
     expect(await row(s.id)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
   });
 
+  it('reconcile ends a non-campaign session found on an absence with no ring_off: no reason the app words would be true', async () => {
+    await device();
+    const s = await onAwayRing();
+    await getTestPool().query(`UPDATE agency_agent_sessions SET kind = 'softphone', campaign_id = NULL WHERE id = $1`, [s.id]);
+    expect(await service().svc.reconcile()).toMatchObject({ ended: 1 });
+    expect(await row(s.id)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sender.sent).toEqual([]);
+  });
+
   it("reconcile clears a stale key when Redis is off away_ring with nothing in flight", async () => {
     await device();
     const s = await onAwayRing();
@@ -814,6 +824,11 @@ describe('the runtime with a session on away_ring (no station socket)', () => {
     const s = await awayRingFor(rt);
     expect(await rt.dialer.releaseAgent(s.id)).toEqual({ state: 'break', result: 'ok' });
     expect(await rt.agents.get(s.id)).toMatchObject({ state: 'break', ring: true });
+    // Kept while reserved for a push offer: the release answers the state it kept, not `break`.
+    expect((await rt.agents.reserveForInbound(s.id, 'ib-1', ['break'])).ok).toBe(true);
+    expect(await rt.dialer.releaseAgent(s.id)).toEqual({ state: 'reserved', result: 'ok' });
+    expect(await rt.agents.get(s.id)).toMatchObject({ state: 'reserved', inboundCallId: 'ib-1' });
+    expect(await rt.agents.releaseInboundToAwayRing(s.id, 'ib-1', MAX_AGE)).toBe(true);
     await rt.agents.set(s.id, 'break');
     expect(await rt.dialer.releaseAgent(s.id)).toEqual({ state: 'offline', result: 'ok' });
   });

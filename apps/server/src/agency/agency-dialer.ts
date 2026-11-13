@@ -2096,7 +2096,11 @@ export class AgencyDialer {
     if (!stillHere) {
       this.breaks.cancel(sessionId);
       const wrote = await this.agents.setOfflineUnlessAway(sessionId, false);
-      if (wrote === 'kept') return { state: 'break', result: 'ok' };
+      if (wrote === 'kept') {
+        // Kept on `away_ring` (`break`), or reserved for a push offer (`reserved`): the real state.
+        const kept = await this.agents.get(sessionId);
+        return { state: kept?.state === 'reserved' ? 'reserved' : 'break', result: 'ok' };
+      }
       await mirrored(agencyAgentSessionRepository.setState(sessionId, 'offline'), sessionId, 'Could not mirror released agent state');
       return { state: 'offline', result: wrote === 'offline' ? 'ok' : 'unavailable' };
     }

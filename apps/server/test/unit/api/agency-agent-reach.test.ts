@@ -204,7 +204,9 @@ const EXPECTED_AGENT_REACHABLE = [
 
 /**
  * Mode B (IQ71): native Android code posts these at the tap, with the offer token as their only
- * authority (no Firebase session). They are the agency's only HTTP routes without a session; each
+ * authority (no Firebase session). They are the agency's only HTTP routes without a session, and the
+ * only public routes that read the runtime (the connector's `ringTenancy`) before `callCore`
+ * (docs/seams.md §4; pinned in `routes/proxy-agency-inbound-ring.routes.test.ts`). Each
  * answers anything but a live ring's token with the uniform 404 `ring_not_offered`, pinned below.
  */
 const TOKEN_ONLY_ROUTES = [

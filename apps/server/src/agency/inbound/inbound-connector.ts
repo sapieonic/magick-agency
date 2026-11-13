@@ -779,7 +779,8 @@ export class InboundConnector {
       id: call.id,
       record: call,
       route,
-      accountKey: accountKeyOfCall(call.tenant_id, call.account_id!),
+      // The route's account: always set (the spine's own column is nullable).
+      accountKey: accountKeyOfCall(call.tenant_id, route.account_id),
       phase: 'preamble',
       sessionId: null,
       agentUserId: null,
@@ -1606,7 +1607,7 @@ export class InboundConnector {
   ringTenancy(callId: string): { tenantId: string; accountId: string } | null {
     const held = this.calls.get(callId);
     if (!held) return null;
-    return { tenantId: held.record.tenant_id, accountId: held.record.account_id! };
+    return { tenantId: held.record.tenant_id, accountId: held.route.account_id };
   }
 
   /**
@@ -1625,12 +1626,13 @@ export class InboundConnector {
       const ring = this.ringFor(callId, token);
       if (!ring) return notOffered;
       if (ring.accepted) return { ok: false as const, code: 'already_accepted' as const };
-      if (!ring.answering) {
+      let answeredAt = ring.answeredAt;
+      if (!ring.answering || answeredAt === null) {
         // The ring timer fired (its expiry is queued behind this step): too late.
         if (!ring.ringTimer) return notOffered;
-        await this.markAnswering(held, ring);
+        answeredAt = await this.markAnswering(held, ring);
       }
-      return { ok: true as const, callId, acceptBy: new Date(ring.answeredAt! + this.acceptGraceMs) };
+      return { ok: true as const, callId, acceptBy: new Date(answeredAt + this.acceptGraceMs) };
     }) ?? notOffered;
   }
 
@@ -1653,7 +1655,7 @@ export class InboundConnector {
       await this.endRing(held, ring.sessionId, reason);
       return {
         ok: true as const, callId, sessionId: ring.sessionId, agentUserId,
-        tenantId: held.record.tenant_id, accountId: held.record.account_id!,
+        tenantId: held.record.tenant_id, accountId: held.route.account_id,
       };
     }) ?? notOffered;
   }
@@ -1893,13 +1895,17 @@ export class InboundConnector {
     });
   }
 
-  /** The ring was answered (on the call's chain): the ring timer stopped, `accepted_at`, the grace. */
-  private async markAnswering(held: HeldCall, ring: RingState): Promise<void> {
+  /**
+   * The ring was answered (on the call's chain): the ring timer stopped, `accepted_at`, the grace.
+   * Answers the instant it was answered (set before any await).
+   */
+  private async markAnswering(held: HeldCall, ring: RingState): Promise<number> {
     if (ring.ringTimer) clearTimeout(ring.ringTimer);
     ring.ringTimer = null;
     ring.answering = true;
-    ring.answeredAt = this.now();
-    trackInboundRingAnswer((ring.answeredAt - ring.startedAt) / 1000);
+    const answeredAt = this.now();
+    ring.answeredAt = answeredAt;
+    trackInboundRingAnswer((answeredAt - ring.startedAt) / 1000);
     ring.acceptTimer = setTimeout(() => {
       ring.acceptTimer = null;
       void this.serial(held.id, async () => {
@@ -1908,12 +1914,13 @@ export class InboundConnector {
       });
     }, this.acceptGraceMs);
     ring.acceptTimer.unref?.();
-    const at = new Date(ring.answeredAt);
+    const at = new Date(answeredAt);
     const row = await agencyInboundCallRepository.markRingAnswered(held.id, ring.sessionId, at).catch((err: unknown) => {
       log.warn({ err, inboundCallId: held.id }, 'Could not stamp an answered ring');
       return null;
     });
     held.record = row ?? { ...held.record, accepted_at: held.record.accepted_at ?? at };
+    return answeredAt;
   }
 
   /** N5: a station with `caps=inbound` attached during a ring (on the call's chain): accepted, and the phone told to stop. */

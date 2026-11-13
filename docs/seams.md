@@ -282,9 +282,14 @@ only through `PushSender`:
 - `send(device, payload, { ttlMs })`: `device` is a `PushSenderDevice` (the push device row's `id`,
   `platform`, `fcm_token`, `voip_token`; `pushTokenOf` in `@magick-agency/db/models/push-device.model`
   picks the token), `payload` the contract's `AgencyRingPush` (IQ61: never a name or a number),
-  `ttlMs` how long the carrier may hold it. It answers `{ ok: true }` or `{ ok: false, reason }`, the
-  reason one of the contract's `AGENCY_PUSH_FAILURE_REASONS` (`unregistered`, `invalid`,
-  `rate_limited`, `unavailable`, `unconfigured`), and never throws.
+  `ttlMs` how long the carrier may hold it. It answers `{ ok: true }` or `{ ok: false, reason,
+  scope? }`, the reason one of the contract's `AGENCY_PUSH_FAILURE_REASONS` (`unregistered`,
+  `invalid`, `rate_limited`, `unavailable`, `unconfigured`), and never throws. Whose trouble a
+  failure is (`pushFailureScope`): `device` for `unregistered` and `invalid` (a token refused for
+  good, which revokes the device: `pushFailureRevokes`) and for a failure the sender scoped to one
+  device (`scope: 'device'`: its own Retry-After hold, an APNs 429); `service` for the rest
+  (`unavailable`, `unconfigured`, an FCM 429). Only a `service` failure pauses ringing for the whole
+  process.
 - `configured(platform)`: whether the deployment has that platform's credentials.
 
 `setPushSender` / `getPushSender` / `resetPushSender` (tests), as §3.5's router. Until an
@@ -307,19 +312,23 @@ at load, so a broken credential fails boot naming the env key, never its value):
 
 - **FCM HTTP v1** (`fcm-sender.ts`): an RS256 assertion traded at `oauth2.googleapis.com` for an
   access token cached 55 minutes (single flight; a 401 drops it and sends once more); a data-only
-  message (`android.priority: HIGH`, `android.ttl` the ring window). 404/`UNREGISTERED` →
-  `unregistered`; 429/`QUOTA_EXCEEDED` → `rate_limited`; `SENDER_ID_MISMATCH` and other 4xx →
-  `invalid`; 401/403, 5xx, network, a failed token exchange and the 5 s timeout → `unavailable`.
+  message (`android.priority: HIGH`, `android.ttl` the ring window). `UNREGISTERED` →
+  `unregistered` (a bare 404 never revokes: `unavailable`); 429/`QUOTA_EXCEEDED` → `rate_limited`
+  (no scope: FCM does not say whether the device's or the project's quota was hit);
+  `SENDER_ID_MISMATCH` and `INVALID_ARGUMENT` on `message.token` → `invalid`; 401/403, a bare 404,
+  5xx, any other 4xx (a message refused as malformed), network, a failed token exchange and the
+  5 s timeout → `unavailable`.
 - **APNs VoIP** (`apns-sender.ts`): one reused HTTP/2 session to `api.push.apple.com` or
   `api.sandbox.push.apple.com`, dropped and reopened after a GOAWAY, an error, a close or a peer that
   answers neither the send nor a PING; an ES256 provider token minted every 50 minutes (and again
   on `ExpiredProviderToken`). Only `ring` and `test_ring` are sent (every VoIP push must report a
   call to CallKit); `ring_cancel` and `ring_off` answer `{ ok: true }` unsent. 410,
-  `BadDeviceToken`, `Unregistered` → `unregistered`; 429 → `rate_limited`; other 4xx but 403 →
-  `invalid`; 403, 5xx, network and the timeout → `unavailable`. A stream refused unprocessed is
-  sent once more; nothing that may have reached the phone is.
-- A 429 holds the device back (`rate_limited`, unsent) until its `Retry-After` (10 s without one):
-  nothing is retried inside a ring. Logs name the device row id, the push type and the call id,
+  `BadDeviceToken`, `Unregistered`, `ExpiredToken` → `unregistered`; `DeviceTokenNotForTopic` →
+  `invalid`; 429 (`TooManyRequests`, per token) → `rate_limited`, scope `device`; 403, 5xx, any
+  other 4xx, network and the timeout → `unavailable`. A stream refused unprocessed is sent once
+  more; nothing that may have reached the phone is.
+- A 429 holds the device back (`rate_limited`, unsent, scope `device`) until its `Retry-After`
+  (10 s without one): nothing is retried inside a ring. Logs name the device row id, the push type and the call id,
   never a token. Metrics (`packages/observability/src/metrics/platform.ts`):
   `agency_push_sends_total{platform,result}` (`result`: `ok`, `skipped`, or the failure reason) and
   `agency_push_send_seconds{platform}`.
@@ -330,7 +339,7 @@ at load, so a broken credential fails boot naming the env key, never its value):
 
 **The agency side** reaches the seam only through `getPushSender()`: `AwayRingService`
 (`agency/away-ring.ts`: `configured` in the `away_ring` refusals, `send` for `ring_off` and the test
-ring, recording a failure on the device row, which revokes it on `unregistered`), the inbound
+ring, recording a failure on the device row, which revokes it on `unregistered` or `invalid`), the inbound
 connector (`ring` and `ring_cancel`, `configured` before a ring) and the push-device routes
 (`push_configured` in the device status). What it sends is the contract's `AgencyRingPush`; the
 device rows are `agency_push_devices` (`0036_inbound_ring.sql`, read through
@@ -360,6 +369,19 @@ Read or written by more than one module area, so it has one home (decision B10):
 - `apps/server/src/audit/`: `auditLogger` (→ `audit_logs`, the "Dialer" half of the activity trail)
   and the platform audit logger with its catalog, vocabulary and actor types (→ `platform_audit_log`,
   the "Console" half). Both tables are kept (decision B7).
+
+**The token-only ring routes reach the agency runtime before `callCore`.** Every other public route
+gets its tenancy from the Firebase session and the tenant headers, then calls the internal handler
+(B16). `POST /proxy/agency/inbound/calls/:id/ring/answering` and `…/ring/decline` carry no session
+(native Android code posts them at the tap with the offer token alone, IQ71), so the public layer
+asks the connector which tenant and account hold the call:
+`getAgencyRuntime()?.inbound?.ringTenancy(callId)`, wired in `api/agency.plugin.ts` and passed to
+`proxyAgencyInboundRingRoutes` as `ringTenancy`. A call the connector does not hold is the uniform
+404 `ring_not_offered` and never reaches `callCore`; the token itself is checked by the internal
+handler. The same lookup keys the routes' rate limit (per IP and ringing call). Pinned by
+`test/unit/api/routes/proxy-agency-inbound-ring.routes.test.ts` (the lookup before `callCore`, no
+Bearer) and `test/unit/api/agency-agent-reach.test.ts` (`TOKEN_ONLY_ROUTES`: the only agency HTTP
+routes without a session).
 
 ## 5. Known gaps
 
