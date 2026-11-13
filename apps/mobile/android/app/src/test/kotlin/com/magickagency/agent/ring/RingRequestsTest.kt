@@ -92,13 +92,40 @@ class RingRequestsTest {
     }
 
     @Test
-    fun onlyANetworkFailureOrAServerErrorIsRetriedAndOnlyOnce() {
+    fun onlyANetworkFailureAServerErrorOrA429IsRetriedAndOnlyOnce() {
         assertTrue(RingRequests.shouldRetry(RingApiOutcome.NETWORK, attempt = 1))
         assertTrue(RingRequests.shouldRetry(RingApiOutcome.SERVER_ERROR, attempt = 1))
+        assertTrue(RingRequests.shouldRetry(RingApiOutcome.RATE_LIMITED, attempt = 1))
         assertFalse(RingRequests.shouldRetry(RingApiOutcome.NETWORK, attempt = 2))
-        for (o in listOf(RingApiOutcome.OK, RingApiOutcome.GONE, RingApiOutcome.CONFLICT, RingApiOutcome.RATE_LIMITED, RingApiOutcome.CLIENT_ERROR)) {
+        assertFalse(RingRequests.shouldRetry(RingApiOutcome.RATE_LIMITED, attempt = 2))
+        for (o in listOf(RingApiOutcome.OK, RingApiOutcome.GONE, RingApiOutcome.CONFLICT, RingApiOutcome.CLIENT_ERROR)) {
             assertFalse(RingRequests.shouldRetry(o, attempt = 1), "$o")
         }
+    }
+
+    @Test
+    fun aRateLimitedDeclineIsSentOnceMoreInsideItsBudgetHonouringRetryAfter() {
+        val budget = RingRequests.DECLINE_BUDGET_MS
+        // No Retry-After: the usual wait.
+        assertEquals(RingRequests.RETRY_DELAY_MS, RingRequests.retryDelayMs(RingApiOutcome.RATE_LIMITED, 1, budget - 500))
+        // Retry-After: 2 fits in what is left of the budget: waited for.
+        assertEquals(2_000L, RingRequests.retryDelayMs(RingApiOutcome.RATE_LIMITED, 1, budget - 500, RingRequests.retryAfterMs("2")))
+        // Retry-After: 7 leaves no room for an attempt: not cut short, no retry.
+        assertNull(RingRequests.retryDelayMs(RingApiOutcome.RATE_LIMITED, 1, budget - 500, RingRequests.retryAfterMs("7")))
+        // Once only.
+        assertNull(RingRequests.retryDelayMs(RingApiOutcome.RATE_LIMITED, 2, budget - 3_000, null))
+        // Without a budget (answering): a short Retry-After is waited for, a long one is not.
+        assertEquals(3_000L, RingRequests.retryDelayMs(RingApiOutcome.RATE_LIMITED, 1, null, 3_000))
+        assertNull(RingRequests.retryDelayMs(RingApiOutcome.RATE_LIMITED, 1, null, RingRequests.MAX_RETRY_AFTER_MS + 1))
+    }
+
+    @Test
+    fun retryAfterIsReadAsDeltaSeconds() {
+        assertEquals(3_000L, RingRequests.retryAfterMs(" 3 "))
+        assertEquals(0L, RingRequests.retryAfterMs("0"))
+        assertNull(RingRequests.retryAfterMs(null))
+        assertNull(RingRequests.retryAfterMs("Wed, 21 Oct 2026 07:28:00 GMT"), "an HTTP-date reads as none")
+        assertNull(RingRequests.retryAfterMs("-1"))
     }
 
     @Test

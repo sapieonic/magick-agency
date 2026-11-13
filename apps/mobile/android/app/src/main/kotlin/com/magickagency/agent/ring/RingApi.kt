@@ -47,12 +47,16 @@ internal class RingApi(context: Context) {
                     RingApiOutcome.CLIENT_ERROR
                 } else {
                     var attempt = 1
-                    var result = RingRequests.classify(execute(request, RingRequests.attemptTimeoutMs(left()) ?: 0))
-                    while (RingRequests.shouldRetry(result, attempt, left())) {
-                        Thread.sleep(RingRequests.RETRY_DELAY_MS)
+                    var answer = execute(request, RingRequests.attemptTimeoutMs(left()) ?: 0)
+                    var result = RingRequests.classify(answer.status)
+                    while (true) {
+                        val delay = RingRequests.retryDelayMs(result, attempt, left(), RingRequests.retryAfterMs(answer.retryAfter))
+                            ?: break
+                        Thread.sleep(delay)
                         val timeout = RingRequests.attemptTimeoutMs(left()) ?: break
                         attempt += 1
-                        result = RingRequests.classify(execute(request, timeout))
+                        answer = execute(request, timeout)
+                        result = RingRequests.classify(answer.status)
                     }
                     Log.i(TAG, "$request: $result after $attempt attempt(s)")
                     result
@@ -67,9 +71,12 @@ internal class RingApi(context: Context) {
         }
     }
 
-    /** The HTTP status, or null when no answer came. [timeoutMs]: connect and read, each; 0 sends nothing. */
-    private fun execute(request: RingHttpRequest, timeoutMs: Int): Int? {
-        if (timeoutMs <= 0) return null
+    /** An attempt's HTTP status (null: no answer came) and its `Retry-After` header, if any. */
+    private class Answer(val status: Int?, val retryAfter: String? = null)
+
+    /** One attempt. [timeoutMs]: connect and read, each; 0 sends nothing. */
+    private fun execute(request: RingHttpRequest, timeoutMs: Int): Answer {
+        if (timeoutMs <= 0) return Answer(null)
         var conn: HttpURLConnection? = null
         return try {
             conn = (URI(request.url).toURL().openConnection() as HttpURLConnection).apply {
@@ -86,13 +93,13 @@ internal class RingApi(context: Context) {
             val status = conn.responseCode
             // Drain so the connection can be reused; the body carries nothing native needs.
             runCatching { (if (status >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
-            status
+            Answer(status, conn.getHeaderField("Retry-After"))
         } catch (e: IOException) {
             Log.w(TAG, "$request failed: ${e.javaClass.simpleName}")
-            null
+            Answer(null)
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "$request not sent: ${e.javaClass.simpleName}")
-            null
+            Answer(null)
         } finally {
             conn?.disconnect()
         }

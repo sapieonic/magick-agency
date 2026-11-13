@@ -132,13 +132,45 @@ object RingRequests {
         else -> RingApiOutcome.SERVER_ERROR
     }
 
-    /** Whether to send again after [attempt] (1-based) ended with [outcome]. A refusal is final. */
-    fun shouldRetry(outcome: RingApiOutcome, attempt: Int): Boolean =
-        attempt < MAX_ATTEMPTS && (outcome == RingApiOutcome.NETWORK || outcome == RingApiOutcome.SERVER_ERROR)
+    /**
+     * The longest `Retry-After` honoured without a budget (`…/ring/answering`: the accept's grace
+     * runs meanwhile); a longer one is not waited for.
+     */
+    const val MAX_RETRY_AFTER_MS = 5_000L
 
-    /** [shouldRetry], and with a budget ([remainingMs] left, null for none) only when the wait and one attempt still fit. */
-    fun shouldRetry(outcome: RingApiOutcome, attempt: Int, remainingMs: Long?): Boolean =
-        shouldRetry(outcome, attempt) && (remainingMs == null || remainingMs - RETRY_DELAY_MS >= MIN_ATTEMPT_MS)
+    /**
+     * The wait before sending again after [attempt] (1-based) ended with [outcome], or null for no
+     * retry. One retry at most, for an answer that never came, a server error, or a 429
+     * (`RATE_LIMITED`: the wait is the server's `Retry-After`, [retryAfterMs], when it sent one,
+     * else [RETRY_DELAY_MS]). A refusal is final. With a budget ([remainingMs] left, null for
+     * none) only when the wait and one attempt still fit ([MIN_ATTEMPT_MS]); without one, a
+     * `Retry-After` longer than [MAX_RETRY_AFTER_MS] is not waited for. A `Retry-After` that does
+     * not fit is respected, not cut short: no retry.
+     */
+    fun retryDelayMs(outcome: RingApiOutcome, attempt: Int, remainingMs: Long?, retryAfterMs: Long? = null): Long? {
+        if (attempt >= MAX_ATTEMPTS) return null
+        val delay = when (outcome) {
+            RingApiOutcome.NETWORK, RingApiOutcome.SERVER_ERROR -> RETRY_DELAY_MS
+            RingApiOutcome.RATE_LIMITED -> retryAfterMs ?: RETRY_DELAY_MS
+            else -> return null
+        }
+        if (remainingMs == null) return delay.takeIf { it <= MAX_RETRY_AFTER_MS }
+        return delay.takeIf { remainingMs - it >= MIN_ATTEMPT_MS }
+    }
+
+    /** [retryDelayMs] says to send again. */
+    fun shouldRetry(outcome: RingApiOutcome, attempt: Int, remainingMs: Long? = null, retryAfterMs: Long? = null): Boolean =
+        retryDelayMs(outcome, attempt, remainingMs, retryAfterMs) != null
+
+    /**
+     * A `Retry-After` header's wait in ms: delta-seconds only (an HTTP-date, which the server does
+     * not send, reads as none); null when absent or unreadable.
+     */
+    fun retryAfterMs(header: String?): Long? {
+        val seconds = header?.trim()?.toLongOrNull() ?: return null
+        if (seconds < 0 || seconds > 3_600) return null
+        return seconds * 1_000
+    }
 
     // Hex by hand: String.format follows the default locale.
     private val HEX = "0123456789ABCDEF".toCharArray()
