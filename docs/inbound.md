@@ -842,7 +842,9 @@ No phone at all when the caller has less than one ring window of their maximum w
 checked again when the ring starts), so a ring in flight overruns the maximum wait by at most the
 15 s grace. One phone per caller at a time: having rung one, the search moves to the next caller.
 
-**The ring (IQ66, IQ61; `InboundConnector.ringOffer`).** On the call's serial chain:
+**The ring (IQ66, IQ61; `RingOffers.offer`, `inbound-ring.ts`).** The ring is its own module behind
+the connector (`RingOffers` over the connector's `RingHost`: its calls, chains, queue and the offer's
+shared steps), which owns the ring's state, tokens, timers and pushes. On the call's serial chain:
 
 1. the search's CAS `break (ring = 1) → reserved` (`reserveForInbound`'s `break` arm, which refuses
    any other break) writes `inbound` and `push = 1` in the same script;
@@ -925,14 +927,16 @@ hang-up on the station is the way out: an offer not yet bound is declined (`decl
 Android declines `busy_on_phone` by itself when a cellular call is on (IQ70); the server never rings
 a `phone_call` break.
 
-**Every other end of a ring (`endRing`).** `expired` (the ring timer), `accept_lapsed` (accepted or
+**Every other end of a ring (`RingOffers.end`, the one end of every ring).** `expired` (the ring timer), `accept_lapsed` (accepted or
 answered, not bound within the grace), `push_failed`, `caller_left`, the lease lost,
 `answered_elsewhere` (IQ73, or the take-over below) and `cancelled` (the away break ended, an older
 build attached, a bind refused). Each writes `ring_result`, sends Android `ring_cancel` with the
 result (fire and forget; not after `push_failed`), returns the agent to `away_ring`
 (`AwayRingService.releaseInbound`: Redis `releaseInboundToAwayRing`, only while this call holds the
 session, then the mirror `restoreAwayRing`), and puts the caller back at the head of the queue,
-searched again (or leaving at the maximum wait). With an OPEN station attached here (an accepted
+searched again (or leaving at the maximum wait); `caller_left` (the bridge's `ended`, after the
+call is settled) takes the same end, with the ring's result written on the ended row and nothing
+requeued. With an OPEN station attached here (an accepted
 ring whose station came), Mode A's `releaseAgent` runs instead. A ring that ends past the absence's
 maximum age returns the agent and then ends the absence `max_age`. A session the spine says holds
 another unsettled call is never rung again: its absence ends. A requeue whose write throws still
@@ -957,7 +961,7 @@ first, the station agent is given back. A search never takes over a ring it star
 ring's start is read once per caller in a search, but whether the ring may still be taken over is
 asked again for each candidate: an earlier candidate's take-over may have ended the ring and then
 been refused, or the ring may have ended during an await. Once the ring is gone the caller is
-searched for, and offered (`takeOverRing` falls back to `offer`), as any queued caller; nothing
+searched for, and offered (`RingOffers.takeOver` falls back to the station offer), as any queued caller; nothing
 throws.
 
 **Could take (IQ68).** For IQ29's at-once overflow (`couldTakeLater`), a ringable agent counts as
