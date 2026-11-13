@@ -1,7 +1,6 @@
 import type WebSocket from 'ws';
 import {
   AGENCY_INBOUND_CONNECT_DELAY_MS,
-  type AgencyRingOffReason,
   type AgencyInboundCall,
   type AgencyInboundCallOutcome,
   type AgencyInboundClipSlot,
