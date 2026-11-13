@@ -123,6 +123,7 @@ class FakeRingChannel implements RingChannel {
 class FakeStationRing implements StationRing {
   FakeStationRing(this.channel);
 
+  @override
   final FakeRingChannel channel;
 
   @override
@@ -135,40 +136,8 @@ class FakeStationRing implements StationRing {
   int statusReads = 0;
 
   @override
-  Stream<RingEvent> get events => channel.events;
-
-  @override
-  void showAwayNotification(bool on, {DateTime? since, String? sessionId}) =>
-      channel.showAwayNotification(on, since: since, sessionId: sessionId);
-
-  @override
-  void reportBound(String callId) => channel.reportBound(callId);
-
-  @override
-  void reportEnded(String callId, RingEndReason reason) => channel.reportEnded(callId, reason);
-
-  @override
-  void holdOverLockScreen(bool on) => channel.holdOverLockScreen(on);
-
-  @override
   Future<PushDeviceStatus?> readStatus() async {
     statusReads++;
     return status;
   }
-
-  @override
-  Future<RingOffRecord?> takeRingOff() => channel.takeRingOff();
-
-  @override
-  Future<RingStopRequest?> peekStopRinging() => channel.peekStopRinging();
-
-  @override
-  void clearStopRinging() => channel.clearStopRinging();
-
-  @override
-  void setServerClock({required int offsetMs, required DateTime measuredAt}) =>
-      channel.setServerClock(offsetMs: offsetMs, measuredAt: measuredAt);
-
-  @override
-  void moveTaskToBack() => channel.moveTaskToBack();
 }

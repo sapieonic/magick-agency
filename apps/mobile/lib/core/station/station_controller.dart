@@ -386,6 +386,9 @@ class StationController extends Notifier<StationView?>
   /// Mode B's seam ([StationRing.none] where nothing rings).
   late StationRing _ring;
 
+  /// The ring channel, for what the station tells native and reads from it.
+  RingChannel get _native => _ring.channel;
+
   /// The inbound call routes. Made here, not on first use: the first use can be the notes'
   /// flush in teardown (`_closeSession(disposing: true)`), inside `onDispose`.
   late InboundCallApi _inboundApi;
@@ -623,7 +626,7 @@ class StationController extends Notifier<StationView?>
     _foreground = lifecycle.isForeground;
     lifecycle.attach(onHide: _onHide, onShow: _onShow);
     s.network = ref.read(networkMonitorProvider).changes().listen(s.socket.networkChanged, onError: (Object _) {});
-    s.ring = _ring.events.listen((event) => _onRingEvent(s, event), onError: (Object _) {});
+    s.ring = _native.events.listen((event) => _onRingEvent(s, event), onError: (Object _) {});
 
     // While the app is on screen: Android starts the on-duty service only from the foreground.
     s.audio.open(_onDutyNotification());
@@ -1472,7 +1475,7 @@ class StationController extends Notifier<StationView?>
     final parkedReturn = _awayRingParked && _ringAnswerHold == null && !s.hosted.isSoftphone;
     if (_awayRingParked) {
       _awayRingParked = false;
-      _ring.showAwayNotification(false);
+      unawaited(_native.showAwayNotification(false));
     }
     if (_awayRingHeld) {
       _ringOffCheck = true;
@@ -1520,7 +1523,7 @@ class StationController extends Notifier<StationView?>
     final c = _station.connection;
     if (parkedReturn) {
       _returnHold = true;
-      unawaited(_ring.peekStopRinging().then(
+      unawaited(_native.peekStopRinging().then(
         (stop) => _afterParkedReturn(s, stop),
         onError: (Object e) {
           _log.warn('reading Stop ringing failed', {'error': e.runtimeType.toString()});
@@ -1565,7 +1568,7 @@ class StationController extends Notifier<StationView?>
       return;
     }
     // Another session's: moot here.
-    if (stop != null) _ring.clearStopRinging();
+    if (stop != null) unawaited(_native.clearStopRinging());
     _releaseReturnHold(s);
   }
 
@@ -1600,11 +1603,11 @@ class StationController extends Notifier<StationView?>
     _announceOnReturn = false;
     _cancelAutoReturn();
     // Whatever native kept of this absence's end is moot now.
-    unawaited(_ring.takeRingOff().then((_) {}, onError: (Object _) {}));
+    unawaited(_native.takeRingOff().then((_) {}, onError: (Object _) {}));
     _askDeviceAwayForStop(s.id, _now().add(stopRingingBound), stillWanted: () => identical(_s, s), done: (landed) {
       if (landed) {
         s.socket.declareInbound = true;
-        _ring.clearStopRinging();
+        unawaited(_native.clearStopRinging());
         _releaseReturnHold(s);
         _afterStopRinging(landed: true);
         return;
@@ -1646,7 +1649,7 @@ class StationController extends Notifier<StationView?>
     s.socket.declareInbound = true;
     if (_stopUnconfirmed) {
       _cancelStopConfirm();
-      _ring.clearStopRinging();
+      unawaited(_native.clearStopRinging());
       if (paused) _afterStopRinging(landed: true);
     }
     // Not from inside the frame's own handling: the attach replaces the socket that sent it.
@@ -1669,7 +1672,7 @@ class StationController extends Notifier<StationView?>
     final done = Completer<void>();
     _askDeviceAwayForStop(sessionId, _now().add(stopRingingBound), stillWanted: () => ref.mounted, done: (landed) {
       if (landed) {
-        _ring.clearStopRinging();
+        unawaited(_native.clearStopRinging());
       } else {
         _log.warn('Stop ringing on a cold start: device_away did not apply in time');
       }
@@ -1684,7 +1687,7 @@ class StationController extends Notifier<StationView?>
   void _afterStopRinging({required bool landed}) {
     if (!ref.mounted) return;
     ref.read(ringNoticeProvider.notifier).show(landed ? RingCopy.ringingStopped : RingCopy.stopRingingFailed);
-    if (landed && (_foreground || _s == null)) _ring.moveTaskToBack();
+    if (landed && (_foreground || _s == null)) unawaited(_native.moveTaskToBack());
   }
 
   /// `device_away` for [sessionId] until it applies: answered `reserved` (a ring in flight: the
@@ -2284,10 +2287,10 @@ class StationController extends Notifier<StationView?>
     // The server's clock as measured on this socket, so native times a ring on it rather than on
     // this phone's clock, which can run fast or slow.
     final measuredAt = _clockMeasuredAt;
-    if (measuredAt != null) _ring.setServerClock(offsetMs: _mapper.appliedOffsetMs, measuredAt: measuredAt);
+    if (measuredAt != null) unawaited(_native.setServerClock(offsetMs: _mapper.appliedOffsetMs, measuredAt: measuredAt));
     // The absence's start on the server's clock (the break's `since`), so native can tell a late
     // `ring_off` for an earlier absence from one for this.
-    _ring.showAwayNotification(true, since: _awayRingSince(), sessionId: s.id);
+    unawaited(_native.showAwayNotification(true, since: _awayRingSince(), sessionId: s.id));
   }
 
   /// When this absence on `away_ring` began, on the server's clock: the break's `since` while the
@@ -2297,11 +2300,11 @@ class StationController extends Notifier<StationView?>
 
   /// The station stops here (closed, 4404, 4409): nothing of Mode B may outlive it.
   void _releaseRing() {
-    if (_awayRingParked) _ring.showAwayNotification(false);
+    if (_awayRingParked) unawaited(_native.showAwayNotification(false));
     _awayRingParked = false;
     final call = _ringCall;
-    if (call != null && !call.ended) _ring.reportEnded(call.callId, call.bound ? RingEndReason.ended : RingEndReason.cancelled);
-    if (call != null) _ring.holdOverLockScreen(false);
+    if (call != null && !call.ended) unawaited(_native.reportEnded(call.callId, call.bound ? RingEndReason.ended : RingEndReason.cancelled));
+    if (call != null) unawaited(_native.holdOverLockScreen(false));
     _ringCall = null;
   }
 
@@ -2319,9 +2322,9 @@ class StationController extends Notifier<StationView?>
     final call = _terminal ? null : _station.inboundOnScreen;
     final tracked = _ringCall;
     if (tracked != null && call?.id != tracked.callId) {
-      if (!tracked.ended) _ring.reportEnded(tracked.callId, tracked.bound ? RingEndReason.ended : RingEndReason.cancelled);
+      if (!tracked.ended) unawaited(_native.reportEnded(tracked.callId, tracked.bound ? RingEndReason.ended : RingEndReason.cancelled));
       // Its outcome saved, or it left the station: the app need not stay over the lock screen.
-      _ring.holdOverLockScreen(false);
+      unawaited(_native.holdOverLockScreen(false));
       _ringCall = null;
     }
     if (call == null || !call.isPushOffer) return;
@@ -2329,7 +2332,7 @@ class StationController extends Notifier<StationView?>
     if (!t.lockHeld) {
       // Over the lock screen until its outcome is saved: native's own hold ends with the call.
       t.lockHeld = true;
-      _ring.holdOverLockScreen(true);
+      unawaited(_native.holdOverLockScreen(true));
     }
     final phase = inboundPhase(call);
     if (_ringHangUp == call.id && phase == InboundPhase.connected) {
@@ -2344,11 +2347,11 @@ class StationController extends Notifier<StationView?>
     }
     if (!t.bound && (phase == InboundPhase.connected || call.bridgedAt != null)) {
       t.bound = true;
-      _ring.reportBound(call.id);
+      unawaited(_native.reportBound(call.id));
     }
     if (!t.ended && phase == InboundPhase.outcome) {
       t.ended = true;
-      _ring.reportEnded(call.id, RingEndReason.ended);
+      unawaited(_native.reportEnded(call.id, RingEndReason.ended));
     }
   }
 
@@ -2373,7 +2376,7 @@ class StationController extends Notifier<StationView?>
     final misses = _ringMissesWhileAway;
     _ringMissesWhileAway = 0;
     // Read (and cleared) whatever the state: a ring_off left unread would be the next return's.
-    final ringOff = _ring.takeRingOff();
+    final ringOff = _native.takeRingOff();
     if (_station.agentState != AgentState.onBreak || !isAwayBreak(_station.breakReasonCode)) return;
     // The absence's start: the return's `since` (the server keeps it), else as it was before the park.
     final absenceStart = _station.agentStateSince ?? back?.absenceStart;
@@ -2467,7 +2470,7 @@ class StationController extends Notifier<StationView?>
       _log.info('answered from a ring: reopening the station', {'call_id': call.id});
       if (_awayRingParked) {
         _awayRingParked = false;
-        _ring.showAwayNotification(false);
+        unawaited(_native.showAwayNotification(false));
       }
       _awayRingHeld = false;
       _ringOffCheck = false;

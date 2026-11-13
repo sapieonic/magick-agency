@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -41,8 +39,6 @@ final class _RegistrationStationRing implements StationRing {
 
   final Ref _ref;
 
-  RingChannel get _channel => _ref.read(ringChannelProvider);
-
   @override
   bool get ringOn => _ref.read(ringRegistrationProvider).ringOn;
 
@@ -50,37 +46,8 @@ final class _RegistrationStationRing implements StationRing {
   RingBlocker? get fallbackBlocker => _ref.read(ringRegistrationProvider).fallbackBlocker;
 
   @override
-  Stream<RingEvent> get events => _channel.events;
-
-  @override
-  void showAwayNotification(bool on, {DateTime? since, String? sessionId}) =>
-      _channel.showAwayNotification(on, since: since, sessionId: sessionId);
-
-  @override
-  void reportBound(String callId) => _channel.reportBound(callId);
-
-  @override
-  void reportEnded(String callId, RingEndReason reason) => _channel.reportEnded(callId, reason);
-
-  @override
-  void holdOverLockScreen(bool on) => unawaited(_channel.holdOverLockScreen(on));
-
-  @override
   Future<PushDeviceStatus?> readStatus() => _ref.read(ringRegistrationProvider.notifier).readStatus();
 
   @override
-  Future<RingOffRecord?> takeRingOff() => _channel.takeRingOff();
-
-  @override
-  Future<RingStopRequest?> peekStopRinging() => _channel.peekStopRinging();
-
-  @override
-  void clearStopRinging() => unawaited(_channel.clearStopRinging());
-
-  @override
-  void setServerClock({required int offsetMs, required DateTime measuredAt}) =>
-      unawaited(_channel.setServerClock(offsetMs: offsetMs, measuredAt: measuredAt));
-
-  @override
-  void moveTaskToBack() => unawaited(_channel.moveTaskToBack());
+  RingChannel get channel => _ref.read(ringChannelProvider);
 }

@@ -76,6 +76,58 @@ abstract interface class RingChannel {
   /// What native tells Dart: `token`, `ringAnswered`, `ringEnded`, `testRingReceived`. Broadcast. An event nobody listens to is answered with an error, so
   /// native knows Dart did not take it (and keeps an answer for `pendingAnswer`).
   Stream<RingEvent> get events;
+
+  /// No native side at all (where nothing rings): every call answers nothing, no event comes.
+  static const RingChannel none = _NoRingChannel();
+}
+
+final class _NoRingChannel implements RingChannel {
+  const _NoRingChannel();
+
+  @override
+  Future<String?> getToken() async => null;
+
+  @override
+  Future<RingAnswer?> pendingAnswer() async => null;
+
+  @override
+  Future<RingChecklist?> checklist() async => null;
+
+  @override
+  Future<void> openSettings(RingChecklistItem item) async {}
+
+  @override
+  Future<void> reportBound(String callId) async {}
+
+  @override
+  Future<void> reportEnded(String callId, RingEndReason reason) async {}
+
+  @override
+  Future<void> showAwayNotification(bool on, {DateTime? since, String? sessionId}) async {}
+
+  @override
+  Future<void> showMissedRing() async {}
+
+  @override
+  Future<void> holdOverLockScreen(bool on) async {}
+
+  @override
+  Future<RingStopRequest?> peekStopRinging() async => null;
+
+  @override
+  Future<void> clearStopRinging() async {}
+
+  @override
+  Future<void> setServerClock({required int offsetMs, required DateTime measuredAt}) async {}
+
+  @override
+  Future<bool> moveTaskToBack() async => false;
+
+  @override
+  Future<RingOffRecord?> takeRingOff() async => null;
+
+  @override
+  Stream<RingEvent> get events => const Stream<RingEvent>.empty();
 }
 
 /// One answered ring: what `…/ring/accept` takes. [offerToken] is never logged.
