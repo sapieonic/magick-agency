@@ -88,14 +88,28 @@ data class PhoneSignals(
 /** How long a ring may ring on this phone, from the server's times rather than this phone's clock. */
 object RingTiming {
     /**
-     * The ring's time left at receipt: `ring_expires_at` less the push's FCM send time (both on
-     * server-side clocks, so a phone clock running fast or slow changes nothing), at most one ring
-     * window plus [RingWire.CLOCK_SLACK_MS]. Without a send time (null or not positive), the phone's
-     * clock is all there is.
+     * The ring's time left at receipt ([nowMs], this phone's clock), at most one ring window plus
+     * [RingWire.CLOCK_SLACK_MS]:
+     *
+     *  - With the push's FCM send time ([sentAtMs]) and a phone clock that looks in step with it
+     *    (`0 ≤ now − sentAt ≤` one ring window plus the slack: the push took no longer to arrive
+     *    than a ring lasts), `ring_expires_at − now`: what the server left at send, less the time
+     *    the push spent in delivery, so a push delivered late rings no longer than the server
+     *    offers the call (an Answer after that would be refused).
+     *  - With a send time but a phone clock that does not look in step (before the send time, or
+     *    further after it than a ring lasts), `ring_expires_at − sentAt`: both on server-side
+     *    clocks, so a phone clock running fast or slow never drops a ring; the delivery delay is
+     *    then unknown and not taken off.
+     *  - Without a send time (null or not positive), the phone's clock is all there is.
      */
     fun remainingMs(expiresAtMs: Long, sentAtMs: Long?, nowMs: Long): Long {
-        val left = if (sentAtMs != null && sentAtMs > 0) expiresAtMs - sentAtMs else expiresAtMs - nowMs
-        return minOf(left, RingWire.RING_MS + RingWire.CLOCK_SLACK_MS)
+        val window = RingWire.RING_MS + RingWire.CLOCK_SLACK_MS
+        val left = when {
+            sentAtMs == null || sentAtMs <= 0 -> expiresAtMs - nowMs
+            nowMs - sentAtMs in 0..window -> expiresAtMs - nowMs
+            else -> expiresAtMs - sentAtMs
+        }
+        return minOf(left, window)
     }
 }
 

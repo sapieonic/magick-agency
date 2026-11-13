@@ -386,6 +386,27 @@ class RingStateMachineTest {
     }
 
     @Test
+    fun aPushDeliveredLateRingsOnlyForWhatIsLeftOfTheServersWindow() {
+        // Sent 15 s ago with 20 s to run, the phone's clock in step: 5 s left, not 20.
+        assertEquals(5_000L, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 + 15_000))
+        val m = RingStateMachine()
+        m.handle(push(ringA, now = t0 + 15_000, sentAt = t0))
+        assertEquals(RingState.Ringing(callA, t0 + RingWire.RING_MS), m.state)
+        // In step at the edge of the window (one ring plus the slack after the send).
+        assertEquals(-RingWire.CLOCK_SLACK_MS, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 + RingWire.RING_MS + RingWire.CLOCK_SLACK_MS))
+        // Delivered after the server's expiry: dropped, not rung.
+        assertEquals(listOf(Dropped(DropReason.EXPIRED)), RingStateMachine().handle(push(ringA, now = t0 + 21_000, sentAt = t0)))
+    }
+
+    @Test
+    fun aSkewedPhoneClockFallsBackToTheTimeLeftAtSend() {
+        // The phone's clock reads before the send time (behind): the delivery delay is unknown.
+        assertEquals(RingWire.RING_MS, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 - 5_000))
+        // Further after the send than a ring lasts (ahead): the same.
+        assertEquals(RingWire.RING_MS, RingTiming.remainingMs(t0 + RingWire.RING_MS, t0, t0 + RingWire.RING_MS + RingWire.CLOCK_SLACK_MS + 1))
+    }
+
+    @Test
     fun aTestRingWhileARealOneRingsIsDropped() {
         val m = ringing()
         assertEquals(listOf(Dropped(DropReason.BUSY_WITH_CALL)), m.handle(push(RingPush.Test)))
