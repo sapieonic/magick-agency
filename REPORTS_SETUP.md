@@ -87,8 +87,8 @@ that made the bucket. The server sends one message per render; the Lambda reads 
 S3, writes the files and posts a signed callback to the server's public URL. The module also
 builds the Lambda's zip from your checkout, publishes its Chromium layer and generates the
 callback secret, so there is nothing to prepare by hand. Nothing in CI applies this: you do it by
-hand, at the release you are deploying, from the machine that holds the environment's Terraform
-state.
+hand, at the release you are deploying, from any machine with AWS access (the Terraform state is
+in S3; [`aws/README.md`](aws/README.md), "State").
 
 Before you start:
 
@@ -98,9 +98,10 @@ Before you start:
   DNS, `docker/.env`, Caddy, Firebase, VoiceLink, the first super-admin), and come back here.
   Section 3.5 and 6.4 there point to this page. Migration `0023` is applied by the server's
   container at start, like every migration.
-- **The Terraform state for this environment** is on the machine you apply from (the same
-  `aws/terraform` workspace that created the bucket; state is local and per workspace).
-- **Tools:** the AWS CLI, Terraform, Node 22 and pnpm 10 (the plan builds the Lambda zip), and
+- **The Terraform state for this environment** is the `aws/terraform` workspace that created the
+  bucket, read from the state bucket by `terraform init` on whichever machine you apply from.
+  You need that environment's tfvars there too (it is gitignored).
+- **Tools:** the AWS CLI, Terraform 1.10+, Node 22 and pnpm 10 (the plan builds the Lambda zip), and
   HTTPS to GitHub (the plan downloads the Chromium layer zip once and checks its SHA-256). The AWS
   identity must be able to create, besides the bucket's resources, SQS queues, Lambda functions
   and layers, aliases, event source mappings, CloudWatch log groups, IAM roles and SSM parameters.

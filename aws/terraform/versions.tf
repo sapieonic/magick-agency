@@ -1,5 +1,20 @@
 terraform {
-  required_version = ">= 1.5.0"
+  # 1.10 for the S3 backend's lock file (use_lockfile).
+  required_version = ">= 1.10.0"
+
+  # State lives in S3, so any machine with AWS access can plan and apply (aws/README.md,
+  # "State"). The bucket is made once per account by aws/state; its name and region are repeated
+  # there (a backend block cannot read variables). The default workspace's state is at `key`,
+  # every other workspace's at `env:/<workspace>/<key>`. The backend authenticates with the
+  # usual AWS chain, not the provider's `aws_profile`: export AWS_PROFILE, or pass
+  # `-backend-config="profile=<name>"` to `terraform init`.
+  backend "s3" {
+    bucket       = "magick-agency-terraform-state"
+    key          = "aws/terraform.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 
   required_providers {
     aws = {

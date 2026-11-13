@@ -36,8 +36,8 @@ packages/domain/     pure dialer rules: leaf modules, no imports beyond contract
 packages/db/         pg pool, shared repositories and models, the migrations
 packages/observability/  logger, OTel tracing, metric declarations per module area
 packages/web-ui/     components, hooks and helpers shared by both web UIs (B23)
-grafana/             alert rules + dashboard (Terraform, own state; grafana/README.md)
-aws/                 S3 bucket, IAM user, optional VM per environment (Terraform; aws/README.md)
+grafana/             alert rules + dashboard (Terraform, own state key in the S3 state bucket; grafana/README.md)
+aws/                 S3 bucket, IAM user, optional VM per environment; aws/state the Terraform state bucket (aws/README.md)
 tooling/             test-env resolver, release-please guard, contract-literal extractor
 ```
 
