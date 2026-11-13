@@ -14,7 +14,7 @@ import {
   FCM_OAUTH_TOKEN_URL, FCM_SCOPE, FcmSender, fcmSendUrl, fcmTtl, mapFcmAnswer, type PushFetch,
 } from '../../../../src/notifications/push/fcm-sender.js';
 import type { FcmCredentials } from '../../../../src/notifications/push/credentials.js';
-import type { PushSenderDevice } from '../../../../src/seams/push-sender.js';
+import { pushFailureScope, type PushSenderDevice } from '../../../../src/seams/push-sender.js';
 
 const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const CREDS: FcmCredentials = { projectId: 'agent-app', clientEmail: 'push@agent-app.iam.gserviceaccount.com', privateKey: rsa.privateKey };
@@ -295,8 +295,8 @@ describe('FcmSender: errors', () => {
     expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited' });
     expect(h.sendCalls).toHaveLength(1);
     h.advance(29_999);
-    // Held back by its own Retry-After, unsent: this device's trouble alone (no process-wide pause).
-    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
+    // Held back by its Retry-After, unsent, with the 429's own scope (the project's quota).
+    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'service' });
     expect(h.sendCalls).toHaveLength(1);
     expect(metrics.trackPushSend).toHaveBeenLastCalledWith('android', 'rate_limited', undefined);
     // Another device is not held back.
@@ -310,9 +310,26 @@ describe('FcmSender: errors', () => {
     const h = harness({ send: (n) => (n === 1 ? fcmError(429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED') : Response.json({ name: 'm' })) });
     await h.send();
     h.advance(9_999);
-    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'device' });
+    expect(await h.send()).toEqual({ ok: false, reason: 'rate_limited', scope: 'service' });
     h.advance(1);
     expect(await h.send()).toEqual({ ok: true });
+  });
+
+  it('a held device answers the scope of the 429 that set the hold: an FCM quota is the service\'s, so the ring pauses instead of passing the phone over', async () => {
+    // A project-wide QUOTA_EXCEEDED whose Retry-After outlives the agency's 10 s pause: each send
+    // to a held phone during it must still read as the push service's trouble (`service`), never
+    // the phone's (`device`, which marks it as one this caller never rings again).
+    const h = harness({ send: () => fcmError(429, 'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', { 'retry-after': '120' }) });
+    const first = await h.send();
+    expect(first).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(pushFailureScope(first as Extract<typeof first, { ok: false }>)).toBe('service');
+    for (const wait of [10_000, 10_000, 60_000]) {
+      h.advance(wait);
+      const held = await h.send();
+      expect(held).toEqual({ ok: false, reason: 'rate_limited', scope: 'service' });
+      expect(pushFailureScope(held as Extract<typeof held, { ok: false }>)).toBe('service');
+    }
+    expect(h.sendCalls).toHaveLength(1);
   });
 });
 

@@ -28,7 +28,7 @@
 import http2, { type ClientHttp2Session, type ClientHttp2Stream } from 'node:http2';
 import { logger } from '@magick-agency/observability';
 import type { AgencyRingPush, AgencyRingPushType } from '@magick-agency/contracts/agency';
-import type { PushSendOptions, PushSendResult, PushSenderDevice } from '../../seams/push-sender.js';
+import { pushFailureScope, type PushSendOptions, type PushSendResult, type PushSenderDevice } from '../../seams/push-sender.js';
 import type { ApnsCredentials, ApnsEnvironment } from './credentials.js';
 import { signJwt } from './jwt.js';
 import {
@@ -146,8 +146,9 @@ export class ApnsSender implements PlatformPushSender {
     if (!APNS_SENT_TYPES.has(payload.type)) return { result: { ok: true }, skipped: true };
     const token = device.voip_token;
     if (!token || !DEVICE_TOKEN.test(token)) return { result: { ok: false, reason: 'invalid' }, code: 'no_token' };
-    // Held by this device's own Retry-After: this device's trouble, not the service's.
-    if (this.#gate.blocked(device.id)) return { result: { ok: false, reason: 'rate_limited', scope: 'device' }, code: 'retry_after' };
+    // Held by a Retry-After: answered with the scope of the 429 that set the hold (APNs: per token, the device's).
+    const held = this.#gate.blocked(device.id);
+    if (held) return { result: { ok: false, reason: 'rate_limited', scope: held }, code: 'retry_after' };
 
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
@@ -177,7 +178,7 @@ export class ApnsSender implements PlatformPushSender {
     }
     const result = mapApnsAnswer(answer.status, reason);
     if (!result.ok && result.reason === 'rate_limited') {
-      this.#gate.hold(device.id, parseRetryAfter(answer.retryAfter, this.#now()));
+      this.#gate.hold(device.id, parseRetryAfter(answer.retryAfter, this.#now()), pushFailureScope(result));
     }
     return { result, status: answer.status, code: reason, seconds: seconds() };
   }

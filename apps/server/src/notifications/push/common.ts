@@ -9,7 +9,7 @@
 import { logger } from '@magick-agency/observability';
 import { trackPushSend, type PushSendMetricResult } from '@magick-agency/observability/metrics/platform';
 import type { AgencyPushPlatform, AgencyRingPush } from '@magick-agency/contracts/agency';
-import type { PushSendOptions, PushSendResult, PushSenderDevice } from '../../seams/push-sender.js';
+import type { PushFailureScope, PushSendOptions, PushSendResult, PushSenderDevice } from '../../seams/push-sender.js';
 
 /** Each carrier request (the OAuth exchange, a send) is bounded by this: a ring window is 20 s. */
 export const PUSH_REQUEST_TIMEOUT_MS = 5_000;
@@ -51,26 +51,32 @@ export function parseRetryAfter(header: string | null | undefined, now: number):
  * The carrier asked us to slow down for a device: until its `Retry-After` has passed, a send to
  * that device answers `rate_limited` without a request. Nothing is retried inside a ring (its
  * window is shorter than any sensible back-off); the agency side treats it as a failed send.
+ *
+ * A hold remembers whose trouble the 429 that set it was (`PushFailureScope`), and a held send
+ * answers with that scope: an APNs 429 is per token (`device`), an FCM 429 the project's quota
+ * (`service`), so a service-scoped hold pauses ringing rather than marking the phone as one this
+ * caller never rings again.
  */
 export class RetryAfterGate {
-  readonly #until = new Map<string, number>();
+  readonly #until = new Map<string, { until: number; scope: PushFailureScope }>();
 
   constructor(private readonly now: () => number) {}
 
-  blocked(deviceId: string): boolean {
-    const until = this.#until.get(deviceId);
-    if (until === undefined) return false;
-    if (this.now() < until) return true;
+  /** The scope of the hold on `deviceId` while it lasts; null when there is none. */
+  blocked(deviceId: string): PushFailureScope | null {
+    const held = this.#until.get(deviceId);
+    if (held === undefined) return null;
+    if (this.now() < held.until) return held.scope;
     this.#until.delete(deviceId);
-    return false;
+    return null;
   }
 
-  hold(deviceId: string, ms: number): void {
+  hold(deviceId: string, ms: number, scope: PushFailureScope): void {
     if (this.#until.size >= 10_000) {
       const now = this.now();
-      for (const [id, until] of this.#until) if (until <= now) this.#until.delete(id);
+      for (const [id, held] of this.#until) if (held.until <= now) this.#until.delete(id);
     }
-    this.#until.set(deviceId, this.now() + ms);
+    this.#until.set(deviceId, { until: this.now() + ms, scope });
   }
 }
 

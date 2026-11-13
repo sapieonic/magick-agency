@@ -14,14 +14,15 @@
  *    `SENDER_ID_MISMATCH` (a token of another Firebase project) and `INVALID_ARGUMENT` on the token
  *    itself (`message.token`) → `invalid` (both revoke the device); 429 or `QUOTA_EXCEEDED` →
  *    `rate_limited`, and the device is held back until its `Retry-After` (never retried inside a
- *    ring; while held, a send answers `rate_limited` with scope `device`); 401/403 (our
+ *    ring; while held, a send answers `rate_limited` with the 429's own scope, `service`: the
+ *    project's quota, not this phone's); 401/403 (our
  *    credentials), a bare 404, 5xx, any other 4xx (a message refused as malformed), a network
  *    error, a timeout or a failed token exchange → `unavailable`.
  *  - Hosts are fixed ({@link FCM_OAUTH_TOKEN_URL}, {@link FCM_API_ORIGIN}); tests swap the
  *    transport (`fetchImpl`, or `setPushTransportsForTests` in `push-sender.ts`), never the host.
  */
 import type { AgencyRingPush } from '@magick-agency/contracts/agency';
-import type { PushSendOptions, PushSendResult, PushSenderDevice } from '../../seams/push-sender.js';
+import { pushFailureScope, type PushSendOptions, type PushSendResult, type PushSenderDevice } from '../../seams/push-sender.js';
 import type { FcmCredentials } from './credentials.js';
 import { signJwt } from './jwt.js';
 import {
@@ -144,8 +145,10 @@ export class FcmSender implements PlatformPushSender {
   async #send(device: PushSenderDevice, payload: AgencyRingPush, { ttlMs }: PushSendOptions): Promise<SendOutcome> {
     const token = device.fcm_token;
     if (!token) return { result: { ok: false, reason: 'invalid' }, code: 'no_token' };
-    // Held by this device's own Retry-After: this device's trouble, not the service's.
-    if (this.#gate.blocked(device.id)) return { result: { ok: false, reason: 'rate_limited', scope: 'device' }, code: 'retry_after' };
+    // Held by a Retry-After: answered with the scope of the 429 that set the hold (an FCM 429 is
+    // the project's quota, so the service's: ringing pauses, the phone is not passed over).
+    const held = this.#gate.blocked(device.id);
+    if (held) return { result: { ok: false, reason: 'rate_limited', scope: held }, code: 'retry_after' };
 
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
@@ -184,7 +187,7 @@ export class FcmSender implements PlatformPushSender {
     const code = detail.code;
     const result = mapFcmAnswer(answer.status, code, { tokenRefused: detail.tokenRefused });
     if (!result.ok && result.reason === 'rate_limited') {
-      this.#gate.hold(device.id, parseRetryAfter(answer.retryAfter, this.#now()));
+      this.#gate.hold(device.id, parseRetryAfter(answer.retryAfter, this.#now()), pushFailureScope(result));
     }
     return { result, status: answer.status, code, seconds: seconds() };
   }
