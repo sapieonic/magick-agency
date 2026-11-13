@@ -265,7 +265,7 @@ describe('package surface', () => {
     expect([...AGENCY_PUSH_PLATFORMS]).toEqual(['android', 'ios']);
     expect([...AGENCY_PUSH_FAILURE_REASONS]).toEqual(['unregistered', 'invalid', 'rate_limited', 'unavailable', 'unconfigured']);
     expect([...AGENCY_RING_PUSH_TYPES]).toEqual(['ring', 'ring_cancel', 'ring_off', 'test_ring']);
-    expect([...AGENCY_RING_OFF_REASONS]).toEqual(['ring_missed', 'revoked', 'opted_out', 'flag_off', 'max_age', 'taken_over']);
+    expect([...AGENCY_RING_OFF_REASONS]).toEqual(['ring_missed', 'revoked', 'opted_out', 'flag_off', 'max_age', 'taken_over', 'left']);
     // The decline reasons are ring results too (a decline is recorded as its own reason).
     for (const r of AGENCY_INBOUND_RING_DECLINE_REASONS) expect(AGENCY_INBOUND_RING_RESULTS).toContain(r);
     // The console wire layer re-exports the same values rather than copies.

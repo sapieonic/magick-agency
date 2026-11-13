@@ -108,9 +108,11 @@ export interface AgencyPushDeviceStatus {
  *  - `opted_out`: the agent turned ringing off ("Stop ringing");
  *  - `flag_off`: `agency_inbound_ring_enabled` was switched off for the account;
  *  - `max_age`: away longer than `AGENCY_AWAY_RING_MAX_MS` (server config);
- *  - `taken_over`: another device took the session's station over (OS3).
+ *  - `taken_over`: another device took the session's station over (OS3);
+ *  - `left`: the session was left with the phone still parked on it: the agent's own Leave from
+ *    another device, or the session ended as idle because the agent joined in another tenant (OS7).
  */
-export const AGENCY_RING_OFF_REASONS = ['ring_missed', 'revoked', 'opted_out', 'flag_off', 'max_age', 'taken_over'] as const;
+export const AGENCY_RING_OFF_REASONS = ['ring_missed', 'revoked', 'opted_out', 'flag_off', 'max_age', 'taken_over', 'left'] as const;
 export type AgencyRingOffReason = (typeof AGENCY_RING_OFF_REASONS)[number];
 
 /**

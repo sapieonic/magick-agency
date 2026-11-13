@@ -114,6 +114,11 @@ enum RingOffReason implements WireEnum {
 
   /// Another device took the station over.
   takenOver('taken_over'),
+
+  /// The session was left with this phone still parked on it (Leave from
+  /// another device, or the session ended as idle by a join in another
+  /// tenant).
+  left('left'),
   unknown('');
 
   const RingOffReason(this.wire);

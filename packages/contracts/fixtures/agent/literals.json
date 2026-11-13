@@ -737,7 +737,8 @@
       "opted_out",
       "flag_off",
       "max_age",
-      "taken_over"
+      "taken_over",
+      "left"
     ]
   },
   "away_ring_refusal_codes": {

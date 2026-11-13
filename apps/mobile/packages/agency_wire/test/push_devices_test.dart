@@ -109,6 +109,8 @@ void main() {
       expect(ring.awaySince, isNull);
       // Older servers send no away_since.
       expect(RingPush.fromJson(const {'type': 'ring_off', 'session_id': 's', 'reason': 'max_age'}).awaySince, isNull);
+      // The session left with the phone parked on it: its own reason, not a take-over.
+      expect(RingPush.fromJson(const {'type': 'ring_off', 'session_id': 's', 'reason': 'left'}).offReason, RingOffReason.left);
       expect(RingPush.fromJson(push('push_test_ring')).type, RingPushType.testRing);
     });
 
