@@ -797,8 +797,9 @@ verified yet").
   the Me card's toggle). It opens the app with an extra; native declines a ring ringing at the tap,
   and one arriving in the next ring window (an app attaching during a ring would answer it, N5),
   and keeps the tap for Dart (`takeStopRinging`). The returning station keeps its socket parked and
-  asks `device_away` over HTTP (the server's switch from `away_ring`); while a ring in flight keeps
-  `away_ring` the answer still says `away_ring`, and it is asked again each second, up to 10 s,
+  asks `device_away` over HTTP (the server's switch from `away_ring`); while a ring is in flight the
+  answer says `reserved` (the pause queued behind the ring's offer until native's decline releases
+  it) or still `away_ring`, and it is asked again each second, up to 10 s,
   then the station attaches anyway. Then: no IQ50 return, the banner "Ringing stopped. You're
   paused.", and the app's task goes back (`moveTaskToBack`). Hidden again in that absence, the app
   asks `device_away`, not `away_ring`, until the agent is back in the pool, and the paused

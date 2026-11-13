@@ -1599,9 +1599,10 @@ class StationController extends Notifier<StationView?>
     if (_foreground || _s == null) _ring.moveTaskToBack();
   }
 
-  /// `device_away` for [sessionId] until it applies: answered still on `away_ring` (a ring in
-  /// flight keeps it until the ring ends), or failed in a way worth retrying, it is asked again
-  /// after 1 s, until [deadline]. [done] gets whether it applied.
+  /// `device_away` for [sessionId] until it applies: answered `reserved` (a ring in flight: the
+  /// pause is queued behind it until native's decline releases it) or still on `away_ring`, or
+  /// failed in a way worth retrying, it is asked again after 1 s, until [deadline]. [done] gets
+  /// whether it applied.
   void _askDeviceAwayForStop(
     String sessionId,
     DateTime deadline, {
@@ -1620,8 +1621,13 @@ class StationController extends Notifier<StationView?>
 
     unawaited(_api.takeBreak(sessionId, ReservedBreakCode.deviceAway.wire, timeout: const Duration(seconds: 5)).then((r) {
       if (!stillWanted()) return;
-      final stillAwayRing = r != null && r.state == AgentState.onBreak && r.breakReason == ReservedBreakCode.awayRing.wire;
-      if (stillAwayRing) {
+      // A ring in flight holds the session `reserved` for its push offer (the device_away is queued
+      // behind it, applied once the decline releases it); an answer still on `away_ring` is the
+      // same ring's end not reached yet. Either way an attach now would answer it (N5).
+      final ringInFlight = r != null &&
+          (r.state == AgentState.reserved ||
+              (r.state == AgentState.onBreak && r.breakReason == ReservedBreakCode.awayRing.wire));
+      if (ringInFlight) {
         again();
         return;
       }

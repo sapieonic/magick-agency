@@ -353,15 +353,22 @@ void main() {
   });
 
   group('"Stop ringing" on the away notification (this absence only)', () {
-    /// The break route as the server answers `device_away` asked on `away_ring`: still on
-    /// `away_ring` for [ringInFlight] asks (a ring in flight keeps it), then switched.
-    void breakRoute(App app, {int ringInFlight = 0}) {
+    /// The break route as the server answers `device_away` asked on `away_ring`: for
+    /// [ringInFlight] asks a ring is in flight, so the session is `reserved` for its push offer and
+    /// the pause is queued behind it ([reservedWhileRinging]; else the answer is still
+    /// `away_ring`), then switched.
+    void breakRoute(App app, {int ringInFlight = 0, bool reservedWhileRinging = false}) {
       var asked = 0;
       app.routes['POST $_breakPath'] = (r) {
         final reason = (r.body! as Map<String, Object?>)['reason']! as String;
         if (reason == 'away_ring') return json(200, stateBody('break', breakReason: 'away_ring'));
         asked++;
-        return json(200, stateBody('break', breakReason: asked <= ringInFlight ? 'away_ring' : 'device_away'));
+        if (asked <= ringInFlight) {
+          return json(200, reservedWhileRinging
+              ? stateBody('reserved', breakReason: 'device_away', pending: 'break')
+              : stateBody('break', breakReason: 'away_ring'));
+        }
+        return json(200, stateBody('break', breakReason: 'device_away'));
       };
     }
 
@@ -419,6 +426,22 @@ void main() {
         expect(reasons(app), ['away_ring', 'device_away', 'device_away', 'device_away']);
         expect(app.connector.attempts, 2);
         expect(app.mints, 1);
+        app.dispose();
+      });
+    });
+
+    test('a ring in flight holds the session reserved (the pause queued behind it): the station still waits', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        breakRoute(app, ringInFlight: 1, reservedWhileRinging: true);
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1, reason: 'reserved for the ring\'s offer: an attach would answer it (N5)');
+        async.elapse(const Duration(seconds: 1));
+        expect(reasons(app), ['away_ring', 'device_away', 'device_away']);
+        expect(app.connector.attempts, 2);
         app.dispose();
       });
     });
