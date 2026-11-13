@@ -45,6 +45,10 @@ abstract interface class RingChannel {
   /// Posts the local "Missed inbound call" notification (no name, no number).
   Future<void> showMissedRing();
 
+  /// The `ring_off` push native took for the absence it showed (the server ended `away_ring`
+  /// while the agent was away), or null. Cleared on read; a new absence drops one never read.
+  Future<RingOffRecord?> takeRingOff();
+
   /// What native tells Dart: `token`, `ringAnswered`, `ringEnded`, `testRingReceived`,
   /// `stopRingingTapped`. Broadcast. An event nobody listens to is answered with an error, so
   /// native knows Dart did not take it (and keeps an answer for `pendingAnswer`).
@@ -80,6 +84,40 @@ final class RingAnswer {
 
   @override
   String toString() => 'RingAnswer($callId, <token>)';
+}
+
+/// A `ring_off` native took: the server ended `away_ring` for the absence that began at
+/// [awaySince] in [sessionId] (each null when the push did not say), for [reason].
+@immutable
+final class RingOffRecord {
+  const RingOffRecord({this.sessionId, this.awaySince, required this.reason});
+
+  /// Reads `{session_id, away_since, reason}`; null when it is not a map.
+  static RingOffRecord? tryRead(Object? raw) {
+    if (raw is! Map) return null;
+    final session = raw['session_id'];
+    final since = raw['away_since'];
+    final reason = raw['reason'];
+    return RingOffRecord(
+      sessionId: session is String && session.isNotEmpty ? session : null,
+      awaySince: since is String ? DateTime.tryParse(since)?.toUtc() : null,
+      reason: RingOffReason.fromWire(reason is String ? reason : null),
+    );
+  }
+
+  final String? sessionId;
+  final DateTime? awaySince;
+  final RingOffReason reason;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RingOffRecord && other.sessionId == sessionId && other.awaySince == awaySince && other.reason == reason;
+
+  @override
+  int get hashCode => Object.hash(sessionId, awaySince, reason);
+
+  @override
+  String toString() => 'RingOffRecord(${reason.wire}, $sessionId, $awaySince)';
 }
 
 /// The `checklist` keys, in the order the settings card lists them.
@@ -296,6 +334,9 @@ final class MethodRingChannel implements RingChannel {
 
   @override
   Future<void> showMissedRing() => _invoke<void>('showMissedRing');
+
+  @override
+  Future<RingOffRecord?> takeRingOff() async => RingOffRecord.tryRead(await _invoke<Object?>('takeRingOff'));
 }
 
 /// The one channel for the process (it owns the native handler). Tests override it with a fake.

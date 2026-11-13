@@ -279,10 +279,21 @@ class StationController extends Notifier<StationView?>
   /// The on-duty service and the audio were stopped for `away_ring`: opened again on return.
   bool _audioStoodDown = false;
 
-  /// Back from `away_ring`: once the station's next `ready` says where the agent stands, a
-  /// `device_away` there means the server ended `away_ring` meanwhile, and the agent is told why.
+  /// Back from `away_ring`: once the station's next `ready` says where the agent stands, the agent
+  /// is told why the phone stopped ringing meanwhile, when something says it did
+  /// ([_maybeExplainRingOff]). The server answers every return with `device_away`, so that alone
+  /// says nothing.
   bool _ringOffCheck = false;
   bool _ringOffReady = false;
+
+  /// When the agent came back from `away_ring` (device clock), and when that absence began (server
+  /// clock, as the break's `since` said before the socket parked; null when unknown).
+  ({DateTime back, DateTime? absenceStart})? _ringReturn;
+
+  /// The app's own `away_ring` applied in the absence the agent is back from: the away card says
+  /// this phone was ringing for inbound calls, though the server reports `device_away` on return.
+  /// Cleared once the agent leaves that pause.
+  bool _awayRang = false;
 
   /// Rings that ended unanswered on this phone while on `away_ring` (native's `ringEnded`).
   int _ringMissesWhileAway = 0;
@@ -714,6 +725,8 @@ class StationController extends Notifier<StationView?>
     _audioStoodDown = false;
     _ringOffCheck = false;
     _ringOffReady = false;
+    _ringReturn = null;
+    _awayRang = false;
     _ringMissesWhileAway = 0;
     _ringCall = null;
     _ringHangUp = null;
@@ -1055,6 +1068,7 @@ class StationController extends Notifier<StationView?>
     _syncRingCall();
     _settleInboundWaiters();
     _applyLifecycle(s);
+    if (_awayRang && !(_station.effectiveState == AgentState.onBreak && isAwayBreak(_station.breakReasonCode))) _awayRang = false;
     _maybeExplainRingOff(s);
     _maybeAnnounceReturn(s);
     _maybeAutoReturn(s);
@@ -1118,6 +1132,7 @@ class StationController extends Notifier<StationView?>
       redialPlaced: _redialPlacedHere,
       inboundHangupFailure: inbound != null && _inboundHangupFailure?.callId == inbound.id ? _inboundHangupFailure!.text : null,
       inboundNotice: _inboundNotice,
+      awayRang: _awayRang,
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -1385,6 +1400,8 @@ class StationController extends Notifier<StationView?>
     _announceOnReturn = false;
     _ringOffCheck = false;
     _ringOffReady = false;
+    _ringReturn = null;
+    _awayRang = false;
     // A new away period: `away_ring` is worth asking again.
     _awayRingRefused = false;
     // Gone again before the return was decided: the next return decides afresh.
@@ -1405,6 +1422,7 @@ class StationController extends Notifier<StationView?>
     // Back from `away_ring` (Mode B): the away notification goes, the on-duty service and the
     // audio start again (from the foreground, as Android requires), and the socket reopens
     // below. Whether the server kept `away_ring` meanwhile is the next `ready`'s to say.
+    final absenceStart = _awayRingHeld ? _awayRingSince() : null;
     if (_awayRingParked) {
       _awayRingParked = false;
       _ring.showAwayNotification(false);
@@ -1412,6 +1430,8 @@ class StationController extends Notifier<StationView?>
     if (_awayRingHeld) {
       _ringOffCheck = true;
       _ringOffReady = false;
+      _ringReturn = (back: _now(), absenceStart: absenceStart);
+      _awayRang = true;
     }
     _awayRingHeld = false;
     _awayCodeAsked = null;
@@ -1711,6 +1731,9 @@ class StationController extends Notifier<StationView?>
       return;
     }
     if (_station.connection != StationConnection.open || _awayInFlight) return;
+    // Back from `away_ring` on a parked socket: the reopened socket's `ready` says when the
+    // absence began (the server keeps its start as `since`).
+    if (_ringOffCheck) return;
     final st = _station.effectiveState;
     if (st == AgentState.onBreak && isAwayBreak(_station.breakReasonCode)) {
       _announceOnReturn = false;
@@ -2046,30 +2069,61 @@ class StationController extends Notifier<StationView?>
     }
   }
 
-  /// Back from `away_ring`: the server ends it on its own (`device_away`, IQ67: two missed
-  /// rings, the device revoked, ringing turned off, the flag off, the maximum age). The phone
-  /// never sees the `ring_off` push (native drops the away notification), so the first `ready`
-  /// after the return decides: `device_away` there means it ended, and the agent is told why,
-  /// as far as the phone can tell ([inferRingOffReason]).
+  /// Back from `away_ring`, once the reopened socket's `ready` says where the agent stands: the
+  /// server answers every return with `device_away` (IQ67, the absence's start kept as `since`),
+  /// so that says nothing about whether the phone stopped ringing meanwhile. The agent is told why
+  /// it stopped only on a concrete reason ([ringOffReasonOnReturn]): the `ring_off` native took for
+  /// this absence, else two misses heard while away, the device status read now (revoked, opted
+  /// out, the flag off), or an absence as long as the server's maximum. No reason, no banner.
   void _maybeExplainRingOff(_Session s) {
     if (!_ringOffCheck) return;
     if (!_foreground || _terminal) {
       _ringOffCheck = false;
+      _ringReturn = null;
       return;
     }
     if (!_ringOffReady || _station.connection != StationConnection.open) return;
     _ringOffCheck = false;
     _ringOffReady = false;
-    if (_station.agentState != AgentState.onBreak || _station.breakReasonCode != ReservedBreakCode.deviceAway.wire) return;
+    final back = _ringReturn;
+    _ringReturn = null;
     final misses = _ringMissesWhileAway;
     _ringMissesWhileAway = 0;
-    _log.info('away_ring ended while away', {'misses': misses});
-    unawaited(_ring.readStatus().then((status) {
+    // Read (and cleared) whatever the state: a ring_off left unread would be the next return's.
+    final ringOff = _ring.takeRingOff();
+    if (_station.agentState != AgentState.onBreak || !isAwayBreak(_station.breakReasonCode)) return;
+    // The absence's start: the return's `since` (the server keeps it), else as it was before the park.
+    final absenceStart = _station.agentStateSince ?? back?.absenceStart;
+    final awayFor = back == null || absenceStart == null ? null : _serverInstant(back.back).difference(absenceStart);
+    unawaited(() async {
+      RingOffRecord? off;
+      try {
+        off = await ringOff;
+      } catch (e) {
+        _log.warn('reading the ring_off failed', {'error': e.runtimeType.toString()});
+      }
+      if (off != null && !ringOffEndsAbsence(off, sessionId: s.id, absenceStart: absenceStart)) {
+        _log.info('a ring_off for another absence: ignored', {'reason': off.reason.wire});
+        off = null;
+      }
+      PushDeviceStatus? status;
+      if (off == null && misses < inboundRingMaxMisses) {
+        try {
+          status = await _ring.readStatus();
+        } catch (e) {
+          _log.warn('reading the device status on return failed', {'error': e.runtimeType.toString()});
+        }
+      }
       if (!identical(_s, s) || !ref.mounted) return;
-      ref.read(ringNoticeProvider.notifier).show(RingCopy.stopped(inferRingOffReason(missesWhileAway: misses, status: status)));
-    }, onError: (Object e) {
-      if (identical(_s, s) && ref.mounted) ref.read(ringNoticeProvider.notifier).show(RingCopy.stopped(null));
-    }));
+      final reason = ringOffReasonOnReturn(ringOff: off, missesWhileAway: misses, status: status, awayFor: awayFor);
+      _log.info('back from away_ring', {
+        'misses': misses,
+        'ring_off': off?.reason.wire ?? '',
+        'reason': reason?.wire ?? '',
+        'away_s': awayFor?.inSeconds ?? -1,
+      });
+      if (reason != null) ref.read(ringNoticeProvider.notifier).show(RingCopy.stopped(reason));
+    }());
   }
 
   /// How long a station opened from a ring waits before asking for its join again.

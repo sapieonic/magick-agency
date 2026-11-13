@@ -111,24 +111,45 @@ void main() {
       expect(isDeclinedRing(InboundRingResult.busyOnPhone), isTrue);
     });
 
-    test('inferRingOffReason: two misses, else what the device status says, else nothing', () {
+    test('ringOffReasonOnReturn: the ring_off for this absence, else two misses, the device status, the maximum age; '
+        'else nothing (a normal return is not news)', () {
       final ringing = _status('device_status_ringing');
-      expect(inferRingOffReason(missesWhileAway: 2, status: null), RingOffReason.ringMissed);
-      expect(inferRingOffReason(missesWhileAway: 1, status: ringing), isNull);
-      expect(inferRingOffReason(missesWhileAway: 0, status: null), isNull);
-      expect(inferRingOffReason(missesWhileAway: 0, status: _status('device_status_unregistered')), RingOffReason.revoked);
-      expect(inferRingOffReason(missesWhileAway: 0, status: _status('device_status_failed_opted_out')), RingOffReason.optedOut);
+      RingOffReason? on({RingOffRecord? off, int misses = 0, PushDeviceStatus? status, Duration? away = const Duration(minutes: 5)}) =>
+          ringOffReasonOnReturn(ringOff: off, missesWhileAway: misses, status: status, awayFor: away);
+      expect(on(status: ringing), isNull, reason: 'nothing says it stopped');
+      expect(on(), isNull);
+      expect(on(off: const RingOffRecord(reason: RingOffReason.takenOver), status: ringing), RingOffReason.takenOver);
+      expect(on(off: const RingOffRecord(reason: RingOffReason.unknown)), RingOffReason.unknown, reason: 'told it stopped, not a guess why');
+      expect(on(misses: 2), RingOffReason.ringMissed);
+      expect(on(misses: 1, status: ringing), isNull);
+      expect(on(status: _status('device_status_unregistered')), RingOffReason.revoked);
+      expect(on(status: _status('device_status_failed_opted_out')), RingOffReason.optedOut);
+      expect(on(status: _status('device_status_ringing', top: {'account_allows_ring': false})), RingOffReason.flagOff);
+      expect(on(status: _status('device_status_ringing', top: {'push_configured': false})), RingOffReason.unknown);
       expect(
-        inferRingOffReason(missesWhileAway: 0, status: _status('device_status_ringing', top: {'account_allows_ring': false})),
-        RingOffReason.flagOff,
-      );
-      expect(
-        inferRingOffReason(
-          missesWhileAway: 0,
-          status: _status('device_status_ringing', device: {'last_failure_reason': 'unregistered', 'last_failure_at': '2026-11-02T08:00:00.000Z'}),
-        ),
+        on(status: _status('device_status_ringing', device: {'last_failure_reason': 'unregistered', 'last_failure_at': '2026-11-02T08:00:00.000Z'})),
         RingOffReason.revoked,
       );
+      expect(on(status: ringing, away: const Duration(hours: 4)), RingOffReason.maxAge);
+      expect(on(status: ringing, away: const Duration(hours: 3, minutes: 59)), isNull);
+    });
+
+    test('ringOffEndsAbsence: this session, and an absence starting no more than 2 s before this one', () {
+      final start = DateTime.utc(2026, 11, 2, 7, 58, 41, 120);
+      RingOffRecord off({String? session = 'sess-1', DateTime? since}) => RingOffRecord(sessionId: session, awaySince: since, reason: RingOffReason.ringMissed);
+      expect(ringOffEndsAbsence(off(since: start), sessionId: 'sess-1', absenceStart: start), isTrue);
+      expect(ringOffEndsAbsence(off(since: start.subtract(const Duration(milliseconds: 1500))), sessionId: 'sess-1', absenceStart: start), isTrue);
+      expect(ringOffEndsAbsence(off(since: start.subtract(const Duration(hours: 1))), sessionId: 'sess-1', absenceStart: start), isFalse);
+      expect(ringOffEndsAbsence(off(session: 'sess-0', since: start), sessionId: 'sess-1', absenceStart: start), isFalse);
+      expect(ringOffEndsAbsence(off(session: null), sessionId: 'sess-1', absenceStart: start), isTrue, reason: 'an older server says less');
+    });
+
+    test('a ring_off record reads as native sends it (the contract\'s ring_off)', () {
+      final push = pushSample('push_ring_off');
+      final record = RingOffRecord.tryRead({'session_id': push['session_id'], 'away_since': push['away_since'], 'reason': push['reason']})!;
+      expect(record, RingOffRecord(sessionId: '6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12', awaySince: DateTime.utc(2026, 11, 2, 7, 58, 41, 120), reason: RingOffReason.ringMissed));
+      expect(RingOffRecord.tryRead({'reason': 'something_new'}), const RingOffRecord(reason: RingOffReason.unknown));
+      expect(RingOffRecord.tryRead(null), isNull);
     });
 
     test('every reason is said in words, never as a code', () {

@@ -69,6 +69,17 @@ class FakeRingChannel implements RingChannel {
 
   @override
   Future<void> showMissedRing() async => calls.add('showMissedRing');
+
+  /// What `takeRingOff` answers next (then null: cleared on read).
+  RingOffRecord? ringOff;
+
+  @override
+  Future<RingOffRecord?> takeRingOff() async {
+    calls.add('takeRingOff');
+    final r = ringOff;
+    ringOff = null;
+    return r;
+  }
 }
 
 /// The station's Mode B seam over a [FakeRingChannel], with the ring switched on or off by the
@@ -102,4 +113,7 @@ class FakeStationRing implements StationRing {
     statusReads++;
     return status;
   }
+
+  @override
+  Future<RingOffRecord?> takeRingOff() => channel.takeRingOff();
 }

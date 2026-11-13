@@ -105,6 +105,7 @@ class StationViewMapper {
     bool redialPlaced = false,
     String? inboundHangupFailure,
     String? inboundNotice,
+    bool awayRang = false,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -120,7 +121,10 @@ class StationViewMapper {
       // when it sent none (a server older than the field) is a pause this app
       // asked for while away the honest reading.
       final code = s.breakReasonCode ?? (awayPauseRequested ? wire.ReservedBreakCode.deviceAway.wire : '');
-      onBreak = BreakInfo(code: code, label: breakLabel(code, breakReasons), since: phaseSince);
+      // Back from the app's own `away_ring`: the server reports `device_away`, but the phone was
+      // ringing for inbound calls while the agent was away, and the card says so.
+      final rang = awayRang && code == wire.ReservedBreakCode.deviceAway.wire;
+      onBreak = BreakInfo(code: code, label: rang ? awayRingBreakLabel : breakLabel(code, breakReasons), since: phaseSince, rang: rang);
     }
     final queued = pendingBreakCode == null
         ? null

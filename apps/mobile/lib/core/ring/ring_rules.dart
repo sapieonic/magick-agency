@@ -34,19 +34,51 @@ bool isMissedRing(InboundRingResult reason) =>
 bool isDeclinedRing(InboundRingResult reason) =>
     reason == InboundRingResult.declined || reason == InboundRingResult.busyOnPhone;
 
-/// Why the server ended `away_ring`, worked out on the phone, which never sees the `ring_off`
-/// push itself (native drops the away notification). [missesWhileAway]: the rings that ended
-/// unanswered on this phone since `away_ring` began, as `ringEnded` told Dart. [status]: the
-/// device's status read on return (null when the read failed). Null when nothing on the phone
-/// says which (a long absence, say): the agent is told it stopped, not a guess at why.
-RingOffReason? inferRingOffReason({required int missesWhileAway, required PushDeviceStatus? status}) {
+/// How long one absence on `away_ring` lasts before the server ends it (`max_age`): the server's
+/// `AGENCY_AWAY_RING_MAX_MS` default, 4 h (IQ67). The phone uses it only to say why it stopped.
+const awayRingMaxAge = Duration(hours: 4);
+
+/// Why the phone stopped ringing during the absence the agent is back from, or null when nothing
+/// says it did. The server always ends `away_ring` as `device_away` when the agent comes back
+/// (IQ67), so the return itself says nothing: only a concrete reason makes a banner.
+///
+/// 1. [ringOff]: the `ring_off` native took for this absence (already matched to it): its reason.
+/// 2. Else worked out on the phone: [missesWhileAway] ([inboundRingMaxMisses] or more, as
+///    `ringEnded` told Dart), the device [status] read on return (revoked, opted out, the flag off,
+///    the server unable to push), or an absence of [awayRingMaxAge] or more ([awayFor]).
+///
+/// Null otherwise: a normal return is not news.
+RingOffReason? ringOffReasonOnReturn({
+  required RingOffRecord? ringOff,
+  required int missesWhileAway,
+  required PushDeviceStatus? status,
+  required Duration? awayFor,
+}) {
+  if (ringOff != null) return ringOff.reason;
   if (missesWhileAway >= inboundRingMaxMisses) return RingOffReason.ringMissed;
-  if (status == null) return null;
-  if (!status.accountAllowsRing) return RingOffReason.flagOff;
-  final device = status.device;
-  if (device == null || device.revokedAt != null || device.lastFailureReason == PushFailureReason.unregistered) {
-    return RingOffReason.revoked;
+  if (status != null) {
+    if (!status.accountAllowsRing) return RingOffReason.flagOff;
+    final device = status.device;
+    if (device == null || device.revokedAt != null || device.lastFailureReason == PushFailureReason.unregistered) {
+      return RingOffReason.revoked;
+    }
+    if (!device.ringEnabled) return RingOffReason.optedOut;
+    if (!status.pushConfigured) return RingOffReason.unknown;
   }
-  if (!device.ringEnabled) return RingOffReason.optedOut;
+  if (awayFor != null && awayFor >= awayRingMaxAge) return RingOffReason.maxAge;
   return null;
 }
+
+/// Whether [ringOff] ends the absence that began at [absenceStart] in [sessionId]: the same
+/// session (when both say), and an absence starting no more than 2 s before this one's (native
+/// already drops older ones; this is the same rule on Dart's side of the channel).
+bool ringOffEndsAbsence(RingOffRecord ringOff, {required String sessionId, required DateTime? absenceStart}) {
+  final session = ringOff.sessionId;
+  if (session != null && session != sessionId) return false;
+  final since = ringOff.awaySince;
+  if (since == null || absenceStart == null) return true;
+  return !since.isBefore(absenceStart.subtract(ringOffTolerance));
+}
+
+/// [ringOffEndsAbsence]'s tolerance between two stamps of one absence's start.
+const ringOffTolerance = Duration(seconds: 2);

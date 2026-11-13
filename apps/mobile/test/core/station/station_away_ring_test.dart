@@ -8,6 +8,7 @@ import 'package:magick_agency_agent/core/inbound/inbound_call_rules.dart';
 import 'package:magick_agency_agent/core/ring/ring_channel.dart';
 import 'package:magick_agency_agent/core/ring/ring_copy.dart';
 import 'package:magick_agency_agent/core/ring/station_ring.dart';
+import 'package:magick_agency_agent/core/station/away_return.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
@@ -171,7 +172,24 @@ void main() {
   });
 
   group('coming back from away_ring', () {
-    test('within 30 s: the notification goes, the on-duty service and the socket reopen, then /available (IQ50)', () {
+    /// The frames the server sends a station reattaching after `away_ring` (the contract's
+    /// samples): `agent_state` break/device_away with the absence's start as `since`, then `ready`
+    /// on the same break. [since]: the absence's start on the harness's clock.
+    void backFromAwayRing(App app, {String since = '2026-11-01T09:00:00.000Z'}) {
+      app.frame(stationFrame('agent_state_after_away_ring_return')..['since'] = since);
+      app.frame(stationFrame('ready_after_away_ring_return')..['session_id'] = 'sess-1');
+      app.async.flushMicrotasks();
+    }
+
+    test('the server\'s return frames are device_away, keeping the absence\'s start (the contract)', () {
+      final state = stationFrame('agent_state_after_away_ring_return');
+      final ready = stationFrame('ready_after_away_ring_return');
+      expect([state['state'], state['break_reason']], ['break', 'device_away']);
+      expect([ready['state'], ready['break_reason']], ['break', 'device_away']);
+      expect(ready.containsKey('since'), isFalse, reason: 'ready has no since: the agent_state before it says');
+    });
+
+    test('within 30 s: the notification goes, the on-duty service and the socket reopen, then /available (IQ50); no banner', () {
       fakeAsync((async) {
         final r = _Ring(async)..availableThenAway();
         final app = r.app;
@@ -184,33 +202,95 @@ void main() {
         expect(app.engine.calls.where((c) => c == 'fgs.start').length, starts + 1);
         expect(app.connector.attempts, 2, reason: 'the socket reopens');
         expect(app.requests('POST', _availablePath), isEmpty, reason: 'decided once the station says where the agent stands');
-        app.readyFrame('break', extra: {'break_reason': 'away_ring'});
-        async.flushMicrotasks();
+        backFromAwayRing(app);
         expect(app.requests('POST', _availablePath), hasLength(1));
-        expect(app.container.read(ringNoticeProvider), isNull, reason: 'away_ring held: nothing to explain');
+        expect(app.container.read(ringNoticeProvider), isNull, reason: 'the server answers every return with device_away: no news');
         app.dispose();
       });
     });
 
-    test('after 30 s: the away card says this phone rings for inbound calls, and waits for the tap', () {
+    test('a normal return after 30 s: the away card says this phone was ringing, waits for the tap, and no banner', () {
       fakeAsync((async) {
         final r = _Ring(async)..availableThenAway();
         final app = r.app;
         async.elapse(const Duration(minutes: 2));
         app.lifecycle.show();
         async.flushMicrotasks();
-        app.readyFrame('break', extra: {'break_reason': 'away_ring'});
-        async.flushMicrotasks();
+        backFromAwayRing(app);
         expect(app.requests('POST', _availablePath), isEmpty);
         final onBreak = app.view!.onBreak!;
+        expect(onBreak.code, 'device_away', reason: 'the server\'s reason');
         expect(onBreak.isDeviceAway, isTrue);
-        expect(onBreak.isAwayRing, isTrue);
+        expect(onBreak.isAwayRing, isTrue, reason: 'the app itself asked away_ring for this absence');
         expect(onBreak.label, 'Away · this phone rings for inbound calls');
+        expect(app.container.read(ringNoticeProvider), isNull);
+        expect(r.channel.named('takeRingOff'), hasLength(1), reason: 'read (and cleared) on every return');
         app.dispose();
       });
     });
 
-    test('the server ended away_ring after two missed rings: the agent is told why', () {
+    test('a 3-hour absence: no return without the tap, no banner, and the summary counts from the absence\'s start', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.ring.status = PushDeviceStatus.fromJson(pushSample('device_status_ringing'));
+        async.elapse(const Duration(hours: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('POST', _availablePath), isEmpty);
+        expect(app.container.read(ringNoticeProvider), isNull);
+        expect(app.container.read(awayReturnProvider)!.since, DateTime.utc(2026, 11, 1, 9), reason: 'from when the absence began');
+        expect(app.view!.onBreak!.since, DateTime.utc(2026, 11, 1, 9));
+        app.dispose();
+      });
+    });
+
+    test('away for the maximum age (4 h): the agent is told that is why it stopped', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        async.elapse(const Duration(hours: 4, minutes: 1));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: it stops after 4 hours away.');
+        app.dispose();
+      });
+    });
+
+    test('a ring_off native took for this absence (ring_missed): the banner says why', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        final push = pushSample('push_ring_off');
+        r.channel.ringOff = RingOffRecord(sessionId: 'sess-1', awaySince: DateTime.utc(2026, 11, 1, 9), reason: RingOffReason.fromWire(push['reason'] as String?));
+        async.elapse(const Duration(minutes: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: you missed two inbound calls.');
+        expect(r.ring.statusReads, 0, reason: 'the ring_off says why');
+        app.dispose();
+      });
+    });
+
+    test('a ring_off for an earlier absence says nothing about this one', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.ringOff = RingOffRecord(sessionId: 'sess-1', awaySince: DateTime.utc(2026, 11, 1, 8), reason: RingOffReason.ringMissed);
+        async.elapse(const Duration(minutes: 3));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        backFromAwayRing(app);
+        expect(app.container.read(ringNoticeProvider), isNull);
+        app.dispose();
+      });
+    });
+
+    test('two missed rings heard while away: the agent is told why', () {
       fakeAsync((async) {
         final r = _Ring(async)..availableThenAway();
         final app = r.app;
@@ -219,10 +299,8 @@ void main() {
         async.elapse(const Duration(minutes: 3));
         app.lifecycle.show();
         async.flushMicrotasks();
-        app.readyFrame('break', extra: {'break_reason': 'device_away'});
-        async.flushMicrotasks();
+        backFromAwayRing(app);
         expect(app.container.read(ringNoticeProvider), RingCopy.stopped(RingOffReason.ringMissed));
-        expect(app.container.read(ringNoticeProvider), 'Your phone stopped ringing for inbound calls: you missed two inbound calls.');
         app.dispose();
       });
     });
@@ -236,8 +314,7 @@ void main() {
         async.elapse(const Duration(minutes: 3));
         app.lifecycle.show();
         async.flushMicrotasks();
-        app.readyFrame('break', extra: {'break_reason': 'device_away'});
-        async.flushMicrotasks();
+        backFromAwayRing(app);
         expect(r.ring.statusReads, 1);
         expect(app.container.read(ringNoticeProvider), RingCopy.stopped(RingOffReason.revoked));
         app.dispose();

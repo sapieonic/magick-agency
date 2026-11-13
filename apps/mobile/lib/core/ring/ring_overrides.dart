@@ -58,4 +58,7 @@ final class _RegistrationStationRing implements StationRing {
 
   @override
   Future<PushDeviceStatus?> readStatus() => _ref.read(ringRegistrationProvider.notifier).readStatus();
+
+  @override
+  Future<RingOffRecord?> takeRingOff() => _channel.takeRingOff();
 }

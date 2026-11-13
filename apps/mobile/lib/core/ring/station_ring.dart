@@ -28,6 +28,9 @@ abstract interface class StationRing {
   /// The device's status read again, for why the server ended `away_ring` (null when unknown).
   Future<PushDeviceStatus?> readStatus();
 
+  /// The `ring_off` native took while away ([RingChannel.takeRingOff]), once.
+  Future<RingOffRecord?> takeRingOff();
+
   static const StationRing none = _NoRing();
 }
 
@@ -51,6 +54,9 @@ final class _NoRing implements StationRing {
 
   @override
   Future<PushDeviceStatus?> readStatus() async => null;
+
+  @override
+  Future<RingOffRecord?> takeRingOff() async => null;
 }
 
 final stationRingProvider = Provider<StationRing>((ref) => StationRing.none);
