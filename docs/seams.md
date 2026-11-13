@@ -311,7 +311,11 @@ at load, so a broken credential fails boot naming the env key, never its value):
 | `PUSH_APNS_ENV` | `sandbox` or `production`, no default: a debug build's token sent to production is refused `BadDeviceToken`, which revokes the device. |
 
 - **FCM HTTP v1** (`fcm-sender.ts`): an RS256 assertion traded at `oauth2.googleapis.com` for an
-  access token cached 55 minutes (single flight; a 401 drops it and sends once more); a data-only
+  access token cached 55 minutes (single flight; a 401 drops it and sends once more). The platform
+  bootstrap starts the sender (`RoutingPushSender.start`): the token is traded at boot and again
+  5 minutes before it ends, in the background, so a ring never waits on the exchange (a failed one
+  is logged and tried again a minute later). Each request is bounded by `AbortSignal.timeout` and,
+  for a transport that ignores it, `withTimeoutOr`. A data-only
   message (`android.priority: HIGH`, `android.ttl` the ring window). `UNREGISTERED` →
   `unregistered` (a bare 404 never revokes: `unavailable`); 429/`QUOTA_EXCEEDED` → `rate_limited`
   (no scope: FCM does not say whether the device's or the project's quota was hit);
