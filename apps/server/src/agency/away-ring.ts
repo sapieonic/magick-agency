@@ -51,6 +51,7 @@ import { AGENT_LEASE_MS, type AgentStateMachine } from './agent-state-machine.js
 import { InFlight } from './pacing/in-flight.js';
 import type { StationRegistry } from './station-registry.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
+import type { RingOffers } from './inbound/inbound-ring.js';
 import { accountKeyOfCall } from './inbound/inbound-queue.js';
 
 const log = createChildLogger({ component: 'agency-away-ring' });
@@ -229,11 +230,19 @@ export interface AwayRingReconcileSummary {
   cleared: number;
 }
 
+/**
+ * What the away break reaches of the inbound connector: whether a session holds a push offer, and
+ * the ring's two steps that end one for the absence's sake, on the call's chain (N1).
+ */
+export type AwayRingInbound = Pick<InboundConnector, 'holdsPushOffer'> & {
+  readonly rings: Pick<RingOffers, 'cancelForAwayRingEnd' | 'declineForDeviceAway'>;
+};
+
 export interface AwayRingServiceDeps {
   agents: AgentStateMachine;
   stations: StationRegistry;
-  /** The inbound connector while one runs (the runtime's `inbound`). */
-  inbound: () => InboundConnector | null;
+  /** The inbound connector while one runs (the runtime's `inbound`): {@link AwayRingInbound}. */
+  inbound: () => AwayRingInbound | null;
   /**
    * The runtime's break queue: the app's own pauses queued behind a ring (`device_away`,
    * `away_ring`) are settled by the ring's end ({@link AwayRingService.releaseInbound}). Without it
@@ -507,14 +516,14 @@ export class AwayRingService {
 
   /**
    * The app asked `device_away` while the session holds a push offer (`POST /sessions/:id/break`,
-   * the away notification's "Stop ringing", IQ79): the connector's
-   * `InboundConnector.declineRingForDeviceAway`, on the call's chain. A ring not yet answered is
+   * the away notification's "Stop ringing", IQ79): the ring's `RingOffers.declineForDeviceAway`,
+   * on the call's chain. A ring not yet answered is
    * the agent saying no to it: declined (`declined`, never a miss), and the absence ended as
    * `device_away` keeping its start (`declined`). An answered ring is the agent taking the call
    * (`answered`): the pause queues behind it as behind any call. `none`: no push offer.
    */
   async declineRingForDeviceAway(sessionId: string): Promise<'declined' | 'answered' | 'none'> {
-    return (await this.deps.inbound()?.declineRingForDeviceAway(sessionId)) ?? 'none';
+    return (await this.deps.inbound()?.rings.declineForDeviceAway(sessionId)) ?? 'none';
   }
 
   /**
@@ -529,7 +538,7 @@ export class AwayRingService {
    *
    * A ring in flight is never ended here (`ring_in_flight`): its end is the connector's, on the
    * call's own chain (N1). {@link endOrCancelRing} goes through
-   * `InboundConnector.cancelRingForAwayRingEnd`, which cancels the ring and then calls this.
+   * `RingOffers.cancelForAwayRingEnd`, which cancels the ring and then calls this.
    */
   async end(
     sessionId: string,
@@ -642,7 +651,7 @@ export class AwayRingService {
       // The ring in flight is the connector's to cancel, on the call's chain (`answered_elsewhere`;
       // an answered one too: the device that answered no longer holds the station). It leaves the
       // agent on a plain break for the new device's attach, `since` kept at the absence's start.
-      const cancelled = await this.deps.inbound()?.cancelRingForAwayRingEnd(sessionId, 'taken_over', { absenceSince: awaySince });
+      const cancelled = await this.deps.inbound()?.rings.cancelForAwayRingEnd(sessionId, 'taken_over', { absenceSince: awaySince });
       log.info({ sessionId, cancelled }, 'Take-over during a ring: the ring was cancelled');
     } else {
       const redis = await this.deps.agents.endAwayRing(sessionId, { offline: false, absenceSinceMs: awaySince?.getTime() ?? null });
@@ -683,7 +692,7 @@ export class AwayRingService {
   ): Promise<AwayRingEndOutcome> {
     const connector = this.deps.inbound();
     if (connector && this.holdsPushOffer(sessionId)) {
-      const out = await connector.cancelRingForAwayRingEnd(sessionId, reason);
+      const out = await connector.rings.cancelForAwayRingEnd(sessionId, reason);
       return out === 'cancelled' ? 'ended' : out === 'answered' ? 'ring_in_flight' : this.end(sessionId, reason, opts);
     }
     return this.end(sessionId, reason, opts);
@@ -772,7 +781,7 @@ export class AwayRingService {
    * `break_reason`, which a ring's `reserved` nulls):
    *  - a ring in flight (the connector holds a push offer, or Redis an `inbound` field): skipped,
    *    unless the absence must end (below) while the connector holds the ring: then the ring is
-   *    cancelled on the call's chain (`InboundConnector.cancelRingForAwayRingEnd`) and the absence
+   *    cancelled on the call's chain (`RingOffers.cancelForAwayRingEnd`) and the absence
    *    ended there (an answered ring runs to its end and the next pass ends the absence);
    *  - the ring rule refusing it (past the maximum age, the flags off, the device gone, revoked or
    *    without a token, opted out, the maximum missed rings): ended (`max_age`, `flag_off`,

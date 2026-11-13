@@ -950,8 +950,8 @@ ringing" (IQ79), each second for up to 10 s, before its station attaches. While 
 the session `reserved`:
 
 - **Not yet answered:** the agent saying no to that ring. The route asks the away break
-  (`AwayRingService.declineRingForDeviceAway`), which asks the connector
-  (`declineRingForDeviceAway` → `RingOffers.declineForDeviceAway`, on the call's chain): the ring
+  (`AwayRingService.declineRingForDeviceAway`), which asks the connector's ring
+  (`InboundConnector.rings`: `RingOffers.declineForDeviceAway`, on the call's chain): the ring
   ends through `RingOffers.end` as `declined`, exactly as the token-only decline (never a miss,
   `ring_cancel` sent, the caller back at the head of the queue, searched for again and never rung on
   this phone again), and the absence then ends as `device_away` keeping its start (`offline: false`;
@@ -1056,7 +1056,7 @@ attach or a join over `break, ring = 1`, or an attach without `caps=inbound` dur
 `away_ring` (the switch; this is how the away notification's "Stop ringing" ends the absence, IQ79,
 with no route of its own), and the app asking `device_away` during a ring not yet answered (the ring
 declined first, IQ83). A ring in flight is never ended by a state write
-(N1): the end goes through the connector's `cancelRingForAwayRingEnd` on the call's chain, which
+(N1): the end goes through the connector's ring (`RingOffers.cancelForAwayRingEnd`) on the call's chain, which
 cancels a ring not yet answered (`cancelled`; `answered_elsewhere` for a take-over) and then ends the
 absence; an answered ring runs to its end and the next reconcile ends the absence, except on a
 take-over, which cancels it too (the device that answered no longer holds the station).

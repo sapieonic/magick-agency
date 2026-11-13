@@ -377,8 +377,11 @@ export class InboundConnector {
   private readonly awayPauses: NonNullable<InboundConnectorDeps['awayPauses']>;
   /** IQ50: sessionId → the timer that searches its account again when its `device_away` grace ends. */
   private readonly awayTimers = new Map<string, NodeJS.Timeout>();
-  /** Mode B: the rings of away agents' phones (`inbound-ring.ts`). */
-  private readonly ring: RingOffers;
+  /**
+   * Mode B: the rings of away agents' phones (`inbound-ring.ts`). Read-only to others: the away
+   * break (`AwayRingService`) reaches its cancel and its device-away decline here.
+   */
+  readonly rings: RingOffers;
   /** {@link stop} ran: no new work; the listener stays for the calls still held. */
   private stopped = false;
   private republishTimer: NodeJS.Timeout | null = null;
@@ -392,7 +395,7 @@ export class InboundConnector {
     this.awayPauses = deps.awayPauses ?? ((ids, withinMs) => agencyAgentSessionRepository.deviceAwayPauseAges(ids, withinMs));
     this.members = deps.members ?? ((tenantId, accountId, userIds) =>
       agencyInboundAnswerRepository.filterAccountMembers(tenantId, accountId, userIds));
-    this.ring = new RingOffers({
+    this.rings = new RingOffers({
       host: this.ringHost(),
       stations: deps.stations,
       agents: deps.agents,
@@ -510,11 +513,11 @@ export class InboundConnector {
       if (held.phase === 'done' || !this.calls.has(callId)) return { kind: 'not_held' };
       if (held.phase === 'offered' && !held.bound && held.sessionId) {
         const sessionId = held.sessionId;
-        if (this.ring.isPushOffer(held)) {
+        if (this.rings.isPushOffer(held)) {
           // Mode B (N4): after `accept` the agent's hang-up is the way out of a ring not yet bound:
           // `declined`, never a miss; the agent goes back to `away_ring` (or, with a station open
           // here, to the pool as Mode A's).
-          const rung = await this.ring.end(held, sessionId, 'declined');
+          const rung = await this.rings.end(held, sessionId, 'declined');
           return rung ? { kind: 'declined', call: rung } : { kind: 'not_held' };
         }
         const row = await this.cancelOffer(held, sessionId, 'declined');
@@ -554,12 +557,12 @@ export class InboundConnector {
    * Whether the session holds a PUSH offer (IQ66: a ring to the away agent's phone, or an answered
    * ring in its accept grace, until it binds). Synchronous, beside {@link hasLiveCall}: the station
    * close decides presence from it with nothing awaited (`AgencyRuntime.releaseStationOnClose`), and
-   * the away-ring reconcile and ends leave a session it answers true for to
-   * {@link cancelRingForAwayRingEnd} (N1).
+   * the away-ring reconcile and ends leave a session it answers true for to the ring's
+   * `RingOffers.cancelForAwayRingEnd` (N1).
    */
   holdsPushOffer(sessionId: string): boolean {
     const held = this.forSession(sessionId);
-    return !!held && this.ring.isPushOffer(held);
+    return !!held && this.rings.isPushOffer(held);
   }
 
   /** The queue as it stands, per route, for the supervisor's tile (docs/inbound.md §6). */
@@ -696,7 +699,7 @@ export class InboundConnector {
     const station = this.deps.stations.get(sessionId);
     if (!station) return;
     const key = accountKeyOfCall(station.tenantId, station.accountId);
-    if (this.queue.waiting(key).length > 0 || this.ring.ringingCallers(key).length > 0) this.searchInBackground(key);
+    if (this.queue.waiting(key).length > 0 || this.rings.ringingCallers(key).length > 0) this.searchInBackground(key);
   }
 
   /**
@@ -711,7 +714,7 @@ export class InboundConnector {
     const station = this.releasableStation(sessionId);
     if (!station) return false;
     const key = accountKeyOfCall(station.tenantId, station.accountId);
-    if (!this.handovers.hasPending(sessionId) && this.queue.waiting(key).length === 0 && this.ring.ringingCallers(key).length === 0) return false;
+    if (!this.handovers.hasPending(sessionId) && this.queue.waiting(key).length === 0 && this.rings.ringingCallers(key).length === 0) return false;
     // Counted in the session's returns in flight until the hook has answered (an older build's
     // attach meanwhile reads the agent after it; the `available` its caller writes on a false
     // follows the answer, and is not counted).
@@ -727,7 +730,7 @@ export class InboundConnector {
     return this.withAccountLock(key, async () => {
       if (this.handovers.hasPending(sessionId) && await this.handovers.take(sessionId, agentUserId)) return true;
       // Mode B (IQ73): a caller whose phone ring is not answered yet is this freed agent's too.
-      const callers = [...this.ring.ringingCallers(key), ...this.callerViews(key)];
+      const callers = [...this.rings.ringingCallers(key), ...this.callerViews(key)];
       if (callers.length === 0) return false;
       const views = await this.agentViews(key);
       const self = views.find((v) => v.sessionId === sessionId);
@@ -736,7 +739,7 @@ export class InboundConnector {
       if (!callId) return false;
       const held = this.calls.get(callId);
       if (!held || held.leaving) return false;
-      const takeOver = this.ring.preemptible(held);
+      const takeOver = this.rings.preemptible(held);
       const reserved = await this.deps.agents.reserveForInbound(sessionId, callId, RELEASE_STATES);
       if (!reserved.ok) return false;
       // Re-checked after the CAS and queued with no await between: a caller marked leaving
@@ -745,7 +748,7 @@ export class InboundConnector {
         await this.giveBack(sessionId, callId, 'call_gone');
         return false;
       }
-      const offered = await this.serial(callId, () => (takeOver ? this.ring.takeOver(held, sessionId) : this.offer(held, sessionId))) ?? 'call_gone';
+      const offered = await this.serial(callId, () => (takeOver ? this.rings.takeOver(held, sessionId) : this.offer(held, sessionId))) ?? 'call_gone';
       if (offered === 'offered') return true;
       await this.giveBack(sessionId, callId, offered);
       return false;
@@ -845,7 +848,7 @@ export class InboundConnector {
     const held = this.forSession(sessionId);
     // Mode B: a push offer has no socket to lose until it binds; an accepted ring whose station
     // closed inside the grace waits for a re-attach until the grace ends (`accept_lapsed`).
-    if (held && this.ring.isPushOffer(held)) return;
+    if (held && this.rings.isPushOffer(held)) return;
     if (held && held.phase === 'offered' && !held.bound) {
       void this.serial(held.id, () => this.cancelOffer(held, sessionId, 'station_lost'));
     } else if (held && this.handovers.isHeldFor(held.id, sessionId)) {
@@ -902,14 +905,14 @@ export class InboundConnector {
     const held = this.forSession(sessionId);
     if (!held) return;
     let returnAgent = false;
-    if (this.ring.isPushOffer(held)) {
+    if (this.rings.isPushOffer(held)) {
       // Mode B: a station that cannot take inbound calls attached during a ring (or an accepted
       // one): it can never show the call, and it is no answer (the app attaches without
       // `caps=inbound` once its "Stop ringing" could not pause it, IQ79). Ended `cancelled`, never
       // a miss; the attach is the agent's return, so the absence ends as `device_away` keeping its
       // start (IQ76; the `agent_state` frame to this station before its `ready`), never the pool.
       log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during a ring — ending it');
-      await this.serial(held.id, () => this.ring.end(held, sessionId, 'cancelled', {
+      await this.serial(held.id, () => this.rings.end(held, sessionId, 'cancelled', {
         offerResult: 'station_lost', absence: { kind: 'asReturn' },
       }));
     } else if (held.phase === 'offered' && !held.bound) {
@@ -974,12 +977,12 @@ export class InboundConnector {
       const resumed = this.deps.bridge.reattachBorrowedBrowserLeg(held.id, ws);
       log.info({ sessionId, inboundCallId: held.id, resumed }, 'Station reconnected during an inbound call');
     }
-    if (held && this.ring.isPushOffer(held)) {
+    if (held && this.rings.isPushOffer(held)) {
       // Mode B: the app's station attached during a ring (N5). Accepted already: the frame below,
       // then the bind (`bindAcceptedRing`, after the station has sent it). Not yet answered (the
       // agent opened the app by its icon): an implicit answer and accept, so it binds the same way,
       // and the phone is told to stop ringing. The state stays `reserved` either way.
-      await this.serial(held.id, () => this.ring.acceptOnAttach(held, sessionId));
+      await this.serial(held.id, () => this.rings.acceptOnAttach(held, sessionId));
     }
     const unsettled = await agencyInboundCallRepository.findUnsettledForSession(sessionId).catch((err: unknown) => {
       log.warn({ err, sessionId }, 'Could not read the session\'s inbound call on reconnect');
@@ -1004,7 +1007,7 @@ export class InboundConnector {
    */
   bindAcceptedRing(sessionId: string): void {
     const held = this.forSession(sessionId);
-    if (!held || !this.ring.isPushOffer(held) || !this.ring.isAccepted(held)) return;
+    if (!held || !this.rings.isPushOffer(held) || !this.rings.isAccepted(held)) return;
     void this.serial(held.id, () => this.bind(held));
   }
 
@@ -1228,7 +1231,7 @@ export class InboundConnector {
     if (held.phase !== 'offered' || held.bound || !held.sessionId) return;
     const push = held.channel === 'push';
     // Mode B: a ring binds only once accepted (the accept, or an attach that accepted it).
-    if (push && !this.ring.isAccepted(held)) return;
+    if (push && !this.rings.isAccepted(held)) return;
     const sessionId = held.sessionId;
     const station = this.deps.stations.get(sessionId);
     const ws = station?.ws;
@@ -1241,7 +1244,7 @@ export class InboundConnector {
     if (!station.canTakeInbound && push) {
       // A station that cannot take inbound calls attached since the accept (IQ46): it can never
       // show the call. Ended as the attach's own let-go ends it: the absence over as `device_away`.
-      await this.ring.end(held, sessionId, 'cancelled', {
+      await this.rings.end(held, sessionId, 'cancelled', {
         offerResult: 'station_lost', absence: { kind: 'asReturn' },
       });
       return;
@@ -1279,7 +1282,7 @@ export class InboundConnector {
         // Its end returns the agent itself: to the pool with the station still open (Mode A's), else
         // to `away_ring`. Never offered this caller again.
         held.declined.add(sessionId);
-        await this.ring.end(held, sessionId, 'cancelled', { offerResult: stillOpen ? 'bind_refused' : 'station_lost' });
+        await this.rings.end(held, sessionId, 'cancelled', { offerResult: stillOpen ? 'bind_refused' : 'station_lost' });
         return;
       }
       const row = await this.cancelOffer(held, sessionId, stillOpen ? 'bind_refused' : 'station_lost');
@@ -1287,7 +1290,7 @@ export class InboundConnector {
       return;
     }
     held.bound = true;
-    if (push) this.ring.onBound(held, sessionId);
+    if (push) this.rings.onBound(held, sessionId);
   }
 
   private async onLifecycle(held: HeldCall, ev: WebRtcLifecycleEvent): Promise<void> {
@@ -1352,7 +1355,7 @@ export class InboundConnector {
       // Mode B: the caller left while the phone rang (or in the accept grace): the ring's one end
       // (`caller_left`: the phone told to stop, the agent back on `away_ring` or to the pool with a
       // station open here, and an owed `ring_missed` end sent).
-      await this.ring.end(held, held.sessionId, 'caller_left');
+      await this.rings.end(held, held.sessionId, 'caller_left');
     } else if (phase === 'offered' && held.sessionId) {
       const sessionId = held.sessionId;
       trackInboundOffer('caller_left', held.offeredClient, held.channel);
@@ -1423,7 +1426,7 @@ export class InboundConnector {
   ): Promise<AgencyInboundCallRecord | null> {
     if (held.phase !== 'offered' || held.sessionId !== sessionId || held.bound) return null;
     // Mode B: a push offer ends through its own path (the agent back to `away_ring`).
-    if (this.ring.isPushOffer(held)) return this.ring.end(held, sessionId, why === 'declined' ? 'declined' : 'cancelled', { offerResult: why });
+    if (this.rings.isPushOffer(held)) return this.rings.end(held, sessionId, why === 'declined' ? 'declined' : 'cancelled', { offerResult: why });
     this.clearTimers(held);
     // Turned down, or unbindable: this session is never offered the caller again.
     if (why === 'declined' || why === 'bind_refused') held.declined.add(sessionId);
@@ -1484,43 +1487,22 @@ export class InboundConnector {
 
   /** `…/ring/answering` (IQ71, token only): {@link RingOffers.answering}. */
   ringAnswering(callId: string, token: string): ReturnType<RingOffers['answering']> {
-    return this.ring.answering(callId, token);
+    return this.rings.answering(callId, token);
   }
 
   /** `…/ring/decline` (IQ71, token only; valid until accept, N4): {@link RingOffers.decline}. */
   ringDecline(callId: string, token: string, reason: 'declined' | 'busy_on_phone'): ReturnType<RingOffers['decline']> {
-    return this.ring.decline(callId, token, reason);
+    return this.rings.decline(callId, token, reason);
   }
 
   /** Who a ring is for, by its token (the accept route, before {@link ringAccept}): {@link RingOffers.peek}. */
   ringPeek(callId: string, token: string): { ok: true; sessionId: string; agentUserId: string | null } | { ok: false; code: InboundRingRefusal } {
-    return this.ring.peek(callId, token);
+    return this.rings.peek(callId, token);
   }
 
   /** `…/ring/accept` (IQ71; the route has checked the agent and claimed the station): {@link RingOffers.accept}. */
   ringAccept(callId: string, token: string, by: { agentUserId: string; deviceId: string }): ReturnType<RingOffers['accept']> {
-    return this.ring.accept(callId, token, by);
-  }
-
-  /**
-   * The app asked `device_away` while the session holds a push offer (the away notification's "Stop
-   * ringing", IQ79): a ring not yet answered is declined and the absence ended as `device_away`; an
-   * answered one is left to run. {@link RingOffers.declineForDeviceAway}.
-   */
-  declineRingForDeviceAway(sessionId: string): Promise<'declined' | 'answered' | 'none'> {
-    return this.ring.declineForDeviceAway(sessionId);
-  }
-
-  /**
-   * End the session's ring because its `away_ring` is ending (N1): the reconcile, the opt-out (the
-   * Me toggle), the device removed, or the take-over (OS3). {@link RingOffers.cancelForAwayRingEnd}.
-   */
-  cancelRingForAwayRingEnd(
-    sessionId: string,
-    reason: AgencyRingOffReason,
-    opts: { absenceSince?: Date | null } = {},
-  ): Promise<'cancelled' | 'answered' | 'none'> {
-    return this.ring.cancelForAwayRingEnd(sessionId, reason, opts);
+    return this.rings.accept(callId, token, by);
   }
 
   /**
@@ -1593,7 +1575,7 @@ export class InboundConnector {
       const callers = this.callerViews(accountKey);
       // Mode B (IQ73): callers whose phone ring has not been answered yet are searched for too,
       // for a station agent who became available since the ring started.
-      const ringing = this.ring.ringingCallers(accountKey);
+      const ringing = this.rings.ringingCallers(accountKey);
       if (callers.length === 0 && ringing.length === 0) return;
       const views = await this.agentViews(accountKey);
       this.overflowWhomNobodyCanTake(callers, views);
@@ -1603,19 +1585,19 @@ export class InboundConnector {
       /** Callers rung by this search: never taken over by it (a station agent it saw then was not "freed mid-ring"). */
       const rung = new Set<string>();
       const viewOf = new Map(views.map((v) => [v.sessionId, v]));
-      for (const step of searchOrder([...ringing, ...callers], views, this.now(), this.ring.ringMs)) {
+      for (const step of searchOrder([...ringing, ...callers], views, this.now(), this.rings.ringMs)) {
         const held = this.calls.get(step.callId);
         if (!held || this.handovers.of(held.id) || held.leaving) continue;
         // IQ73: the ring's start, read once here. Whether the caller is still on a ring that may be
         // taken over is asked again per candidate: an earlier candidate's take-over may have ended
         // the ring and then been refused, or the ring may have ended during an await; once the
         // ring is gone the caller is searched for as any queued caller.
-        const ringStartedAt = !rung.has(held.id) && this.ring.preemptible(held) ? this.ring.startedAt(held) : null;
+        const ringStartedAt = !rung.has(held.id) && this.rings.preemptible(held) ? this.rings.startedAt(held) : null;
         if (ringStartedAt === null && (held.phase !== 'queued' || this.queue.offeredTo(step.callId) !== null)) continue;
         for (const candidate of step.candidates) {
           const sessionId = candidate.sessionId;
           if (taken.has(sessionId)) continue;
-          const takeOver = ringStartedAt !== null && this.ring.preemptible(held);
+          const takeOver = ringStartedAt !== null && this.rings.preemptible(held);
           if (takeOver) {
             // IQ73: only a station agent, and only one who became available after the ring began.
             const since = viewOf.get(sessionId)?.live?.since ?? null;
@@ -1627,7 +1609,7 @@ export class InboundConnector {
           // A ring push failed for the push service's own reasons a moment ago: no phone is rung
           // until the pause ends (the republish after it retries), so an outage never walks a
           // caller through the pool.
-          if (push && this.ring.paused()) continue;
+          if (push && this.rings.paused()) continue;
           // Counted in the session's returns in flight from before the CAS to the offer or the
           // give-back's end: an older build attaching meanwhile reads the agent after it.
           const settle = this.holdReturn(sessionId);
@@ -1645,25 +1627,25 @@ export class InboundConnector {
           if (held.leaving || this.handovers.of(held.id)) {
             giveBacks.push({
               settle,
-              run: () => (push ? this.ring.giveBack(sessionId, step.callId) : this.giveBack(sessionId, step.callId, 'call_gone', { release: true })),
+              run: () => (push ? this.rings.giveBack(sessionId, step.callId) : this.giveBack(sessionId, step.callId, 'call_gone', { release: true })),
             });
             break;
           }
           if (push) {
             // One phone per caller at a time (IQ60): the search moves on to the next caller.
-            const ringResult = await this.serial(step.callId, () => this.ring.offer(held, sessionId)) ?? 'call_gone';
+            const ringResult = await this.serial(step.callId, () => this.rings.offer(held, sessionId)) ?? 'call_gone';
             if (ringResult === 'offered') {
               rung.add(held.id);
               settle();
               break;
             }
-            giveBacks.push({ settle, run: () => this.ring.giveBack(sessionId, step.callId, ringResult) });
+            giveBacks.push({ settle, run: () => this.rings.giveBack(sessionId, step.callId, ringResult) });
             if (ringResult === 'call_gone') break;
             continue;
           }
           // A take-over decided before the CAS whose ring has ended since is an ordinary offer
           // (`RingOffers.takeOver` falls back to it; `offer` refuses a caller no longer queued).
-          const offered = await this.serial(step.callId, () => (takeOver ? this.ring.takeOver(held, sessionId) : this.offer(held, sessionId))) ?? 'call_gone';
+          const offered = await this.serial(step.callId, () => (takeOver ? this.rings.takeOver(held, sessionId) : this.offer(held, sessionId))) ?? 'call_gone';
           if (offered === 'offered') {
             settle();
             break;
@@ -1775,7 +1757,7 @@ export class InboundConnector {
     // Mode B: the sessions whose phone may be rung (no station here: the app parked it). Read
     // FIRST, so the registry read below and the Redis read stay one synchronous run (the rejoin
     // grace's rule). A failed read counts nobody as ringable.
-    const ringRows = await this.ring.ringables(tenantId, accountId).catch((err: unknown) => {
+    const ringRows = await this.rings.ringables(tenantId, accountId).catch((err: unknown) => {
       log.warn({ err, accountKey }, 'inbound: could not read the ringable sessions; nobody is rung this search');
       return [] as AgencyRingableSession[];
     });
@@ -1996,7 +1978,7 @@ export class InboundConnector {
   private dropCall(held: HeldCall): void {
     held.phase = 'done';
     this.calls.delete(held.id);
-    this.ring.forget(held.id);
+    this.rings.forget(held.id);
     held.finish();
     this.unsubscribeWhenIdle();
   }
@@ -2050,7 +2032,7 @@ export class InboundConnector {
     this.stopLease(held);
     if (held.bindTimer) clearTimeout(held.bindTimer);
     held.bindTimer = null;
-    this.ring.clearTimers(held);
+    this.rings.clearTimers(held);
   }
 
   private forSession(sessionId: string): HeldCall | undefined {

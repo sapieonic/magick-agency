@@ -123,7 +123,7 @@ function service(opts: { attached?: Set<string>; holds?: Set<string>; allowed?: 
     stations: { isLocallyOwned: (id: string) => attached.has(id), send: (_id: string, f: unknown) => { sent.push(f); return true; } } as never,
     inbound: () => ({
       holdsPushOffer: (id: string) => opts.holds?.has(id) ?? false,
-      cancelRingForAwayRingEnd: async (id: string, reason: string) => { cancels.push([id, reason]); return 'answered'; },
+      rings: { cancelForAwayRingEnd: async (id: string, reason: string) => { cancels.push([id, reason]); return 'answered'; } },
     }) as never,
     ringAllowed: async () => opts.allowed ?? true,
   });
