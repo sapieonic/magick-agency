@@ -137,6 +137,10 @@ const STATION = {
   ready_reconnect_wrapup: fits<Core.AgencyStationReadyFrame>()(station.ready_reconnect_wrapup),
   ready_missed_release: fits<Core.AgencyStationReadyFrame>()(station.ready_missed_release),
   ready_device_away: fits<Core.AgencyStationReadyFrame>()(station.ready_device_away),
+  // Mode B: back from `away_ring`. The `agent_state` the return sends first keeps the absence's start
+  // as `since` (one absence, `away_ring` → `device_away`); `ready` follows on the same break.
+  agent_state_after_away_ring_return: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_after_away_ring_return),
+  ready_after_away_ring_return: fits<Core.AgencyStationReadyFrame>()(station.ready_after_away_ring_return),
   reserved: fits<Core.AgencyStationReservedFrame>()(station.reserved),
   reserved_redial: fits<Core.AgencyStationReservedFrame>()(station.reserved_redial),
   countdown: fits<Core.AgencyStationCountdownFrame>()(station.countdown),
@@ -387,6 +391,10 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['station', 'ready_missed_release', 'missed_release.reason', 'release_reasons'],
   ['station', 'ready_device_away', 'state', 'agent_states'],
   ['station', 'ready_device_away', 'break_reason', 'reserved_break_codes'],
+  ...['agent_state_after_away_ring_return', 'ready_after_away_ring_return'].flatMap((s): Array<[string, string, string, string]> => [
+    ['station', s, 'state', 'agent_states'],
+    ['station', s, 'break_reason', 'reserved_break_codes'],
+  ]),
   ['station', 'reserved', 'attempt.prior_attempts.0.outcome', 'attempt_outcomes'],
   ['station', 'released_completed', 'reason', 'release_reasons'],
   ['station', 'released_no_answer', 'reason', 'release_reasons'],
@@ -676,9 +684,18 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     // IQ61: a ring push never carries a name or a number.
     for (const p of [push.push_ring, push.push_ring_cancel, push.push_ring_off, push.push_test_ring]) {
       expect(Object.keys(p).sort()).toEqual(
-        Object.keys(p).filter((k) => ['type', 'call_id', 'offer_token', 'ring_expires_at', 'session_id', 'reason'].includes(k)).sort());
+        Object.keys(p).filter((k) => ['type', 'call_id', 'offer_token', 'ring_expires_at', 'session_id', 'reason', 'away_since'].includes(k)).sort());
       for (const v of Object.values(p)) expect(typeof v).toBe('string');
     }
+  });
+
+  it('Mode B: back from away_ring, the station keeps the absence\'s start, and ring_off names that absence', () => {
+    // One absence: the `agent_state` the return sends keeps `since`, and the `ring_off` that ends an
+    // absence carries the same instant as `away_since`, so the phone can drop a late one.
+    expect(station.agent_state_after_away_ring_return.break_reason).toBe('device_away');
+    expect(station.ready_after_away_ring_return.break_reason).toBe('device_away');
+    expect(push.push_ring_off.away_since).toBe(station.agent_state_after_away_ring_return.since);
+    expect(new Date(push.push_ring_off.away_since).toISOString()).toBe(push.push_ring_off.away_since);
   });
 
   it('customer history: the search answer\'s timeline is the five per-kind entry samples, in order', () => {

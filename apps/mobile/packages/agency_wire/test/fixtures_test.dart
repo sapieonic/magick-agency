@@ -23,6 +23,8 @@ final Map<String, Map<String, Decoder>> decoders = {
       'ready_reconnect_wrapup',
       'ready_missed_release',
       'ready_device_away',
+      'agent_state_after_away_ring_return',
+      'ready_after_away_ring_return',
       'reserved',
       'countdown',
       'bridged',

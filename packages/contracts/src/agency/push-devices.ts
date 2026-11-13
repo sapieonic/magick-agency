@@ -142,6 +142,14 @@ export interface AgencyRingPush {
   session_id?: string;
   /** `ring_cancel`: an {@link AgencyInboundRingResult}; `ring_off`: an {@link AgencyRingOffReason}. */
   reason?: AgencyInboundRingResult | AgencyRingOffReason;
+  /**
+   * `ring_off`: ISO-8601, the start of the absence this `ring_off` ends (the session's
+   * `away_ring_since`, the same instant as the `since` of the `agent_state` frame that announced
+   * `away_ring`, and kept by the `device_away` that ends it). A carrier may hold a push for a phone
+   * that is offline, so a `ring_off` can arrive after a NEW absence began: the phone drops one whose
+   * `away_since` is older than the absence it shows. Absent from older servers.
+   */
+  away_since?: string;
 }
 
 /**

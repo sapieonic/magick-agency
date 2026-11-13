@@ -73,6 +73,18 @@
     "state": "break",
     "break_reason": "device_away"
   },
+  "agent_state_after_away_ring_return": {
+    "event": "agent_state",
+    "state": "break",
+    "since": "2026-11-02T07:58:41.120Z",
+    "break_reason": "device_away"
+  },
+  "ready_after_away_ring_return": {
+    "event": "ready",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "state": "break",
+    "break_reason": "device_away"
+  },
   "reserved": {
     "event": "reserved",
     "attempt": {

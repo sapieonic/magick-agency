@@ -67,7 +67,8 @@
   "push_ring_off": {
     "type": "ring_off",
     "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
-    "reason": "ring_missed"
+    "reason": "ring_missed",
+    "away_since": "2026-11-02T07:58:41.120Z"
   },
   "push_test_ring": {
     "type": "test_ring"

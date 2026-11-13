@@ -105,6 +105,10 @@ void main() {
       final off = RingPush.fromJson(push('push_ring_off'));
       expect(off.offReason, RingOffReason.ringMissed);
       expect(off.cancelReason, isNull);
+      expect(off.awaySince, DateTime.utc(2026, 11, 2, 7, 58, 41, 120));
+      expect(ring.awaySince, isNull);
+      // Older servers send no away_since.
+      expect(RingPush.fromJson(const {'type': 'ring_off', 'session_id': 's', 'reason': 'max_age'}).awaySince, isNull);
       expect(RingPush.fromJson(push('push_test_ring')).type, RingPushType.testRing);
     });
 

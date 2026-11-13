@@ -349,6 +349,7 @@ final class RingPush {
     this.ringExpiresAt,
     this.sessionId,
     this.reasonRaw,
+    this.awaySince,
   }) : typeRaw = typeRaw ?? type.wire;
 
   /// Reads a payload; [RingPushType.unknown] for a type this build does not
@@ -363,6 +364,7 @@ final class RingPush {
       ringExpiresAt: j.timeOrNull('ring_expires_at'),
       sessionId: j.strOrNull('session_id'),
       reasonRaw: j.strOrNull('reason'),
+      awaySince: j.timeOrNull('away_since'),
     );
   }
 
@@ -384,6 +386,12 @@ final class RingPush {
   /// `ring_cancel`: an [InboundRingResult]; `ring_off`: a [RingOffReason].
   final String? reasonRaw;
 
+  /// `ring_off`: the start of the absence it ends (the `since` of the
+  /// `away_ring` the phone was told of, kept by the `device_away` that ends
+  /// it). A carrier can deliver a `ring_off` late, after a new absence began:
+  /// drop one older than the absence on show. Null from older servers.
+  final DateTime? awaySince;
+
   /// A `ring_cancel`'s reason; null on any other type.
   InboundRingResult? get cancelReason =>
       type == RingPushType.ringCancel && reasonRaw != null ? InboundRingResult.fromWire(reasonRaw) : null;
@@ -401,6 +409,7 @@ final class RingPush {
     putIfSet(json, 'ring_expires_at', ringExpiresAt == null ? null : isoUtc(ringExpiresAt!));
     putIfSet(json, 'session_id', sessionId);
     putIfSet(json, 'reason', reasonRaw);
+    putIfSet(json, 'away_since', awaySince == null ? null : isoUtc(awaySince!));
     return json;
   }
 
@@ -412,10 +421,11 @@ final class RingPush {
       other.offerToken == offerToken &&
       other.ringExpiresAt == ringExpiresAt &&
       other.sessionId == sessionId &&
-      other.reasonRaw == reasonRaw;
+      other.reasonRaw == reasonRaw &&
+      other.awaySince == awaySince;
 
   @override
-  int get hashCode => Object.hash(typeRaw, callId, offerToken, ringExpiresAt, sessionId, reasonRaw);
+  int get hashCode => Object.hash(typeRaw, callId, offerToken, ringExpiresAt, sessionId, reasonRaw, awaySince);
 
   @override
   String toString() => 'RingPush($typeRaw, call: $callId)';
