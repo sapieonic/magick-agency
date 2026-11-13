@@ -13,13 +13,12 @@ export interface InboundCloseAudit {
   campaign_id: string | null;
 }
 
+import { takeAuditMarker } from '../helpers/audit-marker.js';
+
 export const INBOUND_CLOSE_AUDIT_KEY = 'inbound_closed';
 
 /** Remove the close facts from an internal answer (mutating it) and return them, or null. */
 export function takeInboundCloseAudit(body: unknown): InboundCloseAudit | null {
-  if (!body || typeof body !== 'object' || !(INBOUND_CLOSE_AUDIT_KEY in body)) return null;
-  const record = body as Record<string, unknown>;
-  const audit = record[INBOUND_CLOSE_AUDIT_KEY] as InboundCloseAudit | null;
-  delete record[INBOUND_CLOSE_AUDIT_KEY];
+  const audit = takeAuditMarker<InboundCloseAudit>(body, INBOUND_CLOSE_AUDIT_KEY);
   return audit && typeof audit === 'object' && typeof audit.inbound_call_id === 'string' ? audit : null;
 }

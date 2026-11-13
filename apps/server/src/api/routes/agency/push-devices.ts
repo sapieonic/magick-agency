@@ -32,7 +32,9 @@ import { agencyPushDeviceRepository, toWirePushDevice } from '../../../db/reposi
 import { getPushSender, pushFailureRevokes } from '../../../seams/push-sender.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { awayRingRefusalBody, TEST_RING_PUSH_TTL_MS } from '../../../agency/away-ring.js';
-import { sendActionError } from './helpers.js';
+import { takeAuditMarker } from '../helpers/audit-marker.js';
+import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { sendRefusal } from '../helpers/refusal.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import type { AuditActorFields } from '../../../audit/platform/audit-actor.js';
 
@@ -57,11 +59,7 @@ export interface PushDeviceAudit {
 
 /** Remove the audit marker from an internal answer (mutating it); the marker, when there was one. */
 export function takePushDeviceAudit(body: unknown): PushDeviceAudit | null {
-  if (!body || typeof body !== 'object' || !(PUSH_DEVICE_AUDIT_KEY in body)) return null;
-  const record = body as Record<string, unknown>;
-  const audit = record[PUSH_DEVICE_AUDIT_KEY] as PushDeviceAudit | undefined;
-  delete record[PUSH_DEVICE_AUDIT_KEY];
-  return audit ?? null;
+  return takeAuditMarker<PushDeviceAudit>(body, PUSH_DEVICE_AUDIT_KEY);
 }
 
 export const pushDevicePutSchema = z.object({
@@ -99,7 +97,7 @@ function actorFrom(request: FastifyRequest, reply: FastifyReply, source: 'body' 
     ? ((request.body ?? {}) as { agent_user_id?: unknown }).agent_user_id
     : ((request.query ?? {}) as { actor_user_id?: unknown }).actor_user_id;
   if (typeof raw !== 'string' || !UUID_RE.test(raw)) {
-    sendActionError(reply, 400, 'missing_actor', undefined, 'The request did not identify which agent is acting.');
+    sendRefusal(reply, 400, 'missing_actor', 'The request did not identify which agent is acting.');
     return null;
   }
   return { tenantId: getTenantId(request), accountId: getAccountId(request) || undefined, userId: raw };
@@ -164,7 +162,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     if (!deviceId) return reply;
     const parsed = pushDevicePutSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation failed', message: parsed.error.issues.map((i) => i.message).join('; ') });
+      return replyValidationFailed(reply, parsed.error.flatten().fieldErrors);
     }
     const body = parsed.data;
     const device = await agencyPushDeviceRepository.register({
@@ -193,7 +191,7 @@ export async function registerPushDeviceRoutes(sub: FastifyInstance, runtime: Ag
     if (!deviceId) return reply;
     const parsed = pushDevicePatchSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation failed', message: 'ring_enabled (true or false) is required' });
+      return replyValidationFailed(reply, { ring_enabled: 'required: true or false' });
     }
     const device = await agencyPushDeviceRepository.setRingEnabled(actor.userId, deviceId, parsed.data.ring_enabled);
     if (!device) return reply.code(404).send({ error: 'Not Found', message: 'This phone is not registered. Open the app on it first.' });

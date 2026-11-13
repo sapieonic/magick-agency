@@ -3,11 +3,13 @@ import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
+import { sendRefusal } from './helpers/refusal.js';
 import { callCore } from '../core-dispatch.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
 import { sendCoreRefusal } from './proxy-agency-softphone/shared.js';
-import { pushDeviceIdOr404, takePushDeviceAudit, type PushDeviceAudit } from './agency/push-devices.js';
+import { pushDeviceIdOr404, pushDevicePutSchema, takePushDeviceAudit, type PushDeviceAudit } from './agency/push-devices.js';
 
 /*
  * The agent app's push devices (Mode B, IQ58–IQ74; `@magick-agency/contracts/agency`
@@ -36,7 +38,7 @@ function deviceIdOr404(request: FastifyRequest<{ Params: { deviceId: string } }>
 function actorId(request: FastifyRequest, reply: FastifyReply): string | null {
   const id = request.user?.id;
   if (id) return id;
-  void reply.code(400).send({ error: 'Bad Request', code: 'missing_actor', message: 'Sign in as the agent whose phone this is.' });
+  void sendRefusal(reply, 400, 'missing_actor', 'Sign in as the agent whose phone this is.');
   return null;
 }
 
@@ -92,9 +94,10 @@ export async function proxyAgencyPushDeviceRoutes(app: FastifyInstance): Promise
     if (!deviceId) return reply;
     const userId = actorId(request, reply);
     if (!userId) return reply;
-    const body = (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>;
+    const parsed = parseOr400(pushDevicePutSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
     const result = await callCore({
-      method: 'PUT', path: `/agency/push-devices/${deviceId}`, body: { ...body, agent_user_id: userId },
+      method: 'PUT', path: `/agency/push-devices/${deviceId}`, body: { ...parsed.data, agent_user_id: userId },
       tenantId: request.tenantId!, accountId: request.accountId,
     });
     const entry = takePushDeviceAudit(result.body);

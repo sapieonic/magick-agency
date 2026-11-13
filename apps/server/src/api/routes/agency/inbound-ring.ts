@@ -19,7 +19,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENCY_INBOUND_RING_DECLINE_REASONS,
-  AGENCY_STATION_DEVICE_ID_PATTERN,
   type AgencyInboundRingAcceptResponse,
   type AgencyInboundRingAnsweringResponse,
   type AgencyInboundRingDeclineReason,
@@ -30,7 +29,9 @@ import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type { InboundConnector } from '../../../agency/inbound/inbound-connector.js';
 import { agencyAgentSessionRepository } from '../../../db/repositories/agency.repository.js';
 import { UUID_RE } from '../../../utils/uuid.js';
-import { claimStationOrReply, mintStationTokenOr503 } from './helpers.js';
+import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { sendRefusal } from '../helpers/refusal.js';
+import { claimStationOrReply, mintStationTokenOr503, stationDeviceFields } from './helpers.js';
 import { sendInboundAnswer, sendInboundRefusal } from './inbound-answer.js';
 
 /** An offer token's shape: 128 bits, base64url (22 characters); anything else is refused before the connector. */
@@ -95,7 +96,7 @@ export async function registerInboundRingRoutes(sub: FastifyInstance, runtime: A
     if (!token) return sendInboundRefusal(reply, { code: 'ring_not_offered' });
     const reason = (request.body as { reason?: unknown }).reason;
     if (typeof reason !== 'string' || !(AGENCY_INBOUND_RING_DECLINE_REASONS as readonly string[]).includes(reason)) {
-      return reply.code(400).send({ error: 'Validation failed', details: { reason: `one of ${AGENCY_INBOUND_RING_DECLINE_REASONS.join(', ')}` } });
+      return replyValidationFailed(reply, { reason: `one of ${AGENCY_INBOUND_RING_DECLINE_REASONS.join(', ')}` });
     }
     const declined = await ringing.connector.ringDecline(ringing.callId, token, reason as AgencyInboundRingDeclineReason);
     if (!declined.ok) return sendInboundRefusal(reply, { code: declined.code });
@@ -110,13 +111,11 @@ export async function registerInboundRingRoutes(sub: FastifyInstance, runtime: A
   sub.post<{ Params: { id: string } }>('/inbound/calls/:id/ring/accept', async (request, reply) => {
     const ringing = ringingOr404(request, reply);
     if (!ringing || !runtime) return reply;
-    const body = (request.body ?? {}) as { agent_user_id?: unknown; device_id?: unknown };
-    const agentUserId = typeof body.agent_user_id === 'string' && UUID_RE.test(body.agent_user_id) ? body.agent_user_id : null;
-    if (!agentUserId) {
-      return reply.code(400).send({ error: 'Bad Request', code: 'missing_actor', message: 'Sign in as the agent the call rings for.' });
-    }
-    const deviceId = typeof body.device_id === 'string' && AGENCY_STATION_DEVICE_ID_PATTERN.test(body.device_id) ? body.device_id : null;
-    if (!deviceId) return reply.code(400).send({ error: 'Validation failed', details: { device_id: 'required: the station device id' } });
+    const rawActor = (request.body as { agent_user_id?: unknown } | null)?.agent_user_id;
+    const agentUserId = typeof rawActor === 'string' && UUID_RE.test(rawActor) ? rawActor : null;
+    if (!agentUserId) return sendRefusal(reply, 400, 'missing_actor', 'Sign in as the agent the call rings for.');
+    const { deviceId } = stationDeviceFields(request.body);
+    if (!deviceId) return replyValidationFailed(reply, { device_id: 'required: the station device id' });
     const token = offerTokenOf(request.body);
     if (!token) return sendInboundRefusal(reply, { code: 'ring_not_offered' });
     const { connector, callId } = ringing;

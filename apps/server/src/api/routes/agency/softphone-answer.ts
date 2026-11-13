@@ -12,6 +12,7 @@ import type {
   AgencySoftphoneErrorResponse,
 } from '@magick-agency/contracts/agency';
 import { softphoneRefusalMessage, type SoftphoneRefusal } from '../../../agency/softphone/types.js';
+import { takeAuditMarker } from '../helpers/audit-marker.js';
 import type { AgencyInboundCallLiveRefusal } from '@magick-agency/contracts/api/agency/inbound';
 
 /**
@@ -238,10 +239,7 @@ export const SOFTPHONE_SESSION_AUDIT_KEY = 'softphone_audit';
 
 /** Remove the exit facts from an internal answer (mutating it) and return them, or null. */
 export function takeSoftphoneSessionAudit(body: unknown): SoftphoneSessionExitAudit | null {
-  if (!body || typeof body !== 'object' || !(SOFTPHONE_SESSION_AUDIT_KEY in body)) return null;
-  const record = body as Record<string, unknown>;
-  const audit = record[SOFTPHONE_SESSION_AUDIT_KEY] as SoftphoneSessionExitAudit;
-  delete record[SOFTPHONE_SESSION_AUDIT_KEY];
+  const audit = takeAuditMarker<SoftphoneSessionExitAudit>(body, SOFTPHONE_SESSION_AUDIT_KEY);
   return audit && typeof audit === 'object' && typeof audit.campaign_id === 'string' ? audit : null;
 }
 

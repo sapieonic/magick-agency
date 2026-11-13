@@ -589,11 +589,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // on: the release would write them `offline` (and end their ringing) rather than put them in
     // the pool. Refused, nothing changed; force-break and sign-off work as today.
     if (liveNow?.state === 'break' && liveNow.ring) {
-      const err: AgencyActionErrorResponse = {
-        error: 'Conflict', code: 'agent_away_ring',
-        message: 'They\'re away from the app; their phone rings for inbound calls.',
-      };
-      return reply.code(409).send(err);
+      return sendActionError(reply, 409, 'agent_away_ring', undefined, 'They\'re away from the app; their phone rings for inbound calls.');
     }
     const leavingSoftphone = onSoftphoneBreak(liveNow, session);
     const forced = await runtime.wrapup.force(session.id);

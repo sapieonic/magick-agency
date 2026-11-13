@@ -9,6 +9,7 @@ import { requestAuditActor, resolvedUserAuditActor } from '../../audit/platform/
 import { callCore } from '../core-dispatch.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { sendRefusal } from './helpers/refusal.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { inboundRefusalBody } from './agency/inbound-answer.js';
 import type { InboundRingAcceptAudit, InboundRingDeclineAudit } from './agency/inbound-ring.js';
@@ -140,7 +141,7 @@ export async function proxyAgencyInboundRingRoutes(app: FastifyInstance, opts: {
     const parsed = parseOr400(acceptSchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
     const userId = request.user?.id;
-    if (!userId) return reply.code(400).send({ error: 'Bad Request', code: 'missing_actor', message: 'Sign in as the agent the call rings for.' });
+    if (!userId) return sendRefusal(reply, 400, 'missing_actor', 'Sign in as the agent the call rings for.');
     const ringing = tenancyOr404(request, reply);
     if (!ringing) return reply;
     if (ringing.tenantId !== request.tenantId) return notOffered(reply);
