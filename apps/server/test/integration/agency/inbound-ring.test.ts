@@ -777,6 +777,23 @@ describe('a ring`s end, when things go wrong', () => {
     expect(await sessionRow(late.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
     expect(await until('ring_off', () => pushes('ring_off', late.deviceRowId)[0] ?? null)).toMatchObject({ reason: 'ring_missed' });
   });
+
+  it('IQ62: a ring that slipped in past the maximum misses ends the owed absence when its caller hangs up too (one end for every ring)', async () => {
+    const c = connector();
+    const late = await awayAgent();
+    const { call, done } = await caller(c);
+    await ringPush(late.deviceRowId, call.id);
+    // The second miss's end landed while this ring was in flight (`ring_in_flight`): owed to this ring's end.
+    await pool().query('UPDATE agency_agent_sessions SET ring_misses = $2 WHERE id = $1', [late.sessionId, AGENCY_INBOUND_RING_MAX_MISSES]);
+    bridge.end(call.id);
+    await done;
+    await drain();
+    expect(await row(call.id)).toMatchObject({ state: 'ended', outcome: 'abandoned_in_queue', ring_result: 'caller_left' });
+    expect(c.holdsPushOffer(late.sessionId)).toBe(false);
+    expect(pushes('ring_cancel', late.deviceRowId)).toEqual([{ type: 'ring_cancel', call_id: call.id, session_id: late.sessionId, reason: 'caller_left' }]);
+    expect(await sessionRow(late.sessionId)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
+    expect(await until('ring_off', () => pushes('ring_off', late.deviceRowId)[0] ?? null)).toMatchObject({ reason: 'ring_missed' });
+  });
 });
 
 // ─── 3. Who is rung ─────────────────────────────────────────────────────────

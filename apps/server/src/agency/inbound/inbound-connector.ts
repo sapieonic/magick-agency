@@ -1481,24 +1481,10 @@ export class InboundConnector {
     await this.handovers.release(held.id, { returnAgent: true });
     await this.deps.exits.settleCall(held.record, outcome);
     if (phase === 'offered' && held.sessionId && held.channel === 'push' && !held.bound) {
-      // Mode B: the caller left while the phone rang (or in the accept grace): `caller_left`, the
-      // phone told to stop, the agent back on `away_ring` (or to the pool with a station open here).
-      const sessionId = held.sessionId;
-      const ring = held.ring;
-      held.ring = null;
-      held.spentRingToken = ring?.token ?? held.spentRingToken;
-      trackInboundOffer('caller_left', held.offeredClient, 'push');
-      trackInboundRing('caller_left');
-      await agencyInboundCallRepository.setRingResult(held.id, 'caller_left')
-        .catch((err: unknown) => log.warn({ err, inboundCallId: held.id }, 'Could not write a ring the caller left'));
-      if (ring) this.sendRingCancel(ring, held.id, 'caller_left');
-      const ended = await agencyInboundCallRepository.findByIdAnyTenant(held.id).catch(() => null);
-      if (ended) held.record = ended;
-      await this.sendFrame(held);
-      // From here the session holds no push offer: the release may end its absence.
-      this.bySession.delete(sessionId);
-      held.sessionId = null;
-      await this.releaseRungAgent(held.id, sessionId);
+      // Mode B: the caller left while the phone rang (or in the accept grace): the ring's one end
+      // (`caller_left`: the phone told to stop, the agent back on `away_ring` or to the pool with a
+      // station open here, and an owed `ring_missed` end sent).
+      await this.endRing(held, held.sessionId, 'caller_left');
     } else if (phase === 'offered' && held.sessionId) {
       const sessionId = held.sessionId;
       trackInboundOffer('caller_left', held.offeredClient, held.channel);
@@ -1965,13 +1951,15 @@ export class InboundConnector {
   }
 
   /**
-   * End a push offer that has not bound (see the header, "Every other end"), on the call's chain.
-   * The caller goes back to the head of the queue (and the account is searched again unless
-   * `search` is false: IQ73's take-over offers the caller itself). The agent goes back to
-   * `away_ring` ({@link releaseRungAgent}); with `awayRingEnd` the absence then ends with that
-   * reason (null: ended by its caller already). Null when the call is not on a push offer to the
-   * session, or when it ended meanwhile (its `ended` follows on this chain; the agent is released
-   * either way).
+   * End a push offer that has not bound (see the header, "Every other end"), on the call's chain:
+   * the one end of every ring, the caller's hang-up included. The agent goes back to `away_ring`
+   * ({@link releaseRungAgent}); with `awayRingEnd` the absence then ends with that reason (null:
+   * ended by its caller already), else an owed `ring_missed` end is sent ({@link noteMiss}). The
+   * caller goes back to the head of the queue (and the account is searched again unless `search`
+   * is false: IQ73's take-over offers the caller itself), except for `caller_left`: the bridge's
+   * `ended` has settled the call, which the connector then lets go. Null when the call is not on a
+   * push offer to the session, for `caller_left`, or when it ended meanwhile (its `ended` follows
+   * on this chain; the agent is released either way).
    */
   private async endRing(
     held: HeldCall,
@@ -1992,18 +1980,31 @@ export class InboundConnector {
     held.ring = null;
     if (ring) held.spentRingToken = ring.token;
     if (NEVER_AGAIN.has(result) || opts.neverAgain) held.declined.add(sessionId);
-    // A requeue that throws is handled as `unwriteOffer`'s: the agent is still released and the
-    // caller requeued in memory (below), never left on a push offer with no timer. The spine then
-    // still reads `offered` to the session, so every later offer of the caller is refused there
-    // (`not_offerable`) and they leave at their maximum wait, whose settle ends the row.
-    const requeued = await agencyInboundCallRepository.requeue(held.id, sessionId, { at: new Date(this.now()), ringResult: result })
-      .catch((err: unknown) => {
-        log.warn({ err, inboundCallId: held.id, sessionId, result },
-          'Could not requeue an ended ring — the caller waits in memory and the spine reads offered until they leave');
-        return undefined;
-      });
-    const requeueFailed = requeued === undefined;
-    const row = requeued ?? null;
+    const callEnded = result === 'caller_left';
+    let row: AgencyInboundCallRecord | null = null;
+    let requeueFailed = false;
+    if (callEnded) {
+      // The call is settled already (the router's, from the bridge's `ended`): the ring's result is
+      // written on the ended row, and the session's last frame of the call says it ended.
+      await agencyInboundCallRepository.setRingResult(held.id, 'caller_left')
+        .catch((err: unknown) => log.warn({ err, inboundCallId: held.id }, 'Could not write a ring the caller left'));
+      const ended = await agencyInboundCallRepository.findByIdAnyTenant(held.id).catch(() => null);
+      if (ended) held.record = ended;
+      await this.sendFrame(held);
+    } else {
+      // A requeue that throws is handled as `unwriteOffer`'s: the agent is still released and the
+      // caller requeued in memory (below), never left on a push offer with no timer. The spine then
+      // still reads `offered` to the session, so every later offer of the caller is refused there
+      // (`not_offerable`) and they leave at their maximum wait, whose settle ends the row.
+      const requeued = await agencyInboundCallRepository.requeue(held.id, sessionId, { at: new Date(this.now()), ringResult: result })
+        .catch((err: unknown) => {
+          log.warn({ err, inboundCallId: held.id, sessionId, result },
+            'Could not requeue an ended ring — the caller waits in memory and the spine reads offered until they leave');
+          return undefined;
+        });
+      requeueFailed = requeued === undefined;
+      row = requeued ?? null;
+    }
     // From here the session holds no push offer: the release below may end its absence.
     this.bySession.delete(sessionId);
     held.sessionId = null;
@@ -2013,6 +2014,10 @@ export class InboundConnector {
     if (ring && result !== 'push_failed') this.sendRingCancel(ring, held.id, result);
     const released = await this.releaseRungAgent(held.id, sessionId, opts.awayRingEnd, opts.absenceSince ?? null);
     if (released === 'away_ring' && opts.awayRingEnd === undefined) await this.noteMiss(sessionId, MISSES.has(result));
+    if (callEnded) {
+      trackInboundOffer('caller_left', 'mobile', 'push');
+      return null;
+    }
     if (!row && !requeueFailed) {
       held.phase = 'queued';
       return null;
