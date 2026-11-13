@@ -1181,15 +1181,16 @@ packages/
   run under the Android Gradle plugin). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
   changes) has never been compiled, like the rest of the iOS engine (iOS does not compile yet,
   above).
-- **Mode B (2026-11-12) has not run on a phone, and Android's native ring has never been built
-  under Gradle.** No Gradle build or APK has run with it (the Android SDK's host was out of reach).
-  Every Kotlin file of the app module (the Telecom, notification, activity, channel and FCM
+- **Mode B (2026-11-12) has not run on a phone.** CI built it under Gradle for the first time on
+  2026-11-13 (PR #80's Mobile workflow at `95a0db9`: the debug APK, so the manifest, the resources
+  and the Gradle changes were processed, and `:app:testDevDebugUnitTest` and
+  `:agent_audio:testDebugUnitTest` under the Android Gradle plugin, all green). Before that, every Kotlin file of the app module (the Telecom, notification, activity, channel and FCM
   adapters included) and `agent_audio`'s `PhoneCalls.kt` compiled with `kotlinc` outside Gradle
   against the AOSP framework jar (Robolectric's android-all, API 37), Flutter's embedding jar,
   androidx.core 1.17.0 and firebase-messaging 25.1.3 with its Firebase and GMS dependencies, and a
   stub `R` class (105 classes, no errors, on the branch's final run of 2026-11-13, after the cleanup pass); the manifest, the resources
   and the Gradle changes (the Firebase BoM and `firebase-messaging`, the dart-defines written into
-  string resources) were never processed, so CI's debug Android build is their first build.
+  string resources) were first processed by that CI build.
   Their pure logic (`RingStateMachine`, the push parser, the request builders, the copy and
   checklist rules, the lock-screen ring's contrast: 115 tests, on that same run) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
   under the Android Gradle plugin (`./gradlew :app:testDevDebugUnitTest`) from its first run. The

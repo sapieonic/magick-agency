@@ -1852,10 +1852,9 @@ the renew never touches `away_ring`, `/leave` and OS7 tell a parked phone, a que
 applies from `offline`, and `0037_away_ring_sessions_index.sql` (§9.4). The server's side is tested on real
 Postgres and Redis with fakes, and end to end against mock Plivo, the mock push carrier and a real
 station socket; the app's with a fake ring channel; Android's logic (the state machine, the push
-parser, the request builders) by Kotlin JVM tests. **Not done:** no Gradle build or APK has run
-(the Android SDK was out of reach): the Telecom, notification, activity and FCM adapters compiled
-only with `kotlinc` against the framework jar outside Gradle, and the manifest and Gradle changes
-were never processed; nothing has run on a phone, against FCM or APNs, or with a real caller; the
+parser, the request builders) by Kotlin JVM tests. CI's Mobile workflow built the debug APK under
+Gradle and ran those tests under the Android Gradle plugin, green (PR #80 at `95a0db9`, 2026-11-13).
+**Not done:** nothing has run on a phone, against FCM or APNs, or with a real caller; the
 Play Console full-screen-intent declaration is not filed; iOS is a design only (blocked on its first
 compile, an Apple account and an APNs key). The field test (the Telecom answer from a headset or a
 car, Android 14/15's background activity starts, battery killers and a force-stop that drops FCM)

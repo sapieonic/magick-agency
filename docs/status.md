@@ -1426,11 +1426,12 @@ off by default. IQ59, IQ62, IQ63, IQ65, IQ67 and IQ73 are **Decided** (Manas, 20
   full-screen intent only for a headset or car answer; a hang-up after Dart's accept hangs the
   call up through the station.
 
-**Not verified:** no Gradle build or APK has run (the Android SDK's host was out of reach). The
-app module's Kotlin, native adapters included, compiled with `kotlinc` outside Gradle against the
-AOSP framework jar, androidx.core and firebase-messaging with a stub `R` (no errors); the manifest,
-resources and Gradle changes were never processed. The pure Kotlin logic's 115 tests and
-`agent_audio`'s 7 passed on a JVM with `kotlinc` and JUnit. Nothing has run on a phone, against FCM or APNs, or with a
+**Built in CI, not on a phone:** PR #80's Mobile workflow at `95a0db9` (2026-11-13) built the
+debug APK under Gradle (`flutter build apk --debug --flavor dev`: the manifest, resources, the
+Firebase BoM and the dart-defines written into string resources) and ran the Kotlin unit tests under
+the Android Gradle plugin (`:app:testDevDebugUnitTest`, `:agent_audio:testDebugUnitTest`), green.
+Locally the same Kotlin compiled with `kotlinc` against the framework jar and its 115 + 7 tests
+passed on a JVM. **Not verified:** nothing has run on a phone, against FCM or APNs, or with a
 real caller. The Play Console full-screen-intent declaration is not filed. iOS is a design only
 (`mobile.md` "iOS: the design (Mode B)"). Test counts: "Test counts", the Mode B entry.
 
