@@ -1152,6 +1152,7 @@ packages/
   - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart).
   - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`) and the app's own (Mode B's ring logic, `./gradlew :app:testDevDebugUnitTest`).
   - An unsigned iOS build on `main`.
+  - A signed `staging` release APK on every `mobile` release, attached to its GitHub Release ("The release APK" below).
 - **Android:**
   - minSdk 28, compileSdk 37 (`permission_handler_android` requires it), targetSdk Flutter's default.
   - Flavours `dev`, `staging` and `prod` install side by side (`com.magickagency.agent[.dev|.staging]`).
@@ -1162,6 +1163,34 @@ packages/
   - Google sign-in needs the reversed iOS client id as a URL scheme. It is in `ios/Runner/Info.plist`, hard-coded for this repo's Firebase project; another project replaces it (`apps/mobile/dev-setup.md`).
   - **iOS dependency pin.** Firebase is held on the iOS SDK 12 line: `firebase_core` ^4.15.2 and `firebase_auth` ^6.7.1 (SDK 12.19.3). SDK 13 (`firebase_core` 5, `firebase_auth` 7) needs `gtm-session-fetcher` >=4, while `google_sign_in_ios` 6.3.8, the latest release (`google_sign_in` ^7.2.0), pins GoogleSignIn-iOS 9, which needs `gtm-session-fetcher` <4, so the Swift packages cannot resolve. On SDK 12 they resolve to `gtm-session-fetcher` 3.5.0 with GoogleSignIn-iOS 9.2.0. Move Firebase up again, both plugins together, when a `google_sign_in_ios` release depends on GoogleSignIn-iOS 10.1 or later: 10.0 accepts `gtm-session-fetcher` 4 but still caps `app-check` below 12, which SDK 13 needs. The app's Dart calls are the same on both lines. Android follows the same pin: Firebase BoM 34.19.0, down from the BoM 35.1.0 and `firebase_auth` 7.0.1 that ran on the first Android phone, so Android sign-in on a phone needs a fresh check. SDK 12.19.3 needs Xcode 16.3 or newer.
 - **Versions:** `pubspec.yaml` `version:` belongs to release-please (component `mobile`, `release-type: dart`). Store build numbers come from CI (`--build-number`).
+
+### The release APK
+
+When release-please publishes a `mobile-vX.Y.Z` release, `.github/workflows/release-please.yml`
+calls `.github/workflows/mobile-release.yml`, which builds a release-signed APK of the `staging`
+flavour (`com.magickagency.agent.staging`, "MA Agent Staging") and attaches
+`magick-agency-agent-staging-X.Y.Z.apk` and its `.sha256` to that GitHub Release (also kept as a
+workflow artifact for 90 days). Anyone with access to the repository downloads it from the
+release page and installs it (Android asks to allow installs from that source once). To build an
+existing release, or rebuild one: Actions → "Mobile release APK" → Run workflow, with the tag;
+a rebuild replaces the release's APK.
+
+- **Version:** `versionName` is the tag's version; `versionCode` is `major × 1 000 000 + minor ×
+  1 000 + patch` (0.12.0 is 12000), so it rises with every release and each APK installs over the
+  one before. The job refuses a tag whose `pubspec.yaml` version differs.
+- **Config:** the committed `env/staging.json` holds placeholders, so the build reads
+  `MOBILE_ENV_STAGING` (an Actions secret, or else a variable): the whole env JSON, with the same
+  keys as `env/staging.json`. The job refuses one without `"FLAVOR": "staging"` and a real
+  `https://` `API_ORIGIN`, and warns for each missing key. Without the Firebase values sign-in and
+  push do not work.
+- **Signing:** Actions secrets `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.jks`),
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, written to
+  `android/key.properties` for the build and removed after it. Keep the keystore safe: an APK
+  signed with another key cannot be installed over one signed with this. The job refuses a
+  debug-signed APK and puts the signer's certificate SHA-256 in its summary. If Google sign-in is
+  on, that SHA-256 needs adding to the Android app in the Firebase project.
+- **Invite links:** the `staging` flavour's `appLinkHost` is still `staging.agency.example.invalid`
+  (`android/app/build.gradle.kts`), so invite links open the browser, not this APK, until it is set.
 
 ## Not verified yet
 

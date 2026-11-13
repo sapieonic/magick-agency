@@ -28,6 +28,9 @@ jobs:
   release-please:
     name: Release PR and releases
     runs-on: ubuntu-latest
+    outputs:
+      mobile_released: ${{ steps.release.outputs['apps/mobile--release_created'] }}
+      mobile_tag: ${{ steps.release.outputs['apps/mobile--tag_name'] }}
     steps:
       # RELEASE_PLEASE_TOKEN (a fine-grained PAT or GitHub App token with contents and
       # pull-requests write) is optional. With the default GITHUB_TOKEN the release PR
@@ -51,3 +54,17 @@ jobs:
             echo "$OUTPUTS" | jq -r --argjson paths "$PATHS_RELEASED" \
               '. as $o | $paths[] | "- `\(.)`: \($o["\(.)--tag_name"])"'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A signed, installable APK of the agent app on each mobile release, attached to its GitHub
+  # Release (mobile-release.yml). Called from here, not on the tag: a tag pushed with the default
+  # GITHUB_TOKEN starts no workflow.
+  mobile-apk:
+    name: Mobile release APK
+    needs: release-please
+    if: ${{ needs.release-please.outputs.mobile_released == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/mobile-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.mobile_tag }}
+    secrets: inherit
