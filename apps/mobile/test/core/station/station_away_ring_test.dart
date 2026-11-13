@@ -791,6 +791,90 @@ void main() {
       });
     });
 
+    test('back first, answered while native is asked whether it was "Stop ringing" (the lock screen\'s Answer on a '
+        'warm app): the return does not reopen the parked socket on a mint; the accept\'s URL does', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        // The answer reaches Dart before peekStopRinging has answered.
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(r.channel.named('peekStopRinging'), hasLength(1));
+        async.elapse(const Duration(seconds: 5));
+        expect(app.connector.attempts, 1, reason: 'an attach of its own would answer the ring (N5) ahead of the accept');
+        expect(app.mints, 0);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('back first, answered while native is asked, and the launch was "Stop ringing": moot, no device_away, no attach', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        final reasons = app.requests('POST', _breakPath).map((r) => (r.body! as Map<String, Object?>)['reason']);
+        expect(reasons, ['away_ring'], reason: 'the agent answered: not paused');
+        expect(app.connector.attempts, 1);
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
+    test('back first, answered while native is asked, then the accept failed: the socket reopens as usual', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        app.lifecycle.show();
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 1);
+        app.controller.releaseRingAnswer(_pushCallId);
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2, reason: 'the return\'s hold went with the answer: nothing keeps the socket parked');
+        expect(app.mints, 1);
+        app.dispose();
+      });
+    });
+
+    test('"Stop ringing" waiting for device_away, then a ring answered: device_away applying does not reopen the socket', () {
+      fakeAsync((async) {
+        final r = _Ring(async)..availableThenAway();
+        final app = r.app;
+        var asked = 0;
+        app.routes['POST $_breakPath'] = (req) {
+          final reason = (req.body! as Map<String, Object?>)['reason']! as String;
+          if (reason == 'away_ring') return json(200, stateBody('break', breakReason: 'away_ring'));
+          asked++;
+          return json(200, stateBody('break', breakReason: asked == 1 ? 'away_ring' : 'device_away'));
+        };
+        r.channel.stop = const RingStopRequest(sessionId: 'sess-1');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(asked, 1, reason: 'still away_ring: asked again in a second');
+        app.controller.holdForRingAnswer(_pushCallId);
+        async.elapse(const Duration(seconds: 2));
+        expect(asked, 2);
+        expect(app.connector.attempts, 1, reason: 'an attach of its own would answer the ring (N5) ahead of the accept');
+        expect(app.mints, 0);
+        app.run(app.controller.resumeForRing(_accept()));
+        async.flushMicrotasks();
+        expect(app.connector.attempts, 2);
+        expect(app.socket.url.queryParameters['token'], 'accept1');
+        expect(app.mints, 0);
+        app.dispose();
+      });
+    });
+
     test('answered on the way back: the return\'s check ends with the answer (native\'s ring_off is not read, no banner)', () {
       fakeAsync((async) {
         final r = _Ring(async)..availableThenAway();

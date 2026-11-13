@@ -1480,6 +1480,16 @@ class StationController extends Notifier<StationView?>
   /// ([stop]). Not: the socket reopens as for any return. Was: "Stop ringing" for this absence.
   void _afterParkedReturn(_Session s, RingStopRequest? stop) {
     if (!identical(_s, s)) return;
+    if (_ringAnswerHold != null) {
+      // A ring answered while native was asked: the lock screen's Answer on a warm app brings it
+      // to the front before the answer reaches Dart, so the return can start ahead of
+      // [holdForRingAnswer]. The accept's URL is now the station's only attach ([resumeForRing];
+      // a mint here would answer the ring first, N5, and the accept would be refused), and a
+      // "Stop ringing" is moot. The return's hold goes; the socket stays parked.
+      _log.info('back during a ring answer: the socket waits for the accept', {'call_id': _ringAnswerHold});
+      _releaseReturnHold(s);
+      return;
+    }
     if (stop != null && !_terminal && (stop.sessionId == null || stop.sessionId == s.id)) {
       _stopRingingHere(s);
       return;
@@ -1489,9 +1499,13 @@ class StationController extends Notifier<StationView?>
     _releaseReturnHold(s);
   }
 
+  /// The return's hold ends: the parked socket reopens, unless a ring's accept is in flight
+  /// ([holdForRingAnswer]), whose URL reopens it (or whose release does, through the keep-alive).
   void _releaseReturnHold(_Session s) {
     _absence.returnHold = false;
-    if (_foreground && _station.connection == StationConnection.reconnecting) s.socket.reconnect();
+    if (_foreground && _ringAnswerHold == null && _station.connection == StationConnection.reconnecting) {
+      s.socket.reconnect();
+    }
     _afterChange();
   }
 
