@@ -287,6 +287,21 @@ export class AwayRingService {
   /** Work started and not awaited (the `ring_off` pushes): {@link drain} and {@link stop} wait for it. */
   private readonly background = new InFlight();
   private readonly ringAllowedFn: (tenantId: string, accountId: string) => Promise<boolean>;
+  /**
+   * The sessions on an absence, by account ({@link mayHaveAway}): what lets the inbound search skip
+   * its Postgres read for an account with nobody away. Added to on every entry, before the Redis
+   * write; taken from on the ends this service runs; rebuilt from the database by every reconcile
+   * pass (boot, then every {@link AWAY_RING_RECONCILE_MS}). An end it does not see (the leave, a
+   * ring that binds) leaves an entry until the next pass: a stale "someone may be away" costs one
+   * read, never a missed agent. A stale "nobody" (an absence entered behind its back) lasts at most
+   * until the next pass.
+   */
+  private readonly awayByAccount = new Map<string, Set<string>>();
+  private readonly awayAccountOf = new Map<string, string>();
+  /** False until a reconcile pass has rebuilt {@link awayByAccount}: until then every search reads. */
+  private awayKnown = false;
+  /** Entries added while a pass reads the database: kept by its rebuild, which may not see them. */
+  private addedDuringPass: Map<string, string> | null = null;
 
   constructor(private readonly deps: AwayRingServiceDeps) {
     this.ringAllowedFn = deps.ringAllowed ?? flagsAllowRing;
@@ -308,6 +323,57 @@ export class AwayRingService {
       log.warn({ err, tenantId, accountId }, 'Could not read the ring flags; treating ringing as off');
       return false;
     });
+  }
+
+  // ─── Who may be away, per account (the inbound search's shortcut) ──────────────────
+
+  /**
+   * Whether the account may have a session on an absence: false only once a reconcile pass has
+   * rebuilt the set and nothing since has entered one there. The search skips its read on false.
+   */
+  mayHaveAway(tenantId: string, accountId: string): boolean {
+    if (!this.awayKnown) return true;
+    return (this.awayByAccount.get(accountKeyOfCall(tenantId, accountId))?.size ?? 0) > 0;
+  }
+
+  /** A session entering (or back on) an absence in its account. */
+  private noteAway(sessionId: string, tenantId: string, accountId: string): void {
+    const account = accountKeyOfCall(tenantId, accountId);
+    this.addedDuringPass?.set(sessionId, account);
+    this.addAway(sessionId, account);
+  }
+
+  private addAway(sessionId: string, account: string): void {
+    const previous = this.awayAccountOf.get(sessionId);
+    if (previous === account) return;
+    if (previous) this.awayByAccount.get(previous)?.delete(sessionId);
+    this.awayAccountOf.set(sessionId, account);
+    let set = this.awayByAccount.get(account);
+    if (!set) {
+      set = new Set();
+      this.awayByAccount.set(account, set);
+    }
+    set.add(sessionId);
+  }
+
+  /** A session whose absence this service ended. */
+  private noteEnded(sessionId: string): void {
+    this.addedDuringPass?.delete(sessionId);
+    const account = this.awayAccountOf.get(sessionId);
+    if (!account) return;
+    this.awayAccountOf.delete(sessionId);
+    const set = this.awayByAccount.get(account);
+    set?.delete(sessionId);
+    if (set?.size === 0) this.awayByAccount.delete(account);
+  }
+
+  /** The reconcile's rebuild: the database's absences, and any entered while it read them. */
+  private rebuildAway(rows: readonly AgencyAwayRingCandidate[], added: ReadonlyMap<string, string>): void {
+    this.awayByAccount.clear();
+    this.awayAccountOf.clear();
+    for (const row of rows) this.addAway(row.id, accountKeyOfCall(row.tenant_id, row.account_id));
+    for (const [sessionId, account] of added) this.addAway(sessionId, account);
+    this.awayKnown = true;
   }
 
   // ─── The ring rule (IQ58, IQ62, IQ65, IQ67): who may be rung, in ONE place ───────────
@@ -342,10 +408,13 @@ export class AwayRingService {
    * The inbound search's read (`InboundConnectorDeps.ringables`' default): the account's sessions
    * on an absence whose phone the rule lets ring now. The account's candidates
    * (`findAwayRingCandidates`, one statement), then, only when there are any, both flags on, then
-   * {@link canRing}. It runs on every search, under the account's lock: an account with nobody
-   * away reads no flags.
+   * {@link canRing}. It runs on every search, under the account's lock: an account this process
+   * knows has nobody away reads nothing ({@link mayHaveAway}), and one with nobody away in the
+   * database reads no flags.
    */
   async ringableSessions(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
+    // Nobody away in the account (the common case, Mode B off included): no read at all.
+    if (!this.mayHaveAway(tenantId, accountId)) return [];
     const rows = await agencyAgentSessionRepository.findAwayRingCandidates({ tenantId, accountId });
     if (rows.length === 0 || !(await this.ringAllowed(tenantId, accountId))) return [];
     const now = Date.now();
@@ -406,6 +475,8 @@ export class AwayRingService {
     fromStates: readonly AgencyAgentState[],
   ): Promise<{ ok: true; since: string } | { ok: false; reason: string; noKey?: boolean }> {
     const sinceMs = Date.now();
+    // Before the Redis write: a search that runs once the entry lands must not skip its read.
+    this.noteAway(session.id, session.tenant_id, session.account_id);
     const entered = await this.deps.agents.enterAwayRing(session.id, {
       ttlMs: this.ttlLeft(session.away_ring_since),
       fromStates,
@@ -420,6 +491,7 @@ export class AwayRingService {
   /** {@link applyQueued}'s entry over no key at all: created only if still absent, then mirrored. */
   private async enterWhereNoKey(session: AgencyAgentSessionRecord): Promise<{ ok: true; since: string } | { ok: false; reason: string; noKey?: boolean }> {
     const sinceMs = Date.now();
+    this.noteAway(session.id, session.tenant_id, session.account_id);
     const created = await this.deps.agents.reseedAwayRing(session.id, {
       sinceMs,
       ttlMs: this.ttlLeft(session.away_ring_since),
@@ -497,6 +569,7 @@ export class AwayRingService {
   async releaseInbound(sessionId: string, inboundCallId: string, opts: AwayRingReleaseOptions = {}): Promise<AwayRingRelease> {
     const session = await agencyAgentSessionRepository.findById(sessionId);
     if (!session || session.left_at || !session.away_ring_since) return { outcome: 'not_away_ring' };
+    this.noteAway(sessionId, session.tenant_id, session.account_id);
     const ttl = this.ttlLeft(session.away_ring_since);
     // Past the maximum age mid-ring: back to `away_ring` for a moment (a 1 s key), then ended
     // `max_age` like any other end, so there is one path that writes an end.
@@ -588,6 +661,7 @@ export class AwayRingService {
     }
     const ended = await agencyAgentSessionRepository.endAwayRing(sessionId, offline ? 'offline' : 'break');
     if (!ended) return { outcome: 'not_away_ring' };
+    this.noteEnded(sessionId);
     const awaySince = ended.away_since ?? absenceSince;
     // `taken_over` and `left` are counted where their `ring_off` is sent ({@link sendRingOff}): the
     // take-over and the leaves end the absence outside this method. An end with no reason counts as
@@ -638,6 +712,7 @@ export class AwayRingService {
    * The new station's attach shows it. No `ring_off`: the take-over sends its own.
    */
   async endAfterRing(sessionId: string, inboundCallId: string, absenceSince: Date | null): Promise<void> {
+    this.noteEnded(sessionId);
     await this.deps.agents.releaseInbound(sessionId, inboundCallId);
     const sinceMs = absenceSince?.getTime();
     await this.deps.agents.set(sessionId, 'break', {
@@ -668,6 +743,8 @@ export class AwayRingService {
     previousDeviceId: string | null,
     awaySince: Date | null = null,
   ): Promise<void> {
+    // The claim already ended the absence in the mirror.
+    this.noteEnded(sessionId);
     if (this.holdsPushOffer(sessionId)) {
       // The ring in flight is the connector's to cancel, on the call's chain (`answered_elsewhere`;
       // an answered one too: the device that answered no longer holds the station). It leaves the
@@ -834,7 +911,18 @@ export class AwayRingService {
 
   private async reconcileOnce(now: number): Promise<AwayRingReconcileSummary> {
     const summary: AwayRingReconcileSummary = { candidates: 0, ended: 0, reseeded: 0, restored: 0, skippedInFlight: 0, cleared: 0 };
-    const rows = await agencyAgentSessionRepository.findAwayRingCandidates();
+    // Entries made while the read runs are kept by the rebuild, which the read may not include.
+    const added = new Map<string, string>();
+    this.addedDuringPass = added;
+    let rows: AgencyAwayRingCandidate[];
+    try {
+      rows = await agencyAgentSessionRepository.findAwayRingCandidates();
+    } finally {
+      this.addedDuringPass = null;
+    }
+    // Who may be away, per account, from the database (self-healing: an entry or an end this
+    // process missed is right again from here). The ends below take their sessions out again.
+    this.rebuildAway(rows, added);
     summary.candidates = rows.length;
     // Every candidate's key, in one Redis round trip (a key that cannot be read is null, as `get`'s).
     const lives = rows.length > 0 ? await this.deps.agents.getMany(rows.map((r) => r.id)) : [];
@@ -903,7 +991,10 @@ export class AwayRingService {
       return;
     }
     // Only the absence this pass read: a new one entered since (a fresh `away_ring_since`) stays.
-    if (await agencyAgentSessionRepository.clearAwayRingSince(row.id, row.away_ring_since)) summary.cleared++;
+    if (await agencyAgentSessionRepository.clearAwayRingSince(row.id, row.away_ring_since)) {
+      summary.cleared++;
+      this.noteEnded(row.id);
+    }
   }
 
   /**

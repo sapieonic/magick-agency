@@ -589,6 +589,104 @@ describe('AwayRingService', () => {
     expect(await rule()).toEqual({ search: false, ring: null, entry: 'no_push_device' });
   });
 
+  it('the search reads Postgres only for an account where someone may be away; the reconcile rebuilds who, so a missed entry heals within a pass', async () => {
+    await device();
+    const reads = vi.spyOn(sessions, 'findAwayRingCandidates');
+    const flags = vi.fn(async () => true);
+    const svc = new AwayRingService({
+      agents: sm(),
+      stations: { isLocallyOwned: () => false, send: () => true } as never,
+      inbound: () => null,
+      ringAllowed: flags,
+    });
+    svc.configure({ maxAgeMs: MAX_AGE });
+    const search = () => svc.ringableSessions(DEFAULTS.tenantId, DEFAULTS.accountId);
+    const searchReads = () => reads.mock.calls.filter((c) => c[0] !== undefined).length;
+    try {
+      // Before any reconcile pass the process cannot know: every search reads.
+      expect(await search()).toEqual([]);
+      expect(searchReads()).toBe(1);
+
+      // Off: the reconcile found nobody away, so a search reads nothing, flags included.
+      await svc.reconcile();
+      reads.mockClear();
+      flags.mockClear();
+      expect(svc.mayHaveAway(DEFAULTS.tenantId, DEFAULTS.accountId)).toBe(false);
+      expect(await search()).toEqual([]);
+      expect(searchReads()).toBe(0);
+      expect(flags).not.toHaveBeenCalled();
+
+      // On: an entry counts the account at once, and the search reads and finds the agent.
+      const s = await session({ state: 'available' });
+      await sm().set(s.id, 'available');
+      expect(await svc.enter((await sessions.findById(s.id))!, ['available'])).toMatchObject({ ok: true });
+      expect(svc.mayHaveAway(DEFAULTS.tenantId, DEFAULTS.accountId)).toBe(true);
+      expect((await search()).map((r) => r.id)).toEqual([s.id]);
+      expect(searchReads()).toBe(1);
+      // Another account is still off.
+      expect(svc.mayHaveAway(DEFAULTS.tenantId, randomUUID())).toBe(false);
+
+      // Its end takes it out again.
+      expect(await svc.end(s.id, 'opted_out')).toBe('ended');
+      reads.mockClear();
+      expect(await search()).toEqual([]);
+      expect(searchReads()).toBe(0);
+
+      // An absence this process never saw entered (as another path's mirror write would leave): a
+      // stale "nobody" until the next pass, which rebuilds from the database and finds it.
+      await sm().set(s.id, 'break', { breakReason: 'device_away' });
+      expect(await sm().enterAwayRing(s.id, { ttlMs: MAX_AGE, fromStates: ['break'] })).toEqual({ ok: true });
+      await sessions.setState(s.id, 'break', 'away_ring');
+      expect(await search()).toEqual([]);
+      await svc.reconcile();
+      expect(svc.mayHaveAway(DEFAULTS.tenantId, DEFAULTS.accountId)).toBe(true);
+      expect((await search()).map((r) => r.id)).toEqual([s.id]);
+
+      // An end it never saw (the leave): a stale "someone" costs reads until the next pass, never a miss.
+      await sessions.leave(s.id);
+      expect(svc.mayHaveAway(DEFAULTS.tenantId, DEFAULTS.accountId)).toBe(true);
+      expect(await search()).toEqual([]);
+      await svc.reconcile();
+      expect(svc.mayHaveAway(DEFAULTS.tenantId, DEFAULTS.accountId)).toBe(false);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  it('an entry made while a reconcile pass reads the database is kept by its rebuild', async () => {
+    await device();
+    const svc = new AwayRingService({
+      agents: sm(),
+      stations: { isLocallyOwned: () => false, send: () => true } as never,
+      inbound: () => null,
+      ringAllowed: async () => true,
+    });
+    svc.configure({ maxAgeMs: MAX_AGE });
+    await svc.reconcile();
+    const s = await session({ state: 'available' });
+    await sm().set(s.id, 'available');
+    // The pass's read starts first and answers what the database held before the entry.
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const real = sessions.findAwayRingCandidates.bind(sessions);
+    const reads = vi.spyOn(sessions, 'findAwayRingCandidates').mockImplementationOnce(async () => {
+      const before = await real();
+      await held;
+      return before;
+    });
+    try {
+      const pass = svc.reconcile();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(await svc.enter((await sessions.findById(s.id))!, ['available'])).toMatchObject({ ok: true });
+      release();
+      await pass;
+    } finally {
+      reads.mockRestore();
+    }
+    expect(svc.mayHaveAway(DEFAULTS.tenantId, DEFAULTS.accountId)).toBe(true);
+    expect((await svc.ringableSessions(DEFAULTS.tenantId, DEFAULTS.accountId)).map((r) => r.id)).toEqual([s.id]);
+  });
+
   it('enter: Redis away_ring with the time left, the mirror on away_ring with the absence stamped', async () => {
     await device();
     const s = await onAwayRing();
