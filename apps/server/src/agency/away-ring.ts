@@ -50,6 +50,7 @@ import { AGENCY_AWAY_RING_MAX_MS_DEFAULT } from '../config/blocks/agency.js';
 import { AGENT_LEASE_MS, type AgentStateMachine } from './agent-state-machine.js';
 import type { StationRegistry } from './station-registry.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
+import { accountKeyOfCall } from './inbound/inbound-queue.js';
 
 const log = createChildLogger({ component: 'agency-away-ring' });
 
@@ -134,6 +135,16 @@ function ringDeviceOfCandidate(row: AgencyAwayRingCandidate): RingDeviceFacts | 
     ringEnabled: row.device_ring_enabled === true,
     hasToken: row.device_has_token === true,
   };
+}
+
+/**
+ * A session row the caller holds, told that the agent is back from `away_ring` (the rehydrate's
+ * return, the station take-over's claim): its reason is now `device_away` (the mirror says so too),
+ * so the `ready` frame and the bootstrap, which word the break from this row (`breakReasonFor`), do
+ * not say "rings for inbound" to an agent looking at the app.
+ */
+export function returnFromAwayRing(row: { break_reason?: string | null } | null): void {
+  if (row?.break_reason === AWAY_RING_BREAK_REASON) row.break_reason = DEVICE_AWAY_BREAK_REASON;
 }
 
 /** The `away_ring` refusal for each block of the ring rule (IQ65's codes; the app pauses `device_away` on any). */
@@ -860,7 +871,7 @@ export class AwayRingService {
   ): Promise<AgencyRingOffReason | null> {
     const blocks = this.ringBlocks(row, ringDeviceOfCandidate(row), now);
     if (blocks.includes('max_age')) return 'max_age';
-    const flagKey = `${row.tenant_id}:${row.account_id}`;
+    const flagKey = accountKeyOfCall(row.tenant_id, row.account_id);
     let ok = allowed.get(flagKey);
     if (!ok) {
       // A flag read that FAILS ends nobody's ringing: only a flag read as off does.

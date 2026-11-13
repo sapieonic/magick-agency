@@ -4,8 +4,8 @@
  * callback dial time, and the account name a live-session refusal carries. Part of
  * `agency.routes.ts`.
  */
-import type { AwayRingService } from '../../../agency/away-ring.js';
-import { AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON, type AgencyRingOffReason } from '@magick-agency/contracts/agency';
+import { returnFromAwayRing, type AwayRingService } from '../../../agency/away-ring.js';
+import type { AgencyRingOffReason } from '@magick-agency/contracts/agency';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
@@ -430,7 +430,7 @@ export async function claimStationOrReply(
   if (claim.ok && claim.endedAwayRing) {
     // The row the route holds was read before the claim rewrote it: the bootstrap words the break
     // from it (`breakReasonFor`), and the agent is no longer on `away_ring`.
-    if (session.break_reason === AWAY_RING_BREAK_REASON) session.break_reason = DEVICE_AWAY_BREAK_REASON;
+    returnFromAwayRing(session);
     if (options.awayRing && session.agent_user_id) {
       await options.awayRing.endOnTakeOver(session.id, session.agent_user_id, claim.endedAwayRing.previousDeviceId, claim.endedAwayRing.awaySince)
         .catch((err: unknown) => log.warn({ err, sessionId: session.id }, 'Could not end away-ring on a take-over'));
@@ -510,6 +510,29 @@ type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
   & Partial<Pick<AgencyAgentSessionRecord, 'agent_user_id' | 'station_device_id' | 'away_ring_since'>>;
 
 /**
+ * Leave `session` (its lease `lease`, as the caller just read it): the lease cleared, the row left,
+ * the station detached. A session on `away_ring` (`ring = 1`, or an absence in the row: its phone
+ * parked, so whoever leaves it is not on that phone) tells that phone (`ring_off`, `taken_over`), so
+ * its "rings this phone" notification does not outlive the session. The agent's own `leave` and
+ * {@link endIdleSessionElsewhere} both end a session this way.
+ */
+export async function leaveSession(
+  runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing'>,
+  session: Omit<IdleSession, 'tenant_id'>,
+  lease: { ring?: boolean } | null,
+  leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
+): Promise<void> {
+  const awaySince = session.away_ring_since ?? null;
+  const awayRinging = lease?.ring === true || awaySince !== null;
+  await runtime.agents.clear(session.id);
+  await leave(session.id);
+  await runtime.stations.detach(session.id);
+  if (awayRinging && session.agent_user_id) {
+    runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'taken_over', awaySince);
+  }
+}
+
+/**
  * OS7: end the agent's session in ANOTHER tenant when nothing is there: no station attached in any
  * process (`stationPresence` says `absent`; `unknown` keeps it), no lease beyond `offline` /
  * `break` (no reservation, call or wrap-up), and no live campaign attempt, redial being set up,
@@ -542,13 +565,7 @@ export async function endIdleSessionElsewhere(
     if ((await runtime.stations.stationPresence(id)) !== 'absent') return false;
     const lease = await runtime.agents.get(id);
     if (lease && lease.state !== 'offline' && lease.state !== 'break') return false;
-    const awayRinging = lease?.ring === true || (session.away_ring_since !== undefined && session.away_ring_since !== null);
-    await runtime.agents.clear(id);
-    await leave(id);
-    await runtime.stations.detach(id);
-    if (awayRinging && session.agent_user_id) {
-      runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, id, 'taken_over', session.away_ring_since ?? null);
-    }
+    await leaveSession(runtime, session, lease, leave);
     log.info({ sessionId: id, tenantId: session.tenant_id },
       'Ended an idle session in another tenant so the agent can join here (OS7)');
     return true;

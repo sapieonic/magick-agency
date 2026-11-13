@@ -30,7 +30,7 @@ import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import {
   accountNameInTenant, claimStationOrReply, joinEndingIdleElsewhere, mintStationTokenOr503, refuseIfHeldElsewhere,
-  requireOwnedSession, resolveRetryContext, sendActionError, sendSessionInOtherTenant, stationDeviceFields,
+  leaveSession, requireOwnedSession, resolveRetryContext, sendActionError, sendSessionInOtherTenant, stationDeviceFields,
   stationIntervalsFor,
 } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
@@ -1010,14 +1010,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
 
     // Mode B: a session left while on `away_ring` (its phone parked, so the leave came from
     // another device: the app on screen would have ended the absence on its return) tells that
-    // phone, so its "rings this phone" notification does not outlive the session. A ring in flight
-    // refused the leave above.
-    const live = await runtime.agents.get(session.id);
-    const awayRinging = live?.ring === true || !!session.away_ring_since;
-    await runtime.agents.clear(session.id);
-    await agencyAgentSessionRepository.leave(session.id);
-    await runtime.stations.detach(session.id);
-    if (awayRinging) runtime.awayRing.sendRingOff(session.agent_user_id, session.station_device_id, session.id, 'taken_over', session.away_ring_since);
+    // phone (`leaveSession`). A ring in flight refused the leave above.
+    await leaveSession(runtime, session, await runtime.agents.get(session.id));
     return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'offline', since: new Date().toISOString() });
   });
 }

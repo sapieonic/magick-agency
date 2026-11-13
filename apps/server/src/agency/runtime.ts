@@ -13,7 +13,6 @@ import {
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import {
   AGENCY_STATION_CLOSE,
-  AWAY_RING_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
   type AgencyAgentState,
@@ -44,7 +43,7 @@ import { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
 import { queuedBreakReleaseOf } from './reserved-agent.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
 import { InboundCallService } from './inbound/inbound-disposition.js';
-import { AwayRingService } from './away-ring.js';
+import { AwayRingService, returnFromAwayRing } from './away-ring.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -912,14 +911,4 @@ export class AgencyRuntime {
     // rehydrate into `break` on reconnect, never `available`.
     log.info('Agency dialer runtime stopped');
   }
-}
-
-/**
- * The row a rehydrate was handed, told that the agent is back from `away_ring`: its reason is now
- * `device_away` (the mirror says so too, `AwayRingService.endOnReturn` or the plain path's
- * `setState`), so the `ready` frame and the bootstrap, which word the break from this row
- * (`breakReasonFor`), do not say "rings for inbound" to an agent looking at the app.
- */
-function returnFromAwayRing(row: Pick<AgencyAgentSessionRecord, 'break_reason'> | null): void {
-  if (row?.break_reason === AWAY_RING_BREAK_REASON) row.break_reason = DEVICE_AWAY_BREAK_REASON;
 }
