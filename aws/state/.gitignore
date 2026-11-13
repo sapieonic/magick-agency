@@ -1,0 +1,6 @@
+# Local state for the state bucket itself (no secrets, but the account id), and Terraform's cache.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars

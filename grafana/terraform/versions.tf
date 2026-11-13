@@ -1,5 +1,18 @@
 terraform {
-  required_version = ">= 1.5.0"
+  # 1.10 for the S3 backend's lock file (use_lockfile).
+  required_version = ">= 1.10.0"
+
+  # State lives in the same S3 bucket as aws/terraform's, under its own key, so any machine with
+  # AWS access can plan and apply (grafana/README.md, "Apply"; the bucket is made by aws/state).
+  # The backend authenticates with the usual AWS chain (AWS_PROFILE, SSO, env keys); the
+  # Grafana token below is separate.
+  backend "s3" {
+    bucket       = "magick-agency-terraform-state"
+    key          = "grafana/terraform.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 
   required_providers {
     grafana = {

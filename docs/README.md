@@ -84,7 +84,8 @@ agent's own "Use it here" / "Use this phone" moves it ([`status.md`](status.md))
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
 IAM user per environment and, optionally, the VM with its security group and Elastic IP, applied
-from a local machine; a staging VM exists (`status.md`, next steps). Nothing has run against a real carrier, a real Firebase sign-in or
+by hand from any machine with AWS access (its state, and the Grafana module's, is in an S3 bucket
+that `aws/state` makes); a staging VM exists (`status.md`, next steps). Nothing has run against a real carrier, a real Firebase sign-in or
 production data.
 
 **Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s,
