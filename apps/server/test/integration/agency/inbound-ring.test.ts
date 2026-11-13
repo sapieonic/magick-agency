@@ -320,7 +320,11 @@ describe('a ring and its answer', () => {
     // The app's station attaches: the frame (push, accepted), then the bind.
     const entry = await attach(c, away.sessionId, away.userId);
     await until('connected', async () => (await row(call.id)).state === 'connected');
-    const frames = entry.ws.sent.filter((f) => f['event'] === 'inbound_call').map((f) => f['call'] as Record<string, unknown>);
+    // The spine says `connected` before the bridge sends its frame (the agent's state, then the
+    // call's, behind the panel read): wait for the frame itself rather than race it.
+    const callFrames = () => entry.ws.sent.filter((f) => f['event'] === 'inbound_call').map((f) => f['call'] as Record<string, unknown>);
+    await until('connected frame', async () => callFrames().some((f) => f['state'] === 'connected'));
+    const frames = callFrames();
     expect(frames[0]).toMatchObject({ id: call.id, state: 'offered', offer_channel: 'push', connects_at: null });
     expect(frames[0]!['accepted_at']).not.toBeNull();
     expect(frames.some((f) => f['state'] === 'connected')).toBe(true);
