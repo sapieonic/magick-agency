@@ -551,6 +551,9 @@ void main() {
         app.lifecycle.show();
         async.flushMicrotasks();
         expect(app.connector.attempts, 1, reason: 'an attach now would answer the ring still in flight (N5)');
+        expect(r.channel.named('showAwayNotification'), ['showAwayNotification:true', 'showAwayNotification:false'],
+            reason: 'not parked for away_ring again: the agent stopped ringing for this absence');
+        expect(r.channel.named('peekStopRinging'), hasLength(1), reason: 'one Stop ringing, not a second');
         async.elapse(const Duration(milliseconds: 500));
         expect(app.connector.attempts, 1);
         async.elapse(const Duration(seconds: 3));

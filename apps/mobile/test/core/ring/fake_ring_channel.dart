@@ -66,6 +66,8 @@ class FakeRingChannel implements RingChannel {
   Future<void> showAwayNotification(bool on, {DateTime? since, String? sessionId}) async {
     calls.add('showAwayNotification:$on');
     if (on) awayShownFor = (since: since, sessionId: sessionId);
+    // As native: a new absence drops a "Stop ringing" never cleared.
+    if (on) stop = null;
   }
 
   @override

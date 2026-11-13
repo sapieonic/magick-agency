@@ -2264,7 +2264,9 @@ class StationController extends Notifier<StationView?>
   /// "Away · this phone rings for inbound calls" notification takes the station's place. Undone on
   /// return ([_onShow]) or when a ring is answered ([resumeForRing]).
   void _maybeParkForRing(_Session s) {
-    if (_awayRingParked || _foreground || _terminal || s.hosted.isSoftphone) return;
+    // "Stop ringing" in this absence: the station's `away_ring` is stale (the socket is parked,
+    // device_away on its way), and parking again would show the away notification anew.
+    if (_awayRingParked || _ringStopped || _foreground || _terminal || s.hosted.isSoftphone) return;
     final st = _station.effectiveState;
     final onRing = st == AgentState.onBreak
         ? _station.breakReasonCode == ReservedBreakCode.awayRing.wire
