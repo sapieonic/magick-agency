@@ -700,7 +700,7 @@ verified yet").
   "Your phone stopped ringing for inbound calls: …" only on a concrete reason
   (`ringOffReasonOnReturn`): the `ring_off` native took for this absence (`takeRingOff`, matched to
   the session and the absence's start), else two misses heard while away, the device status read
-  then (revoked or unregistered, opted out, the flag off, no push), or an absence of 4 hours (the
+  then (revoked, or a last push failure the server revokes on: `unregistered` or `invalid`; opted out, the flag off, no push), or an absence of 4 hours (the
   server's default maximum age). No reason, no banner.
 - **The ring** (Android, `android/app/src/main/kotlin/com/magickagency/agent/ring/`). FCM without a
   Flutter plugin: `firebase-messaging` in the app module (Firebase BoM 34.19.0, the one

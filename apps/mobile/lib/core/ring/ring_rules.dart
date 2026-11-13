@@ -124,7 +124,7 @@ RingOffReason? ringOffReasonOnReturn({
   if (status != null) {
     if (!status.accountAllowsRing) return RingOffReason.flagOff;
     final device = status.device;
-    if (device == null || device.revokedAt != null || device.lastFailureReason == PushFailureReason.unregistered) {
+    if (device == null || device.revokedAt != null || pushFailureRevokes(device.lastFailureReason)) {
       return RingOffReason.revoked;
     }
     if (!device.ringEnabled) return RingOffReason.optedOut;
@@ -144,6 +144,11 @@ bool ringOffEndsAbsence(RingOffRecord ringOff, {required String sessionId, requi
   if (since == null || absenceStart == null) return true;
   return !since.isBefore(absenceStart.subtract(ringOffTolerance));
 }
+
+/// Whether the server revoked the device for a failed push of this [reason]: the token is gone
+/// (`unregistered`) or refused for good (`invalid`), as the server's own rule says.
+bool pushFailureRevokes(PushFailureReason? reason) =>
+    reason == PushFailureReason.unregistered || reason == PushFailureReason.invalid;
 
 /// [ringOffEndsAbsence]'s tolerance between two stamps of one absence's start.
 const ringOffTolerance = Duration(seconds: 2);

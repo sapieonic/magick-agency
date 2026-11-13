@@ -130,6 +130,16 @@ void main() {
         on(status: _status('device_status_ringing', device: {'last_failure_reason': 'unregistered', 'last_failure_at': '2026-11-02T08:00:00.000Z'})),
         RingOffReason.revoked,
       );
+      expect(
+        on(status: _status('device_status_ringing', device: {'last_failure_reason': 'invalid', 'last_failure_at': '2026-11-02T08:00:00.000Z'})),
+        RingOffReason.revoked,
+        reason: 'the server revokes on invalid too',
+      );
+      expect(
+        on(status: _status('device_status_ringing', device: {'last_failure_reason': 'unavailable', 'last_failure_at': '2026-11-02T08:00:00.000Z'})),
+        isNull,
+        reason: 'a service failure does not revoke',
+      );
       expect(on(status: ringing, away: const Duration(hours: 4)), RingOffReason.maxAge);
       expect(on(status: ringing, away: const Duration(hours: 3, minutes: 59)), isNull);
     });
