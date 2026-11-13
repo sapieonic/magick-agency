@@ -1162,11 +1162,11 @@ packages/
   adapters included) and `agent_audio`'s `PhoneCalls.kt` compiled with `kotlinc` outside Gradle
   against the AOSP framework jar (Robolectric's android-all, API 37), Flutter's embedding jar,
   androidx.core 1.17.0 and firebase-messaging 25.1.3 with its Firebase and GMS dependencies, and a
-  stub `R` class (96 classes, no errors, after the 2026-11-13 review fixes); the manifest, the resources
+  stub `R` class (98 classes, no errors, on the branch's final run of 2026-11-13); the manifest, the resources
   and the Gradle changes (the Firebase BoM and `firebase-messaging`, the dart-defines written into
   string resources) were never processed, so CI's debug Android build is their first build.
   Their pure logic (`RingStateMachine`, the push parser, the request builders, the copy and
-  checklist rules, the lock-screen ring's contrast: 109 tests) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
+  checklist rules, the lock-screen ring's contrast: 115 tests) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
   under the Android Gradle plugin (`./gradlew :app:testDevDebugUnitTest`) from its first run. The
   Dart side ran under `flutter test` with a fake channel; the server's against a mock push carrier.
   Not done at all: a real FCM push (no service account was used), the native Firebase app built from
