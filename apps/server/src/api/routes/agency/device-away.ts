@@ -20,6 +20,14 @@
  * `device_away ↔ away_ring` is a break-to-break SWITCH (the app's own two away breaks, never the
  * agent's choice), so an agent already paused as away can be rung, and an agent being rung can be
  * paused as away without it (`decideDeviceAway`'s `switch`).
+ *
+ * `device_away` asked while a ring holds the session `reserved` (the away notification's "Stop
+ * ringing", IQ79): a ring not yet answered is the agent saying no to it, so it is declined through
+ * the ring's one end (`declined`, never a miss) and the absence ended as `device_away` keeping its
+ * start (`AwayRingService.declineRingForDeviceAway`), answered as applied. A ring already answered
+ * is the agent taking the call: the pause queues behind it, as behind any call. Either away pause
+ * left queued is settled by the ring's end or by the switch, never by the release after the
+ * agent's next call.
  */
 import type {
   AgencyAgentState,
@@ -167,7 +175,27 @@ export async function runDeviceAway(
   const reason: AgencyBreakReason = { ...APP_PAUSE_BREAKS[code] };
   let queuedHere = false;
   for (let pass = 0; pass < DEVICE_AWAY_PASSES; pass++) {
-    const live = await runtime.agents.get(session.id);
+    let live = await runtime.agents.get(session.id);
+    // ── Mode B: `device_away` during a ring not yet answered: the ring is declined ─────────
+    // On the call's chain, through the ring's one end; the absence ends as `device_away`, keeping
+    // its start (IQ76). An answered ring (`answered`) is decided below like any call: queued.
+    if (code === DEVICE_AWAY_BREAK_REASON && live?.state === 'reserved' && runtime.awayRing.holdsPushOffer(session.id)) {
+      const declined = await runtime.awayRing.declineRingForDeviceAway(session.id);
+      if (declined === 'declined') {
+        live = await runtime.agents.get(session.id);
+        if (live?.state === 'break' && !live.ring) {
+          // Ours, if one was queued on an earlier pass or request: it has applied now.
+          runtime.awayRing.takeQueuedAwayPause(session.id);
+          return {
+            ok: true,
+            body: {
+              session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break',
+              since: new Date(live.since ?? Date.now()).toISOString(), break_reason: reason.code,
+            },
+          };
+        }
+      }
+    }
     const queued = runtime.breaks.peek(session.id);
     const decision = decideDeviceAway({
       campaignSession: isCampaignSession(session),
@@ -200,8 +228,13 @@ export async function runDeviceAway(
     // ── Mode B: `device_away` asked while on `away_ring`: the ringing ends, the pause stays ──
     // One absence: the pause keeps its start (`since`), as the station's frame says.
     if (code === DEVICE_AWAY_BREAK_REASON && decision === 'switch') {
-      const ended = await runtime.awayRing.endKeepingSince(session.id, null, { offline: false });
-      if (ended.outcome === 'ended') return applied(ended.since);
+      const ended = await runtime.awayRing.endKeepingSince(session.id, null, { offline: false, countAs: 'returned' });
+      if (ended.outcome === 'ended') {
+        // An away pause still queued from a ring (asked while it held the session) has applied now:
+        // left queued, the release after the agent's next call would pause them unasked.
+        runtime.awayRing.takeQueuedAwayPause(session.id);
+        return applied(ended.since);
+      }
       if (ended.outcome === 'not_away_ring' || ended.outcome === 'unavailable') continue;
       // A ring in flight: the connector's. Answered as it stands below.
     }

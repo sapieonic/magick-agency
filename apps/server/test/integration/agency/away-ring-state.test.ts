@@ -689,11 +689,18 @@ describe('AwayRingService', () => {
     expect(await row(s.id)).toMatchObject({ state: 'offline', break_reason: 'device_away', away_ring_since: null });
   });
 
-  it('reconcile ends a non-campaign session found on an absence with no ring_off: no reason the app words would be true', async () => {
+  it('reconcile ends a non-campaign session found on an absence with no ring_off and uncounted: no reason the app words would be true', async () => {
     await device();
     const s = await onAwayRing();
     await getTestPool().query(`UPDATE agency_agent_sessions SET kind = 'softphone', campaign_id = NULL WHERE id = $1`, [s.id]);
-    expect(await service().svc.reconcile()).toMatchObject({ ended: 1 });
+    const ended = vi.spyOn(agencyAwayRingEndedTotal, 'inc');
+    try {
+      expect(await service().svc.reconcile()).toMatchObject({ ended: 1 });
+      // Not `returned`: nobody came back. No label says this end truly, so it is not counted.
+      expect(ended).not.toHaveBeenCalled();
+    } finally {
+      ended.mockRestore();
+    }
     expect(await row(s.id)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
     await new Promise((r) => setTimeout(r, 50));
     expect(sender.sent).toEqual([]);

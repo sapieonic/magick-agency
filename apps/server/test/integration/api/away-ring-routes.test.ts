@@ -16,7 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *     `device_away`; `device_away` asked on it switches back.
  *  3. The "no socket means offline" paths on a phone that has gone away ringing: the station close
  *     keeps it; the silent-station sweep drops a phone's socket and the close keeps it; the
- *     supervisor's force-available is refused `agent_away_ring`; "Stop ringing" (PATCH) ends it
+ *     supervisor's force-available is refused `agent_away_ring`; the opt-out (the Me toggle, PATCH) ends it
  *     (`device_away`, then `offline` with no socket, a `ring_off` push); the agent's return (a
  *     station attaching) ends it as `device_away`; another device taking the station over ends it
  *     (`ring_off`, `taken_over`, to the old device).
@@ -52,6 +52,7 @@ import { resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voi
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { resetPushSender, setPushSender } from '../../../src/seams/push-sender.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
+import { DEVICE_AWAY_BREAK } from '@magick-agency/domain/break-manager';
 
 async function waitFor<T>(what: string, probe: () => Promise<T | null | undefined | false> | T | null | undefined | false, timeoutMs = 10_000): Promise<T> {
   const started = Date.now();
@@ -321,9 +322,21 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(await row(sessionId)).toMatchObject({ break_reason: 'device_away', away_ring_since: null });
   });
 
+  it('the switch back to device_away leaves no away pause queued', async () => {
+    const { agent, sessionId, station } = await onDuty();
+    const awaySince = await goAwayRinging(agent, sessionId, station);
+    // As a pause asked while a ring held the session and left queued when the agent came back to
+    // away_ring: left there, the release after their next call would pause them unasked.
+    runtime.breaks.queue(sessionId, { ...DEVICE_AWAY_BREAK });
+    const back = await send('POST', `/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'device_away' });
+    expect(back.json()).toMatchObject({ state: 'break', break_reason: 'device_away', since: awaySince });
+    expect(back.json()).not.toHaveProperty('pending_state');
+    expect(runtime.breaks.peek(sessionId)).toBeNull();
+  });
+
   // ── 3. Away ringing: the paths that used to mean offline ───────────────────
 
-  it('the station close keeps away_ring; force-available is refused; "Stop ringing" ends it with ring_off', async () => {
+  it('the station close keeps away_ring; force-available is refused; the opt-out (the Me toggle) ends it with ring_off', async () => {
     const { agent, sessionId, station } = await onDuty();
     const awaySince = await goAwayRinging(agent, sessionId, station);
     expect(await runtime.agents.get(sessionId)).toMatchObject({ state: 'break', ring: true });
@@ -343,7 +356,7 @@ describe('Mode B routes over HTTP: push devices, away_ring and its ends (integra
     expect(sent.find((s) => s.payload['type'] === 'ring_off')!.payload).toEqual({ type: 'ring_off', session_id: sessionId, reason: 'opted_out', away_since: awaySince });
   });
 
-  it('"Stop ringing" and a removed device answer as committed even when ending the absence fails: the reconcile ends it', async () => {
+  it('the opt-out (the Me toggle) and a removed device answer as committed even when ending the absence fails: the reconcile ends it', async () => {
     const { agent, sessionId, station } = await onDuty();
     await goAwayRinging(agent, sessionId, station);
     const end = vi.spyOn(runtime.awayRing, 'endForDevice').mockRejectedValue(new Error('redis went away'));

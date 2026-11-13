@@ -250,7 +250,7 @@ export class AgencyRuntime {
       // A soft-phone session (no campaign) is never `available`; nothing to wake.
       if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
-    this.awayRing = new AwayRingService({ agents: this.agents, stations: this.stations, inbound: () => this.inbound });
+    this.awayRing = new AwayRingService({ agents: this.agents, stations: this.stations, inbound: () => this.inbound, breaks: this.breaks });
     // A queued `away_ring` applied by the one release path (a break asked for while hidden during a
     // call or wrap-up, IQ72), with or without a station socket.
     this.dialer.registerAwayRing({ applyQueued: (sessionId) => this.awayRing.applyQueued(sessionId) });

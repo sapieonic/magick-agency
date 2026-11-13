@@ -22,7 +22,8 @@
  * offer for it) is never ended here: its end is the connector's, on the call's own chain (N1).
  */
 import { createChildLogger } from '@magick-agency/observability';
-import { trackAwayRingEnded } from '@magick-agency/observability/metrics/agency';
+import { trackAwayRingEnded, type AwayRingEndedReason } from '@magick-agency/observability/metrics/agency';
+import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import {
   AGENCY_INBOUND_RING_MAX_MISSES,
   AWAY_RING_BREAK_REASON,
@@ -167,6 +168,21 @@ export interface AwayRingEndOptions {
   notify?: boolean;
   /** The absence's start when the caller has it (default: read from the session row). */
   absenceSince?: Date | null;
+  /**
+   * With no `reason`: what `agency_away_ring_ended_total` counts this end as. `returned` for the
+   * agent's return and the app's own `device_away`; left out, the end is not counted (an end no
+   * label says truly: a session that should never have been on an absence, a stale call row).
+   */
+  countAs?: Extract<AwayRingEndedReason, 'returned'>;
+}
+
+/** {@link AwayRingService.releaseInbound}'s options. */
+export interface AwayRingReleaseOptions {
+  /**
+   * The caller ends the absence itself right after (a reason of its own): a queued `device_away`
+   * is taken but not applied here, since that end is `device_away` too.
+   */
+  ending?: boolean;
 }
 
 /** How {@link AwayRingService.releaseInbound} came out. */
@@ -198,6 +214,12 @@ export interface AwayRingServiceDeps {
   stations: StationRegistry;
   /** The inbound connector while one runs (the runtime's `inbound`). */
   inbound: () => InboundConnector | null;
+  /**
+   * The runtime's break queue: the app's own pauses queued behind a ring (`device_away`,
+   * `away_ring`) are settled by the ring's end ({@link AwayRingService.releaseInbound}). Without it
+   * (a harness) nothing queued is read.
+   */
+  breaks?: Pick<BreakRegistry, 'peek' | 'take'>;
   /** Both flags on for the account (IQ65). Default: the feature-flag service. */
   ringAllowed?: (tenantId: string, accountId: string) => Promise<boolean>;
 }
@@ -425,14 +447,21 @@ export class AwayRingService {
    *  - `not_away_ring`: the session is not on an absence (never was, or it left). Nothing written:
    *    the connector returns the agent as Mode A does (`releaseInbound` + `releaseAgent`).
    *  - `not_held`: the call does not hold the session. Nothing written.
+   *
+   * The app's own pause queued behind the ring (`device_away` or `away_ring`, asked while the ring
+   * held the session `reserved`) is settled here, never left for the release after the agent's
+   * next call: a queued `away_ring` is what the session is back on, and a queued `device_away`
+   * ends the absence as `device_away`, keeping its start (IQ76; no `ring_off`: the app asked),
+   * unless the caller ends it with a reason of its own (`opts.ending`).
    */
-  async releaseInbound(sessionId: string, inboundCallId: string): Promise<AwayRingReleaseOutcome> {
+  async releaseInbound(sessionId: string, inboundCallId: string, opts: AwayRingReleaseOptions = {}): Promise<AwayRingReleaseOutcome> {
     const session = await agencyAgentSessionRepository.findById(sessionId);
     if (!session || session.left_at || !session.away_ring_since) return 'not_away_ring';
     const ttl = this.ttlLeft(session.away_ring_since);
     // Past the maximum age mid-ring: back to `away_ring` for a moment (a 1 s key), then ended
     // `max_age` like any other end, so there is one path that writes an end.
     if (!(await this.deps.agents.releaseInboundToAwayRing(sessionId, inboundCallId, Math.max(ttl, 1000)))) return 'not_held';
+    const queued = this.takeQueuedAwayPause(sessionId);
     if (!(await agencyAgentSessionRepository.restoreAwayRing(sessionId))) {
       // The absence ended between the read above and here (a take-over cleared its key).
       await this.end(sessionId, null);
@@ -442,7 +471,35 @@ export class AwayRingService {
       await this.end(sessionId, 'max_age');
       return 'ended';
     }
+    if (queued === DEVICE_AWAY_BREAK_REASON && !opts.ending) {
+      log.info({ sessionId, inboundCallId }, 'A device_away queued behind a ring applies at its end');
+      await this.end(sessionId, null, { offline: false, countAs: 'returned' });
+      return 'ended';
+    }
     return 'away_ring';
+  }
+
+  /**
+   * Take the app's own pause queued for the session, if it is one of the two away breaks
+   * (`device_away`, `away_ring`); another break (the agent's choice) stays queued. The code taken.
+   */
+  takeQueuedAwayPause(sessionId: string): typeof DEVICE_AWAY_BREAK_REASON | typeof AWAY_RING_BREAK_REASON | null {
+    const code = this.deps.breaks?.peek(sessionId)?.code;
+    if (code !== DEVICE_AWAY_BREAK_REASON && code !== AWAY_RING_BREAK_REASON) return null;
+    this.deps.breaks!.take(sessionId);
+    return code;
+  }
+
+  /**
+   * The app asked `device_away` while the session holds a push offer (`POST /sessions/:id/break`,
+   * the away notification's "Stop ringing", IQ79): the connector's
+   * `InboundConnector.declineRingForDeviceAway`, on the call's chain. A ring not yet answered is
+   * the agent saying no to it: declined (`declined`, never a miss), and the absence ended as
+   * `device_away` keeping its start (`declined`). An answered ring is the agent taking the call
+   * (`answered`): the pause queues behind it as behind any call. `none`: no push offer.
+   */
+  async declineRingForDeviceAway(sessionId: string): Promise<'declined' | 'answered' | 'none'> {
+    return (await this.deps.inbound()?.declineRingForDeviceAway(sessionId)) ?? 'none';
   }
 
   /**
@@ -491,8 +548,10 @@ export class AwayRingService {
     if (!ended) return { outcome: 'not_away_ring' };
     const awaySince = ended.away_since ?? absenceSince;
     // `taken_over` is counted where its `ring_off` is sent ({@link sendRingOff}): the take-over and
-    // the leaves end the absence outside this method.
-    if (reason !== 'taken_over') trackAwayRingEnded(reason ?? 'returned');
+    // the leaves end the absence outside this method. An end with no reason counts as its caller
+    // says (`countAs`), or not at all.
+    if (reason !== null && reason !== 'taken_over') trackAwayRingEnded(reason);
+    else if (reason === null && opts.countAs) trackAwayRingEnded(opts.countAs);
     const since = offline ? undefined : (awaySince ?? new Date()).toISOString();
     if (since) {
       this.deps.stations.send(sessionId, { event: 'agent_state', state: 'break', since, break_reason: DEVICE_AWAY_BREAK_REASON });
@@ -550,7 +609,7 @@ export class AwayRingService {
    * show it. No `ring_off`: the app is on screen and drops its own notification.
    */
   async endOnReturn(sessionId: string): Promise<AwayRingEndOutcome> {
-    return this.end(sessionId, null, { offline: false });
+    return this.end(sessionId, null, { offline: false, countAs: 'returned' });
   }
 
   /**
@@ -580,7 +639,7 @@ export class AwayRingService {
   }
 
   /**
-   * "Stop ringing" (`PATCH ring_enabled=false`, `opted_out`) or the device removed (`DELETE`,
+   * The opt-out (the Me toggle, `PATCH ring_enabled=false`, `opted_out`) or the device removed (`DELETE`,
    * `revoked`): end the `away_ring` of the agent's live session whose station this device holds,
    * if there is one. A ring in flight is left to the connector (and to the next reconcile, which
    * finds the device opted out or revoked).
@@ -762,7 +821,7 @@ export class AwayRingService {
       // Unreachable: `away_ring` is refused to a non-campaign session (`refusalFor`), a live row
       // never changes its kind, and such a session is never rung (the ring rule). Ended
       // all the same, with no `ring_off`: no reason the app words would be true (`flag_off` would
-      // tell the agent the account switched ringing off).
+      // tell the agent the account switched ringing off), and not counted: no label says it.
       log.warn({ sessionId: row.id, kind: row.kind }, 'A non-campaign session was on away-ring; ending it');
       if ((await this.end(row.id, null)) === 'ended') summary.ended++;
       return;

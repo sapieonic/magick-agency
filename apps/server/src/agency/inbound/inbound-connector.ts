@@ -1498,8 +1498,17 @@ export class InboundConnector {
   }
 
   /**
-   * End the session's ring because its `away_ring` is ending (N1): the reconcile, "Stop ringing",
-   * the device removed, or the take-over (OS3). {@link RingOffers.cancelForAwayRingEnd}.
+   * The app asked `device_away` while the session holds a push offer (the away notification's "Stop
+   * ringing", IQ79): a ring not yet answered is declined and the absence ended as `device_away`; an
+   * answered one is left to run. {@link RingOffers.declineForDeviceAway}.
+   */
+  declineRingForDeviceAway(sessionId: string): Promise<'declined' | 'answered' | 'none'> {
+    return this.ring.declineForDeviceAway(sessionId);
+  }
+
+  /**
+   * End the session's ring because its `away_ring` is ending (N1): the reconcile, the opt-out (the
+   * Me toggle), the device removed, or the take-over (OS3). {@link RingOffers.cancelForAwayRingEnd}.
    */
   cancelRingForAwayRingEnd(
     sessionId: string,

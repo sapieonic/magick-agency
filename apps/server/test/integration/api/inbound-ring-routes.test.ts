@@ -19,6 +19,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *     the call bound and connected.
  *  3. The audit rows `agency_inbound_call.ring_declined` and `.ring_accepted`: ids only, never the
  *     offer token.
+ *  4. The app's `device_away` during a ring (the away notification's "Stop ringing", IQ79): a ring
+ *     not yet answered is declined (not a miss), the absence over as `device_away` keeping its
+ *     start, nothing queued, the caller rung on the next phone; an answered ring queues it behind
+ *     the call, applied at its release; and a pause queued behind an answered ring that then ends
+ *     unbound applies at the ring's end, never at the release after the agent's next call.
  */
 
 const mocks = vi.hoisted(() => {
@@ -156,6 +161,19 @@ describe('Mode B ring routes over HTTP (integration)', () => {
     void connector.take({ call: (await agencyInboundCallRepository.findByIdAnyTenant(call!.id))!, route, stickyCandidates: [], recordingNotice: false });
     const push = await waitFor('the ring push', () => sent.find((p) => p.payload['type'] === 'ring' && p.payload['call_id'] === call!.id));
     return { callId: call!.id, token: String(push.payload['offer_token']) };
+  }
+
+  async function sessionRow(sessionId: string) {
+    return (await getTestPool().query('SELECT * FROM agency_agent_sessions WHERE id = $1', [sessionId])).rows[0];
+  }
+  const pushesOf = (type: string, callId: string) => sent.filter((p) => p.payload['type'] === type && p.payload['call_id'] === callId).map((p) => p.payload);
+  const deviceAway = (who: Who, sessionId: string) => send('POST', `/proxy/agency/sessions/${sessionId}/break`, who, { reason: 'device_away' });
+
+  /** Nobody left on an absence from an earlier case (the next caller would ring them first). */
+  async function quietFloor() {
+    await getTestPool().query('UPDATE agency_push_devices SET ring_enabled = false WHERE ring_enabled');
+    await runtime.awayRing.reconcile();
+    await connector.drain();
   }
 
   async function auditRows(action: string) {
@@ -384,6 +402,114 @@ describe('Mode B ring routes over HTTP (integration)', () => {
     expect(accepted.statusCode, accepted.body).toBe(200);
     bridge.end(callId);
     await connector.drain();
+  });
+
+  it('device_away during a ring not yet answered declines it: not a miss, the absence over as device_away keeping its start, nothing queued, the caller rung on the next phone', async () => {
+    await quietFloor();
+    const first = await awayAgent();
+    const second = await awayAgent();
+    const absence = ((await sessionRow(first.sessionId)).away_ring_since as Date).toISOString();
+    const { callId, token } = await caller();
+    // Longest idle first: the first phone rings.
+    expect(pushesOf('ring', callId).map((p) => p['session_id'])).toEqual([first.sessionId]);
+    expect(await runtime.agents.get(first.sessionId)).toMatchObject({ state: 'reserved', inboundCallId: callId });
+
+    // "Stop ringing" (IQ79): the app asks device_away before its station attaches.
+    const stop = await deviceAway(first.agent, first.sessionId);
+    expect(stop.statusCode, stop.body).toBe(200);
+    expect(stop.json()).toMatchObject({ session_id: first.sessionId, state: 'break', break_reason: 'device_away', since: absence });
+    expect(stop.json()).not.toHaveProperty('pending_state');
+    expect(runtime.breaks.peek(first.sessionId)).toBeNull();
+    expect(await runtime.agents.get(first.sessionId)).toMatchObject({ state: 'break', ring: false, inboundCallId: null, since: Date.parse(absence) });
+    expect(await sessionRow(first.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null, ring_misses: 0 });
+    expect(((await sessionRow(first.sessionId)).state_since as Date).toISOString()).toBe(absence);
+    // Declined, as the native decline would have: the phone told, the token spent; no ring_off (the app asked).
+    expect(await waitFor('ring_cancel', () => pushesOf('ring_cancel', callId)[0])).toEqual({
+      type: 'ring_cancel', call_id: callId, session_id: first.sessionId, reason: 'declined',
+    });
+    expect((await ring(callId, 'answering', null, { offer_token: token })).statusCode).toBe(404);
+    expect(sent.filter((p) => p.payload['type'] === 'ring_off' && p.payload['session_id'] === first.sessionId)).toEqual([]);
+    // The caller is searched for again: the next phone rings, and this one never again for them.
+    await waitFor('the next phone rung', () => pushesOf('ring', callId).find((p) => p['session_id'] === second.sessionId));
+    expect(await agencyInboundCallRepository.findByIdAnyTenant(callId)).toMatchObject({ state: 'offered', session_id: second.sessionId, ring_count: 2 });
+    expect(pushesOf('ring', callId).filter((p) => p['session_id'] === first.sessionId)).toHaveLength(1);
+    // The app's retry of the same ask finds the pause it asked for, and queues nothing.
+    const again = await deviceAway(first.agent, first.sessionId);
+    expect(again.json()).toMatchObject({ state: 'break', break_reason: 'device_away', since: absence });
+    expect(runtime.breaks.peek(first.sessionId)).toBeNull();
+
+    bridge.end(callId);
+    await connector.drain();
+    expect((await send('PATCH', `/proxy/agency/push-devices/${second.deviceId}`, second.agent, { ring_enabled: false })).statusCode).toBe(200);
+  });
+
+  it('device_away during an answered ring queues behind the call (the agent took it) and applies at its release', async () => {
+    await quietFloor();
+    const away = await awayAgent();
+    const { callId, token } = await caller();
+    expect((await ring(callId, 'answering', null, { offer_token: token })).statusCode).toBe(200);
+    const paused = await deviceAway(away.agent, away.sessionId);
+    expect(paused.statusCode, paused.body).toBe(200);
+    expect(paused.json()).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'device_away' });
+    expect(runtime.breaks.peek(away.sessionId)).toMatchObject({ code: 'device_away' });
+    expect(await agencyInboundCallRepository.findByIdAnyTenant(callId)).toMatchObject({ state: 'offered', session_id: away.sessionId });
+
+    // The ring stands: the agent takes the call.
+    const accepted = await ring(callId, 'accept', away.agent, { offer_token: token, device_id: away.deviceId });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    const station = await connect(accepted.json().station_ws_url as string);
+    await waitFor('connected', async () => (await agencyInboundCallRepository.findByIdAnyTenant(callId))?.state === 'connected');
+    expect(station.frames.find((f) => f['event'] === 'ready')).toMatchObject({ state: 'reserved', pending_state: 'break', pending_break_reason: 'device_away' });
+    expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'on_call', inboundCallId: callId });
+    expect(runtime.breaks.peek(away.sessionId)).toMatchObject({ code: 'device_away' });
+
+    // The call ends and its outcome settles: the release (as the outcome's settle runs it) applies the pause.
+    bridge.end(callId);
+    await connector.drain();
+    await runtime.agents.releaseInbound(away.sessionId, callId);
+    expect(await runtime.dialer.releaseAgent(away.sessionId)).toMatchObject({ state: 'break' });
+    expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'break', ring: false });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    expect(runtime.breaks.peek(away.sessionId)).toBeNull();
+    station.ws.close();
+    await station.closed;
+  });
+
+  it('a device_away queued behind an answered ring that then ends unbound applies at the ring`s end: after /available, the next call`s release is to available', async () => {
+    await quietFloor();
+    const away = await awayAgent();
+    const absence = ((await sessionRow(away.sessionId)).away_ring_since as Date).toISOString();
+    const { callId, token } = await caller();
+    expect((await ring(callId, 'answering', null, { offer_token: token })).statusCode).toBe(200);
+    const paused = await deviceAway(away.agent, away.sessionId);
+    expect(paused.json()).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'device_away' });
+    // Declined natively after Answer (N4): the ring ends unbound, and the pause it held queued applies there.
+    expect((await ring(callId, 'decline', null, { offer_token: token, reason: 'declined' })).statusCode).toBe(200);
+    await connector.drain();
+    expect(runtime.breaks.peek(away.sessionId)).toBeNull();
+    expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'break', ring: false, inboundCallId: null, since: Date.parse(absence) });
+    expect(await sessionRow(away.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away', away_ring_since: null });
+    const again = await deviceAway(away.agent, away.sessionId);
+    expect(again.json()).toMatchObject({ state: 'break', break_reason: 'device_away', since: absence });
+    bridge.end(callId);
+    await connector.drain();
+
+    // Back in the app, back in the pool, then a call: its release returns the agent to the pool,
+    // never to a pause nobody asked for since.
+    const mint = await send('POST', `/proxy/agency/sessions/${away.sessionId}/station-token`, away.agent, { device_id: away.deviceId });
+    expect(mint.statusCode, mint.body).toBe(200);
+    const station = await connect(mint.json().station_ws_url as string);
+    const ready = station.frames.find((f) => f['event'] === 'ready')!;
+    expect(ready).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    expect(ready).not.toHaveProperty('pending_state');
+    expect((await send('POST', `/proxy/agency/sessions/${away.sessionId}/available`, away.agent, {})).statusCode).toBe(200);
+    await runtime.agents.set(away.sessionId, 'on_call', { leaseMs: 60_000 });
+    expect(await runtime.dialer.releaseAgent(away.sessionId)).toMatchObject({ state: 'available' });
+    expect(await runtime.agents.get(away.sessionId)).toMatchObject({ state: 'available' });
+    // Out of the pool again for the later cases' callers.
+    expect((await deviceAway(away.agent, away.sessionId)).json()).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    station.ws.close();
+    await station.closed;
   });
 
   it('the token-only routes are rate-limited per IP', async () => {
