@@ -225,13 +225,7 @@
   font-size: 13px;
 }
 
-/* ── KPIs ──────────────────────────────────────────────────────────────── */
-
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-}
+/* ── KPIs: `components/common/StatGrid` lays the tiles out. ─────────────── */
 
 /* A number that opens its list. Underlined on hover only: a page of underlines
    reads as a page of warnings. */

@@ -11,6 +11,7 @@ import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { CountLink, CsvButton, InsightsTable, Kpi, Panel, rateFigure, tableCsv, type InsightsColumn } from './InsightsParts';
 import type { RangeSectionContext } from './ActivitySections';
 import styles from './Insights.module.css';
+import { StatGrid } from '../../../../components/common/StatGrid';
 
 type StallReason = keyof AgencyInsightsHealth['stalls']['minutes_by_reason'];
 const STALL_REASONS: StallReason[] = [...AGENCY_PACING_IDLE_REASONS, 'outside_calling_hours'];
@@ -82,7 +83,7 @@ export function HealthSection({
         </>
       }
     >
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi
           label={`Abandonment vs ${ceilingPctText(ceiling)} ceiling`}
           value={rateText(abandonment)}
@@ -113,7 +114,7 @@ export function HealthSection({
           testId="kpi-carrier-failures"
         />
         <Kpi label="Retired by our faults" value={formatCount(health.our_fault_retired)} sub="Contacts closed after repeated system faults" testId="kpi-our-fault" />
-      </div>
+      </StatGrid>
 
       <h4 className={styles.subTitle}>Caller IDs</h4>
       {health.caller_ids.length === 0 ? (
@@ -163,7 +164,7 @@ export function RecordingSection({
   const share = (n: number) => rateText(insightsRate(n, sentimentTotal));
   return (
     <Panel id="recording" title="Recording and analysis" sub={ctx.rangeLabel}>
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi
           label="Recording coverage"
           value={coverage.value}
@@ -197,7 +198,7 @@ export function RecordingSection({
             testId="kpi-analysed"
           />
         )}
-      </div>
+      </StatGrid>
       {analysis && analysis.top_topics.length > 0 ? (
         <p className={styles.muted} data-testid="top-topics">
           {`Top topics: ${analysis.top_topics.map((t) => `${t.topic} (${formatCount(t.count)})`).join(', ')}`}

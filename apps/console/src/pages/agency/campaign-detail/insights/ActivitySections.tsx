@@ -31,6 +31,7 @@ import {
   type InsightsColumn,
 } from './InsightsParts';
 import styles from './Insights.module.css';
+import { StatGrid } from '../../../../components/common/StatGrid';
 
 /** What every range section is handed: whose, which range, and how to name people. */
 export interface RangeSectionContext {
@@ -141,7 +142,7 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
         </>
       }
     >
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi
           label="Dials"
           value={<CountLink to={attemptsLink(campaignId, range)} value={calls.dials} label="dials" />}
@@ -192,7 +193,7 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
           sub="Tagged to this campaign; not in any other count here"
           testId="kpi-softphone"
         />
-      </div>
+      </StatGrid>
 
       <h4 className={styles.subTitle}>By outcome</h4>
       <InsightsTable caption="Placed dials by outcome" columns={outcomeColumns} rows={lines} rowKey={(l) => l.outcome ?? 'null'} testId="outcomes-table" />
@@ -251,7 +252,7 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
       sub={`${ctx.rangeLabel} · on time means dialled within 15 minutes of the booked time`}
       actions={<CsvButton filename={insightsCsvFilename(ctx.campaignName, 'callbacks', ctx.campaignId)} build={() => tableCsv(columns, cb.by_owner)} />}
     >
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi label="Booked" value={formatCount(cb.booked)} sub="In this range" testId="kpi-callbacks-booked" />
         <Kpi label="Kept on time" value={formatCount(cb.kept_on_time)} sub={keptOnTimeSub(cb, onTime.withheld ? null : onTime.value)} testId="kpi-callbacks-on-time" />
         <Kpi label="Late" value={formatCount(cb.kept_late)} testId="kpi-callbacks-late" />
@@ -274,7 +275,7 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
           sub={overdueNowSub(cb)}
           testId="kpi-callbacks-open"
         />
-      </div>
+      </StatGrid>
       {gapNote ? <p className={styles.muted} data-testid="callbacks-gap-note">{gapNote}</p> : null}
       {cb.by_owner.length > 0 ? (
         <InsightsTable caption="Callbacks booked for this range and not dialled yet, by owner" columns={columns} rows={cb.by_owner} rowKey={(row) => row.agent_user_id ?? 'pool'} sortable testId="callbacks-table" />

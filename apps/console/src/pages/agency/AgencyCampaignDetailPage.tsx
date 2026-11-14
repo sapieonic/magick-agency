@@ -21,6 +21,7 @@ import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
+import { CampaignWorkspaceFrame } from './campaign-detail/CampaignWorkspace';
 import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
 import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
@@ -155,74 +156,78 @@ export function AgencyCampaignDetailPage() {
   if (!campaign) return null;
 
   return (
-    <div className={styles.page}>
+    <CampaignWorkspaceFrame
+      header={
+        <CampaignDetailHeader
+          campaign={campaign}
+          lastUpdatedAt={lastUpdatedAt}
+          autoRefreshing={shouldPoll}
+          concurrency={stats?.concurrency}
+          tenantId={tenantId}
+          accountId={accountId}
+          canControl={canControl}
+          busy={lifecycle.busy}
+          onAction={lifecycle.onAction}
+          onRetry={canRetry ? () => setRetryOpen(true) : undefined}
+          canJoinStation={canJoinStation}
+          role={role}
+          onRefresh={() => {
+            void load();
+            /*
+              The analytic tabs' range reads fetch separately and deliberately do
+              not poll, so without this Refresh moved the counters and the
+              "Updated" stamp while those sections silently kept showing the
+              older read. Bumped only here — never on the 10s poll, which must
+              not re-read up to 92 days every tick.
+            */
+            setInsightsRefresh((n) => n + 1);
+          }}
+        />
+      }
 
-      <CampaignDetailHeader
-        campaign={campaign}
-        lastUpdatedAt={lastUpdatedAt}
-        autoRefreshing={shouldPoll}
-        concurrency={stats?.concurrency}
-        tenantId={tenantId}
-        accountId={accountId}
-        canControl={canControl}
-        busy={lifecycle.busy}
-        onAction={lifecycle.onAction}
-        onRetry={canRetry ? () => setRetryOpen(true) : undefined}
-        canJoinStation={canJoinStation}
-        role={role}
-        onRefresh={() => {
-          void load();
-          /*
-            The analytic tabs' range reads fetch separately and deliberately do
-            not poll, so without this Refresh moved the counters and the
-            "Updated" stamp while those sections silently kept showing the
-            older read. Bumped only here — never on the 10s poll, which must
-            not re-read up to 92 days every tick.
-          */
-          setInsightsRefresh((n) => n + 1);
-        }}
-      />
-
-      {/* No description line: the API has no such column, so it was a paragraph
-          that could only ever be empty. See the note on `AgencyCampaign`. */}
-
-      {error && <ErrorAlert message={error} onRetry={() => void load()} />}
-
-      {/*
+      /*
         A blocker stays above every metric AND above the tab bar. It is the one
         thing on this screen that is worth reading before choosing what to read:
         a diagnosis that only appeared on the section you happened to be on
         would be invisible to the supervisor who opened Agents first.
-      */}
-      <CampaignHealthStrip
-        stats={stats}
-        campaignId={campaign.id}
-        campaignStatus={campaign.status}
-        role={role}
-      />
-
-      {/*
+      */
+      strip={
+        <CampaignHealthStrip
+          stats={stats}
+          campaignId={campaign.id}
+          campaignStatus={campaign.status}
+          role={role}
+        />
+      }
+      /*
         The workspace's sections. Contacts, Call attempts, Activity
         and Settings used to be secondary buttons in the header row above —
         the same row that carries Stop — each gated on its own permission at the
         call site. They are tabs now, gated inside `CAMPAIGN_TABS` on the same
         permissions the server enforces, which leaves the header holding only the
         affordances that CHANGE the campaign.
-      */}
-      <CampaignTabs
-        campaignId={campaign.id}
-        active={panel}
-        role={role}
-        /*
-          Agents on shift, so the tab says whether it is worth opening: the same
-          count the floor's "N on shift" and the stall banner read
-          (`agentsOnShift`), never `agents.length`, which counted signed-out rows.
-          `stats.agents` absent is "not known" (null), not "nobody".
-        */
-        agentsOnShift={onShift}
-        campaignStatus={campaign.status}
-        callbacksOverdue={callbacksOverdue}
-      />
+      */
+      tabs={
+        <CampaignTabs
+          campaignId={campaign.id}
+          active={panel}
+          role={role}
+          /*
+            Agents on shift, so the tab says whether it is worth opening: the same
+            count the floor's "N on shift" and the stall banner read
+            (`agentsOnShift`), never `agents.length`, which counted signed-out rows.
+            `stats.agents` absent is "not known" (null), not "nobody".
+          */
+          agentsOnShift={onShift}
+          campaignStatus={campaign.status}
+          callbacksOverdue={callbacksOverdue}
+        />
+      }
+    >
+      {/* No description line: the API has no such column, so it was a paragraph
+          that could only ever be empty. See the note on `AgencyCampaign`. */}
+
+      {error && <ErrorAlert message={error} onRetry={() => void load()} />}
 
       {/*
         The floor and the roster together, because the question they answer is a
@@ -339,7 +344,7 @@ export function AgencyCampaignDetailPage() {
           }}
         />
       )}
-    </div>
+    </CampaignWorkspaceFrame>
   );
 }
 

@@ -1,17 +1,4 @@
-/*
-  The workspace is a supervisor's monitoring screen, not a reading column: its
-  sections (Insights, the floor, the contacts) get better the more of them fit
-  in one glance. 1440px left a third of a 2560px screen as gutter — the
-  campaign's numbers ended in the left two thirds with a screen of white beside
-  them. The sibling campaign screens keep their narrower widths on purpose (760
-  for the forms, 1100 for the activity log): those ARE reading columns.
-*/
-.page {
-  width: 100%;
-  max-width: 2400px;
-  margin: 0 auto;
-  padding-bottom: 48px;
-}
+/* The page's width and bottom space are the campaign frame's (`campaign-detail/CampaignWorkspace.module.css`). */
 
 /*
   The name first, the actions beside it only when both fit at their natural
@@ -215,10 +202,6 @@ a.actionButton {
 }
 
 @media (max-width: 680px) {
-  .page {
-    padding-bottom: 28px;
-  }
-
   .title {
     font-size: 25px;
   }

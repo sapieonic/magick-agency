@@ -30,6 +30,7 @@ import { rosterBucketLink } from '../../../../utils/agency/insights/links';
 import { CountLink, Kpi, Panel, rateFigure } from './InsightsParts';
 import styles from './Insights.module.css';
 import { carrierPauseCopy } from '../../../../utils/agencyCarriers';
+import { StatGrid } from '../../../../components/common/StatGrid';
 
 /**
  * The status-aware block at the top of the Insights tab: one component per
@@ -175,7 +176,7 @@ export function RunningHeadline({
 
   return (
     <Panel id="headline" title="Live now" sub={ranFor ? `Running for ${ranFor}` : undefined} testId="headline-running">
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi
           label="Agents online"
           value={staffedAgents !== null ? `${formatCount(online)} of ${formatCount(staffedAgents)}` : formatCount(online)}
@@ -202,7 +203,7 @@ export function RunningHeadline({
           sub="At the current pace, inside calling hours"
           testId="kpi-eta"
         />
-      </div>
+      </StatGrid>
       <RosterProgress roster={summary.roster} />
       <ul className={styles.callouts} aria-label="What is holding dials back">
         {live.stall ? (
@@ -240,7 +241,7 @@ export function PausedHeadline({
   const carrierCopy = carrierPauseCopy(paused.reason);
   return (
     <Panel id="headline" title="Paused" sub={`Paused for ${longDuration(secondsSince(paused.paused_at, now))}`} testId="headline-paused">
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi
           label="Paused by"
           value={auto ? 'The abandonment guardrail' : carrierCopy ? carrierCopy.by : actorName(paused.actor)}
@@ -266,7 +267,7 @@ export function PausedHeadline({
             : undefined}
           testId="kpi-callbacks-missed"
         />
-      </div>
+      </StatGrid>
       {paused.callbacks_missed_while_paused > 0 ? (
         <ul className={styles.callouts}>
           <li className={styles.callout} data-tone="warn">
@@ -287,10 +288,10 @@ export function StoppingHeadline({
 }: HeadlineContext & { stopping: NonNullable<AgencyInsightsHeadline['stopping']> }) {
   return (
     <Panel id="headline" title="Stopping" sub="Waiting for live calls to end" testId="headline-stopping">
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi label="Stopped by" value={actorName(stopping.actor)} sub={formatZoned(stopping.stopped_at, summary.settings.timezone)} testId="kpi-stopped-by" />
         <Kpi label="Calls still finishing" value={formatCount(stopping.calls_finishing)} testId="kpi-calls-finishing" />
-      </div>
+      </StatGrid>
     </Panel>
   );
 }
@@ -313,12 +314,12 @@ export function StoppedHeadline({
       actions={<RetryButton count={stopped.retry_matched} canRetry={canRetry} onRetry={onRetry} />}
       testId="headline-stopped"
     >
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi label="Pending at stop" value={<CountLink to={rosterBucketLink(id, 'waiting')} value={stopped.pending} label="contacts pending" />} sub="Due, waiting for a retry, or a callback" testId="kpi-pending" />
         <Kpi label="Callbacks scheduled" value={<CountLink to={rosterBucketLink(id, 'waiting_callback')} value={stopped.callbacks_scheduled} label="callbacks scheduled" />} sub="Promised, and now not dialled" testId="kpi-callbacks-scheduled" />
         <Kpi label="Never attempted" value={<CountLink to={rosterBucketLink(id, 'never_attempted')} value={stopped.never_attempted} label="contacts never attempted" />} sub={`${rateText(neverShare, 'contacts')} of the roster`} testId="kpi-never-attempted" />
         <Kpi label="A retry would pick up" value={formatCount(stopped.retry_matched)} sub="No answer, busy, or never reached. Do Not Call and invalid numbers are left out." testId="kpi-retry-matched" />
-      </div>
+      </StatGrid>
       <RosterProgress roster={summary.roster} />
     </Panel>
   );
@@ -343,13 +344,13 @@ export function CompletedHeadline({
       actions={<RetryButton count={completed.retry_matched} canRetry={canRetry} onRetry={onRetry} />}
       testId="headline-completed"
     >
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi label="Duration" value={longDuration(completed.duration_seconds)} sub="From start to the last call" testId="kpi-duration" />
         <Kpi label="Contacts reached" value={formatCount(completed.reached)} sub={`${rateText(reachedShare, 'contacts')} of the roster`} testId="kpi-reached" />
         <Kpi label="Successes" value={formatCount(completed.successes)} sub={`${success.value} of contacts reached`} testId="kpi-successes" />
         <Kpi label="Not reached" value={formatCount(completed.not_reached)} sub={`${formatCount(completed.retry_matched)} a retry could pick up`} testId="kpi-not-reached" />
         <Kpi label="Do Not Call" value={<CountLink to={rosterBucketLink(id, 'suppressed_dnc')} value={completed.dnc} label="contacts on Do Not Call" />} testId="kpi-dnc" />
-      </div>
+      </StatGrid>
     </Panel>
   );
 }
