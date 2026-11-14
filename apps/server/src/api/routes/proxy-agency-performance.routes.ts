@@ -9,7 +9,7 @@ import { registerFloorPerformanceRoutes } from './proxy-agency-performance/floor
  * B16). Each route runs the internal handler instance's body (`agency-agents.routes.ts`)
  * in-process through `callCore` (`../core-dispatch.ts`) with the request's tenant and
  * account. `callCore` has no transport to time out, and nothing bounds the roster and
- * grouped reads' wall clock (no `statement_timeout` is set; the handler's 92-day window
+ * grouped reads' wall clock (no `statement_timeout` unless `DB_STATEMENT_TIMEOUT_MS` is set; the handler's 92-day window
  * cap bounds how much work a caller can ask for). There are no platform API keys in v1 (`docs/decisions.md`, open question 5),
  * so `request.user` is always the Firebase-verified person; `resolveMyAgentId` is the
  * staffing plugin's. This plugin adds the query whitelists, `include_inactive`, the account

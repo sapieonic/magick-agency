@@ -919,7 +919,8 @@ and the slow statements on `agency_insights_rollup_buckets`.
 (`agency_insights_rollup_recompute_seconds_count` flat), although the job committed batches
 before. A pass has started and not finished, so the job skips every later tick and the backlog
 gauges are frozen at their last value (which is why `agy-insights-rollup-behind` cannot see this).
-The server sets no `statement_timeout`, so a batch waiting on a lock waits indefinitely.
+Unless `DB_LOCK_TIMEOUT_MS` or `DB_STATEMENT_TIMEOUT_MS` is set (both off by default,
+[`db-hygiene.md`](../db-hygiene.md) §5), a batch waiting on a lock waits indefinitely.
 
 **Check:** if `agy-insights-rollup-failing` fires too, follow that one. Otherwise, in agency's
 Postgres, `pg_stat_activity` for a long-running statement on `agency_insights_rollup_dirty` or
