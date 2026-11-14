@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   fetchManualCallRecordingBlobUrl: vi.fn(),
   listTenantMembers: vi.fn(),
   getAgencyCampaign: vi.fn(),
+  getAgencyCampaignStats: vi.fn(),
+  campaignLineage: vi.fn(),
   isEnabled: vi.fn((_c: string) => true),
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -27,7 +29,15 @@ vi.mock('../../api/softphone', () => ({
   fetchManualCallRecordingBlobUrl: mocks.fetchManualCallRecordingBlobUrl,
 }));
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
-vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
+// The campaign's workspace (header, health strip, bar) around Manual calls reads these.
+vi.mock('../../api/agencyCampaigns', () => ({
+  getAgencyCampaign: mocks.getAgencyCampaign,
+  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
+  campaignLineage: mocks.campaignLineage,
+}));
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
+}));
 vi.mock('../../api/calls', () => ({ retryAnalysis: vi.fn(), fetchRecordingBlobUrl: vi.fn() }));
 vi.mock('../../components/audio/AudioWaveform', () => ({ AudioWaveform: () => <div data-testid="waveform" /> }));
 
@@ -36,6 +46,7 @@ import SoftphoneCallDetailPage, { savedByLine } from '../../pages/agency/softpho
 import AgencyCampaignManualCallsPage from '../../pages/agency/AgencyCampaignManualCallsPage';
 import { todayLocal } from '../../utils/softphone/callStats';
 import { BOOTSTRAP, CAMPAIGN, manualCall } from '../helpers/softphone';
+import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 import type { WebRtcCallRecord } from '../../types/webrtc-call';
 import type { AgencyManualCallListRow } from '../../types/softphone';
 import { ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
@@ -276,6 +287,8 @@ describe('Soft-phone calls (the account list)', () => {
 describe('a campaign’s Manual calls', () => {
   it('is the same list with the tag fixed', async () => {
     mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Home Loan Renewals', status: 'running' });
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+    mocks.campaignLineage.mockResolvedValue(noLineage());
     render(
       <MemoryRouter initialEntries={['/agency/campaigns/camp-1/manual-calls']}>
         <Routes>
@@ -291,7 +304,10 @@ describe('a campaign’s Manual calls', () => {
     expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
     expect(screen.getByTestId('call-log-view-manual').getAttribute('aria-current')).toBe('page');
     expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Call log');
+    // In the campaign's workspace: the header names the campaign, the section is Call log.
+    expect(screen.getByTestId('campaign-workspace')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Home Loan Renewals');
+    expect(screen.getByRole('heading', { level: 2, name: 'Call log' })).toBeTruthy();
   });
 });
 

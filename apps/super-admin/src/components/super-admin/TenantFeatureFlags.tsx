@@ -21,6 +21,7 @@ import { ConfirmDialog } from './feature-flags/ConfirmDialog';
 import { FlagPolicyWarning } from './feature-flags/FlagPolicyWarning';
 import { humanize, isGuardedWhenOn, numericBoundsFor, relativeExpiry, toTriState, type TriState } from './feature-flags/flagUtils';
 import styles from './TenantFeatureFlags.module.css';
+import flagStyles from './feature-flags/featureFlags.module.css';
 
 interface AccountOption {
   id: string;
@@ -303,8 +304,8 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
             ))}
           </select>
         </div>
-        <span className={styles.globalChip} title="Set platform-wide defaults in the Feature Flags tab">
-          Global defaults — managed in the Feature Flags tab
+        <span className={styles.globalChip} title="Set platform-wide defaults on the Feature Flags page">
+          Global defaults — managed on the Feature Flags page
         </span>
       </div>
 
@@ -313,7 +314,7 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
       {loading ? (
         <LoadingSpinner size="sm" />
       ) : (
-        <div className={styles.table}>
+        <div className={`${styles.table} ${flagStyles.stackedTable}`}>
           <table>
             <thead>
               <tr>
@@ -379,7 +380,9 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
                         </span>
                       )}
                     </td>
-                    <td className={styles.featMeta}>
+                    {/* `data-label` names the value where a phone stacks the row, and a
+                        phone leaves out an empty expiry (the CSS). */}
+                    <td className={`${styles.featMeta} ${ov?.expires_at ? '' : styles.noExpiry}`} data-label="Expires">
                       {ov?.expires_at ? relativeExpiry(ov.expires_at) : '—'}
                     </td>
                     <td>

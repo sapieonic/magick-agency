@@ -151,3 +151,24 @@
     font-size: 12px;
   }
 }
+
+/* A phone: the resource id took a row of its own and the two dates split
+   across rows at their desktop widths, a ragged stack. The id fills its row
+   and the two dates share the next. The detail chips stay on one line, as
+   the table scrolls sideways there, rather than stacking a chip per line and
+   making every row several lines tall. */
+@media (max-width: 640px) {
+  .resourceInput {
+    width: 100%;
+  }
+
+  .dateInput {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
+
+  .detailsChips {
+    flex-wrap: nowrap;
+  }
+}

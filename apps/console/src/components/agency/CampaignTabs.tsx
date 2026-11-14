@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
+import { useKeepCurrentInStrip } from '../../hooks/useKeepCurrentInStrip';
 import { hasPermission } from '../../utils/permissions';
 import {
   barTabFor,
@@ -106,9 +108,13 @@ export function CampaignTabs({
   // (`CallLogViews` reads that flag), so none is passed.
   const groups = visibleCampaignTabGroups(role);
   const current = barTabFor(active);
+  const navRef = useRef<HTMLElement>(null);
+
+  // On a phone the bar scrolls sideways; the tab saying where you are is kept in sight.
+  useKeepCurrentInStrip(navRef, '[aria-current="page"]', current);
 
   return (
-    <nav className={styles.tabs} aria-label="Campaign sections" data-testid="campaign-tabs">
+    <nav ref={navRef} className={styles.tabs} aria-label="Campaign sections" data-testid="campaign-tabs">
       {groups.map((group) => {
         const labelId = `campaign-tab-group-${group.id}-${campaignId}`;
         return (

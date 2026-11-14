@@ -6,7 +6,8 @@
 /* Summary cards */
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  /* Two abreast on a phone too, not a column of half-empty full-width cards. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -124,6 +125,8 @@
   border-radius: 9999px;
   background: var(--accent-subtle);
   color: var(--accent);
+  /* A pill broken over two lines ("Swar / (VoiceLink)") reads as two tags. */
+  white-space: nowrap;
 }
 
 .capBadge {
@@ -368,6 +371,9 @@
 }
 
 @media (max-width: 768px) {
+  /* The box too, not only its input: the box shrank to fit and left the
+     search shorter than the full-width selects under it. */
+  .searchBox,
   .searchBox input,
   .filterBar select {
     width: 100%;

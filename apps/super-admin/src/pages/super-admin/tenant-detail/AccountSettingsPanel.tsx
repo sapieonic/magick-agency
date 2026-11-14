@@ -114,7 +114,7 @@ export function AccountSettingsPanel({ tenantId, accounts }: {
       {accounts.length === 0 ? (
         <EmptyState icon={<PhoneOff size={28} />} title="No accounts" />
       ) : (
-        <form onSubmit={handleSave} className={styles.form}>
+        <form onSubmit={handleSave} className={`${styles.form} ${styles.settingsForm}`}>
           <div className={styles.field}>
             <label htmlFor="settings-account">Account</label>
             <select id="settings-account" value={accountId} onChange={e => setAccountId(e.target.value)}>
@@ -148,7 +148,7 @@ export function AccountSettingsPanel({ tenantId, accounts }: {
               <div className={styles.field}>
                 <label htmlFor="settings-max-concurrent">Max concurrent calls</label>
                 <input id="settings-max-concurrent" value={settings.max_concurrent_calls} readOnly disabled />
-                <span className={styles.hint}>Read-only here: set it with the concurrency editor above.</span>
+                <span className={styles.hint}>Read-only here: set it in Account Concurrency below.</span>
               </div>
               <div className={styles.field}>
                 <label htmlFor="settings-reason">Reason (optional)</label>

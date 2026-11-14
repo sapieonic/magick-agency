@@ -73,7 +73,13 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
                       /
                     </li>
                   )}
-                  <li className={last ? styles.crumbCurrent : styles.crumb}>
+                  <li
+                    className={
+                      last
+                        ? styles.crumbCurrent
+                        : `${styles.crumb}${i === crumbs.length - 2 ? ` ${styles.crumbParent}` : ''}`
+                    }
+                  >
                     {crumb.to && !last ? (
                       <Link to={crumb.to}>{crumb.label}</Link>
                     ) : (

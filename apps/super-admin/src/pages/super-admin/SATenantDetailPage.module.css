@@ -233,7 +233,10 @@
   margin-bottom: 6px;
 }
 
-.checkboxLabel {
+/* `.field .checkboxLabel` too: inside a field, `.field label` (display:
+   block) won, and the box sat above the line of its label text. */
+.checkboxLabel,
+.field .checkboxLabel {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -252,5 +255,25 @@
 @media (max-width: 768px) {
   .table {
     overflow-x: auto;
+  }
+}
+
+/* The per-account settings form: on a wide screen each field ran the whole
+   width of the page, a four-digit number in a 2,000px box. */
+.settingsForm {
+  max-width: 640px;
+}
+
+/* A phone: the four tabs fit across the screen, rather than the last one
+   cut off at the edge ("Meml") with nothing saying the strip scrolls. */
+@media (max-width: 640px) {
+  .tabs {
+    gap: 0;
+  }
+
+  .tab {
+    flex: 1 0 auto;
+    padding: 10px 8px;
+    font-size: 13px;
   }
 }

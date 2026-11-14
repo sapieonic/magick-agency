@@ -168,6 +168,14 @@
   padding: 24px;
 }
 
+/* An ultrawide screen stretched every page over 2,300px: a four-column table
+   with its figures a screen apart, form fields as wide as the window. The page
+   stops at a width a table still reads across, centred in the space. */
+.page {
+  max-width: 1680px;
+  margin: 0 auto;
+}
+
 .overlay {
   display: none;
 }
@@ -201,5 +209,28 @@
     background: rgba(0, 0, 0, 0.6);
     z-index: 90;
     backdrop-filter: blur(2px);
+  }
+}
+
+/* A phone: every table already scrolls sideways inside its own box, yet its
+   cells still squeezed to fit, so names and slugs broke a word or a few
+   letters per line ("acme- / collections- / zjyvuc") and rows grew tall. Each
+   cell keeps one line and the box scrolls. `:where` keeps this at the weight
+   of one class so a page's own cell rule (a stacked flag row, a description)
+   still wins; a full-width cell (`colspan`: an empty state, an expanded
+   detail) keeps wrapping. */
+@media (max-width: 640px) {
+  .page :where(td:not([colspan])) {
+    white-space: nowrap;
+  }
+
+  /* A full-width row (an expanded detail, an empty state) spans a table wider than the
+     screen, so its content sat across the sideways-scrolling box with half of it out of
+     view. It keeps to the visible box and stays put while the columns scroll: the screen
+     less this page's 16px gutters, the box's border and the cell's padding. */
+  .page :where(td[colspan] > *) {
+    position: sticky;
+    left: 16px;
+    max-width: calc(100vw - 66px);
   }
 }

@@ -27,6 +27,7 @@ import {
 import type { RangeSectionContext } from './ActivitySections';
 import { CountLink, Kpi, Panel, rateFigure } from './InsightsParts';
 import styles from './Insights.module.css';
+import { StatGrid } from '../../../../components/common/StatGrid';
 
 /**
  * The Overview tab's own parts (decision IN13): the headline numbers, what needs
@@ -76,7 +77,7 @@ export function OverviewKpis({
   const pending = (read: keyof OverviewUnavailable) => (unavailable[read] ? '—' : '…');
 
   return (
-    <div className={styles.kpis} data-testid="overview-kpis">
+    <StatGrid testId="overview-kpis">
       <Kpi
         label="Reached · now"
         value={reached.value}
@@ -119,7 +120,7 @@ export function OverviewKpis({
         sub={health ? `Ceiling ${ceilingPctText(health.abandonment.ceiling_pct)}` : undefined}
         testId="overview-kpi-abandonment"
       />
-    </div>
+    </StatGrid>
   );
 }
 

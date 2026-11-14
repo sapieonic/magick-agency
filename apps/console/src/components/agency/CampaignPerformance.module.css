@@ -488,3 +488,13 @@
     grid-column: 1 / -1;
   }
 }
+
+/* A phone: the 160px floor plus the two figure columns were wider than the
+   card, which clipped the hint under each row at its right edge. */
+@media (max-width: 640px) {
+  .splitKeyRow {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+}

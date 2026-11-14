@@ -1,12 +1,19 @@
-.page {
-  max-width: 1000px;
-}
+/*
+  The page sits in the campaign frame (`CampaignWorkspaceFrame`, 1680px), so its header and
+  tab bar line up with every other tab. Inside it: the sticky section nav, then the form in
+  one reading column from the tab bar's left edge. The column stops at 960px however wide the
+  screen: past that a text field is a line the eye cannot follow, and a settings form is read
+  top to bottom, not across. What the form leaves on the right of a wide screen stays empty
+  rather than filled with something made up for it; the only content that wants the width,
+  the read-only lifecycle and upload history below the Save bar, takes it (`.wide`), so its
+  table stops scrolling sideways.
 
-/* The section nav beside the sections; one column on a phone, the nav a strip above. */
+  One column on a phone, the nav a strip above.
+*/
 .layout {
   display: grid;
-  grid-template-columns: 200px minmax(0, 760px);
-  gap: 28px;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 32px;
   align-items: start;
 }
 
@@ -17,9 +24,19 @@
   min-width: 0;
 }
 
-/* Every section is an anchor (`#id`); land it just below the top of the scroll area. */
+/*
+  Every card, and the Save bar with them, keeps the form's measure. A cap only, no width:
+  the column already stretches them, and a width here would also widen the Save bar's
+  visually hidden status line (`.sr-only`, a child of this column) past the screen's edge.
+  Every section is an anchor (`#id`), landed just below the top of the scroll area.
+*/
 .sections > * {
+  max-width: 960px;
   scroll-margin-top: 16px;
+}
+
+.sections > .wide {
+  max-width: none;
 }
 
 .stack {
@@ -53,6 +70,11 @@
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
+}
+
+/* The dialling note above the form: the frame's body already spaces it from what follows. */
+.pageNote {
+  margin: 0;
 }
 
 .fieldError {

@@ -1,0 +1,35 @@
+/*
+  The one frame every campaign screen sits in (`CampaignWorkspace.tsx`).
+
+  Each screen used to set its own: 2400px for the Monitor tabs, 1240px for
+  Contacts and Call log, 1100px for History, 1000px for Settings and 760px for
+  Add contacts, all pinned to the left. On a 2560px screen the content's right
+  edge jumped by over a thousand pixels from one tab to the next, and the tables
+  on the widest tabs set a row's label and its figure two thousand pixels apart.
+
+  One width now, centred, so the header, the health strip and the tab bar stay
+  where they are whichever tab is open. 1680px holds a seven-figure row at a
+  readable width and two tables side by side; a form or a reading column inside
+  keeps its own measure within it.
+*/
+.frame {
+  width: 100%;
+  max-width: 1680px;
+  min-width: 0;
+  margin-inline: auto;
+  padding-bottom: 48px;
+}
+
+/* The body's sections, one rhythm on every tab. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 680px) {
+  .frame {
+    padding-bottom: 28px;
+  }
+}

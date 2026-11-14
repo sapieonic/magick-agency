@@ -5,7 +5,6 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
-import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
 import { ApiError } from '../../api/client';
 import { outcomeReportFilename } from '../../api/exportCsv';
@@ -33,8 +32,6 @@ import {
   retentionNotice,
   truncationNotice,
 } from '../../utils/agencyActivityCopy';
-import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { CampaignHistoryLink } from '../../components/agency/CampaignHistoryLink';
 import { CAMPAIGN_TABS, campaignLandingPath } from '../../utils/agencyCampaignTabs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -43,7 +40,7 @@ import { TruncatedId } from '../../components/common/TruncatedId';
 import { PageDescription } from '../../components/common/PageDescription';
 import { MultiSelectFilter } from '../../components/agency/MultiSelectFilter';
 import { FiltersCard } from '../../components/agency/FiltersCard';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import {
   activityActionLabel,
   activityActionLabels,
@@ -133,10 +130,37 @@ const CLIENT_ACTOR_DESC_ID = 'activity-client-actor-desc';
  */
 export function AgencyCampaignActivityPage() {
   const { id } = useParams<{ id: string }>();
+  const { role } = useTenant();
+  if (!id) return null;
+
+  /*
+    In the campaign's workspace, like every campaign screen: its header (whose History
+    button is marked as where you are), the health strip and the section bar. History is
+    the header's button, not a tab (decision IN14), so no tab is current here: the link
+    beneath the bar is the way back to where a campaign opens for this role (Overview for
+    a supervisor).
+  */
+  return (
+    <CampaignWorkspace
+      campaignId={id}
+      active="activity"
+      subnav={
+        <Link to={campaignLandingPath(id, role)} className={styles.backLink} data-testid="campaign-history-back">
+          <ArrowLeft size={15} aria-hidden="true" />
+          {`Back to ${landingLabel(id, role)}`}
+        </Link>
+      }
+    >
+      {(campaign) => <ActivitySection id={id} campaign={campaign} />}
+    </CampaignWorkspace>
+  );
+}
+
+/** The trail itself, given the workspace's campaign (see `CampaignWorkspace`) for its names only. */
+function ActivitySection({ id, campaign }: { id: string; campaign: AgencyCampaign | null }) {
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
 
-  const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   useCampaignCrumbs(id, campaign, 'activity');
   const [page, setPage] = useState<ActivityPage | null>(null);
   const [rows, setRows] = useState<ActivityRow[]>([]);
@@ -203,15 +227,6 @@ export function AgencyCampaignActivityPage() {
     },
     [id, tenantId, accountId],
   );
-
-  useEffect(() => {
-    if (!id || !tenantId || !accountId) return;
-    getAgencyCampaign(id, tenantId, accountId)
-      .then(setCampaign)
-      // The trail is the point of the page; a campaign header that will not load
-      // is not a reason to withhold it.
-      .catch(() => setCampaign(null));
-  }, [id, tenantId, accountId]);
 
   useEffect(() => {
     void load(filters);
@@ -382,45 +397,19 @@ export function AgencyCampaignActivityPage() {
   const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
 
   return (
-    <div className={styles.page}>
-
-      {/*
-        The campaign workspace's section bar, in the same slot on every one of
-        its screens. These four sections used to be reachable only
-        as secondary buttons on the detail page's header row — the same row
-        that carries Stop — so getting from Contacts to Call attempts meant
-        going back through the campaign first.
-      */}
-      {id && (
-        <CampaignTabs campaignId={id} active="activity" role={role} campaignStatus={campaign?.status} />
-      )}
-
-      {/*
-        History is the header's button, not a tab (decision IN14), so no tab
-        above is current here: this link is the way back to where a campaign
-        opens for this role (Overview for a supervisor).
-      */}
-      {id && (
-        <Link to={campaignLandingPath(id, role)} className={styles.backLink} data-testid="campaign-history-back">
-          <ArrowLeft size={15} aria-hidden="true" />
-          {`Back to ${landingLabel(id, role)}`}
-        </Link>
-      )}
-
+    <div>
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><History size={20} /></span>
-          <h1 className={spine.title}>History</h1>
-          {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
+          <h2 className={spine.title}>History</h2>
         </div>
         <div className={spine.actions}>
-          {/* The header's History button, marked as where you are. */}
-          {id && <CampaignHistoryLink campaignId={id} role={role} current />}
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}
             onClick={() => void load(filters)}
             disabled={loading}
+            aria-label="Refresh history"
           >
             <RefreshCw size={16} />
             Refresh
@@ -439,14 +428,6 @@ export function AgencyCampaignActivityPage() {
           )}
         </div>
       </header>
-
-      {/*
-        The campaign, by name. This page has no campaign header, and at phone width the
-        top bar shows only "History", so nothing else on screen said whose history it is.
-      */}
-      {campaign?.name && (
-        <p className={styles.campaignName} data-testid="history-campaign-name">{campaign.name}</p>
-      )}
 
       <PageDescription
         pageKey="agency-campaign-activity"

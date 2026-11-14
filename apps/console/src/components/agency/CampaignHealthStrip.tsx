@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import {
@@ -41,6 +41,22 @@ import styles from './CampaignHealthStrip.module.css';
  * (IN1) and serves both figures from its own reads, so the strip is the
  * diagnosis alone.
  */
+
+/**
+ * Every `campaignId:code` this session has reported as surfaced. Module scope, not per mount:
+ * the strip is on the Monitor tabs and on Contacts, Add contacts, Call log and History, each
+ * mounting its own, and a supervisor moving between them was sending the same stall once per
+ * screen. So the event is the first sighting of a stall in a session, as it was of one in a
+ * mount: a stall that clears and comes back while the console stays open is not reported again,
+ * as it never was within a mount (re-arming on a clear would report a flapping stall on every
+ * swing of the poll). A full page load starts a new session.
+ */
+const surfacedStalls = new Set<string>();
+
+/** Forget what has been reported, so each test starts a session of its own. */
+export function resetSurfacedStallsForTests(): void {
+  surfacedStalls.clear();
+}
 
 export interface CampaignHealthStripProps {
   /** Null while the first load is in flight, or when the stats read failed. */
@@ -88,10 +104,9 @@ export function CampaignHealthStrip({
   const canSeeActivity = hasPermission(role, 'audit.read');
 
   /*
-    First-surfaced-per-mount analytics, deduped per `campaignId:code` so the
-    10s stats poll (`AgencyCampaignDetailPage`) doesn't refire on every tick.
+    First-surfaced-per-session analytics, deduped per `campaignId:code` (`surfacedStalls`) so
+    neither the stats poll nor a move to another of the campaign's screens refires it.
   */
-  const surfacedStallsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!stall || !isKnownCampaignStatus(campaignStatus)) return;
     const codes = [stall.code, ...others];
@@ -99,8 +114,8 @@ export function CampaignHealthStrip({
     const abandonmentOverCeiling = codes.includes('auto_paused_abandonment');
     for (const code of codes) {
       const key = `${campaignId}:${code}`;
-      if (surfacedStallsRef.current.has(key)) continue;
-      surfacedStallsRef.current.add(key);
+      if (surfacedStalls.has(key)) continue;
+      surfacedStalls.add(key);
       trackAgencyCampaignStallSurfaced({
         campaign_id: campaignId,
         code,

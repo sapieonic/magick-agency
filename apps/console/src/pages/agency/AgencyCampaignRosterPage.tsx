@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Download, ListChecks, RefreshCw, RotateCcw, Search, Upload, UserPlus, Users } from 'lucide-react';
+import { AlertCircle, Download, ListChecks, RefreshCw, RotateCcw, Search, UserPlus, Users } from 'lucide-react';
 import { phoneFilterDraftError, phoneFilterUsable } from '../../utils/agencyCampaignAttemptParams';
 import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
-import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignContacts } from '../../api/agencySpine';
 import { listCampaignAgents } from '../../api/agency';
 import { getAssignmentProgress } from '../../api/agencyAssignment';
@@ -43,7 +42,6 @@ import {
   exportTruncationNotice,
   formatSpineTimestamp,
 } from '../../utils/agencySpineCopy';
-import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -62,7 +60,7 @@ import {
   rosterFiltersToParams,
   rosterLinkFilterChips,
 } from '../../utils/agencyRosterFilters';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import {
   AGENCY_UNASSIGNED_FILTER,
   CONTACT_STATE_LABELS,
@@ -136,12 +134,27 @@ function withoutOwnerFilter(filters: AgencyContactFilters): AgencyContactFilters
  */
 export function AgencyCampaignRosterPage() {
   const { id } = useParams<{ id: string }>();
+  if (!id) return null;
+
+  // In the campaign's workspace, like every campaign screen: its header (name, status,
+  // lifecycle, Add contacts), the health strip and the section bar, then the roster.
+  return (
+    <CampaignWorkspace campaignId={id} active="contacts">
+      {(campaign) => <RosterSection id={id} campaign={campaign} />}
+    </CampaignWorkspace>
+  );
+}
+
+/**
+ * The roster itself, given the workspace's campaign (see `CampaignWorkspace`) to name things
+ * and gate what needs it: Retry these contacts, assignment, the disposition filter.
+ */
+function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign | null }) {
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   useCampaignCrumbs(id, campaign, 'contacts');
   const [rows, setRows] = useState<AgencyRosterContact[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -246,11 +259,6 @@ export function AgencyCampaignRosterPage() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [id, tenantId, accountId]);
-
-  useEffect(() => {
-    if (!id || !tenantId || !accountId) return;
-    getAgencyCampaign(id, tenantId, accountId).then(setCampaign).catch(() => setCampaign(null));
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
@@ -468,24 +476,11 @@ export function AgencyCampaignRosterPage() {
   const retrySelection = useMemo(() => selectorFromContactFilters(filters), [filters]);
 
   return (
-    <div className={styles.page}>
-
-      {/*
-        The campaign workspace's section bar, in the same slot on every one of
-        its screens. These four sections used to be reachable only
-        as secondary buttons on the detail page's header row — the same row
-        that carries Stop — so getting from Contacts to Call attempts meant
-        going back through the campaign first.
-      */}
-      {id && (
-        <CampaignTabs campaignId={id} active="contacts" role={role} campaignStatus={campaign?.status} />
-      )}
-
+    <div>
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><Users size={20} /></span>
-          <h1 className={spine.title}>Contacts</h1>
-          {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
+          <h2 className={spine.title}>Contacts</h2>
         </div>
         <div className={spine.actions}>
           <button
@@ -493,31 +488,18 @@ export function AgencyCampaignRosterPage() {
             className={`${spine.actionButton} btn-secondary`}
             onClick={() => void load(filters)}
             disabled={loading}
+            aria-label="Refresh contacts"
           >
             <RefreshCw size={16} />
             Refresh
           </button>
           {/*
-            The upload is an ACTION on this page now, not the page itself.
-
-            ⚠️ There is deliberately NO redirect: `…/contacts` now means the
-            roster, and an external bookmark to the old "Add contacts" screen
-            lands here instead. That is the right outcome — the roster carries
-            this button, so the operator is one click from where they meant to
-            go — but it IS a change in what that URL means, so check any docs or
-            onboarding mail that deep-links it. (An earlier version of this
-            comment asserted a redirect in `App.tsx`; none exists, and none is
-            needed.)
+            No Add contacts here: the campaign header above carries it (and, once the
+            campaign has ended, New campaign in its place, since an ended campaign takes
+            no more contacts), gated as this page's `canUpload` is (`agency.campaigns.write`)
+            and shown once the campaign is read, whatever its stats do. `…/contacts` is the
+            roster, and `…/contacts/add` the upload.
           */}
-          {canUpload && (
-            <Link
-              to={`/agency/campaigns/${id}/contacts/add`}
-              className={`${spine.actionButton} btn-secondary`}
-            >
-              <Upload size={16} />
-              Add contacts
-            </Link>
-          )}
           {canExport && (
             <button
               type="button"

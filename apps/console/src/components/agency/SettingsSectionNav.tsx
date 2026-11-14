@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { prefersReducedMotion, useKeepCurrentInStrip } from '../../hooks/useKeepCurrentInStrip';
 import styles from './SettingsSectionNav.module.css';
 
 export interface SettingsNavSection {
@@ -31,11 +32,6 @@ function scrollAreaOf(element: Element | null): Element | null {
 function bandTopOf(element: Element | null): number {
   const landing = element ? parseFloat(getComputedStyle(element).scrollMarginTop) : 0;
   return Math.max(0, (Number.isFinite(landing) ? landing : 0) - BAND_SLACK_PX);
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 /**
@@ -189,23 +185,8 @@ interface SettingsSectionNavProps {
  */
 export function SettingsSectionNav({ sections, active, onSelect }: SettingsSectionNavProps) {
   const navRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const nav = navRef.current;
-    // A column, or a strip with room for every section: nothing is out of sight.
-    if (!nav || active === null || nav.scrollWidth <= nav.clientWidth) return;
-    const link = nav.querySelector<HTMLElement>('[aria-current="true"]');
-    if (!link) return;
-    const strip = nav.getBoundingClientRect();
-    const box = link.getBoundingClientRect();
-    if (box.left >= strip.left && box.right <= strip.right) return;
-    // Sideways only, never `scrollIntoView`, which would scroll the page as well.
-    const left = nav.scrollLeft + box.left - strip.left - (strip.width - box.width) / 2;
-    if (typeof nav.scrollTo === 'function') {
-      nav.scrollTo({ left, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
-    } else {
-      nav.scrollLeft = left;
-    }
-  }, [active]);
+  // A column, or a strip with room for every section, has nothing out of sight.
+  useKeepCurrentInStrip(navRef, '[aria-current="true"]', active, { smooth: true });
 
   return (
     <nav ref={navRef} className={styles.nav} aria-label="Settings sections" data-testid="settings-section-nav">

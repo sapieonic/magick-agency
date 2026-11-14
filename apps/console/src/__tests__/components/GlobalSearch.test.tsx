@@ -178,6 +178,17 @@ describe('opening and closing', () => {
     fireEvent.click(dialog());
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  // A phone has no Escape key; CSS shows this button there alone.
+  it('the close button closes it and puts focus back on the field', async () => {
+    renderShell();
+    trigger().focus();
+    fireEvent.click(trigger());
+    await waitFor(() => expect(document.activeElement).toBe(input()));
+    fireEvent.click(screen.getByRole('button', { name: 'Close search' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
 });
 
 describe('layers', () => {

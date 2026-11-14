@@ -12,6 +12,7 @@ import { toCsv } from '../../../../utils/agency/insights/csv';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { CountLink, CsvButton, Kpi, Panel, rateFigure, ReconciliationChips } from './InsightsParts';
 import styles from './Insights.module.css';
+import { StatGrid } from '../../../../components/common/StatGrid';
 
 export interface FunnelRow {
   bucket: RosterBucket;
@@ -99,7 +100,7 @@ export function RosterSection({
         />
       }
     >
-      <div className={styles.kpis}>
+      <StatGrid>
         <Kpi
           label="Penetration"
           value={penetration.value}
@@ -121,7 +122,7 @@ export function RosterSection({
           sub={shares.map((s) => `${s.label}: ${s.share}`).join(' · ')}
           testId="kpi-attempts-per-contact"
         />
-      </div>
+      </StatGrid>
 
       <ul className={styles.funnel} aria-label="Where the contacts stand">
         {funnel.map((row) => (

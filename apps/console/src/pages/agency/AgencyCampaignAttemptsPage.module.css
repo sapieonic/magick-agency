@@ -1,3 +1,8 @@
+/*
+  The account's soft-phone calls page (`softphone/SoftphoneCallsPage`) only. The campaign's
+  Call log views sit in the campaign workspace, which owns their width
+  (`campaign-detail/CampaignWorkspace.module.css`).
+*/
 .page {
   max-width: 1240px;
 }

@@ -911,6 +911,19 @@ describe('the campaign header on Settings', () => {
     expect(screen.getByTestId('campaign-history-link').getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
   });
 
+  it('offers Retry contacts, as every other campaign screen’s header does, to a role allowed it', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+    expect(screen.getByTestId('campaign-retry-action')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Add contacts' }).getAttribute('href'))
+      .toBe('/agency/campaigns/camp-1/contacts/add');
+    // This page reads no stats: no health strip and no lines in use.
+    expect(screen.queryByTestId('health-strip-diagnosis')).toBeNull();
+    expect(screen.queryByTestId('campaign-lines')).toBeNull();
+  });
+
   it('leaves out the controls and History below their gates', async () => {
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
@@ -919,6 +932,8 @@ describe('the campaign header on Settings', () => {
     await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
     expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
     expect(screen.queryByTestId('campaign-history-link')).toBeNull();
+    expect(screen.queryByTestId('campaign-retry-action')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Add contacts' })).toBeNull();
   });
 
   it('pauses the campaign without touching edits in progress', async () => {

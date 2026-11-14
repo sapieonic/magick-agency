@@ -70,6 +70,30 @@
   font-weight: 600;
 }
 
+/* On a phone the five presets wrapped "Custom" onto a second row of the
+   bordered group, which read as a broken control. One row that fills the width
+   instead, tighter, and scrolling sideways rather than wrapping if a narrower
+   screen still cannot hold it. */
+@media (max-width: 640px) {
+  .rangeGroup,
+  .segmented {
+    width: 100%;
+  }
+
+  .segmented {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .segment {
+    flex: 1 0 auto;
+    padding: 6px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+}
+
 .customRange {
   display: inline-flex;
   flex-wrap: wrap;
@@ -179,6 +203,13 @@
   gap: 8px;
 }
 
+/* A titled part of a panel (a heading and its table), laid beside its sibling by `PanelGrid`. */
+.subSection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .subTitle {
   margin: 4px 0 0;
   color: var(--text-secondary);
@@ -201,13 +232,7 @@
   font-size: 13px;
 }
 
-/* ── KPIs ──────────────────────────────────────────────────────────────── */
-
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-}
+/* ── KPIs: `components/common/StatGrid` lays the tiles out. ─────────────── */
 
 /* A number that opens its list. Underlined on hover only: a page of underlines
    reads as a page of warnings. */
@@ -478,6 +503,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+  A phone: the row's name and the column headings may wrap, so a three- or
+  four-column table fits the card instead of scrolling its last column out of
+  sight ("Share of dials" was cut at 390px). Figures stay on one line, and a
+  table with more columns than fit still scrolls inside its box.
+*/
+@media (max-width: 640px) {
+  .table th,
+  .table td {
+    padding: 7px 6px;
+  }
+
+  .table thead th,
+  .table tbody th {
+    white-space: normal;
+  }
+
+  .table tbody th {
+    min-width: 96px;
+  }
+}
+
 .table tbody tr:hover {
   background: var(--bg-tertiary);
 }
@@ -612,16 +659,43 @@
 
 /* ── Overview (IN13): attention list, teaser cards ─────────────────────── */
 
+/*
+  The attention list, the roster and the three "more on this campaign" cards.
+  Beside each other the roster runs down the right and the cards sit under the
+  attention list, which is nearly always the shorter of the two: with the cards
+  in a row of their own below, the space under a two-item attention list was an
+  empty block as tall as the roster. Stacked (a laptop under 1100px, a phone)
+  they read in DOM order: attention, roster, then the cards across a row.
+*/
 .overviewGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
-@media (max-width: 1100px) {
+@media (min-width: 1101px) {
   .overviewGrid {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      'attention roster'
+      'teasers roster';
+  }
+
+  .overviewGrid > :first-child {
+    grid-area: attention;
+  }
+
+  .overviewGrid > :not(:first-child, .teasers) {
+    grid-area: roster;
+  }
+
+  /* Under the attention list the cards stack, one per row. */
+  .overviewGrid > .teasers {
+    grid-area: teasers;
     grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
 }
 
@@ -735,7 +809,7 @@
 
 .teasers {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 16px;
 }
 

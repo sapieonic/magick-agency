@@ -3,6 +3,19 @@ import styles from './PageDescription.module.css';
 
 const STORAGE_PREFIX = 'pageDescCollapsed:';
 
+/*
+ * A phone, where an open guide fills the first screen and pushes the page itself
+ * out of sight. There the guide starts closed until someone opens it, and that
+ * choice is kept ('0'), as closing it is ('1').
+ */
+const PHONE_QUERY = '(max-width: 640px)';
+
+function isPhone(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(PHONE_QUERY).matches;
+}
+
 interface PageDescriptionProps {
   /** Unique key for localStorage persistence (e.g. "calls", "schedules") */
   pageKey: string;
@@ -27,9 +40,9 @@ export function PageDescription({ pageKey, description, tips }: PageDescriptionP
       // If user has dismissed the getting started checklist, default to collapsed
       // (they're past onboarding and likely don't need guides expanded)
       if (localStorage.getItem('gettingStartedDismissed') === 'true') return true;
-      return false;
+      return isPhone();
     } catch {
-      return false;
+      return isPhone();
     }
   });
 
@@ -37,11 +50,7 @@ export function PageDescription({ pageKey, description, tips }: PageDescriptionP
     setCollapsed(prev => {
       const next = !prev;
       try {
-        if (next) {
-          localStorage.setItem(storageKey, '1');
-        } else {
-          localStorage.removeItem(storageKey);
-        }
+        localStorage.setItem(storageKey, next ? '1' : '0');
       } catch { /* quota */ }
       return next;
     });

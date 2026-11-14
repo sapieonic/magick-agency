@@ -60,6 +60,9 @@
   color: var(--text-muted);
   margin: 0 0 16px;
   line-height: 1.5;
+  /* A readable measure: on a wide screen the note ran as three lines of
+     over 400 characters each. */
+  max-width: 120ch;
 }
 
 .windowError {
@@ -88,3 +91,29 @@
 .nameTitle { font-weight: 600; color: var(--text-primary); }
 .accountRow { padding-left: 26px; color: var(--text-secondary); }
 .num { font-variant-numeric: tabular-nums; }
+
+/* A phone: the four period presets ran past the screen edge ("Custom" cut
+   off, the page scrolling sideways). One row that fills the width instead,
+   tighter, scrolling sideways inside itself if a narrower screen still cannot
+   hold it; the tenant picker takes the full width rather than its 260px floor. */
+@media (max-width: 640px) {
+  .filterBar > .filterGroup,
+  .segmented {
+    width: 100%;
+  }
+
+  .pickerBox {
+    min-width: 0;
+  }
+
+  .segmented {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .pill {
+    flex: 1 0 auto;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+}

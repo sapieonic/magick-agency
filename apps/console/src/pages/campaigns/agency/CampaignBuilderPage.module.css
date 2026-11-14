@@ -96,7 +96,13 @@
   color: var(--text-primary);
 }
 
+/* Focus moves here on every step change; ring it only for a keyboard reader (a click on
+   Continue drew a box round the heading). */
 .cardTitle:focus {
+  outline: none;
+}
+
+.cardTitle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
   border-radius: 3px;
@@ -347,5 +353,12 @@
   .footer {
     padding-left: 16px;
     padding-right: 16px;
+  }
+
+  /* Buttons that wrap fill their rows (Save campaign alone under Back and Skip for now
+     read as a stray), at a finger's height. */
+  .footer > button {
+    flex: 1 1 auto;
+    min-height: 44px;
   }
 }

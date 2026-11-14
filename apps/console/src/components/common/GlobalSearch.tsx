@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useNavGate } from '../../hooks/useNavGate';
 import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
@@ -241,6 +241,17 @@ function Palette({ onClose }: DialogProps) {
             }}
           />
           <kbd className={styles.escKey} aria-hidden="true">Esc</kbd>
+          {/* A phone has no Escape key: its way out besides a tap on the dimmed page (CSS shows it
+              there alone). Out of the tab order, as everything but the input is. */}
+          <button
+            type="button"
+            className={styles.closeBtn}
+            onClick={() => onClose(true)}
+            aria-label="Close search"
+            tabIndex={-1}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
 
         {answer.numberNote && (

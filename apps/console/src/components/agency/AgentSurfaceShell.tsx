@@ -139,7 +139,7 @@ export function AgentSurfaceShell({
             <span className={styles.icon} aria-hidden="true">
               {icon}
             </span>
-            <div>
+            <div className={styles.headerText}>
               <h1 className={styles.title}>{title}</h1>
               <p className={styles.subtitle}>{subtitle}</p>
             </div>

@@ -69,7 +69,12 @@ export function useCampaignLifecycle({
 }: CampaignLifecycleSource): CampaignLifecycle {
   const { showToast, showErrorToast } = useToast();
   const [busy, setBusy] = useState<Action | null>(null);
-  const [confirming, setConfirming] = useState<Action | null>(null);
+  /*
+    With the campaign it was asked for: the routes have no `key`, so a confirmation left open
+    while the URL moves to another campaign must not stay up and, confirmed, stop that one.
+  */
+  const [confirmingFor, setConfirmingFor] = useState<{ action: Action; id: string | undefined } | null>(null);
+  const confirming = confirmingFor && confirmingFor.id === id ? confirmingFor.action : null;
 
   /**
    * Synchronous with the click. `setBusy` is a render, so two Start clicks in
@@ -179,10 +184,10 @@ export function useCampaignLifecycle({
 
   const onAction = useCallback(
     (action: Action) => {
-      if (CONFIRM_COPY[action]) setConfirming(action);
+      if (CONFIRM_COPY[action]) setConfirmingFor({ action, id });
       else void runAction(action);
     },
-    [runAction],
+    [runAction, id],
   );
 
   const confirmCopy = confirming ? CONFIRM_COPY[confirming] : undefined;
@@ -196,10 +201,10 @@ export function useCampaignLifecycle({
       disabled={busy !== null}
       onConfirm={() => {
         const action = confirming;
-        setConfirming(null);
+        setConfirmingFor(null);
         void runAction(action);
       }}
-      onCancel={() => setConfirming(null)}
+      onCancel={() => setConfirmingFor(null)}
     />
   ) : null;
 

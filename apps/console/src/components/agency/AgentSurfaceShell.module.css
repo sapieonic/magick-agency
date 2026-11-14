@@ -59,8 +59,16 @@
 
 .headerMain {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 12px;
+  min-width: 0;
+}
+
+/* The heading takes the line's room first; on a phone the actions wrap under it
+   rather than squeezing "My performance" to a word a line. */
+.headerText {
+  flex: 1 1 220px;
   min-width: 0;
 }
 

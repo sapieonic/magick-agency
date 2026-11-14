@@ -64,6 +64,8 @@
   justify-content: center;
   width: 28px;
   height: 28px;
+  /* The global button padding (9px 18px) left no room inside 28px: the X shrank to nothing. */
+  padding: 0;
   color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
