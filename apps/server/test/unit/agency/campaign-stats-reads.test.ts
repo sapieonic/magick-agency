@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *    flight and never serves a settled one;
  *  - a failed read is never kept;
  *  - the writes a supervisor re-reads after (`campaign_changed`, `contacts_changed`,
- *    `invalidateCampaignStatsReads`) drop the read, and the next request reads afresh rather
+ *    `campaign_stats_stale`, `invalidateCampaignStatsReads`) drop the read, and the next request reads afresh rather
  *    than joining a read that began before the write;
  *  - closing it stops all of that.
  * The route's use of it (authorisation first, per-request strip) is
@@ -143,7 +143,7 @@ describe('CampaignStatsReads', () => {
     expect(campaigns.healthInputs).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['campaign_changed', 'contacts_changed'] as const)('%s on the bus drops that campaign\'s read, and only that one', async (type) => {
+  it.each(['campaign_changed', 'contacts_changed', 'campaign_stats_stale'] as const)('%s on the bus drops that campaign\'s read, and only that one', async (type) => {
     const { reads: r, bus } = open(60_000);
     await Promise.all([r.read(A), r.read(B)]);
     expect(campaigns.stats).toHaveBeenCalledTimes(2);

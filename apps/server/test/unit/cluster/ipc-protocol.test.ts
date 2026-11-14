@@ -82,6 +82,9 @@ describe('body decoders', () => {
     const ev = { type: 'agent_available', sessionId: 's', campaignId: null };
     expect(IPC_EVENT_DECODERS['pacing.invalidate'](roundTrip(ev))).toEqual(ev);
     expect(IPC_EVENT_DECODERS['pacing.invalidate']({ type: 'made_up' })).toBeNull();
+    // A media worker's force-available reaches the primary's shared stats read this way.
+    const stale = { type: 'campaign_stats_stale', campaignId: 'c1' } as const;
+    expect(IPC_EVENT_DECODERS['pacing.invalidate'](roundTrip(stale))).toEqual(stale);
   });
 
   it('call.lease: a held lease whole, a release by its key, anything else refused', () => {

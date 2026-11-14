@@ -226,6 +226,7 @@ describe('PacingInvalidationBus (in process)', () => {
       { type: 'agent_available', sessionId: 's', campaignId: null },
       { type: 'station_ready', sessionId: 's', campaignId: 'c1' },
       { type: 'dedications_changed', campaignId: 'c1' },
+      { type: 'campaign_stats_stale', campaignId: 'c1' },
     ];
     for (const e of events) expect(parsePacingInvalidationEvent(JSON.parse(JSON.stringify(e)))).toEqual(e);
     for (const bad of [null, 'x', {}, { type: 'nope' }, { type: 'campaign_changed' },

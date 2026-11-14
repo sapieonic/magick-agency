@@ -33,9 +33,11 @@
  *    abandonment ceiling, both of which `stats()` reads, the automatic pauses);
  *  - `contacts_changed`: contacts arrived (each roster chunk), the owner sweeps moved some, an
  *    agent reopened some;
- *  - a supervisor's force-available, which calls {@link invalidateCampaignStatsReads} itself:
- *    no bus event carries it reliably (`agent_available` names no campaign when the agent has
- *    no station here, and it fires on every wrap-up end, far too often to drop a read on).
+ *  - `campaign_stats_stale`: a supervisor's force-available publishes it for its campaign. No
+ *    other event carries that write reliably (`agent_available` names no campaign when the agent
+ *    has no station here, and it fires on every wrap-up end, far too often to drop a read on).
+ *    It goes over the bus, not a direct call, because with `MEDIA_WORKERS` the route runs in a
+ *    media worker while this read lives on the primary; the IPC bus carries it across.
  * Everything else the payload counts (dials, outcomes, dispositions, agent state, a contact
  * edited on its own) moves without an event; the page polls for it, and an answer up to `ttlMs`
  * old is the trade. Home's board keeps a still campaign's stats for a minute under its floor's
@@ -45,8 +47,11 @@
  * ── One cache per registration ────────────────────────────────────────────
  * Each `registerCampaignStatsRoutes` opens its own {@link CampaignStatsReads} and closes it with
  * its app. Production registers the route once (the core handlers), so there is one; every test
- * that builds an app starts empty, with nothing left over from the last. Writes that happen
- * outside the route's plugin reach every open one through {@link invalidateCampaignStatsReads}.
+ * that builds an app starts empty, with nothing left over from the last. A media worker builds
+ * the core handlers too, so it holds one that nothing reads (the stats route runs on the
+ * primary) and that its IPC bus never feeds: empty, so harmless. A write in the primary's own
+ * process outside the route's plugin (Home's board) reaches every open one through
+ * {@link invalidateCampaignStatsReads}.
  */
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import { agencyCampaignStatsReadsTotal } from '@magick-agency/observability/metrics/agency';
@@ -94,7 +99,9 @@ export class CampaignStatsReads {
       name: 'agency-campaign-stats',
     });
     this.unsubscribe = (opts.bus ?? getPacingInvalidationBus()).subscribe((event) => {
-      if (event.type === 'campaign_changed' || event.type === 'contacts_changed') this.invalidate(event.campaignId);
+      if (event.type === 'campaign_changed' || event.type === 'contacts_changed' || event.type === 'campaign_stats_stale') {
+        this.invalidate(event.campaignId);
+      }
     });
     open.add(this);
   }

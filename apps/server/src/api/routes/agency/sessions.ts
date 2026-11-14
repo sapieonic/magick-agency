@@ -38,7 +38,7 @@ import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close
 import { isAppPauseBreakReason, runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
 import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
-import { invalidateCampaignStatsReads } from '../../../agency/campaign-stats-reads.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 
 /**
  * `/available`, force-available and `/leave` while a wrap-up redial is in flight
@@ -642,8 +642,11 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     }
     // The console re-reads the campaign's stats as soon as this answers (`AgentFloor`'s
     // `onForced`) to show the agent back on the floor: drop the campaign's shared stats read so
-    // that re-read is fresh (`agency/campaign-stats-reads.ts`).
-    invalidateCampaignStatsReads(session.campaign_id);
+    // that re-read is fresh (`agency/campaign-stats-reads.ts`). Over the bus: with media workers
+    // this runs in a worker and the read lives on the primary. Synchronous in-process; over IPC it is
+    // sent before this reply, so it is all but always on the primary before the console's re-read,
+    // and the TTL bounds the rest.
+    publishPacingInvalidation({ type: 'campaign_stats_stale', campaignId: session.campaign_id });
     return reply.send({
       session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString(),
       ...exitAudit(endedSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'force_available', withdrawn: false }),

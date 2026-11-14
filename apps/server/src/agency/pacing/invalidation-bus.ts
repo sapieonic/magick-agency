@@ -22,11 +22,14 @@
  * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, so what it last heard of its queue is that frame's | the station attach |
 | `dedications_changed`    | the campaign's effective dedicated caller IDs (DN1): one set, replaced or released, or an agent's staffing on it closed | `AgencyAgentCallerIdRepository.set` / `.clear`, `returnContactsOnUnstaff` (every unstaff path) |
  * | `inbound_waiting`        | how many inbound callers wait for the account's agents, and whom they want (docs/inbound.md §5.2) | the inbound connector (P2; no consumer yet) |
+ * | `campaign_stats_stale`   | nothing pacing reads: a write the campaign's stats show (a forced return to available) | `POST /sessions/:id/force-available` |
  *
  * One consumer outside pacing: the supervisors' shared campaign stats read
- * (`agency/campaign-stats-reads.ts`) drops a campaign's read on `campaign_changed` and
- * `contacts_changed`, so the console's re-read after a supervisor's own write is fresh. Its
- * backstop is its TTL (`AGENCY_CAMPAIGN_STATS_CACHE_MS`).
+ * (`agency/campaign-stats-reads.ts`) drops a campaign's read on `campaign_changed`,
+ * `contacts_changed` and `campaign_stats_stale`, so the console's re-read after a supervisor's
+ * own write is fresh. The bus is how a write served by a media worker reaches that read, which
+ * lives on the primary (`pacing.invalidate` over IPC). Its backstop is its TTL
+ * (`AGENCY_CAMPAIGN_STATS_CACHE_MS`).
  *
  * ── Serialisable on purpose ─────────────────────────────────────────────────
  * Events are plain JSON objects and carry ids only, never a row, a callback or a
@@ -56,6 +59,8 @@ export type PacingInvalidationEvent =
   /** `campaignId` null when the publisher does not know it; consumers then resolve it or widen. */
   | { type: 'agent_available'; sessionId: string; campaignId: string | null }
   | { type: 'contacts_changed'; campaignId: string }
+  /** For the shared campaign stats read only (`campaign-stats-reads.ts`); pacing ignores it. */
+  | { type: 'campaign_stats_stale'; campaignId: string }
   /**
    * The engine forgets the last `queue` frame it sent this session (contact assignment, CA3):
    * the `ready` replaced it on the station, or cleared it when its queue read failed, so the
@@ -149,6 +154,7 @@ export function parsePacingInvalidationEvent(raw: unknown): PacingInvalidationEv
     case 'campaign_changed':
     case 'contacts_changed':
     case 'dedications_changed':
+    case 'campaign_stats_stale':
       return isId(e['campaignId']) ? { type: e['type'], campaignId: e['campaignId'] } : null;
     case 'account_limit_changed':
     case 'account_capacity_freed':

@@ -111,7 +111,6 @@ import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
 // The station socket lives in `agency/station-socket.ts` and is mounted beside the routes on the same instance (below).
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
 import { CampaignStatsReads } from '../../../src/agency/campaign-stats-reads.js';
-import { InProcessPacingInvalidationBus } from '../../../src/agency/pacing/invalidation-bus.js';
 
 const LIVE = {
   id: 'sess-1', agent_user_id: 'u-agent', campaign_id: 'camp-1',
@@ -1010,9 +1009,11 @@ describe('/force-available answers what it did', () => {
   });
 
   it("drops the campaign's shared stats read once it has acted, so the floor's re-read is fresh; a refusal leaves it", async () => {
-    // The console re-reads `/stats` the moment this answers (`AgentFloor`'s `onForced`).
+    // The console re-reads `/stats` the moment this answers (`AgentFloor`'s `onForced`). The read
+    // listens on the process's bus, as the route's does: the route publishes `campaign_stats_stale`
+    // there, which is also how it reaches the primary from a media worker.
     Object.assign(repos.campaign, { stats: vi.fn(async () => ({})), healthInputs: vi.fn(async () => ({})) });
-    const reads = new CampaignStatsReads({ ttlMs: 60_000, bus: new InProcessPacingInvalidationBus() });
+    const reads = new CampaignStatsReads({ ttlMs: 60_000 });
     try {
       await reads.read('camp-1');
       await reads.read('camp-1');
