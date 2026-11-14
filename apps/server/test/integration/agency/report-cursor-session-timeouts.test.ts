@@ -86,20 +86,25 @@ describe('report cursor under the pool session timeouts', () => {
     const cursor = reportCursorRows<{ n: number; pid: number }>(
       'SELECT n, pg_backend_pid() AS pid FROM generate_series(1, 6) AS n', [], { batch: 2, timeoutMs: 1500 },
     )[Symbol.asyncIterator]();
-    const first = await cursor.next();
-    const pid = (first.value as { pid: number }).pid;
-    await cursor.next();
-    // Past the pool's 300 ms, inside the bound: still open, waiting on the consumer.
-    await sleep(700);
-    expect(await backendState(pid)).toBe('idle in transaction');
-    expect((await cursor.next()).value).toMatchObject({ n: 3 });
-    // Never pulls again: nothing of the cursor's runs, so only Postgres can end it.
-    await sleep(2500);
-    expect(await backendState(pid)).toBeNull();
-    // The consumer that does come back gets the failure, and the client is discarded.
-    await cursor.next();
-    await expect(cursor.next()).rejects.toThrow();
-    expect((await getPool().query<{ one: number }>('SELECT 1 AS one')).rows[0]!.one).toBe(1);
+    try {
+      const first = await cursor.next();
+      const pid = (first.value as { pid: number }).pid;
+      await cursor.next();
+      // Past the pool's 300 ms, inside the bound: still open, waiting on the consumer.
+      await sleep(700);
+      expect(await backendState(pid)).toBe('idle in transaction');
+      expect((await cursor.next()).value).toMatchObject({ n: 3 });
+      // Never pulls again: nothing of the cursor's runs, so only Postgres can end it.
+      await sleep(2500);
+      expect(await backendState(pid)).toBeNull();
+      // The consumer that does come back gets the failure, and the client is discarded.
+      await cursor.next();
+      await expect(cursor.next()).rejects.toThrow();
+      expect((await getPool().query<{ one: number }>('SELECT 1 AS one')).rows[0]!.one).toBe(1);
+    } finally {
+      // A failed assertion above must not leave the cursor's client checked out.
+      await cursor.return(undefined).catch(() => undefined);
+    }
   });
 
   it('leaves the session values in place on the connection afterwards', async () => {
