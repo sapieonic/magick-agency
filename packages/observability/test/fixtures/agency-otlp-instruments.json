@@ -156,6 +156,14 @@
     ]
   },
   {
+    "name": "agency_campaign_stats_reads_total",
+    "kind": "Counter",
+    "description": "Campaign stats requests by whether they ran the campaign reads (scanned) or shared another request's (shared)",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
     "name": "agency_inbound_answer_seconds",
     "kind": "Histogram",
     "description": "Seconds the inbound answer webhook took to answer the carrier, by result: stream, spoken (a message the carrier speaks), hangup, fallback, refused or timed_out",

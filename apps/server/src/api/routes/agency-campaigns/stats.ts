@@ -18,6 +18,8 @@ import { campaignHealth, RECENT_FAILURE_WINDOW_MINUTES } from '../../../agency/c
 import { carrierCapacityMissing, dialableCallerIds } from '../../../agency/campaign-dialability.js';
 import { resolveCallingWindow, callingWindowState, nextWindowOpen } from '../../../agency/calling-hours.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { CampaignStatsReads } from '../../../agency/campaign-stats-reads.js';
+import { config } from '../../../config/index.js';
 import type { AgencyCampaignRouteDeps } from '../agency-campaigns.routes.js';
 import { campaignOf, ownedCampaign } from './guards.js';
 
@@ -83,20 +85,34 @@ function evaluateCallingHours(
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
 export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: AgencyCampaignRouteDeps): Promise<void> {
+  // The campaign's two SQL reads, shared between the supervisors watching it
+  // (`agency/campaign-stats-reads.ts`): one per registration, closed with the app. Only a
+  // plain number is read off `deps` here (`?.`: Fastify may hand a plugin its options object
+  // instead), so a degraded `deps` still cannot take the SQL half down with the strip.
+  const campaignReads = new CampaignStatsReads({
+    ttlMs: deps?.statsCacheMs ?? config.agency.campaignStatsCacheMs,
+  });
+  app.addHook('onClose', async () => { campaignReads.close(); });
+
   // ── GET /api/v1/agency-campaigns/:id/stats ───────────────────────────────
   app.get<{ Params: { id: string } }>('/:id/stats', {
     preHandler: ownedCampaign({ gated: true }),
   }, async (request, reply) => {
+    // `ownedCampaign` has run: only a caller who may see this campaign gets this far, so
+    // the shared read below is never handed to anyone the guard would have refused.
     const campaign = campaignOf(request);
     // Two producers, one payload. The repository half is SQL over this campaign;
     // the health half needs Redis (DNC sync state, the account concurrency
     // counter) and a pure TS rule (calling hours), which is why `stats()` cannot
     // and should not reach it. `AGENCY_STATS_ROUTE_FIELDS` is the split, stated
     // once and imported by both sides.
-    const [stats, health] = await Promise.all([
-      agencyCampaignRepository.stats(campaign.id),
-      agencyCampaignRepository.healthInputs(campaign.id),
-    ]);
+    //
+    // The SQL half (`stats()` and `healthInputs()`) is shared between the requests for
+    // one campaign: one read for every request that arrives while it runs, and for
+    // `AGENCY_CAMPAIGN_STATS_CACHE_MS` after it (see `agency/campaign-stats-reads.ts` for
+    // the key, and for the writes that drop it so a supervisor sees their own). Shared
+    // objects: read them, never write to them. Everything below this line is per request.
+    const { stats, health } = await campaignReads.read(campaign.id);
 
     const tenantId = getTenantId(request);
     const accountId = getAccountId(request);

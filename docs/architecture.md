@@ -888,7 +888,14 @@ a rate-limit key and never an auth input.
   the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's
   carrier failures and recording and the recording and calling-hours settings; every 10 s and on
   return. The server reuses a still campaign's stats while its floor holds, and the allocation and
-  today's figures, for a minute. The
+  today's figures, for a minute. The stats route itself shares each campaign's two SQL reads
+  (`stats()`, `healthInputs()`) between the requests for it (`agency/campaign-stats-reads.ts`): a
+  read in flight is joined, a settled one served for `AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s), so N
+  supervisors on one campaign no longer cost N scans of its contacts and attempts every 10 s. The
+  rest of the payload (DNC, concurrency, liveness, calling hours, the campaign row) is read per
+  request, after the route's ownership guard. A campaign row write (`campaign_changed`), contacts
+  arriving (`contacts_changed`) and a force-available drop the shared read, so a supervisor's
+  re-read after their own action is fresh; Home reads a campaign it may keep as still past it. The
   sidebar badge reads the same board (one per tenant and account, `useHomeBadgeCount`): its
   readers share one read at the fastest period any of them asks for, so on Home the badge adds no
   request and elsewhere the board is read once a minute, never while the tab is hidden.

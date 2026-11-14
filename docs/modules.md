@@ -26,7 +26,10 @@ and its review fixes added or changed. The files Plivo steps 3 and 4 (2026-11-07
 statically and marked `~` (an `it.each` table or a loop counts as one, so they undercount); a file
 they changed shows its earlier count plus the cases the change added or removed, marked `~` too.
 The files the reports feature (RP1–RP16, 2026-11-08) added or changed show the counts Vitest
-printed that day for unit files and for the integration files of the final run.
+printed that day for unit files and for the integration files of the final run. The files the
+shared campaign stats read (2026-11-14) added or changed show the counts Vitest printed that day;
+where a changed file's old count was already stale (`left-session-guards.test.ts`), the new one
+corrects it.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -56,7 +59,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 
 The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and upgrade query (`station-upgrade.ts`: `client=` / `media=` / `caps=`, and `stationCanTakeInbound`: a console always, a phone only with `caps=inbound`, IQ46; the registry keeps that per socket as `canTakeInbound` and drops the inbound frames for a station without it; the registry probes a mobile station with protocol pings and holds each station to its client kind's heartbeat grace), the reserved-agent leaf (`reserved-agent.ts`: the `reserving` marker every pre-attempt reservation holds, and the one return of a reserved agent that was not dialled, to a queued break or the pool, shared by the pacing tick, its media-worker twin and the agent's own dial), wrap-up (and wrap-up redial: `wrapup-redial.ts` places a redial of the customer from wrap-up through the normal dial path, `wrapup-redial-rules.ts` holds its pure rules; the rest of it is the dialer's `hasRedialInFlight` / `releaseOwingOutcome`, the WrapupManager's redial set-up mark and the stats' `CONVERSATION_ATTEMPT_SQL` in `db/repositories/agency/sql-fragments.ts`), breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; the insights rollup job (`insights-rollup-job.ts`: every `agency.insightsRollup.intervalMs` a pass recomputes the dirty 15-minute buckets migration 0012's triggers mark, `batchSize` at a time, publishes the backlog and stops with agency; started by `bootstrap/agency.ts`, the main process only, `docs/insights.md`); what a campaign PATCH changed, for its `agency_campaign.config_changed` audit row (`campaign-config-audit.ts`, IN8: the internal PATCH handler computes it from the row before and after the write and hands it to the public route on a private response header; a carrier-account change carries each side's label as it was then, so the Activity trail never prints a credential id); and the campaign-management layer: CSV ingest and its jobs (and their activity rows, `agency-ingest-audit.ts`, IN8: a committed upload started, how it ended, a roster clear), staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment; and for contact assignment (decisions CA1–CA15, the operations in `assignment/`): `campaign-assignment-gate.ts` (CA9: a campaign create, PATCH or retry asking for an assignment setting or an outcome override other than its default and other than what the campaign already stores is refused while `agency_contact_assignment_enabled` is off; it never gates the runtime), `contact-overrides.ts` (the pure rules of outcome-granted overrides and of why an agent may dial one of their contacts now, CA7, CA8; DNC is never overridable) and `my-contact-call.ts` (the agent's dial of one of their own contacts on the campaign's normal path, CA7), and `agent-caller-id-audit.ts` (the dedicated caller ID audit rows, DN10: one envelope for the set, the supervisor's release and the release on unstaff); and `auto-disposition.ts` (automatic outcomes for unanswered calls, OD1–OD8: `resolveAutoDisposition`, the code a campaign's `outcome_dispositions` stamps on an attempt that ended `no_answer`, `busy`, `failed`, `invalid` or `abandoned`, re-checked against the catalog with the shared `autoDispositionRefusal` (`packages/domain/src/auto-disposition.ts`); the write-time rule is `validateOutcomeDispositions` in `campaign-config.ts`, shared with the public layer's `agency-campaign-config.ts`; tested by `test/unit/agency/auto-disposition.test.ts`, and on a real database by `test/integration/agency/auto-disposition-settle.test.ts` (the stamp on settle) and `campaign-outcome-dispositions-setting.test.ts` (create, PATCH, retry)). Which carrier account a campaign dials on (decisions B18–B22): `campaign-carrier.ts` checks a campaign's carrier, its pinned tenant credential and its caller IDs at create, PATCH and retry (404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`; on the same carrier account only the caller IDs a write adds), `campaign-dialability.ts` narrows a pinned campaign's caller IDs at the dial to those still active on its credential (PL13, cached, cleared by a sync, retire, delete or unassign) and refuses start and resume (`campaignDialBlockers`, in this order) while its tenant-account carrier cannot dial from this server (409 `carrier_not_ready`, PL12), with none left (409 `campaign_caller_ids_unavailable`) or with no concurrency allocated to the carrier on an account split by carrier (409 `carrier_capacity_unallocated`, PL14), and `carrier-account-pause.ts` pauses a running campaign whose dial was refused because its carrier account cannot dial (`carrier_auth` on a carrier 401, `carrier_account_unavailable` on a credential no longer `active`, `carrier_refusing_calls` when `carrier-refusal-breaker.ts` counts five carrier refusals in a row, PL11), audited `agency_campaign.auto_paused` with the reason; `carrier-account-pause-reasons.ts` tells those reasons apart for Insights.
 
-Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `home-board.ts` (Home's board, B28a: the active campaigns of an account with what the Overview's attention rules read (the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's carrier failures and recording, the settings); a still campaign's stats reused for a minute while its floor holds, the allocation and today's figures for a minute), `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`
+Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-stats-reads.ts` (the stats route's campaign reads, shared between requests), `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `home-board.ts` (Home's board, B28a: the active campaigns of an account with what the Overview's attention rules read (the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's carrier failures and recording, the settings); a still campaign's stats reused for a minute while its floor holds, the allocation and today's figures for a minute), `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`
 
 | Test file | Cases |
 |---|---|
@@ -74,6 +77,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
 | `apps/server/test/integration/agency/agency-campaign-stats-concurrency.test.ts` | ~4 |
+| `apps/server/test/integration/agency/agency-campaign-stats-sharing.test.ts` | 6 |
 | `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-contact-claim-limit.test.ts` | 2 |
@@ -220,6 +224,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 22 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` | 62 |
 | `apps/server/test/unit/agency/campaign-series-parse.test.ts` | 13 |
+| `apps/server/test/unit/agency/campaign-stats-reads.test.ts` | 12 |
+| `apps/server/test/unit/agency/campaign-stats-route-sharing.test.ts` | 5 |
 | `apps/server/test/unit/agency/campaign-sip-removal-route.test.ts` | 4 |
 | `apps/server/test/unit/agency/campaign-start-roster-route.test.ts` | 16 |
 | `apps/server/test/unit/agency/campaign-stats-concurrency-guard-route.test.ts` | 2 |
@@ -243,7 +249,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
-| `apps/server/test/unit/agency/left-session-guards.test.ts` | 50 |
+| `apps/server/test/unit/agency/left-session-guards.test.ts` | 58 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 21 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
 | `apps/server/test/unit/agency/my-contacts-summary-caller-id.test.ts` | 2 |
@@ -873,7 +879,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 19 |
+| `apps/server/test/unit/config/config.test.ts` | 20 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
@@ -1498,10 +1504,10 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 |---|---|
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
-| `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
+| `packages/db/test/unit/utils/single-flight.test.ts` | 19 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
 | `packages/db/test/unit/utils/transaction.test.ts` | 14 |
-| `packages/db/test/unit/utils/ttl-cache.test.ts` | 51 |
+| `packages/db/test/unit/utils/ttl-cache.test.ts` | 56 |
 
 ### Cross-cutting tests (`packages/db`)
 

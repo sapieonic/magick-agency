@@ -109,6 +109,8 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
 // The station socket lives in `agency/station-socket.ts` and is mounted beside the routes on the same instance (below).
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
+import { CampaignStatsReads } from '../../../src/agency/campaign-stats-reads.js';
+import { InProcessPacingInvalidationBus } from '../../../src/agency/pacing/invalidation-bus.js';
 
 const LIVE = {
   id: 'sess-1', agent_user_id: 'u-agent', campaign_id: 'camp-1',
@@ -972,6 +974,30 @@ describe('/force-available answers what it did', () => {
     const res = await asSupervisor();
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-3', inbound_closed: { inbound_call_id: 'ib-2' } });
+  });
+
+  it("drops the campaign's shared stats read once it has acted, so the floor's re-read is fresh; a refusal leaves it", async () => {
+    // The console re-reads `/stats` the moment this answers (`AgentFloor`'s `onForced`).
+    Object.assign(repos.campaign, { stats: vi.fn(async () => ({})), healthInputs: vi.fn(async () => ({})) });
+    const reads = new CampaignStatsReads({ ttlMs: 60_000, bus: new InProcessPacingInvalidationBus() });
+    try {
+      await reads.read('camp-1');
+      await reads.read('camp-1');
+      expect((repos.campaign as any).stats).toHaveBeenCalledTimes(1);
+
+      // Refused, nothing released: the read stands.
+      h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValueOnce({ kind: 'live', inboundCallId: 'ib-1' });
+      expect((await asSupervisor()).statusCode).toBe(409);
+      await reads.read('camp-1');
+      expect((repos.campaign as any).stats).toHaveBeenCalledTimes(1);
+
+      h.runtime.dialer.releaseAgent.mockResolvedValueOnce({ state: 'available', result: 'ok' });
+      expect((await asSupervisor()).statusCode).toBe(200);
+      await reads.read('camp-1');
+      expect((repos.campaign as any).stats).toHaveBeenCalledTimes(2);
+    } finally {
+      reads.close();
+    }
   });
 
   it('the state actually written: a queued break, or offline for a station that is gone', async () => {

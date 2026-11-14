@@ -34,6 +34,7 @@ import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close
 import { isAppPauseBreakReason, runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
 import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
+import { invalidateCampaignStatsReads } from '../../../agency/campaign-stats-reads.js';
 
 /**
  * `/available`, force-available and `/leave` while a wrap-up redial is in flight
@@ -591,6 +592,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       state = released.state;
       endedSoftphone = leavingSoftphone && released.state === 'available' && released.result === 'ok';
     }
+    // The console re-reads the campaign's stats as soon as this answers (`AgentFloor`'s
+    // `onForced`) to show the agent back on the floor: drop the campaign's shared stats read so
+    // that re-read is fresh (`agency/campaign-stats-reads.ts`).
+    invalidateCampaignStatsReads(session.campaign_id);
     return reply.send({
       session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString(),
       ...exitAudit(endedSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'force_available', withdrawn: false }),

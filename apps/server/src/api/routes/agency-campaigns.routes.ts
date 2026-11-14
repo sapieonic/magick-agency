@@ -68,6 +68,12 @@ export interface AgencyCampaignRouteDeps {
   callManager: {
     accountConcurrencyGuard: Pick<AccountConcurrencyGuard, 'getDistributedAccountCount'>;
   };
+  /**
+   * How long one campaign's stats read is shared between requests
+   * (`AGENCY_CAMPAIGN_STATS_CACHE_MS`, `agency/campaign-stats-reads.ts`). `agencyPlugin` passes
+   * its context's config, so a test app's `configure` reaches it; absent, the loaded config's.
+   */
+  statsCacheMs?: number;
 }
 
 export async function agencyCampaignRoutes(

@@ -35,7 +35,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 import type { RecordingAccessResolver } from '../../../src/telephony/recording-access.js';
 const { RECORDING_HOSTS } = vi.hoisted(() => ({ RECORDING_HOSTS: ['recordings.voicelink.test'] }));
 vi.mock('../../../src/config/index.js', () => ({
-  config: { redis: { keyPrefix: '' }, telephony: {}, voicelinkRecording: { allowedHosts: RECORDING_HOSTS } },
+  config: { redis: { keyPrefix: '' }, agency: { campaignStatsCacheMs: 2_000 }, telephony: {}, voicelinkRecording: { allowedHosts: RECORDING_HOSTS } },
 }));
 
 const { authSpy } = vi.hoisted(() => ({ authSpy: vi.fn(async () => { /* authenticated */ }) }));
