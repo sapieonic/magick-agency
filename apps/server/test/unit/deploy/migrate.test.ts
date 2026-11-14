@@ -105,7 +105,7 @@ describe('runMigrations', () => {
   it('names its session and resets the three timeouts before node-pg-migrate runs on that same connection', async () => {
     const { client, calls, raw } = fakeClient();
     let seenBy: unknown;
-    await runMigrations(cfg('test'), 'm', async (options) => { seenBy = options.dbClient; calls.push('runner'); return []; }, () => client);
+    await runMigrations(cfg('test'), 'm', async (options) => { seenBy = (options as { dbClient?: unknown }).dbClient; calls.push('runner'); return []; }, () => client);
     expect(seenBy).toBe(client);
     expect(calls).toEqual([
       'connect',
