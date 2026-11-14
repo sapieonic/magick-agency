@@ -1,4 +1,4 @@
-import type { DbPoolOptions } from '@magick-agency/db';
+import type { DbPoolOptions, DbSessionTimeouts } from '@magick-agency/db';
 
 /**
  * Postgres `application_name` per kind of connection, so `pg_stat_activity` (and the server log,
@@ -16,15 +16,16 @@ export const DB_APPLICATION_NAMES = {
 
 /** The parsed config fields the server's pools read for their session (`config/blocks/base.ts`). */
 export interface DbSessionConfig {
-  db: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs: number };
+  db: Required<DbSessionTimeouts>;
 }
 
 /**
  * The session options of one of the server's own pools (the primary's and each worker's):
  * its `application_name`, and the session timeouts from `DB_STATEMENT_TIMEOUT_MS`,
  * `DB_LOCK_TIMEOUT_MS` and `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` (all off by default). The
- * migration step and the super-admin CLI take only a name: a migration must never be cut short
- * by a limit sized for the server's statements.
+ * migration step and the super-admin CLI take only a name, so their connections RESET all three:
+ * a migration must never be cut short by a limit sized for the server's statements. Copied field
+ * by field: `cfg.db` also carries the URL and TLS settings.
  */
 export function dbSessionOptions(cfg: DbSessionConfig, applicationName: string): Pick<DbPoolOptions, 'applicationName' | 'sessionTimeouts'> {
   return {

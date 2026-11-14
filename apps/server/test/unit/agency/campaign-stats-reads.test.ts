@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *    flight and never serves a settled one;
  *  - a failed read is never kept;
  *  - the writes a supervisor re-reads after (`campaign_changed`, `contacts_changed`,
- *    `campaign_stats_stale`, `invalidateCampaignStatsReads`) drop the read, and the next request reads afresh rather
+ *    `campaign_stats_stale`) drop the read, and the next request reads afresh rather
  *    than joining a read that began before the write;
  *  - closing it stops all of that.
  * The route's use of it (authorisation first, per-request strip) is
@@ -25,7 +25,6 @@ vi.mock('@magick-agency/observability/metrics/agency', () => ({ agencyCampaignSt
 import {
   CampaignStatsReads,
   CAMPAIGN_STATS_READS_MAX_ENTRIES,
-  invalidateCampaignStatsReads,
 } from '../../../src/agency/campaign-stats-reads.js';
 import { InProcessPacingInvalidationBus } from '../../../src/agency/pacing/invalidation-bus.js';
 
@@ -184,20 +183,20 @@ describe('CampaignStatsReads', () => {
     expect(campaigns.stats).toHaveBeenCalledTimes(2);
   });
 
-  it('invalidateCampaignStatsReads reaches every open instance, and none once closed', async () => {
-    const one = open(60_000).reads;
-    const two = open(60_000).reads;
+  it('an event on the bus reaches every instance listening on it, and none once closed', async () => {
+    const { reads: one, bus } = open(60_000);
+    const two = open(60_000, bus).reads;
     await one.read(A);
     await two.read(A);
     expect(campaigns.stats).toHaveBeenCalledTimes(2);
 
-    invalidateCampaignStatsReads(A);
+    bus.publish({ type: 'campaign_stats_stale', campaignId: A });
     await one.read(A);
     await two.read(A);
     expect(campaigns.stats).toHaveBeenCalledTimes(4);
 
     two.close();
-    invalidateCampaignStatsReads(A);
+    bus.publish({ type: 'campaign_stats_stale', campaignId: A });
     await one.read(A);
     expect(campaigns.stats).toHaveBeenCalledTimes(5);
   });

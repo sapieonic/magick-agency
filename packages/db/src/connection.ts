@@ -105,8 +105,8 @@ export function sessionSettingsSql(applicationName: string | undefined, timeouts
  * failed connect does.
  */
 export function sessionSettingsHook(
+  applicationName: string | undefined,
   timeouts: DbSessionTimeouts | undefined,
-  applicationName?: string,
 ): (client: pg.ClientBase) => Promise<void> {
   const sql = sessionSettingsSql(applicationName, timeouts);
   return async (client) => {
@@ -154,7 +154,7 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     keepAlive: true,
     keepAliveInitialDelayMillis: 30_000,
     ...(opts.applicationName ? { application_name: opts.applicationName } : {}),
-    onConnect: sessionSettingsHook(opts.sessionTimeouts, opts.applicationName),
+    onConnect: sessionSettingsHook(opts.applicationName, opts.sessionTimeouts),
   });
   // Keeps a query that waited for a connection in its own trace; see bindPoolConnectContext.
   bindPoolConnectContext(pool);

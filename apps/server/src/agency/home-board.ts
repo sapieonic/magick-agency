@@ -70,7 +70,7 @@ import { mapWithConcurrency } from '../utils/concurrency.js';
 import { InsightsCache, insightsCacheKey } from './insights/cache.js';
 import { insightsSettings } from './insights/settings.js';
 import { todayRange } from './insights/health.js';
-import { invalidateCampaignStatsReads } from './campaign-stats-reads.js';
+import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import type { ServedInsightsRange } from './insights/range.js';
 
 const log = createChildLogger({ component: 'agency-home-board' });
@@ -231,8 +231,11 @@ async function liveFor(
   // moving) reads past the stats route's shared read (`campaign-stats-reads.ts`): one up to
   // `AGENCY_CAMPAIGN_STATS_CACHE_MS` old could predate the floor signature just read, and an
   // agent who joined in between would then be kept off Home for a whole minute. A running or
-  // stopping campaign is never kept, so it shares the read its supervisors' pages make.
-  if (floor !== undefined && !campaignMoving(campaign.status, {})) invalidateCampaignStatsReads(campaign.id);
+  // stopping campaign is never kept, so it shares the read its supervisors' pages make. Home runs
+  // on the primary, whose in-process bus delivers before the next line.
+  if (floor !== undefined && !campaignMoving(campaign.status, {})) {
+    publishPacingInvalidation({ type: 'campaign_stats_stale', campaignId: campaign.id });
+  }
   const [stats, staffing] = await Promise.all([
     settle('stats', campaign.id, () => deps.liveStats(campaign)),
     insights ? settle('staffing', campaign.id, () => insights.staffing(campaign)) : Promise.resolve(null),

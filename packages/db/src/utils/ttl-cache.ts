@@ -99,10 +99,8 @@ export class TtlCache<V> {
 
   /** Insert/replace `key`'s value, resetting its TTL and LRU recency. */
   set(key: string, value: V): void {
-    // Cancel any in-flight load's pending write-back for this key so a slower,
-    // staler load can't overwrite this fresher value, and stop sharing it.
-    this.loadTokens.delete(key);
-    this.flight.forget(key);
+    // A slower, staler load in flight must neither overwrite this fresher value nor be shared.
+    this.cancelLoad(key);
     this.writeEntry(key, value);
   }
 
@@ -154,8 +152,7 @@ export class TtlCache<V> {
    * sharing that load: the next `getOrLoad` for the key loads afresh.
    */
   invalidate(key: string): void {
-    this.loadTokens.delete(key);
-    this.flight.forget(key);
+    this.cancelLoad(key);
     this.store.delete(key);
   }
 
@@ -205,5 +202,14 @@ export class TtlCache<V> {
       if (oldest === undefined) break;
       this.store.delete(oldest);
     }
+  }
+
+  /**
+   * Stop the load in flight for `key`, if any, from writing its result back (its token no longer
+   * matches) or being handed to later callers. Every mutator that changes `key` calls this.
+   */
+  private cancelLoad(key: string): void {
+    this.loadTokens.delete(key);
+    this.flight.forget(key);
   }
 }

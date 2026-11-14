@@ -22,7 +22,7 @@
  * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, so what it last heard of its queue is that frame's | the station attach |
 | `dedications_changed`    | the campaign's effective dedicated caller IDs (DN1): one set, replaced or released, or an agent's staffing on it closed | `AgencyAgentCallerIdRepository.set` / `.clear`, `returnContactsOnUnstaff` (every unstaff path) |
  * | `inbound_waiting`        | how many inbound callers wait for the account's agents, and whom they want (docs/inbound.md §5.2) | the inbound connector (P2; no consumer yet) |
- * | `campaign_stats_stale`   | nothing pacing reads: a write the campaign's stats show (a forced return to available) | `POST /sessions/:id/force-available` |
+ * | `campaign_stats_stale`   | nothing pacing reads: a write the campaign's stats show (a forced return to available), or a reader that needs a fresh one | `POST /sessions/:id/force-available`, Home's board (`home-board.ts`) |
  *
  * One consumer outside pacing: the supervisors' shared campaign stats read
  * (`agency/campaign-stats-reads.ts`) drops a campaign's read on `campaign_changed`,

@@ -11,4 +11,12 @@ export const envBoolean = z.preprocess(
   z.boolean(),
 );
 
+/**
+ * A blank (empty or whitespace-only) env value is unset, so the schema's default applies; plain
+ * `z.coerce.number()` would read it as 0. Wrap a schema with `z.preprocess(blankAsUnset, …)`.
+ */
+export function blankAsUnset(v: unknown): unknown {
+  return typeof v === 'string' && v.trim() === '' ? undefined : v;
+}
+
 export type Env = Record<string, string | undefined>;

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
-import type { Env } from '../env.js';
+import { blankAsUnset, type Env } from '../env.js';
 import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
 import { WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, WS_MAX_PAYLOAD_DEFAULT_BYTES } from '../../utils/ws-limits.js';
 
@@ -64,7 +64,7 @@ export function splitOriginList(value: string | undefined): string[] | undefined
  */
 function dbTimeoutMs(envName: string) {
   return z.preprocess(
-    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    blankAsUnset,
     z.coerce.number().int().min(0).max(3_600_000).default(0).refine((ms) => ms === 0 || ms >= 1_000, {
       message: `${envName} is in milliseconds: 0 (off) or at least 1000`,
     }),

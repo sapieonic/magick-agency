@@ -23,7 +23,7 @@ describe('sessionTimeoutsSql / sessionSettingsHook', () => {
   });
 
   it('sets the non-zero timeouts in milliseconds and resets the others, in one round trip', async () => {
-    const { done, query } = run(sessionSettingsHook({ statementTimeoutMs: 60_000, lockTimeoutMs: 0, idleInTransactionTimeoutMs: 120_000 }));
+    const { done, query } = run(sessionSettingsHook(undefined, { statementTimeoutMs: 60_000, lockTimeoutMs: 0, idleInTransactionTimeoutMs: 120_000 }));
     await done;
     expect(query).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledWith(
@@ -38,8 +38,8 @@ describe('sessionTimeoutsSql / sessionSettingsHook', () => {
   });
 
   it('refuses a negative or fractional value instead of writing it into the SQL', () => {
-    expect(() => sessionSettingsHook({ statementTimeoutMs: -1 })).toThrow(/statementTimeoutMs must be a non-negative integer/);
-    expect(() => sessionSettingsHook({ lockTimeoutMs: 1.5 })).toThrow(/lockTimeoutMs must be a non-negative integer/);
+    expect(() => sessionSettingsHook(undefined, { statementTimeoutMs: -1 })).toThrow(/statementTimeoutMs must be a non-negative integer/);
+    expect(() => sessionSettingsHook(undefined, { lockTimeoutMs: 1.5 })).toThrow(/lockTimeoutMs must be a non-negative integer/);
     expect(() => sessionTimeoutsSql({ idleInTransactionTimeoutMs: Number.NaN })).toThrow(/idleInTransactionTimeoutMs/);
   });
 
@@ -54,7 +54,7 @@ describe('sessionTimeoutsSql / sessionSettingsHook', () => {
   });
 
   it('propagates a failed statement, so pg-pool ends that connection rather than hand it out unset', async () => {
-    const hook = sessionSettingsHook({ statementTimeoutMs: 1000 });
+    const hook = sessionSettingsHook(undefined, { statementTimeoutMs: 1000 });
     const query = vi.fn(async () => { throw new Error('boom'); });
     await expect(hook({ query } as unknown as pg.ClientBase)).rejects.toThrow('boom');
   });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { envBoolean, type Env } from '../env.js';
+import { blankAsUnset, envBoolean, type Env } from '../env.js';
 
 /**
  * Agency config (decision B4: one config block per area, so blocks never collide).
@@ -60,12 +60,8 @@ const customerHistorySchema = z.object({
  * arriving) and a supervisor's force-available drop its shared read at once, so the read that
  * follows them is fresh. At most 10 s: longer would serve one answer to two polls of one page.
  */
-const campaignStatsCacheMs = z.preprocess(
-  // A blank value is unset (the default), not 0: `z.coerce` would read '' as 0 and silently turn
-  // the sharing of settled reads off.
-  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
-  z.coerce.number().int().min(0).max(10_000).default(2_000),
-);
+// Blank is unset (the default), not 0, which would silently turn the sharing of settled reads off.
+const campaignStatsCacheMs = z.preprocess(blankAsUnset, z.coerce.number().int().min(0).max(10_000).default(2_000));
 
 /**
  * `reports`: agent, campaign and account reports (docs/reports.md "Config", RP8, RP12, RP13).

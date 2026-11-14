@@ -107,11 +107,8 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
     // and should not reach it. `AGENCY_STATS_ROUTE_FIELDS` is the split, stated
     // once and imported by both sides.
     //
-    // The SQL half (`stats()` and `healthInputs()`) is shared between the requests for
-    // one campaign: one read for every request that arrives while it runs, and for
-    // `AGENCY_CAMPAIGN_STATS_CACHE_MS` after it (see `agency/campaign-stats-reads.ts` for
-    // the key, and for the writes that drop it so a supervisor sees their own). Shared
-    // objects: read them, never write to them. Everything below this line is per request.
+    // The SQL half is shared between the requests for one campaign (`agency/campaign-stats-reads.ts`):
+    // read the objects, never write to them. Everything below this line is per request.
     const { stats, health } = await campaignReads.read(campaign.id);
 
     const tenantId = getTenantId(request);

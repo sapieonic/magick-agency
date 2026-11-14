@@ -33,11 +33,12 @@
  *    abandonment ceiling, both of which `stats()` reads, the automatic pauses);
  *  - `contacts_changed`: contacts arrived (each roster chunk), the owner sweeps moved some, an
  *    agent reopened some;
- *  - `campaign_stats_stale`: a supervisor's force-available publishes it for its campaign. No
- *    other event carries that write reliably (`agent_available` names no campaign when the agent
- *    has no station here, and it fires on every wrap-up end, far too often to drop a read on).
- *    It goes over the bus, not a direct call, because with `MEDIA_WORKERS` the route runs in a
- *    media worker while this read lives on the primary; the IPC bus carries it across.
+ *  - `campaign_stats_stale`: a supervisor's force-available publishes it for its campaign, and
+ *    Home's board before it reads a campaign it may keep (below). No other event carries the
+ *    force-available reliably (`agent_available` names no campaign when the agent has no station
+ *    here, and it fires on every wrap-up end, far too often to drop a read on). With
+ *    `MEDIA_WORKERS` the force-available route runs in a media worker; the IPC bus carries the
+ *    event to the primary, where this read lives.
  * Everything else the payload counts (dials, outcomes, dispositions, agent state, a contact
  * edited on its own) moves without an event; the page polls for it, and an answer up to `ttlMs`
  * old is the trade. Home's board keeps a still campaign's stats for a minute under its floor's
@@ -48,10 +49,8 @@
  * Each `registerCampaignStatsRoutes` opens its own {@link CampaignStatsReads} and closes it with
  * its app. Production registers the route once (the core handlers), so there is one; every test
  * that builds an app starts empty, with nothing left over from the last. A media worker builds
- * the core handlers too, so it holds one that nothing reads (the stats route runs on the
- * primary) and that its IPC bus never feeds: empty, so harmless. A write in the primary's own
- * process outside the route's plugin (Home's board) reaches every open one through
- * {@link invalidateCampaignStatsReads}.
+ * the core handlers too, so it holds one that nothing reads (the stats route is not forwarded to
+ * workers) and that its IPC bus never feeds: empty, so harmless.
  */
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import { agencyCampaignStatsReadsTotal } from '@magick-agency/observability/metrics/agency';
@@ -70,8 +69,6 @@ export interface CampaignStatsRead {
  * and bounds memory at 500 floors' worth of rows whatever is browsed.
  */
 export const CAMPAIGN_STATS_READS_MAX_ENTRIES = 500;
-
-const open = new Set<CampaignStatsReads>();
 
 /** Both reads for one campaign, together. A rejection of either rejects the pair (never cached). */
 async function readCampaign(campaignId: string): Promise<CampaignStatsRead> {
@@ -103,7 +100,6 @@ export class CampaignStatsReads {
         this.invalidate(event.campaignId);
       }
     });
-    open.add(this);
   }
 
   /**
@@ -131,14 +127,5 @@ export class CampaignStatsReads {
   close(): void {
     this.unsubscribe();
     this.cache.clear();
-    open.delete(this);
   }
-}
-
-/**
- * Drop `campaignId`'s shared read in every open {@link CampaignStatsReads}, from a write path
- * outside the stats route (a supervisor's force-available). Total: never throws into the write.
- */
-export function invalidateCampaignStatsReads(campaignId: string): void {
-  for (const reads of open) reads.invalidate(campaignId);
 }
