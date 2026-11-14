@@ -1416,13 +1416,16 @@ The retention purge's time indexes (`apps/server/src/maintenance/retention-purge
 otherwise read whole tables daily. **`idx_agency_calls_transcript_pending`** `(created_at) WHERE
 conversation_log IS NOT NULL OR transcript_meta IS NOT NULL` (the transcript step, on by default;
 the predicate is the purge's `hasTranscript`, spelled the same so the planner can use it);
-**`idx_agency_calls_created`** `(created_at)` and **`idx_dialer_analysis_jobs_created`**
-`(created_at)` (the row purge, off until `AGENCY_RETENTION_DAYS` is set);
 **`idx_agency_inbound_calls_voicemail`** `(arrived_at, id) WHERE voicemail_key IS NOT NULL` (the
-voicemail walk's keyset order). `IF NOT EXISTS`, so a deployment can build them `CONCURRENTLY`
-first (`db-hygiene.md`). **Down** drops them. **Tests**:
-`test/integration/db/retention-purge-indexes-migration.test.ts` (the definitions, each purge
-read's plan, down then up) and the down → up inventory suite.
+voicemail walk's keyset order). Deliberately no plain `(created_at)` index on `agency_calls` or
+`dialer_analysis_jobs` for the row purge (off until `AGENCY_RETENTION_DAYS` is set): reads that
+`ORDER BY created_at LIMIT n` with a filter, such as the analysis sweeps, could switch to walking it
+and read most of the table; that index comes with the purge window. `IF NOT EXISTS`, so a
+deployment can build them `CONCURRENTLY` first (`db-hygiene.md`); a `DO` block at the end of Up
+fails the migration if either is left invalid by a failed concurrent build. **Down** drops them.
+**Tests**: `test/integration/db/retention-purge-indexes-migration.test.ts` (the definitions, each
+purge read's plan, no plain `created_at` index, the invalid-index refusal, down then up) and the
+down → up inventory suite.
 
 ### 0040 — `migrations/0040_drop_duplicate_indexes.sql`
 
