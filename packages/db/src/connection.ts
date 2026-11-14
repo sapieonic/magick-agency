@@ -137,8 +137,16 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     logger.error({ err }, 'Unexpected database pool error');
   });
 
-  pool.on('connect', () => {
+  pool.on('connect', (client) => {
     logger.debug('New database connection established');
+    // pg-pool listens for a client's 'error' only while the client is idle and removes that
+    // listener on checkout. A backend that ends under a checked-out client with no query in flight
+    // (idle_in_transaction_session_timeout, pg_terminate_backend, a pooler restart) then emits
+    // 'error' with no listener, which ends the process. With this one, the error is logged, the
+    // holder's next query fails ("not queryable"), and pg-pool discards the client on release.
+    client.on('error', (err) => {
+      logger.warn({ err }, 'Database connection ended under its client');
+    });
   });
 
   return pool;

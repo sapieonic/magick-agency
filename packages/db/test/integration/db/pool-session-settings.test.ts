@@ -79,15 +79,18 @@ describe('pool session settings (real Postgres)', () => {
 
   it('idle_in_transaction_session_timeout ends a session left idle inside a transaction', async () => {
     const pool = initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 1, sessionTimeouts: { idleInTransactionTimeoutMs: 200 } });
+    // No 'error' listener of the test's own: the pool's (initDbPool) must catch the server ending
+    // a checked-out session, or the unhandled 'error' fails this file (in the server, the process).
     const client = await pool.connect();
-    client.on('error', () => { /* the server ends the session; the next query reports it */ });
     try {
       await client.query('BEGIN');
       await new Promise((r) => setTimeout(r, 600));
       await expect(client.query('SELECT 1')).rejects.toThrow();
     } finally {
-      client.release(true);
+      // A plain release, as withTransaction does: pg-pool drops the ended client itself.
+      client.release();
     }
+    expect(pool.totalCount).toBe(0);
     // The pool replaces the ended connection; the setting is applied to the new one too.
     expect((await settings(pool)).idle_in_transaction_session_timeout).toBe('200ms');
   });
