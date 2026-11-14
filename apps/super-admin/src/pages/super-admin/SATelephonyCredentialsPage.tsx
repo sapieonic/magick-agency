@@ -326,107 +326,107 @@ export default function SATelephonyCredentialsPage() {
         </label>
       </div>
 
-      <div className={styles.tableWrap}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Label</th>
-              <th>Tenant</th>
-              <th>Provider</th>
-              <th>Account</th>
-              <th>Secret</th>
-              <th>Status</th>
-              <th>Verified</th>
-            </tr>
-          </thead>
-          <tbody>
-            {credentials.map((c) => (
-              <Fragment key={c.id}>
-                <tr className={styles.clickableRow} onClick={() => void toggleExpand(c.id)}>
-                  <td>
-                    {/* The row is clickable for the mouse; this button is the keyboard and
-                        screen-reader way to the actions rendered in the expanded row. */}
-                    <button
-                      type="button"
-                      className={styles.labelCell}
-                      aria-expanded={expandedId === c.id}
-                      aria-controls={`credential-detail-${c.id}`}
-                      onClick={(e) => { e.stopPropagation(); void toggleExpand(c.id); }}
-                    >
-                      <KeyRound size={14} className={styles.icon} />
-                      <span>{c.label}</span>
-                    </button>
-                  </td>
-                  <td>{tenantName.get(c.tenant_id) ?? <span className={styles.mono}>{c.tenant_id}</span>}</td>
-                  <td><span className={styles.providerBadge}>{operatorCarrierName(c.provider, providerOf(c.provider)?.display_name)}</span></td>
-                  <td className={styles.mono}>{c.account_ref}</td>
-                  <td className={styles.mono}>{c.secret_hint ? `••••${c.secret_hint}` : '—'} <span className={styles.muted}>v{c.secret_version}</span></td>
-                  <td>
-                    <StatusBadge label={saStatusLabel(c.status)} color={saStatusColor(c.status)} status={c.status} />
-                  </td>
-                  <td className={styles.muted}>{fmt(c.verified_at)}</td>
-                </tr>
-                {expandedId === c.id && (
-                  <tr id={`credential-detail-${c.id}`}>
-                    <td colSpan={7} className={styles.detailCell}>
-                      <dl className={styles.detailGrid}>
-                        <div className={styles.detailItem}><dt>ID</dt><dd className={styles.mono}>{c.id}</dd></div>
-                        <div className={styles.detailItem}><dt>Campaigns using it (not finished)</dt><dd>{usage ? usage.campaigns : '…'}</dd></div>
-                        <div className={styles.detailItem}><dt>Calls in flight</dt><dd>{usage ? usage.in_flight_calls : '…'}</dd></div>
-                        <div className={styles.detailItem}><dt>Last error</dt><dd>{c.last_error ?? 'None'}</dd></div>
-                        <div className={styles.detailItem}><dt>Updated</dt><dd>{fmt(c.updated_at)}</dd></div>
-                        {c.revoked_at && <div className={styles.detailItem}><dt>Revoked</dt><dd>{fmt(c.revoked_at)}{c.shredded_at ? ' (secret destroyed)' : ''}</dd></div>}
-                      </dl>
-                      {c.status !== 'revoked' && (
-                        <div className={styles.detailActions} onClick={(e) => e.stopPropagation()}>
-                          <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runAction(c, 'verify')}>
-                            <ShieldCheck size={14} /> {busyWith(c.id, 'verify') ? 'Verifying…' : 'Verify now'}
-                          </button>
-                          {c.status === 'active' && (
-                            <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runSync(c)}>
-                              <PhoneIncoming size={14} /> {busyWith(c.id, 'sync') ? 'Syncing…' : 'Sync numbers'}
-                            </button>
-                          )}
-                          <button className="btn-secondary" onClick={() => { setRotateTarget(c); setRotateFields({}); setModalError(null); }}>
-                            <RefreshCw size={14} /> Rotate secret
-                          </button>
-                          <button className="btn-secondary" onClick={() => { setRenameTarget(c); setRenameLabel(c.label); setModalError(null); }}>
-                            <Pencil size={14} /> Rename
-                          </button>
-                          {c.status === 'disabled' ? (
-                            <button className={`btn-secondary ${styles.successBtn}`} disabled={busyWith(c.id)} onClick={() => void runAction(c, 'enable')}>
-                              <RotateCcw size={14} /> Enable
-                            </button>
-                          ) : (
-                            <button className="btn-secondary" onClick={() => setConfirm({ cred: c, action: 'disable' })}>
-                              <Ban size={14} /> Disable
-                            </button>
-                          )}
-                          <button className={`btn-secondary ${styles.dangerBtn}`} onClick={() => setConfirm({ cred: c, action: 'revoke' })}>
-                            <Trash2 size={14} /> Revoke
-                          </button>
-                        </div>
-                      )}
-                      {sync?.id === c.id && <SyncSummary outcome={sync} />}
-                      {c.status !== 'revoked' && <CredentialInboundSection credential={c} />}
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-            {credentials.length === 0 && (
+      {/* The empty state sits outside the table: inside it, the table's 820px
+          floor centred it in a sideways-scrolling box, so a phone showed only
+          "No tel…", and it drew a bordered box inside the table's box. */}
+      {credentials.length === 0 ? (
+        <EmptyState
+          title="No telephony credentials"
+          description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Sync its numbers, then the tenant’s campaigns and soft phone can dial on it.'}
+        />
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
               <tr>
-                <td colSpan={7}>
-                  <EmptyState
-                    title="No telephony credentials"
-                    description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Sync its numbers, then the tenant’s campaigns and soft phone can dial on it.'}
-                  />
-                </td>
+                <th>Label</th>
+                <th>Tenant</th>
+                <th>Provider</th>
+                <th>Account</th>
+                <th>Secret</th>
+                <th>Status</th>
+                <th>Verified</th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {credentials.map((c) => (
+                <Fragment key={c.id}>
+                  <tr className={styles.clickableRow} onClick={() => void toggleExpand(c.id)}>
+                    <td>
+                      {/* The row is clickable for the mouse; this button is the keyboard and
+                          screen-reader way to the actions rendered in the expanded row. */}
+                      <button
+                        type="button"
+                        className={styles.labelCell}
+                        aria-expanded={expandedId === c.id}
+                        aria-controls={`credential-detail-${c.id}`}
+                        onClick={(e) => { e.stopPropagation(); void toggleExpand(c.id); }}
+                      >
+                        <KeyRound size={14} className={styles.icon} />
+                        <span>{c.label}</span>
+                      </button>
+                    </td>
+                    <td>{tenantName.get(c.tenant_id) ?? <span className={styles.mono}>{c.tenant_id}</span>}</td>
+                    <td><span className={styles.providerBadge}>{operatorCarrierName(c.provider, providerOf(c.provider)?.display_name)}</span></td>
+                    <td className={styles.mono}>{c.account_ref}</td>
+                    <td className={styles.mono}>{c.secret_hint ? `••••${c.secret_hint}` : '—'} <span className={styles.muted}>v{c.secret_version}</span></td>
+                    <td>
+                      <StatusBadge label={saStatusLabel(c.status)} color={saStatusColor(c.status)} status={c.status} />
+                    </td>
+                    <td className={styles.muted}>{fmt(c.verified_at)}</td>
+                  </tr>
+                  {expandedId === c.id && (
+                    <tr id={`credential-detail-${c.id}`}>
+                      <td colSpan={7} className={styles.detailCell}>
+                        <dl className={styles.detailGrid}>
+                          <div className={styles.detailItem}><dt>ID</dt><dd className={styles.mono}>{c.id}</dd></div>
+                          <div className={styles.detailItem}><dt>Campaigns using it (not finished)</dt><dd>{usage ? usage.campaigns : '…'}</dd></div>
+                          <div className={styles.detailItem}><dt>Calls in flight</dt><dd>{usage ? usage.in_flight_calls : '…'}</dd></div>
+                          <div className={styles.detailItem}><dt>Last error</dt><dd>{c.last_error ?? 'None'}</dd></div>
+                          <div className={styles.detailItem}><dt>Updated</dt><dd>{fmt(c.updated_at)}</dd></div>
+                          {c.revoked_at && <div className={styles.detailItem}><dt>Revoked</dt><dd>{fmt(c.revoked_at)}{c.shredded_at ? ' (secret destroyed)' : ''}</dd></div>}
+                        </dl>
+                        {c.status !== 'revoked' && (
+                          <div className={styles.detailActions} onClick={(e) => e.stopPropagation()}>
+                            <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runAction(c, 'verify')}>
+                              <ShieldCheck size={14} /> {busyWith(c.id, 'verify') ? 'Verifying…' : 'Verify now'}
+                            </button>
+                            {c.status === 'active' && (
+                              <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runSync(c)}>
+                                <PhoneIncoming size={14} /> {busyWith(c.id, 'sync') ? 'Syncing…' : 'Sync numbers'}
+                              </button>
+                            )}
+                            <button className="btn-secondary" onClick={() => { setRotateTarget(c); setRotateFields({}); setModalError(null); }}>
+                              <RefreshCw size={14} /> Rotate secret
+                            </button>
+                            <button className="btn-secondary" onClick={() => { setRenameTarget(c); setRenameLabel(c.label); setModalError(null); }}>
+                              <Pencil size={14} /> Rename
+                            </button>
+                            {c.status === 'disabled' ? (
+                              <button className={`btn-secondary ${styles.successBtn}`} disabled={busyWith(c.id)} onClick={() => void runAction(c, 'enable')}>
+                                <RotateCcw size={14} /> Enable
+                              </button>
+                            ) : (
+                              <button className="btn-secondary" onClick={() => setConfirm({ cred: c, action: 'disable' })}>
+                                <Ban size={14} /> Disable
+                              </button>
+                            )}
+                            <button className={`btn-secondary ${styles.dangerBtn}`} onClick={() => setConfirm({ cred: c, action: 'revoke' })}>
+                              <Trash2 size={14} /> Revoke
+                            </button>
+                          </div>
+                        )}
+                        {sync?.id === c.id && <SyncSummary outcome={sync} />}
+                        {c.status !== 'revoked' && <CredentialInboundSection credential={c} />}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <Modal
         open={showCreate}

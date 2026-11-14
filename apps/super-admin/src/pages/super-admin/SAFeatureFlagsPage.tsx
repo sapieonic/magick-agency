@@ -347,8 +347,10 @@ export default function SAFeatureFlagsPage() {
                         </span>
                       )}
                     </td>
+                    {/* `data-label` names the value where a phone stacks the row (the CSS). */}
                     <td
                       className={styles.defaultsCell}
+                      data-label="Inherited default"
                       title="Value used when no global override is set. The catalogue does not report whether this flag's environment variable is configured, so this is the env value if one is set and the registry default otherwise."
                     >
                       <strong>{String(inheritedDefault(entry) ?? '—')}</strong>

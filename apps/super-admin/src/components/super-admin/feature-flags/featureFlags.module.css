@@ -91,6 +91,8 @@
 }
 
 /* ── Popover / modal ── */
+/* The padding is the gutter a phone keeps round the dialog, which otherwise
+   ran edge to edge; the overlay scrolls if a dialog is taller than the screen. */
 .popoverOverlay {
   position: fixed;
   inset: 0;
@@ -99,6 +101,8 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 16px;
+  overflow-y: auto;
 }
 
 .popover,
@@ -113,6 +117,17 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* With the overlay scrolling, a tall dialog starts at the top rather than
+     centring with its head cut off above the screen. */
+  margin: auto 0;
+}
+
+/* A phone: the dialog's 28px padding left the fields a narrow column. */
+@media (max-width: 640px) {
+  .popover,
+  .modal {
+    padding: 20px;
+  }
 }
 
 .popoverHeader {

@@ -82,7 +82,9 @@ export function SuperAdminLayout() {
           </div>
         </div>
         <main className={styles.content}>
-          <Outlet />
+          <div className={styles.page}>
+            <Outlet />
+          </div>
         </main>
       </div>
 

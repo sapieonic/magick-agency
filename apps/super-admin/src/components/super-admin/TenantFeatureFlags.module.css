@@ -195,3 +195,69 @@
   border-radius: var(--radius);
   margin: 8px 0;
 }
+
+/* A phone: four columns left the feature name a word per line and squeezed
+   the state control into a sliver. Each flag stacks instead: name and
+   description across the width, then its state, any expiry and reset on one
+   row. */
+@media (max-width: 640px) {
+  .scopeCard {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table table,
+  .table tbody {
+    display: block;
+  }
+
+  .table tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .table tr:last-child {
+    border-bottom: none;
+  }
+
+  .table td {
+    display: block;
+    padding: 0;
+    border-bottom: none;
+    white-space: normal;
+  }
+
+  .table td:first-child {
+    flex: 1 1 100%;
+  }
+
+  .table td[data-label]::before {
+    content: attr(data-label) ': ';
+    color: var(--text-muted);
+  }
+
+  .table td:last-child {
+    margin-left: auto;
+  }
+
+  .table td:last-child:empty {
+    display: none;
+  }
+
+  /* "Expires: —" on every flag is noise; an expiry shows when there is one. */
+  .table td.noExpiry {
+    display: none;
+  }
+
+  .featName {
+    flex-wrap: wrap;
+  }
+}

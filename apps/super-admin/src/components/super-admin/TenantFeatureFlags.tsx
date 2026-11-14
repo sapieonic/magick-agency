@@ -303,8 +303,8 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
             ))}
           </select>
         </div>
-        <span className={styles.globalChip} title="Set platform-wide defaults in the Feature Flags tab">
-          Global defaults — managed in the Feature Flags tab
+        <span className={styles.globalChip} title="Set platform-wide defaults on the Feature Flags page">
+          Global defaults — managed on the Feature Flags page
         </span>
       </div>
 
@@ -379,7 +379,9 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
                         </span>
                       )}
                     </td>
-                    <td className={styles.featMeta}>
+                    {/* `data-label` names the value where a phone stacks the row, and a
+                        phone leaves out an empty expiry (the CSS). */}
+                    <td className={`${styles.featMeta} ${ov?.expires_at ? '' : styles.noExpiry}`} data-label="Expires">
                       {ov?.expires_at ? relativeExpiry(ov.expires_at) : '—'}
                     </td>
                     <td>
