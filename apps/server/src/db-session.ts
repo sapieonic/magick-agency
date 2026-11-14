@@ -1,9 +1,10 @@
 import type { DbPoolOptions } from '@magick-agency/db';
 
 /**
- * Postgres `application_name` per kind of connection, so `pg_stat_activity` and
- * `pg_stat_statements` say which process ran a statement (`db-hygiene.md`). Each fits the
- * 63-byte limit: a slot is at most two digits (`MEDIA_WORKERS` ≤ 64).
+ * Postgres `application_name` per kind of connection, so `pg_stat_activity` (and the server log,
+ * with `%a` in `log_line_prefix`) says which process holds a connection (`db-hygiene.md`). Each
+ * fits the 63-byte limit and `sessionSettingsSql`'s character set: a slot is at most two digits
+ * (`MEDIA_WORKERS` ≤ 64).
  */
 export const DB_APPLICATION_NAMES = {
   primary: 'magick-agency-server',

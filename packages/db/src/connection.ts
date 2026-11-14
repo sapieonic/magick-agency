@@ -30,21 +30,25 @@ export interface DbPoolOptions {
   /** PEM text of the CA that signed the server certificate (`DB_SSL_CA`); absent = Node's roots. */
   sslCa?: string;
   /**
-   * Postgres `application_name` for every connection of this pool (at most 63 bytes), so
-   * `pg_stat_activity` and `pg_stat_statements` can tell the server, each worker process, the
-   * migrations and scripts apart. Sent in the startup packet, as psql sends its own.
+   * Postgres `application_name` for every connection of this pool (1-63 plain characters), so
+   * `pg_stat_activity` and the server log (`%a` in `log_line_prefix`) can tell the server, each
+   * worker process, the migrations and scripts apart. Sent in the startup packet, as psql sends
+   * its own, and set again by the connect hook (`sessionSettingsSql`).
    */
   applicationName?: string;
-  /** Session timeouts set on every new connection of this pool; see {@link DbSessionTimeouts}. */
+  /**
+   * Session timeouts set on every new connection of this pool; see {@link DbSessionTimeouts}.
+   * Those left out are RESET on connect, to the role's and database's values.
+   */
   sessionTimeouts?: DbSessionTimeouts;
 }
 
 /**
  * Postgres session timeouts, in milliseconds; `0` or absent leaves the setting as the database
- * and role define it (`db-hygiene.md`, "Timeouts"). Set with `set_config` on each new connection
- * before the pool hands it out (pg-pool's `onConnect`), as plain SQL, so they hold through a
- * session-mode pooler that would not forward startup options. A transaction that needs more
- * overrides one for itself with `SET LOCAL`.
+ * and role define it (`db-hygiene.md`, "5. Timeouts"). Set on each new connection before the
+ * pool hands it out (pg-pool's `onConnect`), as plain SQL, so they hold through a session-mode
+ * pooler that would not forward startup options. A transaction that needs more overrides one for
+ * itself with `SET LOCAL`.
  *  - `statementTimeoutMs`: `statement_timeout`, a statement running longer is cancelled (57014);
  *  - `lockTimeoutMs`: `lock_timeout`, a lock not granted in time fails the statement (55P03);
  *  - `idleInTransactionTimeoutMs`: `idle_in_transaction_session_timeout`, a session idle inside an
@@ -63,24 +67,50 @@ const SESSION_TIMEOUT_SETTINGS = [
 ] as const satisfies ReadonlyArray<readonly [string, keyof DbSessionTimeouts]>;
 
 /**
- * The `onConnect` hook for `timeouts`, or `undefined` when none is set: a pool with no timeouts
- * sends no extra statement on connect. pg-pool awaits the hook before handing the connection to
- * its first caller, so the settings are in place for that caller's first statement; a hook that
- * fails ends the connection and fails that acquire, as a failed connect does.
+ * The SQL that puts `timeouts` on a session: `SET` for each one given, `RESET` for each left at 0
+ * or absent. `RESET` returns a setting to what the role and database define, so 0 means exactly
+ * "as the database defines it" even on a pooled Postgres connection that an earlier client left
+ * a value on (a session-mode pooler is not known to clear session state between its clients).
+ * Values are validated integers before they are written into the SQL.
  */
-export function sessionTimeoutsHook(timeouts: DbSessionTimeouts | undefined): ((client: pg.ClientBase) => Promise<void>) | undefined {
-  const settings: Array<[string, string]> = [];
-  for (const [name, key] of SESSION_TIMEOUT_SETTINGS) {
+export function sessionTimeoutsSql(timeouts: DbSessionTimeouts | undefined): string {
+  return SESSION_TIMEOUT_SETTINGS.map(([name, key]) => {
     const ms = timeouts?.[key];
-    if (ms === undefined || ms === 0) continue;
+    if (ms === undefined || ms === 0) return `RESET ${name}`;
     if (!Number.isInteger(ms) || ms < 0) throw new Error(`${key} must be a non-negative integer of milliseconds, got ${ms}`);
-    settings.push([name, `${ms}ms`]);
+    return `SET ${name} = '${ms}ms'`;
+  }).join('; ');
+}
+
+/** An `application_name` the settings SQL may carry: plain characters, at most 63 (Postgres's limit). */
+const APPLICATION_NAME = /^[A-Za-z0-9_.:-]{1,63}$/;
+
+/**
+ * Everything a new connection of this pool gets before its first caller: `application_name`
+ * again as SQL (it is also in the startup packet, but a session-mode pooler is not known to
+ * forward that onto the Postgres connection it hands out), then `sessionTimeoutsSql`.
+ */
+export function sessionSettingsSql(applicationName: string | undefined, timeouts: DbSessionTimeouts | undefined): string {
+  if (applicationName !== undefined && !APPLICATION_NAME.test(applicationName)) {
+    throw new Error(`applicationName must be 1-63 letters, digits or _ . : -, got ${JSON.stringify(applicationName)}`);
   }
-  if (settings.length === 0) return undefined;
-  const sql = `SELECT ${settings.map((_, i) => `set_config($${2 * i + 1}, $${2 * i + 2}, false)`).join(', ')}`;
-  const params = settings.flat();
+  const name = applicationName ? `SET application_name = '${applicationName}'; ` : '';
+  return `${name}${sessionTimeoutsSql(timeouts)}`;
+}
+
+/**
+ * The `onConnect` hook (`sessionSettingsSql`), one round trip per new connection. pg-pool awaits
+ * it before handing the connection to its first caller, so the settings are in place for that
+ * caller's first statement; a hook that fails ends the connection and fails that acquire, as a
+ * failed connect does.
+ */
+export function sessionSettingsHook(
+  timeouts: DbSessionTimeouts | undefined,
+  applicationName?: string,
+): (client: pg.ClientBase) => Promise<void> {
+  const sql = sessionSettingsSql(applicationName, timeouts);
   return async (client) => {
-    await client.query(sql, params);
+    await client.query(sql);
   };
 }
 
@@ -124,7 +154,7 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     keepAlive: true,
     keepAliveInitialDelayMillis: 30_000,
     ...(opts.applicationName ? { application_name: opts.applicationName } : {}),
-    onConnect: sessionTimeoutsHook(opts.sessionTimeouts),
+    onConnect: sessionSettingsHook(opts.sessionTimeouts, opts.applicationName),
   });
   // Keeps a query that waited for a connection in its own trace; see bindPoolConnectContext.
   bindPoolConnectContext(pool);

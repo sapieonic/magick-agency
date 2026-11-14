@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
+import pg from 'pg';
 import { runner as pgMigrateRunner, type RunnerOption } from 'node-pg-migrate';
-import { buildSslOption } from '@magick-agency/db';
+import { buildSslOption, sessionSettingsSql } from '@magick-agency/db';
 import { logger } from '@magick-agency/observability';
 import { dbTlsOptions, type DbTlsConfig } from './db-tls.js';
 import { DB_APPLICATION_NAMES } from './db-session.js';
@@ -23,31 +24,51 @@ export interface MigrateConfig extends DbTlsConfig {
   db: DbTlsConfig['db'] & { url: string };
 }
 
-/** Runs every pending `up` migration in `dir`; resolves to the names applied. */
+/** The connection the migrations run on; a test passes a fake. */
+export type MigrateClient = Pick<pg.Client, 'connect' | 'query' | 'end' | 'on'>;
+
+/**
+ * Runs every pending `up` migration in `dir`; resolves to the names applied.
+ *
+ * The step opens its own connection and hands it to node-pg-migrate (`dbClient`), so that before
+ * any DDL it can name itself and RESET the three session timeouts (`sessionSettingsSql`). Through
+ * a session-mode pooler that does not clear session state, the Postgres connection it gets may be
+ * one the server's pool used, still carrying the server's `DB_*_TIMEOUT_MS`; those are sized for
+ * the server's statements, not a migration's DDL (`db-hygiene.md`, "5. Timeouts").
+ */
 export async function runMigrations(
   cfg: MigrateConfig,
   dir: string,
   runner: (options: RunnerOption) => Promise<Array<{ name: string }>> = pgMigrateRunner,
+  newClient: (config: pg.ClientConfig) => MigrateClient = (config) => new pg.Client(config),
 ): Promise<string[]> {
   const ssl = buildSslOption(dbTlsOptions(cfg));
-  const applied = await runner({
-    // Named, so the migration shows as itself in pg_stat_activity. No session timeouts: the
-    // server's DB_*_TIMEOUT_MS are sized for its statements, not for a migration's DDL.
-    databaseUrl: { connectionString: cfg.db.url, application_name: DB_APPLICATION_NAMES.migrate, ...(ssl ? { ssl } : {}) },
-    dir: resolve(dir),
-    direction: 'up',
-    // packages/db `migrate:up` uses the same table; keep them in step.
-    migrationsTable: 'pgmigrations',
-    count: Infinity,
-    // Each level kept: a connection failure is node-pg-migrate's `error`, not an `info` line.
-    logger: {
-      debug: (msg: string) => logger.debug(msg),
-      info: (msg: string) => logger.info(msg),
-      warn: (msg: string) => logger.warn(msg),
-      error: (msg: string) => logger.error(msg),
-    },
-  });
-  return applied.map((m) => m.name);
+  const client = newClient({ connectionString: cfg.db.url, application_name: DB_APPLICATION_NAMES.migrate, ...(ssl ? { ssl } : {}) });
+  // A connection lost between statements fails the next one (and so the step) instead of
+  // surfacing as an unhandled 'error' event.
+  client.on('error', (err) => logger.error({ err }, 'migration connection error'));
+  await client.connect();
+  try {
+    await client.query(sessionSettingsSql(DB_APPLICATION_NAMES.migrate, undefined));
+    const applied = await runner({
+      dbClient: client as pg.Client,
+      dir: resolve(dir),
+      direction: 'up',
+      // packages/db `migrate:up` uses the same table; keep them in step.
+      migrationsTable: 'pgmigrations',
+      count: Infinity,
+      // Each level kept: a migration failure is node-pg-migrate's `error`, not an `info` line.
+      logger: {
+        debug: (msg: string) => logger.debug(msg),
+        info: (msg: string) => logger.info(msg),
+        warn: (msg: string) => logger.warn(msg),
+        error: (msg: string) => logger.error(msg),
+      },
+    });
+    return applied.map((m) => m.name);
+  } finally {
+    await client.end();
+  }
 }
 
 async function main(): Promise<number> {

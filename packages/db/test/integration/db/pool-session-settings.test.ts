@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
-import { closePool, initDbPool } from '../../../src/connection.js';
+import { closePool, initDbPool, sessionSettingsSql } from '../../../src/connection.js';
 import { withTransaction } from '../../../src/utils/transaction.js';
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 
@@ -62,6 +62,26 @@ describe('pool session settings (real Postgres)', () => {
     } finally {
       a.release();
       b.release();
+    }
+  });
+
+  it('the settings SQL replaces what an earlier client left on a reused session (a pooler that does not reset)', async () => {
+    // One Postgres session standing in for a pooled connection: an earlier client's name and
+    // timeouts are still on it when the next client's connect hook runs.
+    const client = new pg.Client({ connectionString: TEST_DB_URL, application_name: 'earlier-client' });
+    await client.connect();
+    try {
+      await client.query(`SET statement_timeout = '5s'; SET lock_timeout = '6s'; SET idle_in_transaction_session_timeout = '7s'`);
+      await client.query(sessionSettingsSql('magick-agency-test', { lockTimeoutMs: 60_000 }));
+      const { rows } = await client.query<{ a: string; s: string; l: string; i: string }>(
+        `SELECT current_setting('application_name') AS a, current_setting('statement_timeout') AS s,
+                current_setting('lock_timeout') AS l, current_setting('idle_in_transaction_session_timeout') AS i`);
+      const defaults = await serverDefaults();
+      expect(rows[0]).toEqual({
+        a: 'magick-agency-test', s: defaults.statement_timeout, l: '1min', i: defaults.idle_in_transaction_session_timeout,
+      });
+    } finally {
+      await client.end();
     }
   });
 
