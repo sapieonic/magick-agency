@@ -32,6 +32,7 @@ operator applies to Supabase or to the server's environment (sections 2 to 6).
 | TCP keepalive on pool connections | `packages/db/src/connection.ts` | A connection dropped on the network path errors instead of hanging |
 | Optional session timeouts `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`, `DB_LOCK_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS` | `config/blocks/base.ts`, `connection.ts` | **Off by default.** Nothing changes until section 5 |
 | The report cursor exempts its own transaction from the idle and statement timeouts | `report-dataset-reads.ts` | Reports keep working once section 5 is applied |
+| Supervisor stats: the campaign-wide reads behind `GET /agency-campaigns/:id/stats` are shared by every supervisor watching that campaign, for `AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s by default); the campaign's own writes drop the shared read | `apps/server/src/agency/campaign-stats-reads.ts` | Up to one scan per 2 s per campaign, however many consoles poll; `agency_campaign_stats_reads_total{result}` shows scanned vs shared |
 
 Rolling back any of it: the migrations each have a tested Down; the code changes are inert or
 reversible by environment (unset a variable and restart).
