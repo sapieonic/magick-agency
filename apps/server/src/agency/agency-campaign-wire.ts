@@ -134,7 +134,7 @@ export interface AgencyCampaignTransitionRequest {
  * that in the direction a try/catch cannot see: a pool starved of connections, a
  * lock queue, a replica that has stopped answering — none of them reject, they
  * just take longer than anyone pressing Stop on a live campaign will wait, and
- * `pg` has no statement timeout configured in this repo.
+ * `pg` has no statement timeout unless `DB_STATEMENT_TIMEOUT_MS` is set (off by default).
  *
  * ── Expiry behaves EXACTLY as a rejection does ─────────────────────────────
  * Same branch, same log line, same id-only actor: `actor_name` omitted, never a

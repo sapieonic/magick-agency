@@ -14,6 +14,7 @@ import { closePool, initDbPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { dbTlsOptions } from '../db-tls.js';
+import { DB_APPLICATION_NAMES, dbSessionOptions } from '../db-session.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { initAnalytics, shutdownAnalytics } from '../analytics/posthog.js';
 import { createTranscriber } from '../transcription/index.js';
@@ -63,6 +64,7 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
     // primary counts this pool in the host's total (`db-connection-budget.ts`).
     poolMax: analysisChildDbPoolMax(config.db.poolMax, analysisConfig.concurrency),
     ...dbTlsOptions(config),
+    ...dbSessionOptions(config, DB_APPLICATION_NAMES.analysis(slot)),
   });
   auditLogger.start();
   // PostHog in this process too: the runner's `dialer_call_*` events are emitted here. A

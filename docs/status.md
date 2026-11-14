@@ -1476,7 +1476,57 @@ set `MOBILE_ENV_STAGING` and the signing secrets ([`operations.md`](operations.m
 settings it needs"), then run "Mobile release APK" by hand for `mobile-v0.12.0`; add the key's
 SHA-1 to a Firebase Android app for `com.magickagency.agent.staging`.
 
+### Database hygiene, phase 1 2026-11-14 ([`db-hygiene.md`](../db-hygiene.md))
+
+Manas: a review of the schema (tables, indexes, foreign keys) and how the server uses Postgres,
+split in two phases; phase 1 is what is safe and measurable now, with no product decisions.
+In code: `0038_table_storage_settings` (per-table autovacuum thresholds, `fillfactor` on agent
+sessions and pacing minutes), `0039_retention_purge_indexes` (two partial indexes for the daily
+purge; fails on an invalid pre-built one), `0040_drop_duplicate_indexes` (seven indexes a unique
+index already covered); every pool connection named (`application_name`) and kept alive (TCP
+keepalive); a connection Postgres ends under a checked-out client logged and discarded instead of
+ending the process; opt-in session timeouts `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`,
+`DB_LOCK_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, off by default, set as SQL on each connection
+(the ones that are off RESET, so nothing a session pooler left behind is inherited), with the
+report cursor's transaction bounded by the report's deadline instead (or a lower role or database
+limit) and the migration step resetting all three on its own connection; the
+campaign stats route's two campaign-wide reads shared between supervisors for
+`AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s), dropped by the campaign's row writes, a force-available
+and a completed roster upload (the last two over the cache-invalidation channel, which reaches the
+primary from a media worker as `cache.invalidate`; the pacing bus carries only what pacing reads),
+and only marked stale by each roster chunk's `contacts_changed`, so an ingest never overlaps two
+scans of one campaign; Home reads past it only for a still campaign it is about to keep from a
+read another request began, and never drops it for others. The operator half (building
+0039's indexes `CONCURRENTLY` on a large database, point-in-time recovery and a restore drill,
+`pg_stat_statements` and slow and lock-wait logging, the timeouts one at a time) is the runbook,
+`db-hygiene.md`; its section 7 is phase 2's list (retention windows, campaign stats from the
+rollups, index clean-up, `fillfactor` on attempts and contacts, tenant-scoped foreign keys, an
+erasure procedure, the inbound actions' lock held across Plivo calls, the statement timeout's
+value).
+
+A fresh-context review of the branch found, and the branch fixes: the idle-in-transaction timeout
+would have ended the server process when it fired (no `'error'` listener on a checked-out
+client); plain `created_at` indexes in 0039 that the analysis sweeps could have walked instead of
+their own index (dropped; the row purge's comes with its window, as BRIN); the force-available
+invalidation not reaching the primary with media workers; the pooler assumptions; and runbook SQL
+that did not run.
+
+Evidence: see "Test counts" below (2026-11-14). **Not verified:** whether Supabase's session
+pooler forwards `application_name` and clears session state between clients (the code no longer
+depends on either; `db-hygiene.md` 4.1 has the post-deploy check); every operator step in
+`db-hygiene.md` (they run against production).
+
 ## Test counts
+
+**Database hygiene, 2026-11-14 (after the PR review fixes).** Branch `claude-mgkvc/epic-shannon-lesp56`
+on `182fab4`, run on `560cfe5` (this entry's commit changes docs only). Each package from inside
+its directory, one suite at a time, on the local Postgres 16 and Redis on the agency ports with no
+other run sharing them; the server's integration as two lanes; `mpg123` and `sndfile-programs`
+installed. `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and
+`pnpm test:tooling` 16 pass. `packages/db`: unit 457 (28 files), integration 789 (84 files).
+`apps/server`: unit 10038 passed + 1 expected fail (506 files); rest lane 2868 passed, 9 expected
+fail, 2 skipped (259 files passed, 2 skipped); wall-clock lane 26 (6 files). No failures, no
+reruns. Other packages untouched by the branch were not re-run.
 
 **Mode B, 2026-11-13 (final, after the cleanup pass).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`
 on `main` `b3894d2`, run on `d6ec1a0`, after the Mode B cleanup pass (`47edcfd`–`d6ec1a0`: dead
@@ -2353,6 +2403,10 @@ account their browser last had open. Every signed-in console page is now served 
     type or literal, and `contracts-literals --check` is unchanged.
 
 ### Pre-deploy checklist
+
+- [ ] A release with `0039_retention_purge_indexes`: on a database where `agency_calls` holds more
+      than about a million rows, its two indexes built `CONCURRENTLY` first and checked valid
+      ([`db-hygiene.md`](../db-hygiene.md) §2).
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
       `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.

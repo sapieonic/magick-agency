@@ -586,4 +586,146 @@ describe('TtlCache', () => {
     expect(await cache.getOrLoad('k', loader)).toBe(2);
     expect(loader).toHaveBeenCalledTimes(2);
   });
+
+  // ── a read issued after a mutation never joins a load that began before it ──
+  it('invalidate() mid-load: a later getOrLoad starts its own load instead of joining the stale one', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    const old = deferred<string>();
+    const before = cache.getOrLoad('k', () => old.promise);
+    cache.invalidate('k'); // the write this caller must see has committed
+    const fresh = vi.fn(async () => 'after');
+    const after = cache.getOrLoad('k', fresh);
+    expect(fresh).toHaveBeenCalledTimes(1);
+
+    old.resolve('before');
+    expect(await before).toBe('before');
+    expect(await after).toBe('after');
+    // The newer load is the one written back, and the older one did not overwrite it.
+    expect(cache.get('k')).toBe('after');
+  });
+
+  it('invalidate() mid-load with ttlMs=0: the later caller still loads afresh', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 0 });
+    const old = deferred<string>();
+    const before = cache.getOrLoad('k', () => old.promise);
+    cache.invalidate('k');
+    const fresh = vi.fn(async () => 'after');
+    expect(await cache.getOrLoad('k', fresh)).toBe('after');
+    old.resolve('before');
+    expect(await before).toBe('before');
+    expect(fresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('the stale load settling does not disturb the newer load: a third caller joins the newer one', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    const old = deferred<string>();
+    const next = deferred<string>();
+    const p1 = cache.getOrLoad('k', () => old.promise);
+    cache.invalidate('k');
+    const p2 = cache.getOrLoad('k', () => next.promise);
+    old.resolve('before');
+    await p1;
+    const third = vi.fn(async () => 'third');
+    const p3 = cache.getOrLoad('k', third);
+    expect(third).not.toHaveBeenCalled();
+    next.resolve('after');
+    expect(await p2).toBe('after');
+    expect(await p3).toBe('after');
+    expect(cache.get('k')).toBe('after');
+  });
+
+  it('clear() mid-load: a later getOrLoad starts its own load', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    const old = deferred<string>();
+    const before = cache.getOrLoad('k', () => old.promise);
+    cache.clear();
+    const fresh = vi.fn(async () => 'after');
+    expect(await cache.getOrLoad('k', fresh)).toBe('after');
+    old.resolve('before');
+    expect(await before).toBe('before');
+    expect(cache.get('k')).toBe('after');
+  });
+
+  it('set() mid-load and then expiry: a later getOrLoad does not join the load that predates the set', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 1000 });
+    const old = deferred<string>();
+    const before = cache.getOrLoad('k', () => old.promise);
+    cache.set('k', 'written');
+    vi.advanceTimersByTime(1001); // the set value has expired; the old load is still running
+    const fresh = vi.fn(async () => 'after');
+    expect(await cache.getOrLoad('k', fresh)).toBe('after');
+    old.resolve('before');
+    expect(await before).toBe('before');
+  });
+  // ── markStale: nothing cached from the load in flight, but it is still shared ──
+  it('markStale() mid-load: later callers join the load in flight, which is returned but not cached', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    const old = deferred<string>();
+    const before = cache.getOrLoad('k', () => old.promise);
+    cache.markStale('k');
+    const joined = vi.fn(async () => 'never');
+    const during = cache.getOrLoad('k', joined);
+    expect(joined).not.toHaveBeenCalled();
+
+    old.resolve('before');
+    expect(await before).toBe('before');
+    expect(await during).toBe('before');
+    expect(cache.has('k')).toBe(false);
+    // Settled and not kept: the next caller loads afresh, and that one is kept.
+    const fresh = vi.fn(async () => 'after');
+    expect(await cache.getOrLoad('k', fresh)).toBe('after');
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(cache.get('k')).toBe('after');
+  });
+
+  it('a burst of markStale() never runs two loads for the key at once', async () => {
+    const cache = new TtlCache<number>({ ttlMs: 10_000 });
+    let running = 0;
+    let most = 0;
+    let loads = 0;
+    const gates: Array<() => void> = [];
+    const loader = () => new Promise<number>((resolve) => {
+      running += 1;
+      most = Math.max(most, running);
+      const n = (loads += 1);
+      gates.push(() => { running -= 1; resolve(n); });
+    });
+    const answers: Array<Promise<number>> = [];
+    for (let round = 0; round < 3; round++) {
+      // Each round: a load in flight, several stale marks each followed by a caller, then it settles.
+      answers.push(cache.getOrLoad('k', loader));
+      for (let i = 0; i < 4; i++) {
+        cache.markStale('k');
+        answers.push(cache.getOrLoad('k', loader));
+      }
+      gates.shift()!();
+      await Promise.all(answers);
+    }
+    expect(most).toBe(1);
+    expect(loads).toBe(3);
+    expect(cache.has('k')).toBe(false);
+  });
+
+  it('markStale() with nothing in flight just drops the entry', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    cache.set('k', 'v');
+    cache.markStale('k');
+    expect(cache.has('k')).toBe(false);
+    cache.markStale('absent');
+    expect(await cache.getOrLoad('k', async () => 'again')).toBe('again');
+    expect(cache.get('k')).toBe('again');
+  });
+
+  it('invalidate() after markStale() still stops the sharing: the next caller does not join the older load', async () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    const old = deferred<string>();
+    const before = cache.getOrLoad('k', () => old.promise);
+    cache.markStale('k');
+    cache.invalidate('k');
+    const fresh = vi.fn(async () => 'after');
+    expect(await cache.getOrLoad('k', fresh)).toBe('after');
+    old.resolve('before');
+    expect(await before).toBe('before');
+    expect(cache.get('k')).toBe('after');
+  });
 });

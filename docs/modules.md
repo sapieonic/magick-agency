@@ -26,7 +26,11 @@ and its review fixes added or changed. The files Plivo steps 3 and 4 (2026-11-07
 statically and marked `~` (an `it.each` table or a loop counts as one, so they undercount); a file
 they changed shows its earlier count plus the cases the change added or removed, marked `~` too.
 The files the reports feature (RP1–RP16, 2026-11-08) added or changed show the counts Vitest
-printed that day for unit files and for the integration files of the final run.
+printed that day for unit files and for the integration files of the final run. The files the
+shared campaign stats read (2026-11-14) and its review fixes (the cache-invalidation channel,
+`markStale`, Home's read past the shared read) added or changed show the counts Vitest printed that
+day; where a changed file's old count was already stale (`left-session-guards.test.ts`), the new one
+corrects it.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -35,9 +39,9 @@ For how the pieces fit together, read [`architecture.md`](architecture.md); for 
 
 ### `apps/server/src/`
 
-Composition: `instrumentation.ts` (the OpenTelemetry SDK, imported first; exports over OTLP only when `OTEL_ENABLED`, the endpoint and `OTEL_SERVICE_NAME` are all set), `index.ts` (process start, signal handling, shutdown order, the OTel flush last), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
+Composition: `instrumentation.ts` (the OpenTelemetry SDK, imported first; exports over OTLP only when `OTEL_ENABLED`, the endpoint and `OTEL_SERVICE_NAME` are all set), `index.ts` (process start, signal handling, shutdown order, the OTel flush last), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `db-session.ts` (each process's Postgres `application_name` and the server pools' `DB_*_TIMEOUT_MS` session timeouts), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
 
-Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`, `migrate.ts`
+Files: `app-context.ts`, `app.ts`, `db-session.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`, `migrate.ts`
 
 | Test file | Cases |
 |---|---|
@@ -50,7 +54,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
 | `apps/server/test/unit/app/websocket-max-payload.test.ts` | 4 |
-| `apps/server/test/unit/deploy/migrate.test.ts` | 9 |
+| `apps/server/test/unit/deploy/migrate.test.ts` (TLS as the server's; its own connection named and the three timeouts reset before node-pg-migrate runs on it; ended on failure) | 11 |
 
 ### `apps/server/src/agency/`
 
@@ -58,7 +62,7 @@ The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the 
 
 Mode B (2026-11-12, docs/inbound.md §6.1): `away-ring.ts` (`AwayRingService`, `runtime.awayRing`) is the `away_ring` break whose phone rings for inbound callers: the ring rule in one place (IQ78: `ringBlocks` and `canRing` over the session and its station's device, with the flags' `ringAllowed`), read by the refusals in order (`refusalFor`), the inbound search (`ringableSessions`, which reads nothing for an account `mayHaveAway` says has nobody away: an in-memory set per account, rebuilt by every reconcile pass), the ring as it starts (`ringableDevice`) and the reconcile; entering it, a queued one applied by the release with or without a socket (`applyQueued`, through `AgencyDialer.registerAwayRing`), the connector's return to it after an unanswered ring (`releaseInbound`, which settles an away pause queued behind the ring: a queued `device_away` ends the absence), the app's `device_away` during a ring (`declineRingForDeviceAway`, IQ83, through the connector's ring, `InboundConnector.rings`), its ends (`end`, `endOnReturn`, `endOnTakeOver`, `endForDevice`, `endOrCancelRing`: `device_away`, then `offline` with no socket; the `ring_off` push; audited `agency_session.away_ring_ended`), the pushes it sends (`send`, recording a failure on the device row unless the sender scoped it to the whole service) and the reconcile at boot and every 60 s (`reconcile`, keyed on `away_ring_since`, N1). Its Redis side is in `agent-state-machine.ts` (`enterAwayRing`, `releaseInboundToAwayRing`, `reseedAwayRing`, `endAwayRing`, `setOfflineUnlessAway`; the `ring` and `push` fields, the break's `reason` that the entry from `break` requires to be `device_away`, `reserveForInbound`'s `break` arm); `heartbeatLeaseMs` never renews it (N2); the runtime's station close and rehydrate keep it and end it on the agent's return.
 
-Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `home-board.ts` (Home's board, B28a: the active campaigns of an account with what the Overview's attention rules read (the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's carrier failures and recording, the settings); a still campaign's stats reused for a minute while its floor holds, the allocation and today's figures for a minute), `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`, `away-ring.ts`
+Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-stats-reads.ts` (the stats route's campaign reads, shared between requests: dropped by `campaign_changed` and by the cache-invalidation channel (a force-available, a completed roster upload), marked stale by `contacts_changed` so a burst never overlaps two scans; a `fresh` read of the caller's own for Home, and the `scanned`/`shared` answer header), `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `home-board.ts` (Home's board, B28a: the active campaigns of an account with what the Overview's attention rules read (the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's carrier failures and recording, the settings); a still campaign's stats reused for a minute while its floor holds, kept only from a read that began after the floor read (a read the stats route handed over is read once more past the shared read), the allocation and today's figures for a minute), `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`, `away-ring.ts`
 
 | Test file | Cases |
 |---|---|
@@ -76,6 +80,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
 | `apps/server/test/integration/agency/agency-campaign-stats-concurrency.test.ts` | ~4 |
+| `apps/server/test/integration/agency/agency-campaign-stats-sharing.test.ts` | 9 |
 | `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-contact-claim-limit.test.ts` | 2 |
@@ -187,7 +192,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
-| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 53 (a DNC row claims its key, as ruled) |
+| `apps/server/test/unit/agency/agency-ingest.service.test.ts` (a DNC row claims its key, as ruled; a completed roster drops the shared stats read once, after its last chunk) | 54 |
 | `apps/server/test/unit/agency/agency-internal-ingest-ownership.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-join-result.test.ts` | 7 |
 | `apps/server/test/unit/agency/agency-proxy-path-traversal.test.ts` | 83 |
@@ -222,6 +227,9 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 22 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` | 62 |
 | `apps/server/test/unit/agency/campaign-series-parse.test.ts` | 13 |
+| `apps/server/test/unit/agency/campaign-stats-reads.test.ts` (the hard drops, `contacts_changed`'s join-but-not-kept and a burst never running two scans, the `fresh` read) | 17 |
+| `apps/server/test/unit/agency/campaign-stats-route-sharing.test.ts` (and the `x-mgkvc-stats-read` answer, the `x-mgkvc-stats-fresh` read behind the guard) | 6 |
+| `apps/server/test/unit/agency/home-board.test.ts` (Home's board: the active campaigns and the fields Home reads, the minute-long reuse of a still campaign's stats under its floor's signature and of the allocation and today's figures, a still campaign's read handed over by the stats route read once more past it before it is kept, a moving one sharing it, Home publishing no invalidation) | 41 |
 | `apps/server/test/unit/agency/campaign-sip-removal-route.test.ts` | 4 |
 | `apps/server/test/unit/agency/campaign-start-roster-route.test.ts` | 16 |
 | `apps/server/test/unit/agency/campaign-stats-concurrency-guard-route.test.ts` | 2 |
@@ -245,7 +253,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
-| `apps/server/test/unit/agency/left-session-guards.test.ts` | 50 |
+| `apps/server/test/unit/agency/left-session-guards.test.ts` | 62 |
 | `apps/server/test/unit/agency/end-idle-session-elsewhere.test.ts` (OS7; Mode B: a parked phone told `left`) | 15 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 21 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
@@ -276,7 +284,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-campaign-series.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts` | 26 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts` | 30 |
-| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 158 |
+| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 159 |
 | `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 111 |
 | `apps/server/test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` | 78 |
 | `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
@@ -292,7 +300,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 38 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-drilldown-routes.test.ts` | 25 |
-| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
+| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 27 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
 | `apps/server/test/unit/agency/station-heartbeat-lease.test.ts` (what the heartbeat renews: `available`, `break`, a vouched `wrapup`) | 5 |
 | `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 22 |
@@ -422,6 +430,7 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/integration/agency/report-subscription-subject.test.ts` (`probeSubscriptionSubject` on Postgres) | 3 |
 | `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` and `postgresZoneName` against `pg_timezone_names`) | 4 |
 | `apps/server/test/integration/agency/report-assembler-deadline.test.ts` (the deadline over the real cursor: a stalled upload and a long statement end `assembly_failed` with the cursor's transaction ended; a real builder stops at its next stage) | 5 |
+| `apps/server/test/integration/agency/report-cursor-session-timeouts.test.ts` (the report cursor replaces the pool's idle-in-transaction and statement timeouts for its own transaction only, with a bound: the report deadline or `timeoutMs`, never 0, and a lower database value kept; a consumer that stalls past the bound has its transaction ended by Postgres) | 7 |
 
 ### `apps/server/src/agency/reports/datasets/`
 
@@ -626,7 +635,7 @@ Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`
 
 Route families: a large plugin keeps its exported function, hooks and module note in `<family>.routes.ts` and registers its routes from `<family>/` on the same instance, so the hooks apply to every one of them and the area plugins are unchanged: `agency/` (sessions, attempts, the soft phone's internal handlers and their refusal statuses and envelope, the agent's dial of one of their own contacts, `my-contact-call.ts`, shared helpers), `agency-campaigns/` (guards with the `ownedCampaign` preHandler, crud with the batched `GET /summaries`, stats, spine, retry, lifecycle), `proxy-agency-campaigns/` (ownership, crud, stats, activity, spine with the CSV export drain, lifecycle, retry, ingest), `proxy-agency-performance/` (the per-agent pairs, the whole-floor reads, shared), `proxy-agency-staffing/` (the `my-*` reads, campaign agents), `proxy-agency-softphone/` (the soft phone, docs/softphone.md §6: sessions and the switch, calls, reads, settings, shared actor / flag / envelope / enrichment), `proxy-agency-assignment/` (contact assignment, served without an internal handler hop: the supervisor's preview, commit, progress and history; the agents' dedicated caller IDs, `agent-caller-ids.ts`, DN5: list, set, release, only the set behind the flag (DN9); the agent's own contacts (`my-contacts.ts`; the summary's `caller_id` falls back to null when its read fails, `my-contacts-summary-caller-id.test.ts`) and their actions, retry and the per-contact call; the shared flag gate and refusals), `proxy-agency-insights/` (the campaign insights reads, docs/insights.md "API": summary, readiness, allocation, uploads in `as-of-now.ts`; activity, trends, health in `range.ts`; Home's board `GET /home` in `home.ts`, B28a, after `agency.supervise` the account scope then the dialer flag; their query refused `400 invalid_insights_query` after the guards; the shared guard chain after `agency.supervise`: dialer flag, id shape, ownership probe), `proxy-agency-customers/` (customer history, docs/customer-history.md §2, served without an internal handler hop: `search.ts`, `timeline.ts`, `export.ts`, `options.ts` (`GET /customers/options`, the search box's default calling code); `shared.ts`, the guard chain after `agency.customer_history.read` (dialer flag, then the per-user search cap for search and export), the family's own JSON parser (`useFamilyJsonParser`: a body that is not JSON is `400 invalid_search_request`), the refusal bodies, the search lookup, `no-store` and the audit row), `super-admin/` (login, own account, tenants, admins, concurrency). Source-text guards read a whole family (`test/helpers/route-source.ts`).
 
-Shared helpers (`helpers/`): `audit-marker.ts` (`takeAuditMarker`, the one taker of an internal answer's audit marker: the push devices', the soft-phone exit's, the inbound close's), `create-account.ts` (`createTenantAccount`, the one account create both `POST /accounts` and the super-admin route make: one transaction under a lock on the tenant row, the name rule, the slug, and the zero-call settings row for a tenant admin's create), `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe; `ownedCoreCampaignOnce`, that probe read at most once per request; and `stringField`), `audit-bounds.ts` (`boundedSelector`, the bounded filters of an audit row: the retry routes and the customer-history export), `live-stats.ts` (`liveStats`, the stats strip through the internal handler, shared by the Insights summary route and the campaign report's builder), `csv-attachment.ts` (the `Content-Disposition` pair: `attachmentHeader` for any extension, also the report downloads' presigned URLs; `csvAttachmentHeader`), `dialer-gate.ts` (`dialerEnabled`, the agency-dialer flag gate of the Insights and customer-history families), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `query-string.ts` (`definedQueryString`, a validated query as `callCore`'s string map: the soft phone's call list and the Missed list), `read-cursor.ts` (`readKeysetCursor`), `refusal.ts` (`sendRefusal`, the contact-assignment routes' `{ error, code, message, details? }` body), `settled.ts` (`settledValue`: independent reads started together, answered in order).
+Shared helpers (`helpers/`): `audit-marker.ts` (`takeAuditMarker`, the one taker of an internal answer's audit marker: the push devices', the soft-phone exit's, the inbound close's), `create-account.ts` (`createTenantAccount`, the one account create both `POST /accounts` and the super-admin route make: one transaction under a lock on the tenant row, the name rule, the slug, and the zero-call settings row for a tenant admin's create), `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe; `ownedCoreCampaignOnce`, that probe read at most once per request; and `stringField`), `audit-bounds.ts` (`boundedSelector`, the bounded filters of an audit row: the retry routes and the customer-history export), `live-stats.ts` (`liveStats`, the stats strip through the internal handler, shared by the Insights summary route and the campaign report's builder; `liveStatsRead` for Home's board, which says whether the read ran for it and can read past the shared read), `csv-attachment.ts` (the `Content-Disposition` pair: `attachmentHeader` for any extension, also the report downloads' presigned URLs; `csvAttachmentHeader`), `dialer-gate.ts` (`dialerEnabled`, the agency-dialer flag gate of the Insights and customer-history families), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `query-string.ts` (`definedQueryString`, a validated query as `callCore`'s string map: the soft phone's call list and the Missed list), `read-cursor.ts` (`readKeysetCursor`), `refusal.ts` (`sendRefusal`, the contact-assignment routes' `{ error, code, message, details? }` body), `settled.ts` (`settledValue`: independent reads started together, answered in order).
 
 Mode B's routes: `proxy-agency-push-devices.routes.ts` over `agency/push-devices.ts` (`/proxy/agency/push-devices/:deviceId`: `GET`, `PUT`, `PATCH`, `DELETE`, `POST …/test-ring` at one per 10 s per agent and device; own devices only; audited opt-in changes and removals) and `proxy-agency-inbound-ring.routes.ts` over `agency/inbound-ring.ts` (`/proxy/agency/inbound/calls/:id/ring/{answering,decline,accept}`: the first two with the offer token only, 30 a minute per IP, a uniform 404; `accept` with the agent's session and `agency.station.connect`, the station claim and the station bootstrap; audited accept and decline). `agency/device-away.ts` takes `away_ring` (its refusals, the `device_away ↔ away_ring` switch, which takes an away pause left queued) and declines a ring not yet answered on `device_away` (IQ83) and `agency/helpers.ts`'s `claimStationOrReply` ends `away_ring` on a take-over.
 
@@ -641,6 +650,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/create-account.test.ts` | 15 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
+| `apps/server/test/unit/api/routes/helpers/live-stats.test.ts` (the read-past header sent only when asked; an answer shared unless the handler says its read ran for the call) | 7 |
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/path-params.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/helpers/refusal.test.ts` | 3 |
@@ -814,9 +824,9 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `voice.ts`
 
 ### `apps/server/src/cache/`
 
-Redis-backed cache with an optional in-process layer, cross-instance invalidation, and the retried revocation path (Q5).
+Redis-backed cache with an optional in-process layer, cross-instance invalidation, and the retried revocation path (Q5). `cache-invalidation.ts`: the channel an in-process cache hears it is stale on, `{ cache, key }` for the caches it lists (today the shared campaign stats read), delivered in this process and, from a media worker, to the primary as `cache.invalidate`; a cache's staleness that is nothing pacing reads goes here, never on the pacing bus.
 
-Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
+Files: `cache-invalidation.ts`, `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 
 | Test file | Cases |
 |---|---|
@@ -824,6 +834,7 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 | `apps/server/test/integration/cache/membership-invalidation.test.ts` | ~3 |
 | `apps/server/test/integration/cache/redis-cache.delbypattern.test.ts` | ~4 |
 | `apps/server/test/integration/cache/tenant-record-cache.test.ts` | ~10 |
+| `apps/server/test/unit/cache/cache-invalidation.test.ts` | 6 |
 | `apps/server/test/unit/cache/local-cache-wiring.test.ts` | 7 |
 | `apps/server/test/unit/cache/local-cache.test.ts` | 15 |
 | `apps/server/test/unit/cache/redis-cache-invalidation-order.test.ts` | 4 |
@@ -860,12 +871,12 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 16 |
-| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 13 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 14 |
 | `apps/server/test/unit/cluster/lease-snapshot-window.test.ts` | 2 |
 | `apps/server/test/unit/cluster/loop-sampler.test.ts` | 5 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 15 |
-| `apps/server/test/unit/cluster/media-child-invalidations.test.ts` | 2 |
-| `apps/server/test/unit/cluster/media-cluster.test.ts` | 8 |
+| `apps/server/test/unit/cluster/media-child-invalidations.test.ts` (and a worker's cache invalidation sent to the primary) | 3 |
+| `apps/server/test/unit/cluster/media-cluster.test.ts` (and a worker's `cache.invalidate` delivered to the primary's listeners) | 9 |
 | `apps/server/test/unit/cluster/plivo-callback-forwarding.test.ts` | ~6 |
 | `apps/server/test/unit/cluster/primary.test.ts` | 5 |
 | `apps/server/test/unit/cluster/process-observability.test.ts` | 4 |
@@ -885,7 +896,8 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 19 |
+| `apps/server/test/unit/config/config.test.ts` | 21 |
+| `apps/server/test/unit/config/db-session-config.test.ts` (`DB_*_TIMEOUT_MS`: off by default, the refusals, `dbSessionOptions`, each process's `application_name`) | 7 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/push-config.test.ts` (`PUSH_*`: parsed keys, every refusal by env key, no key material in a dump) | 24 |
@@ -1431,7 +1443,7 @@ Files: `auth.ts`, `console-urls.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`
 
 ### `packages/db/src/`
 
-pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
+pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed; TCP keepalive; an `'error'` listener on every client, so a connection Postgres ends under a checked-out client is logged and discarded rather than ending the process; `application_name` and the session timeouts set on each new connection by `sessionSettingsSql`, the ones that are off RESET) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
 
 Files: `connection.ts`, `index.ts`, `migrations-dir.ts`, `pg-errors.ts`
 
@@ -1526,11 +1538,12 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
+| `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; the settings SQL replacing what an earlier client left on a reused session; `SET LOCAL` lifts one for a transaction; the idle limit ending a checked-out session without ending the process, logged once as a held connection's warning; an idle pooled connection ended by `pg_terminate_backend` logged once, as a pool error only) | 7 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
-| `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
+| `packages/db/test/unit/utils/single-flight.test.ts` | 19 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
 | `packages/db/test/unit/utils/transaction.test.ts` | 14 |
-| `packages/db/test/unit/utils/ttl-cache.test.ts` | 51 |
+| `packages/db/test/unit/utils/ttl-cache.test.ts` (and `markStale`: the load in flight still joined, never cached, one load at a time through a burst) | 60 |
 
 ### Cross-cutting tests (`packages/db`)
 
@@ -1553,6 +1566,9 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/inbound-migration.test.ts` | 31 |
 | `packages/db/test/integration/db/away-ring-sessions-index-migration.test.ts` (0037, Mode B: the partial index's definition, the ring search's plan using it, down then up) | 3 |
+| `packages/db/test/integration/db/table-storage-settings-migration.test.ts` (0038: exactly these autovacuum and fillfactor parameters on exactly these tables, down then up) | 2 |
+| `packages/db/test/integration/db/retention-purge-indexes-migration.test.ts` (0039: the two definitions, each purge read's plan, no plain `created_at` index, the refusal of an invalid pre-built index, down then up) | 6 |
+| `packages/db/test/integration/db/drop-duplicate-indexes-migration.test.ts` (0040: the seven gone, each lookup an index scan on its covering unique index, down then up) | 9 |
 | `packages/db/test/integration/db/inbound-ring-migration.test.ts` (0036, Mode B: the push devices table, its CHECKs and partial token indexes, the ring columns, the session's `ring_misses` and `away_ring_since`, each CHECKed list equal to its contract list, the down) | ~11 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the inbound reached trigger and its races, the summary's index and its plan, down and up) | 8 |
@@ -1594,6 +1610,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/scenarios/audit-logging.test.ts` | ~14 |
 | `packages/db/test/unit/agency/agency-campaign-agent.repository.test.ts` | 64 |
 | `packages/db/test/unit/db/connection-ssl.test.ts` | 5 |
+| `packages/db/test/unit/db/connection-session-timeouts.test.ts` (the connect hook's SQL: RESET for each timeout that is off, SET for the others, the name first, refusals; the pool's keepalive, name and hook options; the client 'error' listener warning once for a checked-out client and staying silent, without throwing, for an idle one) | 9 |
 | `packages/db/test/unit/db/dialer-analysis-job-model.test.ts` | 2 |
 | `packages/db/test/unit/db/dialer-analysis-models.test.ts` | 1 |
 | `packages/db/test/unit/helpers/truncate-all.test.ts` | 6 |

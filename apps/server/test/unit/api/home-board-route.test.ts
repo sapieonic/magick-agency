@@ -16,13 +16,13 @@ const mocks = vi.hoisted(() => ({
   campaignStaffing: vi.fn(),
   cachedAllocation: vi.fn(),
   rangeAttentionFigures: vi.fn(),
-  liveStats: vi.fn(),
+  liveStatsRead: vi.fn(),
 }));
 vi.mock('../../../src/agency/home-board.js', () => ({ computeHomeBoard: mocks.computeHomeBoard }));
 vi.mock('../../../src/api/routes/helpers/dialer-gate.js', () => ({ dialerEnabled: mocks.dialerEnabled }));
 vi.mock('../../../src/agency/insights/allocation.js', () => ({ campaignStaffing: mocks.campaignStaffing, cachedAllocation: mocks.cachedAllocation }));
 vi.mock('../../../src/agency/insights/health.js', () => ({ rangeAttentionFigures: mocks.rangeAttentionFigures }));
-vi.mock('../../../src/api/routes/helpers/live-stats.js', () => ({ liveStats: mocks.liveStats }));
+vi.mock('../../../src/api/routes/helpers/live-stats.js', () => ({ liveStatsRead: mocks.liveStatsRead }));
 
 import { registerHomeBoardRoutes } from '../../../src/api/routes/proxy-agency-insights/home.js';
 import type { HomeBoardDeps } from '../../../src/agency/home-board.js';
@@ -84,7 +84,7 @@ describe('GET /proxy/agency/home', () => {
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual(BOARD);
     expect(mocks.computeHomeBoard).toHaveBeenCalledWith({ tenantId: 't-1', accountId: 'a-1' }, expect.anything());
-    expect(lastDeps().liveStats).toBe(mocks.liveStats);
+    expect(lastDeps().liveStats).toBe(mocks.liveStatsRead);
     expect(lastDeps().insights).toBeNull();
   });
 
@@ -122,7 +122,8 @@ describe('GET /proxy/agency/home', () => {
     const app = await appFor();
     await get(app, { 'x-role': 'account_admin', 'x-account-id': 'a-1' });
     const deps = mocks.computeHomeBoard.mock.calls[0]![1] as HomeBoardDeps;
-    expect(deps.liveStats).toBe(mocks.liveStats);
+    // The read that says whether it was read for the board, and can read past the shared one.
+    expect(deps.liveStats).toBe(mocks.liveStatsRead);
     const insights = deps.insights!;
     expect(insights.staffing).toBe(mocks.campaignStaffing);
 

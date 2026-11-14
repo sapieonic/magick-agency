@@ -551,6 +551,7 @@ runs. The worker trusts a command only from its parent channel.
 | `station.attached` / `station.detached` | event | `{sessionId, campaignId, replicaId}` / `{sessionId}` |
 | `station.snapshot` | event | `{sessions: [{sessionId, campaignId}]}`, on ready and on request (reconcile) |
 | `pacing.invalidate` | event | a `PacingInvalidationEvent` |
+| `cache.invalidate` | event | `{cache, key}`: an in-process cache entry on the primary that the worker's write made stale (`cache/cache-invalidation.ts`; today `agency-campaign-stats`, a force-available's campaign), delivered to the primary's listeners and never sent back |
 | `voice.wake_self_heal` | event | `{}` (the guard host's `wakeSelfHeal` in shard mode) |
 | `analysis.wake` | event | `{}` |
 

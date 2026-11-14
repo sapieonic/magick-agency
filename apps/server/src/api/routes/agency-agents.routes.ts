@@ -222,10 +222,10 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * occupancy on `/grouped-stats`, whose cardinality is a product of dimensions and
    * which therefore does push its `limit` into SQL.
    *
-   * **No `statement_timeout`, and that is filed rather than done.** None is set
-   * anywhere in this server — there is no precedent to follow and no place to put
-   * a per-route budget without introducing the concept, which is a server-wide
-   * change and outside this route's scope. Nothing else bounds it either:
+   * **No `statement_timeout` of its own, and that is filed rather than done.** The
+   * server's pools have one only when `DB_STATEMENT_TIMEOUT_MS` is set (off by default, a
+   * server-wide backstop: `db-hygiene.md` §5), and no per-route budget exists. When that
+   * backstop is on, this read is one it must sit above. Nothing else bounds it either:
    * `callCore` runs in-process with no transport timeout, and a cancelled request
    * leaves the scan running. Anyone tightening this should add the timeout on both
    * statements.

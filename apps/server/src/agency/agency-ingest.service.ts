@@ -26,6 +26,8 @@ import {
 
 import { rejectedExportKey } from './agency-ingest-keys.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
+import { publishCacheInvalidation } from '../cache/cache-invalidation.js';
+import { CAMPAIGN_STATS_CACHE } from './campaign-stats-reads.js';
 import { auditRosterUploadEndedById } from './agency-ingest-audit.js';
 
 const log = createChildLogger({ component: 'agency-ingest-service' });
@@ -531,6 +533,11 @@ export class AgencyIngestService {
           );
           return;
         }
+        // The roster is in: the console opens the campaign next and paints its stats. Each
+        // chunk's `contacts_changed` only marks the supervisors' shared stats read stale (a
+        // read in flight is still joined), so drop it outright now, once, and the first read
+        // after the upload is fresh (`campaign-stats-reads.ts`).
+        publishCacheInvalidation({ cache: CAMPAIGN_STATS_CACHE, key: campaignId! });
       }
 
       // Render the export only now: the phone column's resolved header (which

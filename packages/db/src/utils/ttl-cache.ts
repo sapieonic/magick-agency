@@ -22,7 +22,17 @@ import { SingleFlight } from './single-flight.js';
  *  - **Invalidation-race safe** — a load that started before a concurrent
  *    `set`/`invalidate`/`clear` for the same key is **not** written back on
  *    completion, so a stale read in flight during a revocation/update can't
- *    resurrect the old value. (Guarded by a per-load token.)
+ *    resurrect the old value. (Guarded by a per-load token.) Nor is it shared
+ *    any further: a `getOrLoad` issued after the mutation starts its own load
+ *    instead of joining the older one, so a caller that writes, invalidates and
+ *    reads never gets back a value read before its write. Callers that joined
+ *    before the mutation still get the older load's result.
+ *  - **A softer invalidation for bursts** — {@link markStale} drops the entry and
+ *    cancels the in-flight load's write-back like `invalidate`, but lets later
+ *    callers keep joining that load until it settles; the first `getOrLoad`
+ *    after it settles loads afresh. A burst of `markStale` calls therefore never
+ *    runs two loads for the key at once. For a change no caller needs to see
+ *    the instant after it (the caller that must uses `invalidate`).
  *  - **Errors are never cached** — a rejected loader propagates and leaves the
  *    key empty so the next caller retries.
  *  - **Negative caching** — whatever the loader returns is cached, including
@@ -95,9 +105,8 @@ export class TtlCache<V> {
 
   /** Insert/replace `key`'s value, resetting its TTL and LRU recency. */
   set(key: string, value: V): void {
-    // Cancel any in-flight load's pending write-back for this key so a slower,
-    // staler load can't overwrite this fresher value.
-    this.loadTokens.delete(key);
+    // A slower, staler load in flight must neither overwrite this fresher value nor be shared.
+    this.cancelLoad(key);
     this.writeEntry(key, value);
   }
 
@@ -144,15 +153,31 @@ export class TtlCache<V> {
     return true;
   }
 
-  /** Drop a single key (and cancel any in-flight load's write-back for it). */
+  /**
+   * Drop a single key, cancel any in-flight load's write-back for it, and stop
+   * sharing that load: the next `getOrLoad` for the key loads afresh.
+   */
   invalidate(key: string): void {
+    this.cancelLoad(key);
+    this.store.delete(key);
+  }
+
+  /**
+   * Drop a single key and cancel any in-flight load's write-back for it, but keep
+   * sharing that load: a `getOrLoad` before it settles joins it (and gets its
+   * result, which is never cached); the first one after it settles loads afresh.
+   * {@link invalidate} instead stops the sharing, so a load starts at once beside
+   * the one in flight. This one bounds a burst to one load at a time.
+   */
+  markStale(key: string): void {
     this.loadTokens.delete(key);
     this.store.delete(key);
   }
 
-  /** Drop every entry (and cancel all in-flight loads' write-backs). */
+  /** Drop every entry, cancel all in-flight loads' write-backs and stop sharing them. */
   clear(): void {
     this.loadTokens.clear();
+    this.flight.forgetAll();
     this.store.clear();
   }
 
@@ -195,5 +220,15 @@ export class TtlCache<V> {
       if (oldest === undefined) break;
       this.store.delete(oldest);
     }
+  }
+
+  /**
+   * Stop the load in flight for `key`, if any, from writing its result back (its token no longer
+   * matches) or being handed to later callers. Every mutator that changes `key` calls this,
+   * except {@link markStale}, which keeps the sharing on purpose.
+   */
+  private cancelLoad(key: string): void {
+    this.loadTokens.delete(key);
+    this.flight.forget(key);
   }
 }

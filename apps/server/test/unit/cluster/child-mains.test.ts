@@ -79,6 +79,7 @@ vi.mock('../../../src/api/core-handlers.js', () => ({
 }));
 vi.mock('../../../src/cluster/media-child.js', () => ({
   installIpcPacingBus: vi.fn(),
+  installIpcCacheInvalidation: vi.fn(),
   startMediaChild: vi.fn(() => {
     h.calls.push('startMediaChild');
     return { shutdown: vi.fn(async () => { h.calls.push('child.shutdown'); }), health: vi.fn() };
@@ -126,6 +127,10 @@ describe('a media worker process', () => {
     const configured = h.calls.indexOf('configureAgencyRuntime:{"refusalCountShared":true}');
     expect(configured).toBeGreaterThanOrEqual(0);
     expect(configured).toBeLessThan(h.calls.indexOf('ensureAgencyRuntime'));
+    // Its pacing events and its cache invalidations both go to the primary.
+    const mediaChild = await import('../../../src/cluster/media-child.js');
+    expect(mediaChild.installIpcPacingBus).toHaveBeenCalled();
+    expect(mediaChild.installIpcCacheInvalidation).toHaveBeenCalled();
 
     await expect(primary.request('shutdown', { graceMs: 1_000 }, { deadlineMs: 2_000 })).resolves.toEqual({});
     expect(await exited).toBe(0);

@@ -9,6 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const repo = vi.hoisted(() => ({ listForHome: vi.fn(), floorSignatures: vi.fn() }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyCampaignRepository: repo }));
+// Home never drops anyone's shared stats read: it publishes nothing on either channel.
+const bus = vi.hoisted(() => ({ publishPacingInvalidation: vi.fn() }));
+vi.mock('../../../src/agency/pacing/invalidation-bus.js', async (actual) => ({
+  ...(await actual<typeof import('../../../src/agency/pacing/invalidation-bus.js')>()), ...bus,
+}));
+const caches = vi.hoisted(() => ({ publishCacheInvalidation: vi.fn() }));
+vi.mock('../../../src/cache/cache-invalidation.js', async (actual) => ({
+  ...(await actual<typeof import('../../../src/cache/cache-invalidation.js')>()), ...caches,
+}));
 
 import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
 import {
@@ -67,6 +76,11 @@ function payload(over: Partial<AgencyCampaignStats> = {}): Partial<AgencyCampaig
   } as Partial<AgencyCampaignStats>;
 }
 
+/** One stats read as the hop answers it: `shared` when the route handed over a read another request began. */
+function answer(stats: Partial<AgencyCampaignStats>, shared = false) {
+  return { stats, shared };
+}
+
 type Mocked<T> = { [K in keyof T]: ReturnType<typeof vi.fn> };
 /** The insights reads of a supervisor's board. */
 let reads: HomeInsightsDeps & Mocked<HomeInsightsDeps>;
@@ -107,7 +121,7 @@ beforeEach(() => {
     allocation: vi.fn(async () => ALLOCATION),
     today: vi.fn(async () => TODAY),
   };
-  const liveStats = vi.fn(async () => payload());
+  const liveStats = vi.fn(async () => answer(payload()));
   deps = { liveStats, insights: reads };
   viewer = { liveStats, insights: null };
 });
@@ -189,7 +203,7 @@ describe('a read that fails is null, never a failed board', () => {
     deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) => {
       if (c.id === 'r1') throw new Error('boom');
       if (c.id === 'r2') return null;
-      return payload();
+      return answer(payload());
     });
     const board = await computeHomeBoard(SCOPE, deps);
     expect(board.campaigns.map((c) => c.stats === null)).toEqual([true, true, false]);
@@ -256,7 +270,7 @@ describe('what is read again on the next board', () => {
   it('a moving campaign’s stats, every time', async () => {
     list([row('r1', 'running'), row('s1', 'stopping'), row('p-live', 'paused'), row('p-staffed', 'paused')]);
     deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) =>
-      payload(c.id === 'p-live' ? { attempts_live: 1 } : c.id === 'p-staffed' ? { agents_live: 2 } : {}));
+      answer(payload(c.id === 'p-live' ? { attempts_live: 1 } : c.id === 'p-staffed' ? { agents_live: 2 } : {})));
     await computeHomeBoard(SCOPE, deps);
     advance();
     await computeHomeBoard(SCOPE, deps);
@@ -266,11 +280,11 @@ describe('what is read again on the next board', () => {
   it('a moving campaign’s card figures are the latest read’s, never a kept one', async () => {
     list([row('r1', 'running'), row('p-live', 'paused')]);
     let dials = 300;
-    deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) => payload({
+    deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) => answer(payload({
       attempts_total: dials, contacts_pending: 500 - dials,
       ...(c.id === 'p-live' ? { attempts_live: 1 } : {}),
       concurrency: { campaign_live: 1, fair_share: null, account_limit: 10, account_live: dials / 100, running_campaigns: 1 },
-    }));
+    })));
     await computeHomeBoard(SCOPE, deps);
     dials = 400;
     advance();
@@ -322,6 +336,85 @@ describe('what is read again on the next board', () => {
     advance();
     await computeHomeBoard(SCOPE, deps);
     expect(deps.liveStats).toHaveBeenCalledTimes(3);
+  });
+
+  it('a still campaign’s read handed over by the stats route is read once more past it, and that read is kept', async () => {
+    // The shared read may predate the floor signature it would be kept under.
+    list([row('p1', 'paused')]);
+    deps.liveStats.mockImplementation(async (_c: AgencyCampaignRecord, { fresh }: { fresh: boolean }) =>
+      fresh ? answer(payload({ contacts_pending: 150 })) : answer(payload({ contacts_pending: 200 }), true));
+    const board = await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats.mock.calls.map(([c, o]) => [(c as AgencyCampaignRecord).id, o])).toEqual([
+      ['p1', { fresh: false }], ['p1', { fresh: true }],
+    ]);
+    expect(board.campaigns[0]!.stats).toMatchObject({ contacts_pending: 150 });
+
+    // Kept: the next boards inside the minute read nothing and serve the read past it.
+    advance();
+    expect((await computeHomeBoard(SCOPE, deps)).campaigns[0]!.stats).toMatchObject({ contacts_pending: 150 });
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+  });
+
+  it('a read that ran for the board is kept as it is: it began after the floor read', async () => {
+    list([row('p1', 'paused')]);
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats.mock.calls).toEqual([[expect.objectContaining({ id: 'p1' }), { fresh: false }]]);
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('a moving campaign shares the supervisors’ read, by status or by its own stats: nothing kept, nothing read past it', async () => {
+    list([row('r1', 'running'), row('s1', 'stopping'), row('p-staffed', 'paused')]);
+    deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) =>
+      answer(payload(c.id === 'p-staffed' ? { agents_live: 1 } : {}), true));
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats.mock.calls.map(([, o]) => o)).toEqual([{ fresh: false }, { fresh: false }, { fresh: false }]);
+  });
+
+  it('when the read past it shows the campaign moving (an agent joined), it is served and not kept', async () => {
+    list([row('p1', 'paused')]);
+    deps.liveStats.mockImplementation(async (_c: AgencyCampaignRecord, { fresh }: { fresh: boolean }) =>
+      fresh ? answer(payload({ agents_live: 1 })) : answer(payload(), true));
+    const board = await computeHomeBoard(SCOPE, deps);
+    expect(board.campaigns[0]!.stats).toMatchObject({ agents_live: 1 });
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(4);
+  });
+
+  it('when the read past it fails, the shared read is served and nothing is kept', async () => {
+    list([row('p1', 'paused')]);
+    deps.liveStats.mockImplementation(async (_c: AgencyCampaignRecord, { fresh }: { fresh: boolean }) => {
+      if (fresh) throw new Error('pool exhausted');
+      return answer(payload({ contacts_pending: 200 }), true);
+    });
+    const board = await computeHomeBoard(SCOPE, deps);
+    expect(board.campaigns[0]!.stats).toMatchObject({ contacts_pending: 200 });
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(4);
+  });
+
+  it('nothing is read past the shared read when nothing would be kept: no floor signature, or a failed staffing read', async () => {
+    list([row('p1', 'paused')]);
+    deps.liveStats.mockImplementation(async () => answer(payload(), true));
+    repo.floorSignatures.mockRejectedValueOnce(new Error('db down'));
+    await computeHomeBoard(SCOPE, deps);
+    advance();
+    reads.staffing.mockRejectedValueOnce(new Error('slow'));
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats.mock.calls.map(([, o]) => o)).toEqual([{ fresh: false }, { fresh: false }]);
+  });
+
+  it('never drops the supervisors’ shared read: Home publishes no invalidation', async () => {
+    list([row('r1', 'running'), row('p1', 'paused')]);
+    deps.liveStats.mockImplementation(async () => answer(payload(), true));
+    await computeHomeBoard(SCOPE, deps);
+    advance(HOME_STILL_MS);
+    await computeHomeBoard(SCOPE, deps);
+    expect(bus.publishPacingInvalidation).not.toHaveBeenCalled();
+    expect(caches.publishCacheInvalidation).not.toHaveBeenCalled();
   });
 
   it('every still campaign’s stats when the floor read fails (nothing reused on a guess)', async () => {

@@ -36,7 +36,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 }));
 
 vi.mock('../../../src/config/index.js', () => ({
-  config: { redis: { keyPrefix: '' }, telephony: {} },
+  config: { redis: { keyPrefix: '' }, agency: { campaignStatsCacheMs: 2_000 }, telephony: {} },
 }));
 
 const { authSpy } = vi.hoisted(() => ({

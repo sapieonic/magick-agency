@@ -176,6 +176,23 @@ describe('agency campaign proxy routes', () => {
     await app.close();
   });
 
+  it('the public stats route never asks for a read past the shared one, nor passes on how its answer was read', async () => {
+    // Only an in-process caller (Home's board) may read past the supervisors' shared stats read
+    // (`agency/campaign-stats-reads.ts`): a client's header must not reach the internal handler.
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200, body: { campaign_id: 'c1', agents: [] }, headers: new Headers({ 'x-mgkvc-stats-read': 'scanned' }),
+    });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/c1/stats?fresh=1`, headers: { 'x-mgkvc-stats-fresh': '1' } });
+    expect(res.statusCode).toBe(200);
+    const call = mocks.proxyToCore.mock.calls[0]![0];
+    expect(call.path).toBe('/agency-campaigns/c1/stats');
+    expect(call.headers).toBeUndefined();
+    expect(call.query).toBeUndefined();
+    expect(res.headers['x-mgkvc-stats-read']).toBeUndefined();
+    await app.close();
+  });
+
   it.each([
     ['start', '/agency-campaigns/c1/start'],
     ['pause', '/agency-campaigns/c1/pause'],

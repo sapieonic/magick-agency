@@ -17,6 +17,14 @@ import type {
 } from '@magick-agency/contracts/reports';
 import type { ReportRunRecord } from '../../../db/repositories/agency/report-run.repository.js';
 
+/**
+ * The wall-clock deadline on one run's build: the builder, its detail files and `dataset.json`
+ * (the assembler's "Deadline"). Here, at the seam, rather than in the assembler, because the
+ * report cursor (`reportCursorRows`) bounds its own transaction by it and the repository layer
+ * must not import the assembler (which imports the repository).
+ */
+export const REPORT_BUILD_TIMEOUT_MS = 10 * 60_000;
+
 /** What a builder is given: the claimed run row and the instant assembly reads "now" as. */
 export interface ReportBuildContext {
   run: ReportRunRecord;

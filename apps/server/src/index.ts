@@ -9,6 +9,7 @@ import { config } from './config/index.js';
 import { buildApp } from './app.js';
 import type { AppContext } from './app-context.js';
 import { dbTlsOptions } from './db-tls.js';
+import { DB_APPLICATION_NAMES, dbSessionOptions } from './db-session.js';
 import { redisClientOptions } from './utils/redis-options.js';
 import { startPlatform } from './bootstrap/platform.js';
 import { getAgencyRuntime, getReportPipeline, startAgency } from './bootstrap/agency.js';
@@ -50,6 +51,8 @@ async function main(): Promise<void> {
     poolMax: config.db.poolMax,
     // TLS on in production, verified (decision Q1); shared with dist/migrate.js (`db-tls.ts`).
     ...dbTlsOptions(config),
+    // Its application_name and the DB_*_TIMEOUT_MS session timeouts (off by default).
+    ...dbSessionOptions(config, DB_APPLICATION_NAMES.primary),
   });
   // Bounded (command, connect and retry limits): a Redis that is gone fails each command in
   // seconds instead of queueing it. `utils/redis-options.ts`.
