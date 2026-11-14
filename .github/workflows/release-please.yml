@@ -27,7 +27,7 @@ concurrency:
 jobs:
   release-please:
     name: Release PR and releases
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       mobile_released: ${{ steps.release.outputs['apps/mobile--release_created'] }}
       mobile_tag: ${{ steps.release.outputs['apps/mobile--tag_name'] }}
