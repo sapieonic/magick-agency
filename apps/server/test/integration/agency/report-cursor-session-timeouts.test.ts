@@ -44,7 +44,7 @@ describe('report cursor under the pool session timeouts', () => {
 
   it('runs a FETCH longer than the statement timeout', async () => {
     const got: number[] = [];
-    for await (const row of reportCursorRows<{ n: number }>('SELECT n FROM generate_series(1, 2) AS n, pg_sleep(0.3) AS s', [])) {
+    for await (const row of reportCursorRows<{ n: number }>('SELECT n FROM generate_series(1, 2) AS n, pg_sleep(0.6) AS s', [])) {
       got.push(row.n);
     }
     expect(got).toEqual([1, 2]);

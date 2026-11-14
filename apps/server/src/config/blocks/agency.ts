@@ -54,13 +54,18 @@ const customerHistorySchema = z.object({
  *
  * Why 2 s: a supervisor's page asks every 10 s, so N supervisors on one campaign ask about
  * N times per 10 s at moments that do not line up. Two seconds folds every request in a fifth of
- * that interval into one read (about five reads per 10 s however many watch, instead of N), and
+ * that interval into one read (about five reads per 10 s however many watch, plus one after each write that drops it, instead of N), and
  * an answer is at most 2 s older than the request, beside the 10 s a page already waits between
  * two of its reads. A campaign's own writes (start, pause, stop, a settings save, contacts
  * arriving) and a supervisor's force-available drop its shared read at once, so the read that
  * follows them is fresh. At most 10 s: longer would serve one answer to two polls of one page.
  */
-const campaignStatsCacheMs = z.coerce.number().int().min(0).max(10_000).default(2_000);
+const campaignStatsCacheMs = z.preprocess(
+  // A blank value is unset (the default), not 0: `z.coerce` would read '' as 0 and silently turn
+  // the sharing of settled reads off.
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.coerce.number().int().min(0).max(10_000).default(2_000),
+);
 
 /**
  * `reports`: agent, campaign and account reports (docs/reports.md "Config", RP8, RP12, RP13).

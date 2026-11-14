@@ -65,6 +65,9 @@ describe('parseConfig', () => {
     expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '500' })).toBe(500);
     // 0: a read in flight is still shared, a settled one never served.
     expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '0' })).toBe(0);
+    // Blank is unset, not 0 (`z.coerce` alone would read '' as 0 and turn the sharing off).
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '' })).toBe(2_000);
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '  ' })).toBe(2_000);
     expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '10000' })).toBe(10_000);
     expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '10001' })).toBeNull();
     expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '-1' })).toBeNull();

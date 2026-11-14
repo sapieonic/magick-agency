@@ -165,14 +165,15 @@ describe('GET /api/v1/agency-campaigns/:id/stats · one read for every viewer (i
   it('a write that announces nothing is served from the shared read until it expires, then seen', async () => {
     const campaign = await insertAgencyCampaign({ status: 'running' });
     await insertAgencyContacts(campaign.id, 2);
-    const app = await buildApp(300);
+    // 2 s: room for the insert and the second request on a loaded runner, inside the TTL.
+    const app = await buildApp(2_000);
     expect((await getStats(app, campaign.id)).contacts_total).toBe(2);
 
     await insertAgencyContact(campaign.id, { source_row_number: 3 });
     // Within the TTL: the shared read (the trade the cache makes, bounded by its TTL).
     expect((await getStats(app, campaign.id)).contacts_total).toBe(2);
 
-    await new Promise((r) => setTimeout(r, 350));
+    await new Promise((r) => setTimeout(r, 2_100));
     expect((await getStats(app, campaign.id)).contacts_total).toBe(3);
   });
 
