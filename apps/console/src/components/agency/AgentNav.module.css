@@ -87,9 +87,35 @@
   border-color: var(--border);
 }
 
-@media (max-width: 1023px) {
+/*
+  Where the header bar cannot hold every label beside the soft phone's own
+  controls (a 1366px laptop could not), the entries other than the current one
+  show their icon alone. The label stays for screen readers and as the tooltip.
+  On a phone the row wraps under the agent's name (AgentStation.module.css), so
+  the screens stay reachable there too instead of disappearing.
+*/
+@media (max-width: 1599px) {
+  .headerNav .item:not(.current) {
+    padding: 6px 8px;
+  }
+
+  .headerNav .item:not(.current) .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 767px) {
   .headerNav {
-    display: none;
+    flex-wrap: wrap;
+    margin-left: 0;
   }
 }
 

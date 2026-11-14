@@ -57,6 +57,18 @@
   outline: none;
 }
 
+/* The field is the whole dialog, so it draws no box of its own: the global text-field rules
+   (a light-theme fill, and a focus ring that outranks `.input`) drew one inside the panel. */
+.inputWrapper .input,
+.inputWrapper .input:focus {
+  background: transparent;
+  box-shadow: none;
+}
+
+.closeBtn {
+  display: none;
+}
+
 .input::placeholder {
   color: var(--text-muted);
 }
@@ -214,6 +226,41 @@
   border-radius: 4px;
   margin: 0 2px;
   font-family: var(--font-mono);
+}
+
+/* A phone: a close button for the Esc key it has not got, no arrow-and-Enter hints for keys it
+   has not got either (a bar left with nothing else goes), and results that wrap rather than
+   cut a campaign's name short. */
+@media (max-width: 768px) {
+  .escKey,
+  .hintKeys {
+    display: none;
+  }
+
+  .hintBar:has(> .hintKeys:only-child) {
+    display: none;
+  }
+
+  .closeBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    margin-right: -10px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .resultLabel,
+  .resultDetail {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 @keyframes fadeIn {

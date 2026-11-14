@@ -63,8 +63,15 @@
 }
 
 /* `--content-pad`: the pane's padding, which a page's sticky strip reaches back over. */
+/*
+  The page's scroll area, and the containing block for anything a page positions absolutely
+  without a positioned parent of its own (a visually hidden live region, `.sr-only`, above all).
+  Without it such an element was placed against the document, so a long page made the document
+  itself scrollable: a jump to a late section scrolled the whole console with it.
+*/
 .content {
   --content-pad: 24px;
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;

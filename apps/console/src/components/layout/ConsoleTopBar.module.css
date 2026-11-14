@@ -178,10 +178,39 @@
     display: flex;
   }
 
-  /* On a phone the breadcrumb collapses to the current page; the back arrow goes up one. */
-  .crumb,
+  /*
+    On a phone the breadcrumb collapses to the current page, with the crumb just
+    above it as a small line over it (so a campaign's Contacts or Call log still
+    says which campaign); the back arrow goes up one.
+  */
+  .crumb:not(.crumbParent),
   .separator {
     display: none;
+  }
+
+  .crumbs {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+
+  .crumbs > li {
+    max-width: 100%;
+  }
+
+  .crumbParent {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .crumbParent a {
+    color: var(--text-muted);
+  }
+
+  .crumbCurrent {
+    line-height: 1.3;
   }
 
   /* On a phone the field is an icon button; its aria-label still says what it searches. */

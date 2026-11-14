@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
   getAgencyCampaign: vi.fn(),
+  getAgencyCampaignStats: vi.fn(),
+  campaignLineage: vi.fn(),
   getCampaignActivity: vi.fn(),
   downloadCampaignActivityCsv: vi.fn(),
   softphoneOn: true,
@@ -40,13 +42,19 @@ vi.mock('../../api/agencyInsights', async (importOriginal) => ({
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
-vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
+// The campaign's workspace (header, health strip, bar) around the section reads these.
+vi.mock('../../api/agencyCampaigns', () => ({
+  getAgencyCampaign: mocks.getAgencyCampaign,
+  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
+  campaignLineage: mocks.campaignLineage,
+}));
 vi.mock('../../api/agencyActivity', () => ({
   getCampaignActivity: mocks.getCampaignActivity,
   downloadCampaignActivityCsv: mocks.downloadCampaignActivityCsv,
 }));
 
 import ActivityPageView from '../../pages/agency/AgencyCampaignActivityPage';
+import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 
 /** Dialer-runtime-only: no console row exists for an automatic pause. */
 const AUTO_PAUSE: ActivityRow = {
@@ -152,6 +160,8 @@ beforeEach(() => {
   });
   // A TERMINAL campaign — the primary case, not an afterthought.
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Q3 collections', status: 'stopped' });
+  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+  mocks.campaignLineage.mockResolvedValue(noLineage());
   mocks.getCampaignActivity.mockResolvedValue(page());
   mocks.downloadCampaignActivityCsv.mockResolvedValue({
     blob: new Blob(['at,source\n']),
@@ -772,7 +782,7 @@ describe('accessibility', () => {
 
     const table = await screen.findByRole('table', { name: /Q3 collections/ });
     // Visually hidden, not absent: sighted users already have the "History"
-    // heading and the campaign badge, so the caption must not duplicate that
+    // heading and the campaign's name in the header, so the caption must not duplicate that
     // on screen while still being the table's accessible name.
     expect(table.querySelector('caption')?.className).toMatch(/srOnly/);
   });
@@ -919,13 +929,17 @@ describe('the campaign section bar', () => {
     expect(screen.getByTestId('campaign-tabs').querySelector('[aria-current="page"]')).toBeNull();
   });
 
-  it('marks the History button as the current page and titles the page History', async () => {
+  it('marks the History button as the current page and titles the section History', async () => {
     renderPage();
 
+    // The header's History button, the only one: the section no longer repeats it.
     const history = await screen.findByTestId('campaign-history-link');
+    expect(screen.getAllByTestId('campaign-history-link')).toHaveLength(1);
+    expect(history.closest('[data-testid="campaign-actions"]')).not.toBeNull();
     expect(history.getAttribute('aria-current')).toBe('page');
     expect(history.getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('History');
+    // The campaign's name is the page's h1 (the header); History is the section's.
+    expect(screen.getByRole('heading', { level: 2, name: 'History' })).toBeTruthy();
   });
 
   it('offers a way back to Overview, where a supervisor’s campaign opens', async () => {
@@ -1048,10 +1062,11 @@ describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
 });
 
 describe('the page names the campaign', () => {
-  it('under the heading, since at phone width the top bar says only "History"', async () => {
+  it('in the workspace header’s h1, since at phone width the top bar says only "History"', async () => {
     mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'CD 11TH NOV — Retry 1', status: 'paused' });
     renderPage();
-    expect((await screen.findByTestId('history-campaign-name')).textContent).toBe('CD 11TH NOV — Retry 1');
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('CD 11TH NOV — Retry 1');
+    expect(screen.getByTestId('campaign-workspace')).toBeTruthy();
   });
 });
 

@@ -49,8 +49,12 @@
   color: var(--text-secondary);
 }
 
+/* Beside its label and Assign, not a field across the whole panel (the global
+   `select` rule is full width): a name is all it ever holds. */
 .picker {
-  min-width: 260px;
+  flex: 0 1 420px;
+  width: auto;
+  min-width: min(100%, 240px);
   max-width: 100%;
 }
 
@@ -77,13 +81,18 @@
   color: var(--text-muted);
 }
 
+/*
+  As many people abreast as keep a row on one line (name, role, station badge,
+  Remove): one column on a laptop or a phone, two or three across a wide panel,
+  where a single list put each name a screen's width from its Remove button.
+*/
 .list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr));
+  gap: 4px 8px;
 }
 
 .row {
@@ -100,7 +109,9 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  flex: 1;
+  /* A basis, so on a phone the role, station and Remove wrap under the person
+     instead of squeezing the email into a column broken mid-word. */
+  flex: 1 1 220px;
   min-width: 0;
 }
 

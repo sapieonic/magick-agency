@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import type { AgencyKeysetPage, AgencyRosterContact } from '../../types/agency-spine';
 
@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
   getAgencyCampaign: vi.fn(),
+  getAgencyCampaignStats: vi.fn(),
+  campaignLineage: vi.fn(),
   getCampaignContacts: vi.fn(),
   downloadSpineCsv: vi.fn(),
   // The retry dialog is mounted only while open and owns these two reads.
@@ -38,6 +40,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
+  // The campaign's workspace (header, health strip, bar) around the roster reads these two.
+  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
+  campaignLineage: mocks.campaignLineage,
   retryPreview: mocks.retryPreview,
   createRetry: mocks.createRetry,
 }));
@@ -48,6 +53,7 @@ vi.mock('../../api/agencySpine', () => ({
 vi.mock('../../hooks/usePhoneNumbers', () => ({ usePhoneNumbers: mocks.usePhoneNumbers }));
 
 import RosterPage from '../../pages/agency/AgencyCampaignRosterPage';
+import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 
 const COMPLETED: AgencyRosterContact = {
   id: 'contact-1', phone_e164: '+919876500001', state: 'completed', attempt_count: 3,
@@ -119,6 +125,8 @@ beforeEach(() => {
     // built-ins, which is the server's rule for `last_disposition` exactly.
     disposition_catalog: [{ code: 'not_interested', label: 'Not interested' }],
   });
+  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+  mocks.campaignLineage.mockResolvedValue(noLineage());
   mocks.getCampaignContacts.mockResolvedValue(page([COMPLETED, SUPPRESSED, OUR_FAULT]));
   mocks.usePhoneNumbers.mockReturnValue({
     phoneNumbers: [], loading: false, error: null, reload: vi.fn(), defaultNumber: null,
@@ -141,9 +149,28 @@ describe('this page lists contacts — it is not the upload form', () => {
     renderPage();
     await screen.findByTestId(`roster-row-${COMPLETED.id}`);
     expect(screen.getByText('+919876500001')).toBeTruthy();
-    // The upload is still reachable, as an ACTION rather than as the page.
-    expect(screen.getByText('Add contacts').closest('a')?.getAttribute('href'))
-      .toBe('/agency/campaigns/camp-1/contacts/add');
+    // An ended campaign takes no more contacts: its header offers New campaign instead.
+    expect(await screen.findByText('New campaign')).toBeTruthy();
+    expect(screen.queryByText('Add contacts')).toBeNull();
+  });
+
+  it('keeps the upload one click away, as the header’s action rather than as the page', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Q3 Renewals', status: 'paused' });
+    renderPage();
+    await screen.findByTestId(`roster-row-${COMPLETED.id}`);
+    // Once: the section does not repeat the header's Add contacts.
+    await waitFor(() => expect(screen.getAllByText('Add contacts')).toHaveLength(1));
+    const link = screen.getByText('Add contacts').closest('a');
+    expect(link?.getAttribute('href')).toBe('/agency/campaigns/camp-1/contacts/add');
+    expect(link?.closest('[data-testid="campaign-actions"]')).not.toBeNull();
+  });
+
+  it('sits in the campaign’s workspace: its name is the h1, Contacts the section’s title', async () => {
+    renderPage();
+    expect(await screen.findByTestId('campaign-workspace')).toBeTruthy();
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Q3 Renewals');
+    expect(screen.getByRole('heading', { level: 2, name: 'Contacts' })).toBeTruthy();
+    expect((await screen.findByTestId('campaign-tab-contacts')).getAttribute('aria-current')).toBe('page');
   });
 
   it('links each contact to its own drill-down', async () => {
@@ -270,6 +297,34 @@ describe('the campaign section bar', () => {
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+  });
+});
+
+/**
+ * The workspace re-reads the campaign on its header's poll (every 10 s while it dials) and on
+ * the header's Refresh, and hands the section a new campaign object each time. The section
+ * names things from it; it must not re-read the roster for it.
+ */
+describe('the workspace’s campaign re-read', () => {
+  it('does not re-read the roster', async () => {
+    renderPage();
+    await screen.findByTestId(`roster-row-${COMPLETED.id}`);
+    await screen.findByRole('heading', { level: 1 });
+    const listReads = mocks.getCampaignContacts.mock.calls.length;
+    const campaignReads = mocks.getAgencyCampaign.mock.calls.length;
+
+    // The same campaign, as a new object: what every re-read hands over.
+    const current = await mocks.getAgencyCampaign.mock.results[0]!.value;
+    mocks.getAgencyCampaign.mockResolvedValue({ ...current });
+
+    // The header's Refresh (the campaign), named exactly "Refresh".
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => expect(mocks.getAgencyCampaign.mock.calls.length).toBe(campaignReads + 1));
+    await waitFor(() => expect(mocks.getAgencyCampaignStats.mock.calls.length).toBeGreaterThan(1));
+    // Let the new campaign object land and the section render with it.
+    await act(async () => {});
+    expect(mocks.getCampaignContacts.mock.calls.length).toBe(listReads);
   });
 });
 

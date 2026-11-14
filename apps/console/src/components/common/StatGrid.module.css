@@ -1,0 +1,133 @@
+/*
+  See `StatGrid.tsx`. The grid's own width decides, not the window's: the same
+  six tiles sit in a full-width panel and in half of a two-column row.
+
+  Tiers (the container's content width) and the columns each count gets:
+
+            <480   480   640   860   1000  1150  1300
+    2        2
+    3        2*    3
+    4        2           4
+    5        2*    3           5
+    6        2     3                 6
+    7        2*          4                 7
+    8        2           4                       8
+    9        2*          3     5
+    10       2                 5
+    11       2*          4           6
+    12       2           4           6
+
+  * two abreast with the last tile across the row, so an odd count leaves no hole.
+  About 150px a tile is the floor each step keeps above: a label such as
+  "CALLBACKS OVERDUE · NOW" on two lines, a 22px figure on one.
+*/
+
+.container {
+  container: stat-grid / inline-size;
+  min-width: 0;
+}
+
+.grid {
+  --cols: 2;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grid[data-count='1'] {
+  --cols: 1;
+}
+
+/* Two abreast and an odd count: the last tile across the row. The tiers below reset it. */
+.grid > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+@container stat-grid (min-width: 480px) {
+  .grid[data-count='3'],
+  .grid[data-count='5'],
+  .grid[data-count='6'] {
+    --cols: 3;
+  }
+
+  .grid[data-count='3'] > :last-child,
+  .grid[data-count='5'] > :last-child {
+    grid-column: auto;
+  }
+}
+
+@container stat-grid (min-width: 640px) {
+  .grid[data-count='4'],
+  .grid[data-count='7'],
+  .grid[data-count='8'],
+  .grid[data-count='11'],
+  .grid[data-count='12'] {
+    --cols: 4;
+  }
+
+  .grid[data-count='9'] {
+    --cols: 3;
+  }
+
+  .grid[data-count='7'] > :last-child,
+  .grid[data-count='9'] > :last-child,
+  .grid[data-count='11'] > :last-child {
+    grid-column: auto;
+  }
+}
+
+@container stat-grid (min-width: 860px) {
+  .grid[data-count='5'],
+  .grid[data-count='9'],
+  .grid[data-count='10'] {
+    --cols: 5;
+  }
+}
+
+@container stat-grid (min-width: 1000px) {
+  .grid[data-count='6'],
+  .grid[data-count='11'],
+  .grid[data-count='12'] {
+    --cols: 6;
+  }
+}
+
+@container stat-grid (min-width: 1150px) {
+  .grid[data-count='7'] {
+    --cols: 7;
+  }
+}
+
+@container stat-grid (min-width: 1300px) {
+  .grid[data-count='8'] {
+    --cols: 8;
+  }
+}
+
+/*
+  Print: no container, so none of the tiers above apply. Columns are
+  min(4, count) — one row up to four tiles, rows of four past that — and the
+  last tile keeps its own cell. Count 1 stays at the base rule's one column.
+*/
+@media print {
+  .container {
+    container-type: normal;
+  }
+
+  .grid {
+    --cols: 4;
+  }
+
+  .grid[data-count='2'] {
+    --cols: 2;
+  }
+
+  .grid[data-count='3'] {
+    --cols: 3;
+  }
+
+  /* As specific as the odd-count rule it undoes: a bare `:last-child` loses to it. */
+  .grid > :last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+}

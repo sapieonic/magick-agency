@@ -11,6 +11,7 @@ import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { PageDescription } from '../../components/common/PageDescription';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import {
@@ -295,7 +296,14 @@ export function DncPage() {
 
   return (
     <div className={styles.page}>
-      <h1 className={styles.title}>Do Not Call</h1>
+      <PageHeader
+        title="Do Not Call"
+        // No "never": a soft-phone agent may still call by writing down why, and a scoped
+        // entry holds only where its Scope column says. AI calls and broadcasts ignore the list.
+        subtitle={softphoneOn
+          ? 'Numbers agency campaigns don’t dial and the soft phone stops, and who listed them.'
+          : 'Numbers agency campaigns don’t dial, and who listed them.'}
+      />
 
       {/*
         This list governs agency campaigns and the soft phone, and the copy has to
@@ -446,6 +454,8 @@ export function DncPage() {
 
       {!loading && entries.length > 0 && (
         <>
+          {/* Scrolls sideways on its own on a phone, not the whole page. */}
+          <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
@@ -476,7 +486,7 @@ export function DncPage() {
                       );
                     })()}
                   </td>
-                  <td>{formatDate(entry.created_at)}</td>
+                  <td className={styles.nowrap}>{formatDate(entry.created_at)}</td>
                   <td className={entry.added_by ? undefined : styles.unattributed}>
                     {addedByLabel(entry.added_by)}
                   </td>
@@ -500,6 +510,7 @@ export function DncPage() {
               ))}
             </tbody>
           </table>
+          </div>
 
           <div className={styles.pager}>
             <span className={styles.pagerLabel}>

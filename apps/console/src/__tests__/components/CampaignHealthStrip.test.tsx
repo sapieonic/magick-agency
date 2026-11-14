@@ -25,7 +25,7 @@ vi.mock('../../analytics/events', () => ({
   trackAgencyCampaignStallExpanded: mocks.trackAgencyCampaignStallExpanded,
 }));
 
-import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
+import { CampaignHealthStrip, resetSurfacedStallsForTests } from '../../components/agency/CampaignHealthStrip';
 
 function stats(over: Partial<AgencyCampaignStats> = {}): AgencyCampaignStats {
   return {
@@ -69,7 +69,10 @@ function renderStrip(props: Partial<Parameters<typeof CampaignHealthStrip>[0]> =
   );
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetSurfacedStallsForTests();
+});
 afterEach(cleanup);
 
 describe('the diagnosis banner', () => {
@@ -153,7 +156,7 @@ describe('the action links, and their gate', () => {
 });
 
 describe('the stall-surfaced event', () => {
-  it('reports a surfaced stall once per mount, not once per poll tick', () => {
+  it('reports a surfaced stall once, not once per poll tick', () => {
     const { rerender } = renderStrip();
     rerender(
       <MemoryRouter>
@@ -161,6 +164,31 @@ describe('the stall-surfaced event', () => {
       </MemoryRouter>,
     );
     expect(mocks.trackAgencyCampaignStallSurfaced).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports it once per session, not once per campaign screen that mounts a strip', () => {
+    /*
+      Every campaign screen mounts its own strip: Overview, then Contacts, then Call log is three
+      mounts and one stall. Each new mount here is the next screen opened.
+    */
+    renderStrip();
+    cleanup();
+    renderStrip();
+    cleanup();
+    renderStrip();
+    expect(mocks.trackAgencyCampaignStallSurfaced).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reports the same stall on another campaign, and another stall on this one', () => {
+    renderStrip();
+    cleanup();
+    renderStrip({ campaignId: 'camp-2' });
+    cleanup();
+    renderStrip({
+      stats: stats({ stall: { code: 'no_carrier_capacity' } }),
+    });
+    expect(mocks.trackAgencyCampaignStallSurfaced.mock.calls.map(([event]) => `${event.campaign_id}:${event.code}`))
+      .toEqual(['camp-1:no_agents_available', 'camp-2:no_agents_available', 'camp-1:no_carrier_capacity']);
   });
 });
 

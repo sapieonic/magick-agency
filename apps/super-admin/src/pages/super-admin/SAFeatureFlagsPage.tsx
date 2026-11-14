@@ -19,6 +19,7 @@ import { BulkRolloutModal } from '../../components/super-admin/feature-flags/Bul
 import { FlagPolicyWarning } from '../../components/super-admin/feature-flags/FlagPolicyWarning';
 import { humanize, asBool, canBulkRollOut, numericBoundsFor, toTriState, type TriState } from '../../components/super-admin/feature-flags/flagUtils';
 import styles from './SAFeatureFlagsPage.module.css';
+import flagStyles from '../../components/super-admin/feature-flags/featureFlags.module.css';
 
 /**
  * The value a flag inherits when no global override is set.
@@ -272,7 +273,7 @@ export default function SAFeatureFlagsPage() {
             : 'Try clearing the search or filters.'}
         />
       ) : (
-        <div className={styles.table}>
+        <div className={`${styles.table} ${flagStyles.stackedTable}`}>
           <table>
             <thead>
               <tr>
@@ -347,8 +348,10 @@ export default function SAFeatureFlagsPage() {
                         </span>
                       )}
                     </td>
+                    {/* `data-label` names the value where a phone stacks the row (the CSS). */}
                     <td
                       className={styles.defaultsCell}
+                      data-label="Inherited default"
                       title="Value used when no global override is set. The catalogue does not report whether this flag's environment variable is configured, so this is the env value if one is set and the registry default otherwise."
                     >
                       <strong>{String(inheritedDefault(entry) ?? '—')}</strong>

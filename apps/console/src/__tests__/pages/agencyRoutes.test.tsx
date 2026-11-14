@@ -74,12 +74,13 @@ describe('agency campaign routes', () => {
     const roster = readFileSync(
       resolve(process.cwd(), 'src/pages/agency/AgencyCampaignRosterPage.tsx'), 'utf8',
     );
-    // Both "Add contacts" affordances must target the new path.
-    for (const [name, source] of [['detail page', detail], ['roster page', roster]] as const) {
-      const addLink = source.match(/to=\{`\/agency\/campaigns\/\$\{[^}]+\}\/contacts(\/add)?`\}[\s\S]{0,220}?Add contacts/);
-      expect(addLink, `${name} has an "Add contacts" link`).toBeTruthy();
-      expect(addLink![1], `${name}'s "Add contacts" link must point at /contacts/add`).toBe('/add');
-    }
+    // The header's "Add contacts" (on every campaign screen in the workspace) targets the new path.
+    const addLink = detail.match(/to=\{`\/agency\/campaigns\/\$\{[^}]+\}\/contacts(\/add)?`\}[\s\S]{0,220}?Add contacts/);
+    expect(addLink, 'the campaign header has an "Add contacts" link').toBeTruthy();
+    expect(addLink![1], 'the header\'s "Add contacts" link must point at /contacts/add').toBe('/add');
+    // The roster carries that header (it sits in the campaign's workspace) and no "Add contacts" of its own.
+    expect(roster).toMatch(/<CampaignWorkspace\b/);
+    expect(roster).not.toMatch(/to=\{`\/agency\/campaigns\/\$\{[^}]+\}\/contacts(\/add)?`\}[\s\S]{0,220}?Add contacts/);
   });
 });
 

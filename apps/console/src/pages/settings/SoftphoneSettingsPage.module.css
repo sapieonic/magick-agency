@@ -34,19 +34,6 @@
   font-size: 13px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 1023px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 .stack {
   display: flex;
   flex-direction: column;
@@ -71,6 +58,7 @@
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -87,6 +75,7 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 180px;
 }
 
 .rowLabel {
@@ -104,6 +93,7 @@
 
 .rowControl:where(select) {
   width: 240px;
+  max-width: 100%;
   flex: none;
 }
 

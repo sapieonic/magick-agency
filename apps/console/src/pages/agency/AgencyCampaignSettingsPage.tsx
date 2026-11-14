@@ -74,8 +74,8 @@ import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
-import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
+import { CampaignWorkspaceFrame } from './campaign-detail/CampaignWorkspace';
+import { useCampaignChrome } from './campaign-detail/useCampaignChrome';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignSettingsPage.module.css';
 
@@ -124,7 +124,7 @@ export function AgencyCampaignSettingsPage() {
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   /** When `campaign` was last read or written: the header's "Updated" stamp. */
   const [campaignReadAt, setCampaignReadAt] = useState<Date | null>(null);
-  /** The campaign at click time, for the header's lifecycle controls (`useCampaignLifecycle`). */
+  /** The campaign at click time, for the header's lifecycle controls (`useCampaignChrome`). */
   const campaignRef = useRef<AgencyCampaign | null>(campaign);
   campaignRef.current = campaign;
   const [config, setConfig] = useState<CampaignConfigState | null>(null);
@@ -158,9 +158,8 @@ export function AgencyCampaignSettingsPage() {
   const [assignmentResetPending, setAssignmentResetPending] = useState(false);
 
   const canEdit = hasPermission(role, 'agency.campaigns.write');
-  // The header's lifecycle controls and Join as agent, gated as on the Monitor tabs.
+  // The sections a supervisor's reads fill (Agents' staffing, the upload history).
   const canSupervise = hasPermission(role, 'agency.supervise');
-  const canJoinStation = hasPermission(role, 'agency.station.connect');
   // Contact assignment's settings and outcome overrides: shown and sent only while
   // the flag is on (the server refuses a non-default value with it off).
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
@@ -277,15 +276,23 @@ export function AgencyCampaignSettingsPage() {
     }
   }, [id, tenantId, accountId, commitCampaign]);
 
-  const lifecycle = useCampaignLifecycle({
-    id,
-    tenantId,
-    accountId,
-    campaignRef,
-    refreshCampaign,
-    commitCampaign,
-    reload: () => void refreshCampaign(),
-    fromTab: 'settings',
+  /*
+    The header, its lifecycle controls, Retry contacts and the dialogs they open, through the
+    gates every campaign screen shares (`useCampaignChrome`). Its source is this page's own read
+    of the campaign row: no stats (so no health strip), and a lifecycle action or the header's
+    Refresh re-reads the row alone, never the form.
+  */
+  const chrome = useCampaignChrome({
+    campaignId: id,
+    active: 'settings',
+    detail: {
+      campaign,
+      lastUpdatedAt: campaignReadAt,
+      campaignRef,
+      refreshCampaign,
+      commitCampaign,
+      load: refreshCampaign,
+    },
   });
 
   const onSave = useCallback(async () => {
@@ -560,35 +567,28 @@ export function AgencyCampaignSettingsPage() {
   });
 
   return (
-    <div className={styles.page}>
-
-      {/*
+    /*
+      The frame every campaign screen shares, so the header and the tab bar sit where
+      they do on the Monitor tabs. No health strip: this page reads no stats.
+    */
+    <CampaignWorkspaceFrame
+      /*
         The campaign's own header, as on its Monitor tabs: its name and status, the
         lifecycle controls (pausing before an assignment-mode change is said below, so
-        it belongs here) and History — "who changed the caller ID?" is asked here.
-      */}
-      <CampaignDetailHeader
-        campaign={campaign}
-        lastUpdatedAt={campaignReadAt}
-        tenantId={tenantId}
-        accountId={accountId}
-        canControl={canSupervise}
-        busy={lifecycle.busy}
-        onAction={lifecycle.onAction}
-        canJoinStation={canJoinStation}
-        role={role}
-        onRefresh={() => void refreshCampaign()}
-      />
-
-      <CampaignTabs
-        campaignId={campaign.id}
-        active="settings"
-        role={role}
-        campaignStatus={campaign.status}
-      />
-
+        it belongs here), Retry contacts and History — "who changed the caller ID?" is asked here.
+      */
+      header={chrome.header}
+      tabs={
+        <CampaignTabs
+          campaignId={campaign.id}
+          active="settings"
+          role={role}
+          campaignStatus={campaign.status}
+        />
+      }
+    >
       {isLive && (
-        <p className={styles.liveNote}>
+        <p className={`${styles.liveNote} ${styles.pageNote}`}>
           This campaign is dialling. Changes apply to calls placed from now on — a call already
           under way keeps the settings it started with.
         </p>
@@ -869,21 +869,21 @@ export function AgencyCampaignSettingsPage() {
             Not a card of its own: its two panels carry their own titles.
           */}
           {historyVisible ? (
-            <div id="roster-uploads" className={styles.anchor}>
+            <div id="roster-uploads" className={`${styles.anchor} ${styles.wide}`}>
               <CampaignHistory campaignId={campaign.id} />
             </div>
           ) : null}
         </div>
       </div>
 
-      {lifecycle.confirmDialog}
+      {chrome.dialogs}
 
       <LeaveUnsavedDialog
         guard={leaveGuard}
         message={`You have ${plural(changes.length, 'unsaved change')} to this campaign’s settings. `
           + 'Leave now and they are lost; Cancel keeps you here to save them.'}
       />
-    </div>
+    </CampaignWorkspaceFrame>
   );
 }
 

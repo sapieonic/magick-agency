@@ -325,6 +325,44 @@
   color: var(--text-secondary);
 }
 
+/*
+  An opening-hours row, laid out by the width it has rather than wrapped: wrapping put Day and
+  Opens on one line and Closes with the bin on the next, in the narrow two-column editor and on a
+  phone alike. Wide enough, one line; narrower, the day with its bin over the two times.
+*/
+.hoursRows {
+  container-type: inline-size;
+}
+
+.editRow.hoursRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    'day remove'
+    'opens closes'
+    'note note';
+  align-items: end;
+}
+
+.hoursRow > :nth-child(1) { grid-area: day; }
+.hoursRow > :nth-child(2) { grid-area: opens; }
+.hoursRow > :nth-child(3) { grid-area: closes; }
+.hoursRow > .iconBtn { grid-area: remove; justify-self: end; }
+.hoursRow > .rowNote { grid-area: note; }
+
+@container (min-width: 460px) {
+  .hoursRow > .iconBtn {
+    justify-self: auto;
+  }
+
+  .editRow.hoursRow {
+    grid-template-columns: minmax(72px, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-areas:
+      'day opens closes remove'
+      'note note note note';
+  }
+}
+
 .rowNote {
   flex-basis: 100%;
   margin: 0;

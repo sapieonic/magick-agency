@@ -816,6 +816,48 @@ describe('campaign detail — sections', () => {
     expect(screen.getByTestId('stored-overdue').textContent).toBe('none');
   });
 
+  it('never shows the previous campaign’s header or controls while the next one is read', async () => {
+    let go: (to: string) => void = () => undefined;
+    function Driver() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/overview']}>
+        <Driver />
+        <Routes>
+          <Route path="/agency/campaigns/:id/overview" element={<DetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'Collections' });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+
+    let land: (value: AgencyCampaign) => void = () => undefined;
+    mocks.getAgencyCampaign.mockImplementation((id: string) =>
+      (id === 'camp-2' ? new Promise<AgencyCampaign>((r) => { land = r; }) : Promise.resolve(campaign())));
+    mocks.getAgencyCampaignStats.mockImplementation((id: string) => Promise.resolve(stats({ campaign_id: id })));
+    act(() => go('/agency/campaigns/camp-2/overview'));
+
+    expect(screen.queryByRole('heading', { level: 1, name: 'Collections' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+
+    await act(async () => land(campaign({ id: 'camp-2', name: 'Renewals' })));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+  });
+
+  it('shows the campaign when only its stats fail, and says the stats did, with a Retry', async () => {
+    mocks.getAgencyCampaignStats.mockRejectedValueOnce(new Error('Stats service unavailable'));
+    renderPage('agents');
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Collections' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    expect(screen.getByText('Stats service unavailable')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading' }));
+    await waitFor(() => expect(screen.queryByText('Stats service unavailable')).toBeNull());
+  });
+
   it('marks the open section as the current page, and only that one', async () => {
     renderPage('agents');
     await screen.findByRole('heading', { name: 'Collections' });
@@ -1700,7 +1742,8 @@ describe('the campaign header names the retry chain', () => {
       ]),
     );
 
-    renderPage();
+    // Opened at the parent's own URL: the header is only ever the campaign the URL names.
+    renderPage('overview', '/agency/campaigns/camp-root/overview');
     const strip = await screen.findByTestId('campaign-lineage');
     // A parent is not one of its own retries.
     expect(strip.textContent).toContain('Retried 2 times');

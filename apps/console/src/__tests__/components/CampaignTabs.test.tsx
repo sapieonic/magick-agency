@@ -127,3 +127,53 @@ describe('campaign tab bar', () => {
     expect(tabs).toMatch(/max-width:\s*100%/);
   });
 });
+
+describe('the current tab on a bar that scrolls (a phone)', () => {
+  /*
+    jsdom lays nothing out, so the bar's geometry is stated: 360px wide over 640px of tabs,
+    each tab 80px, in bar order; the bar's box at x = 0.
+  */
+  function withGeometry() {
+    const box = (left: number, width: number) =>
+      ({ left, right: left + width, width, top: 0, bottom: 40, height: 40, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+    const spies = [
+      vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.tagName === 'NAV' ? 640 : 0;
+      }),
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.tagName === 'NAV' ? 360 : 0;
+      }),
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        if (this.tagName === 'NAV') return box(0, 360);
+        const tabs = [...document.querySelectorAll('[data-testid^="campaign-tab-"]')].filter((el) => el.tagName === 'A');
+        const nav = this.closest('nav') as HTMLElement;
+        return box(tabs.indexOf(this) * 80 - nav.scrollLeft, 80);
+      }),
+    ];
+    return () => spies.forEach((spy) => spy.mockRestore());
+  }
+
+  it('scrolls the bar so the current tab is in sight, centred', () => {
+    const restore = withGeometry();
+    try {
+      show({ active: 'settings', agentsOnShift: 0, callbacksOverdue: 0 });
+      const nav = screen.getByTestId('campaign-tabs');
+      const tabs = [...nav.querySelectorAll('a')];
+      const index = tabs.findIndex((a) => a.getAttribute('aria-current') === 'page');
+      expect(index).toBeGreaterThan(4);
+      expect(nav.scrollLeft).toBe(index * 80 - (360 - 80) / 2);
+    } finally {
+      restore();
+    }
+  });
+
+  it('leaves the bar where it is when the current tab is already in sight', () => {
+    const restore = withGeometry();
+    try {
+      show({ active: 'overview', agentsOnShift: 0, callbacksOverdue: 0 });
+      expect(screen.getByTestId('campaign-tabs').scrollLeft).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+});

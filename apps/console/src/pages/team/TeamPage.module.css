@@ -48,6 +48,13 @@
   flex-shrink: 0;
 }
 
+.who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
 .name {
   font-size: 13px;
   font-weight: 500;
@@ -56,8 +63,8 @@
 }
 
 .email {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ── Role Badge ──────────────────────────────── */
@@ -140,6 +147,8 @@
 .actionsItem {
   display: flex;
   align-items: center;
+  /* Left, as a menu reads: the global button rule centred "Remove". */
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   padding: 8px 12px;
@@ -182,6 +191,8 @@
 .roleOption {
   display: flex;
   align-items: center;
+  /* Left, as a menu reads: the global button rule centred each role. */
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   padding: 6px 12px;

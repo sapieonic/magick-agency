@@ -131,7 +131,7 @@ export function AgentNav({
               data-current="true"
             >
               <Icon size={15} aria-hidden="true" />
-              {surface.label}
+              <span className={styles.label}>{surface.label}</span>
               {badgeFor(surface.id)}
             </span>
           );
@@ -143,13 +143,14 @@ export function AgentNav({
               key={surface.id}
               className={`${styles.item} ${styles.locked}`}
               aria-disabled="true"
-              title={lockedReason}
+              // As the link's: in the header the label can show as an icon alone, so name the screen first.
+              title={variant === 'header' ? [surface.label, lockedReason].filter(Boolean).join(' — ') : lockedReason}
               data-testid={`agent-nav-${surface.id}`}
               data-current="false"
               data-locked="true"
             >
               <Icon size={15} aria-hidden="true" />
-              {surface.label}
+              <span className={styles.label}>{surface.label}</span>
               {badgeFor(surface.id)}
             </span>
           );
@@ -160,13 +161,14 @@ export function AgentNav({
             key={surface.id}
             className={styles.item}
             to={surface.to}
-            title={hint ?? undefined}
+            // In the header the label can show as an icon alone, so the tooltip names the screen first.
+            title={variant === 'header' ? [surface.label, hint].filter(Boolean).join(' — ') : hint ?? undefined}
             aria-describedby={hint ? hintId : undefined}
             data-testid={`agent-nav-${surface.id}`}
             data-current="false"
           >
             <Icon size={15} aria-hidden="true" />
-            {surface.label}
+            <span className={styles.label}>{surface.label}</span>
             {badgeFor(surface.id)}
           </Link>
         );

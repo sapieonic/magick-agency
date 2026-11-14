@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { PageDescription } from '../../components/common/PageDescription';
 import * as config from '../../config';
 
@@ -38,5 +38,44 @@ describe('PageDescription — no docs link (B17)', () => {
     for (const name of ['DOCS_BASE_URL', 'DOCS_SLUGS', 'docsUrl']) {
       expect(name in config, name).toBe(false);
     }
+  });
+});
+
+describe('PageDescription — on a phone', () => {
+  function asPhone(matches: boolean) {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: matches && query.includes('max-width'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('starts closed on a phone, where an open guide fills the first screen', () => {
+    asPhone(true);
+    render(<PageDescription pageKey="team" description="Invite people and manage their roles." />);
+
+    expect(screen.getByText('Show page guide')).toBeDefined();
+    expect(screen.queryByText('Invite people and manage their roles.')).toBeNull();
+  });
+
+  it('starts open on a wider screen', () => {
+    asPhone(false);
+    render(<PageDescription pageKey="team" description="Invite people and manage their roles." />);
+
+    expect(screen.getByText('Invite people and manage their roles.')).toBeDefined();
+  });
+
+  it('keeps a guide someone opened on a phone open next time', () => {
+    asPhone(true);
+    const first = render(<PageDescription pageKey="team" description="Invite people and manage their roles." />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show page guide' }));
+    expect(screen.getByText('Invite people and manage their roles.')).toBeDefined();
+    first.unmount();
+
+    render(<PageDescription pageKey="team" description="Invite people and manage their roles." />);
+    expect(screen.getByText('Invite people and manage their roles.')).toBeDefined();
   });
 });

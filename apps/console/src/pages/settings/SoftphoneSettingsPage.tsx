@@ -37,6 +37,7 @@ import {
   type AgencySoftphoneSettings,
 } from '../../types/softphone';
 import styles from './SoftphoneSettingsPage.module.css';
+import { PanelGrid } from '../../components/common/PanelGrid';
 
 /**
  * Settings → Soft phone (`docs/softphone.md` §3, §7): what a soft-phone call uses
@@ -178,7 +179,12 @@ export default function SoftphoneSettingsPage() {
       ) : null}
       {saveError ? <ErrorAlert message={saveError} /> : null}
 
-      <div className={styles.grid}>
+      {/*
+        Two columns only where each can hold a row's label beside its control. The space is
+        what the sidebar and the Settings list leave, not the window: at 1366px a viewport
+        breakpoint kept two ~420px columns and squeezed "Summary profile" into a word a line.
+      */}
+      <PanelGrid min={480}>
         <div className={styles.stack}>
           <section className="card" aria-labelledby="sp-defaults">
             <h2 className={styles.cardTitle} id="sp-defaults">
@@ -468,7 +474,7 @@ export default function SoftphoneSettingsPage() {
             on past calls keep their meaning. Every call uses this set, whether or not it is logged to a campaign.
           </p>
         </section>
-      </div>
+      </PanelGrid>
     </div>
   );
 }

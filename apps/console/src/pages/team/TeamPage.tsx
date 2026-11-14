@@ -244,8 +244,9 @@ export default function TeamPage() {
             <table>
               <thead>
                 <tr>
+                  {/* Name and email share a column: as two, the table ran past its
+                      card at laptop width with the sidebar and Settings list open. */}
                   <th>Name</th>
-                  <th>Email</th>
                   <th>Role</th>
                   {/* "Invite", never "Status": `membership.status` is a
                       different field with different values (`active` /
@@ -277,13 +278,13 @@ export default function TeamPage() {
                         <div className={styles.avatar}>
                           {(m.user.display_name ?? m.user.email).charAt(0).toUpperCase()}
                         </div>
-                        <span className={styles.name}>
-                          {m.user.display_name || m.user.email.split('@')[0]}
-                        </span>
+                        <div className={styles.who}>
+                          <span className={styles.name}>
+                            {m.user.display_name || m.user.email.split('@')[0]}
+                          </span>
+                          <span className={styles.email}>{m.user.email}</span>
+                        </div>
                       </div>
-                    </td>
-                    <td>
-                      <span className={styles.email}>{m.user.email}</span>
                     </td>
                     <td>
                       <span

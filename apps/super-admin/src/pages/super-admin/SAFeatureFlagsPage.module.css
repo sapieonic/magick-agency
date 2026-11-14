@@ -11,7 +11,11 @@
   min-width: 200px;
 }
 
+/* A basis, not only a floor: the global select width is 100%, which put the
+   search and each select on a full-width row of its own at every size. */
 .select {
+  flex: 1 1 140px;
+  max-width: 220px;
   min-width: 140px;
 }
 
@@ -151,4 +155,26 @@
 .rolloutBtn {
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* A phone: the two selects share a row under the search, and each flag stacks
+   rather than squeezing four columns into the width (the name a word per
+   line, the global default cut off at the edge): name and description across
+   the width, then its default, the inherited default and Roll out on one row. */
+@media (max-width: 640px) {
+  .search {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .select {
+    max-width: none;
+    min-width: 0;
+  }
+
+  /* The stacked rows themselves: `feature-flags/featureFlags.module.css` `.stackedTable`. */
+
+  .featName {
+    flex-wrap: wrap;
+  }
 }

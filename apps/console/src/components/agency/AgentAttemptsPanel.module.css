@@ -211,4 +211,9 @@
     flex-direction: column;
     align-items: stretch;
   }
+
+  /* In a column the 220px basis became a height: an empty box above Add. */
+  .codeEntry > label {
+    flex: none;
+  }
 }

@@ -296,11 +296,12 @@ function FloorRow({ row }: { row: HomeFloorRow }) {
         {row.stale && <span className={styles.staleTag} data-testid="home-floor-stale">Not refreshed</span>}
         {row.onCall === null && <span className={styles.quiet}>{` ${plural(row.agentsLive, 'agent')} live`}</span>}
       </th>
-      <td className={styles.num}>{figure(row.onCall)}</td>
-      <td className={styles.num}>{figure(row.available)}</td>
-      <td className={styles.num}>{figure(row.wrapup)}</td>
-      <td className={styles.num}>{figure(row.onBreak)}</td>
-      <td className={styles.num}>
+      {/* `data-label` names each figure where a phone stacks the row (the CSS). */}
+      <td className={styles.num} data-label="On a call">{figure(row.onCall)}</td>
+      <td className={styles.num} data-label="Available">{figure(row.available)}</td>
+      <td className={styles.num} data-label="Wrapping up">{figure(row.wrapup)}</td>
+      <td className={styles.num} data-label="On break">{figure(row.onBreak)}</td>
+      <td className={styles.num} data-label="Abandonment (24h)">
         <span className={`${styles.rate} ${row.abandonment.level ? styles[row.abandonment.level] : ''}`}>
           {row.abandonment.text}
         </span>
