@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { envBoolean, type Env } from '../env.js';
+import { blankAsUnset, envBoolean, type Env } from '../env.js';
 
 /**
  * Analysis config (decision B4: one config block per area, so blocks never collide):
@@ -18,8 +18,6 @@ import { envBoolean, type Env } from '../env.js';
  *  - `postCallAnalysis` and `dialerAnalysis` pick and configure a client of the AI layer
  *    (`ai/`), which every AI call goes through.
  */
-
-const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
 
 /** The model when POST_CALL_ANALYSIS_MODEL is unset, per provider. */
 const DEFAULT_ANALYSIS_MODEL = {
@@ -44,9 +42,9 @@ const postCallAnalysisSchema = z.object({
   ).default('openai_compatible'),
   apiKey: z.string().optional(),
   /** Unset = the provider's default (`DEFAULT_ANALYSIS_MODEL`). */
-  model: z.preprocess(emptyToUndefined, z.string().optional()),
+  model: z.preprocess(blankAsUnset, z.string().optional()),
   /** openai_compatible only: the endpoint's base URL with its version path. Unset = OpenAI. */
-  baseUrl: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  baseUrl: z.preprocess(blankAsUnset, z.string().url().optional()),
   /**
    * openai_compatible only: extra request headers, `name=value` pairs separated by
    * commas. A malformed entry fails boot; its value is never echoed (it may be a secret).
@@ -71,7 +69,7 @@ const postCallAnalysisSchema = z.object({
     return out;
   }),
   /** openai_compatible only: `json_object` for endpoints without `json_schema` support. */
-  structuredOutput: z.preprocess(emptyToUndefined, z.enum(['json_schema', 'json_object']).default('json_schema')),
+  structuredOutput: z.preprocess(blankAsUnset, z.enum(['json_schema', 'json_object']).default('json_schema')),
   /**
    * Sampling temperature. `none` sends none, for models that refuse one (OpenAI's
    * reasoning models). Gemini 3.x ignores it either way (`ai/gemini.client.ts`).
@@ -85,7 +83,7 @@ const postCallAnalysisSchema = z.object({
    * is sent too, so tone, emotion, interruptions and silences inform the analysis.
    * Needs a provider that accepts audio (gemini); refused at boot otherwise.
    */
-  input: z.preprocess(emptyToUndefined, z.enum(['transcript', 'audio']).default('transcript')),
+  input: z.preprocess(blankAsUnset, z.enum(['transcript', 'audio']).default('transcript')),
   /** Unset = 30 s for `transcript`, 180 s for `audio` (upload, processing and a longer request). */
   timeoutMs: z.coerce.number().int().min(1000).optional(),
   maxConversationTurns: z.coerce.number().default(200),
