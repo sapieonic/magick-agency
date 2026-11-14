@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const repo = vi.hoisted(() => ({ listForHome: vi.fn(), floorSignatures: vi.fn() }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyCampaignRepository: repo }));
+const statsReads = vi.hoisted(() => ({ invalidateCampaignStatsReads: vi.fn() }));
+vi.mock('../../../src/agency/campaign-stats-reads.js', () => statsReads);
 
 import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
 import {
@@ -322,6 +324,20 @@ describe('what is read again on the next board', () => {
     advance();
     await computeHomeBoard(SCOPE, deps);
     expect(deps.liveStats).toHaveBeenCalledTimes(3);
+  });
+
+  it('a campaign it may keep is read past the stats route\'s shared read; a moving one shares it', async () => {
+    // A shared read could predate the floor signature it would be kept under.
+    list([row('r1', 'running'), row('s1', 'stopping'), row('p1', 'paused')]);
+    await computeHomeBoard(SCOPE, deps);
+    expect(statsReads.invalidateCampaignStatsReads.mock.calls).toEqual([['p1']]);
+
+    // Nothing is kept when the floor read fails, so nothing needs a fresh read.
+    statsReads.invalidateCampaignStatsReads.mockClear();
+    repo.floorSignatures.mockRejectedValue(new Error('db down'));
+    advance(HOME_STILL_MS);
+    await computeHomeBoard(SCOPE, deps);
+    expect(statsReads.invalidateCampaignStatsReads).not.toHaveBeenCalled();
   });
 
   it('every still campaign’s stats when the floor read fails (nothing reused on a guess)', async () => {

@@ -26,7 +26,10 @@ and its review fixes added or changed. The files Plivo steps 3 and 4 (2026-11-07
 statically and marked `~` (an `it.each` table or a loop counts as one, so they undercount); a file
 they changed shows its earlier count plus the cases the change added or removed, marked `~` too.
 The files the reports feature (RP1–RP16, 2026-11-08) added or changed show the counts Vitest
-printed that day for unit files and for the integration files of the final run.
+printed that day for unit files and for the integration files of the final run. The files the
+shared campaign stats read (2026-11-14) added or changed show the counts Vitest printed that day;
+where a changed file's old count was already stale (`left-session-guards.test.ts`), the new one
+corrects it.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -58,7 +61,7 @@ The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the 
 
 Mode B (2026-11-12, docs/inbound.md §6.1): `away-ring.ts` (`AwayRingService`, `runtime.awayRing`) is the `away_ring` break whose phone rings for inbound callers: the ring rule in one place (IQ78: `ringBlocks` and `canRing` over the session and its station's device, with the flags' `ringAllowed`), read by the refusals in order (`refusalFor`), the inbound search (`ringableSessions`, which reads nothing for an account `mayHaveAway` says has nobody away: an in-memory set per account, rebuilt by every reconcile pass), the ring as it starts (`ringableDevice`) and the reconcile; entering it, a queued one applied by the release with or without a socket (`applyQueued`, through `AgencyDialer.registerAwayRing`), the connector's return to it after an unanswered ring (`releaseInbound`, which settles an away pause queued behind the ring: a queued `device_away` ends the absence), the app's `device_away` during a ring (`declineRingForDeviceAway`, IQ83, through the connector's ring, `InboundConnector.rings`), its ends (`end`, `endOnReturn`, `endOnTakeOver`, `endForDevice`, `endOrCancelRing`: `device_away`, then `offline` with no socket; the `ring_off` push; audited `agency_session.away_ring_ended`), the pushes it sends (`send`, recording a failure on the device row unless the sender scoped it to the whole service) and the reconcile at boot and every 60 s (`reconcile`, keyed on `away_ring_since`, N1). Its Redis side is in `agent-state-machine.ts` (`enterAwayRing`, `releaseInboundToAwayRing`, `reseedAwayRing`, `endAwayRing`, `setOfflineUnlessAway`; the `ring` and `push` fields, the break's `reason` that the entry from `break` requires to be `device_away`, `reserveForInbound`'s `break` arm); `heartbeatLeaseMs` never renews it (N2); the runtime's station close and rehydrate keep it and end it on the agent's return.
 
-Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `home-board.ts` (Home's board, B28a: the active campaigns of an account with what the Overview's attention rules read (the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's carrier failures and recording, the settings); a still campaign's stats reused for a minute while its floor holds, the allocation and today's figures for a minute), `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`, `away-ring.ts`
+Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-stats-reads.ts` (the stats route's campaign reads, shared between requests), `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `home-board.ts` (Home's board, B28a: the active campaigns of an account with what the Overview's attention rules read (the fields of `/stats` Home reads, the allocation's staffing and attention figures, today's carrier failures and recording, the settings); a still campaign's stats reused for a minute while its floor holds, the allocation and today's figures for a minute), `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`, `away-ring.ts`
 
 | Test file | Cases |
 |---|---|
@@ -76,6 +79,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
 | `apps/server/test/integration/agency/agency-campaign-stats-concurrency.test.ts` | ~4 |
+| `apps/server/test/integration/agency/agency-campaign-stats-sharing.test.ts` | 6 |
 | `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-contact-claim-limit.test.ts` | 2 |
@@ -222,6 +226,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 22 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` | 62 |
 | `apps/server/test/unit/agency/campaign-series-parse.test.ts` | 13 |
+| `apps/server/test/unit/agency/campaign-stats-reads.test.ts` | 12 |
+| `apps/server/test/unit/agency/campaign-stats-route-sharing.test.ts` | 5 |
 | `apps/server/test/unit/agency/campaign-sip-removal-route.test.ts` | 4 |
 | `apps/server/test/unit/agency/campaign-start-roster-route.test.ts` | 16 |
 | `apps/server/test/unit/agency/campaign-stats-concurrency-guard-route.test.ts` | 2 |
@@ -245,7 +251,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
-| `apps/server/test/unit/agency/left-session-guards.test.ts` | 50 |
+| `apps/server/test/unit/agency/left-session-guards.test.ts` | 62 |
 | `apps/server/test/unit/agency/end-idle-session-elsewhere.test.ts` (OS7; Mode B: a parked phone told `left`) | 15 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 21 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
@@ -886,7 +892,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 19 |
+| `apps/server/test/unit/config/config.test.ts` | 21 |
 | `apps/server/test/unit/config/db-session-config.test.ts` (`DB_*_TIMEOUT_MS`: off by default, the refusals, `dbSessionOptions`, each process's `application_name`) | 7 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
@@ -1530,10 +1536,10 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
 | `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; `SET LOCAL` lifts one for a transaction) | 5 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
-| `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
+| `packages/db/test/unit/utils/single-flight.test.ts` | 19 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
 | `packages/db/test/unit/utils/transaction.test.ts` | 14 |
-| `packages/db/test/unit/utils/ttl-cache.test.ts` | 51 |
+| `packages/db/test/unit/utils/ttl-cache.test.ts` | 56 |
 
 ### Cross-cutting tests (`packages/db`)
 

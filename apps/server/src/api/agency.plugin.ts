@@ -104,6 +104,9 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
             getDistributedAccountCount: async () => ({ status: 'unavailable' as const }),
           },
         },
+    // How long a campaign's stats read is shared (`AGENCY_CAMPAIGN_STATS_CACHE_MS`), from this
+    // context's config; without a context the route reads the loaded config's.
+    ...(ctx ? { statsCacheMs: ctx.config.agency.campaignStatsCacheMs } : {}),
   };
   // `agencyRoutes(app, agencyRuntime)` (sessions and attempts) gets the runtime as a
   // per-access lookup (`lazyRuntime`), so the handler module keeps its plain signature.

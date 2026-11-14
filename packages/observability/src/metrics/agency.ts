@@ -831,6 +831,18 @@ export const agencyInsightsRollupFailuresTotal = counter(meter, 'agency_insights
   description: 'Insights rollup batches that failed and were rolled back (their marks stay dirty)',
 });
 
+// ─── Campaign stats reads (`apps/server/src/agency/campaign-stats-reads.ts`) ────────
+//
+// Every `GET …/campaigns/:id/stats` that reached its campaign's two SQL reads, by whether it ran
+// them (`scanned`) or took a read another request ran: one in flight or one settled less than
+// `AGENCY_CAMPAIGN_STATS_CACHE_MS` ago (`shared`). `scanned` is the database's share of the
+// supervisor polls; `shared / (scanned + shared)` is what the sharing saves. Unlabelled beyond the
+// result: a campaign label would be one series per campaign ever watched.
+
+export const agencyCampaignStatsReadsTotal = counter<'result'>(meter, 'agency_campaign_stats_reads_total', {
+  description: 'Campaign stats requests by whether they ran the campaign reads (scanned) or shared another request\'s (shared)',
+});
+
 // ─── Reports (docs/reports.md) ────────────────────────────────────────────────
 //
 // The report pipeline in `apps/server/src/agency/reports/`: the assembler builds a run's dataset,

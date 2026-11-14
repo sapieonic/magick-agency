@@ -56,6 +56,22 @@ describe('parseConfig', () => {
     expect(history({ AGENCY_CUSTOMER_EXPORT_MAX_ROWS: 'all' })).toBeNull();
   });
 
+  it('agency.campaignStatsCacheMs: 2 s by default, read from the env, 0 allowed, at most the 10 s poll', () => {
+    const ttl = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? result.config.agency.campaignStatsCacheMs : null;
+    };
+    expect(ttl({})).toBe(2_000);
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '500' })).toBe(500);
+    // 0: a read in flight is still shared, a settled one never served.
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '0' })).toBe(0);
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '10000' })).toBe(10_000);
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '10001' })).toBeNull();
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '-1' })).toBeNull();
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: '1.5' })).toBeNull();
+    expect(ttl({ AGENCY_CAMPAIGN_STATS_CACHE_MS: 'forever' })).toBeNull();
+  });
+
   describe('agency.reports (docs/reports.md "Config")', () => {
     const reports = (env: Record<string, string>) => {
       const result = parseConfig({ ...valid, ...env });

@@ -22,7 +22,11 @@ import { SingleFlight } from './single-flight.js';
  *  - **Invalidation-race safe** — a load that started before a concurrent
  *    `set`/`invalidate`/`clear` for the same key is **not** written back on
  *    completion, so a stale read in flight during a revocation/update can't
- *    resurrect the old value. (Guarded by a per-load token.)
+ *    resurrect the old value. (Guarded by a per-load token.) Nor is it shared
+ *    any further: a `getOrLoad` issued after the mutation starts its own load
+ *    instead of joining the older one, so a caller that writes, invalidates and
+ *    reads never gets back a value read before its write. Callers that joined
+ *    before the mutation still get the older load's result.
  *  - **Errors are never cached** — a rejected loader propagates and leaves the
  *    key empty so the next caller retries.
  *  - **Negative caching** — whatever the loader returns is cached, including
@@ -96,8 +100,9 @@ export class TtlCache<V> {
   /** Insert/replace `key`'s value, resetting its TTL and LRU recency. */
   set(key: string, value: V): void {
     // Cancel any in-flight load's pending write-back for this key so a slower,
-    // staler load can't overwrite this fresher value.
+    // staler load can't overwrite this fresher value, and stop sharing it.
     this.loadTokens.delete(key);
+    this.flight.forget(key);
     this.writeEntry(key, value);
   }
 
@@ -144,15 +149,20 @@ export class TtlCache<V> {
     return true;
   }
 
-  /** Drop a single key (and cancel any in-flight load's write-back for it). */
+  /**
+   * Drop a single key, cancel any in-flight load's write-back for it, and stop
+   * sharing that load: the next `getOrLoad` for the key loads afresh.
+   */
   invalidate(key: string): void {
     this.loadTokens.delete(key);
+    this.flight.forget(key);
     this.store.delete(key);
   }
 
-  /** Drop every entry (and cancel all in-flight loads' write-backs). */
+  /** Drop every entry, cancel all in-flight loads' write-backs and stop sharing them. */
   clear(): void {
     this.loadTokens.clear();
+    this.flight.forgetAll();
     this.store.clear();
   }
 
