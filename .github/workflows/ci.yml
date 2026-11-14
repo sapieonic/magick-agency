@@ -7,11 +7,10 @@ name: CI
 # release-please check. The `full-ci` label, a manual run and the weekly scheduled run run
 # everything; the weekly run catches what a scope rule may have missed.
 #
-# Job names never change with the scope, and the integration matrix is never skipped as a
-# whole: a skipped matrix job reports one check under its unexpanded name, which leaves a
-# required "Integration (db)" check waiting forever. Its steps are skipped instead. Every job
-# after the scope fails when the scope job failed: a skipped job counts as passing for a
-# required check, so a broken scope must not skip its way to green.
+# Job names never change with the scope. A job out of scope is skipped and starts no runner (a
+# skipped job counts as passing for a required check); the integration lanes are three named
+# jobs rather than a matrix for that reason (see below). Every job after the scope runs and
+# fails when the scope job failed, so a broken scope cannot skip its way to green.
 #
 # Adding any label starts a new run (only `full-ci` widens it): skipping the run for other
 # labels would report the checks as skipped, which reads as passing over an earlier failure.
@@ -175,34 +174,24 @@ jobs:
   # real timers (apps/server/vitest.config.integration.ts). Inside a job the files run in
   # parallel, one database and Redis db per worker, as many workers as the runner has
   # cores up to 4 (tooling/test-env.ts).
-  integration:
-    name: Integration (${{ matrix.section }})
+  #
+  # Three named jobs, not a matrix: a lane out of scope is skipped and starts no runner, and a
+  # skipped matrix would report one check under its unexpanded name, leaving a required
+  # "Integration (db)" check waiting. The first job holds the services and steps (YAML anchors);
+  # the other two reuse them with their own PACKAGE_DIR and INTEGRATION_LANE. When the scope job
+  # failed, every lane runs and fails at its first step.
+  integration-db:
+    name: Integration (db)
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.integration || '{}').db) }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - section: db
-            scope: db
-            dir: packages/db
-            lane: ''
-          - section: server
-            scope: server
-            dir: apps/server
-            lane: rest
-          - section: server wall-clock
-            scope: server
-            dir: apps/server
-            lane: wall-clock
     env:
-      IN_SCOPE: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] }}
-    # An empty image starts no service container: a lane out of scope does not pay for them.
-    services:
+      PACKAGE_DIR: packages/db
+      INTEGRATION_LANE: ''
+    services: &integration-services
       postgres:
-        image: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] && 'postgres:16-alpine' || '' }}
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: magick_agency_test
           POSTGRES_USER: magick_agency
@@ -213,32 +202,26 @@ jobs:
           --health-cmd "pg_isready -U magick_agency -d magick_agency_test"
           --health-interval 2s --health-timeout 5s --health-retries 20
       redis:
-        image: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] && 'redis:7-alpine' || '' }}
+        image: redis:7-alpine
         ports: ['6383:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 10
-    steps:
+    steps: &integration-steps
       - if: needs.changes.result != 'success'
         run: echo "::error::The CI scope job did not succeed, so this lane cannot be skipped as out of scope." && exit 1
-      - if: needs.changes.result == 'success' && env.IN_SCOPE != 'true'
-        run: echo "No backend change in scope; add the full-ci label to run this lane."
       # As docker/docker-compose.dev.yml: integration files run four at a time and peaked at 96
       # of Postgres's default 100 connections. A service container takes no command, so the
       # setting is written and the container restarted.
-      - if: env.IN_SCOPE == 'true'
-        timeout-minutes: 2
+      - timeout-minutes: 2
         run: |
           PG=${{ job.services.postgres.id }}
           docker exec "$PG" psql -U magick_agency -d magick_agency_test -qc "ALTER SYSTEM SET max_connections = 300"
           docker restart "$PG"
           until docker exec "$PG" pg_isready -q -U magick_agency -d magick_agency_test; do sleep 1; done
           docker exec "$PG" psql -U magick_agency -d magick_agency_test -tAc "SHOW max_connections"
-      - if: env.IN_SCOPE == 'true'
-        uses: actions/checkout@v7
-      - if: env.IN_SCOPE == 'true'
-        uses: pnpm/action-setup@v6
-      - if: env.IN_SCOPE == 'true'
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -248,18 +231,18 @@ jobs:
       # package mirror (a stalled mirror once held this step for 16 minutes before failing).
       # Nothing to do when the image already has them. Saved straight after the install, so a
       # job that fails later still keeps them; a set dpkg refuses falls back to apt-get.
-      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
+      - if: env.PACKAGE_DIR == 'apps/server'
         id: apt
         run: |
           if dpkg -s mpg123 sndfile-programs >/dev/null 2>&1; then echo "installed=true" >> "$GITHUB_OUTPUT"; fi
           echo "key=apt-audio-$ImageOS-$ImageVersion-v1" >> "$GITHUB_OUTPUT"
-      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server' && steps.apt.outputs.installed != 'true'
+      - if: env.PACKAGE_DIR == 'apps/server' && steps.apt.outputs.installed != 'true'
         id: apt-cache
         uses: actions/cache/restore@v6
         with:
           path: ~/apt-debs
           key: ${{ steps.apt.outputs.key }}
-      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server' && steps.apt.outputs.installed != 'true'
+      - if: env.PACKAGE_DIR == 'apps/server' && steps.apt.outputs.installed != 'true'
         timeout-minutes: 5
         run: |
           DEBS="$HOME/apt-debs"; PKGS="mpg123 sndfile-programs"
@@ -271,17 +254,38 @@ jobs:
             sudo rm -rf "$DEBS/partial" "$DEBS/lock" && sudo chown -R "$(id -u):$(id -g)" "$DEBS"
           fi
           sudo dpkg -i "$DEBS"/*.deb || { sudo apt-get update && sudo apt-get install -y --fix-broken --no-install-recommends $PKGS; }
-      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server' && steps.apt.outputs.installed != 'true' && steps.apt-cache.outputs.cache-hit != 'true'
+      - if: env.PACKAGE_DIR == 'apps/server' && steps.apt.outputs.installed != 'true' && steps.apt-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
           path: ~/apt-debs
           key: ${{ steps.apt.outputs.key }}
-      - if: env.IN_SCOPE == 'true'
-        run: pnpm install --frozen-lockfile
-      # From inside the package directory: dotenv resolves from cwd.
-      - if: env.IN_SCOPE == 'true'
-        run: pnpm test:integration
-        working-directory: ${{ matrix.dir }}
-        env:
-          INTEGRATION_LANE: ${{ matrix.lane }}
+      - run: pnpm install --frozen-lockfile
+      # From inside the package directory: dotenv resolves from cwd. INTEGRATION_LANE (job env)
+      # picks the server's lane.
+      - run: pnpm test:integration
+        working-directory: ${{ env.PACKAGE_DIR }}
+
+  integration-server:
+    name: Integration (server)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.integration || '{}').server) }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      PACKAGE_DIR: apps/server
+      INTEGRATION_LANE: rest
+    services: *integration-services
+    steps: *integration-steps
+
+  integration-server-wall-clock:
+    name: Integration (server wall-clock)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.integration || '{}').server) }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      PACKAGE_DIR: apps/server
+      INTEGRATION_LANE: wall-clock
+    services: *integration-services
+    steps: *integration-steps

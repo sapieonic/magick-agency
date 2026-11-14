@@ -11,22 +11,27 @@ name: Mobile
 # file): the debug Android build and its Kotlin tests on a pull request, the release Android
 # build on main, the iOS build (macOS, the costly runner) on main and by hand only.
 #
-# The `full-ci` label runs every pull request job; a manual run runs every job; the weekly
-# scheduled run runs every job but iOS. The pull request trigger has no path filter because a
-# path filter cannot be lifted by a label; the scope job decides, and the jobs it skips report as
-# skipped under their own names. Pushes to main keep the path filter. Adding any label starts a
-# new run (only `full-ci` widens it); see ci.yml.
+# Pull requests and pushes to main share one path filter, the same list as MOBILE_PREFIXES
+# (tooling/ci-scope.test.mjs holds the two equal): a change outside it starts no Mobile run at
+# all, not even the scope job. A label cannot lift a path filter, so `full-ci` runs every pull
+# request job only on a pull request inside the filter; Flutter builds from none of the shared
+# root files, so outside it there is nothing for those jobs to check. A manual run runs every job;
+# the weekly scheduled run every job but iOS. Inside the filter the scope job decides, and the
+# jobs it skips report as skipped under their own names. Do not make a Mobile job a required
+# check: on a pull request outside the filter it never reports, and the merge would wait for it.
+# Adding any label starts a new run (only `full-ci` widens it); see ci.yml.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main]
-    paths:
+    paths: &mobile-paths
       - apps/mobile/**
       - packages/contracts/**
-      - tooling/contracts-literals.mjs
+      - tooling/contracts-literals.*
       - packages/domain/src/customer-search-number.ts
       - .github/workflows/mobile.yml
+  push:
+    branches: [main]
+    paths: *mobile-paths
   workflow_dispatch:
   # Every job but iOS, once a week (Monday 03:47 UTC): main runs only what each push changes.
   schedule:

@@ -13,7 +13,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 
 import {
-  GLOBAL_FILES, READ_BY, SERVER_REPO_GUARDS, computeScope, onlyVersionChanged, readWorkspace, root, ruleCovers,
+  GLOBAL_FILES, MOBILE_PREFIXES, READ_BY, SERVER_REPO_GUARDS, computeScope, onlyVersionChanged, readWorkspace, root, ruleCovers,
 } from './ci-scope.mjs';
 
 const workspace = readWorkspace();
@@ -189,6 +189,24 @@ test("release-please's release PR runs the release-please check and nothing else
   // The same files without the version-only knowledge: a real package.json change runs the package.
   assert.deepEqual(computeScope({ files: ['apps/server/package.json'], workspace }).packages, ['apps/server']);
   assert.equal(computeScope({ files: ['apps/mobile/pubspec.yaml'], workspace }).android, true);
+});
+
+test("the Mobile workflow's path filter is MOBILE_PREFIXES, so no mobile change starts no run", () => {
+  // mobile.yml's pull request and push triggers share the `&mobile-paths` list; a change outside
+  // it starts no Mobile run at all, so a prefix missing from it would skip analyze and the builds.
+  const lines = readFileSync(join(root, '.github/workflows/mobile.yml'), 'utf8').split('\n');
+  const start = lines.findIndex((l) => /^\s+paths: &mobile-paths\s*$/.test(l));
+  assert.ok(start >= 0, 'mobile.yml has a `paths: &mobile-paths` list');
+  const filter = [];
+  for (const l of lines.slice(start + 1)) {
+    const item = /^\s+-\s+(\S+)\s*$/.exec(l);
+    if (!item) break;
+    filter.push(item[1]);
+  }
+  // A directory prefix is `<dir>/**`, a name prefix (`contracts-literals.`) is `<name>*`.
+  const asGlob = (p) => (p.endsWith('/') ? `${p}**` : p.endsWith('.') ? `${p}*` : p);
+  assert.deepEqual([...filter].sort(), MOBILE_PREFIXES.map(asGlob).sort());
+  assert.ok(lines.some((l) => /^\s+paths: \*mobile-paths\s*$/.test(l)), 'the push trigger reuses the same list');
 });
 
 test('every server repository guard exists', () => {
