@@ -143,7 +143,8 @@ export function AgentNav({
               key={surface.id}
               className={`${styles.item} ${styles.locked}`}
               aria-disabled="true"
-              title={lockedReason}
+              // As the link's: in the header the label can show as an icon alone, so name the screen first.
+              title={variant === 'header' ? [surface.label, lockedReason].filter(Boolean).join(' — ') : lockedReason}
               data-testid={`agent-nav-${surface.id}`}
               data-current="false"
               data-locked="true"

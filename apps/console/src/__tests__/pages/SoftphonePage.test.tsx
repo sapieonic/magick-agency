@@ -42,6 +42,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 }));
 
 import SoftphonePage from '../../pages/agency/SoftphonePage';
+import { SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/softphone/SoftphoneHeader';
 import { FakeSocket, latestSocket } from '../helpers/fakeSocket';
 import { BOOTSTRAP, manualCall, step } from '../helpers/softphone';
 
@@ -130,6 +131,10 @@ describe('/dialer/phone', () => {
     expect((screen.getByTestId('softphone-close') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId('agent-nav-attempts').getAttribute('data-locked')).toBe('true');
     expect(screen.getByTestId('agent-nav-attempts').closest('a')).toBeNull();
+    // Shown as an icon alone at laptop width, so the tooltip names the screen before why it is locked.
+    expect(screen.getByTestId('agent-nav-attempts').getAttribute('title')).toBe(
+      `My calls — ${SOFTPHONE_LEAVE_BLOCKED_COPY}`,
+    );
 
     await act(async () =>
       latestSocket().emit({ event: 'manual_call', call: step(manualCall(), 9, { state: 'bridged', bridged_at: '2026-10-30T10:00:09Z' }) }),

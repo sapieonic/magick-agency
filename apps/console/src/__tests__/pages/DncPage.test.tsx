@@ -228,6 +228,27 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     expect(document.body.textContent).toMatch(/writing down why — that reason is logged with their name/);
   });
 
+  /*
+   * The header's one line about reach. It said the soft phone "never" calls a listed
+   * number, under a description that says an agent may, by writing down why — and
+   * "never" is wrong for a scoped entry too, which holds only where its Scope names.
+   */
+  it('says in the header what the list stops, without "never", for either soft-phone setting', async () => {
+    render(<DncPage />);
+    const withPhone = await screen.findByText('Numbers agency campaigns don’t dial and the soft phone stops, and who listed them.');
+    expect(withPhone.textContent).not.toMatch(/\bnever\b/i);
+    cleanup();
+
+    mocks.flags.delete('agency_softphone_enabled');
+    try {
+      render(<DncPage />);
+      const withoutPhone = await screen.findByText('Numbers agency campaigns don’t dial, and who listed them.');
+      expect(withoutPhone.textContent).not.toMatch(/\bnever\b|soft phone/i);
+    } finally {
+      mocks.flags.add('agency_softphone_enabled');
+    }
+  });
+
   it('says nothing about the soft phone where it is off (agency_softphone_enabled)', async () => {
     mocks.flags.delete('agency_softphone_enabled');
     try {

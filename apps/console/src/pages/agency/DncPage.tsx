@@ -298,9 +298,11 @@ export function DncPage() {
     <div className={styles.page}>
       <PageHeader
         title="Do Not Call"
+        // No "never": a soft-phone agent may still call by writing down why, and a scoped
+        // entry holds only where its Scope column says. AI calls and broadcasts ignore the list.
         subtitle={softphoneOn
-          ? 'Numbers your campaigns and the soft phone never call, and who listed them.'
-          : 'Numbers your campaigns never dial, and who listed them.'}
+          ? 'Numbers agency campaigns don’t dial and the soft phone stops, and who listed them.'
+          : 'Numbers agency campaigns don’t dial, and who listed them.'}
       />
 
       {/*

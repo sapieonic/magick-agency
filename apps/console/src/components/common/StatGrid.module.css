@@ -104,6 +104,11 @@
   }
 }
 
+/*
+  Print: no container, so none of the tiers above apply. Columns are
+  min(4, count) — one row up to four tiles, rows of four past that — and the
+  last tile keeps its own cell. Count 1 stays at the base rule's one column.
+*/
 @media print {
   .container {
     container-type: normal;
@@ -113,7 +118,16 @@
     --cols: 4;
   }
 
-  .grid > :last-child {
+  .grid[data-count='2'] {
+    --cols: 2;
+  }
+
+  .grid[data-count='3'] {
+    --cols: 3;
+  }
+
+  /* As specific as the odd-count rule it undoes: a bare `:last-child` loses to it. */
+  .grid > :last-child:nth-child(odd) {
     grid-column: auto;
   }
 }
