@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Upload } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
@@ -10,7 +10,7 @@ import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
 import { IngestSummary } from '../campaigns/agency/IngestSummary';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
+import { CampaignWorkspace, type CampaignWorkspaceSection } from './campaign-detail/CampaignWorkspace';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import spine from '../../components/agency/SpineListLayout.module.css';
@@ -46,48 +46,35 @@ export function AgencyCampaignContactsPage() {
   if (!id) return null;
   return (
     <CampaignWorkspace campaignId={id} active="contacts">
-      <AddContactsSection id={id} />
+      {(campaign, workspace) => <AddContactsSection id={id} campaign={campaign} workspace={workspace} />}
     </CampaignWorkspace>
   );
 }
 
 /**
- * The upload itself. It keeps its OWN read of the campaign rather than the workspace's:
- * the form is decided by the campaign's status (a finished campaign is refused, a running
- * one warned about), so it waits for that read and offers Retry when it fails, and the
- * ingest's start re-reads the campaign and repaints this form as closed if it ended
- * meanwhile. The workspace's read answers neither (it hands a failure over as `null`, and
- * this section cannot write into it). One extra read when the page opens, never polled.
+ * The upload itself, on the workspace's campaign: the form is decided by its status (a finished
+ * campaign is refused, a running one warned about), so it waits for the workspace's first read
+ * (a failed one is said above, with Retry), and the ingest's start re-reads the campaign and
+ * writes it into the workspace (`commitCampaign`), so the form and the header repaint together
+ * as closed if it ended meanwhile. No read of its own: the header's is the only one.
  */
-function AddContactsSection({ id }: { id: string }) {
+function AddContactsSection({
+  id,
+  campaign,
+  workspace,
+}: {
+  id: string;
+  campaign: AgencyCampaign | null;
+  workspace: CampaignWorkspaceSection;
+}) {
   const { tenantId, accountId, role } = useTenant();
-
-  const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { loading, commitCampaign } = workspace;
   // "Campaigns / <name> / Contacts / Add contacts": back to the roster, where this page is
   // reached from and where an operator who has finished uploading looks at what landed.
   useCampaignCrumbs(id, campaign, 'contacts', [{ label: 'Add contacts' }]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canAdd = hasPermission(role, 'agency.campaigns.write');
-
-  const load = useCallback(async () => {
-    if (!id || !tenantId || !accountId) return;
-    setLoading(true);
-    setLoadError(null);
-    try {
-      setCampaign(await getAgencyCampaign(id, tenantId, accountId));
-    } catch (err: unknown) {
-      setLoadError(err instanceof Error ? err.message : 'Could not load this campaign.');
-    } finally {
-      setLoading(false);
-    }
-  }, [id, tenantId, accountId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const {
     limits,
@@ -129,19 +116,20 @@ function AddContactsSection({ id }: { id: string }) {
      */
     resolveCampaignId: useCallback(async () => {
       if (!id || !tenantId || !accountId) return id;
+      // A failed read throws: the start fails rather than trusting the status from page load.
       const fresh = await getAgencyCampaign(id, tenantId, accountId);
-      setCampaign(fresh);
+      commitCampaign(fresh);
       if (fresh.status === 'stopped' || fresh.status === 'completed') {
         throw new Error(
           `This campaign is ${fresh.status} — contacts added now would never be dialled. Nothing was imported.`,
         );
       }
       return id;
-    }, [id, tenantId, accountId]),
+    }, [id, tenantId, accountId, commitCampaign]),
   });
 
   if (loading) return <LoadingSpinner />;
-  if (loadError && !campaign) return <ErrorAlert message={loadError} onRetry={() => void load()} />;
+  // The workspace says why above, with Retry.
   if (!campaign) return null;
 
   const mappingBlock = mapping ? mappingBlockReason(mapping) : null;

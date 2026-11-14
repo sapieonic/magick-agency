@@ -52,8 +52,13 @@ interface CampaignDetailHeaderProps {
   concurrency?: AgencyCampaignConcurrency | null;
   tenantId: string | null;
   accountId: string | null;
-  /** `agency.supervise`: the lifecycle buttons and the secondary actions. */
+  /** `agency.supervise`: the lifecycle buttons. */
   canControl: boolean;
+  /**
+   * `agency.campaigns.write`: Add contacts (the ingest routes' permission), or New campaign in
+   * its place once the campaign has ended. Not `canControl`: an upload is not a supervisory act.
+   */
+  canAddContacts: boolean;
   /** The lifecycle action in flight, which disables every button. */
   busy: Action | null;
   onAction: (action: Action) => void;
@@ -84,6 +89,7 @@ export function CampaignDetailHeader({
   tenantId,
   accountId,
   canControl,
+  canAddContacts,
   busy,
   onAction,
   onRetry,
@@ -211,7 +217,7 @@ export function CampaignDetailHeader({
               </span>
             );
           })}
-        {canControl && (
+        {canAddContacts && (
           <>
             {terminal ? (
               <Link

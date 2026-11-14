@@ -35,7 +35,7 @@ export function AgencyCampaignDetailPage() {
   const panel = campaignPanelFromPath(pathname);
 
   const detail = useAgencyCampaignDetail(id, tenantId, accountId);
-  const { campaign, stats, error, loading, load } = detail;
+  const { campaign, stats, error, statsError, loading, load } = detail;
   /** Bumped by the Refresh control so the analytic tabs' range reads re-read too. */
   const [insightsRefresh, setInsightsRefresh] = useState(0);
   /**
@@ -117,6 +117,7 @@ export function AgencyCampaignDetailPage() {
 
   if (loading) return <LoadingSpinner />;
 
+  const readError = error ?? statsError;
   if (error && !campaign) {
     return <ErrorAlert message={error} onRetry={() => void load()} />;
   }
@@ -155,7 +156,8 @@ export function AgencyCampaignDetailPage() {
       {/* No description line: the API has no such column, so it was a paragraph
           that could only ever be empty. See the note on `AgencyCampaign`. */}
 
-      {error && <ErrorAlert message={error} onRetry={() => void load()} />}
+      {/* The campaign's read, or its stats' alone: the floor and the strip read those, so it is said. */}
+      {readError && <ErrorAlert message={readError} onRetry={() => void load()} />}
 
       {/*
         The floor and the roster together, because the question they answer is a

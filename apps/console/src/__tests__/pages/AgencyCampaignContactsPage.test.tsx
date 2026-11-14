@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 import type { AgencyCampaign, AgencyColumnAnalysis } from '../../types/agency-campaign';
@@ -154,6 +154,41 @@ describe('add contacts — in the campaign’s workspace', () => {
     expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Collections');
     expect((await screen.findByTestId('campaign-tab-contacts')).getAttribute('aria-current')).toBe('page');
     expect(await screen.findByRole('heading', { level: 2, name: 'Add contacts' })).toBeTruthy();
+  });
+});
+
+describe('add contacts — one read of the campaign, shared with the header', () => {
+  it('reads the campaign once on opening: the header’s read is the section’s', async () => {
+    renderPage();
+
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    expect(mocks.getAgencyCampaign).toHaveBeenCalledTimes(1);
+  });
+
+  it('repaints the header and the form together when the start finds the campaign ended', async () => {
+    renderPage();
+    await pickFile();
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'stopped' }));
+    fireEvent.click(screen.getByRole('button', { name: /add to campaign/i }));
+
+    // The form is closed, and the header says the same status rather than its own older read.
+    expect(await screen.findByText(/has finished, so contacts added now would never be dialled/i)).toBeTruthy();
+    expect(mocks.startRosterIngest).not.toHaveBeenCalled();
+    const actions = screen.getByTestId('campaign-actions');
+    expect(within(actions).getByRole('link', { name: 'New campaign' })).toBeTruthy();
+    expect(within(actions).queryByRole('link', { name: 'Add contacts' })).toBeNull();
+  });
+
+  it('says once that the campaign could not be read, and Retry brings the form', async () => {
+    mocks.getAgencyCampaign.mockRejectedValueOnce(new Error('Campaign service unavailable'));
+    renderPage();
+
+    expect(await screen.findAllByText('Campaign service unavailable')).toHaveLength(1);
+    expect(document.querySelector('input[type=file]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading' }));
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    expect(screen.queryByText('Campaign service unavailable')).toBeNull();
   });
 });
 

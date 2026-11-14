@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CampaignDetailHeader } from '../../pages/agency/campaign-detail/CampaignDetailHeader';
+type HeaderProps = Parameters<typeof CampaignDetailHeader>[0];
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
@@ -21,7 +22,7 @@ afterEach(cleanup);
 
 const NAME = 'CD 11TH NOV — Retry 1';
 
-function show(over: Partial<AgencyCampaign> = {}) {
+function show(over: Partial<AgencyCampaign> = {}, props: Partial<HeaderProps> = {}) {
   const campaign = { id: 'camp-1', name: NAME, status: 'paused', ...over } as AgencyCampaign;
   return render(
     <MemoryRouter>
@@ -32,12 +33,14 @@ function show(over: Partial<AgencyCampaign> = {}) {
         tenantId="tenant-1"
         accountId="account-1"
         canControl
+        canAddContacts
         busy={null}
         onAction={vi.fn()}
         onRetry={vi.fn()}
         canJoinStation
         role="tenant_owner"
         onRefresh={vi.fn()}
+        {...props}
       />
     </MemoryRouter>,
   );
@@ -89,6 +92,33 @@ describe('campaign header: the actions on a phone', () => {
     expect(phone).not.toMatch(/\.actionButton[^{]*\{[^}]*width:\s*100%/);
     const historyCss = readFileSync(resolve(__dirname, '../../components/agency/CampaignHistoryLink.module.css'), 'utf-8');
     expect(historyCss).toMatch(/@media \(max-width: 680px\)[\s\S]*\.compact \.label \{[^}]*clip:\s*rect\(0, 0, 0, 0\)/);
+  });
+});
+
+describe('campaign header: Add contacts follows the upload’s permission', () => {
+  /*
+    The ingest routes gate on `agency.campaigns.write`, not `agency.supervise`: the two share a
+    floor today, and a split between them must neither take the only Add contacts away from a
+    role that may upload nor offer it to one that would be refused.
+  */
+  it('offers Add contacts to a role that may upload but not supervise, without the lifecycle buttons', () => {
+    show({}, { canControl: false, canAddContacts: true });
+    const actions = screen.getByTestId('campaign-actions');
+    expect(within(actions).getByRole('link', { name: 'Add contacts' }).getAttribute('href'))
+      .toBe('/agency/campaigns/camp-1/contacts/add');
+    expect(within(actions).queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+
+  it('offers New campaign in its place once the campaign has ended, on the same permission', () => {
+    show({ status: 'completed' }, { canControl: false, canAddContacts: true });
+    expect(screen.getByRole('link', { name: 'New campaign' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Add contacts' })).toBeNull();
+  });
+
+  it('does not offer it to a supervisor who may not upload', () => {
+    show({}, { canControl: true, canAddContacts: false });
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Add contacts' })).toBeNull();
   });
 });
 

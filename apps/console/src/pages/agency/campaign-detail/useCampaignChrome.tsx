@@ -10,6 +10,26 @@ import type { CampaignTabId } from '../../../utils/agencyCampaignTabs';
 import { CampaignDetailHeader } from './CampaignDetailHeader';
 import type { AgencyCampaignDetail } from './useAgencyCampaignDetail';
 import { useCampaignLifecycle } from './useCampaignLifecycle';
+import type { AgencyCampaignStats } from '../../../types/agency-campaign';
+
+/**
+ * What the chrome reads off the screen's campaign: `useAgencyCampaignDetail` as it is (the
+ * Monitor tabs, `CampaignWorkspace`), or a screen's own read of the campaign row (Settings).
+ */
+export type CampaignChromeSource = Pick<
+  AgencyCampaignDetail,
+  'campaign' | 'lastUpdatedAt' | 'campaignRef' | 'refreshCampaign' | 'commitCampaign'
+> & {
+  /** Re-read what the screen shows: after a lifecycle action, and the header's Refresh by default. */
+  load: () => unknown;
+  /**
+   * The campaign's stats, `null` until read or when the read failed. Left out by a screen that
+   * reads none (Settings): no health strip and no lines in use, the header alone.
+   */
+  stats?: AgencyCampaignStats | null;
+  /** The screen polls the campaign: said beside the header's "Updated" stamp. */
+  shouldPoll?: boolean;
+};
 
 export interface CampaignChrome {
   /** The campaign's header, or `null` until it has been read. */
@@ -19,15 +39,22 @@ export interface CampaignChrome {
   /** The Stop confirmation and the retry dialog, mounted at the end of the page. */
   dialogs: ReactNode;
   canControl: boolean;
+  /** `agency.campaigns.write`: Add contacts (or New campaign once it has ended). */
+  canAddContacts: boolean;
   canRetry: boolean;
   openRetry: () => void;
 }
 
 /**
- * What every campaign screen that owns the campaign's reads puts above and below its section:
- * the header with its lifecycle controls, the health strip, and the dialogs those controls open.
- * One place for the gates, so the Monitor tabs and the other sections (`CampaignWorkspace`)
- * cannot disagree on who sees which button.
+ * What every campaign screen puts above and below its section: the header with its lifecycle
+ * controls, the health strip, and the dialogs those controls open. One place for the gates, so
+ * the Monitor tabs, the other sections (`CampaignWorkspace`) and Settings cannot disagree on who
+ * sees which button.
+ *
+ * Only ever for the campaign the route names: a source still holding another campaign (an
+ * answer for the previous one, before a screen without a `key` has caught up with the move)
+ * renders no header, strip or retry dialog, rather than one campaign's name and controls over
+ * the next one's id.
  */
 export function useCampaignChrome({
   campaignId,
@@ -38,15 +65,19 @@ export function useCampaignChrome({
   /** The route's id: what the lifecycle actions are sent for. */
   campaignId: string | undefined;
   active: CampaignTabId;
-  detail: AgencyCampaignDetail;
+  detail: CampaignChromeSource;
   /** The header's Refresh; re-reads the campaign when not given. */
   onRefresh?: () => void;
 }): CampaignChrome {
   const { tenantId, accountId, role } = useTenant();
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const [retryOpen, setRetryOpen] = useState(false);
-  const { campaign, stats, lastUpdatedAt, shouldPoll, campaignRef, load, refreshCampaign, commitCampaign } = detail;
+  // Open for the campaign it was opened on, never for the next one a screen without a `key` moves to.
+  const [retryOpenFor, setRetryOpenFor] = useState<string | null>(null);
+  const { lastUpdatedAt, shouldPoll = false, campaignRef, load, refreshCampaign, commitCampaign } = detail;
+  const campaign = detail.campaign && detail.campaign.id === campaignId ? detail.campaign : null;
+  const stats = detail.stats ?? null;
+  const readsStats = detail.stats !== undefined;
 
   /**
    * `agency.supervise`, floored at `account_admin`.
@@ -59,6 +90,12 @@ export function useCampaignChrome({
    * checking the looser one here would show an `operator` four buttons that 403.
    */
   const canControl = hasPermission(role, 'agency.supervise');
+  /*
+    Add contacts uploads a roster into the campaign (the ingest routes gate on
+    `agency.campaigns.write`), and New campaign in its place creates one: the same permission,
+    not `agency.supervise`, so a split between the two cannot take the only entry away.
+  */
+  const canAddContacts = hasPermission(role, 'agency.campaigns.write');
   // Floors at `agent`, so everyone above holds it too — a supervisor covering a
   // shift is the case this exists for.
   const canJoinStation = hasPermission(role, 'agency.station.connect');
@@ -68,7 +105,7 @@ export function useCampaignChrome({
     (`agency.supervise`). Same `account_admin` floor today; naming both keeps
     this affordance correct if either moves.
   */
-  const canRetry = canControl && hasPermission(role, 'agency.campaigns.write');
+  const canRetry = canControl && canAddContacts;
 
   const lifecycle = useCampaignLifecycle({
     id: campaignId,
@@ -81,7 +118,8 @@ export function useCampaignChrome({
     fromTab: active,
   });
 
-  const openRetry = () => setRetryOpen(true);
+  const openRetry = () => setRetryOpenFor(campaignId ?? null);
+  const retryOpen = retryOpenFor !== null && retryOpenFor === campaignId;
 
   const header = campaign ? (
     <CampaignDetailHeader
@@ -92,6 +130,7 @@ export function useCampaignChrome({
       tenantId={tenantId}
       accountId={accountId}
       canControl={canControl}
+      canAddContacts={canAddContacts}
       busy={lifecycle.busy}
       onAction={lifecycle.onAction}
       onRetry={canRetry ? openRetry : undefined}
@@ -108,7 +147,7 @@ export function useCampaignChrome({
     read: a diagnosis that only appeared on the section you happened to be on
     would be invisible to the supervisor who opened another one first.
   */
-  const strip = campaign ? (
+  const strip = campaign && readsStats ? (
     <CampaignHealthStrip stats={stats} campaignId={campaign.id} campaignStatus={campaign.status} role={role} />
   ) : null;
 
@@ -140,9 +179,9 @@ export function useCampaignChrome({
           */
           selector={DEFAULT_RETRY_SELECTOR}
           origin="campaign"
-          onClose={() => setRetryOpen(false)}
+          onClose={() => setRetryOpenFor(null)}
           onCreated={(result) => {
-            setRetryOpen(false);
+            setRetryOpenFor(null);
             showToast(retryCreatedToast(result), 'success');
             navigate(`/agency/campaigns/${result.campaign.id}`);
           }}
@@ -151,5 +190,5 @@ export function useCampaignChrome({
     </>
   );
 
-  return { header, strip, dialogs, canControl, canRetry, openRetry };
+  return { header, strip, dialogs, canControl, canAddContacts, canRetry, openRetry };
 }

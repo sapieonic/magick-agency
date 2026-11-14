@@ -496,7 +496,9 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
           {/*
             No Add contacts here: the campaign header above carries it (and, once the
             campaign has ended, New campaign in its place, since an ended campaign takes
-            no more contacts). `…/contacts` is the roster, and `…/contacts/add` the upload.
+            no more contacts), gated as this page's `canUpload` is (`agency.campaigns.write`)
+            and shown once the campaign is read, whatever its stats do. `…/contacts` is the
+            roster, and `…/contacts/add` the upload.
           */}
           {canExport && (
             <button
