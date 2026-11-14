@@ -1,7 +1,7 @@
 /* See `PanelGrid.tsx`. `min(100%, …)` keeps a single column from overflowing a phone. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--panel-min, 520px)), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--panel-min)), 1fr));
   gap: 16px;
   align-items: start;
   min-width: 0;

@@ -6,7 +6,8 @@
 /* Summary cards */
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  /* Two abreast on a phone too, not a column of half-empty full-width cards. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -381,27 +382,5 @@
   .bulkBar {
     margin-left: 0;
     width: 100%;
-  }
-}
-
-/* A phone: the two summary cards side by side, not a column of two
-   half-empty full-width cards above the filters. */
-@media (max-width: 640px) {
-  .statsGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-}
-
-/* A phone: a full-width row (a number's details, the empty state) spans the
-   table's 820px floor, so its content sat across the sideways-scrolling box
-   with half of it out of view. It keeps to the visible box instead and stays
-   put while the columns above scroll: the screen less the page gutters, the
-   box's border and the cell's padding. */
-@media (max-width: 640px) {
-  .table td[colspan] > * {
-    position: sticky;
-    left: 16px;
-    max-width: calc(100vw - 66px);
   }
 }

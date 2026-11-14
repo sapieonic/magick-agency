@@ -118,11 +118,8 @@ export function AgencyCampaignAttemptsPage() {
 }
 
 /**
- * The section itself. `campaign` is the workspace's read (`null` until it answers, or when
- * it fails: the attempts are the point of the page, and a header that will not load is no
- * reason to withhold them). It is replaced on the header's poll while the campaign dials,
- * so it only names things here (the export's file, the dispositions, the recording note);
- * no read is keyed on it.
+ * The call log itself, given the workspace's campaign (see `CampaignWorkspace`) for names
+ * only: the export's file, the dispositions, the recording note.
  */
 function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaign | null }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -394,11 +391,9 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><PhoneOutgoing size={20} /></span>
-          {/* The section's title: the campaign's name is the header's h1, its status beside it. */}
           <h2 className={spine.title}>Call log</h2>
         </div>
         <div className={spine.actions}>
-          {/* Named for what it re-reads: the header's own Refresh re-reads the campaign. */}
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}

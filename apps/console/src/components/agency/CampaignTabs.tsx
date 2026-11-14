@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
+import { useKeepCurrentInStrip } from '../../hooks/useKeepCurrentInStrip';
 import { hasPermission } from '../../utils/permissions';
 import {
   barTabFor,
@@ -109,22 +110,8 @@ export function CampaignTabs({
   const current = barTabFor(active);
   const navRef = useRef<HTMLElement>(null);
 
-  /*
-    The current tab in view. On a phone the bar scrolls sideways and opened at its start, so
-    on Contacts, Call log or Settings the tab that says where you are was off the right edge.
-    The bar's own scroll only: never the page's, so a tab click does not move the screen.
-  */
-  useLayoutEffect(() => {
-    const nav = navRef.current;
-    const tab = nav?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!nav || !tab || nav.scrollWidth <= nav.clientWidth) return;
-    const navBox = nav.getBoundingClientRect();
-    const tabBox = tab.getBoundingClientRect();
-    if (tabBox.left >= navBox.left && tabBox.right <= navBox.right) return;
-    // Its place along the bar's content, wherever the bar is scrolled to now; then centred.
-    const left = tabBox.left - navBox.left + nav.scrollLeft;
-    nav.scrollLeft = Math.max(0, left - (nav.clientWidth - tabBox.width) / 2);
-  }, [current]);
+  // On a phone the bar scrolls sideways; the tab saying where you are is kept in sight.
+  useKeepCurrentInStrip(navRef, '[aria-current="page"]', current);
 
   return (
     <nav ref={navRef} className={styles.tabs} aria-label="Campaign sections" data-testid="campaign-tabs">

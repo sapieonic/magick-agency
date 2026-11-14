@@ -208,7 +208,6 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-width: 0;
 }
 
 .subTitle {
@@ -670,39 +669,33 @@
 */
 .overviewGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-  grid-template-rows: auto 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
-.overviewGrid > :nth-child(1) {
-  grid-area: 1 / 1;
-}
-
-.overviewGrid > :nth-child(2) {
-  grid-area: 1 / 2 / span 2;
-}
-
-.overviewGrid > :nth-child(3) {
-  grid-area: 2 / 1;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-}
-
-@media (max-width: 1100px) {
+@media (min-width: 1101px) {
   .overviewGrid {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      'attention roster'
+      'teasers roster';
+  }
+
+  .overviewGrid > :first-child {
+    grid-area: attention;
+  }
+
+  .overviewGrid > :not(:first-child, .teasers) {
+    grid-area: roster;
+  }
+
+  /* Under the attention list the cards stack, one per row. */
+  .overviewGrid > .teasers {
+    grid-area: teasers;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
-  }
-
-  .overviewGrid > :nth-child(n) {
-    grid-area: auto;
-  }
-
-  .overviewGrid > :nth-child(3) {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-    gap: 16px;
+    gap: 12px;
   }
 }
 
@@ -816,7 +809,7 @@
 
 .teasers {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 16px;
 }
 

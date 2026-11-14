@@ -47,7 +47,6 @@ function ManualCallsSection({ campaignId, campaign }: { campaignId: string; camp
           <span className={spine.titleIcon} aria-hidden="true">
             <Phone size={20} />
           </span>
-          {/* The section's title: the campaign's name is the header's h1. */}
           <h2 id="manual-calls-title" className={spine.title}>Call log</h2>
         </div>
       </header>

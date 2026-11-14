@@ -38,7 +38,8 @@
   --cols: 1;
 }
 
-.grid[data-odd='true'] > :last-child {
+/* Two abreast and an odd count: the last tile across the row. The tiers below reset it. */
+.grid > :last-child:nth-child(odd) {
   grid-column: 1 / -1;
 }
 

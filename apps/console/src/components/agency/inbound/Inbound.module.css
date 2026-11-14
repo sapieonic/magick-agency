@@ -344,14 +344,10 @@
   align-items: end;
 }
 
-.hoursRow > .iconBtn {
-  justify-self: end;
-}
-
 .hoursRow > :nth-child(1) { grid-area: day; }
 .hoursRow > :nth-child(2) { grid-area: opens; }
 .hoursRow > :nth-child(3) { grid-area: closes; }
-.hoursRow > .iconBtn { grid-area: remove; }
+.hoursRow > .iconBtn { grid-area: remove; justify-self: end; }
 .hoursRow > .rowNote { grid-area: note; }
 
 @container (min-width: 460px) {

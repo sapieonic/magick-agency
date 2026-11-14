@@ -28,7 +28,7 @@ describe('StatGrid', () => {
     ).toBe(5);
   });
 
-  it('marks its count, and an odd one, for the layout', () => {
+  it('marks its count for the layout', () => {
     render(
       <StatGrid testId="grid">
         <div>one</div>
@@ -40,17 +40,6 @@ describe('StatGrid', () => {
     );
     const grid = screen.getByTestId('grid');
     expect(grid.getAttribute('data-count')).toBe('3');
-    expect(grid.getAttribute('data-odd')).toBe('true');
     expect(grid.children).toHaveLength(3);
-  });
-
-  it('leaves an even count unmarked as odd', () => {
-    render(
-      <StatGrid testId="grid">
-        <div>one</div>
-        <div>two</div>
-      </StatGrid>,
-    );
-    expect(screen.getByTestId('grid').hasAttribute('data-odd')).toBe(false);
   });
 });

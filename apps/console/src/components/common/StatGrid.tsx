@@ -16,24 +16,13 @@ import styles from './StatGrid.module.css';
 export function StatGrid({
   children,
   testId,
-  label,
 }: {
   children: ReactNode;
   testId?: string;
-  /** Names the group for assistive tech, when the panel heading does not already. */
-  label?: string;
 }) {
-  const count = countTiles(children);
   return (
     <div className={styles.container}>
-      <div
-        className={styles.grid}
-        data-count={count}
-        data-odd={count % 2 === 1 ? 'true' : undefined}
-        data-testid={testId}
-        role={label ? 'group' : undefined}
-        aria-label={label}
-      >
+      <div className={styles.grid} data-count={countTiles(children)} data-testid={testId}>
         {children}
       </div>
     </div>

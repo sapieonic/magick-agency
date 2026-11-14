@@ -34,19 +34,6 @@
   font-size: 13px;
 }
 
-/*
-  Two columns only where each can hold a row's label beside its control. The
-  space is what the sidebar and the Settings list leave, not the window: at
-  1366px the old viewport breakpoint kept two ~420px columns and squeezed
-  "Summary profile" into a word a line beside its select.
-*/
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
-  gap: 20px;
-  align-items: start;
-}
-
 .stack {
   display: flex;
   flex-direction: column;

@@ -19,6 +19,7 @@ import { BulkRolloutModal } from '../../components/super-admin/feature-flags/Bul
 import { FlagPolicyWarning } from '../../components/super-admin/feature-flags/FlagPolicyWarning';
 import { humanize, asBool, canBulkRollOut, numericBoundsFor, toTriState, type TriState } from '../../components/super-admin/feature-flags/flagUtils';
 import styles from './SAFeatureFlagsPage.module.css';
+import flagStyles from '../../components/super-admin/feature-flags/featureFlags.module.css';
 
 /**
  * The value a flag inherits when no global override is set.
@@ -272,7 +273,7 @@ export default function SAFeatureFlagsPage() {
             : 'Try clearing the search or filters.'}
         />
       ) : (
-        <div className={styles.table}>
+        <div className={`${styles.table} ${flagStyles.stackedTable}`}>
           <table>
             <thead>
               <tr>

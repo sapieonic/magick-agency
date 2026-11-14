@@ -34,10 +34,16 @@ export interface AgencyCampaignDetail {
   commitCampaign: (campaign: AgencyCampaign) => void;
 }
 
+/**
+ * `poll: false` for a screen that shows the campaign's header but is not watching it (Contacts,
+ * Call log, History): it reads once, again on Refresh and on coming back to the window, and
+ * never puts the stats read on a 10-second loop for a list nobody is watching move.
+ */
 export function useAgencyCampaignDetail(
   id: string | undefined,
   tenantId: string | null,
   accountId: string | null,
+  { poll = true }: { poll?: boolean } = {},
 ): AgencyCampaignDetail {
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   const [stats, setStats] = useState<AgencyCampaignStats | null>(null);
@@ -85,8 +91,8 @@ export function useAgencyCampaignDetail(
       // Written here as well as during render: a 409 handler awaits this
       // function and must see the status it just fetched, not the one the
       // last paint closed over.
-      campaignRef.current = nextCampaign;
-      setCampaign(nextCampaign);
+      campaignRef.current = keepIfUnchanged(campaignRef.current, nextCampaign);
+      setCampaign(campaignRef.current);
       setStats(nextStats);
       setLastUpdatedAt(new Date());
       return nextCampaign;
@@ -110,8 +116,8 @@ export function useAgencyCampaignDetail(
     try {
       const nextCampaign = await getAgencyCampaign(id, tenantId, accountId);
       loadTokenRef.current += 1;
-      campaignRef.current = nextCampaign;
-      setCampaign(nextCampaign);
+      campaignRef.current = keepIfUnchanged(campaignRef.current, nextCampaign);
+      setCampaign(campaignRef.current);
       return nextCampaign;
     } catch {
       return campaignRef.current;
@@ -167,7 +173,7 @@ export function useAgencyCampaignDetail(
   // The campaigns home's cards use the same predicate: running or stopping, OR
   // calls still in flight, OR anyone on the floor. Visible tabs only, and one
   // load at a time — the home has always polled that way.
-  const shouldPoll = needsPolling(campaign?.status ?? '', stats);
+  const shouldPoll = poll && needsPolling(campaign?.status ?? '', stats);
   useVisibleInterval(() => loadRef.current(), REFRESH_MS, shouldPoll);
 
   return {
@@ -182,4 +188,12 @@ export function useAgencyCampaignDetail(
     refreshCampaign,
     commitCampaign,
   };
+}
+
+/**
+ * The campaign as it was when a re-read returns the same row: a poll then changes nothing a
+ * screen keyed on the campaign object would re-render or recompute for.
+ */
+function keepIfUnchanged(previous: AgencyCampaign | null, next: AgencyCampaign): AgencyCampaign {
+  return previous !== null && JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
 }

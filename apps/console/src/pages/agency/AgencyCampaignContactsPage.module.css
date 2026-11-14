@@ -51,15 +51,7 @@
 
 /* Visually hidden: the "Choose a CSV" button beside it opens it. */
 .fileInput {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  composes: sr-only from global;
 }
 
 /* Wraps, so the two import buttons stay on screen at phone width. */

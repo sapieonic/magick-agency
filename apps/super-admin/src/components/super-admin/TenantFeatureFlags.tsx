@@ -21,6 +21,7 @@ import { ConfirmDialog } from './feature-flags/ConfirmDialog';
 import { FlagPolicyWarning } from './feature-flags/FlagPolicyWarning';
 import { humanize, isGuardedWhenOn, numericBoundsFor, relativeExpiry, toTriState, type TriState } from './feature-flags/flagUtils';
 import styles from './TenantFeatureFlags.module.css';
+import flagStyles from './feature-flags/featureFlags.module.css';
 
 interface AccountOption {
   id: string;
@@ -313,7 +314,7 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
       {loading ? (
         <LoadingSpinner size="sm" />
       ) : (
-        <div className={styles.table}>
+        <div className={`${styles.table} ${flagStyles.stackedTable}`}>
           <table>
             <thead>
               <tr>

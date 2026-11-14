@@ -191,7 +191,7 @@
 .roleOption {
   display: flex;
   align-items: center;
-  /* Left, as a menu reads: the global button rule centred "Remove". */
+  /* Left, as a menu reads: the global button rule centred each role. */
   justify-content: flex-start;
   gap: 8px;
   width: 100%;

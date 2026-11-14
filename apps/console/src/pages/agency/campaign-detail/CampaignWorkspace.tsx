@@ -1,18 +1,12 @@
-import { useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
+import { useEffect, type ReactNode } from 'react';
 import { useTenant } from '../../../contexts/TenantContext';
-import { hasPermission } from '../../../utils/permissions';
-import { CampaignHealthStrip } from '../../../components/agency/CampaignHealthStrip';
 import { CampaignTabs } from '../../../components/agency/CampaignTabs';
-import { AgencyRetryDialog } from '../../../components/agency/AgencyRetryDialog';
-import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../../utils/agencyRetrySelector';
+import { publishCampaignTabBadge } from '../../../hooks/useCampaignTabBadges';
 import { agentsOnShift } from '../../../utils/agencyAgentFloor';
 import type { CampaignTabId } from '../../../utils/agencyCampaignTabs';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
-import { CampaignDetailHeader } from './CampaignDetailHeader';
 import { useAgencyCampaignDetail } from './useAgencyCampaignDetail';
-import { useCampaignLifecycle } from './useCampaignLifecycle';
+import { useCampaignChrome } from './useCampaignChrome';
 import styles from './CampaignWorkspace.module.css';
 
 /**
@@ -54,14 +48,17 @@ export function CampaignWorkspaceFrame({
  * The frame with the campaign's own reads behind it, for a section that has no
  * reason to own them (Contacts, Call log, History): the header with its
  * lifecycle controls, Retry contacts and History, the health strip, and the bar
- * with its on-shift count, exactly as on the Monitor tabs. The section gets the
- * campaign as read (`null` until the first answer, or when the read fails: the
- * section is still shown, because a header that will not load is no reason to
- * withhold a list).
+ * with its on-shift count, as on the Monitor tabs (`useCampaignChrome`). The
+ * section gets the campaign as read: `null` until the first answer, or when the
+ * read fails, and the section is still shown, because a header that will not
+ * load is no reason to withhold a list.
  *
- * The campaign is re-read on the header's 10-second poll while it dials, so a
- * section must not key a list read on the campaign object it is handed: key it
- * on the id, or on a primitive field.
+ * Read once, not polled: these sections are lists, not a view of the campaign
+ * moving. The header re-reads on its Refresh and when the window comes back.
+ * A section must still key its own reads on the id, not on the campaign object.
+ *
+ * The header's h1 is the campaign's name, so a section titles itself with an h2, and names
+ * its own Refresh for what it re-reads ("Refresh contacts") beside the header's.
  */
 export function CampaignWorkspace({
   campaignId,
@@ -76,30 +73,23 @@ export function CampaignWorkspace({
   children: ReactNode | ((campaign: AgencyCampaign | null) => ReactNode);
 }) {
   const { tenantId, accountId, role } = useTenant();
-  const navigate = useNavigate();
-  const { showToast } = useToast();
-  const { campaign, stats, lastUpdatedAt, shouldPoll, campaignRef, load, refreshCampaign, commitCampaign } =
-    useAgencyCampaignDetail(campaignId, tenantId, accountId);
-  const [retryOpen, setRetryOpen] = useState(false);
+  const detail = useAgencyCampaignDetail(campaignId, tenantId, accountId, { poll: false });
+  const { campaign, stats } = detail;
+  const chrome = useCampaignChrome({ campaignId, active, detail });
 
-  // The same gates as the Monitor tabs (`AgencyCampaignDetailPage`), for the same server routes.
-  const canControl = hasPermission(role, 'agency.supervise');
-  const canJoinStation = hasPermission(role, 'agency.station.connect');
-  const canRetry = canControl && hasPermission(role, 'agency.campaigns.write');
+  /*
+    The bar's on-shift count from this screen's own stats read. `null` (not known yet) rather
+    than `undefined` until it answers, so the bar does not send a stats read of its own beside
+    this one; once known it is shared, so the next campaign screen opened needs none either.
+  */
+  const onShift = stats ? agentsOnShift(stats.agents) : null;
+  const shownId = campaign?.id;
+  useEffect(() => {
+    if (shownId && tenantId && accountId && onShift !== null) {
+      publishCampaignTabBadge('onShift', tenantId, accountId, shownId, onShift);
+    }
+  }, [shownId, tenantId, accountId, stats, onShift]);
 
-  const lifecycle = useCampaignLifecycle({
-    id: campaignId,
-    tenantId,
-    accountId,
-    campaignRef,
-    refreshCampaign,
-    commitCampaign,
-    reload: () => void load(),
-    fromTab: active,
-  });
-
-  // `undefined` until the stats answer, so the bar falls back to the count another screen shared.
-  const onShift = stats ? agentsOnShift(stats.agents) : undefined;
   /*
     The route has no `key`, so moving to another campaign keeps this mounted and, until the new
     read lands, `campaign` is still the previous one. The section is handed only the campaign
@@ -109,31 +99,8 @@ export function CampaignWorkspace({
 
   return (
     <CampaignWorkspaceFrame
-      header={
-        campaign ? (
-          <CampaignDetailHeader
-            campaign={campaign}
-            lastUpdatedAt={lastUpdatedAt}
-            autoRefreshing={shouldPoll}
-            concurrency={stats?.concurrency}
-            tenantId={tenantId}
-            accountId={accountId}
-            canControl={canControl}
-            busy={lifecycle.busy}
-            onAction={lifecycle.onAction}
-            onRetry={canRetry ? () => setRetryOpen(true) : undefined}
-            canJoinStation={canJoinStation}
-            role={role}
-            onRefresh={() => void load()}
-            historyCurrent={active === 'activity'}
-          />
-        ) : null
-      }
-      strip={
-        campaign ? (
-          <CampaignHealthStrip stats={stats} campaignId={campaignId} campaignStatus={campaign.status} role={role} />
-        ) : null
-      }
+      header={chrome.header}
+      strip={chrome.strip}
       tabs={
         <CampaignTabs
           campaignId={campaignId}
@@ -146,21 +113,7 @@ export function CampaignWorkspace({
       subnav={subnav}
     >
       {typeof children === 'function' ? children(sectionCampaign) : children}
-      {lifecycle.confirmDialog}
-      {retryOpen && campaign ? (
-        <AgencyRetryDialog
-          open
-          campaign={campaign}
-          selector={DEFAULT_RETRY_SELECTOR}
-          origin="campaign"
-          onClose={() => setRetryOpen(false)}
-          onCreated={(result) => {
-            setRetryOpen(false);
-            showToast(retryCreatedToast(result), 'success');
-            navigate(`/agency/campaigns/${result.campaign.id}`);
-          }}
-        />
-      ) : null}
+      {chrome.dialogs}
     </CampaignWorkspaceFrame>
   );
 }

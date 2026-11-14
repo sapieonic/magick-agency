@@ -223,4 +223,14 @@
   .page :where(td:not([colspan])) {
     white-space: nowrap;
   }
+
+  /* A full-width row (an expanded detail, an empty state) spans a table wider than the
+     screen, so its content sat across the sideways-scrolling box with half of it out of
+     view. It keeps to the visible box and stays put while the columns scroll: the screen
+     less this page's 16px gutters, the box's border and the cell's padding. */
+  .page :where(td[colspan] > *) {
+    position: sticky;
+    left: 16px;
+    max-width: calc(100vw - 66px);
+  }
 }

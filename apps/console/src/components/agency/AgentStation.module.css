@@ -376,8 +376,7 @@
 
   .colContact,
   .colDetail,
-  .colOutcome,
-  .colActions {
+  .colOutcome {
     overflow-y: visible;
   }
 }

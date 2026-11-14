@@ -1,38 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
-import { hasPermission } from '../../utils/permissions';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
 import { AgentFloor } from '../../components/agency/AgentFloor';
 import { CampaignAgentAssignments } from '../../components/agency/CampaignAgentAssignments';
 import { CampaignAssignmentProgress } from '../../components/agency/CampaignAssignmentProgress';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
-import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
 import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { publishCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
 import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
-import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
 import { CampaignWorkspaceFrame } from './campaign-detail/CampaignWorkspace';
 import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
-import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
+import { useCampaignChrome } from './campaign-detail/useCampaignChrome';
 import styles from './AgencyCampaignDetailPage.module.css';
 
 export function AgencyCampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const { tenantId, accountId, role } = useTenant();
-  const { showToast } = useToast();
 
   /*
     Which of this page's panels is on screen, read from the URL rather than held
@@ -42,19 +34,8 @@ export function AgencyCampaignDetailPage() {
   */
   const panel = campaignPanelFromPath(pathname);
 
-  const {
-    campaign,
-    stats,
-    error,
-    loading,
-    lastUpdatedAt,
-    shouldPoll,
-    campaignRef,
-    load,
-    refreshCampaign,
-    commitCampaign,
-  } = useAgencyCampaignDetail(id, tenantId, accountId);
-  const [retryOpen, setRetryOpen] = useState(false);
+  const detail = useAgencyCampaignDetail(id, tenantId, accountId);
+  const { campaign, stats, error, loading, load } = detail;
   /** Bumped by the Refresh control so the analytic tabs' range reads re-read too. */
   const [insightsRefresh, setInsightsRefresh] = useState(0);
   /**
@@ -68,40 +49,27 @@ export function AgencyCampaignDetailPage() {
     setOverdueReport(count === null || campaignId === null ? null : { campaignId, count });
   }, []);
 
-  /**
-   * `agency.supervise`, floored at `account_admin`.
-   *
-   * These controls used to check `proxy.schedules.write` — an `operator`-level
-   * permission borrowed because that was what the server's lifecycle routes happened
-   * to gate on. It is now a recorded decision that starting, pausing and stopping
-   * a dialing campaign is a supervisory act, and the server's four lifecycle proxies
-   * gate on `agency.supervise` to match. The UI gate has to be the API gate:
-   * checking the looser one here would show an `operator` four buttons that 403.
-   */
-  const canControl = hasPermission(role, 'agency.supervise');
   // Contacts by agent (contact assignment): a supervisor read behind its flag.
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
-  // Floors at `agent`, so everyone above holds it too — a supervisor covering a
-  // shift is the case this exists for.
-  const canJoinStation = hasPermission(role, 'agency.station.connect');
-  /*
-    The server names BOTH permissions on `POST .../retry`: creating a campaign
-    (`agency.campaigns.write`) and acting on another campaign's call results
-    (`agency.supervise`). Same `account_admin` floor today; naming both keeps
-    this affordance correct if either moves.
-  */
-  const canRetry = canControl && hasPermission(role, 'agency.campaigns.write');
 
-  const lifecycle = useCampaignLifecycle({
-    id,
-    tenantId,
-    accountId,
-    campaignRef,
-    refreshCampaign,
-    commitCampaign,
-    reload: () => void load(),
-    fromTab: panel,
+  /*
+    The header, the health strip and the dialogs their controls open, with the gates that
+    decide who sees which (`useCampaignChrome`, shared with the campaign's other sections).
+    Refresh here also re-reads the analytic tabs' ranges: those fetch separately and
+    deliberately do not poll, so without it Refresh moved the counters and the "Updated"
+    stamp while those sections silently kept showing the older read. Bumped only here —
+    never on the 10s poll, which must not re-read up to 92 days every tick.
+  */
+  const chrome = useCampaignChrome({
+    campaignId: id,
+    active: panel,
+    detail,
+    onRefresh: () => {
+      void load();
+      setInsightsRefresh((n) => n + 1);
+    },
   });
+  const { canControl, canRetry } = chrome;
 
   /*
     `trackAgencyCampaignTabViewed` for the panel the URL landed on directly —
@@ -157,48 +125,8 @@ export function AgencyCampaignDetailPage() {
 
   return (
     <CampaignWorkspaceFrame
-      header={
-        <CampaignDetailHeader
-          campaign={campaign}
-          lastUpdatedAt={lastUpdatedAt}
-          autoRefreshing={shouldPoll}
-          concurrency={stats?.concurrency}
-          tenantId={tenantId}
-          accountId={accountId}
-          canControl={canControl}
-          busy={lifecycle.busy}
-          onAction={lifecycle.onAction}
-          onRetry={canRetry ? () => setRetryOpen(true) : undefined}
-          canJoinStation={canJoinStation}
-          role={role}
-          onRefresh={() => {
-            void load();
-            /*
-              The analytic tabs' range reads fetch separately and deliberately do
-              not poll, so without this Refresh moved the counters and the
-              "Updated" stamp while those sections silently kept showing the
-              older read. Bumped only here — never on the 10s poll, which must
-              not re-read up to 92 days every tick.
-            */
-            setInsightsRefresh((n) => n + 1);
-          }}
-        />
-      }
-
-      /*
-        A blocker stays above every metric AND above the tab bar. It is the one
-        thing on this screen that is worth reading before choosing what to read:
-        a diagnosis that only appeared on the section you happened to be on
-        would be invisible to the supervisor who opened Agents first.
-      */
-      strip={
-        <CampaignHealthStrip
-          stats={stats}
-          campaignId={campaign.id}
-          campaignStatus={campaign.status}
-          role={role}
-        />
-      }
+      header={chrome.header}
+      strip={chrome.strip}
       /*
         The workspace's sections. Contacts, Call attempts, Activity
         and Settings used to be secondary buttons in the header row above —
@@ -297,7 +225,7 @@ export function AgencyCampaignDetailPage() {
         <InsightsPanel
           campaignId={campaign.id}
           canRetry={canRetry}
-          onRetry={() => setRetryOpen(true)}
+          onRetry={chrome.openRetry}
           refreshToken={insightsRefresh}
           shellStatus={campaign.status}
           view={panel}
@@ -309,41 +237,7 @@ export function AgencyCampaignDetailPage() {
         <Navigate to={`/agency/campaigns/${campaign.id}/agents`} replace />
       )}
 
-      {lifecycle.confirmDialog}
-
-      {/* Mounted only while open: the preview is a count over the whole
-          campaign and has no business running on every page view. */}
-      {retryOpen && (
-        <AgencyRetryDialog
-          open
-          campaign={campaign}
-          /*
-            The default, used because this entry point has no filtered
-            list behind it: ONE dimension, `last_outcome ∈ {no_answer, busy,
-            __none__}`.
-
-            ⚠️ NOT `last_outcome` plus `never_attempted`, which is what this
-            comment used to describe. Those are two dimensions, the selector
-            algebra ANDs across dimensions, and a contact with no attempts has a
-            NULL outcome — so that pair matched zero rows on every campaign and
-            this button was dead. "We did not reach them" is a UNION, and
-            `__none__` is how it is spelled inside a single dimension. See
-            `DEFAULT_RETRY_SELECTOR` for the measurement.
-
-            Everything else — machine, failed, a suppressed state, a disposition
-            — is opt-in and reached by narrowing the Contacts tab first, which
-            the dialog says.
-          */
-          selector={DEFAULT_RETRY_SELECTOR}
-          origin="campaign"
-          onClose={() => setRetryOpen(false)}
-          onCreated={(result) => {
-            setRetryOpen(false);
-            showToast(retryCreatedToast(result), 'success');
-            navigate(`/agency/campaigns/${result.campaign.id}`);
-          }}
-        />
-      )}
+      {chrome.dialogs}
     </CampaignWorkspaceFrame>
   );
 }

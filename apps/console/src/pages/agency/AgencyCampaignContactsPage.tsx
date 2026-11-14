@@ -150,7 +150,6 @@ function AddContactsSection({ id }: { id: string }) {
   return (
     <div className={styles.page}>
 
-      {/* The section's title, as on Contacts and Call log: the campaign's name is the header's h1, its status beside it. */}
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><Upload size={20} /></span>

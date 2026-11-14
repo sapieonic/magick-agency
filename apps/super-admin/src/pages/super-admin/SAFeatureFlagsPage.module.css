@@ -172,51 +172,7 @@
     min-width: 0;
   }
 
-  .table thead {
-    display: none;
-  }
-
-  .table table,
-  .table tbody {
-    display: block;
-  }
-
-  .table tr {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 14px;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border-light);
-  }
-
-  .table tr:last-child {
-    border-bottom: none;
-  }
-
-  .table td {
-    display: block;
-    padding: 0;
-    border-bottom: none;
-    white-space: normal;
-  }
-
-  .table td:first-child {
-    flex: 1 1 100%;
-  }
-
-  .table td[data-label]::before {
-    content: attr(data-label) ': ';
-    color: var(--text-muted);
-  }
-
-  .table td:last-child {
-    margin-left: auto;
-  }
-
-  .table td:last-child:empty {
-    display: none;
-  }
+  /* The stacked rows themselves: `feature-flags/featureFlags.module.css` `.stackedTable`. */
 
   .featName {
     flex-wrap: wrap;

@@ -11,21 +11,13 @@
   One column on a phone, the nav a strip above.
 */
 .layout {
-  --settings-form-max: 960px;
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   gap: 32px;
   align-items: start;
 }
 
-/*
-  Positioned so the Save bar's visually hidden status line (an absolute `.sr-only`) is placed
-  in this column. With no positioned ancestor it was placed against the document, at its spot
-  in the scrolled form, and made the document itself scrollable: a jump to a late section
-  scrolled the whole console with it and took the sticky section nav out of view.
-*/
 .sections {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -36,18 +28,15 @@
   Every card, and the Save bar with them, keeps the form's measure. A cap only, no width:
   the column already stretches them, and a width here would also widen the Save bar's
   visually hidden status line (`.sr-only`, a child of this column) past the screen's edge.
+  Every section is an anchor (`#id`), landed just below the top of the scroll area.
 */
 .sections > * {
-  max-width: var(--settings-form-max);
+  max-width: 960px;
+  scroll-margin-top: 16px;
 }
 
 .sections > .wide {
   max-width: none;
-}
-
-/* Every section is an anchor (`#id`); land it just below the top of the scroll area. */
-.sections > * {
-  scroll-margin-top: 16px;
 }
 
 .stack {

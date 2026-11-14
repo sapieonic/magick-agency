@@ -12,16 +12,14 @@ import styles from './PanelGrid.module.css';
  */
 export function PanelGrid({
   children,
-  min = 520,
-  testId,
+  min,
 }: {
   children: ReactNode;
   /** The narrowest a column may get before the grid stacks. */
-  min?: number;
-  testId?: string;
+  min: number;
 }) {
   return (
-    <div className={styles.grid} style={{ '--panel-min': `${min}px` } as CSSProperties} data-testid={testId}>
+    <div className={styles.grid} style={{ '--panel-min': `${min}px` } as CSSProperties}>
       {children}
     </div>
   );

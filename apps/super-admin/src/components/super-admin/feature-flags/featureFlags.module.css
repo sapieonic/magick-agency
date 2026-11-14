@@ -280,3 +280,57 @@
   margin-top: 1px;
   color: var(--warning);
 }
+
+/*
+  A flag table on a phone, on the tenant tab and the global registry alike: four columns left
+  the feature name a word per line and squeezed the state control into a sliver. Each flag
+  stacks instead: name and description across the width, then its state controls on one row,
+  each named by its cell's `data-label`. Applied beside the page's own table class.
+*/
+@media (max-width: 640px) {
+  .stackedTable thead {
+    display: none;
+  }
+
+  .stackedTable table,
+  .stackedTable tbody {
+    display: block;
+  }
+
+  .stackedTable tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .stackedTable tr:last-child {
+    border-bottom: none;
+  }
+
+  .stackedTable td {
+    display: block;
+    padding: 0;
+    border-bottom: none;
+    white-space: normal;
+  }
+
+  .stackedTable td:first-child {
+    flex: 1 1 100%;
+  }
+
+  .stackedTable td[data-label]::before {
+    content: attr(data-label) ': ';
+    color: var(--text-muted);
+  }
+
+  .stackedTable td:last-child {
+    margin-left: auto;
+  }
+
+  .stackedTable td:last-child:empty {
+    display: none;
+  }
+}
