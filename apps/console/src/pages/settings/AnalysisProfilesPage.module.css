@@ -246,12 +246,17 @@
   animation: fadeIn 150ms ease-out;
 }
 
+/* The body scrolls, not the whole dialog, so Cancel and Create stay on screen
+   (a long summary setup put them below a laptop's and a phone's fold). */
 .modal {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 620px;
   margin: 16px;
   max-height: 90vh;
-  overflow-y: auto;
+  max-height: 90dvh;
+  overflow: hidden;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
@@ -293,6 +298,9 @@
 }
 
 .modalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 16px 20px 20px;
 }
 

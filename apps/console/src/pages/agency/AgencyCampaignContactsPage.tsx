@@ -165,10 +165,13 @@ export function AgencyCampaignContactsPage() {
                   {Math.floor(limits.max_file_bytes / (1024 * 1024)).toLocaleString()} MB per file.
                 </p>
               )}
+              {/* Hidden behind a button, as in the builder's contacts step: the browser's own
+                  control ("Choose File · No file chosen") read as unstyled, in US English. */}
               <input
                 ref={fileInputRef}
                 type="file"
                 accept=".csv,text/csv"
+                aria-label="CSV file"
                 className={styles.fileInput}
                 disabled={!canAdd || phase !== 'idle'}
                 onChange={(event) => {
@@ -177,6 +180,14 @@ export function AgencyCampaignContactsPage() {
                   event.target.value = '';
                 }}
               />
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={!canAdd || phase !== 'idle'}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Choose a CSV
+              </button>
               {phase === 'uploading' && <p className={styles.progressLine}>Uploading…</p>}
               {phase === 'analyzing' && <p className={styles.progressLine}>Reading the columns…</p>}
             </div>

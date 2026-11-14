@@ -9,7 +9,9 @@
   padding: 0;
   margin: 12px 0 0;
   display: flex;
-  gap: 10px;
+  /* 8px gaps and 8px side padding: at 10px the seven days ran 20px past the form's width and
+     Sunday sat alone on a second line. */
+  gap: 8px;
   flex-wrap: wrap;
   align-items: center;
 }
@@ -25,7 +27,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-primary);

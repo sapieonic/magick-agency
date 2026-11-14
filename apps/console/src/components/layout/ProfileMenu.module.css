@@ -46,6 +46,10 @@
   top: calc(100% + 6px);
   right: 0;
   min-width: 256px;
+  /* The IDs are long and never wrap: without a cap the panel grew past a phone's
+     left edge. Capped to the bar's gutter on both sides, `.idValue` ellipsises
+     (its title and the copy button have the whole ID). */
+  max-width: calc(100vw - 24px);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);

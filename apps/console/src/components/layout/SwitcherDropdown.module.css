@@ -1,10 +1,12 @@
 .dropdown {
   position: absolute;
   top: calc(100% + 6px);
+  /* The switcher's own width: it opens inside the sidebar, which clips sideways
+     (`overflow-x: hidden`, it scrolls up and down), so a panel wider than its
+     216px line was cut off at the sidebar's edge, search field and all. */
   left: 0;
-  /* Never wider than the screen less useKeepInViewport's 8px gutters, which
-     then keeps it on screen. */
-  min-width: min(280px, calc(100vw - 16px));
+  right: 0;
+  min-width: 0;
   max-width: calc(100vw - 16px);
   display: flex;
   flex-direction: column;

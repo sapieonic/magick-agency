@@ -147,6 +147,8 @@
 .actionsItem {
   display: flex;
   align-items: center;
+  /* Left, as a menu reads: the global button rule centred "Remove". */
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   padding: 8px 12px;
@@ -189,6 +191,8 @@
 .roleOption {
   display: flex;
   align-items: center;
+  /* Left, as a menu reads: the global button rule centred "Remove". */
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   padding: 6px 12px;

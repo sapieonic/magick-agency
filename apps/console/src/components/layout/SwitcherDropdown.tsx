@@ -19,7 +19,8 @@ interface SwitcherDropdownProps {
 }
 
 /**
- * Shared dropdown for the top-bar tenant and account switchers.
+ * Shared dropdown for the sidebar's tenant and account switchers, as wide as the
+ * switcher line it opens from (the sidebar clips sideways).
  *
  * The list is the scrolling surface (`max-height` + `overflow-y: auto`); the
  * label and search stay put above it. Selection is click / Enter / Space on an
@@ -27,9 +28,8 @@ interface SwitcherDropdownProps {
  * so Tab leaves the composite instead of walking every row; ArrowUp/ArrowDown
  * still move programmatic focus.
  *
- * The panel is kept on screen by `useKeepInViewport`: the account switcher is
- * the last control in the top bar, so a panel opened from its left edge would
- * run past the viewport. The search box is focused with `preventScroll`, after
+ * The panel is also kept on screen by `useKeepInViewport`, a no-op while it
+ * fits its switcher. The search box is focused with `preventScroll`, after
  * the panel has been placed. Focusing an input that sits off-screen otherwise
  * asks the browser to scroll an ancestor to reveal it, which slid the whole
  * page under the fixed sidebar (the shells are `overflow: clip` for the same

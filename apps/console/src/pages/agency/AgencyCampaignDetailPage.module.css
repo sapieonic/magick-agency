@@ -252,8 +252,11 @@ a.actionButton {
     border: 0;
   }
 
+  /* The lifecycle buttons share the first row (two of them fill it), the icons the next: at
+     390px Pause, Stop and four icons were a few pixels too wide, and Refresh wrapped alone. */
   .control {
-    align-items: flex-start;
+    flex: 1 1 45%;
+    align-items: stretch;
     max-width: none;
   }
 

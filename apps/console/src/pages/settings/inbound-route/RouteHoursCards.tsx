@@ -34,11 +34,11 @@ export function OpeningHoursCard({ draft, update, errors, warnings }: RouteSecti
       </p>
       {errors.render('weekly_hours')}
       <RouteWarnings warnings={warnings} />
-      <ul className={styles.rows}>
+      <ul className={`${styles.rows} ${styles.hoursRows}`}>
         {draft.hours.map((row, index) => {
           const at = `weekly_hours[${index}]`;
           return (
-            <li key={index} className={styles.editRow} data-testid={`inbound-hours-${index}`}>
+            <li key={index} className={`${styles.editRow} ${styles.hoursRow}`} data-testid={`inbound-hours-${index}`}>
               <div className={styles.small}>
                 <label htmlFor={`${at}-day`}>Day</label>
                 <select id={`${at}-day`} value={row.day} onChange={(e) => setHours(index, { day: Number(e.target.value) })}>
