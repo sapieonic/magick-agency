@@ -1,18 +1,10 @@
+/*
+  The upload form's own measure, inside the campaign workspace (which owns the page's
+  width: `campaign-detail/CampaignWorkspace.module.css`). A dropzone and a column mapper
+  stretched to the workspace's 1680px set the button a screen away from the copy.
+*/
 .page {
   max-width: 760px;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 12px 0 8px;
-}
-
-.title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
 }
 
 .liveNote {

@@ -17,6 +17,8 @@ import type { AgencyCampaign, AgencyColumnAnalysis } from '../../types/agency-ca
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   getAgencyCampaign: vi.fn(),
+  getAgencyCampaignStats: vi.fn(),
+  campaignLineage: vi.fn(),
   createAgencyCampaign: vi.fn(),
   getIngestLimits: vi.fn(),
   uploadRosterCsv: vi.fn(),
@@ -29,8 +31,19 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
+}));
+// The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
+vi.mock('../../api/agencyInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
+  getInsightsAllocation: () => new Promise(() => {}),
+}));
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
+  // The campaign's workspace (header, health strip, bar) around the upload reads these two.
+  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
+  campaignLineage: mocks.campaignLineage,
   createAgencyCampaign: mocks.createAgencyCampaign,
   getIngestLimits: mocks.getIngestLimits,
   uploadRosterCsv: mocks.uploadRosterCsv,
@@ -60,6 +73,7 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
 }
 
 import ContactsPage from '../../pages/agency/AgencyCampaignContactsPage';
+import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 
 /**
  * Mounted at `…/contacts/add`, which is where this page lives.
@@ -100,6 +114,8 @@ beforeEach(() => {
     role: 'tenant_owner',
   });
   mocks.getAgencyCampaign.mockResolvedValue(campaign());
+  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+  mocks.campaignLineage.mockResolvedValue(noLineage());
   mocks.getIngestLimits.mockResolvedValue({ max_rows: 1_000_000, max_file_bytes: 536_870_912 });
   mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'agency-ingest/t/u/f.csv', file_name: 'f.csv' });
   mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
@@ -127,6 +143,17 @@ describe('add contacts — the breadcrumb', () => {
     await waitFor(() => expect(suppliedCrumbs()).toBe(
       'Collections→/agency/campaigns/camp-1 / Contacts→/agency/campaigns/camp-1/contacts / Add contacts',
     ));
+  });
+});
+
+describe('add contacts — in the campaign’s workspace', () => {
+  it('sits under the campaign’s header and the Contacts tab, titled as a section', async () => {
+    renderPage();
+
+    expect(await screen.findByTestId('campaign-workspace')).toBeTruthy();
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Collections');
+    expect((await screen.findByTestId('campaign-tab-contacts')).getAttribute('aria-current')).toBe('page');
+    expect(await screen.findByRole('heading', { level: 2, name: 'Add contacts' })).toBeTruthy();
   });
 });
 

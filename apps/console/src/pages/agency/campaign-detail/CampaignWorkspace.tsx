@@ -60,7 +60,8 @@ export function CampaignWorkspaceFrame({
  * withhold a list).
  *
  * The campaign is re-read on the header's 10-second poll while it dials, so a
- * section must not key a list read on the campaign object it is handed.
+ * section must not key a list read on the campaign object it is handed: key it
+ * on the id, or on a primitive field.
  */
 export function CampaignWorkspace({
   campaignId,
@@ -99,6 +100,12 @@ export function CampaignWorkspace({
 
   // `undefined` until the stats answer, so the bar falls back to the count another screen shared.
   const onShift = stats ? agentsOnShift(stats.agents) : undefined;
+  /*
+    The route has no `key`, so moving to another campaign keeps this mounted and, until the new
+    read lands, `campaign` is still the previous one. The section is handed only the campaign
+    the URL names: its name, catalog and status must never be another campaign's.
+  */
+  const sectionCampaign = campaign && campaign.id === campaignId ? campaign : null;
 
   return (
     <CampaignWorkspaceFrame
@@ -118,6 +125,7 @@ export function CampaignWorkspace({
             canJoinStation={canJoinStation}
             role={role}
             onRefresh={() => void load()}
+            historyCurrent={active === 'activity'}
           />
         ) : null
       }
@@ -137,7 +145,7 @@ export function CampaignWorkspace({
       }
       subnav={subnav}
     >
-      {typeof children === 'function' ? children(campaign) : children}
+      {typeof children === 'function' ? children(sectionCampaign) : children}
       {lifecycle.confirmDialog}
       {retryOpen && campaign ? (
         <AgencyRetryDialog

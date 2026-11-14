@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
   getAgencyCampaign: vi.fn(),
+  getAgencyCampaignStats: vi.fn(),
+  campaignLineage: vi.fn(),
   getCampaignContacts: vi.fn(),
   downloadSpineCsv: vi.fn(),
   listCampaignAgents: vi.fn(),
@@ -40,6 +42,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
+  // The campaign's workspace (header, health strip, bar) around the roster reads these two.
+  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
+  campaignLineage: mocks.campaignLineage,
   retryPreview: vi.fn(),
   createRetry: vi.fn(),
 }));
@@ -59,6 +64,7 @@ vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
 }));
 
 import RosterPage from '../../pages/agency/AgencyCampaignRosterPage';
+import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 
 const BASE: AgencyRosterContact = {
   id: 'c1', phone_e164: '+919800000001', state: 'pending', attempt_count: 0,
@@ -119,6 +125,8 @@ beforeEach(() => {
   mocks.flag.mockReturnValue(true);
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin' });
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Renewals', status: 'running', disposition_catalog: [] });
+  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+  mocks.campaignLineage.mockResolvedValue(noLineage());
   mocks.getCampaignContacts.mockResolvedValue(page(ROWS));
   mocks.listCampaignAgents.mockResolvedValue({
     agents: [

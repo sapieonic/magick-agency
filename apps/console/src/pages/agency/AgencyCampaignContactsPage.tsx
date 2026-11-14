@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { Upload } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { useRosterIngest } from '../../hooks/useRosterIngest';
@@ -9,9 +10,10 @@ import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
 import { IngestSummary } from '../campaigns/agency/IngestSummary';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import type { AgencyCampaign } from '../../types/agency-campaign';
+import spine from '../../components/agency/SpineListLayout.module.css';
 import styles from './AgencyCampaignContactsPage.module.css';
 
 /**
@@ -35,9 +37,29 @@ import styles from './AgencyCampaignContactsPage.module.css';
  * The component itself is deliberately unchanged beyond its breadcrumb: the
  * ingest flow, its column mapping and its rejected-rows export cannot have
  * drifted in a move that touched neither.
+ *
+ * It sits in the campaign's workspace, like every campaign screen, under the
+ * Contacts tab: the header (name, status, lifecycle), the health strip and the bar.
  */
 export function AgencyCampaignContactsPage() {
   const { id } = useParams<{ id: string }>();
+  if (!id) return null;
+  return (
+    <CampaignWorkspace campaignId={id} active="contacts">
+      <AddContactsSection id={id} />
+    </CampaignWorkspace>
+  );
+}
+
+/**
+ * The upload itself. It keeps its OWN read of the campaign rather than the workspace's:
+ * the form is decided by the campaign's status (a finished campaign is refused, a running
+ * one warned about), so it waits for that read and offers Retry when it fails, and the
+ * ingest's start re-reads the campaign and repaints this form as closed if it ended
+ * meanwhile. The workspace's read answers neither (it hands a failure over as `null`, and
+ * this section cannot write into it). One extra read when the page opens, never polled.
+ */
+function AddContactsSection({ id }: { id: string }) {
   const { tenantId, accountId, role } = useTenant();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
@@ -128,10 +150,13 @@ export function AgencyCampaignContactsPage() {
   return (
     <div className={styles.page}>
 
-      <div className={styles.header}>
-        <h1 className={styles.title}>Add contacts</h1>
-        <AgencyCampaignStatusBadge status={campaign.status} />
-      </div>
+      {/* The section's title, as on Contacts and Call log: the campaign's name is the header's h1, its status beside it. */}
+      <header className={spine.header}>
+        <div className={spine.headerCopy}>
+          <span className={spine.titleIcon} aria-hidden="true"><Upload size={20} /></span>
+          <h2 className={spine.title}>Add contacts</h2>
+        </div>
+      </header>
 
       {isLive && (
         <p className={styles.liveNote}>

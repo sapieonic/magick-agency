@@ -15,7 +15,6 @@ import {
 import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
-import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { listCampaignAgents } from '../../api/agency';
 import { downloadSpineCsv, getCampaignAttempts } from '../../api/agencySpine';
 import { outcomeReportFilename } from '../../api/exportCsv';
@@ -33,7 +32,6 @@ import {
   recordingCellCopy,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
-import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { CallLogViews } from '../../components/agency/CallLogViews';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -42,7 +40,7 @@ import { PageDescription } from '../../components/common/PageDescription';
 import { FilterChip } from '../../components/agency/FilterChip';
 import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { FiltersCard } from '../../components/agency/FiltersCard';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import {
   ATTEMPT_OUTCOME_LABELS,
   attemptOutcomeLabel,
@@ -100,11 +98,37 @@ const PAGE_SIZE = 50;
  */
 export function AgencyCampaignAttemptsPage() {
   const { id } = useParams<{ id: string }>();
+  const { role } = useTenant();
+  if (!id) return null;
+
+  /*
+    In the campaign's workspace, like every campaign screen: its header (name, status,
+    lifecycle), the health strip and the section bar, then Call log's two views (Dialler
+    calls | Soft-phone calls, decision IN14; nothing when only this view is open).
+  */
+  return (
+    <CampaignWorkspace
+      campaignId={id}
+      active="attempts"
+      subnav={<CallLogViews campaignId={id} active="attempts" role={role} />}
+    >
+      {(campaign) => <AttemptsSection id={id} campaign={campaign} />}
+    </CampaignWorkspace>
+  );
+}
+
+/**
+ * The section itself. `campaign` is the workspace's read (`null` until it answers, or when
+ * it fails: the attempts are the point of the page, and a header that will not load is no
+ * reason to withhold them). It is replaced on the header's poll while the campaign dials,
+ * so it only names things here (the export's file, the dispositions, the recording note);
+ * no read is keyed on it.
+ */
+function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaign | null }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
 
-  const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   useCampaignCrumbs(id, campaign, 'attempts');
   const [rows, setRows] = useState<AgencyAttempt[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -200,18 +224,13 @@ export function AgencyCampaignAttemptsPage() {
   useEffect(() => {
     /*
       The route has no `key`, so moving to another campaign (or account) keeps this page mounted:
-      drop the previous campaign's header and agents at once, or the Agent picker offers them
-      until the new answer lands, and ignore an answer that lands after the move.
+      drop the previous campaign's agents at once, or the Agent picker offers them until the new
+      answer lands, and ignore an answer that lands after the move. (The campaign itself is the
+      workspace's, which hands over only the campaign the URL names.)
     */
-    setCampaign(null);
     setAssignedAgents([]);
     if (!id || !tenantId || !accountId) return;
     let live = true;
-    getAgencyCampaign(id, tenantId, accountId)
-      // The attempts are the point of the page; a header that will not load is
-      // not a reason to withhold them.
-      .then((answer) => { if (live) setCampaign(answer); })
-      .catch(() => { if (live) setCampaign(null); });
     listCampaignAgents(id, tenantId, accountId)
       .then((answer) => { if (live) setAssignedAgents(answer.agents ?? []); })
       .catch(() => { if (live) setAssignedAgents([]); });
@@ -371,34 +390,21 @@ export function AgencyCampaignAttemptsPage() {
   const phoneError = phoneFilterDraftError(draftPhone, phoneChecked);
 
   return (
-    <div className={styles.page}>
-
-      {/*
-        The campaign workspace's section bar, in the same slot on every one of
-        its screens. These four sections used to be reachable only
-        as secondary buttons on the detail page's header row — the same row
-        that carries Stop — so getting from Contacts to Call attempts meant
-        going back through the campaign first.
-      */}
-      {id && (
-        <CampaignTabs campaignId={id} active="attempts" role={role} campaignStatus={campaign?.status} />
-      )}
-
-      {/* Dialler calls | Soft-phone calls (decision IN14); nothing when only this view is open. */}
-      {id && <CallLogViews campaignId={id} active="attempts" role={role} />}
-
+    <div>
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><PhoneOutgoing size={20} /></span>
-          <h1 className={spine.title}>Call log</h1>
-          {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
+          {/* The section's title: the campaign's name is the header's h1, its status beside it. */}
+          <h2 className={spine.title}>Call log</h2>
         </div>
         <div className={spine.actions}>
+          {/* Named for what it re-reads: the header's own Refresh re-reads the campaign. */}
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}
             onClick={() => void load(filters)}
             disabled={loading}
+            aria-label="Refresh call log"
           >
             <RefreshCw size={16} />
             Refresh

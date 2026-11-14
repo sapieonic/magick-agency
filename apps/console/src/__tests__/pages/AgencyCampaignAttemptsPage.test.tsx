@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
   getAgencyCampaign: vi.fn(),
+  getAgencyCampaignStats: vi.fn(),
+  campaignLineage: vi.fn(),
   getCampaignAttempts: vi.fn(),
   downloadSpineCsv: vi.fn(),
   listCampaignAgents: vi.fn(),
@@ -46,7 +48,12 @@ vi.mock('../../contexts/GovernanceContext', () => ({
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
-vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
+// The campaign's workspace (header, health strip, bar) around the section reads these.
+vi.mock('../../api/agencyCampaigns', () => ({
+  getAgencyCampaign: mocks.getAgencyCampaign,
+  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
+  campaignLineage: mocks.campaignLineage,
+}));
 vi.mock('../../api/agency', () => ({ listCampaignAgents: mocks.listCampaignAgents }));
 vi.mock('../../api/agencySpine', () => ({
   getCampaignAttempts: mocks.getCampaignAttempts,
@@ -55,6 +62,7 @@ vi.mock('../../api/agencySpine', () => ({
 
 import AttemptsPage from '../../pages/agency/AgencyCampaignAttemptsPage';
 import { ApiError } from '../../api/client';
+import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 
 /** Connected, agent named, recording reachable. */
 const BRIDGED: AgencyAttempt = {
@@ -132,6 +140,8 @@ beforeEach(() => {
   });
   // A STOPPED campaign by default: the primary case, not an afterthought.
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
+  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+  mocks.campaignLineage.mockResolvedValue(noLineage());
   mocks.getCampaignAttempts.mockResolvedValue(page([BRIDGED, ABANDONED, ORPHANED, CANCELED]));
   mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
 });
@@ -466,7 +476,10 @@ describe('the campaign section bar', () => {
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Call log');
+    // In the campaign's workspace: the header names the campaign (its h1), and Call log is the section.
+    expect(screen.getByTestId('campaign-workspace')).toBeTruthy();
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Q3 Renewals');
+    expect(screen.getByRole('heading', { level: 2, name: 'Call log' })).toBeTruthy();
   });
 
   /*
@@ -491,6 +504,34 @@ describe('the campaign section bar', () => {
 
     await screen.findByTestId('campaign-tab-attempts');
     expect(screen.queryByTestId('call-log-views')).toBeNull();
+  });
+});
+
+/**
+ * The workspace re-reads the campaign on its header's poll (every 10 s while it dials) and on
+ * the header's Refresh, and hands the section a new campaign object each time. The section
+ * names things from it; it must not re-read the call log for it.
+ */
+describe('the workspace’s campaign re-read', () => {
+  it('does not re-read the call log', async () => {
+    renderPage();
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    await screen.findByRole('heading', { level: 1 });
+    const listReads = mocks.getCampaignAttempts.mock.calls.length;
+    const campaignReads = mocks.getAgencyCampaign.mock.calls.length;
+
+    // The same campaign, as a new object: what every re-read hands over.
+    const current = await mocks.getAgencyCampaign.mock.results[0]!.value;
+    mocks.getAgencyCampaign.mockResolvedValue({ ...current });
+
+    // The header's Refresh (the campaign), named exactly "Refresh".
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => expect(mocks.getAgencyCampaign.mock.calls.length).toBe(campaignReads + 1));
+    await waitFor(() => expect(mocks.getAgencyCampaignStats.mock.calls.length).toBeGreaterThan(1));
+    // Let the new campaign object land and the section render with it.
+    await act(async () => {});
+    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(listReads);
   });
 });
 
@@ -704,12 +745,14 @@ describe('a filter the server refuses', () => {
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('agent_user_id', 'must be an agent id'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    // The section's Refresh (the list), not the header's (the campaign).
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh call log' }));
 
     await waitFor(() => expect(screen.queryByTestId(`attempt-row-${BRIDGED.id}`)).toBeNull());
     const alert = await screen.findByText(/The agent filter does not match an agent/);
     expect(alert.textContent).not.toContain('must be an agent id');
-    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    // The list's own Retry (ErrorAlert's), not the header's Retry contacts.
+    expect(screen.queryByRole('button', { name: 'Retry loading' })).toBeNull();
     expect(screen.getByTestId('attempts-count').textContent).toBe('');
   });
 
@@ -721,7 +764,8 @@ describe('a filter the server refuses', () => {
 
     expect(await screen.findByText(/The phone number filter needs at least one digit\./)).toBeTruthy();
     expect(screen.queryByText(/must contain at least one digit/)).toBeNull();
-    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    // The list's own Retry (ErrorAlert's), not the header's Retry contacts.
+    expect(screen.queryByRole('button', { name: 'Retry loading' })).toBeNull();
   });
 
   it('keeps Retry, and clears the stale rows, for a failure retrying can fix', async () => {
@@ -729,9 +773,10 @@ describe('a filter the server refuses', () => {
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     mocks.getCampaignAttempts.mockRejectedValueOnce(new ApiError(503, { message: 'Service unavailable' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    // The section's Refresh (the list), not the header's (the campaign).
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh call log' }));
 
-    expect(await screen.findByRole('button', { name: /Retry/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Retry loading' })).toBeTruthy();
     expect(screen.queryByTestId(`attempt-row-${BRIDGED.id}`)).toBeNull();
   });
 });

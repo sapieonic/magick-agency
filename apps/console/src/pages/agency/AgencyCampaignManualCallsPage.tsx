@@ -1,15 +1,12 @@
-import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Phone } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { AGENCY_ANALYTICS_CAPABILITY } from '../../utils/agencyCampaignRecording';
-import { getAgencyCampaign } from '../../api/agencyCampaigns';
-import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { CallLogViews } from '../../components/agency/CallLogViews';
 import { SoftphoneCallsList } from '../../components/softphone/SoftphoneCallsList';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import spine from '../../components/agency/SpineListLayout.module.css';
 import styles from './AgencyCampaignAttemptsPage.module.css';
@@ -18,38 +15,40 @@ import styles from './AgencyCampaignAttemptsPage.module.css';
  * `/agency/campaigns/:id/manual-calls` — the soft-phone calls agents logged to
  * this campaign, kept apart from its paced Call attempts (`docs/softphone.md` §2:
  * manual calls never become attempts). The account list with the tag filter
- * fixed.
+ * fixed, in the campaign's workspace (header, health strip, bar) like every
+ * campaign screen.
  */
 export default function AgencyCampaignManualCallsPage() {
-  const { isEnabled } = useGovernance();
   const { id } = useParams<{ id: string }>();
-  const { tenantId, accountId, role } = useTenant();
-  const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  // Call log's second view: the bar tab it sits under names it.
-  useCampaignCrumbs(id, campaign, 'attempts');
-
-  useEffect(() => {
-    if (!id || !tenantId || !accountId) return;
-    getAgencyCampaign(id, tenantId, accountId)
-      .then(setCampaign)
-      // The calls are the point; a header that will not load is no reason to withhold them.
-      .catch(() => setCampaign(null));
-  }, [id, tenantId, accountId]);
-
+  const { role } = useTenant();
   if (!id) return null;
 
   return (
-    <div className={styles.page}>
-      <CampaignTabs campaignId={id} active="manual" role={role} campaignStatus={campaign?.status} />
-      {/* Call log's second view (decision IN14): the bar marks Call log, this marks the view. */}
-      <CallLogViews campaignId={id} active="manual" role={role} />
+    <CampaignWorkspace
+      campaignId={id}
+      active="manual"
+      // Call log's second view (decision IN14): the bar marks Call log, this marks the view.
+      subnav={<CallLogViews campaignId={id} active="manual" role={role} />}
+    >
+      {(campaign) => <ManualCallsSection campaignId={id} campaign={campaign} />}
+    </CampaignWorkspace>
+  );
+}
+
+function ManualCallsSection({ campaignId, campaign }: { campaignId: string; campaign: AgencyCampaign | null }) {
+  const { isEnabled } = useGovernance();
+  // Call log's second view: the bar tab it sits under names it.
+  useCampaignCrumbs(campaignId, campaign, 'attempts');
+
+  return (
+    <section aria-labelledby="manual-calls-title">
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true">
             <Phone size={20} />
           </span>
-          <h1 className={spine.title}>Call log</h1>
-          {campaign ? <AgencyCampaignStatusBadge status={campaign.status} /> : null}
+          {/* The section's title: the campaign's name is the header's h1. */}
+          <h2 id="manual-calls-title" className={spine.title}>Call log</h2>
         </div>
       </header>
       <p className={styles.privacyNote}>
@@ -58,11 +57,11 @@ export default function AgencyCampaignManualCallsPage() {
       </p>
       <SoftphoneCallsList
         scope="account"
-        campaignId={id}
+        campaignId={campaignId}
         detailPath={(call) => `/agency/softphone/calls/${call.id}`}
         showSummary={isEnabled(AGENCY_ANALYTICS_CAPABILITY)}
         caption={`Soft-phone calls logged to ${campaign?.name ?? 'this campaign'}, newest first`}
       />
-    </div>
+    </section>
   );
 }
