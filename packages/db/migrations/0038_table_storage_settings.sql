@@ -25,7 +25,7 @@
 --     columns of a table whose one index is its primary key.
 -- agency_call_attempts and agency_contacts are left at 100: most of their updates change an
 -- indexed column (state, timestamps, the covering insights index), so free space buys little
--- until the HOT ratio has been measured (db-hygiene.md, "Measure first").
+-- until the HOT ratio has been measured (db-hygiene.md, "7. What to measure for phase 2").
 -- Fillfactor applies to pages written from now on; existing pages are not rewritten.
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────

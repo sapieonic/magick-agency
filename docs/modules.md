@@ -53,7 +53,7 @@ Files: `app-context.ts`, `app.ts`, `db-session.ts`, `db-tls.ts`, `index.ts`, `in
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
 | `apps/server/test/unit/app/websocket-max-payload.test.ts` | 4 |
-| `apps/server/test/unit/deploy/migrate.test.ts` | 9 |
+| `apps/server/test/unit/deploy/migrate.test.ts` (TLS as the server's; its own connection named and the three timeouts reset before node-pg-migrate runs on it; ended on failure) | 11 |
 
 ### `apps/server/src/agency/`
 
@@ -226,8 +226,9 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 22 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` | 62 |
 | `apps/server/test/unit/agency/campaign-series-parse.test.ts` | 13 |
-| `apps/server/test/unit/agency/campaign-stats-reads.test.ts` | 12 |
+| `apps/server/test/unit/agency/campaign-stats-reads.test.ts` | 13 |
 | `apps/server/test/unit/agency/campaign-stats-route-sharing.test.ts` | 5 |
+| `apps/server/test/unit/agency/home-board.test.ts` (Home's board: the active campaigns and the fields Home reads, the minute-long reuse of a still campaign's stats under its floor's signature and of the allocation and today's figures, the shared stats read dropped for a still campaign) | 35 |
 | `apps/server/test/unit/agency/campaign-sip-removal-route.test.ts` | 4 |
 | `apps/server/test/unit/agency/campaign-start-roster-route.test.ts` | 16 |
 | `apps/server/test/unit/agency/campaign-stats-concurrency-guard-route.test.ts` | 2 |
@@ -298,7 +299,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 38 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-drilldown-routes.test.ts` | 25 |
-| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
+| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 27 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
 | `apps/server/test/unit/agency/station-heartbeat-lease.test.ts` (what the heartbeat renews: `available`, `break`, a vouched `wrapup`) | 5 |
 | `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 22 |
@@ -1439,7 +1440,7 @@ Files: `auth.ts`, `console-urls.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`
 
 ### `packages/db/src/`
 
-pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
+pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed; TCP keepalive; an `'error'` listener on every client, so a connection Postgres ends under a checked-out client is logged and discarded rather than ending the process; `application_name` and the session timeouts set on each new connection by `sessionSettingsSql`, the ones that are off RESET) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
 
 Files: `connection.ts`, `index.ts`, `migrations-dir.ts`, `pg-errors.ts`
 
@@ -1534,7 +1535,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
-| `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; `SET LOCAL` lifts one for a transaction) | 5 |
+| `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; the settings SQL replacing what an earlier client left on a reused session; `SET LOCAL` lifts one for a transaction; the idle limit ending a checked-out session without ending the process) | 6 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 19 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
@@ -1563,7 +1564,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/inbound-migration.test.ts` | 31 |
 | `packages/db/test/integration/db/away-ring-sessions-index-migration.test.ts` (0037, Mode B: the partial index's definition, the ring search's plan using it, down then up) | 3 |
 | `packages/db/test/integration/db/table-storage-settings-migration.test.ts` (0038: exactly these autovacuum and fillfactor parameters on exactly these tables, down then up) | 2 |
-| `packages/db/test/integration/db/retention-purge-indexes-migration.test.ts` (0039: the four definitions, each purge read's plan, down then up) | 5 |
+| `packages/db/test/integration/db/retention-purge-indexes-migration.test.ts` (0039: the two definitions, each purge read's plan, no plain `created_at` index, the refusal of an invalid pre-built index, down then up) | 6 |
 | `packages/db/test/integration/db/drop-duplicate-indexes-migration.test.ts` (0040: the seven gone, each lookup an index scan on its covering unique index, down then up) | 9 |
 | `packages/db/test/integration/db/inbound-ring-migration.test.ts` (0036, Mode B: the push devices table, its CHECKs and partial token indexes, the ring columns, the session's `ring_misses` and `away_ring_since`, each CHECKed list equal to its contract list, the down) | ~11 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
@@ -1606,7 +1607,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/scenarios/audit-logging.test.ts` | ~14 |
 | `packages/db/test/unit/agency/agency-campaign-agent.repository.test.ts` | 64 |
 | `packages/db/test/unit/db/connection-ssl.test.ts` | 5 |
-| `packages/db/test/unit/db/connection-session-timeouts.test.ts` (the connect hook's `set_config` calls: none when unset, only the non-zero ones, refusals; the pool's keepalive, name and hook options) | 7 |
+| `packages/db/test/unit/db/connection-session-timeouts.test.ts` (the connect hook's SQL: RESET for each timeout that is off, SET for the others, the name first, refusals; the pool's keepalive, name and hook options) | 8 |
 | `packages/db/test/unit/db/dialer-analysis-job-model.test.ts` | 2 |
 | `packages/db/test/unit/db/dialer-analysis-models.test.ts` | 1 |
 | `packages/db/test/unit/helpers/truncate-all.test.ts` | 6 |

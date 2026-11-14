@@ -148,7 +148,8 @@ The database is a Supabase project. Only its Postgres is used: the app has its o
   the pooler, the pool size: see "Which connection string" below and
   [`docs/operations.md`](docs/operations.md), "Postgres connections").
 - **Backups:** paid plans take daily backups; point-in-time recovery is an add-on. Take your own
-  dump before a release that adds a migration (section 12).
+  dump before a release that adds a migration (section 12). Turning on point-in-time recovery,
+  the recovery targets and a restore drill: [`db-hygiene.md`](db-hygiene.md) §3.
 
 **Which connection string.** The *Connect* panel in the dashboard offers three. The server keeps a
 pool of long-lived connections, and runs the migrations at start with node-pg-migrate, which holds
@@ -888,6 +889,18 @@ previous image joins on, so going back past it needs no `migrate:down`; the one 
 an agent live in another tenant is then refused with a 500 rather than the named 409 until they
 leave there (the database still holds them to one live session).
 
+**Before deploying a release with an index on a large table.** A plain `CREATE INDEX` in a
+migration blocks writes to its table while it builds. `0039_retention_purge_indexes.sql` adds two
+on `agency_calls` and `agency_inbound_calls`: if `agency_calls` holds more than about a million
+rows, build them `CONCURRENTLY` first with the server running ([`db-hygiene.md`](db-hygiene.md)
+§2). `0038_table_storage_settings.sql` to `0040_drop_duplicate_indexes.sql` change storage
+settings and indexes only, so going back past them needs no `migrate:down`.
+
+**A migration that fails on its lock timeout.** Migrations that lock a busy table give up after
+10 s (`SET LOCAL lock_timeout`) rather than queue every query behind them; the server then does
+not start. Find and end what holds the lock, then start it again ([`db-hygiene.md`](db-hygiene.md)
+§6).
+
 **Going back past Mode B** (`0036_inbound_ring.sql` and `0037_away_ring_sessions_index.sql`, ringing
 away agents' phones, 8.7). Their downs drop the push devices, the ring columns and the absence's
 start, but leave two things an older image does not know: session rows on `break` with
@@ -959,7 +972,7 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
   production) and apply [`grafana/`](grafana/README.md).
 - Uptime: point an external check at `https://agency.example.com/readyz`.
 - Postgres holds all business data: rely on Supabase's daily backups (paid plans; add
-  point-in-time recovery for finer restores), and before every release that adds a migration take
+  point-in-time recovery for finer restores, [`db-hygiene.md`](db-hygiene.md) §3), and before every release that adds a migration take
   your own dump, with a `pg_dump` at least as new as the project's Postgres:
 
   ```bash

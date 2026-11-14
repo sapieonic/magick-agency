@@ -213,7 +213,7 @@ export const baseConfigSchema = z.object({
      * connect hook (`DbSessionTimeouts` in `packages/db`). Milliseconds; `0`, the default, leaves
      * the database's own setting, so nothing changes until one is set. A non-zero value under a
      * second is refused: it would be a unit mistake that cancels ordinary statements.
-     * `db-hygiene.md` ("Timeouts") has the order to turn them on in and what each one stops.
+     * `db-hygiene.md` ("5. Timeouts") has the order to turn them on in and what each one stops.
      *  - `DB_STATEMENT_TIMEOUT_MS`: a statement running longer is cancelled (57014);
      *  - `DB_LOCK_TIMEOUT_MS`: a statement waiting longer for a lock fails (55P03);
      *  - `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`: a connection idle inside an open transaction for

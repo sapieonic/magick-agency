@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 /**
- * The report cursor under the pool's session timeouts (db-hygiene.md "Timeouts"), on real
+ * The report cursor under the pool's session timeouts (db-hygiene.md "5. Timeouts"), on real
  * Postgres: `reportCursorRows` lifts `idle_in_transaction_session_timeout` and
  * `statement_timeout` for its own transaction, because it sits idle between FETCHes while the
  * consumer waits on the upload, and its FETCHes can run long. Its deadline bounds both instead

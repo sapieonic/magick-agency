@@ -168,7 +168,7 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
   try {
     await query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
     // Out from under the pool's session timeouts (DB_STATEMENT_TIMEOUT_MS,
-    // DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; db-hygiene.md "Timeouts"), for this transaction only:
+    // DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; db-hygiene.md "5. Timeouts"), for this transaction only:
     // between FETCHes it sits idle while the consumer waits on the upload's backpressure, and a
     // FETCH over a 30-day window can run long. The assembler's deadline (`signal`) bounds both:
     // it cancels the statement in flight and ends the transaction.
