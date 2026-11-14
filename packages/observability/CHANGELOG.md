@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/sapieonic/magick-agency/compare/observability-v0.12.0...observability-v0.12.1) (2026-11-14)
+
+
+### Performance Improvements
+
+* **server,db,observability:** database hygiene phase 1 ([#85](https://github.com/sapieonic/magick-agency/issues/85)) ([6da4476](https://github.com/sapieonic/magick-agency/commit/6da4476e1721b7069ace972fe6f0d04c55fe314d))
+
 ## [0.12.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.11.0...observability-v0.12.0) (2026-11-13)
 
 

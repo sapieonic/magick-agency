@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.4...super-admin-v0.5.5) (2026-11-14)
+
+
+### Bug Fixes
+
+* **console,super-admin:** smooth the revamped UIs at ultrawide, laptop and phone sizes ([#86](https://github.com/sapieonic/magick-agency/issues/86)) ([ef4b939](https://github.com/sapieonic/magick-agency/commit/ef4b93995e8145d3f2c0f4f9dc475bdd464ffffd))
+
 ## [0.5.4](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.3...super-admin-v0.5.4) (2026-11-13)
 
 
