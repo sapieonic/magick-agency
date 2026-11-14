@@ -31,7 +31,7 @@ concurrency:
 jobs:
   changes:
     name: CI scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       full: ${{ steps.scope.outputs.full }}
       any: ${{ steps.scope.outputs.any }}
@@ -43,10 +43,10 @@ jobs:
       grafana: ${{ steps.scope.outputs.grafana }}
       release: ${{ steps.scope.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the diff is against the merge base with the target branch
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Pick the scope
@@ -69,15 +69,15 @@ jobs:
     name: Lint, unit tests, build
     needs: changes
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       FILTERS: ${{ needs.changes.outputs.filters }}
     steps:
       - if: needs.changes.result != 'success'
         run: echo "::error::The CI scope job did not succeed, so nothing here can be trusted to pass." && exit 1
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -94,7 +94,7 @@ jobs:
           echo "key=apt-audio-$ImageOS-$ImageVersion-v1" >> "$GITHUB_OUTPUT"
       - if: needs.changes.outputs.server == 'true' && steps.apt.outputs.installed != 'true'
         id: apt-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/apt-debs
           key: ${{ steps.apt.outputs.key }}
@@ -112,7 +112,7 @@ jobs:
           sudo dpkg -i "$DEBS"/*.deb || { sudo apt-get update && sudo apt-get install -y --fix-broken --no-install-recommends $PKGS; }
       - if: needs.changes.outputs.server == 'true' && steps.apt.outputs.installed != 'true' && steps.apt-cache.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/apt-debs
           key: ${{ steps.apt.outputs.key }}
@@ -122,7 +122,7 @@ jobs:
       # an unchanged package checks in seconds. Restored after the install, so pnpm never finds
       # files it did not put in node_modules. Saved per commit; the newest one is restored.
       - if: needs.changes.outputs.any == 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             apps/*/node_modules/.cache/tsc
@@ -137,7 +137,7 @@ jobs:
       # fails later still keeps it.
       - if: ${{ !cancelled() && steps.lint.outcome != 'skipped' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             apps/*/node_modules/.cache/tsc
@@ -170,7 +170,7 @@ jobs:
     name: Integration (${{ matrix.section }})
     needs: changes
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -224,11 +224,11 @@ jobs:
           until docker exec "$PG" pg_isready -q -U magick_agency -d magick_agency_test; do sleep 1; done
           docker exec "$PG" psql -U magick_agency -d magick_agency_test -tAc "SHOW max_connections"
       - if: env.IN_SCOPE == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - if: env.IN_SCOPE == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
       - if: env.IN_SCOPE == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -245,7 +245,7 @@ jobs:
           echo "key=apt-audio-$ImageOS-$ImageVersion-v1" >> "$GITHUB_OUTPUT"
       - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server' && steps.apt.outputs.installed != 'true'
         id: apt-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/apt-debs
           key: ${{ steps.apt.outputs.key }}
@@ -263,7 +263,7 @@ jobs:
           sudo dpkg -i "$DEBS"/*.deb || { sudo apt-get update && sudo apt-get install -y --fix-broken --no-install-recommends $PKGS; }
       - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server' && steps.apt.outputs.installed != 'true' && steps.apt-cache.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/apt-debs
           key: ${{ steps.apt.outputs.key }}

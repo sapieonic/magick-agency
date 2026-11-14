@@ -33,14 +33,14 @@ env:
 jobs:
   changes:
     name: Mobile scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       mobile: ${{ steps.scope.outputs.mobile }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Pick the scope
@@ -63,15 +63,15 @@ jobs:
     needs: changes
     # Runs (and fails) when the scope job failed: a skipped job would read as passing.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mobile == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: apps/mobile
     steps:
       - if: needs.changes.result != 'success'
         run: echo "::error::The Mobile scope job did not succeed." && exit 1
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - uses: subosito/flutter-action@v2
@@ -92,14 +92,14 @@ jobs:
 
   android:
     name: Android build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: analyze-test
     defaults:
       run:
         working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
@@ -142,14 +142,14 @@ jobs:
   android-release:
     name: Android release build (staging, debug-signed)
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: analyze-test
     defaults:
       run:
         working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
@@ -181,7 +181,7 @@ jobs:
       run:
         working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}

@@ -51,7 +51,7 @@ env:
 jobs:
   apk:
     name: Release APK (staging)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # One build per tag; a second request for the same tag waits rather than racing the upload.
     concurrency:
       group: mobile-release-${{ inputs.tag }}
@@ -108,7 +108,7 @@ jobs:
           done
 
       # No token left in .git/config while third-party build code runs; `gh` uses GH_TOKEN.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
           persist-credentials: false
@@ -154,7 +154,7 @@ jobs:
             || echo "::warning::MOBILE_ENV_STAGING has no GOOGLE_SERVER_CLIENT_ID: no Google sign-in (email still works)."
           set_ POSTHOG_KEY || echo "::warning::MOBILE_ENV_STAGING has no POSTHOG_KEY: the APK sends no telemetry."
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
@@ -234,7 +234,7 @@ jobs:
             echo "- Signing certificate SHA-256 (App Links): \`$(grep -m1 'certificate SHA-256 digest' <<< "$certs" | sed 's/.*: //')\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.apk.outputs.name }}
           path: ${{ steps.apk.outputs.dir }}
