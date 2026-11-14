@@ -119,8 +119,8 @@ parallel jobs: db, server, server wall-clock), `mobile.yml` (on `apps/mobile`,
 `packages/contracts`, the literal extractor and the number rule the Dart port mirrors), `pr-title.yml`, `release-please.yml`.
 On a mobile release, `release-please.yml` calls `mobile-release.yml`: a signed staging APK on the
 GitHub Release (`docs/mobile.md` "The release APK").
-On a pull request, `ci.yml` and `mobile.yml` run only what the diff reaches (`tooling/ci-scope.mjs`, `pnpm test:tooling`;
-`docs/operations.md` "What CI runs"); the `full-ci` label runs everything. A test that reads files
+On a pull request and on a push to `main`, `ci.yml` and `mobile.yml` run only what the diff reaches (`tooling/ci-scope.mjs`, `pnpm test:tooling`;
+`docs/operations.md` "What CI runs"); the `full-ci` label, a manual run and the weekly scheduled run run everything. A test that reads files
 outside its package needs a `READ_BY` rule or a server repository guard in `ci-scope.mjs`;
 `test:tooling` fails on the reads it can see (`../` paths, `join`/`resolve` with `'..'`), not on
 paths built with `dirname`.

@@ -1,9 +1,11 @@
 name: CI
 
-# What runs is picked from the files a pull request changes (tooling/ci-scope.mjs,
-# docs/operations.md "What CI runs"): lint, unit tests and build for the changed packages and
-# their dependents, and the integration lanes only when a backend package is among them.
-# The `full-ci` label, a manual run and every push to main run everything.
+# What runs is picked from the files a pull request changes, or a push to main changes since the
+# previous main commit (tooling/ci-scope.mjs, docs/operations.md "What CI runs"): lint, unit
+# tests and build for the changed packages and their dependents, and the integration lanes only
+# when a backend package is among them. A version bump alone (the release PR) runs the
+# release-please check. The `full-ci` label, a manual run and the weekly scheduled run run
+# everything; the weekly run catches what a scope rule may have missed.
 #
 # Job names never change with the scope, and the integration matrix is never skipped as a
 # whole: a skipped matrix job reports one check under its unexpanded name, which leaves a
@@ -21,6 +23,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Everything, once a week (Monday 03:17 UTC), as main no longer runs everything on each push.
+  schedule:
+    - cron: '17 3 * * 1'
 
 # A newer push (or label) to the same pull request replaces the run in progress. Pushes to
 # main are grouped by commit, so none of them is cancelled.
@@ -32,6 +37,7 @@ jobs:
   changes:
     name: CI scope
     runs-on: ubuntu-26.04
+    timeout-minutes: 5
     outputs:
       full: ${{ steps.scope.outputs.full }}
       any: ${{ steps.scope.outputs.any }}
@@ -53,9 +59,11 @@ jobs:
         id: scope
         env:
           FULL: >-
-            ${{ github.event_name != 'pull_request'
+            ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
             || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          # A pull request diffs against its merge base; a push to main against the main commit
+          # before it (the PR's checks ran on the same change).
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           if [ "$FULL" = "true" ]; then
             node tooling/ci-scope.mjs --full
@@ -70,6 +78,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 25
     env:
       FILTERS: ${{ needs.changes.outputs.filters }}
     steps:
@@ -171,6 +180,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

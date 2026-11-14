@@ -1143,24 +1143,32 @@ what failed meanwhile.
 ## What CI runs
 
 A pull request runs what its diff reaches, not everything: the full server unit suite alone is
-about 100 s, and the integration lanes are the longest jobs. `tooling/ci-scope.mjs` reads the
-diff against the merge base and picks:
+about 100 s, and the integration lanes are the longest jobs. A push to `main` does the same with
+the push's own diff (against the `main` commit before it): the merged change is what the pull
+request already checked, so `main` re-checks that scope on the merged tree rather than paying for
+everything twice per merge (once for the change, once for release-please's release commit).
+`tooling/ci-scope.mjs` reads the diff and picks:
 
 | Change | Runs |
 |---|---|
 | Files of a workspace package (prose `*.md` aside) | `lint`, `test` and `build` of that package and of every workspace package that depends on it |
+| A `package.json` or `pubspec.yaml` whose diff is its top-level version line alone (release-please's release PR and release commit) | `pnpm test:release` only, not the package |
 | A file outside a package that its suites read (`READ_BY`: `tooling/test-env.ts` and `tooling/vitest-decorator-transform.ts` for db and server, `tooling/contracts-literals.*` for contracts, `apps/server/test/fixtures/` for the console, `apps/server/src/api/routes/` and `apps/console/brands/` for the super-admin console) | as a change to that package |
 | `packages/db` in scope (itself or a dependency changed) | the `db` integration lane |
 | `apps/server` in scope (itself or any dependency, contracts and domain included) | the `server` and `server wall-clock` lanes |
 | Anything, while the server's suite is not in scope | the server's repository guards on their own (`SERVER_REPO_GUARDS`: branding over the whole tree, the route tables and CORS over the web UIs, the docker/ packaging; about 7 s) |
 | `grafana/`, `apps/server/src/`, any `packages/<name>/src/` (the stray-instrument scan) | `pnpm test:grafana` |
 | The release-please config, the manifest, a `package.json` or `pubspec.yaml` | `pnpm test:release` |
-| `apps/mobile/`, `packages/contracts/`, the literal extractor, `customer-search-number.ts`, `mobile.yml` | the Mobile workflow |
+| `apps/mobile/`, `packages/contracts/`, the literal extractor, `customer-search-number.ts`, `mobile.yml` (prose aside) | the Mobile workflow's analyze and tests |
+| What the builds compile beyond Dart (`ANDROID_INPUTS`, `IOS_INPUTS`): `apps/mobile/android/` and each plugin's `android/` (or `ios/`), the pubspecs and `pubspec.lock`, `apps/mobile/env/`, `mobile.yml` | the Android build: on a pull request the debug build and the Kotlin unit tests, on `main` the release build; the iOS build (macOS) on `main` only |
 | A shared root file (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `.npmrc`, `.nvmrc`), `ci.yml` or `tooling/ci-scope.mjs` | everything in CI (not the Mobile workflow) |
 | Anything else (`docs/`, `aws/`, the other workflows) | the repository guards only |
 
 So a console change runs the console's suites and the server's guards, and no integration; a
-contracts change runs nearly everything. A docs-only change runs the guards only.
+contracts change runs nearly everything. A docs-only change runs the guards only, and so does a
+release PR. A Dart-only change to the app runs analyze and the Dart tests, not the APK build:
+`flutter analyze` already type-checks the Dart, and the build adds only the Gradle and Xcode
+projects, the plugins and the env files.
 
 **Caches.** `setup-node` restores the pnpm store (`pnpm install` takes seconds). The audio
 decoders the server's tests need (`mpg123`, `sndfile-programs`) are kept as `.deb` files per
@@ -1177,9 +1185,13 @@ bump the `-v1` in the apt key).
 to 300 (`ALTER SYSTEM`, then a restart) before anything connects, as the dev compose file does:
 four integration workers peak near Postgres's default of 100.
 
-**Everything** runs on every push to `main`, on a manual run of CI (Actions, CI, "Run workflow";
-the Mobile workflow has no manual run) and on a pull request labelled **`full-ci`**, which also
-runs the Mobile workflow. Adding the label starts the run. Adding any other label starts a new
+**Everything** runs on a manual run (Actions, CI or Mobile, "Run workflow"; the manual Mobile run
+includes the iOS build), on the weekly scheduled run (Monday, 03:17 UTC for CI and 03:47 for
+Mobile, every job but iOS), which catches what a scope rule may have missed, and on a pull request
+labelled **`full-ci`**, which also runs the Mobile workflow's pull request jobs. A push whose
+`before` commit cannot be diffed (a new branch, a force push) runs everything too. Every job has a
+`timeout-minutes`, so a hung job stops in minutes rather than at GitHub's six-hour default.
+Adding the label starts the run. Adding any other label starts a new
 run of the same scope: skipping that run would report its checks as skipped, which reads as
 passing over an earlier failure. "Re-run jobs" replays the original event, so it keeps the labels
 the run started with. The run's summary page shows the scope it picked and why.

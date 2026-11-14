@@ -2155,8 +2155,9 @@ so the failure depends on file order and is not yet explained.
 
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and
-Redis 7 service containers on the same ports. On a pull request it runs only what the change
-reaches (`tooling/ci-scope.mjs`; the `full-ci` label runs everything; [`operations.md`](operations.md),
+Redis 7 service containers on the same ports. On a pull request and a push to `main` it runs only
+what the change reaches (`tooling/ci-scope.mjs`; the `full-ci` label, a manual run and the weekly
+run run everything; [`operations.md`](operations.md),
 "What CI runs"). Per-module test
 files are listed in [`modules.md`](modules.md).
 

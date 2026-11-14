@@ -1053,10 +1053,10 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
 
 ## CI
 
-`.github/workflows/ci.yml`, on pull requests and pushes to `main`. A scope job runs
-`tooling/ci-scope.mjs` over the pull request's diff and picks what the rest run
-([`operations.md`](operations.md), "What CI runs"); on `main`, on a manual run and on a pull
-request labelled `full-ci` it picks everything. Job 1 installs `mpg123` and `sndfile-programs`
+`.github/workflows/ci.yml`, on pull requests, pushes to `main` and a weekly schedule. A scope job
+runs `tooling/ci-scope.mjs` over the pull request's diff (or the push's) and picks what the rest
+run ([`operations.md`](operations.md), "What CI runs"); on a manual run, on the weekly run and on
+a pull request labelled `full-ci` it picks everything. Job 1 installs `mpg123` and `sndfile-programs`
 (when the server's suite is in scope), then runs `pnpm install --frozen-lockfile`, and `lint`,
 `test` and `build` filtered to the packages in scope; `pnpm test:grafana` and `pnpm test:release`
 when their inputs change; and the server's repository guards on their own when the server's
