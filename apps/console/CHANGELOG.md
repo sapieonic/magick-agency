@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/sapieonic/magick-agency/compare/console-v0.23.0...console-v0.23.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **console,super-admin:** smooth the revamped UIs at ultrawide, laptop and phone sizes ([#86](https://github.com/sapieonic/magick-agency/issues/86)) ([ef4b939](https://github.com/sapieonic/magick-agency/commit/ef4b93995e8145d3f2c0f4f9dc475bdd464ffffd))
+
 ## [0.23.0](https://github.com/sapieonic/magick-agency/compare/console-v0.22.0...console-v0.23.0) (2026-11-13)
 
 
