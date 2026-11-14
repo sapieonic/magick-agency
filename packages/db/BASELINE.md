@@ -1396,6 +1396,45 @@ scanned every session row. **Down** drops it. **Tests**:
 `test/integration/db/away-ring-sessions-index-migration.test.ts` (the definition, the search's plan,
 down then up) and the down → up inventory suite.
 
+### 0038 — `migrations/0038_table_storage_settings.sql`
+
+Database hygiene (`db-hygiene.md`): storage parameters only, no shape change. **Autovacuum**:
+`agency_call_attempts` and `agency_contacts` vacuum at 2% dead rows and re-analyse at 2% changed
+(`autovacuum_vacuum_scale_factor`, `autovacuum_analyze_scale_factor` = 0.02); `agency_calls`,
+`agency_agent_sessions` and the rollup breakdowns (`agency_insights_rollup_agents`, `_codes`,
+`_facets`) vacuum at 5%. The defaults (20% / 10%) let the big tables carry millions of dead rows
+between clean-ups. **Fillfactor**: `agency_agent_sessions` 80 (the heartbeat touches no indexed
+column, so it can be a HOT update when its page has room) and `agency_campaign_pacing_minutes` 85
+(counter upserts on a table indexed only by its key). Attempts and contacts stay at 100 until the
+HOT ratio is measured. SHARE UPDATE EXCLUSIVE, no rewrite. **Down** resets every parameter.
+**Tests**: `test/integration/db/table-storage-settings-migration.test.ts` (exactly these
+parameters on exactly these tables, down then up) and the down → up inventory suite.
+
+### 0039 — `migrations/0039_retention_purge_indexes.sql`
+
+The retention purge's time indexes (`apps/server/src/maintenance/retention-purge.ts`), which
+otherwise read whole tables daily. **`idx_agency_calls_transcript_pending`** `(created_at) WHERE
+conversation_log IS NOT NULL OR transcript_meta IS NOT NULL` (the transcript step, on by default;
+the predicate is the purge's `hasTranscript`, spelled the same so the planner can use it);
+**`idx_agency_calls_created`** `(created_at)` and **`idx_dialer_analysis_jobs_created`**
+`(created_at)` (the row purge, off until `AGENCY_RETENTION_DAYS` is set);
+**`idx_agency_inbound_calls_voicemail`** `(arrived_at, id) WHERE voicemail_key IS NOT NULL` (the
+voicemail walk's keyset order). `IF NOT EXISTS`, so a deployment can build them `CONCURRENTLY`
+first (`db-hygiene.md`). **Down** drops them. **Tests**:
+`test/integration/db/retention-purge-indexes-migration.test.ts` (the definitions, each purge
+read's plan, down then up) and the down → up inventory suite.
+
+### 0040 — `migrations/0040_drop_duplicate_indexes.sql`
+
+Seven indexes from 0001 that repeated a unique index (an exact copy or its leading columns) are
+dropped: `idx_super_admins_email`, `idx_account_settings_tenant_account`,
+`idx_account_settings_tenant`, `idx_account_provider_concurrency_account`,
+`idx_memberships_user_id`, `idx_tenant_phone_tenant`, `idx_phone_account_tags_assignment`. Each
+lookup they served is an index scan on the covering unique index. `uq_agency_agent_live_tenant`
+stays (0035 keeps it for rollback). **Down** re-creates them as 0001 defined them. **Tests**:
+`test/integration/db/drop-duplicate-indexes-migration.test.ts` (gone, each lookup's plan on its
+covering index, down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
