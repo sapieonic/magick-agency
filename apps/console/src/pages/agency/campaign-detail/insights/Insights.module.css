@@ -660,16 +660,49 @@
 
 /* ── Overview (IN13): attention list, teaser cards ─────────────────────── */
 
+/*
+  The attention list, the roster and the three "more on this campaign" cards.
+  Beside each other the roster runs down the right and the cards sit under the
+  attention list, which is nearly always the shorter of the two: with the cards
+  in a row of their own below, the space under a two-item attention list was an
+  empty block as tall as the roster. Stacked (a laptop under 1100px, a phone)
+  they read in DOM order: attention, roster, then the cards across a row.
+*/
 .overviewGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.overviewGrid > :nth-child(1) {
+  grid-area: 1 / 1;
+}
+
+.overviewGrid > :nth-child(2) {
+  grid-area: 1 / 2 / span 2;
+}
+
+.overviewGrid > :nth-child(3) {
+  grid-area: 2 / 1;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
 }
 
 @media (max-width: 1100px) {
   .overviewGrid {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+
+  .overviewGrid > :nth-child(n) {
+    grid-area: auto;
+  }
+
+  .overviewGrid > :nth-child(3) {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+    gap: 16px;
   }
 }
 

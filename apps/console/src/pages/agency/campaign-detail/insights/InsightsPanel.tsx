@@ -374,15 +374,16 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
               healthUnavailable={blocked ? 'choose a valid range.' : unavailable.health ? 'the read failed. Refresh to try again.' : null}
             />
             <RosterSection campaignId={campaignId} campaignName={summary.name} roster={summary.roster} />
+            {/* Third, so it follows the roster on a phone; beside two columns it fills the space under the attention list (see `.overviewGrid`). */}
+            <OverviewTeasers
+              campaignId={campaignId}
+              search={search}
+              activity={shownActivity}
+              allocation={allocation}
+              health={shownHealth}
+              unavailable={unavailable}
+            />
           </div>
-          <OverviewTeasers
-            campaignId={campaignId}
-            search={search}
-            activity={shownActivity}
-            allocation={allocation}
-            health={shownHealth}
-            unavailable={unavailable}
-          />
         </>
       ))}
 
