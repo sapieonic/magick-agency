@@ -7,9 +7,9 @@
  *  - the campaigns: `agencyCampaignRepository.listForHome` (the Campaigns page's order, capped);
  *  - per campaign, the internal stats handler's payload (`liveStats`, the route's hop through
  *    `callCore`, so the stall, the guardrail's 24 hours and the floor are the health strip's
- *    own; the read the supervisors' pages share, `campaign-stats-reads.ts`), projected to the fields Home and the Campaigns page's Active cards read
- *    (`homeStats`), and the allocation's staffing (`campaignStaffing`: assigned agents and how
- *    many are on the floor);
+ *    own; the read the supervisors' pages share, `campaign-stats-reads.ts`), projected to the
+ *    fields Home and the Campaigns page's Active cards read (`homeStats`), and the allocation's
+ *    staffing (`campaignStaffing`: assigned agents and how many are on the floor);
  *  - per campaign, the insights allocation (`cachedAllocation`, the Insights tab's own cache)
  *    projected by `attentionAllocation`: overdue callbacks and due contacts held by away agents;
  *  - per campaign, today's carrier failures and recording (`rangeAttentionFigures` over
@@ -254,7 +254,7 @@ async function liveFor(
   if (read.shared && keeps(stats)) {
     // About to keep a read another request began, maybe before the floor signature just read: an
     // agent who joined in between would then stay off Home for a whole minute. So read once past
-    // the supervisors' shared read (which stays theirs) and keep that, if it is still still. A
+    // the supervisors' shared read (which stays theirs) and keep that, if it shows no movement. A
     // read that ran for this board began after the floor read, and is kept as it is. If the read
     // past fails, the shared one is served and nothing is kept.
     const own = await settle('stats', campaign.id, () => deps.liveStats(campaign, { fresh: true }));
