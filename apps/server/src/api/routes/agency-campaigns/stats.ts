@@ -18,7 +18,11 @@ import { campaignHealth, RECENT_FAILURE_WINDOW_MINUTES } from '../../../agency/c
 import { carrierCapacityMissing, dialableCallerIds } from '../../../agency/campaign-dialability.js';
 import { resolveCallingWindow, callingWindowState, nextWindowOpen } from '../../../agency/calling-hours.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { CampaignStatsReads } from '../../../agency/campaign-stats-reads.js';
+import {
+  CAMPAIGN_STATS_FRESH_HEADER,
+  CAMPAIGN_STATS_READ_HEADER,
+  CampaignStatsReads,
+} from '../../../agency/campaign-stats-reads.js';
 import { config } from '../../../config/index.js';
 import type { AgencyCampaignRouteDeps } from '../agency-campaigns.routes.js';
 import { campaignOf, ownedCampaign } from './guards.js';
@@ -108,8 +112,12 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
     // once and imported by both sides.
     //
     // The SQL half is shared between the requests for one campaign (`agency/campaign-stats-reads.ts`):
-    // read the objects, never write to them. Everything below this line is per request.
-    const { stats, health } = await campaignReads.read(campaign.id);
+    // read the objects, never write to them. Everything below this line is per request. An
+    // in-process caller may read past the shared read, and is told whether its answer was
+    // read for it (Home's board, which keeps a still campaign's stats under a floor signature).
+    const fresh = request.headers[CAMPAIGN_STATS_FRESH_HEADER] === '1';
+    const { stats, health, scanned } = await campaignReads.read(campaign.id, { fresh });
+    reply.header(CAMPAIGN_STATS_READ_HEADER, scanned ? 'scanned' : 'shared');
 
     const tenantId = getTenantId(request);
     const accountId = getAccountId(request);

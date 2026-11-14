@@ -1010,8 +1010,9 @@ describe('/force-available answers what it did', () => {
 
   it("drops the campaign's shared stats read once it has acted, so the floor's re-read is fresh; a refusal leaves it", async () => {
     // The console re-reads `/stats` the moment this answers (`AgentFloor`'s `onForced`). The read
-    // listens on the process's bus, as the route's does: the route publishes `campaign_stats_stale`
-    // there, which is also how it reaches the primary from a media worker.
+    // listens on the process's cache-invalidation channel, as the route's does: the route publishes
+    // the stats cache's name there, which is also how it reaches the primary from a media worker
+    // (`cache.invalidate`). Not on the pacing bus, which carries only what pacing reads.
     Object.assign(repos.campaign, { stats: vi.fn(async () => ({})), healthInputs: vi.fn(async () => ({})) });
     const reads = new CampaignStatsReads({ ttlMs: 60_000 });
     try {

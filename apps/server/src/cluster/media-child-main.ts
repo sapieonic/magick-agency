@@ -5,7 +5,8 @@
  *  - the replica id is this incarnation's (`<base>:mw<slot>:<pid>`), so a crashed
  *    worker's station ownership keys name a replica the primary knows is dead;
  *  - the pacing bus publishes to the primary (`IpcPacingInvalidationBus`), before the
- *    runtime exists so every publisher uses it;
+ *    runtime exists so every publisher uses it, and so do cache invalidations
+ *    (`installIpcCacheInvalidation`);
  *  - the guard host admits and releases this worker's calls, and asks the primary to run
  *    the self-heal (`voice.wake_self_heal`), which is the primary's alone;
  *  - the bridge writes `&w=<slot>` into the carrier's URLs, so its media connect and
@@ -43,7 +44,7 @@ import { setDialerAnalysisWorker } from '../core/dialer-analysis-worker-handle.j
 import { buildCoreHandlers } from '../api/core-handlers.js';
 import { initAnalytics, shutdownAnalytics } from '../analytics/posthog.js';
 import { IpcChannel, parentTransport } from './ipc-channel.js';
-import { installIpcPacingBus, startMediaChild, type MediaChild } from './media-child.js';
+import { installIpcCacheInvalidation, installIpcPacingBus, startMediaChild, type MediaChild } from './media-child.js';
 import { buildWorkerApp } from './worker-app.js';
 
 const log = createChildLogger({ component: 'media-child' });
@@ -66,6 +67,7 @@ export async function runMediaChildProcess(opts: MediaChildProcessOptions): Prom
 
   const channel = new IpcChannel(parentTransport(), { name: `media${slot}→primary` });
   installIpcPacingBus(channel);
+  installIpcCacheInvalidation(channel);
 
   // ── Stopping, wired before anything awaits ───────────────────────────────
   // The primary may ask this worker to stop while it is still booting (the host is being

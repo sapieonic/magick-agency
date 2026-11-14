@@ -920,9 +920,15 @@ a rate-limit key and never an auth input.
   read in flight is joined, a settled one served for `AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s), so N
   supervisors on one campaign no longer cost N scans of its contacts and attempts every 10 s. The
   rest of the payload (DNC, concurrency, liveness, calling hours, the campaign row) is read per
-  request, after the route's ownership guard. A campaign row write (`campaign_changed`), contacts
-  arriving (`contacts_changed`) and a force-available drop the shared read, so a supervisor's
-  re-read after their own action is fresh; Home reads a campaign it may keep as still past it. The
+  request, after the route's ownership guard. A campaign row write (`campaign_changed`), a
+  force-available and a completed roster upload drop the shared read (the last two over the
+  cache-invalidation channel, `cache/cache-invalidation.ts`, which a media worker relays to the
+  primary as `cache.invalidate`), so a supervisor's re-read after their own action is fresh.
+  Contacts arriving (`contacts_changed`, one per roster chunk) only mark it stale: a read in flight
+  is still joined and not kept, so a burst never overlaps two scans. Home keeps a still campaign's
+  stats only from a read that began after its floor read: when the route answers with a read
+  another request began, Home reads once more past it (an in-process header), leaving the shared
+  read to the supervisors. The
   sidebar badge reads the same board (one per tenant and account, `useHomeBadgeCount`): its
   readers share one read at the fastest period any of them asks for, so on Home the badge adds no
   request and elsewhere the board is read once a minute, never while the tab is hidden.
@@ -976,7 +982,9 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
   injector to the owning worker; every other handler runs in the primary.
 - **IPC** is Node's `child_process` channel, with one decoder per message type
   (`ipc-protocol.ts`) and deadline-bound requests (`ipc-channel.ts`). Redis keeps only its old
-  roles.
+  roles. A worker's pacing events reach the primary's bus as `pacing.invalidate`; an in-process
+  cache entry its write made stale (today the shared campaign stats read, after a
+  force-available) reaches the primary as `cache.invalidate` (`cache/cache-invalidation.ts`).
 - **A worker that dies** is reaped by slot before it is re-forked (`cluster/primary.ts`
   `reapSlot`): its call slots are released, its attempts are ended `orphaned` with their
   contacts requeued, and its agents are written offline. More than 5 exits of one slot in

@@ -82,9 +82,19 @@ describe('body decoders', () => {
     const ev = { type: 'agent_available', sessionId: 's', campaignId: null };
     expect(IPC_EVENT_DECODERS['pacing.invalidate'](roundTrip(ev))).toEqual(ev);
     expect(IPC_EVENT_DECODERS['pacing.invalidate']({ type: 'made_up' })).toBeNull();
+  });
+
+  it('cache.invalidate names a listed cache and a key; anything else is refused', () => {
     // A media worker's force-available reaches the primary's shared stats read this way.
-    const stale = { type: 'campaign_stats_stale', campaignId: 'c1' } as const;
-    expect(IPC_EVENT_DECODERS['pacing.invalidate'](roundTrip(stale))).toEqual(stale);
+    const decode = IPC_EVENT_DECODERS['cache.invalidate'];
+    const ev = { cache: 'agency-campaign-stats', key: 'c1' };
+    expect(decode(roundTrip(ev))).toEqual(ev);
+    for (const bad of [null, 'x', [ev], {}, { cache: 'agency-campaign-stats' }, { cache: 'agency-campaign-stats', key: '' },
+      { cache: 'agency-campaign-stats', key: 'k'.repeat(129) }, { cache: 'made-up', key: 'c1' }, { key: 'c1' }]) {
+      expect(decode(bad)).toBeNull();
+    }
+    // No longer a pacing event.
+    expect(IPC_EVENT_DECODERS['pacing.invalidate']({ type: 'campaign_stats_stale', campaignId: 'c1' })).toBeNull();
   });
 
   it('call.lease: a held lease whole, a release by its key, anything else refused', () => {
@@ -168,6 +178,7 @@ describe('body decoders', () => {
       'analysis.rate_paused': { untilMs: 5, consecutive: 1 },
       'pacing.invalidate': { type: 'account_capacity_freed', tenantId: 't', accountId: 'a' },
       'pacing.revoke': { campaignId: null, upTo: 7 },
+      'cache.invalidate': { cache: 'agency-campaign-stats', key: 'c1' },
       'station.attached': { sessionId: 's', campaignId: null, replicaId: 'h:mw0:1' },
       'station.detached': { sessionId: 's' },
       'station.snapshot': { replicaId: 'h:mw0:1', sessions: [{ sessionId: 's', campaignId: 'c' }] },

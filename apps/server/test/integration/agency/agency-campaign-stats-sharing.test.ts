@@ -10,8 +10,13 @@ import { insertAgencyCampaign, insertAgencyContact, insertAgencyContacts } from 
  *  - concurrent viewers of one campaign cost ONE `stats()` and ONE `healthInputs()`, and every
  *    one of them gets the database's numbers;
  *  - the writes a supervisor re-reads after reach the next read: a campaign row write (the real
- *    repository's `campaign_changed`) and contacts arriving (`contacts_changed`, as the roster
- *    ingest publishes it);
+ *    repository's `campaign_changed`), a force-available (the stats cache's name on the
+ *    cache-invalidation channel) and contacts arriving (`contacts_changed`, as each roster chunk
+ *    publishes it);
+ *  - a burst of `contacts_changed` while a read is in flight runs no second scan beside it: the
+ *    requests join it, and the first one after it settles reads afresh;
+ *  - a read past the shared read (`x-mgkvc-stats-fresh`, Home's board) sees what the shared read
+ *    has not, and leaves the shared read to everyone else;
  *  - a write that announces nothing is seen once the shared read has expired, and at once with
  *    `0`, which still shares a read in flight.
  * The cache's own rules: `test/unit/agency/campaign-stats-reads.test.ts`; through the route with
@@ -41,6 +46,7 @@ const { agencyCampaignRoutes } = await import('../../../src/api/routes/agency-ca
 type AgencyCampaignRouteDeps = import('../../../src/api/routes/agency-campaigns.routes.js').AgencyCampaignRouteDeps;
 const { agencyCampaignRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { publishPacingInvalidation } = await import('../../../src/agency/pacing/invalidation-bus.js');
+const { publishCacheInvalidation } = await import('../../../src/cache/cache-invalidation.js');
 const { TtlCache } = await import('@magick-agency/db/utils/ttl-cache');
 
 const HEADERS = { 'x-mgkvc-tenant': DEFAULTS.tenantId, 'x-mgkvc-account': DEFAULTS.accountId };
@@ -71,10 +77,14 @@ async function buildApp(statsCacheMs: number): Promise<FastifyInstance> {
   return app;
 }
 
-async function getStats(app: FastifyInstance, campaignId: string) {
-  const res = await app.inject({ method: 'GET', url: `/api/v1/agency-campaigns/${campaignId}/stats`, headers: HEADERS });
+async function getStatsRes(app: FastifyInstance, campaignId: string, headers: Record<string, string> = {}) {
+  const res = await app.inject({ method: 'GET', url: `/api/v1/agency-campaigns/${campaignId}/stats`, headers: { ...HEADERS, ...headers } });
   expect(res.statusCode, res.body).toBe(200);
-  return res.json();
+  return res;
+}
+
+async function getStats(app: FastifyInstance, campaignId: string) {
+  return (await getStatsRes(app, campaignId)).json();
 }
 
 /** The contact counters straight from the table. */
@@ -160,6 +170,81 @@ describe('GET /api/v1/agency-campaigns/:id/stats · one read for every viewer (i
     publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
 
     expect((await getStats(app, campaign.id)).contacts_total).toBe(4);
+  });
+
+  it('a force-available (the stats cache on the cache-invalidation channel) reaches the next read', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'paused' });
+    await insertAgencyContacts(campaign.id, 2);
+    const stats = vi.spyOn(agencyCampaignRepository, 'stats');
+    const app = await buildApp(60_000);
+    expect((await getStats(app, campaign.id)).contacts_total).toBe(2);
+
+    await insertAgencyContact(campaign.id, { source_row_number: 3 });
+    expect((await getStats(app, campaign.id)).contacts_total).toBe(2);
+    // As `POST /sessions/:id/force-available` publishes it (in a media worker, relayed here).
+    publishCacheInvalidation({ cache: 'agency-campaign-stats', key: campaign.id });
+
+    expect((await getStats(app, campaign.id)).contacts_total).toBe(3);
+    expect(stats).toHaveBeenCalledTimes(2);
+  });
+
+  it('a burst of contacts_changed while a read is in flight runs no second scan: requests join it, the next reads afresh', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    await insertAgencyContacts(campaign.id, 2);
+    const app = await buildApp(60_000);
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const original = agencyCampaignRepository.stats.bind(agencyCampaignRepository);
+    const stats = vi.spyOn(agencyCampaignRepository, 'stats').mockImplementationOnce(async (id) => {
+      const read = await original(id);
+      await gate;
+      return read;
+    });
+    const asked = vi.spyOn(TtlCache.prototype, 'getOrLoad');
+
+    const first = getStats(app, campaign.id);
+    await vi.waitFor(() => expect(stats).toHaveBeenCalledTimes(1));
+    // Chunks land while supervisors keep polling.
+    const polls: Array<Promise<{ contacts_total: number }>> = [];
+    for (let chunk = 0; chunk < 3; chunk++) {
+      await insertAgencyContact(campaign.id, { source_row_number: 10 + chunk });
+      publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
+      polls.push(getStats(app, campaign.id));
+    }
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(4));
+    expect(stats).toHaveBeenCalledTimes(1);
+    release();
+    // The read in flight was taken before the chunks: every request that joined it sees it.
+    expect((await first).contacts_total).toBe(2);
+    for (const body of await Promise.all(polls)) expect(body.contacts_total).toBe(2);
+
+    // Not kept: the next request reads afresh and sees every chunk.
+    expect((await getStats(app, campaign.id)).contacts_total).toBe(5);
+    expect(stats).toHaveBeenCalledTimes(2);
+  });
+
+  it('a read past the shared read sees what it has not, and leaves it to everyone else', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'paused' });
+    await insertAgencyContacts(campaign.id, 2);
+    const app = await buildApp(60_000);
+    const first = await getStatsRes(app, campaign.id);
+    expect(first.headers['x-mgkvc-stats-read']).toBe('scanned');
+    expect(first.json().contacts_total).toBe(2);
+
+    await insertAgencyContact(campaign.id, { source_row_number: 3 });
+    const shared = await getStatsRes(app, campaign.id);
+    expect(shared.headers['x-mgkvc-stats-read']).toBe('shared');
+    expect(shared.json().contacts_total).toBe(2);
+
+    const own = await getStatsRes(app, campaign.id, { 'x-mgkvc-stats-fresh': '1' });
+    expect(own.headers['x-mgkvc-stats-read']).toBe('scanned');
+    expect(own.json().contacts_total).toBe(3);
+
+    // The supervisors' read is untouched: still served, still the one from before.
+    const after = await getStatsRes(app, campaign.id);
+    expect(after.headers['x-mgkvc-stats-read']).toBe('shared');
+    expect(after.json().contacts_total).toBe(2);
   });
 
   it('a write that announces nothing is served from the shared read until it expires, then seen', async () => {

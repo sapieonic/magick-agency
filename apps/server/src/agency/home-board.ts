@@ -7,7 +7,7 @@
  *  - the campaigns: `agencyCampaignRepository.listForHome` (the Campaigns page's order, capped);
  *  - per campaign, the internal stats handler's payload (`liveStats`, the route's hop through
  *    `callCore`, so the stall, the guardrail's 24 hours and the floor are the health strip's
- *    own), projected to the fields Home and the Campaigns page's Active cards read
+ *    own; the read the supervisors' pages share, `campaign-stats-reads.ts`), projected to the fields Home and the Campaigns page's Active cards read
  *    (`homeStats`), and the allocation's staffing (`campaignStaffing`: assigned agents and how
  *    many are on the floor);
  *  - per campaign, the insights allocation (`cachedAllocation`, the Insights tab's own cache)
@@ -35,7 +35,10 @@
  *    are reused for {@link HOME_STILL_MS} while its floor holds: the memo's key carries the floor's
  *    signature (`floorSignatures`, one indexed read for the board: open sessions, newest state
  *    change, newest join), so an agent joining a paused campaign's floor, or a signed-out station
- *    being reaped, misses at once. A moving campaign's are read on every board.
+ *    being reaped, misses at once. A moving campaign's are read on every board. A kept read must
+ *    not predate the signature it is kept under: when the stats route handed the board a read
+ *    another request began, and the board is about to keep it, it reads once more past the
+ *    shared read and keeps that (`liveFor`).
  *  - **The allocation figures and today's figures** are reused for {@link HOME_STILL_MS} per
  *    campaign (follow-up counts, not a live queue). At most one allocation per campaign per minute
  *    on the board, shared with any Insights tab open on it through the insights cache. Today's
@@ -70,7 +73,6 @@ import { mapWithConcurrency } from '../utils/concurrency.js';
 import { InsightsCache, insightsCacheKey } from './insights/cache.js';
 import { insightsSettings } from './insights/settings.js';
 import { todayRange } from './insights/health.js';
-import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import type { ServedInsightsRange } from './insights/range.js';
 
 const log = createChildLogger({ component: 'agency-home-board' });
@@ -84,10 +86,22 @@ export const HOME_STILL_MS = 60_000;
 /** Campaigns read at once: a board is at most 25 campaigns, one per account per {@link HOME_BOARD_MS}. */
 export const HOME_READ_CONCURRENCY = 8;
 
+/**
+ * One stats read: the internal stats handler's payload, and whether its SQL half was a read
+ * another request began (`shared`: it may predate the board's floor read).
+ */
+export interface HomeLiveStats {
+  stats: Partial<AgencyCampaignStats>;
+  shared: boolean;
+}
+
 /** What the board reads per campaign. The route supplies them (`liveStats` is a `callCore` hop). */
 export interface HomeBoardDeps {
-  /** The internal stats handler's payload under the campaign's own account; null when it refused. */
-  liveStats: (campaign: AgencyCampaignRecord) => Promise<Partial<AgencyCampaignStats> | null>;
+  /**
+   * The internal stats handler's payload under the campaign's own account; null when it refused.
+   * `fresh` reads past the supervisors' shared read, leaving it as it is for them.
+   */
+  liveStats: (campaign: AgencyCampaignRecord, opts: { fresh: boolean }) => Promise<HomeLiveStats | null>;
   /**
    * The insights reads, `agency.supervise`'s: given for a supervisor's board only. Null below that
    * floor: the board then serves `staffing`, `allocation`, `today` and `settings` null and makes
@@ -227,23 +241,27 @@ async function liveFor(
   if (kept && (!insights || kept.staffing)) {
     return { stats: kept.stats, staffing: insights ? kept.staffing! : null };
   }
-  // A campaign this read may keep (a floor signature to key it under, and a status that is not
-  // moving) reads past the stats route's shared read (`campaign-stats-reads.ts`): one up to
-  // `AGENCY_CAMPAIGN_STATS_CACHE_MS` old could predate the floor signature just read, and an
-  // agent who joined in between would then be kept off Home for a whole minute. A running or
-  // stopping campaign is never kept, so it shares the read its supervisors' pages make. Home runs
-  // on the primary, whose in-process bus delivers before the next line.
-  if (floor !== undefined && !campaignMoving(campaign.status, {})) {
-    publishPacingInvalidation({ type: 'campaign_stats_stale', campaignId: campaign.id });
-  }
-  const [stats, staffing] = await Promise.all([
-    settle('stats', campaign.id, () => deps.liveStats(campaign)),
+  const [read, staffing] = await Promise.all([
+    settle('stats', campaign.id, () => deps.liveStats(campaign, { fresh: false })),
     insights ? settle('staffing', campaign.id, () => insights.staffing(campaign)) : Promise.resolve(null),
   ]);
   still.delete(campaign.id);
-  if (stats && (staffing || !insights) && floor !== undefined && !campaignMoving(campaign.status, stats)) {
-    still.set(campaign, now, staffing ? { stats, staffing } : { stats }, floor);
+  // Kept: every read answered, a floor signature to key it under, and still by its own stats.
+  const keeps = (stats: Partial<AgencyCampaignStats>): boolean =>
+    (staffing !== null || !insights) && floor !== undefined && !campaignMoving(campaign.status, stats);
+  if (!read) return { stats: null, staffing };
+  let stats = read.stats;
+  if (read.shared && keeps(stats)) {
+    // About to keep a read another request began, maybe before the floor signature just read: an
+    // agent who joined in between would then stay off Home for a whole minute. So read once past
+    // the supervisors' shared read (which stays theirs) and keep that, if it is still still. A
+    // read that ran for this board began after the floor read, and is kept as it is. If the read
+    // past fails, the shared one is served and nothing is kept.
+    const own = await settle('stats', campaign.id, () => deps.liveStats(campaign, { fresh: true }));
+    if (!own) return { stats, staffing };
+    stats = own.stats;
   }
+  if (keeps(stats)) still.set(campaign, now, staffing ? { stats, staffing } : { stats }, floor!);
   return { stats, staffing };
 }
 

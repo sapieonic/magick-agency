@@ -1281,9 +1281,6 @@ export class PacingEngine {
       case 'contacts_changed':
         this.markDirty(event.campaignId);
         return;
-      case 'campaign_stats_stale':
-        // The supervisors' stats read's (campaign-stats-reads.ts); nothing a tick reads.
-        return;
       case 'dedications_changed':
         // Which number a dial uses, never whether the campaign can dial: nothing to wake.
         this.dedications.invalidate(event.campaignId);

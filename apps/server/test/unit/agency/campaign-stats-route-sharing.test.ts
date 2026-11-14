@@ -10,7 +10,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
  *  - `ownedCampaign` still runs for every request, before anything shared is served: a caller
  *    from another tenant gets the 404 and a caller with the dialer flag off the 403, with the
  *    campaign's read warm;
- *  - a `campaign_changed` event drops the read, and closing the app stops listening.
+ *  - a `campaign_changed` event drops the read, and closing the app stops listening;
+ *  - each answer says whether its read ran for it (`x-mgkvc-stats-read`), and the in-process
+ *    `x-mgkvc-stats-fresh` header reads past the shared read without disturbing it.
  * The cache itself: `campaign-stats-reads.test.ts`.
  */
 
@@ -222,6 +224,41 @@ describe('GET /agency-campaigns/:id/stats · one read for every viewer', () => {
     } finally {
       await one.close();
       await two.close();
+    }
+  });
+
+  it('says whether each answer was read for its request, and reads past the shared read for the fresh header only', async () => {
+    const app = await buildApp();
+    try {
+      const first = await app.inject({ method: 'GET', url: URL, headers: OWNER });
+      expect(first.headers['x-mgkvc-stats-read']).toBe('scanned');
+      const second = await app.inject({ method: 'GET', url: URL, headers: OWNER });
+      expect(second.headers['x-mgkvc-stats-read']).toBe('shared');
+      expect(campaigns.stats).toHaveBeenCalledTimes(1);
+
+      // Any other value is not a request for a read of one's own.
+      const other = await app.inject({ method: 'GET', url: URL, headers: { ...OWNER, 'x-mgkvc-stats-fresh': 'yes' } });
+      expect(other.headers['x-mgkvc-stats-read']).toBe('shared');
+      expect(campaigns.stats).toHaveBeenCalledTimes(1);
+
+      campaigns.stats.mockResolvedValue({ ...STATS, contacts_total: 1300 });
+      const fresh = await app.inject({ method: 'GET', url: URL, headers: { ...OWNER, 'x-mgkvc-stats-fresh': '1' } });
+      expect(fresh.statusCode).toBe(200);
+      expect(fresh.headers['x-mgkvc-stats-read']).toBe('scanned');
+      expect(fresh.json().contacts_total).toBe(1300);
+      expect(campaigns.stats).toHaveBeenCalledTimes(2);
+
+      // The shared read is still the one the others are served.
+      const after = await app.inject({ method: 'GET', url: URL, headers: OWNER });
+      expect(after.headers['x-mgkvc-stats-read']).toBe('shared');
+      expect(after.json().contacts_total).toBe(1234);
+
+      // A fresh read is still behind the guard.
+      const otherTenant = await app.inject({ method: 'GET', url: URL, headers: { 'x-mgkvc-tenant': 't2', 'x-mgkvc-account': 'a1', 'x-mgkvc-stats-fresh': '1' } });
+      expect(otherTenant.statusCode).toBe(404);
+      expect(campaigns.stats).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
     }
   });
 });

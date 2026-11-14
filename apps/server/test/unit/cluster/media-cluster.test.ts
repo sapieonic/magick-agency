@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { slotFor } from '../../../src/cluster/roles.js';
 import { DEFAULT_MAX_DIALS_IN_FLIGHT, MediaCluster } from '../../../src/cluster/media-cluster.js';
 import { parseConfig } from '../../../src/config/load.js';
+import { onCacheInvalidation, setCacheInvalidationForwarder } from '../../../src/cache/cache-invalidation.js';
 import { EMPTY_SNAPSHOT, FakeChildProcess } from '../../helpers/fake-child-process.js';
 
 /*
@@ -161,6 +162,29 @@ describe('MediaCluster: invalidations the primary sends every worker', () => {
     for (const f of forks) {
       expect(f.sent.filter((m) => m.kind === 'event' && m.type === 'concurrency.invalidate'))
         .toEqual([expect.objectContaining({ body: { tenantId: 't', accountId: 'a' } })]);
+    }
+  });
+});
+
+describe('MediaCluster: what the workers tell the primary', () => {
+  it('a worker\'s `cache.invalidate` reaches this process\'s listeners for that cache, and goes no further', async () => {
+    const { c, forks } = cluster({ count: 2 });
+    running = c;
+    await c.start();
+    const got = vi.fn();
+    const forwarded = vi.fn();
+    const off = onCacheInvalidation('agency-campaign-stats', got);
+    // Were the primary to forward, the event would go back the way it came.
+    setCacheInvalidationForwarder(forwarded);
+    try {
+      forks[1]!.emit('message', { v: 1, kind: 'event', type: 'cache.invalidate', body: { cache: 'agency-campaign-stats', key: 'camp-1' } });
+      // A cache this channel does not list is dropped at the decoder.
+      forks[0]!.emit('message', { v: 1, kind: 'event', type: 'cache.invalidate', body: { cache: 'made-up', key: 'camp-2' } });
+      expect(got.mock.calls).toEqual([['camp-1']]);
+      expect(forwarded).not.toHaveBeenCalled();
+    } finally {
+      off();
+      setCacheInvalidationForwarder(null);
     }
   });
 });

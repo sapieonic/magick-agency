@@ -1468,8 +1468,12 @@ ending the process; opt-in session timeouts `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`,
 (the ones that are off RESET, so nothing a session pooler left behind is inherited), with the
 report cursor exempt and the migration step resetting all three on its own connection; the
 campaign stats route's two campaign-wide reads shared between supervisors for
-`AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s), dropped by the campaign's writes and a force-available
-(over the pacing bus, so it reaches the primary from a media worker). The operator half (building
+`AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s), dropped by the campaign's row writes, a force-available
+and a completed roster upload (the last two over the cache-invalidation channel, which reaches the
+primary from a media worker as `cache.invalidate`; the pacing bus carries only what pacing reads),
+and only marked stale by each roster chunk's `contacts_changed`, so an ingest never overlaps two
+scans of one campaign; Home reads past it only for a still campaign it is about to keep from a
+read another request began, and never drops it for others. The operator half (building
 0039's indexes `CONCURRENTLY` on a large database, point-in-time recovery and a restore drill,
 `pg_stat_statements` and slow and lock-wait logging, the timeouts one at a time) is the runbook,
 `db-hygiene.md`; its section 7 is phase 2's list (retention windows, campaign stats from the

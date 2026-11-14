@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 /*
  * The invalidations a media worker applies from the primary (`media-child.ts`): each one
  * drops this worker's own copy of what the primary changed. Pinned per event, so a cache
- * that a worker's dials read cannot drop out of the relay unnoticed.
+ * that a worker's dials read cannot drop out of the relay unnoticed. And the other way: a
+ * cache invalidation published in the worker goes to the primary (`cache.invalidate`).
  */
 const dialability = vi.hoisted(() => ({ clearDialableCallerIdCache: vi.fn() }));
 vi.mock('../../../src/agency/campaign-dialability.js', () => dialability);
 
-const { startMediaChild } = await import('../../../src/cluster/media-child.js');
+const { installIpcCacheInvalidation, startMediaChild } = await import('../../../src/cluster/media-child.js');
+const cacheChannel = await import('../../../src/cache/cache-invalidation.js');
 
 /** Just what `startMediaChild` registers on, with each event handler kept. */
 function fakeChannel() {
@@ -60,5 +62,20 @@ describe('a media worker applies the primary\'s invalidations', () => {
     expect(guardHost.accountConcurrencyGuard.invalidateLimit).toHaveBeenCalledWith('t', 'a');
     expect(guardHost.providerConcurrencyGuard.invalidateLimits).toHaveBeenCalledWith('t', 'a');
     await child.shutdown();
+  });
+
+  it('a cache invalidation published here goes to the primary as `cache.invalidate`, and to this process too', () => {
+    const channel = fakeChannel();
+    const local = vi.fn();
+    const off = cacheChannel.onCacheInvalidation('agency-campaign-stats', local);
+    try {
+      installIpcCacheInvalidation(channel as any);
+      cacheChannel.publishCacheInvalidation({ cache: 'agency-campaign-stats', key: 'camp-1' });
+      expect(channel.emit).toHaveBeenCalledWith('cache.invalidate', { cache: 'agency-campaign-stats', key: 'camp-1' });
+      expect(local).toHaveBeenCalledWith('camp-1');
+    } finally {
+      off();
+      cacheChannel.setCacheInvalidationForwarder(null);
+    }
   });
 });
