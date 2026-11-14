@@ -94,6 +94,39 @@
   gap: 16px;
 }
 
+/* Each item keeps its words on one line ("Close soft phone" wrapped to three). */
+.headerRight > * {
+  flex: none;
+  white-space: nowrap;
+}
+
+/*
+  A phone: the one 56px row cannot hold who, where the call is logged, the way
+  out and the connection, and pushed the agent's name off the left edge. The bar
+  grows to as many rows as it needs instead.
+*/
+@media (max-width: 767px) {
+  .header {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    height: auto;
+    min-height: 56px;
+    flex: 0 0 auto;
+    padding: 8px 12px;
+  }
+
+  .identity {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding-right: 0;
+  }
+
+  .headerRight {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+}
+
 /*
  * Recording is a dot PLUS the word. In several jurisdictions the agent must
  * announce recording, and they cannot announce what they cannot see — an icon
@@ -324,6 +357,29 @@
   justify-content: flex-end;
   align-items: stretch;
   gap: 8px;
+}
+
+/*
+  Below a laptop the two fixed side columns (340px and 320px) left the middle
+  one nothing: on a phone it collapsed to a 32px sliver. There the columns
+  stack and the body scrolls. The widths still do not change between call
+  states, which is what the frozen geometry above is for.
+*/
+@media (max-width: 1023px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: max-content;
+    gap: 12px;
+    padding: 12px;
+    overflow-y: auto;
+  }
+
+  .colContact,
+  .colDetail,
+  .colOutcome,
+  .colActions {
+    overflow-y: visible;
+  }
 }
 
 /* ── Contact column ─────────────────────────────────────────────────────── */
@@ -831,6 +887,24 @@ button.fatalEscape {
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
   min-height: 64px;
+}
+
+/*
+  A phone: the bar's controls stacked as a ragged column of different widths and
+  took two fifths of the screen from the call. Each wrapped row fills the width
+  instead, and the bar is tighter.
+*/
+@media (max-width: 767px) {
+  .actionBar {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .actionBar > button,
+  .actionBar > div {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
 }
 
 .save {

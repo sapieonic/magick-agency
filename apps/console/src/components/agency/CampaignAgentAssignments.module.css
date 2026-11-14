@@ -100,7 +100,9 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  flex: 1;
+  /* A basis, so on a phone the role, station and Remove wrap under the person
+     instead of squeezing the email into a column broken mid-word. */
+  flex: 1 1 220px;
   min-width: 0;
 }
 

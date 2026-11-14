@@ -50,7 +50,10 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* 320px: four figures and their labels side by side. At 240px, a laptop with
+     the sidebar fitted three narrow tracks, wrapped "Longest wait" and cut the
+     route's name short beside a row of empty space. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   gap: 12px;
   margin: 0;
   padding: 0;

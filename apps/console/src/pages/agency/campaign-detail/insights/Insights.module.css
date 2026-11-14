@@ -70,6 +70,30 @@
   font-weight: 600;
 }
 
+/* On a phone the five presets wrapped "Custom" onto a second row of the
+   bordered group, which read as a broken control. One row that fills the width
+   instead, tighter, and scrolling sideways rather than wrapping if a narrower
+   screen still cannot hold it. */
+@media (max-width: 640px) {
+  .rangeGroup,
+  .segmented {
+    width: 100%;
+  }
+
+  .segmented {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .segment {
+    flex: 1 0 auto;
+    padding: 6px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+}
+
 .customRange {
   display: inline-flex;
   flex-wrap: wrap;

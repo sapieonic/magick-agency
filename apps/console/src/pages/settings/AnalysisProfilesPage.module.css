@@ -20,6 +20,7 @@
 }
 
 .descriptionCell {
+  display: block;
   font-size: 13px;
   color: var(--text-secondary);
 }
@@ -316,5 +317,17 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+/* A phone: floors, so the table scrolls sideways instead of squeezing the name
+   and description to a word a line. Wider screens fit it as it is. */
+@media (max-width: 640px) {
+  .nameCell {
+    min-width: 150px;
+  }
+
+  .descriptionCell {
+    min-width: 220px;
   }
 }

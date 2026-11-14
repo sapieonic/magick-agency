@@ -11,6 +11,7 @@ import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { PageDescription } from '../../components/common/PageDescription';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import {
@@ -295,7 +296,12 @@ export function DncPage() {
 
   return (
     <div className={styles.page}>
-      <h1 className={styles.title}>Do Not Call</h1>
+      <PageHeader
+        title="Do Not Call"
+        subtitle={softphoneOn
+          ? 'Numbers your campaigns and the soft phone never call, and who listed them.'
+          : 'Numbers your campaigns never dial, and who listed them.'}
+      />
 
       {/*
         This list governs agency campaigns and the soft phone, and the copy has to
@@ -446,6 +452,8 @@ export function DncPage() {
 
       {!loading && entries.length > 0 && (
         <>
+          {/* Scrolls sideways on its own on a phone, not the whole page. */}
+          <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
@@ -476,7 +484,7 @@ export function DncPage() {
                       );
                     })()}
                   </td>
-                  <td>{formatDate(entry.created_at)}</td>
+                  <td className={styles.nowrap}>{formatDate(entry.created_at)}</td>
                   <td className={entry.added_by ? undefined : styles.unattributed}>
                     {addedByLabel(entry.added_by)}
                   </td>
@@ -500,6 +508,7 @@ export function DncPage() {
               ))}
             </tbody>
           </table>
+          </div>
 
           <div className={styles.pager}>
             <span className={styles.pagerLabel}>

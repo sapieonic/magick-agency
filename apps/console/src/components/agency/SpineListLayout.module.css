@@ -496,8 +496,11 @@
     align-items: stretch;
   }
 
-  .actions {
-    justify-content: flex-end;
+  /* Each wrapped row of buttons fills the width, rather than a ragged
+     right-aligned stack under a left-aligned title. */
+  .actions > * {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 
   .filterFooter {

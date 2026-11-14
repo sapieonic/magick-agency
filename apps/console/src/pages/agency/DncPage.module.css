@@ -2,13 +2,6 @@
   max-width: 900px;
 }
 
-.title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-}
-
 .addBox {
   display: flex;
   flex-direction: column;
@@ -99,6 +92,15 @@
   margin: -4px 0 12px;
   font-size: 12px;
   color: var(--danger);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 .table {
@@ -194,4 +196,13 @@
   border-radius: 4px;
   cursor: help;
   white-space: nowrap;
+}
+
+/* A phone: the table scrolls inside its own box, so each cell keeps one line
+   instead of wrapping every row to three. */
+@media (max-width: 640px) {
+  .table th,
+  .table td {
+    white-space: nowrap;
+  }
 }

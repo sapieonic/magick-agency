@@ -195,7 +195,8 @@ describe('/dialer/phone', () => {
     expect(link.closest('a')).not.toBeNull();
     const hint = document.getElementById(link.getAttribute('aria-describedby')!)!;
     expect(hint.textContent).toBe('Your soft phone stays open on other screens. Close it here when you’re done.');
-    expect(link.getAttribute('title')).toBe(hint.textContent);
+    // The header shows the entry as an icon alone at laptop width, so its tooltip names it first.
+    expect(link.getAttribute('title')).toBe(`My calls — ${hint.textContent}`);
   });
 
   describe('with the soft phone turned off', () => {

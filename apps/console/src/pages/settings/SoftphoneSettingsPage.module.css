@@ -34,17 +34,17 @@
   font-size: 13px;
 }
 
+/*
+  Two columns only where each can hold a row's label beside its control. The
+  space is what the sidebar and the Settings list leave, not the window: at
+  1366px the old viewport breakpoint kept two ~420px columns and squeezed
+  "Summary profile" into a word a line beside its select.
+*/
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
   gap: 20px;
   align-items: start;
-}
-
-@media (max-width: 1023px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .stack {
@@ -71,6 +71,7 @@
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -87,6 +88,7 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 180px;
 }
 
 .rowLabel {
@@ -104,6 +106,7 @@
 
 .rowControl:where(select) {
   width: 240px;
+  max-width: 100%;
   flex: none;
 }
 
