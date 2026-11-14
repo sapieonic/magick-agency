@@ -1496,16 +1496,15 @@ depends on either; `db-hygiene.md` 4.1 has the post-deploy check); every operato
 
 ## Test counts
 
-**Database hygiene, 2026-11-14.** Branch `claude-mgkvc/epic-shannon-lesp56` on `182fab4`, run on
-`2c82500` (this entry's commit changes docs only). Each package from inside its directory, one
-suite at a time, on the local Postgres 16 and Redis on the agency ports with no other run sharing
-them; the server's integration as two lanes. `pnpm lint` clean; `pnpm test:grafana` 33,
-`pnpm test:release` 10 and `pnpm test:tooling` 16 pass. `packages/db`: unit 452 (28 files),
-integration 788 (84 files). `apps/server` wall-clock lane 26 (6 files). Not green, so no counts:
-`apps/server` unit failed only `inbound-recordings.test.ts` (3) and the rest lane only
-`inbound-clips-routes.test.ts` (11), every failure `spawn mpg123` / `spawn sndfile-convert ENOENT`
-(this machine has neither; CI installs both, `apps/server/CLAUDE.md`); the same two files fail the
-same way on `182fab4`. Other packages untouched by the branch were not re-run.
+**Database hygiene, 2026-11-14 (after the PR review fixes).** Branch `claude-mgkvc/epic-shannon-lesp56`
+on `182fab4`, run on `560cfe5` (this entry's commit changes docs only). Each package from inside
+its directory, one suite at a time, on the local Postgres 16 and Redis on the agency ports with no
+other run sharing them; the server's integration as two lanes; `mpg123` and `sndfile-programs`
+installed. `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and
+`pnpm test:tooling` 16 pass. `packages/db`: unit 457 (28 files), integration 789 (84 files).
+`apps/server`: unit 10038 passed + 1 expected fail (506 files); rest lane 2868 passed, 9 expected
+fail, 2 skipped (259 files passed, 2 skipped); wall-clock lane 26 (6 files). No failures, no
+reruns. Other packages untouched by the branch were not re-run.
 
 **Mode B, 2026-11-13 (final, after the cleanup pass).** Branch `claude-mgkvc/gracious-faraday-rw6nnx`
 on `main` `b3894d2`, run on `d6ec1a0`, after the Mode B cleanup pass (`47edcfd`–`d6ec1a0`: dead
