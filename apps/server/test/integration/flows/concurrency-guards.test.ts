@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { connect } from 'node:net';
 import { getTestPool, closeTestPool, truncateAll } from '../../../../../packages/db/test/integration/setup/test-utils.js';
 import { uuidFor } from '../../../../../packages/db/test/integration/setup/factories.js';
 import Redis from 'ioredis';
@@ -464,18 +466,44 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
    * connection's address. See the comment in test C. `read()` first sends an ECHO with a
    * fresh marker on the connection and waits for the monitor to show it, so every command
    * sent before it has been counted.
+   *
+   * MONITOR is read from a plain socket, not ioredis's `monitor()`: ioredis enters its
+   * monitoring mode in a promise callback after MONITOR's `+OK`, so feed lines that arrive in
+   * the same TCP chunk as the `+OK` (another worker's connection sending `select` or
+   * `client SETINFO` at that moment) are parsed first, as replies to no command, and ioredis
+   * raises an uncaught "Command queue state error". A socket has no mode to race: the `+OK`
+   * comes first and every line after it is feed.
    */
   async function evalCounter(client: Redis) {
     const addr = /(?:^| )addr=(\S+)/.exec(String(await client.client('INFO')))![1]!;
-    const monitor = await new Redis(TEST_REDIS_URL).monitor();
+    const url = new URL(TEST_REDIS_URL);
+    const socket = connect(Number(url.port || 6379), url.hostname);
+    socket.setEncoding('utf8');
+    await once(socket, 'connect');
     let evals = 0;
     const echoed = new Set<string>();
-    monitor.on('monitor', (_time: string, args: string[], source: string) => {
-      if (source !== addr) return;
-      const command = String(args[0]).toLowerCase();
-      if (command === 'eval' || command === 'evalsha') evals++;
-      if (command === 'echo') echoed.add(String(args[1]));
+    let started!: () => void;
+    let refused!: (error: Error) => void;
+    const monitoring = new Promise<void>((resolve, reject) => { started = resolve; refused = reject; });
+    socket.on('error', (error) => refused(error));
+    let pending = '';
+    socket.on('data', (chunk: string) => {
+      pending += chunk;
+      for (let end = pending.indexOf('\r\n'); end >= 0; end = pending.indexOf('\r\n')) {
+        const line = pending.slice(0, end);
+        pending = pending.slice(end + 2);
+        if (line === '+OK') { started(); continue; }
+        if (line.startsWith('-')) { refused(new Error(`MONITOR refused: ${line}`)); continue; }
+        // `+<time> [<db> <source>] "<command>" "<arg>" …`, each argument quoted, `\"` escaped.
+        const feed = /^\+\S+ \[\d+ (\S+)\] "((?:[^"\\]|\\.)*)"(?: "((?:[^"\\]|\\.)*)")?/.exec(line);
+        if (!feed || feed[1] !== addr) continue;
+        const command = feed[2]!.toLowerCase();
+        if (command === 'eval' || command === 'evalsha') evals++;
+        if (command === 'echo' && feed[3] !== undefined) echoed.add(feed[3]);
+      }
     });
+    socket.write('MONITOR\r\n');
+    await monitoring;
     const sync = async () => {
       const marker = randomUUID();
       await client.echo(marker);
@@ -484,7 +512,7 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
     await sync();
     return {
       read: async () => { await sync(); return evals; },
-      close: () => monitor.disconnect(),
+      close: () => socket.destroy(),
     };
   }
 
