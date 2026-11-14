@@ -32,8 +32,10 @@ describe('dialer-analysis baseline (integration)', () => {
     );
     expect(gone.rows).toEqual([]);
     const idx = await getTestPool().query(`SELECT indexname FROM pg_indexes WHERE tablename = 'dialer_analysis_jobs'`);
+    // idx_dialer_analysis_jobs_created is 0039's (the retention purge's time index).
     expect(idx.rows.map((r) => r.indexname).sort()).toEqual([
-      'dialer_analysis_jobs_pkey', 'idx_dialer_analysis_jobs_runnable', 'idx_dialer_analysis_jobs_stale', 'uq_dialer_analysis_jobs_call',
+      'dialer_analysis_jobs_pkey', 'idx_dialer_analysis_jobs_created', 'idx_dialer_analysis_jobs_runnable',
+      'idx_dialer_analysis_jobs_stale', 'uq_dialer_analysis_jobs_call',
     ]);
   });
 
