@@ -650,6 +650,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/create-account.test.ts` | 15 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
+| `apps/server/test/unit/api/routes/helpers/live-stats.test.ts` (the read-past header sent only when asked; an answer shared unless the handler says its read ran for the call) | 7 |
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/path-params.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/helpers/refusal.test.ts` | 3 |
