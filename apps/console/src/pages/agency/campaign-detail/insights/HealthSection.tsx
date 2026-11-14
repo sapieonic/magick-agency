@@ -12,6 +12,7 @@ import { CountLink, CsvButton, InsightsTable, Kpi, Panel, rateFigure, tableCsv, 
 import type { RangeSectionContext } from './ActivitySections';
 import styles from './Insights.module.css';
 import { StatGrid } from '../../../../components/common/StatGrid';
+import { PanelGrid } from '../../../../components/common/PanelGrid';
 
 type StallReason = keyof AgencyInsightsHealth['stalls']['minutes_by_reason'];
 const STALL_REASONS: StallReason[] = [...AGENCY_PACING_IDLE_REASONS, 'outside_calling_hours'];
@@ -116,35 +117,42 @@ export function HealthSection({
         <Kpi label="Retired by our faults" value={formatCount(health.our_fault_retired)} sub="Contacts closed after repeated system faults" testId="kpi-our-fault" />
       </StatGrid>
 
-      <h4 className={styles.subTitle}>Caller IDs</h4>
-      {health.caller_ids.length === 0 ? (
-        <p className={styles.muted}>No dials in this range.</p>
-      ) : (
-        <>
-          <p className={styles.muted}>{`Campaign connect rate across caller IDs: ${average.value}`}</p>
-          <InsightsTable caption="Dials and connect rate by caller ID" columns={callerColumns} rows={health.caller_ids} rowKey={(r) => r.caller_id} sortable testId="caller-ids-table" />
-        </>
-      )}
-
-      <h4 className={styles.subTitle}>Stalls</h4>
-      <p className={styles.muted} data-testid="pacing-history-since">
-        {health.pacing_history_since
-          ? `Pacing history since ${formatZoned(health.pacing_history_since, timezone)}. Earlier minutes were not recorded.`
-          : 'Pacing history has not started recording for this campaign yet.'}
-      </p>
-      {reasonRows.length === 0 ? (
-        <p className={styles.muted}>The dialler was never held back in this range.</p>
-      ) : (
-        <InsightsTable caption="Minutes the dialler waited, by reason" columns={reasonColumns} rows={reasonRows} rowKey={(r) => r.reason} testId="stall-reasons-table" />
-      )}
-      {health.stalls.episodes_truncated ? (
-        <p className={styles.muted} data-testid="stall-episodes-truncated">Showing the newest 500 stall episodes; older ones in this range are not listed (the minutes above count them all).</p>
-      ) : null}
-      {health.stalls.episodes.length > 0 ? (
-        <div className={styles.historyList}>
-          <InsightsTable caption="Stall episodes" columns={episodeColumns} rows={health.stalls.episodes} rowKey={(e) => `${e.reason}-${e.started_at}`} testId="stall-episodes-table" />
+      {/* Side by side once each keeps a readable width (see the Calls section). */}
+      <PanelGrid min={600}>
+        <div className={styles.subSection}>
+          <h4 className={styles.subTitle}>Caller IDs</h4>
+          {health.caller_ids.length === 0 ? (
+            <p className={styles.muted}>No dials in this range.</p>
+          ) : (
+            <>
+              <p className={styles.muted}>{`Campaign connect rate across caller IDs: ${average.value}`}</p>
+              <InsightsTable caption="Dials and connect rate by caller ID" columns={callerColumns} rows={health.caller_ids} rowKey={(r) => r.caller_id} sortable testId="caller-ids-table" />
+            </>
+          )}
         </div>
-      ) : null}
+
+        <div className={styles.subSection}>
+          <h4 className={styles.subTitle}>Stalls</h4>
+          <p className={styles.muted} data-testid="pacing-history-since">
+            {health.pacing_history_since
+              ? `Pacing history since ${formatZoned(health.pacing_history_since, timezone)}. Earlier minutes were not recorded.`
+              : 'Pacing history has not started recording for this campaign yet.'}
+          </p>
+          {reasonRows.length === 0 ? (
+            <p className={styles.muted}>The dialler was never held back in this range.</p>
+          ) : (
+            <InsightsTable caption="Minutes the dialler waited, by reason" columns={reasonColumns} rows={reasonRows} rowKey={(r) => r.reason} testId="stall-reasons-table" />
+          )}
+          {health.stalls.episodes_truncated ? (
+            <p className={styles.muted} data-testid="stall-episodes-truncated">Showing the newest 500 stall episodes; older ones in this range are not listed (the minutes above count them all).</p>
+          ) : null}
+          {health.stalls.episodes.length > 0 ? (
+            <div className={styles.historyList}>
+              <InsightsTable caption="Stall episodes" columns={episodeColumns} rows={health.stalls.episodes} rowKey={(e) => `${e.reason}-${e.started_at}`} testId="stall-episodes-table" />
+            </div>
+          ) : null}
+        </div>
+      </PanelGrid>
     </Panel>
   );
 }

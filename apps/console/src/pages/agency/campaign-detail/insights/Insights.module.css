@@ -203,6 +203,14 @@
   gap: 8px;
 }
 
+/* A titled part of a panel (a heading and its table), laid beside its sibling by `PanelGrid`. */
+.subSection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
 .subTitle {
   margin: 4px 0 0;
   color: var(--text-secondary);
@@ -494,6 +502,28 @@
 .table [data-num='true'] {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+  A phone: the row's name and the column headings may wrap, so a three- or
+  four-column table fits the card instead of scrolling its last column out of
+  sight ("Share of dials" was cut at 390px). Figures stay on one line, and a
+  table with more columns than fit still scrolls inside its box.
+*/
+@media (max-width: 640px) {
+  .table th,
+  .table td {
+    padding: 7px 6px;
+  }
+
+  .table thead th,
+  .table tbody th {
+    white-space: normal;
+  }
+
+  .table tbody th {
+    min-width: 96px;
+  }
 }
 
 .table tbody tr:hover {

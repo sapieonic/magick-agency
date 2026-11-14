@@ -32,6 +32,7 @@ import {
 } from './InsightsParts';
 import styles from './Insights.module.css';
 import { StatGrid } from '../../../../components/common/StatGrid';
+import { PanelGrid } from '../../../../components/common/PanelGrid';
 
 /** What every range section is handed: whose, which range, and how to name people. */
 export interface RangeSectionContext {
@@ -195,15 +196,22 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
         />
       </StatGrid>
 
-      <h4 className={styles.subTitle}>By outcome</h4>
-      <InsightsTable caption="Placed dials by outcome" columns={outcomeColumns} rows={lines} rowKey={(l) => l.outcome ?? 'null'} testId="outcomes-table" />
+      {/* Side by side once each keeps a readable width: on a wide screen one table across the panel set a row's label and its figure a screen apart. */}
+      <PanelGrid min={560}>
+        <div className={styles.subSection}>
+          <h4 className={styles.subTitle}>By outcome</h4>
+          <InsightsTable caption="Placed dials by outcome" columns={outcomeColumns} rows={lines} rowKey={(l) => l.outcome ?? 'null'} testId="outcomes-table" />
+        </div>
 
-      <h4 className={styles.subTitle}>Conversations by disposition</h4>
-      {dispositions.length === 0 ? (
-        <p className={styles.muted}>No conversations in this range.</p>
-      ) : (
-        <InsightsTable caption="Conversations by disposition, successes marked" columns={dispositionColumns} rows={dispositions} rowKey={(row) => row.code ?? 'none'} testId="dispositions-table" />
-      )}
+        <div className={styles.subSection}>
+          <h4 className={styles.subTitle}>Conversations by disposition</h4>
+          {dispositions.length === 0 ? (
+            <p className={styles.muted}>No conversations in this range.</p>
+          ) : (
+            <InsightsTable caption="Conversations by disposition, successes marked" columns={dispositionColumns} rows={dispositions} rowKey={(row) => row.code ?? 'none'} testId="dispositions-table" />
+          )}
+        </div>
+      </PanelGrid>
 
       {activity.no_outcome.total > 0 ? (
         <p className={styles.muted} data-testid="no-outcome">
