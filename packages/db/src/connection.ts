@@ -29,6 +29,59 @@ export interface DbPoolOptions {
   sslRejectUnauthorized?: boolean;
   /** PEM text of the CA that signed the server certificate (`DB_SSL_CA`); absent = Node's roots. */
   sslCa?: string;
+  /**
+   * Postgres `application_name` for every connection of this pool (at most 63 bytes), so
+   * `pg_stat_activity` and `pg_stat_statements` can tell the server, each worker process, the
+   * migrations and scripts apart. Sent in the startup packet, as psql sends its own.
+   */
+  applicationName?: string;
+  /** Session timeouts set on every new connection of this pool; see {@link DbSessionTimeouts}. */
+  sessionTimeouts?: DbSessionTimeouts;
+}
+
+/**
+ * Postgres session timeouts, in milliseconds; `0` or absent leaves the setting as the database
+ * and role define it (`db-hygiene.md`, "Timeouts"). Set with `set_config` on each new connection
+ * before the pool hands it out (pg-pool's `onConnect`), as plain SQL, so they hold through a
+ * session-mode pooler that would not forward startup options. A transaction that needs more
+ * overrides one for itself with `SET LOCAL`.
+ *  - `statementTimeoutMs`: `statement_timeout`, a statement running longer is cancelled (57014);
+ *  - `lockTimeoutMs`: `lock_timeout`, a lock not granted in time fails the statement (55P03);
+ *  - `idleInTransactionTimeoutMs`: `idle_in_transaction_session_timeout`, a session idle inside an
+ *    open transaction for longer is terminated, its locks released.
+ */
+export interface DbSessionTimeouts {
+  statementTimeoutMs?: number;
+  lockTimeoutMs?: number;
+  idleInTransactionTimeoutMs?: number;
+}
+
+const SESSION_TIMEOUT_SETTINGS = [
+  ['statement_timeout', 'statementTimeoutMs'],
+  ['lock_timeout', 'lockTimeoutMs'],
+  ['idle_in_transaction_session_timeout', 'idleInTransactionTimeoutMs'],
+] as const satisfies ReadonlyArray<readonly [string, keyof DbSessionTimeouts]>;
+
+/**
+ * The `onConnect` hook for `timeouts`, or `undefined` when none is set: a pool with no timeouts
+ * sends no extra statement on connect. pg-pool awaits the hook before handing the connection to
+ * its first caller, so the settings are in place for that caller's first statement; a hook that
+ * fails ends the connection and fails that acquire, as a failed connect does.
+ */
+export function sessionTimeoutsHook(timeouts: DbSessionTimeouts | undefined): ((client: pg.ClientBase) => Promise<void>) | undefined {
+  const settings: Array<[string, string]> = [];
+  for (const [name, key] of SESSION_TIMEOUT_SETTINGS) {
+    const ms = timeouts?.[key];
+    if (ms === undefined || ms === 0) continue;
+    if (!Number.isInteger(ms) || ms < 0) throw new Error(`${key} must be a non-negative integer of milliseconds, got ${ms}`);
+    settings.push([name, `${ms}ms`]);
+  }
+  if (settings.length === 0) return undefined;
+  const sql = `SELECT ${settings.map((_, i) => `set_config($${2 * i + 1}, $${2 * i + 2}, false)`).join(', ')}`;
+  const params = settings.flat();
+  return async (client) => {
+    await client.query(sql, params);
+  };
 }
 
 /**
@@ -65,6 +118,13 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     connectionTimeoutMillis: 5000,
     // Decision Q1: verified by default; see `buildSslOption`.
     ssl: buildSslOption(opts),
+    // TCP keepalive, first probe after 30 s idle, so a connection silently dropped on the network
+    // path (a NAT or load balancer idle timeout) is found dead in minutes rather than after the
+    // OS default of two hours (the probe interval and count stay the OS's).
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 30_000,
+    ...(opts.applicationName ? { application_name: opts.applicationName } : {}),
+    onConnect: sessionTimeoutsHook(opts.sessionTimeouts),
   });
   // Keeps a query that waited for a connection in its own trace; see bindPoolConnectContext.
   bindPoolConnectContext(pool);

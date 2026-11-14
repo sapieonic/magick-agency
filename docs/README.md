@@ -124,6 +124,7 @@ Details and next steps: [`status.md`](status.md).
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, Supabase Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
 | [`../REPORTS_SETUP.md`](../REPORTS_SETUP.md) | Setting reports up for the first time, on a development machine (the in-process renderer) and in a deployment (the Lambda, the queue, the server's settings, the flag), with the first report and what to check when it fails |
+| [`../db-hygiene.md`](../db-hygiene.md) | Keeping the production Postgres safe and measurable: building indexes before a deploy, point-in-time recovery and restore drills, the statistics and logs to turn on, the pool's session timeouts and the order to enable them, migration locking practice |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo; each app and package has its own `CLAUDE.md` with its area's rules |
 | `../packages/db/BASELINE.md` | The baseline schema inventory |

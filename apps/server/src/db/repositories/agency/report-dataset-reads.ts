@@ -167,6 +167,12 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
   signal?.addEventListener('abort', cancel, { once: true });
   try {
     await query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    // Out from under the pool's session timeouts (DB_STATEMENT_TIMEOUT_MS,
+    // DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; db-hygiene.md "Timeouts"), for this transaction only:
+    // between FETCHes it sits idle while the consumer waits on the upload's backpressure, and a
+    // FETCH over a 30-day window can run long. The assembler's deadline (`signal`) bounds both:
+    // it cancels the statement in flight and ends the transaction.
+    await query(`SELECT set_config('idle_in_transaction_session_timeout', '0', true), set_config('statement_timeout', '0', true)`);
     await query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
     for (;;) {
       const { rows } = await query(`FETCH ${batch} FROM report_rows`);

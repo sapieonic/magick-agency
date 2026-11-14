@@ -35,9 +35,9 @@ For how the pieces fit together, read [`architecture.md`](architecture.md); for 
 
 ### `apps/server/src/`
 
-Composition: `instrumentation.ts` (the OpenTelemetry SDK, imported first; exports over OTLP only when `OTEL_ENABLED`, the endpoint and `OTEL_SERVICE_NAME` are all set), `index.ts` (process start, signal handling, shutdown order, the OTel flush last), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
+Composition: `instrumentation.ts` (the OpenTelemetry SDK, imported first; exports over OTLP only when `OTEL_ENABLED`, the endpoint and `OTEL_SERVICE_NAME` are all set), `index.ts` (process start, signal handling, shutdown order, the OTel flush last), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `db-session.ts` (each process's Postgres `application_name` and the server pools' `DB_*_TIMEOUT_MS` session timeouts), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
 
-Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`, `migrate.ts`
+Files: `app-context.ts`, `app.ts`, `db-session.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`, `migrate.ts`
 
 | Test file | Cases |
 |---|---|
@@ -422,6 +422,7 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/integration/agency/report-subscription-subject.test.ts` (`probeSubscriptionSubject` on Postgres) | 3 |
 | `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` and `postgresZoneName` against `pg_timezone_names`) | 4 |
 | `apps/server/test/integration/agency/report-assembler-deadline.test.ts` (the deadline over the real cursor: a stalled upload and a long statement end `assembly_failed` with the cursor's transaction ended; a real builder stops at its next stage) | 5 |
+| `apps/server/test/integration/agency/report-cursor-session-timeouts.test.ts` (the report cursor lifts the pool's idle-in-transaction and statement timeouts for its own transaction only) | 4 |
 
 ### `apps/server/src/agency/reports/datasets/`
 
@@ -886,6 +887,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
 | `apps/server/test/unit/config/config.test.ts` | 19 |
+| `apps/server/test/unit/config/db-session-config.test.ts` (`DB_*_TIMEOUT_MS`: off by default, the refusals, `dbSessionOptions`, each process's `application_name`) | 7 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/push-config.test.ts` (`PUSH_*`: parsed keys, every refusal by env key, no key material in a dump) | 24 |
@@ -1526,6 +1528,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
+| `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; `SET LOCAL` lifts one for a transaction) | 5 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
@@ -1553,6 +1556,9 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/inbound-migration.test.ts` | 31 |
 | `packages/db/test/integration/db/away-ring-sessions-index-migration.test.ts` (0037, Mode B: the partial index's definition, the ring search's plan using it, down then up) | 3 |
+| `packages/db/test/integration/db/table-storage-settings-migration.test.ts` (0038: exactly these autovacuum and fillfactor parameters on exactly these tables, down then up) | 2 |
+| `packages/db/test/integration/db/retention-purge-indexes-migration.test.ts` (0039: the four definitions, each purge read's plan, down then up) | 5 |
+| `packages/db/test/integration/db/drop-duplicate-indexes-migration.test.ts` (0040: the seven gone, each lookup an index scan on its covering unique index, down then up) | 9 |
 | `packages/db/test/integration/db/inbound-ring-migration.test.ts` (0036, Mode B: the push devices table, its CHECKs and partial token indexes, the ring columns, the session's `ring_misses` and `away_ring_since`, each CHECKed list equal to its contract list, the down) | ~11 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the inbound reached trigger and its races, the summary's index and its plan, down and up) | 8 |
@@ -1594,6 +1600,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/scenarios/audit-logging.test.ts` | ~14 |
 | `packages/db/test/unit/agency/agency-campaign-agent.repository.test.ts` | 64 |
 | `packages/db/test/unit/db/connection-ssl.test.ts` | 5 |
+| `packages/db/test/unit/db/connection-session-timeouts.test.ts` (the connect hook's `set_config` calls: none when unset, only the non-zero ones, refusals; the pool's keepalive, name and hook options) | 7 |
 | `packages/db/test/unit/db/dialer-analysis-job-model.test.ts` | 2 |
 | `packages/db/test/unit/db/dialer-analysis-models.test.ts` | 1 |
 | `packages/db/test/unit/helpers/truncate-all.test.ts` | 6 |

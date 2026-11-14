@@ -24,6 +24,7 @@ import { closePool, initDbPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { dbTlsOptions } from '../db-tls.js';
+import { DB_APPLICATION_NAMES, dbSessionOptions } from '../db-session.js';
 import { redisClientOptions } from '../utils/redis-options.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { platformAuditLogger } from '../audit/platform/audit-logger.js';
@@ -131,6 +132,7 @@ async function boot(
     // process's pool counts against the server's max_connections (`db-connection-budget.ts`).
     poolMax: config.processes.mediaWorkerDbPoolMax,
     ...dbTlsOptions(config),
+    ...dbSessionOptions(config, DB_APPLICATION_NAMES.media(slot)),
   });
   const redis = new Redis(config.redis.url, redisClientOptions(config.redis));
   onRedis(redis);

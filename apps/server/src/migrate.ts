@@ -3,6 +3,7 @@ import { runner as pgMigrateRunner, type RunnerOption } from 'node-pg-migrate';
 import { buildSslOption } from '@magick-agency/db';
 import { logger } from '@magick-agency/observability';
 import { dbTlsOptions, type DbTlsConfig } from './db-tls.js';
+import { DB_APPLICATION_NAMES } from './db-session.js';
 
 /**
  * Applies pending migrations, then exits. `docker/entrypoint.sh` runs it before the server.
@@ -30,7 +31,9 @@ export async function runMigrations(
 ): Promise<string[]> {
   const ssl = buildSslOption(dbTlsOptions(cfg));
   const applied = await runner({
-    databaseUrl: { connectionString: cfg.db.url, ...(ssl ? { ssl } : {}) },
+    // Named, so the migration shows as itself in pg_stat_activity. No session timeouts: the
+    // server's DB_*_TIMEOUT_MS are sized for its statements, not for a migration's DDL.
+    databaseUrl: { connectionString: cfg.db.url, application_name: DB_APPLICATION_NAMES.migrate, ...(ssl ? { ssl } : {}) },
     dir: resolve(dir),
     direction: 'up',
     // packages/db `migrate:up` uses the same table; keep them in step.

@@ -43,22 +43,22 @@ describe('dbTlsOptions — one TLS decision for the server, migrations and the s
 describe('runMigrations', () => {
   it('connects with verified TLS in production, against DB_SSL_CA when set', async () => {
     const opts = await optionsFor(cfg('production', { sslCa: PEM }));
-    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, ssl: { rejectUnauthorized: true, ca: PEM } });
+    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, application_name: 'magick-agency-migrate', ssl: { rejectUnauthorized: true, ca: PEM } });
   });
 
   it('verifies against Node roots in production when no CA is set', async () => {
     const opts = await optionsFor(cfg('production'));
-    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, ssl: { rejectUnauthorized: true } });
+    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, application_name: 'magick-agency-migrate', ssl: { rejectUnauthorized: true } });
   });
 
   it('turns verification off only on the explicit opt-out', async () => {
     const opts = await optionsFor(cfg('production', { sslRejectUnauthorized: false }));
-    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, ssl: { rejectUnauthorized: false } });
+    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, application_name: 'magick-agency-migrate', ssl: { rejectUnauthorized: false } });
   });
 
   it('connects without TLS outside production', async () => {
     const opts = await optionsFor(cfg('development', { sslCa: PEM }));
-    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL });
+    expect((opts as { databaseUrl?: unknown }).databaseUrl).toEqual({ connectionString: URL, application_name: 'magick-agency-migrate' });
   });
 
   it("applies every pending up migration from the given dir into packages/db's ledger table", async () => {
