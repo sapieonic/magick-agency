@@ -75,6 +75,7 @@ import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
+import { CampaignWorkspaceFrame } from './campaign-detail/CampaignWorkspace';
 import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignSettingsPage.module.css';
@@ -560,35 +561,41 @@ export function AgencyCampaignSettingsPage() {
   });
 
   return (
-    <div className={styles.page}>
-
-      {/*
+    /*
+      The frame every campaign screen shares, so the header and the tab bar sit where
+      they do on the Monitor tabs. No health strip: this page reads no stats.
+    */
+    <CampaignWorkspaceFrame
+      /*
         The campaign's own header, as on its Monitor tabs: its name and status, the
         lifecycle controls (pausing before an assignment-mode change is said below, so
         it belongs here) and History — "who changed the caller ID?" is asked here.
-      */}
-      <CampaignDetailHeader
-        campaign={campaign}
-        lastUpdatedAt={campaignReadAt}
-        tenantId={tenantId}
-        accountId={accountId}
-        canControl={canSupervise}
-        busy={lifecycle.busy}
-        onAction={lifecycle.onAction}
-        canJoinStation={canJoinStation}
-        role={role}
-        onRefresh={() => void refreshCampaign()}
-      />
-
-      <CampaignTabs
-        campaignId={campaign.id}
-        active="settings"
-        role={role}
-        campaignStatus={campaign.status}
-      />
-
+      */
+      header={
+        <CampaignDetailHeader
+          campaign={campaign}
+          lastUpdatedAt={campaignReadAt}
+          tenantId={tenantId}
+          accountId={accountId}
+          canControl={canSupervise}
+          busy={lifecycle.busy}
+          onAction={lifecycle.onAction}
+          canJoinStation={canJoinStation}
+          role={role}
+          onRefresh={() => void refreshCampaign()}
+        />
+      }
+      tabs={
+        <CampaignTabs
+          campaignId={campaign.id}
+          active="settings"
+          role={role}
+          campaignStatus={campaign.status}
+        />
+      }
+    >
       {isLive && (
-        <p className={styles.liveNote}>
+        <p className={`${styles.liveNote} ${styles.pageNote}`}>
           This campaign is dialling. Changes apply to calls placed from now on — a call already
           under way keeps the settings it started with.
         </p>
@@ -869,7 +876,7 @@ export function AgencyCampaignSettingsPage() {
             Not a card of its own: its two panels carry their own titles.
           */}
           {historyVisible ? (
-            <div id="roster-uploads" className={styles.anchor}>
+            <div id="roster-uploads" className={`${styles.anchor} ${styles.wide}`}>
               <CampaignHistory campaignId={campaign.id} />
             </div>
           ) : null}
@@ -883,7 +890,7 @@ export function AgencyCampaignSettingsPage() {
         message={`You have ${plural(changes.length, 'unsaved change')} to this campaign’s settings. `
           + 'Leave now and they are lost; Cancel keeps you here to save them.'}
       />
-    </div>
+    </CampaignWorkspaceFrame>
   );
 }
 
