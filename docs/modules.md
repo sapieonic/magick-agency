@@ -1535,7 +1535,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
-| `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; the settings SQL replacing what an earlier client left on a reused session; `SET LOCAL` lifts one for a transaction; the idle limit ending a checked-out session without ending the process) | 6 |
+| `packages/db/test/integration/db/pool-session-settings.test.ts` (`application_name`; each session timeout applied before a connection's first statement, none when unset; the settings SQL replacing what an earlier client left on a reused session; `SET LOCAL` lifts one for a transaction; the idle limit ending a checked-out session without ending the process, logged once as a held connection's warning; an idle pooled connection ended by `pg_terminate_backend` logged once, as a pool error only) | 7 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 19 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
@@ -1607,7 +1607,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/scenarios/audit-logging.test.ts` | ~14 |
 | `packages/db/test/unit/agency/agency-campaign-agent.repository.test.ts` | 64 |
 | `packages/db/test/unit/db/connection-ssl.test.ts` | 5 |
-| `packages/db/test/unit/db/connection-session-timeouts.test.ts` (the connect hook's SQL: RESET for each timeout that is off, SET for the others, the name first, refusals; the pool's keepalive, name and hook options) | 8 |
+| `packages/db/test/unit/db/connection-session-timeouts.test.ts` (the connect hook's SQL: RESET for each timeout that is off, SET for the others, the name first, refusals; the pool's keepalive, name and hook options; the client 'error' listener warning once for a checked-out client and staying silent, without throwing, for an idle one) | 9 |
 | `packages/db/test/unit/db/dialer-analysis-job-model.test.ts` | 2 |
 | `packages/db/test/unit/db/dialer-analysis-models.test.ts` | 1 |
 | `packages/db/test/unit/helpers/truncate-all.test.ts` | 6 |

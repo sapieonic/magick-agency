@@ -338,7 +338,10 @@ a few days before the next. To undo any of them: unset the variable and restart 
 **What any hit looks like.** The request that hit it fails with an error. For the idle limit,
 Postgres ends the connection: the server logs `Database connection ended under its client` with
 `terminating connection due to idle-in-transaction timeout`, discards that connection and opens a
-new one; the process keeps running.
+new one; the process keeps running. That warning means a connection ended while a request held it.
+A connection ended while idle in the pool (a pooler restart, a network idle timeout,
+`pg_terminate_backend` on an idle session) logs `Unexpected database pool error` once instead,
+and the pool replaces it on the next request.
 
 ### Step 1: `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`
 

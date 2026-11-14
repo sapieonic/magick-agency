@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import pg from 'pg';
+import { logger } from '@magick-agency/observability';
 import { closePool, initDbPool, sessionSettingsSql } from '../../../src/connection.js';
 import { withTransaction } from '../../../src/utils/transaction.js';
 import { TEST_DB_URL } from '../../helpers/test-db.js';
@@ -10,7 +11,33 @@ import { TEST_DB_URL } from '../../helpers/test-db.js';
  * statement. A mocked pool would prove nothing here: the point is what the server applies.
  */
 
-afterEach(closePool);
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await closePool();
+});
+
+const POOL_ERROR = 'Unexpected database pool error';
+const HELD_WARNING = 'Database connection ended under its client';
+
+/** Spies on the two logs a connection ended by the server can produce, and silences them. */
+function spyConnectionLogs() {
+  const error = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+  const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  const messages = (spy: typeof error) => spy.mock.calls.map((call) => call[1]);
+  return { poolErrors: () => messages(error).filter((m) => m === POOL_ERROR), heldWarnings: () => messages(warn).filter((m) => m === HELD_WARNING) };
+}
+
+/** Ends the backend `pid` from a connection of its own, as an operator or a pooler restart would. */
+async function terminateBackend(pid: number): Promise<void> {
+  const admin = new pg.Client({ connectionString: TEST_DB_URL });
+  await admin.connect();
+  try {
+    const { rows } = await admin.query<{ ok: boolean }>('SELECT pg_terminate_backend($1) AS ok', [pid]);
+    expect(rows[0]!.ok).toBe(true);
+  } finally {
+    await admin.end();
+  }
+}
 
 async function settings(pool: pg.Pool): Promise<Record<string, string>> {
   const { rows } = await pool.query<{ name: string; setting: string }>(
@@ -98,6 +125,7 @@ describe('pool session settings (real Postgres)', () => {
   });
 
   it('idle_in_transaction_session_timeout ends a session left idle inside a transaction', async () => {
+    const logs = spyConnectionLogs();
     const pool = initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 1, sessionTimeouts: { idleInTransactionTimeoutMs: 200 } });
     // No 'error' listener of the test's own: the pool's (initDbPool) must catch the server ending
     // a checked-out session, or the unhandled 'error' fails this file (in the server, the process).
@@ -110,8 +138,32 @@ describe('pool session settings (real Postgres)', () => {
       // A plain release, as withTransaction does: pg-pool drops the ended client itself.
       client.release();
     }
+    // Ended under its holder: the warning says so; the pool's own 'error' never saw it.
+    expect(logs.heldWarnings()).toHaveLength(1);
+    expect(logs.poolErrors()).toEqual([]);
     expect(pool.totalCount).toBe(0);
     // The pool replaces the ended connection; the setting is applied to the new one too.
     expect((await settings(pool)).idle_in_transaction_session_timeout).toBe('200ms');
+  });
+
+  it('an idle pooled connection ended by the server is logged once, as a pool error, not as a held one', async () => {
+    const logs = spyConnectionLogs();
+    const pool = initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 1 });
+    // One connection, back in the pool and idle once this query returns.
+    const { rows } = await pool.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+    expect(pool.idleCount).toBe(1);
+
+    const poolError = new Promise((resolve) => pool.once('error', resolve));
+    await terminateBackend(rows[0]!.pid);
+    await poolError;
+    // pg reports an ended backend twice (the server's FATAL, then the socket's end): let the
+    // second arrive before counting.
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(logs.poolErrors()).toHaveLength(1);
+    expect(logs.heldWarnings()).toEqual([]);
+    expect(pool.totalCount).toBe(0);
+    // The pool replaces it on the next acquire.
+    expect((await pool.query<{ one: number }>('SELECT 1 AS one')).rows[0]!.one).toBe(1);
   });
 });

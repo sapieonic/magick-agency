@@ -1,11 +1,14 @@
+import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
+import { logger } from '@magick-agency/observability';
 import { closePool, initDbPool, sessionSettingsHook, sessionSettingsSql, sessionTimeoutsSql } from '../../../src/connection.js';
 
 /**
  * The pool's per-connection settings (`db-hygiene.md`, "5. Timeouts"): the SQL the connect hook
- * sends. On real Postgres, `test/integration/db/pool-session-settings.test.ts`
- * shows each setting taking effect.
+ * sends; and the 'error' listener the pool puts on each client. On real Postgres,
+ * `test/integration/db/pool-session-settings.test.ts` shows each setting taking effect and a
+ * backend ended under an idle and under a checked-out client.
  */
 
 function run(hook: ReturnType<typeof sessionSettingsHook>) {
@@ -80,5 +83,36 @@ describe('initDbPool connection options (no connection is opened)', () => {
     }));
     expect(opts.application_name).toBe('magick-agency-test');
     expect(opts.onConnect).toBeTypeOf('function');
+  });
+});
+
+describe("initDbPool: a client's 'error' (no connection is opened; pg-pool's events emitted by hand)", () => {
+  afterEach(async () => { vi.restoreAllMocks(); await closePool(); });
+  const WARNING = 'Database connection ended under its client';
+
+  it('warns once for a client a caller holds; an idle client\'s error is heard but left to the pool', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const pool = initDbPool({ url: 'postgresql://u:p@localhost:5436/none', poolMin: 0 });
+    // Stand in for pg clients: an EventEmitter throws on an 'error' nobody listens for.
+    const held = new EventEmitter() as unknown as pg.PoolClient;
+    const idle = new EventEmitter() as unknown as pg.PoolClient;
+
+    pool.emit('connect', held);
+    pool.emit('acquire', held);
+    held.emit('error', new Error('terminating connection'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith({ err: expect.objectContaining({ message: 'terminating connection' }) }, WARNING);
+    // pg's second report of the same ended backend (the socket's end) adds nothing.
+    held.emit('error', new Error('Connection terminated unexpectedly'));
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // Released, so idle: pg-pool's own idle listener logs this one, through the pool's 'error'.
+    // Ours stays attached (no throw) and says nothing.
+    pool.emit('connect', idle);
+    pool.emit('acquire', idle);
+    pool.emit('release', undefined, idle);
+    expect(() => idle.emit('error', new Error('terminating connection'))).not.toThrow();
+    expect(() => idle.emit('error', new Error('Connection terminated unexpectedly'))).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

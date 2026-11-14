@@ -167,6 +167,13 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     logger.error({ err }, 'Unexpected database pool error');
   });
 
+  // The clients a caller holds right now, from pg-pool's public 'acquire' and 'release' events.
+  // 'connect' fires just before a new client's first 'acquire', so the listener below is in
+  // place by then.
+  const checkedOut = new WeakSet<pg.PoolClient>();
+  pool.on('acquire', (client) => { checkedOut.add(client); });
+  pool.on('release', (_err, client) => { checkedOut.delete(client); });
+
   pool.on('connect', (client) => {
     logger.debug('New database connection established');
     // pg-pool listens for a client's 'error' only while the client is idle and removes that
@@ -174,8 +181,17 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     // (idle_in_transaction_session_timeout, pg_terminate_backend, a pooler restart) then emits
     // 'error' with no listener, which ends the process. With this one, the error is logged, the
     // holder's next query fails ("not queryable"), and pg-pool discards the client on release.
+    // The listener stays for the client's life, so an 'error' never goes unheard, but it logs
+    // only for a checked-out client: an idle one's error is pg-pool's idle listener's, which
+    // removes the client and re-emits it on the pool ('Unexpected database pool error' above),
+    // so a pooler restart that drops idle connections logs each one once, as a pool error.
+    // Only a client's first error counts: pg reports an ended backend twice (the server's FATAL,
+    // then the socket's end), and a client that errored is never used again.
+    let ended = false;
     client.on('error', (err) => {
-      logger.warn({ err }, 'Database connection ended under its client');
+      if (ended) return;
+      ended = true;
+      if (checkedOut.has(client)) logger.warn({ err }, 'Database connection ended under its client');
     });
   });
 
