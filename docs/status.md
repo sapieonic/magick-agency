@@ -1466,7 +1466,8 @@ keepalive); a connection Postgres ends under a checked-out client logged and dis
 ending the process; opt-in session timeouts `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`,
 `DB_LOCK_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, off by default, set as SQL on each connection
 (the ones that are off RESET, so nothing a session pooler left behind is inherited), with the
-report cursor exempt and the migration step resetting all three on its own connection; the
+report cursor's transaction bounded by the report's deadline instead (or a lower role or database
+limit) and the migration step resetting all three on its own connection; the
 campaign stats route's two campaign-wide reads shared between supervisors for
 `AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s), dropped by the campaign's row writes, a force-available
 and a completed roster upload (the last two over the cache-invalidation channel, which reaches the
