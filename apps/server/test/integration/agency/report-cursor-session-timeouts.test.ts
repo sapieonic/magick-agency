@@ -60,8 +60,9 @@ describe('report cursor under the pool session timeouts', () => {
   it('bounds both for its own transaction, never 0: the report deadline by default, else timeoutMs', async () => {
     expect(await insideCursor()).toEqual({ statement: REPORT_BUILD_TIMEOUT_MS, idle: REPORT_BUILD_TIMEOUT_MS });
     expect(await insideCursor(5000)).toEqual({ statement: 5000, idle: 5000 });
-    // Rounded up, never down to 0 (which would mean no limit).
-    expect(await insideCursor(0.2)).toEqual({ statement: 1, idle: 1 });
+    // Rounded up, and never under a second (0 would mean no limit).
+    expect(await insideCursor(1234.5)).toEqual({ statement: 1235, idle: 1235 });
+    expect(await insideCursor(0)).toEqual({ statement: 1000, idle: 1000 });
   });
 
   it('survives a consumer that holds a row longer than the idle-in-transaction timeout', async () => {

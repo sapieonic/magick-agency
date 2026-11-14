@@ -42,6 +42,9 @@ import {
 /** The rows a detail cursor fetches per round trip. */
 export const REPORT_CURSOR_BATCH = 1000;
 
+/** The least bound {@link reportCursorRows} puts on its transaction: a second, as the pool's config. */
+const REPORT_CURSOR_MIN_TIMEOUT_MS = 1000;
+
 /** One agent in one account over `[from, to)`. */
 export interface ReportAgentScope {
   agentUserId: string;
@@ -134,7 +137,8 @@ export interface ReportCursorOptions {
    * The bound on the cursor's own transaction (default {@link REPORT_BUILD_TIMEOUT_MS}, the
    * report's deadline): its `statement_timeout` and `idle_in_transaction_session_timeout`, each
    * set to this or to the role's and database's value when that is lower. Milliseconds, rounded
-   * up, at least 1 (0 would mean no limit).
+   * up, at least {@link REPORT_CURSOR_MIN_TIMEOUT_MS} (0 would mean no limit, and a few
+   * milliseconds would end the transaction between its own statements).
    */
   timeoutMs?: number;
 }
@@ -149,7 +153,7 @@ export interface ReportCursorOptions {
  */
 export async function* reportCursorRows<T>(text: string, values: unknown[], opts: ReportCursorOptions = {}): AsyncGenerator<T> {
   const { batch = REPORT_CURSOR_BATCH, signal, timeoutMs = REPORT_BUILD_TIMEOUT_MS } = opts;
-  const boundMs = Math.max(1, Math.ceil(timeoutMs));
+  const boundMs = Math.max(REPORT_CURSOR_MIN_TIMEOUT_MS, Math.ceil(timeoutMs));
   signal?.throwIfAborted();
   const client = await getPool().connect();
   let broken: Error | undefined;
