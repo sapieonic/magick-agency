@@ -117,7 +117,9 @@ The mobile app builds with Flutter, not pnpm: see `apps/mobile/CLAUDE.md`.
 CI: `.github/workflows/ci.yml` (lint, unit, grafana, release guard, build; integration as three
 parallel jobs: db, server, server wall-clock), `mobile.yml` (on `apps/mobile`,
 `packages/contracts`, the literal extractor and the number rule the Dart port mirrors), `pr-title.yml`, `release-please.yml`.
-On a pull request both run only what the diff reaches (`tooling/ci-scope.mjs`, `pnpm test:tooling`;
+On a mobile release, `release-please.yml` calls `mobile-release.yml`: a signed staging APK on the
+GitHub Release (`docs/mobile.md` "The release APK").
+On a pull request, `ci.yml` and `mobile.yml` run only what the diff reaches (`tooling/ci-scope.mjs`, `pnpm test:tooling`;
 `docs/operations.md` "What CI runs"); the `full-ci` label runs everything. A test that reads files
 outside its package needs a `READ_BY` rule or a server repository guard in `ci-scope.mjs`;
 `test:tooling` fails on the reads it can see (`../` paths, `join`/`resolve` with `'..'`), not on

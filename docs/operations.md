@@ -1209,7 +1209,8 @@ is how a change in one of them moves the version of every app that bundles it.
 |---|---|
 | `release-please-config.json` | One component per workspace package, named after its directory; the `node-workspace` plugin; changelog sections; `exclude-paths` (each package's test directory); `bootstrap-sha`, the commit history is read back to on a component's first release |
 | `.release-please-manifest.json` | The current released version of each component. release-please writes it; never edit it by hand |
-| `.github/workflows/release-please.yml` | On every push to `main`: opens or updates the release PR; when that PR is merged, tags each released component and publishes its GitHub Release |
+| `.github/workflows/release-please.yml` | On every push to `main`: opens or updates the release PR; when that PR is merged, tags each released component and publishes its GitHub Release. When `mobile` is among them, it calls `mobile-release.yml` |
+| `.github/workflows/mobile-release.yml` | Builds the agent app's signed `staging` APK for a `mobile-vX.Y.Z` tag and attaches it (and its `.sha256`) to that GitHub Release, also as a 90-day workflow artifact. Runs by hand too (Run workflow, with the tag) to build or rebuild an existing release; after a failure inside a release-please run, use "Re-run failed jobs", not "Re-run all jobs". See `docs/mobile.md`, "The release APK" |
 | `.github/workflows/pr-title.yml` | Fails a PR whose title is not a Conventional Commit |
 | `tooling/release-please.test.mjs` | `pnpm test:release`, in CI: every workspace package is a component named after its directory, every config key is one release-please reads (it ignores a misspelt key silently), the pre-1.0 bump rules, the manifest matches every `package.json` version, the plugin is on |
 
@@ -1325,6 +1326,11 @@ Set once in the repository settings, not in code:
   contents and pull-requests write). PRs and tags created with the default `GITHUB_TOKEN` do not
   trigger other workflows, so the release PR gets no CI or title check (a branch protection rule
   requiring them would block it), and a future workflow on release tags would not fire.
+- **Mobile release APK settings** (Settings → Secrets and variables → Actions), without which the
+  "Mobile release APK" job fails and names what is missing: the variable `MOBILE_ENV_STAGING` (the
+  app's env JSON; public, it ships in the APK) and the secrets `ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. What goes in each is
+  in `docs/mobile.md`, "The release APK".
 - **Optional baseline tags**, so the first changelog's compare links resolve: after the first
   merge, tag that squash commit (where every `package.json` says 0.1.0) `<component>-v0.1.0` for
   each of the eight components and push the tags. release-please then reads history back to the

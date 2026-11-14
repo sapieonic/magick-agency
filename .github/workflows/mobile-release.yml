@@ -1,0 +1,254 @@
+name: Mobile release APK
+
+# A signed, installable Android APK of the agent app for each `mobile` release, attached to that
+# release's GitHub Release (and kept as a workflow artifact) so anyone can download and sideload
+# it (docs/mobile.md "The release APK").
+#
+# release-please.yml calls this when it publishes a `mobile-vX.Y.Z` release; run it by hand
+# (Actions → Mobile release APK → Run workflow) to build or rebuild the APK for an existing tag.
+#
+# Built as the `staging` flavour (`com.magickagency.agent.staging`, "MA Agent Staging"). The
+# committed env/staging.json holds placeholders, so the build config comes from the Actions
+# variable MOBILE_ENV_STAGING (or a secret of that name): the whole env JSON, same keys as
+# apps/mobile/env/staging.json. Its values are public (they ship inside the APK). Release
+# signing comes from the secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD. The job fails, and says what is wrong, rather
+# than publish an APK that cannot sign in, points at nowhere or is debug-signed (a debug key
+# differs per runner, so one such APK cannot be installed over another).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The mobile release tag, `mobile-vX.Y.Z`
+        type: string
+        required: true
+    # Named, not inherited: this job runs third-party build code and needs only these.
+    secrets:
+      MOBILE_ENV_STAGING:
+        required: false
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The mobile release tag to build, `mobile-vX.Y.Z` (its GitHub Release must exist)
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FLAVOR: staging
+
+jobs:
+  apk:
+    name: Release APK (staging)
+    runs-on: ubuntu-latest
+    # One build per tag; a second request for the same tag waits rather than racing the upload.
+    concurrency:
+      group: mobile-release-${{ inputs.tag }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      # Before anything else, so a bad tag or a missing secret fails in seconds.
+      - name: Read the version from the tag
+        id: version
+        working-directory: .
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^mobile-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a mobile release tag (mobile-vX.Y.Z)." && exit 1
+          fi
+          major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
+          if (( major > 2099 || minor > 999 || patch > 999 )); then
+            echo "::error::$TAG: the version code needs major ≤ 2099, minor and patch ≤ 999." && exit 1
+          fi
+          # Android's versionCode, from the version alone: it rises with every release, and a
+          # rebuild of one tag gives the same code, so a newer APK always installs over an older one.
+          echo "name=${TAG#mobile-v}" >> "$GITHUB_OUTPUT"
+          echo "code=$(( major * 1000000 + minor * 1000 + patch ))" >> "$GITHUB_OUTPUT"
+
+      - name: Check the secrets are set
+        working-directory: .
+        env:
+          ENV_JSON: ${{ vars.MOBILE_ENV_STAGING || secrets.MOBILE_ENV_STAGING }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=()
+          [ -n "$ENV_JSON" ] || missing+=(MOBILE_ENV_STAGING)
+          [ -n "$KEYSTORE_BASE64" ] || missing+=(ANDROID_KEYSTORE_BASE64)
+          [ -n "$KEYSTORE_PASSWORD" ] || missing+=(ANDROID_KEYSTORE_PASSWORD)
+          [ -n "$KEY_ALIAS" ] || missing+=(ANDROID_KEY_ALIAS)
+          [ -n "$KEY_PASSWORD" ] || missing+=(ANDROID_KEY_PASSWORD)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Not set in this repository's Actions variables/secrets: ${missing[*]}." && exit 1
+          fi
+          # Written to key.properties, which java.util.Properties reads as ISO-8859-1 with
+          # escapes and leading whitespace trimmed: printable ASCII with no leading space only.
+          for name in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            value=${!name}
+            # Anything left after deleting printable ASCII (a newline, a tab, non-ASCII) is refused.
+            if [ "$(printf '%s' "$value" | LC_ALL=C tr -d ' -~' | wc -c)" -ne 0 ] || [[ "$value" == " "* ]]; then
+              echo "::error::ANDROID_$name must be printable ASCII with no leading space." && exit 1
+            fi
+          done
+
+      # No token left in .git/config while third-party build code runs; `gh` uses GH_TOKEN.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      # The SDK comes from mobile.yml at this tag, so there is one pin, and an older tag
+      # builds with the SDK it was tested on.
+      - name: Check the tag and read the Flutter pin
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+        run: |
+          pubspec=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
+          if [ "$pubspec" != "$VERSION" ]; then
+            echo "::error::pubspec.yaml says $pubspec at this tag, the tag says $VERSION." && exit 1
+          fi
+          flutter=$(sed -n 's/^ *FLUTTER_VERSION: *\([0-9][0-9.]*\) *$/\1/p' ../../.github/workflows/mobile.yml | head -1)
+          if [ -z "$flutter" ]; then
+            echo "::error::No FLUTTER_VERSION pin in .github/workflows/mobile.yml at this tag." && exit 1
+          fi
+          echo "flutter=$flutter" >> "$GITHUB_OUTPUT"
+
+      # The values are public (they ship in the APK); checked so a published APK can sign in.
+      - name: Write and check the build config
+        env:
+          ENV_JSON: ${{ vars.MOBILE_ENV_STAGING || secrets.MOBILE_ENV_STAGING }}
+        run: |
+          printf '%s' "$ENV_JSON" > env/release.local.json
+          fail() { echo "::error::MOBILE_ENV_STAGING: $1 (keys: apps/mobile/env/staging.json, values: apps/mobile/dev-setup.md)."; exit 1; }
+          jq -e 'type == "object"' env/release.local.json > /dev/null 2>&1 || fail "not a JSON object"
+          jq -e --arg f "$FLAVOR" '.FLAVOR == $f' env/release.local.json > /dev/null || fail "FLAVOR must be \"$FLAVOR\""
+          # https, a host (no placeholder) and an optional port: what the app's Gradle build also
+          # accepts for the native ring routes (plainDefine in android/app/build.gradle.kts).
+          jq -e '.API_ORIGIN | type == "string" and test("^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$") and (test("\\.invalid(:|/|$)") | not)' \
+            env/release.local.json > /dev/null || fail "API_ORIGIN must be the real https origin of the server"
+          set_() { jq -e --arg k "$1" '.[$k] | type == "string" and length > 0' env/release.local.json > /dev/null; }
+          # Without these the app builds but signs nobody in (Env.hasFirebase, auth_providers.dart).
+          for key in FIREBASE_API_KEY FIREBASE_PROJECT_ID FIREBASE_APP_ID_ANDROID; do
+            set_ "$key" || fail "$key is empty or missing"
+          done
+          set_ FIREBASE_MESSAGING_SENDER_ID \
+            || echo "::warning::MOBILE_ENV_STAGING has no FIREBASE_MESSAGING_SENDER_ID: no ring push while away (Mode B)."
+          set_ GOOGLE_SERVER_CLIENT_ID \
+            || echo "::warning::MOBILE_ENV_STAGING has no GOOGLE_SERVER_CLIENT_ID: no Google sign-in (email still works)."
+          set_ POSTHOG_KEY || echo "::warning::MOBILE_ENV_STAGING has no POSTHOG_KEY: the APK sends no telemetry."
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.tag.outputs.flutter }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # As in mobile.yml: AGP 9.1 looks for platform 37 as `android-37`.
+      - name: Android platform 37
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" > /dev/null
+          [ -e "$ANDROID_HOME/platforms/android-37" ] || ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
+
+      # Written only now, after the toolchain is in, and checked before the long build: a wrong
+      # keystore, store password or alias fails here in seconds.
+      - name: Write the signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks" 2> /dev/null \
+            || { echo "::error::ANDROID_KEYSTORE_BASE64 is not valid base64."; exit 1; }
+          keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass:env KEYSTORE_PASSWORD \
+            -alias "$KEY_ALIAS" > /dev/null 2>&1 \
+            || { echo "::error::The keystore does not open with ANDROID_KEYSTORE_PASSWORD, or has no key ANDROID_KEY_ALIAS."; exit 1; }
+          # Properties escapes: a backslash is written doubled.
+          esc() { printf '%s' "${1//\\/\\\\}"; }
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$(esc "$KEYSTORE_PASSWORD")"
+            echo "keyAlias=$(esc "$KEY_ALIAS")"
+            echo "keyPassword=$(esc "$KEY_PASSWORD")"
+          } > android/key.properties
+
+      - name: Build the APK
+        run: >-
+          flutter build apk --release --flavor "$FLAVOR"
+          --dart-define-from-file=env/release.local.json
+          --build-name=${{ steps.version.outputs.name }}
+          --build-number=${{ steps.version.outputs.code }}
+
+      - name: Remove the signing key
+        if: always()
+        working-directory: .
+        run: rm -f apps/mobile/android/key.properties "$RUNNER_TEMP/release.jks" apps/mobile/env/release.local.json
+
+      - name: Check the signature and name the APK
+        id: apk
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: |
+          src="build/app/outputs/flutter-apk/app-$FLAVOR-release.apk"
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2> /dev/null | sort -V | tail -1)
+          [ -x "$apksigner" ] || { echo "::error::apksigner not found under \$ANDROID_HOME/build-tools."; exit 1; }
+          certs=$("$apksigner" verify --print-certs "$src")
+          if grep -q 'CN=Android Debug' <<< "$certs"; then
+            echo "::error::The APK is signed with a debug key." && exit 1
+          fi
+          name="magick-agency-agent-$FLAVOR-$VERSION.apk"
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$src" "$RUNNER_TEMP/out/$name"
+          (cd "$RUNNER_TEMP/out" && sha256sum "$name" > "$name.sha256")
+          echo "dir=$RUNNER_TEMP/out" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Mobile release APK"
+            echo
+            echo "- \`$name\` (versionCode $CODE)"
+            echo "- APK SHA-256 \`$(cut -d' ' -f1 "$RUNNER_TEMP/out/$name.sha256")\`"
+            echo "- Signing certificate SHA-1 (Google sign-in, Firebase): \`$(grep -m1 'certificate SHA-1 digest' <<< "$certs" | sed 's/.*: //')\`"
+            echo "- Signing certificate SHA-256 (App Links): \`$(grep -m1 'certificate SHA-256 digest' <<< "$certs" | sed 's/.*: //')\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.dir }}
+          if-no-files-found: error
+          retention-days: 90
+          # A re-run replaces it; an APK is already compressed.
+          overwrite: true
+          compression-level: 0
+
+      # --clobber: a rebuild of the same tag replaces the release's APK.
+      - name: Attach to the GitHub Release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DIR: ${{ steps.apk.outputs.dir }}
+        run: gh release upload "$TAG" "$DIR"/* --clobber --repo "$GITHUB_REPOSITORY"

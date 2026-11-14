@@ -28,6 +28,9 @@ jobs:
   release-please:
     name: Release PR and releases
     runs-on: ubuntu-latest
+    outputs:
+      mobile_released: ${{ steps.release.outputs['apps/mobile--release_created'] }}
+      mobile_tag: ${{ steps.release.outputs['apps/mobile--tag_name'] }}
     steps:
       # RELEASE_PLEASE_TOKEN (a fine-grained PAT or GitHub App token with contents and
       # pull-requests write) is optional. With the default GITHUB_TOKEN the release PR
@@ -51,3 +54,26 @@ jobs:
             echo "$OUTPUTS" | jq -r --argjson paths "$PATHS_RELEASED" \
               '. as $o | $paths[] | "- `\(.)`: \($o["\(.)--tag_name"])"'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A signed, installable APK of the agent app on each mobile release, attached to its GitHub
+  # Release (mobile-release.yml). Called from here, not on the tag: a tag pushed with the default
+  # GITHUB_TOKEN starts no workflow. It holds this workflow's concurrency group while it builds
+  # (10-20 min), so release-PR updates for later pushes wait for it. If it fails, use "Re-run
+  # failed jobs" (it keeps this run's outputs) or run mobile-release.yml by hand: "Re-run all
+  # jobs" re-runs release-please, which releases nothing the second time, and skips it.
+  mobile-apk:
+    name: Mobile release APK
+    needs: release-please
+    if: ${{ needs.release-please.outputs.mobile_released == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/mobile-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.mobile_tag }}
+    # By name, not `inherit`: the build runs third-party code and needs only these.
+    secrets:
+      MOBILE_ENV_STAGING: ${{ secrets.MOBILE_ENV_STAGING }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}

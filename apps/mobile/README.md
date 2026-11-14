@@ -88,6 +88,8 @@ node ../../tooling/contracts-literals.mjs --check   # TS literal unions vs the D
 
 - Version: `pubspec.yaml` `version:` belongs to release-please (component `mobile`, `release-type: dart`);
   never edit it by hand (root `CLAUDE.md`). Store build numbers come from CI (`--build-number`).
+- Each `mobile-vX.Y.Z` release gets a signed `staging` APK attached to its GitHub Release, built by
+  `.github/workflows/mobile-release.yml` (`docs/mobile.md`, "The release APK").
 - Android flavours `dev`, `staging`, `prod` install side by side (`com.magickagency.agent[.dev|.staging]`).
   Release signing reads `android/key.properties` (never committed); a release build fails without a
   complete one unless `-PallowDebugSigning=true` is passed.
