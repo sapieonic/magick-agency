@@ -324,6 +324,10 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     expect((await terminalRow(callId)).status).toBe('no_answer');
   }, 60_000);
 
+  // The audit calls below follow a row the test has waited for (the campaign paused, the
+  // credential marked invalid), and are waited for too: the writer audits once its own
+  // connection has read Postgres's reply, and the test's poll, on another connection, can see
+  // the committed row first. Asserted at once, (g) saw no call on a busy CI runner.
   it('(d) a dial Plivo refuses 401 pauses the campaign `carrier_auth`, audited; nothing else is dialled', async () => {
     const r = rig!;
     const audit = vi.spyOn(auditLogger, 'log');
@@ -333,10 +337,10 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused');
     expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_auth' });
     expect(r.carrier.requestsTo('create_call')).toHaveLength(1);
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'agency_campaign.auto_paused',
       eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_auth', telephony_credential_id: r.credentialId }),
-    }));
+    })));
     // The contact is not charged a carrier refusal: it is back in the roster at once.
     const contact = await waitFor('the contact returned', async () => {
       const { rows } = await getTestPool().query<{ state: string; due: boolean; our_fault_attempts: number }>(
@@ -354,10 +358,10 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
       return row?.status === 'invalid' ? row : null;
     });
     expect(credential).toMatchObject({ secret_version: 1, last_error: 'The carrier refused the credential on a dial (HTTP 401)' });
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'telephony_credential.carrier_refused', actor: 'system:carrier-auth',
       eventData: expect.objectContaining({ telephony_credential_id: r.credentialId, secret_version: 1, status: 'invalid' }),
-    }));
+    })));
     expect(JSON.stringify(audit.mock.calls)).not.toContain(r.carrier.authToken);
     expect(await campaignCredentialStartRefusal({ telephony_credential_id: r.credentialId }))
       .toMatchObject({ code: 'telephony_credential_not_active' });
@@ -381,10 +385,10 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused', 30_000);
     expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_refusing_calls' });
     expect(r.carrier.requestsTo('create_call')).toHaveLength(5);
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'agency_campaign.auto_paused',
       eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_refusing_calls', telephony_credential_id: r.credentialId }),
-    }));
+    })));
     // The credential is not the carrier's verdict here: it stays active, so a resume is allowed.
     expect((await r.credentials.get(r.credentialId))?.status).toBe('active');
   }, 60_000);
@@ -413,10 +417,10 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused');
     expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_account_unavailable' });
     expect(r.carrier.requestsTo('create_call')).toEqual([]);
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
       eventType: 'agency_campaign.auto_paused',
       eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_account_unavailable', telephony_credential_id: r.credentialId }),
-    }));
+    })));
     const contact = await waitFor('the contact returned', async () => {
       const { rows } = await getTestPool().query<{ state: string; due: boolean; our_fault_attempts: number }>(
         `SELECT state, next_attempt_at <= now() + interval '1 second' AS due, our_fault_attempts

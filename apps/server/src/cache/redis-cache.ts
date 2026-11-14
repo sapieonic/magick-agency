@@ -10,6 +10,29 @@ export const REVOCATION_DEL_ATTEMPTS = 3;
 /** Q5: backoff between those attempts (ms, multiplied by the attempt number). */
 export const REVOCATION_DEL_BACKOFF_MS = 50;
 
+/**
+ * Resolves once `client` is `ready`: at once when it already is, else on its `ready` event.
+ * Rejects if the connection ends first (its retries gave up).
+ *
+ * A SUBSCRIBE must not go out before then. ioredis writes commands flagged `loading` (SUBSCRIBE
+ * is one) while the connection is still in `connect`, ahead of its own handshake (`SELECT`,
+ * `CLIENT SETINFO`, the ready check's `INFO`); the connection is then in subscriber mode, ioredis
+ * refuses its own ready check ("Connection in subscriber mode, only subscriber commands may be
+ * used"), and the subscribe resolves while the server holds no subscription. A freshly
+ * `duplicate()`d subscriber is in `connect` for as long as the server takes to answer: on a busy
+ * Redis (the integration suite's four workers) that lost the subscription often enough to fail
+ * every broadcast case of `local-cache-invalidation.test.ts` together.
+ */
+export function whenReady(client: Pick<Redis, 'status' | 'once' | 'off'>): Promise<void> {
+  if (client.status === 'ready') return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const onReady = () => { client.off('end', onEnd); resolve(); };
+    const onEnd = () => { client.off('ready', onReady); reject(new Error('the connection ended before it was ready')); };
+    client.once('ready', onReady);
+    client.once('end', onEnd);
+  });
+}
+
 /** Payload broadcast to every instance when a key or pattern is invalidated. */
 type InvalidationMessage =
   | { op: 'del'; keys: string[] }
@@ -133,6 +156,7 @@ export class RedisCache {
     });
 
     try {
+      await whenReady(subscriber);
       await subscriber.subscribe(channel);
       log.info({ channel }, 'Cache invalidation subscriber attached');
     } catch (err) {

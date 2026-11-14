@@ -1,25 +1,41 @@
 name: Mobile
 
 # The agent app (apps/mobile, Flutter). Scoped: a server-only change does not pay for it.
-# A pull request runs it when it touches the app or what the app's wire types are checked
-# against (MOBILE_PREFIXES in tooling/ci-scope.mjs: packages/contracts and its fixtures, the
-# literal extractor tooling/contracts-literals.mjs, and packages/domain/src/customer-search-number.ts,
-# which agency_wire's customer_search_number.dart ports, held to the same table,
-# docs/customer-history.md), or when it carries the `full-ci` label. The pull request trigger
-# has no path filter because a path filter cannot be lifted by a label; the scope job decides,
-# and the jobs it skips report as skipped under their own names. Pushes to main keep the
-# path filter. Adding any label starts a new run (only `full-ci` widens it); see ci.yml.
+# A pull request, or a push to main, runs analyze and tests when it touches the app or what the
+# app's wire types are checked against (MOBILE_PREFIXES in tooling/ci-scope.mjs:
+# packages/contracts and its fixtures, the literal extractor tooling/contracts-literals.mjs, and
+# packages/domain/src/customer-search-number.ts, which agency_wire's customer_search_number.dart
+# ports, held to the same table, docs/customer-history.md). Prose and release-please's version
+# bump do not count. The builds run only when what they compile beyond Dart changes
+# (ANDROID_INPUTS and IOS_INPUTS: the native projects, the pubspecs and lockfile, env/, this
+# file): the debug Android build and its Kotlin tests on a pull request, the release Android
+# build on main, the iOS build (macOS, the costly runner) on main and by hand only.
+#
+# Pull requests and pushes to main share one path filter, the same list as MOBILE_PREFIXES
+# (tooling/ci-scope.test.mjs holds the two equal): a change outside it starts no Mobile run at
+# all, not even the scope job. A label cannot lift a path filter, so `full-ci` runs every pull
+# request job only on a pull request inside the filter; Flutter builds from none of the shared
+# root files, so outside it there is nothing for those jobs to check. A manual run runs every job;
+# the weekly scheduled run every job but iOS. Inside the filter the scope job decides, and the
+# jobs it skips report as skipped under their own names. Do not make a Mobile job a required
+# check: on a pull request outside the filter it never reports, and the merge would wait for it.
+# Adding any label starts a new run (only `full-ci` widens it); see ci.yml.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main]
-    paths:
+    paths: &mobile-paths
       - apps/mobile/**
       - packages/contracts/**
-      - tooling/contracts-literals.mjs
+      - tooling/contracts-literals.*
       - packages/domain/src/customer-search-number.ts
       - .github/workflows/mobile.yml
+  push:
+    branches: [main]
+    paths: *mobile-paths
+  workflow_dispatch:
+  # Every job but iOS, once a week (Monday 03:47 UTC): main runs only what each push changes.
+  schedule:
+    - cron: '47 3 * * 1'
 
 concurrency:
   group: mobile-${{ github.event.pull_request.number || github.sha }}
@@ -34,8 +50,11 @@ jobs:
   changes:
     name: Mobile scope
     runs-on: ubuntu-26.04
+    timeout-minutes: 5
     outputs:
       mobile: ${{ steps.scope.outputs.mobile }}
+      android: ${{ steps.scope.outputs.android }}
+      ios: ${{ steps.scope.outputs.ios }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,11 +65,12 @@ jobs:
       - name: Pick the scope
         id: scope
         env:
-          # A push to main got here through the path filter above.
           FULL: >-
-            ${{ github.event_name != 'pull_request'
+            ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
             || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          # A pull request diffs against its merge base; a push to main against the main commit
+          # before it.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           if [ "$FULL" = "true" ]; then
             node tooling/ci-scope.mjs --full
@@ -64,6 +84,7 @@ jobs:
     # Runs (and fails) when the scope job failed: a skipped job would read as passing.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mobile == 'true') }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/mobile
@@ -90,10 +111,14 @@ jobs:
       - run: flutter test
         working-directory: apps/mobile/packages/agent_audio
 
+  # Pull requests (and manual and scheduled runs): main builds the release variant below instead,
+  # on the change the pull request already built.
   android:
     name: Android build
+    if: github.event_name != 'push' && needs.changes.outputs.android == 'true'
     runs-on: ubuntu-26.04
-    needs: analyze-test
+    timeout-minutes: 30
+    needs: [changes, analyze-test]
     defaults:
       run:
         working-directory: apps/mobile
@@ -137,13 +162,14 @@ jobs:
 
   # The release build mobile-release.yml publishes (R8 minify and resource shrinking), compiled on
   # main before a release is tagged, so a shrinker problem is found while it can still be fixed in
-  # the release. Debug-signed on purpose and not kept: only the compile is checked. Main only, as
-  # it adds a full build. The placeholder env is enough to compile.
+  # the release. Debug-signed on purpose and not kept: only the compile is checked. Not on pull
+  # requests, as it adds a full build. The placeholder env is enough to compile.
   android-release:
     name: Android release build (staging, debug-signed)
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.android == 'true'
     runs-on: ubuntu-26.04
-    needs: analyze-test
+    timeout-minutes: 30
+    needs: [changes, analyze-test]
     defaults:
       run:
         working-directory: apps/mobile
@@ -173,10 +199,14 @@ jobs:
 
   ios:
     name: iOS build (no signing)
-    # macOS runners are expensive: main only. Pull requests get the Android build.
-    if: github.event_name == 'push'
+    # macOS minutes cost about ten Linux minutes: on main when the iOS inputs change, and by hand
+    # (Actions, Mobile, "Run workflow"). Not on pull requests or the weekly run.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
-    needs: analyze-test
+    timeout-minutes: 30
+    needs: [changes, analyze-test]
     defaults:
       run:
         working-directory: apps/mobile

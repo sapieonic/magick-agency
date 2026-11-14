@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * What a pull request's CI runs, from the files it changes (docs/operations.md "What CI runs").
+ * What a CI run checks, from the files it changes (docs/operations.md "What CI runs").
  *
- * A pull request runs the checks of the workspace packages it changes and of every package
- * that depends on them, and the integration suites only when a backend package (the server,
- * the db package or anything they depend on) is among them. The label `full-ci`, a manual
- * run and every push to main run everything.
+ * A pull request, and each push to main, runs the checks of the workspace packages it changes
+ * and of every package that depends on them, and the integration suites only when a backend
+ * package (the server, the db package or anything they depend on) is among them. A version
+ * bump alone (release-please's release PR) runs the release-please check only. The Android and
+ * iOS builds run only when what they build from changes. The label `full-ci`, a manual run and
+ * the weekly scheduled run run everything.
  *
  *   node tooling/ci-scope.mjs --base <sha> [--head <sha>] [--full]
  *
@@ -94,6 +96,22 @@ export const MOBILE_PREFIXES = [
 ];
 
 /**
+ * What the Android build compiles from beyond Dart, which `flutter analyze` and `flutter test`
+ * already check: the Gradle projects (the app's and each plugin's), the plugins pubspec.yaml and
+ * the lockfile pull in, the env files the build reads (--dart-define-from-file), and the
+ * workflow. A Dart-only change does not rebuild the APK.
+ */
+const MOBILE_BUILD_INPUTS = [
+  /^apps\/mobile\/pubspec\.(yaml|lock)$/,
+  /^apps\/mobile\/packages\/[^/]+\/pubspec\.yaml$/,
+  /^apps\/mobile\/env\//,
+  /^\.github\/workflows\/mobile\.yml$/,
+];
+export const ANDROID_INPUTS = [/^apps\/mobile\/(packages\/[^/]+\/)?android\//, ...MOBILE_BUILD_INPUTS];
+/** The same for the iOS build: the Xcode project and each plugin's Swift. */
+export const IOS_INPUTS = [/^apps\/mobile\/(packages\/[^/]+\/)?ios\//, ...MOBILE_BUILD_INPUTS];
+
+/**
  * `pnpm test:grafana` reads grafana/, the metric declarations and the server's OTel setup, and
  * scans `apps/server/src` and every `packages/<name>/src` for a stray instrument.
  */
@@ -103,12 +121,26 @@ const isGrafanaInput = (f) =>
   || /^packages\/[^/]+\/src\//.test(f)
   || f.startsWith('packages/observability/');
 
+/** A file release-please bumps: a package's package.json, the mobile app's pubspec.yaml. */
+export const isVersionFile = (f) => /^(apps|packages)\/[^/]+\/(package\.json|pubspec\.yaml)$/.test(f);
+
 /** `pnpm test:release` reads the release-please config, the manifest and every version. */
 const isReleaseInput = (f) =>
   f === 'release-please-config.json'
   || f === '.release-please-manifest.json'
   || f === 'tooling/release-please.test.mjs'
-  || /^(apps|packages)\/[^/]+\/(package\.json|pubspec\.yaml)$/.test(f);
+  || isVersionFile(f);
+
+/**
+ * Whether a file's diff (`git diff -U0`) changes its top-level version and nothing else: the
+ * `"version"` key of a package.json (two-space indent, as every package writes it) or the
+ * `version:` line of a pubspec.yaml. Such a change, which is all release-please's release PR
+ * makes, builds and tests nothing new, so it reaches `pnpm test:release` only.
+ */
+export function onlyVersionChanged(patch) {
+  const changed = patch.split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---) /.test(l));
+  return changed.length > 0 && changed.every((l) => /^[+-](  "version": "[^"]*",?|version: \S+)\s*$/.test(l));
+}
 
 /** Prose inside a package does not change what its suites run (the branding guards read it). */
 const isProse = (f) => f.endsWith('.md');
@@ -147,22 +179,36 @@ export function readWorkspace(dir = root) {
 /**
  * The scope of a change.
  *
- * @param {{ files: string[], full?: boolean, workspace: ReturnType<typeof readWorkspace> }} input
+ * `versionOnly` names the changed files whose diff is a version bump alone (onlyVersionChanged):
+ * they count for the release-please check and for nothing else.
+ *
+ * @param {{
+ *   files: string[], full?: boolean, fullReason?: string, versionOnly?: string[],
+ *   workspace: ReturnType<typeof readWorkspace>,
+ * }} input
  * @returns {{
  *   full: boolean, reason: string, packages: string[], names: string[],
  *   integration: { db: boolean, server: boolean }, serverGuards: boolean,
- *   grafana: boolean, release: boolean, mobile: boolean,
+ *   grafana: boolean, release: boolean, mobile: boolean, android: boolean, ios: boolean,
  * }}
  */
-export function computeScope({ files, full = false, workspace }) {
+export function computeScope({ files: allFiles, full = false, fullReason = 'full run requested', versionOnly = [], workspace }) {
   const all = workspace.map((p) => p.path);
+  const bumped = new Set(versionOnly);
+  const files = allFiles.filter((f) => !bumped.has(f));
+  const release = allFiles.some(isReleaseInput);
+  // Prose (a CHANGELOG.md among them) builds and tests nothing; the branding guards that read it
+  // run whenever the server's suite does not.
+  const code = files.filter((f) => !isProse(f));
   // Flutter builds from none of the shared root files: only a full run forces it.
-  const mobile = full || files.some((f) => MOBILE_PREFIXES.some((p) => f.startsWith(p)));
+  const mobile = full || code.some((f) => MOBILE_PREFIXES.some((p) => f.startsWith(p)));
+  const android = full || code.some((f) => ANDROID_INPUTS.some((r) => r.test(f)));
+  const ios = full || code.some((f) => IOS_INPUTS.some((r) => r.test(f)));
   const globals = files.filter((f) => GLOBAL_FILES.has(f));
   if (full || globals.length > 0) {
     return {
       full: true,
-      reason: full ? 'full run requested' : `shared root file changed: ${globals.join(', ')}`,
+      reason: full ? fullReason : `shared root file changed: ${globals.join(', ')}`,
       packages: all,
       names: workspace.map((p) => p.name),
       integration: { db: true, server: true },
@@ -170,6 +216,8 @@ export function computeScope({ files, full = false, workspace }) {
       grafana: true,
       release: true,
       mobile,
+      android,
+      ios,
     };
   }
 
@@ -195,16 +243,19 @@ export function computeScope({ files, full = false, workspace }) {
   }
 
   const packages = all.filter((p) => affected.has(p));
+  const bumpNote = bumped.size ? ` (version bump only: ${[...bumped].sort().join(', ')})` : '';
   return {
     full: false,
-    reason: packages.length ? `changed: ${[...changed].sort().join(', ')}` : 'no workspace package changed',
+    reason: (packages.length ? `changed: ${[...changed].sort().join(', ')}` : 'no workspace package changed') + bumpNote,
     packages,
     names: workspace.filter((p) => affected.has(p.path)).map((p) => p.name),
     integration: { db: affected.has(INTEGRATION.db), server: affected.has(INTEGRATION.server) },
     serverGuards: files.length > 0 && !affected.has(INTEGRATION.server),
-    grafana: files.some(isGrafanaInput),
-    release: files.some(isReleaseInput),
+    grafana: code.some(isGrafanaInput),
+    release,
     mobile,
+    android,
+    ios,
   };
 }
 
@@ -212,6 +263,23 @@ export function computeScope({ files, full = false, workspace }) {
 export function changedFiles(base, head = 'HEAD', cwd = root) {
   const out = execFileSync('git', ['diff', '--name-only', '--no-renames', `${base}...${head}`], { cwd, encoding: 'utf8' });
   return out.split('\n').filter(Boolean);
+}
+
+/** The changed version files whose diff is a version bump alone. */
+export function versionOnlyFiles(files, base, head = 'HEAD', cwd = root) {
+  return files.filter((f) => isVersionFile(f) && onlyVersionChanged(
+    execFileSync('git', ['diff', '-U0', '--no-renames', `${base}...${head}`, '--', f], { cwd, encoding: 'utf8' }),
+  ));
+}
+
+/** Whether a commit is in the local history (a push's `before` is not, after a force push). */
+function hasCommit(sha, cwd = root) {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseArgs(argv) {
@@ -229,10 +297,16 @@ function parseArgs(argv) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const workspace = readWorkspace();
-  // No base (or GitHub's all-zero "no previous commit") cannot be diffed: run everything.
-  const full = args.full || !args.base || /^0+$/.test(args.base);
+  // No base (GitHub's all-zero "no previous commit" for a new branch, or a push's `before` that
+  // a force push took out of the history) cannot be diffed: run everything.
+  const fullReason = args.full ? 'full run requested'
+    : !args.base || /^0+$/.test(args.base) ? 'no base commit to diff against'
+      : !hasCommit(args.base) ? `base ${args.base} is not in the history`
+        : null;
+  const full = fullReason !== null;
   const files = full ? [] : changedFiles(args.base, args.head);
-  const scope = computeScope({ files, full, workspace });
+  const versionOnly = full ? [] : versionOnlyFiles(files, args.base, args.head);
+  const scope = computeScope({ files, full, fullReason: fullReason ?? undefined, versionOnly, workspace });
 
   const outputs = {
     full: String(scope.full),
@@ -246,6 +320,8 @@ function main() {
     grafana: String(scope.grafana),
     release: String(scope.release),
     mobile: String(scope.mobile),
+    android: String(scope.android),
+    ios: String(scope.ios),
   };
 
   const lines = [
@@ -256,7 +332,8 @@ function main() {
     `- Lint, unit tests, build: ${scope.packages.length ? scope.packages.join(', ') : 'none'}`,
     `- Integration: ${Object.entries(scope.integration).filter(([, on]) => on).map(([k]) => k).join(', ') || 'none'}`,
     `- Server repository guards on their own: ${scope.serverGuards ? 'yes' : 'no'}`,
-    `- Grafana rules: ${scope.grafana ? 'yes' : 'no'}; release-please config: ${scope.release ? 'yes' : 'no'}; mobile: ${scope.mobile ? 'yes' : 'no'}`,
+    `- Grafana rules: ${scope.grafana ? 'yes' : 'no'}; release-please config: ${scope.release ? 'yes' : 'no'}`,
+    `- Mobile: ${scope.mobile ? 'yes' : 'no'}; Android build: ${scope.android ? 'yes' : 'no'}; iOS build: ${scope.ios ? 'yes' : 'no'}`,
   ];
   console.log(lines.join('\n'));
   if (process.env.GITHUB_OUTPUT) {
