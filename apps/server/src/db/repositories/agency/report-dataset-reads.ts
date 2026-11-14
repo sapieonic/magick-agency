@@ -27,6 +27,7 @@ import { getPool } from '@magick-agency/db';
 import { callSentimentLabelSql } from '@magick-agency/db/repositories/agency-call.repository';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
 import type { SentimentLabel } from '@magick-agency/contracts/api/agency/webrtc-call';
+import { REPORT_BUILD_TIMEOUT_MS } from '../../../agency/reports/datasets/types.js';
 import type { InsightsCallbackClass } from './insights-range-reads.js';
 import { CALLBACK_BOOKING_COLUMNS_SQL, callbackClassSql } from './insights-range-reads.js';
 import { INSIGHTS_MEASURES } from './insights-rollup-sql.js';
@@ -125,9 +126,17 @@ export interface ReportCursorOptions {
    * The report assembler's deadline. Once aborted no further `FETCH` is sent, a statement in
    * flight is cancelled (`pg_cancel_backend` on the cursor's backend), and the generator throws
    * the abort's reason, so the transaction ends and the client goes back however long the
-   * statement would have run.
+   * statement would have run. While the consumer holds a row no statement runs, so the signal
+   * cannot end the transaction then; `timeoutMs` does.
    */
   signal?: AbortSignal;
+  /**
+   * The bound on the cursor's own transaction (default {@link REPORT_BUILD_TIMEOUT_MS}, the
+   * report's deadline): its `statement_timeout` and `idle_in_transaction_session_timeout`, each
+   * set to this or to the role's and database's value when that is lower. Milliseconds, rounded
+   * up, at least 1 (0 would mean no limit).
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -139,7 +148,8 @@ export interface ReportCursorOptions {
  * {@link ReportCursorOptions}.
  */
 export async function* reportCursorRows<T>(text: string, values: unknown[], opts: ReportCursorOptions = {}): AsyncGenerator<T> {
-  const { batch = REPORT_CURSOR_BATCH, signal } = opts;
+  const { batch = REPORT_CURSOR_BATCH, signal, timeoutMs = REPORT_BUILD_TIMEOUT_MS } = opts;
+  const boundMs = Math.max(1, Math.ceil(timeoutMs));
   signal?.throwIfAborted();
   const client = await getPool().connect();
   let broken: Error | undefined;
@@ -170,9 +180,20 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], opts
     // Out from under the pool's session timeouts (DB_STATEMENT_TIMEOUT_MS,
     // DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; db-hygiene.md "5. Timeouts"), for this transaction only:
     // between FETCHes it sits idle while the consumer waits on the upload's backpressure, and a
-    // FETCH over a 30-day window can run long. The assembler's deadline (`signal`) bounds both:
-    // it cancels the statement in flight and ends the transaction.
-    await query(`SELECT set_config('idle_in_transaction_session_timeout', '0', true), set_config('statement_timeout', '0', true)`);
+    // FETCH over a 30-day window can run long. Never unbounded: both become `boundMs`, the
+    // report's deadline, so a legitimately slow upload or FETCH fits (the deadline stops it
+    // first), while a consumer that stalls and never pulls again (where the signal has no
+    // statement to cancel) has its transaction, snapshot and connection ended by Postgres.
+    // A lower limit from the role or database (`reset_val`: what the session has before the
+    // pool's own SET) is kept: the exemption is from the server's own timeouts only, never from
+    // a ceiling the operator put on every session, which a report has always run under.
+    await query(
+      `SELECT set_config(name, (CASE WHEN reset_val::bigint > 0 THEN LEAST(reset_val::bigint, $1::bigint)
+                                     ELSE $1::bigint END)::text, true)
+         FROM pg_settings
+        WHERE name IN ('idle_in_transaction_session_timeout', 'statement_timeout')`,
+      [boundMs],
+    );
     await query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
     for (;;) {
       const { rows } = await query(`FETCH ${batch} FROM report_rows`);

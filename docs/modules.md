@@ -429,7 +429,7 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/integration/agency/report-subscription-subject.test.ts` (`probeSubscriptionSubject` on Postgres) | 3 |
 | `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` and `postgresZoneName` against `pg_timezone_names`) | 4 |
 | `apps/server/test/integration/agency/report-assembler-deadline.test.ts` (the deadline over the real cursor: a stalled upload and a long statement end `assembly_failed` with the cursor's transaction ended; a real builder stops at its next stage) | 5 |
-| `apps/server/test/integration/agency/report-cursor-session-timeouts.test.ts` (the report cursor lifts the pool's idle-in-transaction and statement timeouts for its own transaction only) | 4 |
+| `apps/server/test/integration/agency/report-cursor-session-timeouts.test.ts` (the report cursor replaces the pool's idle-in-transaction and statement timeouts for its own transaction only, with a bound: the report deadline or `timeoutMs`, never 0, and a lower database value kept; a consumer that stalls past the bound has its transaction ended by Postgres) | 7 |
 
 ### `apps/server/src/agency/reports/datasets/`
 

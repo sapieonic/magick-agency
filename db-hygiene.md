@@ -33,7 +33,7 @@ operator applies to Supabase or to the server's environment (sections 2 to 6).
 | A connection that Postgres ends while a request holds it is logged and discarded | `packages/db/src/connection.ts` | Before, that ended the server process (no `'error'` listener on a checked-out client) |
 | Optional session timeouts `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`, `DB_LOCK_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS` | `config/blocks/base.ts`, `connection.ts` | **Off by default.** Each new connection RESETs the ones that are off, so nothing changes until section 5 |
 | The migration step resets the three timeouts on its own connection | `apps/server/src/migrate.ts` | A migration never runs under limits sized for the server's queries |
-| The report cursor exempts its own transaction from the idle and statement timeouts | `report-dataset-reads.ts` | Report detail fetches keep working once section 5 is applied |
+| The report cursor replaces the idle and statement timeouts for its own transaction with a bound: the report's 10-minute deadline, or the role's or database's value when lower (never 0) | `report-dataset-reads.ts` | Report detail fetches keep working once section 5 is applied, and a stalled report still has its transaction ended by Postgres |
 | Supervisor stats: the campaign-wide reads behind `GET /api/v1/agency-campaigns/:id/stats` are shared by every supervisor watching that campaign, for `AGENCY_CAMPAIGN_STATS_CACHE_MS` (2 s by default); the campaign's own writes and a force-available drop the shared read | `apps/server/src/agency/campaign-stats-reads.ts` | About one scan per 2 s per campaign, plus one after each such write, however many consoles poll; `agency_campaign_stats_reads_total{result}` shows scanned vs shared |
 
 **Rolling back.** An older image runs unchanged against a database with
@@ -351,8 +351,10 @@ Postgres ends the connection after the limit and releases its locks.
 
 **What sits idle inside a transaction on purpose.**
 
-- The report cursor waits on the S3 upload between fetches. It exempts its own transaction (the
-  report's 10-minute deadline bounds it instead), so it is unaffected by any value.
+- The report cursor waits on the S3 upload between fetches. Its own transaction runs under the
+  report's 10-minute deadline instead of this limit (or under the role's or database's limit when
+  that is lower), so it is unaffected by any value here, and a report whose consumer stalls is
+  still ended by Postgres after at most 10 minutes idle.
 - The inbound operator actions in `apps/server/src/telephony/credentials/inbound-service.ts`
   (enable, disable, repoint, link and unlink) hold a row lock on the credential or the number
   while they call Plivo, by design, with no statement on the transaction in between. The idle gap
@@ -402,7 +404,7 @@ Many long reads run on the shared pool with no way to exempt themselves, and eve
 must fit under the limit:
 
 - the report builders' reads (`apps/server/src/agency/reports/`; only the cursor's detail fetches
-  are exempt);
+  run under the report's 10-minute deadline instead);
 - the agent roster and grouped statistics (92-day windows) and per-agent statistics (366 days);
 - campaign stats, the insights range reads, customer history;
 - the retention and audit purges.
