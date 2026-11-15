@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { CARRIER_TERMINAL_FAILURE_ERROR_CODE } from '../../../src/telephony/carrier-errors.js';
 
 // ---------------------------------------------------------------------------
 // LATE BINDING — attach the agent at the carrier ANSWER, not before the dial
@@ -387,7 +388,7 @@ describe('late binding: a dial that rings out', () => {
 
     h.bridge.emit({
       callId: 'call-1', correlationId: 'att-1', phase: 'ended',
-      status: 'no_answer', answered: false,
+      status: 'no_answer', outcome: 'no_answer', answered: false,
     });
     await settle();
 
@@ -423,7 +424,7 @@ describe('late binding: a dial that rings out', () => {
 
     h.bridge.emit({
       callId: 'call-1', correlationId: 'att-1', phase: 'ended',
-      status: 'no_answer', answered: false,
+      status: 'no_answer', outcome: 'no_answer', answered: false,
     });
     await settle();
 
@@ -443,7 +444,7 @@ describe('late binding: a dial that rings out', () => {
 
     h.bridge.emit({
       callId: 'call-1', correlationId: 'att-1', phase: 'ended',
-      status: 'no_answer', answered: false,
+      status: 'no_answer', outcome: 'no_answer', answered: false,
     });
     await settle();
 
@@ -1045,7 +1046,7 @@ describe('late binding: the hidden dial\'s activity', () => {
   async function ringOut(h: Awaited<ReturnType<typeof harness>>, attemptId: string) {
     freshRow();
     await h.dialer.executeDial(cmdFor(attemptId));
-    h.bridge.emit({ callId: 'call-1', correlationId: attemptId, phase: 'ended', status: 'no_answer', answered: false });
+    h.bridge.emit({ callId: 'call-1', correlationId: attemptId, phase: 'ended', status: 'no_answer', outcome: 'no_answer', answered: false });
     await settle();
   }
 
@@ -1135,6 +1136,70 @@ describe('late binding: the hidden dial\'s activity', () => {
     expect(h.dialer.dialActivityFor('s1')).toBeNull();
   });
 
+  // The `ended` each end really carries: what `endCall` emits for it (`status`, `outcome`,
+  // `errorCode`, `errorMessage`, `answered`), from the carrier's terminal callback
+  // (`classifyPlivoOutcome`, `classifyVoicelinkOutcome`) or from the bridge's own teardown.
+  const unansweredEnd = (end: Record<string, unknown>) => ({
+    callId: 'call-1', correlationId: 'att-1', phase: 'ended' as const, answered: false, ...end,
+  });
+
+  it.each([
+    ['rang out', { status: 'no_answer', outcome: 'no_answer' }],
+    ['busy', { status: 'busy', outcome: 'busy' }],
+    ['declined or switched off (VoiceLink, Q.850 16 with SIP 200)', { status: 'busy', outcome: 'not_reached' }],
+    ['turned down at the far end (reject, decline, SIP 487)', { status: 'canceled', outcome: 'canceled' }],
+    ['failed at the far end, as the carrier reported', {
+      status: 'failed', outcome: 'failed|unallocated number|3001|carrier',
+      errorCode: CARRIER_TERMINAL_FAILURE_ERROR_CODE, errorMessage: 'failed|unallocated number|3001|carrier',
+    }],
+    ['failed at the far end, with no wording from the carrier', {
+      status: 'failed', outcome: 'telephony_error', errorCode: CARRIER_TERMINAL_FAILURE_ERROR_CODE,
+    }],
+  ])('counts a hidden dial the customer did not take: %s', async (_name, end) => {
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+    h.bridge.emit(unansweredEnd(end));
+    await settle();
+
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([[true, 0], [false, 1]]);
+    expect(h.dialer.dialActivityFor('s1')).toEqual({ ringing: false, unanswered_in_a_row: 1 });
+  });
+
+  it.each([
+    ['a media fault: the carrier stream never started', { status: 'failed', outcome: 'provider_start_timeout' }],
+    ['a media fault: the carrier stream closed before the answer', { status: 'no_answer', outcome: 'pstn_stream_closed' }],
+    ['a media fault: an unsupported media format', { status: 'failed', outcome: 'unsupported_media_format' }],
+    ['a supervisor or API hang-up', { status: 'canceled', outcome: 'ended_by_user' }],
+    ['an agent hang-up', { status: 'canceled', outcome: 'agent_hangup' }],
+    ['a drain on shutdown', { status: 'canceled', outcome: 'service_shutdown' }],
+    ['the ring deadline, with no word from the carrier', { status: 'no_answer', outcome: 'ring_deadline_passed' }],
+    ['the ring deadline, the carrier asked', { status: 'no_answer', outcome: 'ring_deadline_carrier_ended' }],
+    ['an end nobody has seen yet', { status: 'failed', outcome: 'something_new' }],
+    ['answered, its `answered` event missed: the customer hung up', { status: 'completed', outcome: 'remote_hangup', answered: true }],
+  ])('closes, uncounted, a hidden dial our side ended or could not read: %s', async (_name, end) => {
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+    h.bridge.emit(unansweredEnd(end));
+    await settle();
+
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([[true, 0], [false, 0]]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('keeps the count across an uncounted end: our fault neither adds to it nor clears it', async () => {
+    const h = await harness({ lateBinding: true });
+    await ringOut(h, 'att-1');
+    freshRow();
+    await h.dialer.executeDial(cmdFor('att-2'));
+    h.bridge.emit({ ...unansweredEnd({ status: 'canceled', outcome: 'service_shutdown' }), correlationId: 'att-2' });
+    await settle();
+
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([
+      [true, 0], [false, 1],
+      [true, 1], [false, 1],
+    ]);
+  });
+
   it('announces nothing for a dial the carrier refused: no phone rang', async () => {
     // The real refusal path: the bridge ends the call (`telephony_init_failed`) inside the dial,
     // emitting `ended`, and only then rejects. "Dialling a customer…" for it would be false, and
@@ -1170,13 +1235,21 @@ describe('late binding: the hidden dial\'s activity', () => {
 
   it('announces nothing for a dial that resolved without reaching the carrier', async () => {
     // A teardown while the dial waited at the calls-per-second gate resolves with no carrier
-    // handle (`dialWasSent` false).
+    // handle (`dialWasSent` false), and can resolve BEFORE its `ended` arrives: the teardown
+    // emits it only after its terminal row write (`webrtc-bridge-plivo.test.ts` pins that
+    // order). So the attempt is still registered when the dial returns, and only `dialWasSent`
+    // keeps "Dialling a customer…" off a screen for a dial no phone rang.
     const h = await harness({ lateBinding: true });
     h.bridge.createUnboundBridgedCall.mockResolvedValueOnce({ id: 'call-1' } as any);
 
     await h.dialer.executeDial(makeCmd());
-
     expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'canceled', outcome: 'service_shutdown', answered: false });
+    await settle();
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
   });
 
   it('closes, uncounted, a dial answered after the agent went away', async () => {
@@ -1222,7 +1295,7 @@ describe('late binding: the hidden dial\'s activity', () => {
     // `ringing: true` that nothing would ever close: "Dialling…" stuck on screen.
     const h = await harness({ lateBinding: true });
     h.bridge.createUnboundBridgedCall.mockImplementationOnce(async () => {
-      h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'no_answer', answered: false });
+      h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'no_answer', outcome: 'no_answer', answered: false });
       return { id: 'call-1', provider_call_id: 'carrier-1' } as any;
     });
 

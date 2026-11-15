@@ -428,9 +428,11 @@ every account the caller belongs to (CH2) where every internal handler is single
   the dial (never for one refused before or by the carrier) and `ringing: false` when it ends
   unseen, with how many hidden dials in a row went unanswered and nothing about the call (no
   contact, number or attempt id). Sent to that agent's socket only, two frames at most per dial;
-  the count lives in process memory (`AgencyDialer`'s `unansweredInARow`, a `TtlCache`), counts only a dial no customer
-  answered (not one ended because the station stayed gone, or cancelled by the customer ringing
-  in), and starts again from 0 at the next campaign call the agent is shown (`reserved`; an
+  the count lives in process memory (`AgencyDialer`'s `unansweredInARow`, a `TtlCache`), counts only a dial the carrier
+  reported the customer did not take (an allow-list, `isCustomerNoAnswerEnd` in
+  `outcome-classifier.ts`: rang out, busy, declined, failed or unreachable at the far end; never an
+  end of ours such as the station gone, a bridge or media fault, a shutdown or a cancel, nor the
+  customer ringing in), and starts again from 0 at the next campaign call the agent is shown (`reserved`; an
   inbound or soft-phone call does not reset it). `ready` carries the same state at a reconnect,
   and says `available`, not `reserved`, while only a hidden dial holds the agent, as they were
   last told. Early binding and wrap-up redials never send it, so the clients need not know the flag.

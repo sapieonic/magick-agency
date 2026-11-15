@@ -470,6 +470,38 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
     expect(mgr.getActiveCallIds()).toEqual([]);
   });
 
+  it('that unsent dial can resolve before its `ended` is emitted: the teardown says it after its terminal write', async () => {
+    // Why a caller cannot read "still registered when the dial resolved" as "sent": the
+    // dialler's `ringing: true` guard keeps `dialWasSent` for exactly this order.
+    plivoAdapter.initiateCall.mockImplementationOnce((req: { signal?: AbortSignal }) => new Promise((_, reject) => {
+      req.signal!.addEventListener('abort', () => reject(new CarrierDialAbortedError('plivo')));
+    }));
+    let writeTerminal!: () => void;
+    mockRepo.update.mockImplementation(async (_id: string, patch: { ended_at?: Date }) => {
+      if (patch.ended_at) await new Promise<void>((r) => { writeTerminal = r; });
+      return null;
+    });
+    try {
+      const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
+      mgr.onLifecycle((e) => lifecycle.push(e));
+      const placing = mgr.createUnboundBridgedCall(PLIVO);
+      await vi.waitFor(() => expect(plivoAdapter.initiateCall).toHaveBeenCalled());
+      const ending = mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+
+      const record = await placing;
+      expect(dialWasSent(record)).toBe(false);
+      expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(0);
+
+      await vi.waitFor(() => expect(writeTerminal).toBeTypeOf('function'));
+      writeTerminal();
+      await ending;
+      expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(1);
+    } finally {
+      mockRepo.update.mockReset();
+      mockRepo.update.mockResolvedValue(null);
+    }
+  });
+
   it('a dial that is placed is not aborted afterwards: a later teardown hangs it up as before', async () => {
     let seen: AbortSignal | undefined;
     plivoAdapter.initiateCall.mockImplementationOnce(async (req: { signal?: AbortSignal }) => {

@@ -56,7 +56,7 @@ import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 import { trackCarrierDialRefusal, trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import {
-  CarrierDialNotSentError, carrierAuthRejectionReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isCarrierDialAborted, isDialOutcomeUnknown,
+  CARRIER_TERMINAL_FAILURE_ERROR_CODE, CarrierDialNotSentError, carrierAuthRejectionReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isCarrierDialAborted, isDialOutcomeUnknown,
 } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
@@ -2542,7 +2542,7 @@ export class WebRtcBridgeManager {
           status,
           outcome,
           ...(status === 'failed' && !answered
-            ? { errorCode: 'TELEPHONY_ERROR', errorMessage: rawCause || undefined }
+            ? { errorCode: CARRIER_TERMINAL_FAILURE_ERROR_CODE, errorMessage: rawCause || undefined }
             : {}),
           recordingUrl: facts.recordingUrl,
           hangupProvider: false,

@@ -5,6 +5,7 @@ import type {
   AgencyCampaignStatus,
   AgencyReleaseReason,
 } from '@magick-agency/contracts/agency';
+import { CARRIER_TERMINAL_FAILURE_ERROR_CODE } from '../telephony/carrier-errors.js';
 
 /**
  * Carrier/bridge terminal state → agency attempt outcome.
@@ -86,6 +87,62 @@ const LOCALLY_ENDED_OUTCOMES = new Set([
 
 function isLocallyEndedOutcome(outcome?: string | null): boolean {
   return outcome != null && LOCALLY_ENDED_OUTCOMES.has(outcome);
+}
+
+/**
+ * Bridge `ended` outcomes that are the **carrier's verdict that the customer's phone did not take
+ * the call**: what a hidden dial's `ended` must say to be counted in
+ * `AgencyDialActivity.unanswered_in_a_row` ({@link isCustomerNoAnswerEnd}). Each is written only
+ * from the carrier's own terminal callback (`classifyPlivoOutcome`, `classifyVoicelinkOutcome`):
+ *
+ *  - `no_answer` — it rang out (Plivo `no-answer`/`timeout`; VoiceLink no-answer, timeout, SIP
+ *    408/480).
+ *  - `busy` — the line was busy (Plivo `busy`; VoiceLink busy, SIP 486).
+ *  - `not_reached` — VoiceLink's clean unanswered teardown (Q.850 16 with SIP 200): declined or
+ *    switched off, which that carrier does not tell apart.
+ *  - `canceled` — the far end turned it down (reject, decline, SIP 487; Plivo `cancel`). The
+ *    dialer's own cancel of a dial whose customer rang in (`supersedeForInbound`) ends with the same
+ *    outcome; it is settled by the dialer's clash arm, which never asks this set.
+ *
+ * Plus a carrier-reported failure, which carries the carrier's wording as its outcome and is
+ * known by its error code instead ({@link CARRIER_TERMINAL_FAILURE_ERROR_CODE}): the number is
+ * unreachable, invalid or failed at the far end.
+ *
+ * An ALLOW-LIST, as {@link LOCALLY_ENDED_OUTCOMES} is, for the opposite reason: the count tells
+ * the agent "No answer from the last N numbers", and an end it does not recognise must not be read
+ * as a customer who did not pick up. Left out, deliberately, so never counted:
+ *
+ *  - every end of ours: `agent_disconnected` (the station stayed gone), `agent_hangup`,
+ *    `ended_by_user`, `service_shutdown` / `system_rebooted` / `stuck_active_call` (a drain or a
+ *    restart), the reaper's `orphaned`;
+ *  - a bridge or media fault: `provider_start_timeout`, `unsupported_media_format`, and
+ *    `pstn_stream_closed` / `pstn_stream_stopped` before an answer (status `no_answer`, but it is
+ *    the carrier's media socket failing, not a verdict on the customer);
+ *  - the ring deadline's backstop (`ring_deadline_passed`, `ring_deadline_carrier_ended`): no
+ *    terminal callback came, and the bridge's reading folds an answer whose media never arrived
+ *    into `no_answer`, so it cannot say the customer did not answer;
+ *  - a dial refused before or by the carrier (`telephony_init_failed`, the unplaced refusals):
+ *    no phone rang, and it is never announced anyway;
+ *  - anything answered (`abandoned`, `remote_hangup`, `max_duration_reached`): with no answering
+ *    machine detection a voicemail pick-up is an answer too, so there is no machine outcome to
+ *    weigh.
+ */
+const CUSTOMER_NO_ANSWER_OUTCOMES: ReadonlySet<string> = new Set([
+  'no_answer',
+  'busy',
+  'not_reached',
+  'canceled',
+]);
+
+/**
+ * Whether a call's `ended` says the customer's phone did not take it, as the carrier reported:
+ * {@link CUSTOMER_NO_ANSWER_OUTCOMES}, or a carrier-reported failure. Neither is ever written for
+ * a call the bridge saw answered (the carrier classifiers return `remote_hangup` for one, and the
+ * failure code is set only unanswered), so there is no `answered` to check here.
+ */
+export function isCustomerNoAnswerEnd(ev: { outcome?: string | null; errorCode?: string | null }): boolean {
+  if (ev.errorCode === CARRIER_TERMINAL_FAILURE_ERROR_CODE) return true;
+  return ev.outcome != null && CUSTOMER_NO_ANSWER_OUTCOMES.has(ev.outcome);
 }
 
 export function classifyAttemptOutcome(opts: {

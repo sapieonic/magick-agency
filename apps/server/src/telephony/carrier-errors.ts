@@ -47,6 +47,14 @@ export function dialOutcomeUnknownNotBefore(
  */
 export const DIAL_OUTCOME_UNKNOWN_ERROR_CODE = 'TELEPHONY_INIT_OUTCOME_UNKNOWN';
 
+/**
+ * The `errorCode` the bridge ends an unanswered call with when the carrier's own terminal
+ * callback reported it failed (`webrtc-bridge-manager.ts`, the carrier's `hangup`/`error`
+ * event; the carrier's wording is the `outcome` and `errorMessage`): the far end could not be
+ * reached, as the carrier saw it. Not the code of any failure of ours, which each have their own.
+ */
+export const CARRIER_TERMINAL_FAILURE_ERROR_CODE = 'TELEPHONY_ERROR';
+
 /** A carrier REST request abandoned after its timeout. */
 export class CarrierRequestTimeoutError extends Error {
   constructor(

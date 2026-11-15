@@ -653,13 +653,16 @@ export interface AgencyDialActivity {
    */
   ringing: boolean;
   /**
-   * How many of this agent's hidden dials in a row ended without being answered (rang out, busy,
-   * failed or unreachable once the carrier had it), counted since the last campaign call they
-   * were shown, which is a `reserved` frame: a client clears it there, and the next frame the
-   * server sends starts again from 0. An inbound or soft-phone call does not reset it. Not
-   * counted: a dial refused before or by the carrier (never announced at all), one ended because
-   * the agent's station stayed gone, and one the customer cancelled by ringing in themselves
-   * (docs/inbound.md §5.4). Held in the server's memory only, so a restart starts it from 0.
+   * How many of this agent's hidden dials in a row the customer did not answer, as the carrier
+   * reported it (rang out, busy, declined, or failed or unreachable at the far end), counted since
+   * the last campaign call they were shown, which is a `reserved` frame: a client clears it there,
+   * and the next frame the server sends starts again from 0. An inbound or soft-phone call does
+   * not reset it. Not counted, and not resetting it either: a dial refused before or by the
+   * carrier (never announced at all), and any dial our side ended or could not read, closed with
+   * `ringing: false` all the same: the agent's station stayed gone, a fault in our bridge or
+   * media, a service shutdown, a hang-up of ours, a ring with no word from the carrier, and one
+   * the customer cancelled by ringing in themselves (docs/inbound.md §5.4). Held in the server's
+   * memory only, so a restart starts it from 0.
    */
   unanswered_in_a_row: number;
 }

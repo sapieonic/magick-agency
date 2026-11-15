@@ -97,10 +97,11 @@ export interface LiveAttempt {
   /**
    * Was the agent told that this hidden dial is ringing (a `dial_activity` frame with
    * `ringing: true`)? Late binding only, set once the carrier has taken the dial (never for a
-   * dial refused before or by the carrier), and cleared by the bind or once the closing
-   * `dial_activity` has gone out, so the dial is closed exactly once. Every path that drops the
-   * attempt before the agent is shown it closes it (`AgencyDialer.endDialActivity`); a dial
-   * that never set it has nothing to close.
+   * dial refused before or by the carrier). Cleared by a successful `reserved` send in the
+   * `answered` arm (before the bind, whatever the bind returns: the client clears the activity
+   * on `reserved`), or once the closing `dial_activity` has gone out, so the dial is closed at
+   * most once. Every path that drops the attempt goes through `AgencyDialer.forgetAttempt`,
+   * which closes a dial still flagged; a dial that never set it has nothing to close.
    */
   dialActivityShown: boolean;
   /**

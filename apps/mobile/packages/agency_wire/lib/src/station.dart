@@ -1019,9 +1019,10 @@ final class DialActivity {
   /// A hidden dial for this agent is ringing now.
   final bool ringing;
 
-  /// Hidden dials in a row that ended unanswered, since the last campaign
-  /// call the agent was shown (`reserved`); an inbound or soft-phone call does
-  /// not reset it.
+  /// Hidden dials in a row the customer did not answer, as the carrier
+  /// reported it (a dial our side ended is not counted), since the last
+  /// campaign call the agent was shown (`reserved`); an inbound or soft-phone
+  /// call does not reset it.
   final int unansweredInARow;
 
   Map<String, Object?> toJson() => <String, Object?>{'ringing': ringing, 'unanswered_in_a_row': unansweredInARow};

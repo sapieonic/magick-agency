@@ -23,6 +23,7 @@ import { holdOutcomeUnknownContact, parkRedialContact, settleContact } from './d
 import { wrapupRedialRemaining } from './wrapup-redial-rules.js';
 import {
   classifyAttemptOutcome,
+  isCustomerNoAnswerEnd,
   releaseMessageFor,
   releaseReasonFor,
   requiresDisposition,
@@ -714,9 +715,17 @@ export class AgencyDialer {
     //
     // HERE, once the carrier has taken the dial: before it, every refusal (the bridge's own or
     // the carrier's) would announce a dial no phone rang, and a systemic one would hold
-    // "Dialling a customer…" on screen while nothing is dialled. `dialWasSent` excludes a
-    // teardown at the calls-per-second gate; the record check, a dial the `ended` arm settled
-    // inside the call; `answeredAt`, one answered inside it. Synchronous to the send.
+    // "Dialling a customer…" on screen while nothing is dialled. The record check excludes a
+    // dial the `ended` arm settled inside the call; `answeredAt`, one answered inside it.
+    // Synchronous to the send.
+    //
+    // `dialWasSent` excludes a teardown before the dial was sent (while the bridge prepared it,
+    // or while it waited at the calls-per-second gate), and the record check does NOT cover it:
+    // that dial can resolve before its `ended` reaches us. The teardown's `endCall` claims the
+    // call (`endHandled`) and aborts the waiting dial synchronously, and the bridge returns the
+    // unsent dial on seeing either; but `endCall` emits `ended` only after its awaited terminal
+    // row write. Until then the record is still registered here, and without this term the agent
+    // would be told a dial is ringing that no phone ever rang.
     if (
       lateBinding && dialWasSent(record) && this.liveByAttempt.get(attemptId) === live
       && !live.panelDelivered && live.answeredAt === null
@@ -732,8 +741,9 @@ export class AgencyDialer {
     // Only a dial that was sent: a teardown while the dial waited for a calls-per-second
     // slot (or before it) resolves too, with no carrier handle (`dialWasSent`). Nothing
     // reached the carrier, so it says nothing about the account and must not end a streak.
-    // Its `ended` arm has settled the attempt already; the attach below still correlates
-    // the row with its (terminal) call.
+    // Its `ended` arm settles the attempt (it may not have run yet: the teardown emits `ended`
+    // after its terminal row write); the attach below still correlates the row with its
+    // (terminal) call.
     if (cmd.campaign.telephony_credential_id && dialWasSent(record)) {
       void this.refusalBreaker.notePlaced(cmd.campaignId).catch((err) =>
         log.warn({ err, campaignId: cmd.campaignId }, 'Carrier refusal streak not reset — it lapses with its TTL'));
@@ -1513,11 +1523,18 @@ export class AgencyDialer {
     }
     const contactAfterDial = live.placing && live.answeredAt === null && live.bridgedAt === null;
     // Before the settle below, so the closing `dial_activity` reaches the agent ahead of the
-    // `agent_state` its release sends. Counted unanswered only when no one answered and the
-    // agent was still there: the pre-bind grace ends a dial whose station stayed gone
-    // `agent_disconnected`, which is not a customer who did not pick up. A carrier refusal
-    // ends inside the dial, before `ringing: true` was sent, so it closes nothing here.
-    this.forgetAttempt(cmd, { unanswered: live.answeredAt === null && ev.outcome !== 'agent_disconnected' });
+    // `agent_state` its release sends. Counted unanswered only when the carrier said the
+    // customer's phone did not take it (`isCustomerNoAnswerEnd`, an allow-list: rang out,
+    // busy, declined, failed or unreachable at the far end), which it never says of a call
+    // that was answered (an answered dial abandoned for want of an agent ends `abandoned` or
+    // `remote_hangup`, uncounted). Every end of ours closes the dial uncounted: the station gone (`agent_disconnected`), a bridge
+    // or media fault, a drain, a cancel of ours. The dialer's own `canceled` for a customer who
+    // rang in reads exactly like a far-end decline (`canceled`/`canceled`), and never gets here
+    // unanswered: the mark is set only on a dial not placing and not answered, and dropped only
+    // once answered or when nothing was ended, so the clash arm above takes every such end. A
+    // carrier refusal ends inside the dial, before `ringing: true` was sent, so it closes
+    // nothing here.
+    this.forgetAttempt(cmd, { unanswered: isCustomerNoAnswerEnd(ev) });
 
     let settled: EndedSettlement | null = null;
     try {
@@ -2431,9 +2448,9 @@ export class AgencyDialer {
    */
   dialActivityFor(sessionId: string): AgencyDialActivity | null {
     const live = this.liveFor(sessionId);
-    // `dialActivityShown` implies unannounced (the bind clears it). Not once answered: a
-    // customer is on the line (being told no agent could take it, on the abandoned path),
-    // which is not a ringing dial.
+    // `dialActivityShown` implies unannounced (a successful `reserved` send clears it). Not
+    // once answered: a customer is on the line (being told no agent could take it, on the
+    // abandoned path), which is not a ringing dial.
     const ringing = live?.dialActivityShown === true && live.answeredAt === null;
     const unanswered = this.unansweredInARow.get(sessionId) ?? 0;
     return ringing || unanswered > 0 ? { ringing, unanswered_in_a_row: unanswered } : null;
@@ -2471,8 +2488,9 @@ export class AgencyDialer {
    *
    * Every path that drops an attempt comes through here, so a hidden dial the agent was told
    * is ringing is always closed (`ringing: false`), and counted when `unanswered`. Only such a
-   * dial: the bind clears {@link LiveAttempt.dialActivityShown}, so a call the agent was shown
-   * closes nothing.
+   * dial: a successful `reserved` send in the `answered` arm clears
+   * {@link LiveAttempt.dialActivityShown} (before the bind, whatever the bind returns), so a call
+   * the agent was shown closes nothing.
    */
   private forgetAttempt(cmd: DialCommand, { unanswered = false }: { unanswered?: boolean } = {}): void {
     const live = this.liveByAttempt.get(cmd.attemptId);
