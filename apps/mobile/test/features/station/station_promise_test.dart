@@ -60,6 +60,18 @@ void main() {
     expect(h.actions.args['submitDisposition'], isNull);
   });
 
+  testWidgets('the date picker reaches 31 days ahead, as the rule does (a customer a day ahead)', (tester) async {
+    await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20));
+    await tester.tap(find.byKey(const Key('outcome-ptp')));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('promise-pick')));
+    await tester.tap(find.byKey(const Key('promise-pick')));
+    await tester.pumpAndSettle();
+    final dialog = tester.widget<DatePickerDialog>(find.byType(DatePickerDialog));
+    expect(dialog.firstDate, DateTime(2026, 10, 30));
+    expect(dialog.lastDate, DateTime(2026, 12, 1));
+  });
+
   testWidgets('a follow-up outcome says when we call again', (tester) async {
     await pumpStation(tester, wrap(), now: DateTime(2026, 10, 31, 11, 20));
     await tester.tap(find.byKey(const Key('outcome-ptp_f')));

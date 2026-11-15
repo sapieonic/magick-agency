@@ -133,8 +133,7 @@ class _PromisePickerState extends ConsumerState<PromisePicker> {
     final scope = sameCall(widget.attemptId, const {AgentPhase.wrapup});
     Widget guarded(BuildContext _, Widget? child) =>
         widget.station ? StationModalGuard(scope: scope, child: child!) : child!;
-    final first = DateTime(today.year, today.month, today.day - 1);
-    final last = DateTime(today.year, today.month, today.day + promiseMaxDaysAhead);
+    final (:first, :last) = promisePickerBounds(today);
     final initial = widget.form.promiseDate ?? today;
     final date = await showDatePicker(
       context: context,

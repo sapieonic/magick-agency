@@ -2,6 +2,8 @@
 // port, the controller's request (station and inbound share it), the agent's
 // view of a contact's promise, and the soft phone's checks.
 
+import 'dart:io';
+
 import 'package:agency_wire/agency_wire.dart' as wire;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +28,7 @@ void main() {
   group('the rules (port of the domain module)', () {
     test('a real calendar date, or null', () {
       expect(parsePromiseDay('2026-11-18'), DateTime.utc(2026, 11, 18));
-      for (final v in ['2026-02-30', '2026-13-01', '18/11/2026', '2026-11-18T00:00:00Z', '', null]) {
+      for (final v in ['2026-02-30', '2026-13-01', '18/11/2026', '2026-11-18T00:00:00Z', '1969-12-31', '0000-01-01', '', null]) {
         expect(parsePromiseDay(v), isNull, reason: '$v');
       }
     });
@@ -37,6 +39,33 @@ void main() {
       // promiseMaxDaysAhead (30) after the agent's today, plus the day the customer may be ahead.
       expect(promiseDayAllowed(DateTime(2026, 9, 11), now), isTrue);
       expect(promiseDayAllowed(DateTime(2026, 9, 12), now), isFalse);
+    });
+
+    test('the date picker offers exactly the days the rule accepts: the day before to 31 days ahead', () {
+      final b = promisePickerBounds(DateTime(2026, 8, 11));
+      expect(b.first, DateTime(2026, 8, 10));
+      expect(b.last, DateTime(2026, 9, 11));
+      expect(promiseDayAllowed(b.first, now), isTrue);
+      expect(promiseDayAllowed(b.last, now), isTrue);
+      expect(promiseDayAllowed(b.first.subtract(const Duration(days: 1)), now), isFalse);
+      expect(promiseDayAllowed(DateTime(2026, 9, 12), now), isFalse);
+    });
+
+    test('the bound and the amount\'s digits are the contract\'s (packages/contracts/src/agency/promise.ts)', () {
+      var dir = Directory.current.absolute;
+      while (!File('${dir.path}/packages/contracts/src/agency/promise.ts').existsSync()) {
+        if (dir.parent.path == dir.path) throw StateError('packages/contracts/src/agency/promise.ts not found');
+        dir = dir.parent;
+      }
+      final source = File('${dir.path}/packages/contracts/src/agency/promise.ts').readAsStringSync();
+      int constant(String name) {
+        final m = RegExp('export const $name = (\\d+);').firstMatch(source);
+        if (m == null) throw StateError('$name not found in promise.ts');
+        return int.parse(m.group(1)!);
+      }
+
+      expect(promiseMaxDaysAhead, constant('AGENCY_PROMISE_MAX_DAYS_AHEAD'));
+      expect(promiseAmountMaxIntegerDigits, constant('AGENCY_PROMISE_AMOUNT_MAX_INTEGER_DIGITS'));
     });
 
     test('the amount is kept exactly, two places, never through a double', () {

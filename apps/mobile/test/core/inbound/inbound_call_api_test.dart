@@ -88,6 +88,30 @@ void main() {
       expect(inboundDispositionRefusalCopy(r), 'This outcome needs a note.');
     });
 
+    test('each promise rule (PT8) in the console\'s words, not the generic line', () async {
+      final words = {
+        'promise_required': 'This outcome needs the date the customer promised to pay.',
+        'invalid_promise_date':
+            'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.',
+        'invalid_promise_amount': 'Enter the amount as a number, with up to two decimal places and no commas.',
+        'promise_not_expected':
+            'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.',
+      };
+      for (final MapEntry(key: reason, value: copy) in words.entries) {
+        final r = await refused(400, {
+          'error': 'Bad Request', 'code': 'inbound_disposition_invalid', 'message': 'x', 'reason': reason,
+          'inbound_call_id': fixtureCallId,
+        });
+        expect(r.rule?.wire, reason);
+        expect(inboundDispositionRefusalCopy(r), copy, reason: reason);
+      }
+      // Every rule this build knows has its own words.
+      for (final rule in InboundDispositionRule.values) {
+        if (rule == InboundDispositionRule.unknown) continue;
+        expect(inboundDispositionRuleCopy[rule], isNotNull, reason: rule.wire);
+      }
+    });
+
     test('already saved: the call is gone; after the window it reads as the lapse', () async {
       final r = await refused(409, inboundSample('refusal_outcome_already_saved'));
       expect(r.code, InboundErrorCode.inboundOutcomeAlreadySaved);
