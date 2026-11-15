@@ -936,7 +936,7 @@ void main() {
                 'contact_id': 'c-$attemptId',
                 'disposition_code': code,
                 'contact_state': code == 'do_not_call' ? 'suppressed' : 'completed',
-                if (dncRecorded != null) 'dnc_recorded': dncRecorded,
+                'dnc_recorded': ?dncRecorded,
                 'agent_state': 'wrapup',
               };
           final app = App(async)..start();
