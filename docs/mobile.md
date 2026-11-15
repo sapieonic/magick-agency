@@ -265,7 +265,7 @@ minus refused is not the number placed.
 
 An outcome whose catalogue entry sets `requires_promise` (decisions PT1–PT14) shows "When will
 the customer pay?" under the pad: chips for Today, Tomorrow and In a week, a date picker (a day
-before today up to 180 days ahead; the server judges the customer's today), and an optional
+before today up to 30 days ahead; the server judges the customer's today), and an optional
 amount (digits and a point). Save stays disabled with the reason until a date is picked and the
 amount reads as a number with at most two places; the request carries `promise_date` and the
 amount's two-place string only for that outcome. The line under it says whether saving books a

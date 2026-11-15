@@ -1716,7 +1716,7 @@ optionally the amount), show it, and let supervisors follow promises up.
   inbound routes' own catalogues cannot ask for one; a promise entry cannot be an automatic outcome.
 - **Capture.** The station (paced dials, the agent's own call, redials), a tagged soft-phone call and
   a matched inbound call take `promise_date` (a real date, not before the customer's today, at most
-  180 days ahead) and an optional exact `promise_amount`; four refusal codes whose messages name
+  30 days ahead) and an optional exact `promise_amount`; four refusal codes whose messages name
   the fix for an app that predates them (PT8). Console: the shared outcome pad. App: the station's
   wrap-up and inbound pads and the soft phone's.
 - **Storage.** Migration `0041_promise_to_pay.sql`: the promise on each call table, the contact's

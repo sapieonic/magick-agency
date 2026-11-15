@@ -1134,7 +1134,7 @@ const Map<SoftphoneSaveBlock, String> softphoneSaveBlockCopy = {
   SoftphoneSaveBlock.callbackRequired: 'This disposition needs a callback time.',
   SoftphoneSaveBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
   SoftphoneSaveBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
-  SoftphoneSaveBlock.promiseDateInvalid: 'Pick a promised date from today up to 180 days ahead.',
+  SoftphoneSaveBlock.promiseDateInvalid: 'Pick a promised date from today up to 30 days ahead.',
   SoftphoneSaveBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
   SoftphoneSaveBlock.fieldsRequired: 'Fill in the required call details first.',
 };

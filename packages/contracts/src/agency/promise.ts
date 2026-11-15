@@ -28,7 +28,7 @@ export const AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX = 14;
  * further out is refused as a typo (a year keyed as 2062) rather than stored as a promise
  * nobody will be around to check.
  */
-export const AGENCY_PROMISE_MAX_DAYS_AHEAD = 180;
+export const AGENCY_PROMISE_MAX_DAYS_AHEAD = 30;
 
 /**
  * The amount's bounds (PT5): at most this many digits before the decimal point and two after

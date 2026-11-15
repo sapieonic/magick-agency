@@ -5,7 +5,7 @@
 library;
 
 /// How far ahead a promised date may be (`AGENCY_PROMISE_MAX_DAYS_AHEAD`).
-const promiseMaxDaysAhead = 180;
+const promiseMaxDaysAhead = 30;
 
 /// Digits before the decimal point (`AGENCY_PROMISE_AMOUNT_MAX_INTEGER_DIGITS`).
 const promiseAmountMaxIntegerDigits = 12;

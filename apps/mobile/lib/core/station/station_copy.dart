@@ -283,7 +283,7 @@ const Map<DispositionBlock, String> dispositionBlockCopy = {
   DispositionBlock.datetimeRequired: 'This disposition needs a callback time.',
   DispositionBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
   DispositionBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
-  DispositionBlock.promiseDateInvalid: 'Pick a promised date from today up to 180 days ahead.',
+  DispositionBlock.promiseDateInvalid: 'Pick a promised date from today up to 30 days ahead.',
   DispositionBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
 };
 

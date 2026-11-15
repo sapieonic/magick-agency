@@ -54,6 +54,7 @@ import type { AppContext } from '../../../src/app-context.js';
 import { resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
 import { resetVoiceEngineForTests } from '../../../src/bootstrap/voice.js';
 import { ATTEMPT_CSV_COLUMNS, CONTACT_CSV_COLUMNS } from '../../../src/agency/agency-spine.js';
+import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
 
 const PTP = { code: 'ptp', label: 'Promised to pay', requires_promise: true };
 const PTP_FOLLOW = { code: 'ptp_follow', label: 'Promised (follow up)', requires_promise: true, promise_follow_up_days: 2 };
@@ -241,7 +242,7 @@ describe('PT4, PT5, PT8: validation', () => {
     ['an amount without a date', { disposition_code: 'ptp', promise_amount: '5' }, 'promise_required'],
     ['a date that does not exist', { disposition_code: 'ptp', promise_date: '2026-02-30' }, 'invalid_promise_date'],
     ['a date-time instead of a date', { disposition_code: 'ptp', promise_date: '2099-01-01T00:00:00Z' }, 'invalid_promise_date'],
-    ['a date past the bound', { disposition_code: 'ptp', promise_date: dayIn('UTC', 181) }, 'invalid_promise_date'],
+    ['a date past the bound', { disposition_code: 'ptp', promise_date: dayIn('UTC', AGENCY_PROMISE_MAX_DAYS_AHEAD + 1) }, 'invalid_promise_date'],
     ['a negative amount', { disposition_code: 'ptp', promise_date: dayIn('UTC', 1), promise_amount: '-1' }, 'invalid_promise_amount'],
     ['three decimal places', { disposition_code: 'ptp', promise_date: dayIn('UTC', 1), promise_amount: '1.005' }, 'invalid_promise_amount'],
     ['a promise on another outcome', { disposition_code: 'reached', promise_date: dayIn('UTC', 1) }, 'promise_not_expected'],

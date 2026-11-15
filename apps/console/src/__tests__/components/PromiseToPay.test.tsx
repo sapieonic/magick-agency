@@ -49,8 +49,10 @@ describe('the pad\'s checks (PT4, PT5): the client half of the server\'s rule', 
     // One day either side of the agent's today: the customer may be a day behind or ahead.
     expect(blockReason(CATALOG, form({ selectedCode: 'ptp', promiseDate: '2026-08-10' }), T0)).toBeNull();
     expect(blockReason(CATALOG, form({ selectedCode: 'ptp', promiseDate: '2026-08-09' }), T0)).toBe('promise_date_invalid');
-    expect(promiseDateBlocked('2027-02-07', T0)).toBe(false);
-    expect(promiseDateBlocked('2027-02-09', T0)).toBe(true);
+    // The far edge: AGENCY_PROMISE_MAX_DAYS_AHEAD (30) after the agent's today, plus the one day
+    // the customer may be ahead. T0's day is 2026-08-11, so 2026-09-11 is the last date allowed.
+    expect(promiseDateBlocked('2026-09-11', T0)).toBe(false);
+    expect(promiseDateBlocked('2026-09-12', T0)).toBe(true);
     expect(blockReason(CATALOG, form({ selectedCode: 'ptp', promiseDate: '2026-08-18', promiseAmount: '12,500' }), T0))
       .toBe('promise_amount_invalid');
     expect(blockReason(CATALOG, form({ selectedCode: 'ptp', promiseDate: '2026-08-18', promiseAmount: '  ' }), T0)).toBeNull();

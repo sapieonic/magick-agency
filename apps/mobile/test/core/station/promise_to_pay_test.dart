@@ -34,8 +34,9 @@ void main() {
     test('one day either side of the agent\'s today, up to the bound', () {
       expect(promiseDayAllowed(DateTime(2026, 8, 10), now), isTrue);
       expect(promiseDayAllowed(DateTime(2026, 8, 9), now), isFalse);
-      expect(promiseDayAllowed(DateTime(2027, 2, 8), now), isTrue);
-      expect(promiseDayAllowed(DateTime(2027, 2, 9), now), isFalse);
+      // promiseMaxDaysAhead (30) after the agent's today, plus the day the customer may be ahead.
+      expect(promiseDayAllowed(DateTime(2026, 9, 11), now), isTrue);
+      expect(promiseDayAllowed(DateTime(2026, 9, 12), now), isFalse);
     });
 
     test('the amount is kept exactly, two places, never through a double', () {

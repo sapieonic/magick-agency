@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 // the exports run on real Postgres in `test/integration/api/promise-to-pay-routes.test.ts`.
 // ---------------------------------------------------------------------------
 
+import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
 import { validateAgencyCampaignConfig as validatePublic } from '../../../src/agency/agency-campaign-config.js';
 import { validateAgencyCampaignConfig as validateInternal } from '../../../src/agency/campaign-config.js';
 import { promiseZoneFor, validateDispositionFields, dispositionErrorMessage } from '../../../src/agency/disposition.js';
@@ -102,7 +103,7 @@ describe('PT4, PT8: the disposition\'s promise fields', () => {
 
   it('every refusal names what to do, for the app versions that show the message as it is', () => {
     expect(dispositionErrorMessage('promise_required')).toMatch(/update it or pick another outcome/);
-    expect(dispositionErrorMessage('invalid_promise_date')).toMatch(/at most 180 days ahead/);
+    expect(dispositionErrorMessage('invalid_promise_date')).toMatch(new RegExp(`at most ${AGENCY_PROMISE_MAX_DAYS_AHEAD} days ahead`));
     expect(softphoneRefusalMessage({ code: 'disposition_invalid', reason: 'promise_required' }))
       .toBe(dispositionErrorMessage('promise_required'));
     expect(softphoneRefusalMessage({ code: 'disposition_invalid', reason: 'unknown_code' })).toBe('That outcome cannot be saved as submitted.');
