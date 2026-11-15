@@ -535,6 +535,30 @@ describe('the page composes the ingest summary', () => {
     expect(mocks.importCheckedFile.mock.calls[1]).toEqual(['check-1', 'camp-1', 't1', 'a1']);
     expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
   });
+
+  it('an import that failed after its check expired: Change the column mapping sets it aside for a new check', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'check-1', dry_run: true, campaign_id: null, rows_read: 3, accepted: 3, check_expires_at: '2026-01-01T00:00:00.000Z',
+    }));
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const importButton = await screen.findByRole('button', { name: 'Import 3 contacts' }, { timeout: 4000 });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'import-1', dry_run: false, status: 'failed', rows_read: 0, accepted: 0, rejected: 0, check_job_id: 'check-1',
+      error_code: 'unexpected_error', error_message: 'The import failed.',
+    }));
+    fireEvent.click(importButton);
+
+    const recovery = await screen.findByTestId('ingest-recovery', undefined, { timeout: 4000 });
+    expect(screen.queryByRole('button', { name: 'Import again' })).toBeNull();
+    fireEvent.click(within(recovery).getByRole('button', { name: 'Change the column mapping' }));
+    expect(screen.queryByTestId('ingest-summary')).toBeNull();
+    expect((screen.getByLabelText('Use Cust Mobile as') as HTMLSelectElement).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
+  });
 });
 
 describe('the stepper does not tick a step nobody has been to', () => {
