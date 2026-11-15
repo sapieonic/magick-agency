@@ -123,7 +123,9 @@ const plivoSchema = z.object({
   dialRateMaxWaitMs: z.coerce.number().int().min(0).max(60_000).default(5_000),
   /**
    * `PLIVO_REQUEST_TIMEOUT_MS`: abandon a Plivo REST request after this long. A timed-out
-   * create-call may have placed the call, so it is never retried. Default 15 s.
+   * create-call may have placed the call, so it is never retried. Default 15 s. An inbound
+   * repoint holds a transaction open across up to (7 + linked numbers) of these requests, so
+   * `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`, when set, must stay above that (`db-hygiene.md` §5).
    */
   requestTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(15_000),
   /** `PLIVO_RING_TIMEOUT_SECONDS`: how long Plivo lets a dial ring. Default 45 s. */

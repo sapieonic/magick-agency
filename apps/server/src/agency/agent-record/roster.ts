@@ -93,7 +93,8 @@ export const ROSTER_MAX_LIMIT = 200;
  * Neither statement may carry a `LIMIT` — the benchmark needs the whole
  * pre-`limit` cohort, and {@link AgencyRosterBenchmark}'s occupancy percentiles
  * need an input that exists in neither statement alone. The server sets no
- * `statement_timeout` and no `query_timeout` anywhere, so a read that runs long
+ * `query_timeout`, and no `statement_timeout` unless `DB_STATEMENT_TIMEOUT_MS` is set (off by
+ * default), so a read that runs long
  * holds a pool connection for as long as it takes — the same pool serving
  * authentication, the pacing tick and attempt writes. With no `LIMIT` to shed
  * rows and no timeout to cut the statement off, the WINDOW is the only bound
@@ -136,7 +137,7 @@ export interface AgentRosterParams {
  * occupancy read behind it differences every transition of every agent on the
  * floor rather than of one person. That is an ~N-fold cost difference in a floor
  * of N, and neither statement here may carry a `LIMIT` (the benchmark needs the
- * whole pre-`limit` cohort) while the server sets no `statement_timeout` anywhere. A
+ * whole pre-`limit` cohort) while no `statement_timeout` applies by default. A
  * whole-floor read and a one-person read are visibly different questions; giving
  * them the same bound for URL symmetry would be dressing that up as consistency.
  * The refusal names the bound, so a caller wanting a year learns to page by

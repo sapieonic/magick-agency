@@ -11,14 +11,15 @@
  *    or recording callback, runs in the worker its `w` names;
  *  - the reaper's liveness inputs (the workers' live attempts, unrecorded ends, live
  *    soft-phone calls) and the guard host's live call ids, refreshed by `reaper.snapshot`;
- *  - the relay of the workers' events into this process (the pacing bus, the guard's
- *    self-heal wake, the analysis wake).
+ *  - the relay of the workers' events into this process (the pacing bus, cache
+ *    invalidations, the guard's self-heal wake, the analysis wake).
  */
 import type net from 'node:net';
 import type { ChildProcess } from 'node:child_process';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import { publishPacingInvalidation } from '../agency/pacing/invalidation-bus.js';
+import { deliverCacheInvalidation } from '../cache/cache-invalidation.js';
 import type { ReservedReturn } from '../agency/pacing-engine.js';
 import type { AgencyManualCallRecord } from '../db/models/agency.model.js';
 import {
@@ -173,6 +174,7 @@ export class MediaCluster implements WsHandoffTarget {
     channel.onEvent('station.detached', (b) => this.directory.detached(slot, b.sessionId));
     channel.onEvent('station.snapshot', (b) => this.directory.snapshot(slot, b.replicaId, b.sessions));
     channel.onEvent('pacing.invalidate', (ev) => publishPacingInvalidation(ev));
+    channel.onEvent('cache.invalidate', (ev) => deliverCacheInvalidation(ev));
     channel.onEvent('voice.wake_self_heal', () => this.wakeSelfHeal());
     channel.onEvent('analysis.wake', () => getDialerAnalysisWorker()?.wake());
     channel.onEvent('call.lease', (change) => {

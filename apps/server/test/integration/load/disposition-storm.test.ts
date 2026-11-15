@@ -67,7 +67,23 @@ beforeAll(async () => {
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
   // The supervisors poll with no pause at all, far past the per-IP ceiling a real dashboard
   // stays under; the limiter is `rate-limit-bursts.test.ts`'s subject, not this one's.
-  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000, ipAuthMax: 1_000_000 }, userRateLimit: { max: 1_000_000 } }) });
+  //
+  // `campaignStatsCacheMs: 0`: case 4 reads the dashboard the instant the storm ends and
+  // demands it equal the database, after writes that announce nothing (dispositions, and the
+  // raw inserts standing in for the dialer). The stats read is shared for
+  // `AGENCY_CAMPAIGN_STATS_CACHE_MS` after it settles (`agency/campaign-stats-reads.ts`), so
+  // with the 2 s default that read is the last mid-storm answer, by design. At 0 a read is
+  // still shared while in flight (the supervisors' concurrent polls of one campaign join one
+  // read all through the storm) but never served once settled, so case 4 keeps its full meaning:
+  // a read that starts after the writes sees them.
+  loaded = await startLoadApp({
+    configure: (c) => ({
+      ...c,
+      rateLimit: { ...c.rateLimit, max: 1_000_000, ipAuthMax: 1_000_000 },
+      userRateLimit: { max: 1_000_000 },
+      agency: { ...c.agency, campaignStatsCacheMs: 0 },
+    }),
+  });
 });
 
 afterAll(async () => {

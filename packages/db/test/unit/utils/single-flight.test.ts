@@ -265,4 +265,62 @@ describe('SingleFlight', () => {
     d2.resolve(2);
     expect(await p2).toBe(2);
   });
+
+  // ── forget: stop sharing a call that started before something the next caller must see ──
+  it('forget() makes the next call for the key run its own fn; the earlier awaiters keep theirs', async () => {
+    const sf = new SingleFlight<string>();
+    const old = deferred<string>();
+    const fresh = deferred<string>();
+    const p1 = sf.run('k', () => old.promise);
+    const joined = sf.run('k', () => fresh.promise); // joins p1: its fn is ignored
+    sf.forget('k');
+    const fn = vi.fn(() => fresh.promise);
+    const p2 = sf.run('k', fn);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    old.resolve('before');
+    fresh.resolve('after');
+    expect(await p1).toBe('before');
+    expect(await joined).toBe('before');
+    expect(await p2).toBe('after');
+  });
+
+  it('a forgotten call settling does not clear the slot of the call that replaced it', async () => {
+    const sf = new SingleFlight<string>();
+    const old = deferred<string>();
+    const next = deferred<string>();
+    const p1 = sf.run('k', () => old.promise);
+    sf.forget('k');
+    const p2 = sf.run('k', () => next.promise);
+
+    old.resolve('before');
+    await p1;
+    // The replacement is still the key's call in flight: a third caller joins it.
+    expect(sf.size).toBe(1);
+    const third = vi.fn(async () => 'third');
+    const p3 = sf.run('k', third);
+    expect(third).not.toHaveBeenCalled();
+    next.resolve('after');
+    expect(await p2).toBe('after');
+    expect(await p3).toBe('after');
+    expect(sf.size).toBe(0);
+  });
+
+  it('forget() of a key with nothing in flight is a no-op; forgetAll() forgets every key', async () => {
+    const sf = new SingleFlight<number>();
+    sf.forget('absent');
+    expect(sf.size).toBe(0);
+
+    const a = deferred<number>();
+    const b = deferred<number>();
+    void sf.run('a', () => a.promise);
+    void sf.run('b', () => b.promise);
+    sf.forgetAll();
+    expect(sf.size).toBe(0);
+    const fn = vi.fn(async () => 9);
+    expect(await sf.run('a', fn)).toBe(9);
+    expect(fn).toHaveBeenCalledTimes(1);
+    a.resolve(1);
+    b.resolve(2);
+  });
 });

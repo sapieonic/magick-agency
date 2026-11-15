@@ -211,7 +211,7 @@ export function groupedPageHasSingleZone(
  * rather than a second 92 declared here. The cost argument is the same one, and
  * stronger: this read has no `LIMIT`-free requirement so the page IS bounded, but
  * the SCAN is not — the window is still the only thing bounding how many attempt
- * rows are aggregated, and the server sets no `statement_timeout` anywhere. Two caps
+ * rows are aggregated, and no `statement_timeout` applies by default (`DB_STATEMENT_TIMEOUT_MS`). Two caps
  * holding the same value would be two things to change and one of them would be
  * missed.
  *

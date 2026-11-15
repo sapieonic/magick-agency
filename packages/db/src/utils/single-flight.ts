@@ -47,12 +47,32 @@ export class SingleFlight<T> {
     // Clear on settle (success OR failure) so errors aren't sticky and a fresh
     // call re-runs the work. `finally` callbacks run as microtasks, so the
     // `inflight.set` below has always executed by the time this fires.
+    // Only if it is still THIS call's entry: after a `forget`, a later call for the same key
+    // may already own the slot, and deleting it would let a third caller start a third run.
     const p = result.finally(() => {
-      this.inflight.delete(key);
+      if (this.inflight.get(key) === p) this.inflight.delete(key);
     });
 
     this.inflight.set(key, p);
     return p;
+  }
+
+  /**
+   * Stop sharing the call in flight for `key`, if any: the next {@link run} for the key
+   * starts its own `fn` rather than joining it. Callers already awaiting it still get its
+   * result; nothing is cancelled.
+   *
+   * For a caller that knows the in-flight work began before a write it must see (a cache
+   * invalidation): without it, a read issued AFTER the write would join, and return, a
+   * result computed BEFORE it.
+   */
+  forget(key: string): void {
+    this.inflight.delete(key);
+  }
+
+  /** {@link forget} every key. */
+  forgetAll(): void {
+    this.inflight.clear();
   }
 
   /** Number of calls currently in flight (for tests / metrics). */

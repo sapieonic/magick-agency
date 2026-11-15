@@ -74,6 +74,7 @@ import {
 } from '../../db/repositories/agency.repository.js';
 import { uploadJson, uploadStream } from '../../storage/s3.js';
 import {
+  REPORT_BUILD_TIMEOUT_MS,
   REPORT_DATASET_BUILDERS,
   ReportSubjectUnavailableError,
   ReportZoneChangedError,
@@ -89,8 +90,8 @@ const log = createChildLogger({ component: 'agency-reports-assembler' });
 
 /** A claimed `assembling` run with no dataset this long is reclaimed (its assembler died). */
 export const REPORT_ASSEMBLY_STALE_MS = 30 * 60_000;
-/** The wall-clock deadline on one run's build: the builder, its detail files and `dataset.json`. */
-export const REPORT_BUILD_TIMEOUT_MS = 10 * 60_000;
+/** The wall-clock deadline on one run's build (defined at the seam, `datasets/types.ts`). */
+export { REPORT_BUILD_TIMEOUT_MS };
 /** The detail files' content type: gzipped NDJSON. */
 export const REPORT_DETAIL_CONTENT_TYPE = 'application/gzip';
 

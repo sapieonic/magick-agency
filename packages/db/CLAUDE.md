@@ -14,12 +14,17 @@ before writing a repository or a migration.
   validation, 0011 insights foundation, 0012 insights rollup, 0013 pacing history, 0014 the rollup's connect-rate measures and carrier errors, 0015 several running campaigns per account: drops `uq_agency_campaign_running`, adds the account-wide live-number index, 0016 the customer-history soft-phone destination index, 0017 the customer-history roster index, 0018 dedicated caller IDs per agent per campaign, 0019 Plivo numbers and the `carrier_auth` pause, 0020 the `carrier_account_unavailable` pause, 0021 the `carrier_refusing_calls` pause, 0022 automatic outcomes for unanswered calls, 0023 report runs and subscriptions plus an agent-first sessions index, 0024 inbound calls: routes, route numbers, the inbound spine, inbound legs, contact callbacks, credential and number inbound state, 0025 the validation of 0024's big-table CHECKs, 0026 the per-account live inbound calls index pacing counts, the inbound callbacks index and `callback_source` in the insights roster index, 0027 the agent side of inbound calls: the session offered or connected, the outcome, settlement, one unsettled call per session, the inbound arm of the busy probe, 0028 the Missed inbound row's `handled_reason`, the triggers that close it when the customer is reached, and the inbound summary's index, 0029 `callback_reopened` on contacts (a reached inbound call puts a contact its callback reopened back to exhausted) and the inbound spine's `carrier_seconds`, 0030 those triggers on an outbound call's person-reached outcome rather than its bridge, the number matched by its digits, and `closed_cause`, 0031 ingest `dedupe_columns`, up to three columns combined into one duplicate key, 0032 the inbound route's wrap-up window and the window captured on each inbound call, 0033 the answered inbound calls by caller, an inbound sticky signal, 0034 the Do Not Call list searched by the end of a number, 0035 one station per agent:
   one live session per agent across tenants and the device that holds the station, 0036 Mode B's
   ring: the agent app's push devices, the ring on the inbound spine, and the away break's misses
-  and start on the session, 0037 the partial index of the sessions on that away break). node-pg-migrate,
+  and start on the session, 0037 the partial index of the sessions on that away break, 0038 per-table autovacuum thresholds
+  and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).
 - **Never edit or renumber an applied migration; add a new one.** A migration is a shared file:
   ship it with its contract changes, its consumers and its tests in the same commit.
+- **Locks:** a migration that takes a strong lock on a table the live server writes starts its Up
+  with `SET LOCAL lock_timeout = '10s';`, so a migration blocked by a straggler connection fails
+  fast instead of queueing every query behind it (`db-hygiene.md`). An index on a large table is
+  `CREATE INDEX IF NOT EXISTS`, so a deployment can build it `CONCURRENTLY` before the deploy.
 - A new migration gets a section in `BASELINE.md` ("Later migrations") and a test pinning it
   (pattern: `test/integration/db/softphone-migration.test.ts`). Check its down too
   (`test/integration/baseline-down-up.test.ts`).

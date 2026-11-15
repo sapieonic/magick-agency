@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
-import type { Env } from '../env.js';
+import { blankAsUnset, type Env } from '../env.js';
 import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
 import { WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, WS_MAX_PAYLOAD_DEFAULT_BYTES } from '../../utils/ws-limits.js';
 
@@ -56,6 +56,19 @@ export function splitOriginList(value: string | undefined): string[] | undefined
   if (value === undefined) return undefined;
   const entries = value.split(',').map((s) => s.trim()).filter((s) => s !== '');
   return entries.length > 0 ? entries : undefined;
+}
+
+/**
+ * A Postgres session timeout in milliseconds (`config.db`): `0` (the default) is off, otherwise
+ * at least one second and at most one hour. Blank is unset, like the other optional numbers.
+ */
+function dbTimeoutMs(envName: string) {
+  return z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(0).max(3_600_000).default(0).refine((ms) => ms === 0 || ms >= 1_000, {
+      message: `${envName} is in milliseconds: 0 (off) or at least 1000`,
+    }),
+  );
 }
 
 export const baseConfigSchema = z.object({
@@ -194,6 +207,21 @@ export const baseConfigSchema = z.object({
         message: 'DB_SSL_CA must be the PEM text of a CA certificate (-----BEGIN CERTIFICATE-----), not a file path',
       }).optional(),
     ),
+    /**
+     * Postgres session timeouts on every connection of the server's own pools (the primary and
+     * each worker process; not the migrations or the super-admin CLI), set by `initDbPool`'s
+     * connect hook (`DbSessionTimeouts` in `packages/db`). Milliseconds; `0`, the default, leaves
+     * the database's own setting, so nothing changes until one is set. A non-zero value under a
+     * second is refused: it would be a unit mistake that cancels ordinary statements.
+     * `db-hygiene.md` ("5. Timeouts") has the order to turn them on in and what each one stops.
+     *  - `DB_STATEMENT_TIMEOUT_MS`: a statement running longer is cancelled (57014);
+     *  - `DB_LOCK_TIMEOUT_MS`: a statement waiting longer for a lock fails (55P03);
+     *  - `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`: a connection idle inside an open transaction for
+     *    longer is ended by Postgres, releasing its locks.
+     */
+    statementTimeoutMs: dbTimeoutMs('DB_STATEMENT_TIMEOUT_MS'),
+    lockTimeoutMs: dbTimeoutMs('DB_LOCK_TIMEOUT_MS'),
+    idleInTransactionTimeoutMs: dbTimeoutMs('DB_IDLE_IN_TRANSACTION_TIMEOUT_MS'),
   }),
   redis: z.object({
     url: z.string().url(),
@@ -298,6 +326,9 @@ export function readBaseEnv(env: Env) {
       poolMax: env['DB_POOL_MAX'],
       sslRejectUnauthorized: env['DB_SSL_REJECT_UNAUTHORIZED'],
       sslCa: env['DB_SSL_CA'],
+      statementTimeoutMs: env['DB_STATEMENT_TIMEOUT_MS'],
+      lockTimeoutMs: env['DB_LOCK_TIMEOUT_MS'],
+      idleInTransactionTimeoutMs: env['DB_IDLE_IN_TRANSACTION_TIMEOUT_MS'],
     },
     redis: {
       url: env['REDIS_URL'],

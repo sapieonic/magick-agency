@@ -16,6 +16,7 @@
  */
 import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import { parsePacingInvalidationEvent, type PacingInvalidationEvent } from '../agency/pacing/invalidation-bus.js';
+import { parseCacheInvalidation, type CacheInvalidation } from '../cache/cache-invalidation.js';
 import type { DialCommand } from '../agency/dial-dispatcher.js';
 import type { AgencyManualCallRecord } from '../db/models/agency.model.js';
 import type { UnrecordedEnd } from '../agency/reaper.js';
@@ -433,6 +434,8 @@ export interface IpcEventMap {
   'analysis.rate_paused': RatePausedBody;
   'pacing.invalidate': PacingInvalidationEvent;
   'pacing.revoke': PacingRevokeBody;
+  /** Media worker → primary: an in-process cache entry the worker's write made stale (`cache/cache-invalidation.ts`). */
+  'cache.invalidate': CacheInvalidation;
   'station.attached': StationAttachedBody;
   'station.detached': StationDetachedBody;
   'station.snapshot': StationSnapshotBody;
@@ -470,6 +473,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'analysis.rate_paused': parseRatePausedBody,
   'pacing.invalidate': parsePacingInvalidationEvent,
   'pacing.revoke': parsePacingRevoke,
+  'cache.invalidate': parseCacheInvalidation,
   'station.attached': parseStationAttached,
   'station.detached': parseStationDetached,
   'station.snapshot': parseStationSnapshot,

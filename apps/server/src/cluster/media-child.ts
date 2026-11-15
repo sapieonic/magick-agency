@@ -14,7 +14,7 @@
  * `softphone.closed_by_sweep`, `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
  * `concurrency.invalidate`, `dialable.invalidate` and `reaper.forget_unrecorded`, and tells the primary
  * `ready`, `station.attached` / `.detached` / `.snapshot`, `pacing.invalidate`,
- * `voice.wake_self_heal` and `analysis.wake`.
+ * `cache.invalidate`, `voice.wake_self_heal` and `analysis.wake`.
  */
 import type net from 'node:net';
 import type { FastifyInstance } from 'fastify';
@@ -24,6 +24,7 @@ import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import type { TelephonyGuardHost } from '../core/telephony-guard-host.js';
 import { setPacingInvalidationBus, type PacingInvalidationBus } from '../agency/pacing/invalidation-bus.js';
 import { clearDialableCallerIdCache } from '../agency/campaign-dialability.js';
+import { setCacheInvalidationForwarder } from '../cache/cache-invalidation.js';
 import { queuedBreakReleaseOf, returnReservedAgent } from '../agency/reserved-agent.js';
 import { injectLocal, type CoreInjectArgs } from '../api/core-dispatch.js';
 import { handleVoicelinkStatusWebhook } from '../api/routes/webhooks.routes.js';
@@ -71,6 +72,14 @@ export class IpcPacingInvalidationBus implements PacingInvalidationBus {
 
 export function installIpcPacingBus(channel: IpcChannel): void {
   setPacingInvalidationBus(new IpcPacingInvalidationBus(channel));
+}
+
+/**
+ * A worker's cache invalidations (`cache/cache-invalidation.ts`) go to the primary as well, where
+ * the caches they name live (a force-available served here drops the primary's shared stats read).
+ */
+export function installIpcCacheInvalidation(channel: IpcChannel): void {
+  setCacheInvalidationForwarder((event) => { channel.emit('cache.invalidate', event); });
 }
 
 export function startMediaChild(deps: MediaChildDeps): MediaChild {

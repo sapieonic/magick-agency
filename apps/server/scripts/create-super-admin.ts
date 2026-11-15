@@ -36,6 +36,7 @@ import { getPool } from '@magick-agency/db';
 import { createSuperAdminSchema } from '../src/api/validators/super-admin.validator.js';
 import { baseConfigSchema, readBaseEnv } from '../src/config/blocks/base.js';
 import { dbTlsOptions } from '../src/db-tls.js';
+import { DB_APPLICATION_NAMES } from '../src/db-session.js';
 import type { Env } from '../src/config/env.js';
 
 /** Same cost as `super-admin.routes.ts`' `BCRYPT_ROUNDS`. */
@@ -122,7 +123,7 @@ async function main(): Promise<number> {
   }
   const password = process.env['SUPER_ADMIN_PASSWORD'] ?? (await readStdin());
 
-  initDbPool({ url: base.data.db.url, poolMin: 0, poolMax: 2, ...dbTlsOptions(base.data) });
+  initDbPool({ url: base.data.db.url, poolMin: 0, poolMax: 2, ...dbTlsOptions(base.data), applicationName: DB_APPLICATION_NAMES.cli });
   try {
     const result = await createSuperAdmin({ email, name, password, system });
     if (!result.ok) {

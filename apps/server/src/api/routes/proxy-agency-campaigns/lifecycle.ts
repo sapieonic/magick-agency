@@ -65,8 +65,8 @@ export async function resolveActorDisplayName(
     // still caught and logged there.
     lookup.catch(() => undefined);
     // Raced rather than awaited, and the timeout is not a failure mode of its
-    // own: a `pg` query has no `AbortSignal`, and this repo configures no
-    // statement timeout, so an unbounded await is a hung pool holding the off
+    // own: a `pg` query has no `AbortSignal`, and the statement timeout is off
+    // unless `DB_STATEMENT_TIMEOUT_MS` is set, so an unbounded await is a hung pool holding the off
     // button. See {@link TRANSITION_ACTOR_LOOKUP_TIMEOUT_MS}.
     const names = await Promise.race([
       lookup,

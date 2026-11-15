@@ -8,7 +8,7 @@ import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { computeHomeBoard, type HomeInsightsDeps } from '../../../agency/home-board.js';
 import { cachedAllocation, campaignStaffing } from '../../../agency/insights/allocation.js';
 import { rangeAttentionFigures } from '../../../agency/insights/health.js';
-import { liveStats } from '../helpers/live-stats.js';
+import { liveStatsRead } from '../helpers/live-stats.js';
 import { dialerEnabled } from '../helpers/dialer-gate.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
 
@@ -49,7 +49,7 @@ export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<voi
     if (!(await dialerEnabled(request, reply))) return reply;
     const supervises = hasPermission(request.membership?.role, 'agency.supervise');
     const board = await computeHomeBoard({ tenantId: request.tenantId!, accountId }, {
-      liveStats,
+      liveStats: liveStatsRead,
       insights: supervises ? INSIGHTS : null,
     });
     return reply.code(200).send(board);

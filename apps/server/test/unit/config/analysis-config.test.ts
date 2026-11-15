@@ -84,6 +84,8 @@ describe('analysis config block', () => {
     expect(c.headers).toEqual({ 'HTTP-Referer': 'https://agency.test', 'X-Title': 'Magick Agency' });
     expect(c.structuredOutput).toBe('json_object');
     expect(parse({ POST_CALL_ANALYSIS_BASE_URL: '' }).postCallAnalysis.baseUrl).toBeUndefined();
+    // Whitespace only is blank too (`blankAsUnset`, shared with the other blocks), not a URL to refuse.
+    expect(parse({ POST_CALL_ANALYSIS_BASE_URL: '  ' }).postCallAnalysis.baseUrl).toBeUndefined();
     expect(parseConfig({ ...base, POST_CALL_ANALYSIS_BASE_URL: 'not a url' }).ok).toBe(false);
     expect(parseConfig({ ...base, POST_CALL_ANALYSIS_STRUCTURED_OUTPUT: 'xml' }).ok).toBe(false);
   });

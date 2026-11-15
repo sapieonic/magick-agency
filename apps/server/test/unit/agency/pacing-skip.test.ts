@@ -231,7 +231,9 @@ describe('PacingInvalidationBus (in process)', () => {
     for (const bad of [null, 'x', {}, { type: 'nope' }, { type: 'campaign_changed' },
       { type: 'account_limit_changed', tenantId: 't' }, { type: 'agent_available', sessionId: 's', campaignId: 7 },
       { type: 'station_ready', sessionId: 's', campaignId: null }, { type: 'station_ready', campaignId: 'c1' },
-      { type: 'dedications_changed' }, { type: 'dedications_changed', campaignId: '' }]) {
+      { type: 'dedications_changed' }, { type: 'dedications_changed', campaignId: '' },
+      // Not a pacing event: a cache's staleness has its own channel (`cache/cache-invalidation.ts`).
+      { type: 'campaign_stats_stale', campaignId: 'c1' }]) {
       expect(parsePacingInvalidationEvent(bad)).toBeNull();
     }
   });

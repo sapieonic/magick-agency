@@ -35,6 +35,8 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
+    // The campaign plugin's stats route reads this when it registers.
+    agency: { campaignStatsCacheMs: 2_000 },
     telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));

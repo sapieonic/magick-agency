@@ -21,6 +21,7 @@ only; never cite another system, repo or external design doc.
 | `docs/inbound.md` | you work on inbound calls (Plivo callbacks to agency numbers, sticky agent, queue, follow-ups); §12 is the build plan and status |
 | `docs/reports.md` | you work on report exports (agent, campaign, account PDFs and workbooks, subscriptions, the renderer) |
 | `REPORTS_SETUP.md` | you set reports up for the first time, on a dev machine or in a deployment (the renderer, the Lambda, the flag) |
+| `db-hygiene.md` | you touch the pg pool's session settings, write a migration on a large table, or run database maintenance (backups, statistics, timeouts) |
 | `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |
 
 ## Layout

@@ -343,8 +343,8 @@ function groupRowFromSql(row: AgencyGroupRawRow, groupBy: readonly AgencyGroupDi
  * paragraph above. An EMPTY partition (`OVER ()`) cannot emit its first row until
  * it has seen the last one, so the plan MATERIALISES all `total_groups` rows —
  * spilling to disk past `work_mem` — even when `limit` is 1. Two dimensions over
- * a 92-day window can be tens of thousands of groups, and the server sets no
- * `statement_timeout` anywhere, so nothing cuts that short. Pushing the slice down
+ * a 92-day window can be tens of thousands of groups, and no `statement_timeout`
+ * applies unless `DB_STATEMENT_TIMEOUT_MS` is set (off by default), so nothing cuts that short. Pushing the slice down
  * still wins on what crosses the WIRE, which is what it was for; it does not make
  * the read cheap, and the window cap is the only thing bounding it.
  *

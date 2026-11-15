@@ -23,6 +23,13 @@
 | `dedications_changed`    | the campaign's effective dedicated caller IDs (DN1): one set, replaced or released, or an agent's staffing on it closed | `AgencyAgentCallerIdRepository.set` / `.clear`, `returnContactsOnUnstaff` (every unstaff path) |
  * | `inbound_waiting`        | how many inbound callers wait for the account's agents, and whom they want (docs/inbound.md §5.2) | the inbound connector (P2; no consumer yet) |
  *
+ * Every event names something a pacing tick reads. A cache outside pacing that some write makes
+ * stale, and that no event above covers, is told over its own channel
+ * (`cache/cache-invalidation.ts`), not by a new event here. A consumer outside pacing may still
+ * listen to these: the supervisors' shared campaign stats read (`agency/campaign-stats-reads.ts`)
+ * drops a campaign's read on `campaign_changed` and lets the read in flight finish unkept on
+ * `contacts_changed`. Its backstop is its TTL (`AGENCY_CAMPAIGN_STATS_CACHE_MS`).
+ *
  * ── Serialisable on purpose ─────────────────────────────────────────────────
  * Events are plain JSON objects and carry ids only, never a row, a callback or a
  * class instance. The in-process implementation below round-trips every event

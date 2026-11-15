@@ -64,6 +64,7 @@ import {
   AGENCY_INGEST_REAP_INTERVAL_MS,
 } from '../../../src/agency/agency-ingest.service.js';
 import type { AgencyIngestJobRecord } from '../../../src/agency/agency-ingest-job.repository.js';
+import { onCacheInvalidation } from '../../../src/cache/cache-invalidation.js';
 
 const service = new AgencyIngestService();
 
@@ -399,6 +400,35 @@ describe('AgencyIngestService', () => {
       expect.stringContaining('3'),
     );
     expect(mocks.repo.complete).not.toHaveBeenCalled();
+  });
+
+  it('drops the campaign\'s shared stats read once the roster is complete, after the last chunk, once', async () => {
+    // Each chunk's `contacts_changed` only marks the read stale; the console opens the campaign
+    // next, so the first read after the upload must be fresh (`campaign-stats-reads.ts`).
+    const order: string[] = [];
+    mocks.sendRosterChunk.mockImplementation(async (c: { isFinal: boolean }) => {
+      order.push(c.isFinal ? 'final chunk' : 'chunk');
+      return { ...GOOD_CHUNK, roster_complete: true };
+    });
+    const off = onCacheInvalidation('agency-campaign-stats', (key) => order.push(`stats dropped: ${key}`));
+    try {
+      csvStream('Mobile\n9876543210\n');
+      await service.run({ job: job() });
+      expect(order).toEqual(['chunk', 'final chunk', 'stats dropped: campaign-1']);
+
+      // Not for a dry run (nothing sent), nor for a roster the dialer reports incomplete.
+      order.length = 0;
+      csvStream('Mobile\n9876543210\n');
+      await service.run({ job: job({ dry_run: true, campaign_id: null }) });
+      mocks.sendRosterChunk
+        .mockResolvedValueOnce(GOOD_CHUNK)
+        .mockResolvedValueOnce({ ...GOOD_CHUNK, roster_complete: false, missing_chunks: [3] });
+      csvStream('Mobile\n9876543210\n');
+      await service.run({ job: job() });
+      expect(order.filter((o) => o.startsWith('stats'))).toEqual([]);
+    } finally {
+      off();
+    }
   });
 
   it('records a whole-file parse failure with its structured code', async () => {

@@ -32,9 +32,9 @@ const SELF_HEAL_EMPTY_SWEEPS_BEFORE_DORMANT = 2;
  *
  * The wait itself is necessary, but an UNBOUNDED wait put the whole teardown
  * behind whatever the sweep is blocked on, and the sweep is blocked on Postgres:
- * `failStaleActive` is a multi-row `UPDATE ... LIMIT 1000` and no
- * `statement_timeout` is set, so one row lock held by a long transaction stalls
- * it indefinitely. 15s is a budget, not a diagnosis. A healthy sweep is a handful
+ * `failStaleActive` is a multi-row `UPDATE ... LIMIT 1000` and, unless
+ * `DB_LOCK_TIMEOUT_MS` / `DB_STATEMENT_TIMEOUT_MS` are set (off by default), one row lock held
+ * by a long transaction stalls it indefinitely. 15s is a budget, not a diagnosis. A healthy sweep is a handful
  * of indexed statements and finishes in milliseconds.
  */
 const SELF_HEAL_SHUTDOWN_WAIT_MS = 15_000;
