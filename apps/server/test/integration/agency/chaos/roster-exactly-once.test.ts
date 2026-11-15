@@ -21,7 +21,7 @@ vi.mock('../../../../src/config/index.js', () => ({
 const {
   createChaosWorld, attempts, contactStates, campaignStatus,
   contactsWithConcurrentLiveAttempts, abandonedCount,
-  hasOutstandingDialWorkFor, QUIESCENCE_SETTLE_TICKS,
+  hasOutstandingDialWorkFor, contactsSettled, QUIESCENCE_SETTLE_TICKS,
 } = await import('./harness.js');
 
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
@@ -500,6 +500,7 @@ describe('roster-level exactly-once over a full run (chaos)', () => {
     for (const agent of w.agents) await w.bringOnline(agent);
 
     let settled = 0;
+    let settleTimedOut = false;
     for (let i = 0; i < 400; i++) {
       const before = w.bridge.dialed.length;
       // Genuinely concurrent: both engines plan against the same pool and the
@@ -518,6 +519,16 @@ describe('roster-level exactly-once over a full run (chaos)', () => {
       // `pending` alone exits while that write is still in flight and fails the
       // `in_flight === 0` assertion below with a 1 — the observed CI flake, and
       // more likely under the CPU contention of a full parallel run.
+      //
+      // The tick-counted budget alone was not enough either: on CI twenty idle ticks
+      // passed in milliseconds while one contact's write waited out a checkpoint, and the
+      // loop exited with that contact still `in_flight`. So the ended calls' contacts are
+      // waited for by time first (`contactsSettled`, as `runUntilQuiescent` does).
+      if (!settleTimedOut) {
+        const contacts = await contactsSettled(w.campaignId);
+        if (contacts === 'landed') continue;
+        if (contacts === 'timeout') settleTimedOut = true;
+      }
       if (settled < QUIESCENCE_SETTLE_TICKS && (await hasOutstandingDialWorkFor(w.campaignId))) {
         settled++;
         continue;
