@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.24.0](https://github.com/sapieonic/magick-agency/compare/console-v0.23.1...console-v0.24.0) (2026-11-15)
+
+
+### Features
+
+* **server,console,mobile:** show "Dialling a customer…" while a hidden dial rings ([#88](https://github.com/sapieonic/magick-agency/issues/88)) ([fc2527c](https://github.com/sapieonic/magick-agency/commit/fc2527c8ef15021d5ba7b44aff06f4c3a8b0b2fb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.22.0
+    * @magick-agency/domain bumped to 0.11.1
+
 ## [0.23.1](https://github.com/sapieonic/magick-agency/compare/console-v0.23.0...console-v0.23.1) (2026-11-14)
 
 
