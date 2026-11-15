@@ -1573,6 +1573,36 @@ Every new guard was mutation-checked (the reset at the bind, the close not repea
 clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
 carrier, browser or phone.
 
+### Promise to pay 2026-11-15 (PT1–PT14, [`decisions.md`](decisions.md), "Rulings of 2026-11-15: promise to pay")
+
+Reshma (collections): when an agent files a promise to pay, record the promised payment date (and
+optionally the amount), show it, and let supervisors follow promises up.
+
+- **Catalogue.** An entry opts in with `requires_promise`; `promise_follow_up_days` (1–14, off by
+  default) books a call that many days after the promised date through the callback path (window,
+  CA4 ownership, CA5 fallback). A promise alone never books a call (PT3). Combinations that cannot
+  mean anything are refused on both validators with the field named (PT10); the soft phone's and
+  inbound routes' own catalogues cannot ask for one; a promise entry cannot be an automatic outcome.
+- **Capture.** The station (paced dials, the agent's own call, redials), a tagged soft-phone call and
+  a matched inbound call take `promise_date` (a real date, not before the customer's today, at most
+  180 days ahead) and an optional exact `promise_amount`; four refusal codes whose messages name
+  the fix for an app that predates them (PT8). Console: the shared outcome pad. App: the station's
+  wrap-up and inbound pads and the soft phone's.
+- **Storage.** Migration `0041_promise_to_pay.sql`: the promise on each call table, the contact's
+  latest promise (with the promised day's bounds in the customer's zone and a follow-up mark) and a
+  partial index (PT6).
+- **Display.** The Contacts tab's "Promised for" column and "Promise to pay" filter (upcoming, due
+  today, missed, followed up; "missed" means no later outcome, not unpaid); the contact page, the
+  attempt tables, the call pages, the customer history, the agent's panel and prior attempts (console
+  and app). Exports: `promise_date`, `promise_amount` appended to the attempts CSV and
+  `promise_date`, `promise_amount`, `promise_state` to the contacts CSV (PT12).
+
+Mutation-checked: the follow-up booked whatever the entry says (the PT3 cases go red), the
+past-date refusal (the server's "yesterday in Kolkata" case and the domain cases), the contact
+write's "later call wins" guard, the console's date window. **Pending Manas:** the 180-day bound,
+the 1–14 follow-up range, no currency (PT5), the `followed_up` state, Insights not counting
+follow-ups as booked callbacks. **Not verified:** no browser or phone run.
+
 ## Test counts
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
