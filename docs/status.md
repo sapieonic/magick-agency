@@ -2673,10 +2673,15 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] A release with `0039_retention_purge_indexes`: on a database where `agency_calls` holds more
       than about a million rows, its two indexes built `CONCURRENTLY` first and checked valid
       ([`db-hygiene.md`](../db-hygiene.md) §2).
-- [ ] A release with `0041_promise_to_pay`: it builds `idx_agency_contacts_promise` inside its
-      transaction, a scan of `agency_contacts` under SHARE (writes wait). On a large roster, build
-      it `CONCURRENTLY` first (the migration's `IF NOT EXISTS` then skips it) and check it valid.
-      `0044_promise_checks_validate` then validates 0041's CHECKs under SHARE UPDATE EXCLUSIVE.
+- [ ] A release with `0041_promise_to_pay`: 0041 is catalogue changes only (ACCESS EXCLUSIVE, no
+      scan), `0044_promise_checks_validate` validates its CHECKs under SHARE UPDATE EXCLUSIVE, and
+      `0045_promise_contacts_index` builds `idx_agency_contacts_promise` in its own transaction
+      under SHARE: one read of `agency_contacts`, writing an empty index (every promise is new).
+      Nothing to build beforehand: the column does not exist before 0041. Through the CLI, pass
+      `--no-single-transaction` so each file commits on its own, as the image's runner does.
+- [ ] A release with `0046_unrequested_recordings_index`: on a database where `agency_calls` holds
+      more than about a million rows, build `idx_agency_calls_recording_unrequested` `CONCURRENTLY`
+      first and check it valid ([`db-hygiene.md`](../db-hygiene.md) §2), as for 0039.
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
       `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.

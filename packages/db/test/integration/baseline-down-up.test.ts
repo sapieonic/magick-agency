@@ -84,6 +84,8 @@ const ALL_MIGRATIONS = [
   '0042_ingest_check_and_skipped',
   '0043_recording_honours_request',
   '0044_promise_checks_validate',
+  '0045_promise_contacts_index',
+  '0046_unrequested_recordings_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

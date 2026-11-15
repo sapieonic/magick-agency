@@ -6,22 +6,23 @@
 -- for its account) has none: the bridge discards a recording URL the carrier sends for it, the
 -- repository refuses to store one, and every read takes the URL only when the call asked for it
 -- (`recordingUrlSql` / `hasRecordingSql` / `honourRecordingRequest` in
--- `agency-call.repository.ts`). Rows written before it may still hold such a URL (VoiceLink is
--- never told whether to record and posts one anyway); they now read as "not recorded" in the
--- call detail, playback, analysis, customer history and reports, at read time.
+-- `packages/db/src/utils/recording-request.ts`). Rows written before it may still hold such a
+-- URL (VoiceLink is never told whether to record and posts one anyway); they now read as "not
+-- recorded" in the call detail, playback, analysis, customer history and reports, at read time.
 --
 -- The Insights rollup is the one reader that stored the old answer: its `recorded_connected`
 -- counted those calls. This migration marks the bucket of every attempt whose call holds a URL it
 -- did not ask for, so the rollup job recomputes it with the new rule (recompute, never increment:
--- 0012's header). Nothing else is written: the URLs stay on the rows. Nulling them is an opt-in
--- step for operators (`docs/operations.md` "Recordings a call did not ask for"), and the audio
--- itself stays at the carrier.
+-- 0012's header). Nothing else is written here: the retention purge clears the URLs (RC5,
+-- `docs/operations.md` "Recordings a call did not ask for"), and the audio itself stays at the
+-- carrier.
 --
 -- ── Cost ──────────────────────────────────────────────────────────────────────
 -- One read of agency_calls (no index covers `recording_url IS NOT NULL AND NOT
--- recording_requested`; the planner scans it) joined to the attempts by `idx_agency_attempts_webrtc`,
--- and one insert per affected bucket into agency_insights_rollup_dirty. No lock beyond the
--- read's and the insert's; the server is stopped while migrations run.
+-- recording_requested` yet, 0046 adds the purge's; the planner scans it) joined to the attempts
+-- by `idx_agency_attempts_webrtc`, and one insert per affected bucket into
+-- agency_insights_rollup_dirty. No lock beyond the read's and the insert's; the server is stopped
+-- while migrations run.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
 -- Nothing to undo: the marks are work the rollup job consumes, and a recompute is idempotent.
