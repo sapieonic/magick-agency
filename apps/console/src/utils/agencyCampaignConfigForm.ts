@@ -99,7 +99,9 @@ export function dispositionSummary(entry: AgencyDispositionEntry): string {
   }
 
   if (entry.suppress) {
-    parts.push('The contact is suppressed — nothing dials them again.');
+    // DS8: the outcome puts the number on THIS campaign's Do Not Call list; other campaigns can
+    // still call it, so "nothing dials them again" said more than the outcome does.
+    parts.push('The contact is suppressed and the number goes on this campaign’s Do Not Call list — this campaign won’t dial it again. Other campaigns still can.');
   } else if (entry.terminal) {
     parts.push('The contact is finished on this campaign — no more attempts.');
   } else if (entry.retry && entry.retry.max_attempts > 0) {
