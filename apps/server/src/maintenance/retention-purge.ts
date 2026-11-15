@@ -19,6 +19,11 @@ import { deleteFile, isStorageConfigured } from '../storage/s3.js';
  *    transcript and its provenance, which carries `source_url`) on
  *    `AGENCY_TRANSCRIPT_RETENTION_DAYS`, leaving `call_analysis` to survive until
  *    the row expires; unset = transcripts are not nulled early;
+ *  - recordings a call did not ask for (RC5, Manas 2026-11-15): on every run, whatever the
+ *    windows, `recording_url` and `recording_duration_seconds` are cleared on every
+ *    `agency_calls` row whose `recording_requested` is false. Since RC1 none is stored, so this
+ *    clears the links stored before it (VoiceLink recorded on its own default and we kept the
+ *    link) and any a future writer lets through;
  *  - it is invoked by a timer in `bootstrap/analysis.ts`.
  * Deletes are batched, in FK-safe order, and the run posts a Slack summary.
  */
@@ -85,6 +90,11 @@ export interface RetentionPurgeReport {
    */
   agency_transcripts_nulled: number;
   /**
+   * Recording links cleared on calls that did not ask for a recording (RC5): every run, any age
+   * (that would be, in dry-run mode).
+   */
+  unrequested_recordings_cleared: number;
+  /**
    * Inbound voicemails past the row cutoff: their objects deleted from the bucket and their
    * calls' `voicemail_key` cleared (that would be, in dry-run mode). 0 with the window unset.
    */
@@ -138,6 +148,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
     duration_ms: 0,
     tables: {},
     agency_transcripts_nulled: 0,
+    unrequested_recordings_cleared: 0,
     inbound_voicemails_deleted: 0,
     inbound_voicemails_failed: 0,
   };
@@ -169,6 +180,9 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
         }
       }
     }
+
+    // Recordings a call did not ask for (RC5): every run, any age, before the windows below.
+    report.unrequested_recordings_cleared = await purgeUnrequestedRecordings(dryRun);
 
     // Transcript window: null conversation_log + transcript_meta on agency_calls
     // older than the (shorter) transcript-retention window, leaving call_analysis +
@@ -241,6 +255,41 @@ async function purgeAgencyTranscripts(dryRun: boolean, retentionDays: number): P
   } while (updated === BATCH_SIZE);
   if (total > 0) {
     log.info({ transcriptsNulled: total }, 'Transcripts nulled (retention window)');
+  }
+  return total;
+}
+
+/**
+ * Recordings a call did not ask for (RC5, Manas 2026-11-15): clear `recording_url` and
+ * `recording_duration_seconds` on every call whose `recording_requested` is false, in batches.
+ * Every read already treats such a link as "not recorded" (RC1); this removes the link itself.
+ * Our link only: a carrier that recorded anyway (VoiceLink, on its own account default) still
+ * holds the audio. Only rows that still carry a link, so a no-op once cleared. The Insights
+ * trigger re-marks each bucket a cleared row belongs to, which then counts as it already did.
+ * In dry-run mode it counts.
+ */
+async function purgeUnrequestedRecordings(dryRun: boolean): Promise<number> {
+  const pool = getPool();
+  const unrequested = '(recording_url IS NOT NULL AND NOT recording_requested)';
+  if (dryRun) {
+    const result = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM agency_calls WHERE ${unrequested}`,
+    );
+    return result.rows[0]?.n ?? 0;
+  }
+  let total = 0;
+  let updated: number;
+  do {
+    const result = await pool.query(
+      `UPDATE agency_calls SET recording_url = NULL, recording_duration_seconds = NULL
+        WHERE id IN (SELECT id FROM agency_calls WHERE ${unrequested} LIMIT $1)`,
+      [BATCH_SIZE],
+    );
+    updated = result.rowCount ?? 0;
+    total += updated;
+  } while (updated === BATCH_SIZE);
+  if (total > 0) {
+    log.info({ recordingsCleared: total }, 'Recording links cleared on calls that did not ask for a recording');
   }
   return total;
 }
@@ -329,6 +378,7 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
     `Rows ${report.dry_run ? 'matched' : 'deleted'} (${totalRows.toLocaleString()} total):`,
     tableLines,
     `agency transcripts nulled: ${report.agency_transcripts_nulled.toLocaleString()}`,
+    `recording links cleared (calls that did not ask for one): ${report.unrequested_recordings_cleared.toLocaleString()}`,
     `inbound voicemails ${report.dry_run ? 'matched' : 'deleted'}: ${report.inbound_voicemails_deleted.toLocaleString()}`,
     report.inbound_voicemails_failed > 0
       ? `inbound voicemails not deleted (retried next run): ${report.inbound_voicemails_failed.toLocaleString()}`

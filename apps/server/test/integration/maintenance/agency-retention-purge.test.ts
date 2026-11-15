@@ -169,6 +169,31 @@ describe('agency retention purge (integration)', () => {
     expect(row.conversation_log).not.toBeNull();
   });
 
+  it('clears the recording link of every call that did not ask for one, any age, and nothing else (RC5)', async () => {
+    // No window at all: the step runs whatever the windows say.
+    const unasked = await insertWebrtcCall({});
+    const asked = await insertWebrtcCall({});
+    const unaskedNoLink = await insertWebrtcCall({});
+    await getTestPool().query(
+      `UPDATE agency_calls SET recording_requested = (id = $2), recording_url = CASE WHEN id = $3 THEN NULL ELSE 'https://recording.app.voicelink.co.in/r/' || id END,
+              recording_duration_seconds = CASE WHEN id = $3 THEN NULL ELSE 61 END
+        WHERE id IN ($1, $2, $3)`,
+      [unasked.id, asked.id, unaskedNoLink.id]);
+    await age(asked.id, 1);
+
+    const report = await runRetentionPurge();
+    expect(report.unrequested_recordings_cleared).toBe(1);
+    const { rows } = await getTestPool().query(
+      'SELECT id, recording_url, recording_duration_seconds FROM agency_calls WHERE id IN ($1, $2)', [unasked.id, asked.id]);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(byId[unasked.id]).toMatchObject({ recording_url: null, recording_duration_seconds: null });
+    expect(byId[asked.id]!.recording_url).toContain('/r/');
+    expect(byId[asked.id]!.recording_duration_seconds).toBe(61);
+
+    // A second run finds nothing left to clear.
+    expect((await runRetentionPurge()).unrequested_recordings_cleared).toBe(0);
+  });
+
   it('a clean row (no transcript) is not touched by the transcript step', async () => {
     cfg.config.retention.agencyTranscriptRetentionDays = 30;
     const call = await insertWebrtcCall({ call_analysis: analysis() });

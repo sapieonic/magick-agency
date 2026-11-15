@@ -162,7 +162,8 @@ describe('runRetentionPurge (agency slice)', () => {
     mockQueries();
     await runRetentionPurge();
 
-    const updates = mocks.query.mock.calls.filter((c) => (c[0] as string).trimStart().startsWith('UPDATE agency_calls'));
+    // The transcript step's statement: the recording step (RC5) is an UPDATE of agency_calls too.
+    const updates = mocks.query.mock.calls.filter((c) => (c[0] as string).includes('SET conversation_log = NULL'));
     expect(updates).toHaveLength(1);
     const cutoff = ((updates[0]![1] as unknown[])[0] as Date).getTime();
     expect(cutoff).toBe(Date.now() - 30 * DAY);
@@ -174,7 +175,7 @@ describe('runRetentionPurge (agency slice)', () => {
     mockQueries();
     await runRetentionPurge();
 
-    const update = executedSql().find((s) => s.startsWith('UPDATE agency_calls'))!;
+    const update = executedSql().find((s) => s.startsWith('UPDATE agency_calls') && s.includes('conversation_log'))!;
     expect(update).toContain('SET conversation_log = NULL, transcript_meta = NULL');
     expect(update).not.toContain('call_analysis');
     expect(update).not.toContain('analysis_status');
@@ -185,8 +186,28 @@ describe('runRetentionPurge (agency slice)', () => {
   it('runs no transcript step when the transcript window is unset', async () => {
     mockQueries();
     const report = await runRetentionPurge();
-    expect(executedSql().some((s) => s.startsWith('UPDATE'))).toBe(false);
+    expect(executedSql().some((s) => s.startsWith('UPDATE') && s.includes('conversation_log'))).toBe(false);
     expect(report.agency_transcripts_nulled).toBe(0);
+  });
+
+  it('clears recording links on calls that did not ask for one, every run, whatever the windows (RC5)', async () => {
+    mocks.config.retention.agencyRetentionDays = undefined;
+    mocks.config.retention.agencyTranscriptRetentionDays = undefined;
+    mockQueries({ updateRowCount: 4 });
+    const report = await runRetentionPurge();
+    const update = executedSql().find((s) => s.includes('SET recording_url = NULL'))!;
+    expect(update).toContain('SET recording_url = NULL, recording_duration_seconds = NULL');
+    // Only links the call did not ask for, and only rows still carrying one.
+    expect(update).toContain('recording_url IS NOT NULL AND NOT recording_requested');
+    expect(report.unrequested_recordings_cleared).toBe(4);
+  });
+
+  it('counts those links without clearing them in a dry run', async () => {
+    mockQueries();
+    const report = await runRetentionPurge({ dryRun: true });
+    expect(executedSql().some((s) => s.includes('SET recording_url'))).toBe(false);
+    expect(executedSql().some((s) => s.startsWith('SELECT count') && s.includes('NOT recording_requested'))).toBe(true);
+    expect(report.unrequested_recordings_cleared).toBe(7);
   });
 
   it('reports the nulled transcripts', async () => {
