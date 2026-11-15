@@ -22,7 +22,9 @@ import {
 } from '../../../agency/agency-csv-ingest.js';
 import {
   agencyIngestJobRepository,
+  IngestCheckImportUnavailableError,
   type AgencyIngestJobRecord,
+  type CreateExclusiveResult,
   type CreateIngestJobInput,
 } from '../../../agency/agency-ingest-job.repository.js';
 import { isTenantUploadKey, uploadKey } from '../../../agency/agency-ingest-keys.js';
@@ -409,7 +411,9 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       job = await agencyIngestJobRepository.create(jobInput);
     } else {
       const created = await agencyIngestJobRepository.createExclusive({ ...jobInput, campaign_id: input.campaign_id });
-      if (created.outcome !== 'created') return replyImportBusy(reply, created.outcome === 'busy' ? created.live : created.job);
+      if (created.outcome === 'busy') return replyImportBusy(reply, created.live);
+      // Only an import of a check can find an import holding it; this one names none.
+      if (created.outcome !== 'created') throw new Error(`createExclusive answered ${created.outcome} for an import without a check`);
       job = created.job;
     }
 
@@ -433,11 +437,15 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
    * own counts say what happened; the console compares the two.
    *
    *   202 `{ job_id, status, mode, check_job_id }` — the import started.
-   *   200 the same body, `already_started: true` — this check was imported before
-   *       (a double click, a second tab): no second import, its job instead.
+   *   200 the same body, `already_started: true` — this check is held by an import
+   *       (pending, running or completed: a double click, a second tab): no second
+   *       import, its job instead. An import that failed or was cancelled does not
+   *       hold its check: Import starts a new one while the check is valid (IM2).
    *   404 — not a job this caller can see (a sibling account's id is the same 404).
-   *   409 `not_a_check` / `check_not_finished` / `check_failed` / `import_in_progress`.
+   *   409 `not_a_check` / `check_not_finished` / `check_failed` / `import_in_progress`,
+   *       or `check_imported_elsewhere` (an import this caller cannot see holds it).
    *   410 `check_expired` — the check finished more than {@link CHECK_VALID_HOURS} h ago.
+   *   409 `check_import_unavailable` — the database has not had migration 0042 yet.
    *   400 — a campaign that is not the check's, or none at all.
    *
    * `campaign_id` in the body: required when the check named none (the builder
@@ -514,16 +522,30 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       dry_run: false,
       created_by: request.user?.id ?? null,
       check_job_id: check.id,
-    }).catch(async (err: unknown) => {
+    }, scope).catch(async (err: unknown): Promise<CreateExclusiveResult | 'unavailable'> => {
+      if (err instanceof IngestCheckImportUnavailableError) return 'unavailable';
       // `uq_agency_ingest_jobs_check_job`: the same check committed into another
       // campaign at the same instant (the per-campaign lock cannot see that). The
       // first one stands.
       if ((err as { code?: string }).code !== '23505') throw err;
       const first = await agencyIngestJobRepository.findImportOfCheck(check.id, request.tenantId!, scope);
-      if (!first) throw err;
-      return { outcome: 'already_imported' as const, job: first };
+      return first ? { outcome: 'already_imported', job: first } : { outcome: 'imported_elsewhere' };
     });
+    if (created === 'unavailable') {
+      // A 4xx, not a 503: a 5xx body is masked app-wide (`error-mask.middleware.ts`) and the
+      // operator would lose the sentence that says what to do.
+      return reply.code(409).send({
+        error: 'Conflict', code: 'check_import_unavailable',
+        message: 'Importing a checked file is not available until the server\'s database is updated. Import the file without checking, or try again later.',
+      });
+    }
     if (created.outcome === 'already_imported') return reply.code(200).send(importStartedBody(created.job, check.id, true));
+    if (created.outcome === 'imported_elsewhere') {
+      return reply.code(409).send({
+        error: 'Conflict', code: 'check_imported_elsewhere',
+        message: 'That check has already been imported into another campaign. Check the file again for this campaign.',
+      });
+    }
     if (created.outcome === 'busy') return replyImportBusy(reply, created.live);
 
     launchIngest(request, created.job, undefined);

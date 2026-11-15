@@ -1471,9 +1471,12 @@ line, column, the phone cell, code, reason), and `check_job_id` `UUID NULL` → 
 ON DELETE SET NULL` (the check an import was started from). CHECKs
 `ck_agency_ingest_jobs_skipped` (non-negative), `ck_agency_ingest_jobs_dnc_by_scope` (an object),
 `ck_agency_ingest_jobs_rejected_sample` (an array). **`uq_agency_ingest_jobs_check_job`** on
-`(check_job_id) WHERE check_job_id IS NOT NULL`: one check, one import. Every existing row reads
-as an import that skipped nothing. Written only through the widest tier of the repository's write
-ladders, so the server runs on a schema without them; a server before 0042 names none of them.
+`(check_job_id) WHERE check_job_id IS NOT NULL AND status IN ('pending', 'running', 'completed')`:
+one import holds a check at a time; a failed or cancelled import lets it go (it keeps its
+`check_job_id`), so the check can be imported again while valid. Every existing row reads as an
+import that skipped nothing. Written only through the widest tier of the repository's write
+ladders, so the server runs on a schema without them, except importing a checked file, which
+refuses 409 `check_import_unavailable` there; a server before 0042 names none of them.
 **Down** drops the index, the CHECKs and the columns. **Tests**:
 `test/integration/db/ingest-check-and-skipped-migration.test.ts` (shapes and defaults, the CHECKs,
 the unique index and the `SET NULL`, down then up) and the down → up inventory suite.

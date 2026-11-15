@@ -15,8 +15,11 @@
 --   rejected_sample    JSONB   the first rejected rows (line, column, the phone cell, code,
 --                              reason; at most 20), for the review screen (IM2).
 --   check_job_id       UUID    the check (a completed dry run) an import was started from (IM2).
---                              `uq_agency_ingest_jobs_check_job` makes one check one import: a
---                              second commit finds the first instead of importing again.
+--                              `uq_agency_ingest_jobs_check_job` lets one import at a time HOLD a
+--                              check (pending, running or completed): a second commit finds it
+--                              instead of importing again. A failed or cancelled import lets the
+--                              check go, so it can be imported again while it is valid; it keeps
+--                              its `check_job_id` as the record of where it came from.
 --
 -- The JSONB columns carry shape CHECKs (an object, an array) so a reader can trust the shape.
 --
@@ -30,7 +33,9 @@
 -- A server from before this migration names none of these columns, so it runs on this schema
 -- unchanged. This server writes them only through the widest tier of its write ladders
 -- (`agency-ingest-job.repository.ts`), so it also runs on a schema without them (skipped stays
--- unrecorded until the migration lands).
+-- unrecorded until the migration lands), with one exception: importing a CHECKED file needs
+-- `check_job_id`, so without it that route refuses 409 `check_import_unavailable` (a check's
+-- poll and an import without a check run as before).
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
 -- Drops the index and the columns. A finished job loses its skipped count and its download link
@@ -56,7 +61,7 @@ ALTER TABLE agency_ingest_jobs
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_ingest_jobs_check_job
   ON agency_ingest_jobs (check_job_id)
-  WHERE check_job_id IS NOT NULL;
+  WHERE check_job_id IS NOT NULL AND status IN ('pending', 'running', 'completed');
 
 COMMENT ON COLUMN agency_ingest_jobs.skipped IS
   'Rows the campaign already held (its duplicate key, or an exact copy), skipped rather than rejected: accepted + skipped + rejected = rows_read. Nothing about the existing contact changes (B15).';
@@ -65,7 +70,7 @@ COMMENT ON COLUMN agency_ingest_jobs.dnc_by_scope IS
 COMMENT ON COLUMN agency_ingest_jobs.rejected_sample IS
   'The first rejected rows in file order (row_number, column, raw_value, reason_code, reason), at most 20, for the review screen. Never the other columns: those are in the download.';
 COMMENT ON COLUMN agency_ingest_jobs.check_job_id IS
-  'The check (a completed dry run) this import was started from. Unique: one check, one import.';
+  'The check (a completed dry run) this import was started from. Unique among pending, running and completed imports: one import holds a check at a time; a failed or cancelled one lets it go.';
 
 -- Down Migration
 SET LOCAL lock_timeout = '10s';

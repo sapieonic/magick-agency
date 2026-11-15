@@ -64,11 +64,21 @@ describe('0042 — agency_ingest_jobs: the check, the skipped rows', () => {
     await expect(insertJob({ rejected_sample: '{}' })).rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_ingest_jobs_rejected_sample' });
   });
 
-  it('one import per check: a second job naming the same check is refused; a deleted check leaves its import', async () => {
+  it('one import holds a check: a second live or completed one is refused, a failed or cancelled one lets it go; a deleted check leaves its import', async () => {
     const check = await insertJob({ dry_run: true });
     const imported = await insertJob({ check_job_id: check['id'] });
-    await expect(insertJob({ check_job_id: check['id'] }))
+    for (const status of ['pending', 'running', 'completed']) {
+      await expect(insertJob({ check_job_id: check['id'], status }))
+        .rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_ingest_jobs_check_job' });
+    }
+    // The first import fails: its check is free for another, and the failed one keeps its link.
+    await pool().query(`UPDATE agency_ingest_jobs SET status = 'failed' WHERE id = $1`, [imported['id']]);
+    const retried = await insertJob({ check_job_id: check['id'], status: 'cancelled' });
+    const holder = await insertJob({ check_job_id: check['id'] });
+    // A failed one cannot come back to hold it beside the import that does.
+    await expect(pool().query(`UPDATE agency_ingest_jobs SET status = 'completed' WHERE id = $1`, [retried['id']]))
       .rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_ingest_jobs_check_job' });
+    await pool().query('DELETE FROM agency_ingest_jobs WHERE id = $1', [holder['id']]);
     await pool().query('DELETE FROM agency_ingest_jobs WHERE id = $1', [check['id']]);
     const { rows } = await pool().query('SELECT check_job_id FROM agency_ingest_jobs WHERE id = $1', [imported['id']]);
     expect(rows[0]).toEqual({ check_job_id: null });

@@ -16,6 +16,27 @@ function isUndefinedColumnError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === '42703';
 }
 
+/**
+ * Importing a checked file (`createExclusive` with `check_job_id`) on a schema without
+ * 0042: there is no `check_job_id` to record the import against, so it is refused
+ * before anything is created (the route answers 409 `check_import_unavailable`). An
+ * import started without a check, and every read, run unchanged on that schema.
+ */
+export class IngestCheckImportUnavailableError extends Error {
+  constructor() {
+    super('Importing a checked file needs migration 0042 (agency_ingest_jobs.check_job_id).');
+    this.name = 'IngestCheckImportUnavailableError';
+  }
+}
+
+/**
+ * The statuses in which an import HOLDS its check (IM2): one at a time, by
+ * `uq_agency_ingest_jobs_check_job` (0042), whose predicate names the same three. A
+ * failed or cancelled import lets the check go, so the operator can import it again
+ * while it is valid (rows already imported are skipped, IM3).
+ */
+const CHECK_HOLDING_STATUSES = `('pending', 'running', 'completed')`;
+
 /** Lifecycle of a roster ingest. `pending` → `running` → terminal. */
 export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -225,7 +246,12 @@ export type CreateExclusiveResult =
   /** Another import into the campaign is still live: nothing was created. */
   | { outcome: 'busy'; live: AgencyIngestJobRecord }
   /** This check was already imported: nothing was created; this is that import. */
-  | { outcome: 'already_imported'; job: AgencyIngestJobRecord };
+  | { outcome: 'already_imported'; job: AgencyIngestJobRecord }
+  /**
+   * This check is held by an import the caller cannot see (another account's campaign,
+   * from a builder check that named none): nothing was created, and its id is not given.
+   */
+  | { outcome: 'imported_elsewhere' };
 
 /**
  * How stale (no progress heartbeat) a `pending`/`running` job's `updated_at`
@@ -333,24 +359,48 @@ export class AgencyIngestJobRepository {
    *
    * With `check_job_id`, the check's import is also unique: a second commit of one
    * check (a double click, a second tab) answers `already_imported` with the first
-   * import rather than importing twice. `uq_agency_ingest_jobs_check_job` backs that
-   * up against a commit of one check into two campaigns at once, which the per-campaign
-   * lock below does not serialise.
+   * import rather than importing twice, while that import is pending, running or
+   * completed. A failed or cancelled one no longer holds the check, so it can be
+   * imported again. `uq_agency_ingest_jobs_check_job` (on those same statuses) backs
+   * that up against a commit of one check into two campaigns at once, which the
+   * per-campaign lock below does not serialise. The import found is answered only when
+   * the caller can see it (`accountId`, as {@link findImportOfCheck} scopes it);
+   * otherwise `imported_elsewhere`, without its id. On a schema without 0042 a check's
+   * import throws {@link IngestCheckImportUnavailableError} rather than a raw 42703.
    *
    * One transaction under a transaction-scoped advisory lock on the campaign, so two
    * creates cannot both see "nothing live". It never touches the campaign row, whose
    * lock the roster chunks take.
    */
-  async createExclusive(input: CreateIngestJobInput & { campaign_id: string }): Promise<CreateExclusiveResult> {
+  async createExclusive(
+    input: CreateIngestJobInput & { campaign_id: string },
+    accountId?: string | null,
+  ): Promise<CreateExclusiveResult> {
+    try {
+      return await this.createExclusiveTx(input, accountId);
+    } catch (err) {
+      if (input.check_job_id && isUndefinedColumnError(err)) throw new IngestCheckImportUnavailableError();
+      throw err;
+    }
+  }
+
+  private async createExclusiveTx(
+    input: CreateIngestJobInput & { campaign_id: string },
+    accountId: string | null | undefined,
+  ): Promise<CreateExclusiveResult> {
     return withTransaction<CreateExclusiveResult>(async (client) => {
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('agency_ingest:' || $1::text, 0))`, [input.campaign_id]);
 
       if (input.check_job_id) {
         const committed = await client.query<AgencyIngestJobRecord>(
-          'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1',
+          `SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND status IN ${CHECK_HOLDING_STATUSES}`,
           [input.check_job_id],
         );
-        if (committed.rows[0]) return { outcome: 'already_imported', job: committed.rows[0] };
+        const holder = committed.rows[0];
+        if (holder) {
+          const visible = holder.tenant_id === input.tenant_id && (!accountId || holder.account_id === accountId);
+          return visible ? { outcome: 'already_imported', job: holder } : { outcome: 'imported_elsewhere' };
+        }
       }
 
       const live = await client.query<AgencyIngestJobRecord>(
@@ -368,7 +418,11 @@ export class AgencyIngestJobRepository {
     }, { pool: getPool() });
   }
 
-  /** The import a check was committed to, or null. Scoped like {@link findById}. */
+  /**
+   * The import that holds a check (pending, running or completed), or null: none was
+   * started, or the last one failed or was cancelled, and the check may be imported
+   * again. Scoped like {@link findById}.
+   */
   async findImportOfCheck(
     checkJobId: string,
     tenantId: string,
@@ -377,18 +431,21 @@ export class AgencyIngestJobRepository {
     try {
       const result = accountId
         ? await getPool().query<AgencyIngestJobRecord>(
-          'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND tenant_id = $2 AND account_id = $3',
+          `SELECT * FROM agency_ingest_jobs
+            WHERE check_job_id = $1 AND tenant_id = $2 AND account_id = $3 AND status IN ${CHECK_HOLDING_STATUSES}`,
           [checkJobId, tenantId, accountId],
         )
         : await getPool().query<AgencyIngestJobRecord>(
-          'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND tenant_id = $2',
+          `SELECT * FROM agency_ingest_jobs
+            WHERE check_job_id = $1 AND tenant_id = $2 AND status IN ${CHECK_HOLDING_STATUSES}`,
           [checkJobId, tenantId],
         );
       return result.rows[0] ?? null;
     } catch (err) {
       // A schema without 0042 has no `check_job_id`, so no import was started from any check.
       // Every poll of a check reads this; answering "none" keeps the check pollable there,
-      // as the progress ladders keep the rest of the job pollable.
+      // as the progress ladders keep the rest of the job pollable. The write that would
+      // import one refuses instead (`IngestCheckImportUnavailableError`).
       if (isUndefinedColumnError(err)) return null;
       throw err;
     }
