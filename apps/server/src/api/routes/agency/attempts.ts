@@ -540,6 +540,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     let forwarded!: Awaited<ReturnType<typeof markDnc>>;
     let noteDispositionFor: string | null = null;
     const client = await getPool().connect();
+    let failure: Error | undefined;
     try {
       await client.query('BEGIN');
       // ── 2. Suppress the roster rows ──────────────────────────────────────
@@ -659,10 +660,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       }, { client });
       await client.query('COMMIT');
     } catch (err) {
+      failure = err instanceof Error ? err : new Error(String(err));
       await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
       throw err;
     } finally {
-      client.release();
+      // A failed transaction's connection is discarded, never handed back to the pool (as the
+      // disposition route's): a ROLLBACK that failed leaves it mid-transaction.
+      client.release(failure);
     }
     if (noteDispositionFor) {
       await runtime.wrapup.noteDisposition(noteDispositionFor, attempt.id);
