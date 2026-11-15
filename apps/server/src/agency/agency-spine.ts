@@ -418,8 +418,9 @@ export const ATTEMPT_CSV_COLUMNS = [
   // `disposition_code`: that one stays what a person recorded.
   'auto_disposition_code',
   // Where the row came from (decision SR6): `dialler` (an attempt) or `soft_phone` (a soft-phone
-  // call an agent logged to this campaign). Appended LAST, like every column added after the
-  // first release, so a consumer reading by position keeps its columns. A soft-phone row
+  // call an agent logged to this campaign). Appended after `auto_disposition_code`, like every
+  // column added after the first release, so a consumer reading by position keeps its columns
+  // (the promise columns, PT12, were appended after it in turn). A soft-phone row
   // fills the attempt columns from the soft-phone call's own fields: `attempt_id` is the
   // soft-phone call's id, `contact_id` the roster contact its number matched (empty for none),
   // `phone` the number dialled, `recording_call_id` its media leg; `attempt_number`,
@@ -576,11 +577,12 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
           + 'never answered has neither. They are the rows a call list cannot show.',
         ),
         preambleLine(
-          'The last column, source, says where each row came from: dialler (the campaign\'s own '
+          'The source column says where each row came from: dialler (the campaign\'s own '
           + 'dial) or soft_phone (a call an agent placed on the soft phone and logged to this '
           + 'campaign; its attempt_number, wrapup_seconds and auto_disposition_code are empty). '
           + 'Soft-phone calls logged to no campaign are not in this file. Pass ?source=dialler '
-          + 'for the dialler\'s rows alone.',
+          + 'for the dialler\'s rows alone. The promise_date and promise_amount columns after it '
+          + 'are the promise to pay recorded with the row\'s outcome, empty where there is none.',
         ),
       ]
       : [preambleLine(
