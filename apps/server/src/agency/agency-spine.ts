@@ -584,6 +584,11 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
           + 'for the dialler\'s rows alone. The promise_date and promise_amount columns after it '
           + 'are the promise to pay recorded with the row\'s outcome, empty where there is none.',
         ),
+        preambleLine(
+          'Not included for a soft_phone row: the call details the agent entered and the reasons '
+          + 'given for dialling through a Do Not Call entry or outside calling hours. Each is on '
+          + 'the call\'s own page in the console (Call log, Soft-phone calls).',
+        ),
       ]
       : [preambleLine(
         'Suppressed contacts appear here with the reason they were suppressed, including ones '

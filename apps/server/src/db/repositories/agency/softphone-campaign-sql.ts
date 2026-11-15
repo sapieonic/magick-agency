@@ -1,8 +1,11 @@
 /**
  * The soft phone's figures on a campaign: ONE definition of a soft-phone call that was placed,
- * connected and reached a person, shared by every campaign surface that shows one (Insights'
- * `calls.softphone`, `/stats` `softphone`, the campaign call export's `soft_phone` rows) and by
- * the agent report's soft-phone count (decisions SR1–SR3, docs/softphone.md §2).
+ * connected and reached a person, shared by every campaign surface that COUNTS one (Insights'
+ * `calls.softphone`, which the campaign report embeds, and `/stats` `softphone`) and by the agent
+ * report's soft-phone count (decisions SR1–SR3, docs/softphone.md §2). The campaign call export
+ * counts nothing: its `soft_phone` rows are every call tagged to the campaign in its tenant,
+ * placed or not, as its dialler rows are every attempt (`listCallLogForCampaign`), and its
+ * `placed` filter spells the same `dialed_at` rule through `placedDialSql`.
  *
  * A soft-phone call is never an attempt (0005): it has no redials, no pacing and no roster
  * claim of its own, and agents choose whom to ring, so its figures sit BESIDE the dialler's and

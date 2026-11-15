@@ -512,6 +512,8 @@ describe('the CSV exports', () => {
     expect(res.body).toContain('one per soft-phone call logged to the campaign');
     expect(res.body).toContain('Soft-phone calls logged to no campaign are not in this file');
     expect(res.body).toContain('?source=dialler');
+    // What a soft-phone row leaves out, by name, as the preamble names every column it withholds.
+    expect(res.body).toContain('Not included for a soft_phone row: the call details the agent entered and the reasons given for dialling through a Do Not Call entry or outside calling hours');
     await app.close();
   });
 

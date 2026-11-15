@@ -2,16 +2,17 @@
  * One campaign's stats read, shared between the supervisors who ask for it.
  *
  * ── Why ───────────────────────────────────────────────────────────────────
- * `GET /api/v1/agency-campaigns/:id/stats` runs two campaign-wide SQL reads: `stats()`
- * (one pass over ALL the campaign's contacts and ALL its attempts, plus the floor) and
- * `healthInputs()` (the pending contacts by timezone, the last dial, recent failures, breaks).
+ * `GET /api/v1/agency-campaigns/:id/stats` runs two campaign-wide repository reads: `stats()`
+ * (one pass over ALL the campaign's contacts and ALL its attempts, plus the floor and the counts
+ * of the soft-phone calls tagged to it, SR2: three statements) and `healthInputs()` (the
+ * pending contacts by timezone, the last dial, recent failures, breaks).
  * Each open campaign page asks every 10 s, so N supervisors on one big campaign ran N full
  * scans per 10 s, on the same pool the dial loop draws from. Here the pair is read once per
  * campaign and handed to every request that asks while it is being read, and to every request
  * in the `ttlMs` after it settled (`AGENCY_CAMPAIGN_STATS_CACHE_MS`, `config/blocks/agency.ts`).
  *
  * ── What is shared, and what is not ──────────────────────────────────────
- * Only the two SQL reads, keyed by campaign id. Both are a function of the campaign id alone
+ * Only the two repository reads, keyed by campaign id. Both are a function of the campaign id alone
  * (and of the database's `now()`): no tenant, account, user or query parameter reaches them,
  * so the key fully determines the result, as `TtlCache` requires. The route's other inputs
  * (DNC state, the concurrency counters, station liveness and capability, the account's
