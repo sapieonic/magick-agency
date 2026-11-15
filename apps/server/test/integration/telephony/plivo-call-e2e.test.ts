@@ -459,7 +459,10 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
 
     await waitFor('answered', async () => (await callRow(callId))?.status === 'in_progress');
     expect(call.statusesFor('ring')).toEqual([200]);
-    expect(call.answerXml).toContain('<Stream');
+    // The server writes `in_progress` while it handles the answer callback, before its reply
+    // reaches the mock carrier, which records the XML only then: waited for on its own (read
+    // straight after the row it was still null, on a busy CI runner).
+    expect(await waitFor('the answer XML', () => call.answerXml)).toContain('<Stream');
     expect(await getAgencyRuntime()!.dialer.hangupAttempt(attemptId)).toBe(true);
     await r.carrier.settled();
     // The hangup went out on the NEW token (the carrier refuses the old one now).
