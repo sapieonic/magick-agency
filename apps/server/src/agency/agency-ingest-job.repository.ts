@@ -374,16 +374,24 @@ export class AgencyIngestJobRepository {
     tenantId: string,
     accountId?: string | null,
   ): Promise<AgencyIngestJobRecord | null> {
-    const result = accountId
-      ? await getPool().query<AgencyIngestJobRecord>(
-        'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND tenant_id = $2 AND account_id = $3',
-        [checkJobId, tenantId, accountId],
-      )
-      : await getPool().query<AgencyIngestJobRecord>(
-        'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND tenant_id = $2',
-        [checkJobId, tenantId],
-      );
-    return result.rows[0] ?? null;
+    try {
+      const result = accountId
+        ? await getPool().query<AgencyIngestJobRecord>(
+          'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND tenant_id = $2 AND account_id = $3',
+          [checkJobId, tenantId, accountId],
+        )
+        : await getPool().query<AgencyIngestJobRecord>(
+          'SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND tenant_id = $2',
+          [checkJobId, tenantId],
+        );
+      return result.rows[0] ?? null;
+    } catch (err) {
+      // A schema without 0042 has no `check_job_id`, so no import was started from any check.
+      // Every poll of a check reads this; answering "none" keeps the check pollable there,
+      // as the progress ladders keep the rest of the job pollable.
+      if (isUndefinedColumnError(err)) return null;
+      throw err;
+    }
   }
 
   private async insert(

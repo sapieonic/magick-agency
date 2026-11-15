@@ -28,6 +28,20 @@ describe('AgencyIngestJobRepository', () => {
     mocks.query.mockResolvedValue({ rows: [{ id: 'job-1' }], rowCount: 1 });
   });
 
+  describe('findImportOfCheck', () => {
+    it('answers "no import" on a schema without 0042 (no check_job_id), so a check stays pollable', async () => {
+      const missing = Object.assign(new Error('column "check_job_id" does not exist'), { code: '42703' });
+      mocks.query.mockRejectedValueOnce(missing);
+      await expect(repo.findImportOfCheck('check-1', 'tenant-1', 'account-1')).resolves.toBeNull();
+    });
+
+    it('rethrows any other failure', async () => {
+      const down = Object.assign(new Error('connection terminated'), { code: '57P01' });
+      mocks.query.mockRejectedValueOnce(down);
+      await expect(repo.findImportOfCheck('check-1', 'tenant-1')).rejects.toBe(down);
+    });
+  });
+
   describe('create', () => {
     it('defaults dedupe_phones on and dry_run off', async () => {
       // Dedupe defaults ON because the customer asked for duplicate detection
