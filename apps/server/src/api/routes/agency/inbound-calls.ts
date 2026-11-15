@@ -98,12 +98,14 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
     if (!actor) return reply;
     const service = serviceOr404(reply);
     if (!service) return reply;
-    const body = request.body as { code?: unknown; notes?: unknown; callback_at?: unknown };
+    const body = request.body as { code?: unknown; notes?: unknown; callback_at?: unknown; promise_date?: unknown; promise_amount?: unknown };
     if (typeof body.code !== 'string') return reply.code(400).send({ error: 'Validation failed', details: { code: 'required' } });
     const saved = await service.submitDisposition(actor, request.params.id, {
       code: body.code,
       ...(typeof body.notes === 'string' ? { notes: body.notes } : {}),
       ...(typeof body.callback_at === 'string' ? { callbackAt: body.callback_at } : {}),
+      ...(body.promise_date !== undefined ? { promiseDate: body.promise_date } : {}),
+      ...(body.promise_amount !== undefined ? { promiseAmount: body.promise_amount } : {}),
     });
     if (!saved.ok) return sendInboundRefusal(reply, saved.refusal);
     const campaignId = saved.response.call.match?.campaign_id ?? null;

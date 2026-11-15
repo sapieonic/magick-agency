@@ -359,6 +359,9 @@ export interface CustomerTimelineCampaignCall extends CustomerTimelineBase {
   notes: string | null;
   notes_hidden: boolean;
   callback_at: string | null;
+  /** The promise to pay recorded with the outcome (PT1), or null; absent from an older server. */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   /** The wrap-up redial chain: the attempt this redialled, and the chain's first attempt. */
   redial_of_attempt_id: string | null;
   chain_attempt_id: string;
@@ -388,6 +391,9 @@ export interface CustomerTimelineSoftphoneCall extends CustomerTimelineBase {
   dnc_override_note: string | null;
   hours_override_note: string | null;
   callback_at: string | null;
+  /** The promise to pay saved with the outcome (PT1), or null; absent from an older server. */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   recording: CustomerRecordingState;
   call_page: { account_id: string; manual_call_id: string } | null;
 }

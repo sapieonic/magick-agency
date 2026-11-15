@@ -1099,6 +1099,12 @@ enum InboundDispositionRule implements WireEnum {
   noteRequired('note_required'),
   datetimeRequired('datetime_required'),
   invalidCallbackAt('invalid_callback_at'),
+
+  /// Promise to pay (PT8): the outcome asks for a promised date and none came.
+  promiseRequired('promise_required'),
+  invalidPromiseDate('invalid_promise_date'),
+  invalidPromiseAmount('invalid_promise_amount'),
+  promiseNotExpected('promise_not_expected'),
   unknown('');
 
   const InboundDispositionRule(this.wire);
@@ -1214,4 +1220,24 @@ enum StationCapability implements WireEnum {
       if (value.isNotEmpty) queryKey: value,
     };
   }
+}
+
+/// Where a contact's latest promise to pay stands (PT7), in the customer's
+/// timezone. `missed` means the promised day ended with no later outcome on
+/// the contact, never "unpaid": there is no payment signal.
+///
+/// Contract: `AgencyPromiseState` / `AGENCY_PROMISE_STATES` (`agency/promise.ts`).
+enum PromiseState implements WireEnum {
+  upcoming('upcoming'),
+  dueToday('due_today'),
+  missed('missed'),
+  followedUp('followed_up'),
+  unknown('');
+
+  const PromiseState(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static PromiseState fromWire(String? raw) => _byWire[raw] ?? unknown;
 }

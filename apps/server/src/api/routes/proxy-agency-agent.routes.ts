@@ -88,6 +88,10 @@ const dispositionSchema = z.object({
   disposition_code: z.string().min(1).max(50),
   notes: z.string().max(4000).optional(),
   callback_at: z.string().datetime().optional(),
+  // Promise to pay (PT1): shape and size only; the runtime checks the date against the
+  // customer's today and the amount's places (`promise_required`, `invalid_promise_*`).
+  promise_date: z.string().min(1).max(32).optional(),
+  promise_amount: z.string().max(32).optional(),
 });
 
 /**

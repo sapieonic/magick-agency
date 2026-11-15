@@ -129,7 +129,7 @@ export function validateSoftphoneSettings(body: unknown): SoftphoneSettingsIssue
   } else {
     // The campaign catalog's rules, minus `override`: a soft-phone call has no roster
     // contact to carry a grant (overrides are a campaign feature).
-    const noOverride = { allowDispositionOverride: false };
+    const noOverride = { allowDispositionOverride: false, allowPromise: false };
     for (const issue of validateAgencyCampaignConfig({ disposition_catalog: catalog }, {}, noOverride)) {
       issues.push({ path: issue.field, message: issue.message });
     }

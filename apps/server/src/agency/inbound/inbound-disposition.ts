@@ -44,6 +44,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { inboundScheduleState } from '@magick-agency/domain/inbound-schedule';
 import type { AgencyInboundQueueTile } from '@magick-agency/contracts/api/agency/inbound';
 import type {
+  AgencySoftphoneDispositionInvalidRefusal,
   AgencyContactState,
   AgencyInboundCall,
   AgencyInboundCallDispositionResponse,
@@ -62,6 +63,9 @@ import type { AgentLiveState, AgentStateMachine } from '../agent-state-machine.j
 import type { StationRegistry } from '../station-registry.js';
 import { markDnc, type DncMarkResult } from '../dnc-mark.js';
 import { manualDispositionDecision, prepareManualDisposition } from '../softphone/manual-disposition.js';
+import { promiseZoneFor } from '../disposition.js';
+import { contactPromiseWrite, promiseFollowUpAt } from '../promise-to-pay.js';
+import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import type { SoftphoneActor } from '../softphone/types.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { withTimeoutOr } from '../../utils/with-timeout.js';
@@ -81,7 +85,7 @@ export type InboundCallRefusal =
   | { code: 'inbound_outcome_already_saved' }
   | {
     code: 'inbound_disposition_invalid';
-    reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+    reason: AgencySoftphoneDispositionInvalidRefusal['reason'];
     allowed_codes?: string[];
   };
 
@@ -205,7 +209,7 @@ export class InboundCallService {
   async submitDisposition(
     actor: InboundCallActor,
     callId: string,
-    req: { code: string; notes?: string; callbackAt?: string },
+    req: { code: string; notes?: string; callbackAt?: string; promiseDate?: unknown; promiseAmount?: unknown },
   ): Promise<InboundCallResult<{
     response: AgencyInboundCallDispositionResponse;
     onBehalf: boolean;
@@ -225,8 +229,12 @@ export class InboundCallService {
     const tag = campaign && campaign.tenant_id === row.tenant_id ? campaign : null;
     const { catalog, stored } = resolveInboundCatalog(row.matched_campaign_id !== null, tag, route);
     const now = new Date();
+    // A promise's "today" is the customer's (PT4): the matched contact's zone, else its campaign's.
+    const promiseZone = promiseZoneFor(contact?.timezone, tag?.default_timezone);
     const prepared = prepareManualDisposition({
       catalog, code: req.code, notes: req.notes, callbackAt: req.callbackAt,
+      promiseDate: req.promiseDate, promiseAmount: req.promiseAmount,
+      promiseToday: todayIn(promiseZone, now) ?? undefined,
       callFields: [], submittedFields: undefined, storedFields: {}, now,
     });
     if (!prepared.ok) {
@@ -237,9 +245,15 @@ export class InboundCallService {
       // No call fields on an inbound call (IQ22): unreachable with none in force.
       return refuse({ code: 'inbound_disposition_invalid', reason: 'unknown_code' });
     }
-    const { entry, notes, callbackAt } = prepared.prepared;
-    const { decision, nextAttemptAt } = manualDispositionDecision({ entry, now, callbackAt, placed: false, contact, tag });
-    const settlement = inboundContactSettlement(entry, decision, nextAttemptAt);
+    const { entry, notes, callbackAt, promise } = prepared.prepared;
+    // Only a matched campaign's catalogue may ask for a promise (a route's refuses
+    // `requires_promise`). Its follow-up (PT2) takes the callback arm; a promise alone books
+    // nothing (PT3).
+    const followUpAt = promiseFollowUpAt(entry, promise, promiseZone);
+    const { decision, nextAttemptAt } = manualDispositionDecision({
+      entry, now, callbackAt: callbackAt ?? followUpAt, placed: false, contact, tag,
+    });
+    const settlement = inboundContactSettlement(entry, decision, nextAttemptAt, { followUp: followUpAt !== null });
 
     // Written inside the transaction below (typed wide: TS does not follow writes in a callback).
     let dncEntry = null as InboundDncEntryWritten | null;
@@ -248,6 +262,7 @@ export class InboundCallService {
     const saved = await withTransaction(async (client, tx): Promise<{ call: AgencyInboundCallRecord; replay: boolean } | { refusal: InboundCallRefusal }> => {
       const result = await agencyInboundCallRepository.saveDisposition({
         id: row.id, code: entry.code, source: stored, notes, callbackAt,
+        promiseDate: promise?.date ?? null, promiseAmount: promise?.amount ?? null,
         actorUserId: actor.userId, onBehalf: found.onBehalf,
       }, { client });
       if (!result.ok) {
@@ -273,6 +288,14 @@ export class InboundCallService {
             row.matched_campaign_id, row.from_e164, decision.suppressedReason ?? 'dnc', {}, { client },
           );
         }
+      }
+      // The matched contact's latest promise, or an earlier one followed up (PT6, PT7); on a
+      // replay too, so a corrected promise reaches the contact.
+      if (row.matched_contact_id && contact) {
+        const callAt = new Date(row.arrived_at);
+        const write = promise ? contactPromiseWrite(promise, promiseZone, callAt) : null;
+        if (write) await agencyContactRepository.recordContactPromise({ contactId: row.matched_contact_id, promise: write }, { client });
+        else await agencyContactRepository.notePromiseFollowUp({ contactId: row.matched_contact_id, callAt }, { client });
       }
       return { call: result.call, replay: result.replay };
     }, { pool: getPool() });

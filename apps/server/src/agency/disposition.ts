@@ -1,8 +1,16 @@
-import type {
-  AgencyActionErrorCode,
-  AgencyDisposition,
+import {
+  AGENCY_PROMISE_MAX_DAYS_AHEAD,
+  type AgencyActionErrorCode,
+  type AgencyDisposition,
 } from '@magick-agency/contracts/agency';
 import type { AgencyCallAttemptRecord } from '../db/models/agency.model.js';
+import { isUsableTimezone } from '@magick-agency/domain/zone-clock';
+import {
+  todayIn,
+  validatePromiseFields,
+  type PromiseDay,
+  type ValidPromise,
+} from '@magick-agency/domain/promise-to-pay';
 
 /**
  * ─── AGENCY DIALER — DISPOSITION SUBMIT RULES ───────────────────────────────
@@ -125,9 +133,16 @@ export function checkActor(
  */
 export function validateDispositionFields(
   entry: AgencyDisposition,
-  body: { notes?: unknown; callback_at?: unknown },
+  body: { notes?: unknown; callback_at?: unknown; promise_date?: unknown; promise_amount?: unknown },
   now: Date,
-): { ok: true; notes: string | null; callbackAt: Date | null } | { ok: false; code: AgencyActionErrorCode } {
+  /**
+   * The customer's today, for a promised date (PT4): `promiseTodayFor` with the contact's
+   * zone, else the campaign's. Absent: today in UTC (a call with no contact or campaign has
+   * no promise to judge, since only a campaign catalogue may ask for one).
+   */
+  promiseToday?: PromiseDay,
+): { ok: true; notes: string | null; callbackAt: Date | null; promise: ValidPromise | null }
+  | { ok: false; code: AgencyActionErrorCode } {
   const notesRaw = typeof body.notes === 'string' ? body.notes : null;
   // Whitespace is not a note. Without the trim, `requires_note` is satisfiable
   // with a space — which passes the check and records nothing.
@@ -149,7 +164,22 @@ export function validateDispositionFields(
     callbackAt = parsed;
   }
 
-  return { ok: true, notes: notesRaw, callbackAt };
+  // Promise to pay (PT8): after the note and the callback, in the order the pad shows them.
+  const promise = validatePromiseFields(entry, body, promiseToday ?? todayIn('UTC', now)!);
+  if (!promise.ok) return { ok: false, code: promise.code };
+
+  return { ok: true, notes: notesRaw, callbackAt, promise: promise.promise };
+}
+
+/**
+ * The customer's today for a promised date (PT4): in the contact's zone when it is usable,
+ * else the campaign's default, else UTC. The same zone choice as calling hours
+ * (`resolveCallingWindow`), so "today" is the day the customer is living in.
+ */
+export function promiseZoneFor(contactTimezone: string | null | undefined, campaignTimezone: string | null | undefined): string {
+  if (isUsableTimezone(contactTimezone)) return contactTimezone!.trim();
+  if (isUsableTimezone(campaignTimezone)) return campaignTimezone!.trim();
+  return 'UTC';
 }
 
 /** Human copy for each refusal. The console keys off `code`; this is its fallback. */
@@ -169,6 +199,16 @@ export function dispositionErrorMessage(code: AgencyActionErrorCode): string {
       return 'This disposition requires a callback date and time.';
     case 'invalid_callback_at':
       return 'The callback time must be a valid date in the future.';
+    // Promise to pay (PT8). The app versions that predate it show this text as it is, so it
+    // names what to do, including updating the app.
+    case 'promise_required':
+      return 'This outcome needs the date the customer promised to pay. If your app does not ask for one, update it or pick another outcome.';
+    case 'invalid_promise_date':
+      return `The promised payment date must be a real date, not before today in the customer's timezone and at most ${AGENCY_PROMISE_MAX_DAYS_AHEAD} days ahead.`;
+    case 'invalid_promise_amount':
+      return 'The promised amount must be a number of 0 or more with at most two decimal places.';
+    case 'promise_not_expected':
+      return 'This outcome does not record a promise to pay. Remove the promised date and amount, or pick the promise outcome.';
     case 'attempt_not_dispositionable':
       return 'This call can no longer be dispositioned — it was auto-closed or never connected.';
     case 'already_dispositioned':
@@ -178,4 +218,12 @@ export function dispositionErrorMessage(code: AgencyActionErrorCode): string {
     default:
       return 'The request was refused.';
   }
+}
+
+/** The station's copy for a promise refusal (PT8), or null for any other reason. */
+export function promiseRefusalMessage(reason: string): string | null {
+  return reason === 'promise_required' || reason === 'invalid_promise_date'
+    || reason === 'invalid_promise_amount' || reason === 'promise_not_expected'
+    ? dispositionErrorMessage(reason)
+    : null;
 }

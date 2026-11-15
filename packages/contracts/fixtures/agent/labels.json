@@ -25,5 +25,14 @@
       "orphaned": "Interrupted by a system fault",
       "canceled": "Stopped by us before answer"
     }
+  },
+  "promise_state_labels": {
+    "source": "packages/contracts/src/agency/promise.ts#AGENCY_PROMISE_STATE_LABELS",
+    "labels": {
+      "upcoming": "Upcoming",
+      "due_today": "Due today",
+      "missed": "Missed",
+      "followed_up": "Followed up"
+    }
   }
 }

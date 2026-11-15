@@ -148,9 +148,9 @@ function zodIssues(error: z.ZodError): InboundRouteIssue[] {
   }));
 }
 
-/** The campaign catalog's rules, without overrides, under `disposition_catalog`. */
+/** The campaign catalog's rules, without overrides or a promise to pay, under `disposition_catalog`. */
 function catalogIssues(catalog: unknown[]): InboundRouteIssue[] {
-  return validateAgencyCampaignConfig({ disposition_catalog: catalog }, {}, { allowDispositionOverride: false })
+  return validateAgencyCampaignConfig({ disposition_catalog: catalog }, {}, { allowDispositionOverride: false, allowPromise: false })
     .map((issue) => ({ path: issue.field, message: issue.message }));
 }
 

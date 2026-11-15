@@ -187,6 +187,8 @@ export function inboundCallToWire(
     disposition_code: call.disposition_code,
     notes: call.notes,
     callback_at: iso(call.callback_at),
+    promise_date: call.promise_date ?? null,
+    promise_amount: call.promise_amount ?? null,
     dispositioned_by_user_id: call.dispositioned_by_user_id,
     dispositioned_on_behalf: call.dispositioned_on_behalf,
     settled_at: iso(call.settled_at),

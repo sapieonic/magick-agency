@@ -17,6 +17,7 @@ import type {
 import type { AgencyInboundMissedRow } from '../../../db/repositories/agency.repository.js';
 import { matchName } from '../../../agency/inbound/match-name.js';
 import type { InboundCallRefusal } from '../../../agency/inbound/inbound-disposition.js';
+import { promiseRefusalMessage } from '../../../agency/disposition.js';
 
 /**
  * The HTTP status of every inbound refusal, as `errors.ts` §6 states it beside each code. A
@@ -118,7 +119,13 @@ export function inboundRefusalBody(refusal: InboundRefusal): { status: number; b
   return {
     status,
     // `error` and `message` first, the refusal's own fields after; none is named either.
-    body: { error: ERROR_BY_STATUS[status] ?? 'Request Failed', message: INBOUND_REFUSAL_MESSAGES[refusal.code], ...refusal },
+    // A promise refusal says what to do (PT8): an app that predates the promise shows it as it is.
+    body: {
+      error: ERROR_BY_STATUS[status] ?? 'Request Failed',
+      message: (refusal.code === 'inbound_disposition_invalid' ? promiseRefusalMessage(refusal.reason) : null)
+        ?? INBOUND_REFUSAL_MESSAGES[refusal.code],
+      ...refusal,
+    },
   };
 }
 

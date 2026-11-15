@@ -11,11 +11,13 @@ import {
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
   SOFTPHONE_OUTCOME_LAPSE_MS,
   type AgencyAttemptRow,
+  type AgencyContactPromise,
   type AgencyContactRow,
   type AgencyContactState,
   type AgencyManualCall,
   type AgencyPriorAttempt,
 } from '@magick-agency/contracts/agency';
+import { promiseState } from '@magick-agency/domain/promise-to-pay';
 // The codec-free declaration, not `carrier-modules.js`: that loads every carrier's media
 // codec (and the tables it builds at load) into the repository's import graph.
 import { carrierCancelsRinging } from '../../../telephony/carrier-ringing.js';
@@ -59,6 +61,43 @@ export function iso(value: Date | string | null | undefined): string | null {
 }
 
 /**
+ * A `promise_date` column (PT1) → `YYYY-MM-DD`, or null. `pg` reads a DATE as a Date at
+ * LOCAL midnight (no type parser is installed), so the local getters give back the stored
+ * day in any process timezone; `toISOString` would not (east of UTC it names the day before).
+ * A read that casts `::text` hands the string through.
+ */
+export function promiseDateText(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  if (Number.isNaN(value.getTime())) return null;
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${pad(value.getFullYear(), 4)}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
+
+/**
+ * A contact's latest promise (PT6, PT7) → the wire shape, or null without one. The state is
+ * read from the stored day bounds and follow-up against `now`, the same comparison the
+ * Contacts list's `?promise=` filter makes in SQL (`promiseStateSql`).
+ */
+export function contactPromise(
+  row: Pick<AgencyContactRecord,
+    'promise_date' | 'promise_amount' | 'promise_due_from' | 'promise_due_until' | 'promise_followed_up_at'>,
+  now: Date = new Date(),
+): AgencyContactPromise | null {
+  const date = promiseDateText(row.promise_date ?? null);
+  if (date === null || !row.promise_due_from || !row.promise_due_until) return null;
+  return {
+    date,
+    amount: row.promise_amount ?? null,
+    state: promiseState({
+      dueFrom: new Date(row.promise_due_from),
+      dueUntil: new Date(row.promise_due_until),
+      followedUp: row.promise_followed_up_at !== null && row.promise_followed_up_at !== undefined,
+    }, now),
+  };
+}
+
+/**
  * `agency_call_attempts` row (joined to its contact and session) → the wire shape.
  *
  * Shared by the campaign-scoped and agent-scoped spines. Extracted when the second
@@ -85,6 +124,9 @@ export function projectAttemptRow(row: AgencyCallAttemptRecord & {
     // Included deliberately — see the privacy note on `AgencyAttemptRow`.
     notes: row.notes,
     callback_at: iso(row.callback_at),
+    // Promise to pay (PT1): as recorded with this attempt's outcome.
+    promise_date: promiseDateText(row.promise_date ?? null),
+    promise_amount: row.promise_amount ?? null,
     dispositioned_by_user_id: row.dispositioned_by_user_id,
     dispositioned_at: iso(row.dispositioned_at),
     dispositioned_on_behalf: row.dispositioned_on_behalf,
@@ -110,14 +152,19 @@ export function projectAttemptRow(row: AgencyCallAttemptRecord & {
 export function projectPriorAttempt(
   row: Pick<AgencyCallAttemptRecord,
     'attempt_number' | 'outcome' | 'disposition_code' | 'auto_disposition_code' | 'notes' | 'ended_at' | 'dialed_at'
-  > & { campaign_id: string; campaign_name: string },
+  > & Partial<Pick<AgencyCallAttemptRecord, 'promise_date' | 'promise_amount'>>
+    & { campaign_id: string; campaign_name: string },
 ): AgencyPriorAttempt {
+  const promiseDate = promiseDateText(row.promise_date ?? null);
   return {
     attempt_number: row.attempt_number,
     outcome: row.outcome,
     disposition_code: row.disposition_code,
     auto_disposition_code: row.auto_disposition_code,
     notes: row.notes,
+    // PT9: the promise this attempt recorded, so the agent's history shows it. Only when there
+    // is one, so a panel without a promise is byte for byte what it was.
+    ...(promiseDate !== null ? { promise_date: promiseDate, promise_amount: row.promise_amount ?? null } : {}),
     ended_at: iso(row.ended_at),
     campaign_id: row.campaign_id,
     campaign_name: row.campaign_name,
@@ -144,6 +191,7 @@ export function projectContactRow(row: AgencyContactRecord): AgencyContactRow {
     csv_line_number: row.csv_line_number,
     assigned_user_id: row.assigned_user_id ?? null,
     assigned_at: iso(row.assigned_at ?? null),
+    promise: contactPromise(row),
     created_at: iso(row.created_at) ?? '',
     updated_at: iso(row.updated_at) ?? '',
   };
@@ -239,6 +287,8 @@ export function projectManualCallRow(
     disposition_source: row.disposition_source,
     notes: row.notes,
     callback_at: iso(row.callback_at),
+    promise_date: promiseDateText(row.promise_date ?? null),
+    promise_amount: row.promise_amount ?? null,
     fields: row.fields ?? {},
     dispositioned_by_user_id: row.dispositioned_by_user_id,
     dispositioned_at: iso(row.dispositioned_at),

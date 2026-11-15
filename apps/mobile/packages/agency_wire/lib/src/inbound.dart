@@ -495,7 +495,13 @@ final class InboundCallUpdateRequest {
 /// Contract: `AgencyApi.AgencyInboundCallDispositionRequest`.
 @immutable
 final class InboundCallDispositionRequest {
-  const InboundCallDispositionRequest({required this.code, this.notes, this.callbackAt});
+  const InboundCallDispositionRequest({
+    required this.code,
+    this.notes,
+    this.callbackAt,
+    this.promiseDate,
+    this.promiseAmount,
+  });
 
   /// A code of the call's `disposition_catalog`.
   final String code;
@@ -504,10 +510,17 @@ final class InboundCallDispositionRequest {
   /// Required when the catalog entry sets `requires_datetime`.
   final DateTime? callbackAt;
 
+  /// Promise to pay (PT1): `YYYY-MM-DD`, required when the entry sets
+  /// `requires_promise`; the amount optional (a decimal string).
+  final String? promiseDate;
+  final String? promiseAmount;
+
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'code': code};
     putIfSet(json, 'notes', notes);
     if (callbackAt != null) json['callback_at'] = isoUtc(callbackAt!);
+    putIfSet(json, 'promise_date', promiseDate);
+    putIfSet(json, 'promise_amount', promiseAmount);
     return json;
   }
 
@@ -516,10 +529,12 @@ final class InboundCallDispositionRequest {
       other is InboundCallDispositionRequest &&
       other.code == code &&
       other.notes == notes &&
-      other.callbackAt == callbackAt;
+      other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount;
 
   @override
-  int get hashCode => Object.hash(code, notes, callbackAt);
+  int get hashCode => Object.hash(code, notes, callbackAt, promiseDate, promiseAmount);
 }
 
 /// `POST /proxy/agency/inbound/calls/:id/dnc`: mark the caller's number Do Not

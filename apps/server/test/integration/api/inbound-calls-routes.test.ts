@@ -206,3 +206,38 @@ describe('the answered inbound call`s routes', () => {
     expect(tiles.json()).toEqual({ tiles: [] });
   });
 });
+
+describe('promise to pay on an answered inbound call (PT1, PT2, PT6)', () => {
+  it('a matched caller\'s promise lands on the call and the contact; its follow-up is booked; a missing date is refused with its reason', async () => {
+    const campaignId = floor.campaigns[0]!;
+    const { rows: [before] } = await q('SELECT disposition_catalog FROM agency_campaigns WHERE id = $1', [campaignId]);
+    await q(`UPDATE agency_campaigns SET disposition_catalog = disposition_catalog || $2::jsonb WHERE id = $1`, [campaignId, JSON.stringify([
+      { code: 'ptp', label: 'Promised to pay', requires_promise: true },
+      { code: 'ptp_follow', label: 'Promised (follow up)', requires_promise: true, promise_follow_up_days: 3, is_success: true },
+    ])]);
+    try {
+      const date = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+      const c = await takenCall(agent(0));
+      const missing = await call('POST', `/calls/${c.id}/disposition`, agent(0), { code: 'ptp' });
+      expect(missing.json()).toMatchObject({ code: 'inbound_disposition_invalid', reason: 'promise_required' });
+      expect(missing.json().message).toMatch(/promised to pay/);
+      const saved = await call('POST', `/calls/${c.id}/disposition`, agent(0), { code: 'ptp', promise_date: date, promise_amount: '700' });
+      expect(saved.statusCode, saved.body).toBe(200);
+      expect(saved.json().call).toMatchObject({ disposition_code: 'ptp', promise_date: date, promise_amount: '700.00' });
+      // PT3: the plain promise moved nothing (the exhausted contact stays exhausted).
+      expect(saved.json()).toMatchObject({ contact_state: 'exhausted', next_attempt_at: null });
+      const { rows: [contact] } = await q('SELECT state, promise_date::text AS d, promise_amount FROM agency_contacts WHERE id = $1', [c.contactId]);
+      expect(contact).toEqual({ state: 'exhausted', d: date, promise_amount: '700.00' });
+
+      // The follow-up entry (also a success) books its call: date + 3 days, reopened as a callback.
+      const f = await takenCall(agent(0));
+      const follow = await call('POST', `/calls/${f.id}/disposition`, agent(0), { code: 'ptp_follow', promise_date: date });
+      expect(follow.statusCode, follow.body).toBe(200);
+      expect(follow.json()).toMatchObject({ contact_state: 'pending' });
+      const [y, m, d] = date.split('-').map(Number);
+      expect(new Date(follow.json().next_attempt_at).getTime()).toBeGreaterThanOrEqual(Date.UTC(y!, m! - 1, d! + 3) - 14 * 3_600_000);
+    } finally {
+      await q('UPDATE agency_campaigns SET disposition_catalog = $2::jsonb WHERE id = $1', [campaignId, JSON.stringify(before!.disposition_catalog)]);
+    }
+  });
+});

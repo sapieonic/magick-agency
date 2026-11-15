@@ -447,7 +447,8 @@ describe('the CSV exports', () => {
   it('exports the automatic outcome in its own last column, blank when there is none', () => {
     // Appended, so a consumer reading by position keeps every earlier column; and its own
     // column, so `disposition_code` stays what a person recorded (OD4).
-    expect(ATTEMPT_CSV_COLUMNS.at(-1)).toBe('auto_disposition_code');
+    // Followed only by the promise-to-pay columns (PT12), appended after it.
+    expect(ATTEMPT_CSV_COLUMNS.slice(-3)).toEqual(['auto_disposition_code', 'promise_date', 'promise_amount']);
     const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
     const auto = {
       ...ATTEMPT, outcome: 'no_answer', disposition_code: null, notes: null,

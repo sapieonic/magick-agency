@@ -413,6 +413,8 @@ const VOCABULARIES = {
     'agency/push-devices.ts#AGENCY_AWAY_RING_REFUSAL_CODES',
     () => constList('agency/push-devices.ts', 'AGENCY_AWAY_RING_REFUSAL_CODES'),
   ],
+  // Promise to pay (PT7): where a contact's latest promise stands, on the agent's panel.
+  promise_states: ['agency/promise.ts#AGENCY_PROMISE_STATES', () => constList('agency/promise.ts', 'AGENCY_PROMISE_STATES')],
 };
 
 /** Each label map the app shows as it is: where it is declared, and how to read it. */
@@ -424,6 +426,10 @@ const LABELS = {
   attempt_outcome_labels: [
     'api/agency/agency-spine.ts#ATTEMPT_OUTCOME_LABELS',
     () => constStringObject('api/agency/agency-spine.ts', 'ATTEMPT_OUTCOME_LABELS'),
+  ],
+  promise_state_labels: [
+    'agency/promise.ts#AGENCY_PROMISE_STATE_LABELS',
+    () => constStringObject('agency/promise.ts', 'AGENCY_PROMISE_STATE_LABELS'),
   ],
 };
 

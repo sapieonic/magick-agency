@@ -146,7 +146,15 @@ export interface AgencyInboundErrorResponse {
   /** `inbound_disposition_invalid` with `reason: 'unknown_code'`: the codes the call's catalog accepts. */
   allowed_codes?: string[];
   /** `inbound_disposition_invalid`: which rule refused (the soft phone's four). */
-  reason?: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+  reason?:
+    | 'unknown_code'
+    | 'note_required'
+    | 'datetime_required'
+    | 'invalid_callback_at'
+    | 'promise_required'
+    | 'invalid_promise_date'
+    | 'invalid_promise_amount'
+    | 'promise_not_expected';
   /** `inbound_clip_invalid`: why the upload was refused. */
   upload_reason?: AgencyInboundClipInvalidReason;
   /** `inbound_clip_in_use`: the account's live routes that play the recording. */

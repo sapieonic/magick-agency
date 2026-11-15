@@ -56,6 +56,13 @@
           "extra_attempts": 3,
           "retry_delay": true
         }
+      },
+      {
+        "code": "promised_payment",
+        "label": "Promised to pay on a date",
+        "is_success": true,
+        "requires_promise": true,
+        "promise_follow_up_days": 3
       }
     ],
     "wrapup_seconds": 30,

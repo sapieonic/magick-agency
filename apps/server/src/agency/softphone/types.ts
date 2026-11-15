@@ -18,6 +18,7 @@ import type {
   AgencySoftphoneErrorCode,
 } from '@magick-agency/contracts/agency';
 import type { CallFieldIssue } from './call-fields.js';
+import { promiseRefusalMessage } from '../disposition.js';
 
 /** Who is acting, and where, as the public API layer resolved and vouched for it. */
 export interface SoftphoneActor {
@@ -114,7 +115,8 @@ export function softphoneRefusalMessage(refusal: SoftphoneRefusal): string {
     case 'carrier_account_unavailable': return 'The carrier account this caller ID is on cannot place calls: it needs attention. Nothing was dialled. Contact support, or use another caller ID.';
     case 'call_not_found': return 'Call not found.';
     case 'call_settled': return 'This call\'s outcome is already saved or has lapsed.';
-    case 'disposition_invalid': return 'That outcome cannot be saved as submitted.';
+    // A promise refusal says what to do (PT8): an app that predates the promise shows it as it is.
+    case 'disposition_invalid': return promiseRefusalMessage(refusal.reason) ?? 'That outcome cannot be saved as submitted.';
     default: return 'The request was refused.';
   }
 }

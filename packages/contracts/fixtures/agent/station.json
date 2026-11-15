@@ -128,6 +128,66 @@
       ]
     }
   },
+  "reserved_promise": {
+    "event": "reserved",
+    "attempt": {
+      "attempt_id": "7c2d3e4f-5061-4b72-8c83-a4b5c6d7e8f9",
+      "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "campaign_name": "Q4 Renewals — Pune",
+      "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+      "phone_e164": "+918765432109",
+      "caller_id": "+912071234567",
+      "attempt_number": 4,
+      "context": {
+        "Name": "Rahul Deshpande",
+        "Policy No": "PL-2023-099120",
+        "Renewal Due": "2026-11-04",
+        "Premium (INR)": 22100.5,
+        "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+        "Opted in": true,
+        "Alt phone": null
+      },
+      "prior_attempts": [
+        {
+          "attempt_number": 3,
+          "outcome": "connected",
+          "disposition_code": "promised_payment",
+          "notes": "Salary on the 15th.",
+          "promise_date": "2026-11-18",
+          "promise_amount": "12500.00",
+          "ended_at": "2026-11-10T09:40:11.000Z",
+          "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+          "campaign_name": "Q4 Renewals — Pune",
+          "dialed_at": "2026-11-10T09:37:58.300Z"
+        },
+        {
+          "attempt_number": 2,
+          "outcome": "connected",
+          "disposition_code": "callback",
+          "notes": "Asked us to call after 6pm.",
+          "ended_at": "2026-10-31T09:40:11.000Z",
+          "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+          "campaign_name": "Q4 Renewals — Pune",
+          "dialed_at": "2026-10-31T09:37:58.300Z"
+        },
+        {
+          "attempt_number": 1,
+          "outcome": null,
+          "disposition_code": "voicemail",
+          "notes": null,
+          "ended_at": null,
+          "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
+          "campaign_name": "Q3 Winback",
+          "dialed_at": null
+        }
+      ],
+      "promise": {
+        "date": "2026-11-18",
+        "amount": "12500.00",
+        "state": "due_today"
+      }
+    }
+  },
   "countdown": {
     "event": "countdown",
     "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",

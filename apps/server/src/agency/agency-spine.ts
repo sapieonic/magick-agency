@@ -52,6 +52,8 @@ export const CONTACT_QUERY_PARAMS = [
   'state', 'suppressed_reason', 'last_outcome', 'last_disposition', 'assigned_to', 'phone', 'from', 'to',
   // The insights roster's buckets (WS F): one waiting bucket, and attempted (dials_placed > 0).
   'waiting', 'attempted',
+  // Promise to pay (PT7): contacts holding a promise, or in a promise state.
+  'promise',
 ] as const;
 
 export const PAGING_QUERY_PARAMS = ['cursor', 'limit'] as const;
@@ -190,6 +192,9 @@ export interface SpineAttemptRow {
   auto_disposition_code?: string | null;
   notes: string | null;
   callback_at: string | null;
+  /** Promise to pay (PT1); absent from a handler that predates it. */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   dispositioned_by_user_id: string | null;
   dispositioned_at: string | null;
   dispositioned_on_behalf: boolean;
@@ -223,6 +228,8 @@ export interface SpineContactRow {
    * {@link enrichContactOwnerNames}); null for the pool or an id this tenant cannot name.
    */
   assigned_to_name?: string | null;
+  /** Promise to pay (PT6, PT7): the latest promise; absent from a handler that predates it. */
+  promise?: { date: string; amount: string | null; state: string } | null;
   created_at: string;
   updated_at: string;
 }
@@ -394,6 +401,10 @@ export const ATTEMPT_CSV_COLUMNS = [
   // consumer reading by position keeps its columns. Its own column, never merged into
   // `disposition_code`: that one stays what a person recorded.
   'auto_disposition_code',
+  // Promise to pay (PT12), appended: the promised date (`YYYY-MM-DD`, the customer's calendar)
+  // and amount (two places, no currency) recorded with this attempt's outcome.
+  'promise_date',
+  'promise_amount',
 ] as const;
 
 export const CONTACT_CSV_COLUMNS = [
@@ -416,6 +427,11 @@ export const CONTACT_CSV_COLUMNS = [
   'assigned_user_id',
   'assigned_to',
   'assigned_at',
+  // Promise to pay (PT12), appended: the contact's latest promise and where it stands
+  // (`upcoming`, `due_today`, `missed`, `followed_up`; `missed` means no later outcome, not unpaid).
+  'promise_date',
+  'promise_amount',
+  'promise_state',
 ] as const;
 
 /** `null`/`undefined` → an empty cell; everything else → its string form. */
@@ -439,6 +455,7 @@ export function attemptCsvRow(row: SpineAttemptRow): string {
     cell(row.created_at), cell(row.dialed_at), cell(row.answered_at), cell(row.bridged_at),
     cell(row.ended_at), cell(row.talk_seconds), cell(row.wrapup_seconds),
     cell(row.webrtc_call_id), cell(row.auto_disposition_code),
+    cell(row.promise_date), cell(row.promise_amount),
   ]);
 }
 
@@ -453,6 +470,7 @@ export function contactCsvRow(row: SpineContactRow): string {
     cell(row.suppressed_reason), cell(row.next_attempt_at), cell(row.timezone),
     cell(row.csv_line_number), cell(row.created_at), cell(row.updated_at),
     cell(row.assigned_user_id), cell(row.assigned_to_name), cell(row.assigned_at),
+    cell(row.promise?.date), cell(row.promise?.amount), cell(row.promise?.state),
   ]);
 }
 

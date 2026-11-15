@@ -93,6 +93,8 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'ring_push_types': RingPushType.values,
   'ring_off_reasons': RingOffReason.values,
   'away_ring_refusal_codes': AwayRingRefusalCode.values,
+  // Promise to pay (`agency/promise.ts`).
+  'promise_states': PromiseState.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the

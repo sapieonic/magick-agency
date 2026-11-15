@@ -143,6 +143,7 @@ const STATION = {
   ready_after_away_ring_return: fits<Core.AgencyStationReadyFrame>()(station.ready_after_away_ring_return),
   reserved: fits<Core.AgencyStationReservedFrame>()(station.reserved),
   reserved_redial: fits<Core.AgencyStationReservedFrame>()(station.reserved_redial),
+  reserved_promise: fits<Core.AgencyStationReservedFrame>()(station.reserved_promise),
   countdown: fits<Core.AgencyStationCountdownFrame>()(station.countdown),
   bridged: fits<Core.AgencyStationBridgedFrame>()(station.bridged),
   released_completed: fits<Core.AgencyStationReleasedFrame>()(station.released_completed),

@@ -63,6 +63,7 @@ const log = createChildLogger({ component: 'agency-repository' });
 const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_number, c.phone_e164, a.caller_id,
              s.agent_user_id, a.reserved_agent_id, a.state, a.outcome,
              a.disposition_code, a.auto_disposition_code, a.notes, a.callback_at,
+             a.promise_date::text AS promise_date, a.promise_amount,
              a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
              a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
              a.talk_seconds, a.wrapup_seconds, a.redial_of_attempt_id, a.redial_number, a.created_at`;
@@ -519,7 +520,9 @@ export class AgencyAttemptRepository {
    *
    * `notes` and `callback_at` are last-write-wins on a replay rather than
    * COALESCEd: an agent correcting their own note has to be able to shorten or
-   * clear it, and COALESCE would make an empty string un-writable.
+   * clear it, and COALESCE would make an empty string un-writable. The promise to pay
+   * (`promise_date`, `promise_amount`, PT1) is last-write-wins for the same reason: a
+   * same-code replay that corrects the date is an honest correction.
    */
   async recordDisposition(input: {
     attemptId: string;
@@ -528,6 +531,9 @@ export class AgencyAttemptRepository {
     callbackAt: Date | null;
     actorUserId: string;
     onBehalf: boolean;
+    /** `YYYY-MM-DD` and the amount's two-place string; absent or null: no promise. */
+    promiseDate?: string | null;
+    promiseAmount?: string | null;
   },
   /**
    * Run on the caller's client (decision B8) so the DNC route's optional disposition
@@ -542,6 +548,8 @@ export class AgencyAttemptRepository {
               callback_at = $4,
               dispositioned_by_user_id = $5,
               dispositioned_on_behalf = $6,
+              promise_date = $7::date,
+              promise_amount = $8::numeric,
               dispositioned_at = now(),
               updated_at = now()
         WHERE id = $1
@@ -550,6 +558,7 @@ export class AgencyAttemptRepository {
       [
         input.attemptId, input.dispositionCode, input.notes,
         input.callbackAt, input.actorUserId, input.onBehalf,
+        input.promiseDate ?? null, input.promiseAmount ?? null,
       ],
     );
     return rows[0] ?? null;

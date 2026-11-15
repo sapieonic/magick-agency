@@ -1438,6 +1438,26 @@ stays (0035 keeps it for rollback). **Down** re-creates them as 0001 defined the
 `test/integration/db/drop-duplicate-indexes-migration.test.ts` (gone, each lookup's plan on its
 covering index, down then up) and the down → up inventory suite.
 
+### 0041 — `migrations/0041_promise_to_pay.sql`
+
+Promise to pay (decisions PT1–PT14). `agency_call_attempts`, `agency_manual_calls` and
+`agency_inbound_calls` each get **`promise_date DATE`** and **`promise_amount NUMERIC(14,2)`**
+(exact, no currency), recorded with the call's outcome; `ck_<table>_promise`: a promise needs an
+outcome, an amount needs a date and is not negative. `agency_contacts` carries its **latest**
+promise, denormalised so the Contacts list reads it without the calls: `promise_date`,
+`promise_amount`, **`promise_due_from` / `promise_due_until`** (the promised day's start and the
+next day's start in the customer's zone, computed by the server, so the list's state is a
+comparison of instants with no zone arithmetic in SQL), **`promise_call_at`** (when the recording
+call started: a later call's promise replaces it, the same call's replay corrects it) and
+**`promise_followed_up_at`** (a later call's outcome on or after the day: "followed up", else
+"missed"); `ck_agency_contact_promise` keeps them all-or-none. All four CHECKs are added NOT VALID
+(new NULL columns; enforced on writes, no scan). **`idx_agency_contacts_promise`** `(campaign_id,
+promise_date) WHERE promise_date IS NOT NULL` serves the list's promise filter and order, the size
+of the promises rather than the roster (`IF NOT EXISTS`). **Down** drops the index, CHECKs and
+columns (the promises are lost; outcomes stay). **Tests**:
+`test/integration/db/promise-to-pay-migration.test.ts` (column types, each CHECK, NOT VALID, the
+index definition, down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

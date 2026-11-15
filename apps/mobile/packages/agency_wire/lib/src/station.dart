@@ -1053,6 +1053,7 @@ class ReservedAttempt {
     required Map<String, Object?> context,
     required List<PriorAttempt> priorAttempts,
     this.redial,
+    this.promise,
   }) : context = frozenMap(context),
        priorAttempts = List.unmodifiable(priorAttempts);
 
@@ -1067,6 +1068,7 @@ class ReservedAttempt {
     context: j.obj('context'),
     priorAttempts: j.list('prior_attempts', PriorAttempt.fromJson),
     redial: RedialInfo.tryFromJson(j['redial']),
+    promise: ContactPromise.tryFromJson(j['promise']),
   );
 
   final String attemptId;
@@ -1094,6 +1096,10 @@ class ReservedAttempt {
   /// null on a call the pacing engine placed.
   final RedialInfo? redial;
 
+  /// The contact's latest promise to pay (PT9), shown as the agent reaches
+  /// them; null when there is none (or from a server that predates it).
+  final ContactPromise? promise;
+
   @override
   bool operator ==(Object other) =>
       other is ReservedAttempt &&
@@ -1107,7 +1113,8 @@ class ReservedAttempt {
       other.attemptNumber == attemptNumber &&
       jsonEquals(other.context, context) &&
       listEquals(other.priorAttempts, priorAttempts) &&
-      other.redial == redial;
+      other.redial == redial &&
+      other.promise == promise;
 
   @override
   int get hashCode => Object.hash(
@@ -1121,7 +1128,49 @@ class ReservedAttempt {
     jsonHash(context),
     listHash(priorAttempts),
     redial,
+    promise,
   );
+}
+
+/// A contact's latest promise to pay (PT6, PT7).
+///
+/// Contract: `AgencyContactPromise` (`agency/promise.ts`).
+@immutable
+final class ContactPromise {
+  ContactPromise({required this.date, this.amount, required this.state, String? stateRaw})
+    : stateRaw = stateRaw ?? state.wire;
+
+  /// Null when [raw] is absent or not an object, or lacks a date: an older
+  /// server, or no promise.
+  static ContactPromise? tryFromJson(Object? raw) {
+    if (raw is! Map<String, Object?>) return null;
+    final date = raw['date'];
+    if (date is! String || date.isEmpty) return null;
+    final amount = raw['amount'];
+    final state = raw['state'];
+    return ContactPromise(
+      date: date,
+      amount: amount is String && amount.isNotEmpty ? amount : null,
+      state: PromiseState.fromWire(state is String ? state : null),
+      stateRaw: state is String ? state : null,
+    );
+  }
+
+  /// The promised payment date, `YYYY-MM-DD` on the customer's calendar.
+  final String date;
+
+  /// A two-place decimal string (`"12500.00"`), or null when none was given.
+  /// No currency: none is configured.
+  final String? amount;
+  final PromiseState state;
+  final String? stateRaw;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ContactPromise && other.date == date && other.amount == amount && other.stateRaw == stateRaw;
+
+  @override
+  int get hashCode => Object.hash(date, amount, stateRaw);
 }
 
 /// A wrap-up redial, as the reserved (or active) attempt carries it: the
@@ -1186,6 +1235,7 @@ final class ActiveAttempt extends ReservedAttempt {
     required super.context,
     required super.priorAttempts,
     super.redial,
+    super.promise,
     required this.bridgedAt,
     required this.state,
     String? stateRaw,
@@ -1205,6 +1255,7 @@ final class ActiveAttempt extends ReservedAttempt {
       context: base.context,
       priorAttempts: base.priorAttempts,
       redial: base.redial,
+      promise: base.promise,
       bridgedAt: j.timeOrNull('bridged_at'),
       state: AttemptState.fromWire(state),
       stateRaw: state,
@@ -1242,6 +1293,8 @@ final class PriorAttempt {
     required this.campaignId,
     required this.campaignName,
     this.dialedAt,
+    this.promiseDate,
+    this.promiseAmount,
   }) : outcomeRaw = outcomeRaw ?? outcome?.wire;
 
   factory PriorAttempt.fromJson(Map<String, Object?> j) {
@@ -1256,6 +1309,8 @@ final class PriorAttempt {
       campaignId: j.str('campaign_id'),
       campaignName: j.str('campaign_name'),
       dialedAt: j.timeOrNull('dialed_at'),
+      promiseDate: j.strOrNull('promise_date'),
+      promiseAmount: j.strOrNull('promise_amount'),
     );
   }
 
@@ -1269,6 +1324,11 @@ final class PriorAttempt {
   final String campaignName;
   final DateTime? dialedAt;
 
+  /// The promise to pay recorded on this attempt (PT9): `YYYY-MM-DD` and a
+  /// two-place decimal string; null without one.
+  final String? promiseDate;
+  final String? promiseAmount;
+
   @override
   bool operator ==(Object other) =>
       other is PriorAttempt &&
@@ -1279,11 +1339,23 @@ final class PriorAttempt {
       other.endedAt == endedAt &&
       other.campaignId == campaignId &&
       other.campaignName == campaignName &&
-      other.dialedAt == dialedAt;
+      other.dialedAt == dialedAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount;
 
   @override
-  int get hashCode =>
-      Object.hash(attemptNumber, outcomeRaw, dispositionCode, notes, endedAt, campaignId, campaignName, dialedAt);
+  int get hashCode => Object.hash(
+    attemptNumber,
+    outcomeRaw,
+    dispositionCode,
+    notes,
+    endedAt,
+    campaignId,
+    campaignName,
+    dialedAt,
+    promiseDate,
+    promiseAmount,
+  );
 }
 
 /// A `released` the socket was away for. History, not a live transition: do
