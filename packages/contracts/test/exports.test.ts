@@ -14,6 +14,8 @@ import {
   AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
   AGENCY_WS_MAX_MESSAGE_BYTES,
   AGENCY_STATION_CLOSE,
+  AGENCY_DIAL_ACTIVITY_COPY,
+  AGENCY_DIAL_ACTIVITY_TIMING,
   AGENCY_CLIENT_KINDS,
   AGENCY_STATION_MEDIA_FORMATS,
   DEVICE_AWAY_BREAK_REASON,
@@ -121,6 +123,19 @@ describe('package surface', () => {
     });
     // The console layer re-exports the same object rather than a copy that could drop a code.
     expect(AgencyApi.AGENCY_STATION_CLOSE).toBe(AGENCY_STATION_CLOSE);
+  });
+
+  it('declares the hidden dials\' copy and gap hold once (SNAPSHOT, written out by hand)', () => {
+    expect(AGENCY_DIAL_ACTIVITY_COPY).toEqual({
+      headline: 'Dialling a customer\u2026',
+      hint: 'You\u2019ll be connected as soon as they answer.',
+      unanswered_one: 'No answer from the last number',
+      unanswered_many: 'No answer from the last {count} numbers',
+    });
+    expect(AGENCY_DIAL_ACTIVITY_TIMING).toEqual({ GAP_HOLD_MS: 4000 });
+    // The console layer re-exports the same objects rather than copies.
+    expect(AgencyApi.AGENCY_DIAL_ACTIVITY_COPY).toBe(AGENCY_DIAL_ACTIVITY_COPY);
+    expect(AgencyApi.AGENCY_DIAL_ACTIVITY_TIMING).toBe(AGENCY_DIAL_ACTIVITY_TIMING);
   });
 
   it('declares the station media formats and the alaw8 framing once (SNAPSHOT, written out by hand)', () => {

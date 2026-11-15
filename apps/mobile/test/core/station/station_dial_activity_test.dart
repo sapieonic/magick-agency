@@ -163,6 +163,34 @@ void main() {
       });
     });
 
+    test('the last due dial rings out: the queue\'s nothing-due ends the hold at once; a ringing dial still outranks it', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        // A strict or preferred campaign: the tick that dials for the agent has stated something due.
+        app.frame({'event': 'queue', 'campaign_id': 'camp-1', 'due': true, 'reason': null, 'next_due_at': null});
+        // The server's order: the dial's close, the release's `agent_state`, then the next
+        // pacing tick's `queue` frame, which says nothing is left.
+        _rangOut(app, before: 0);
+        expect(app.view!.dialActivity, const DialActivityView(dialling: true, unansweredInARow: 1));
+        expect(_holds(async), hasLength(1));
+        app.frame({'event': 'queue', 'campaign_id': 'camp-1', 'due': false, 'reason': 'queue_empty', 'next_due_at': null});
+
+        // At once, not after the hold: nothing is being dialled and no call is coming.
+        expect(_holds(async), isEmpty);
+        expect(app.view!.dialActivity, const DialActivityView(dialling: false, unansweredInARow: 1));
+        expect(app.view!.queue!.nothingDue, isTrue);
+        async.elapse(StationController.dialGapHold);
+        expect(app.view!.dialActivity, const DialActivityView(dialling: false, unansweredInARow: 1));
+
+        // Something falls due and a dial rings: "dialling" again.
+        app.frame({'event': 'queue', 'campaign_id': 'camp-1', 'due': true, 'reason': null, 'next_due_at': null});
+        _dial(app, ringing: true, unanswered: 1);
+        expect(app.view!.dialActivity, const DialActivityView(dialling: true, unansweredInARow: 1));
+        app.dispose();
+      });
+    });
+
     test('answered: reserved clears it at once, and the next dial counts from 0', () {
       fakeAsync((async) {
         final app = App(async)..start();

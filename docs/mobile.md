@@ -310,9 +310,16 @@ announced, and a reconnect mid-ring gets `ready` with `state: available` and the
 (the server said `reserved` before, which showed "A call is coming through"). The controller holds
 "Dialling…" for 4 s after a dial ends (`dialGapHold`) so the screen does not flick to "Waiting for
 a call" between one dial and the next; the hold drops at once on `reserved`, when the agent leaves
-available, when the campaign stops dialling or when the socket drops. Any `reserved` clears it,
-because the server resets its count there and sends nothing to say so. A ringing dial outranks
-"Nothing due now"; a paused campaign keeps its copy. It names no contact. An early-binding account
+available, when the campaign stops dialling, when the socket drops, and when the agent's `queue`
+states nothing due (one rule, `_dropDialGapHoldIfOver`). That last one is a strict or preferred
+campaign's last due contact ringing out: the server sends `dial_activity {ringing: false}`, then
+`agent_state available`, then the next pacing tick's `queue {due: false}`, and the screen says
+"Nothing due now" at once rather than "Dialling…" for the rest of the hold. Any `reserved` clears
+it, because the server resets its count there and sends nothing to say so. A ringing dial outranks
+"Nothing due now"; a paused campaign keeps its copy. The words and the hold are the contract's
+(`AGENCY_DIAL_ACTIVITY_COPY`, `AGENCY_DIAL_ACTIVITY_TIMING`), which the console imports;
+`test/features/station/dial_activity_copy_test.dart` holds `StationCopy` and `dialGapHold` to
+them through `labels.json` and `literals.json`. It names no contact. An early-binding account
 is never sent the frame and its screen is unchanged; the app does not know which kind it is on.
 The waiting hint no longer says the customer's details appear before they pick up, which is false
 under late binding.
@@ -1147,7 +1154,7 @@ packages/
 - **Wire types.** `agency_wire` is written by hand against `packages/contracts`. Drift is caught from both sides:
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
   - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (62: the soft phone's, customer history's and inbound calls' included, with `station_capabilities`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
-  - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling".
+  - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`, and the hidden dials' `AGENCY_DIAL_ACTIVITY_COPY` with its `{count}` placeholder); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling", and `dial_activity_copy_test.dart` holds the waiting screen's dialling words, and `dialGapHold` to `literals.json`'s `dial_activity_timing`.
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
   - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
 

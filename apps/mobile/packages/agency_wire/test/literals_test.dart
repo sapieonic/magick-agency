@@ -177,6 +177,9 @@ void main() {
     expect(vocabularies.keys.toSet(), {
       ...dartVocabularies.keys,
       'station_close_codes',
+      // Not a vocabulary: the hidden dials' gap hold, which the app's
+      // `dial_activity_copy_test.dart` holds `StationController.dialGapHold` to.
+      'dial_activity_timing',
     }, reason: 'a vocabulary was added to tooling/contracts-literals.mjs: map it to a Dart enum here');
   });
 

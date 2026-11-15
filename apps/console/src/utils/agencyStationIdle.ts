@@ -1,3 +1,4 @@
+import { AGENCY_DIAL_ACTIVITY_COPY } from '../types/agency';
 import type { AgencyDialActivity, AgencyQueueIdleReason, AgencyQueueState } from '../types/agency';
 
 /**
@@ -28,10 +29,13 @@ export const IDLE_PAUSED_HINT =
  * was ringing, nothing was due, or something was stuck. These say a dial is happening and how
  * the recent ones went, from `dial_activity`. Never the number, the name or anything else
  * about the contact: the agent is shown the call only if it is answered.
+ *
+ * The words are the contract's `AGENCY_DIAL_ACTIVITY_COPY`, which the agent app's tests hold
+ * its own copy to (through `fixtures/agent/labels.json`), so the two clients say the same.
  */
-export const DIALLING_HEADLINE = 'Dialling a customer…';
+export const DIALLING_HEADLINE: string = AGENCY_DIAL_ACTIVITY_COPY.headline;
 
-export const DIALLING_HINT = 'You’ll be connected as soon as they answer.';
+export const DIALLING_HINT: string = AGENCY_DIAL_ACTIVITY_COPY.hint;
 
 /**
  * What the waiting agent is told while the campaign dials: that a hidden dial is ringing for
@@ -63,8 +67,8 @@ export function parseDialActivity(value: unknown): AgencyDialActivity | null {
 export function unansweredLine(unansweredInARow: number): string | null {
   if (!(unansweredInARow > 0)) return null;
   return unansweredInARow === 1
-    ? 'No answer from the last number'
-    : `No answer from the last ${unansweredInARow} numbers`;
+    ? AGENCY_DIAL_ACTIVITY_COPY.unanswered_one
+    : AGENCY_DIAL_ACTIVITY_COPY.unanswered_many.replace('{count}', String(unansweredInARow));
 }
 
 export const IDLE_GUIDE_HEADING = 'When a call connects';

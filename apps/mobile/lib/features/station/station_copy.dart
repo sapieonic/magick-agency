@@ -56,18 +56,24 @@ abstract final class StationCopy {
   static const pausedHint = 'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
   static String availableFor(String clock) => 'Available for $clock';
 
-  // ── Hidden dials (late binding): the console's `agencyStationIdle.ts` ──
+  // ── Hidden dials (late binding) ──
   // A dial ringing for this agent that they are shown only if it is answered. Never the
-  // number, the name or anything else about the contact.
+  // number, the name or anything else about the contact. The contract's
+  // `AGENCY_DIAL_ACTIVITY_COPY`, which the console imports: `dial_activity_copy_test.dart`
+  // holds these to `packages/contracts/fixtures/agent/labels.json`, word for word.
   static const diallingHeadline = 'Dialling a customer…';
   static const diallingHint = 'You’ll be connected as soon as they answer.';
+  static const unansweredOne = 'No answer from the last number';
+
+  /// More than one unanswered; `{count}` is the number, as the contract writes it.
+  static const unansweredMany = 'No answer from the last {count} numbers';
 
   /// The line under the headline after hidden dials went unanswered; null for none.
   static String? unansweredLine(int unansweredInARow) => unansweredInARow <= 0
       ? null
       : unansweredInARow == 1
-          ? 'No answer from the last number'
-          : 'No answer from the last $unansweredInARow numbers';
+          ? unansweredOne
+          : unansweredMany.replaceAll('{count}', '$unansweredInARow');
 
   // ── Nothing due (contact assignment: a strict or preferred campaign) ──
   static const nothingDueHeadline = 'Nothing due now';

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type * as Core from '../src/agency';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
-import { buildLabels, buildLiterals, type LabelMap } from '../../../tooling/contracts-literals.mjs';
+import { braceBody, buildLabels, buildLiterals, type LabelMap } from '../../../tooling/contracts-literals.mjs';
+import { AGENCY_DIAL_ACTIVITY_COPY, AGENCY_DIAL_ACTIVITY_TIMING } from '../src/agency';
 import actions from '../fixtures/agent/actions.json';
 import customerHistory from '../fixtures/agent/customer-history.json';
 import inbound from '../fixtures/agent/inbound.json';
@@ -726,6 +727,26 @@ describe('fixtures/agent/labels.json', () => {
     expect(buildLabels()['attempt_state_labels']).toMatchObject({ labels: { dialing: 'Dialling', bridged: 'On the call' } });
     expect(Object.keys((buildLabels()['attempt_outcome_labels'] as LabelMap).labels)).toHaveLength(10);
   });
+
+  it('reads the hidden dials\' copy whole: the `{count}` placeholder, the ’ and the …', () => {
+    // A brace inside a value must not end the object (the extractor brace-matches outside strings).
+    expect(buildLabels()['dial_activity_copy']).toEqual({
+      source: 'packages/contracts/src/agency/station.ts#AGENCY_DIAL_ACTIVITY_COPY',
+      labels: { ...AGENCY_DIAL_ACTIVITY_COPY },
+    });
+    expect((buildLabels()['dial_activity_copy'] as LabelMap).labels).toMatchObject({
+      headline: 'Dialling a customer\u2026',
+      hint: 'You\u2019ll be connected as soon as they answer.',
+      unanswered_many: 'No answer from the last {count} numbers',
+    });
+  });
+
+  it('brace-matches an object outside its strings', () => {
+    const text = "{ a: 'x {n} y', b: '}', c: { d: 1 } } as const";
+    const close = text.lastIndexOf('}');
+    expect(braceBody(text, 1)).toEqual({ body: text.slice(1, close), end: close + 1 });
+    expect(braceBody("{ a: 'never closed }", 1)).toBeNull();
+  });
 });
 
 describe('fixtures/agent/literals.json', () => {
@@ -743,6 +764,13 @@ describe('fixtures/agent/literals.json', () => {
         INVALID_UPGRADE: 1008,
         INTERNAL_ERROR: 1011,
       },
+    });
+  });
+
+  it('extracts the hidden dials\' gap hold the app is held to', () => {
+    expect(buildLiterals()['dial_activity_timing']).toEqual({
+      source: 'packages/contracts/src/agency/station.ts#AGENCY_DIAL_ACTIVITY_TIMING',
+      values: { ...AGENCY_DIAL_ACTIVITY_TIMING },
     });
   });
 });

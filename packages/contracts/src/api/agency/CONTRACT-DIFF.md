@@ -80,7 +80,8 @@ package root.
   `AgencyActiveAttempt`, `AgencyMissedRelease`, `AgencyReservedAttempt`, `AgencyPriorAttempt`, and
   the media / reserved / countdown / bridged / released / agent_state / campaign_state / pong /
   error / bridge_ended frames; contact assignment's `queue` frame with `AgencyQueueState` and
-  `AgencyQueueIdleReason`; late binding's `dial_activity` frame with `AgencyDialActivity`; for the
+  `AgencyQueueIdleReason`; late binding's `dial_activity` frame with `AgencyDialActivity` and the
+  clients' words and gap hold for it (`AGENCY_DIAL_ACTIVITY_COPY`, `AGENCY_DIAL_ACTIVITY_TIMING`); for the
   wrap-up redial, `AgencyRedialInfo`, `AgencyRedialResponse`
   and the constants `AGENCY_WRAPUP_REDIAL_LIMIT` and `AGENCY_REDIALED_DISPOSITION_CODE`
   (`AgencyRedialRequest` is not re-exported: see §5).

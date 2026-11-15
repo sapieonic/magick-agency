@@ -434,6 +434,12 @@ every account the caller belongs to (CH2) where every internal handler is single
   inbound or soft-phone call does not reset it). `ready` carries the same state at a reconnect,
   and says `available`, not `reserved`, while only a hidden dial holds the agent, as they were
   last told. Early binding and wrap-up redials never send it, so the clients need not know the flag.
+  Both clients say it in the contract's words (`AGENCY_DIAL_ACTIVITY_COPY`) and hold "Dialling a
+  customer…" over the gap between dials for the contract's `AGENCY_DIAL_ACTIVITY_TIMING.GAP_HOLD_MS`;
+  the console imports both, the app is held to them through `fixtures/agent/` (`labels.json`,
+  `literals.json`). The hold bridges a gap to the next dial only: the agent's `queue` stating nothing
+  due (sent after the release's `agent_state`, from the next pacing tick) ends it, and a ringing dial
+  still outranks the queue.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);

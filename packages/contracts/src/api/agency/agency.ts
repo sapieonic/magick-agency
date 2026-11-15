@@ -376,6 +376,12 @@ export type AgencyStationServerFrame =
 export { AGENCY_STATION_CLOSE } from '../../agency';
 
 /**
+ * The words and the gap hold for late binding's hidden dials, declared once in the dialer
+ * contract so the console and (through `fixtures/agent/`) the agent app say the same.
+ */
+export { AGENCY_DIAL_ACTIVITY_COPY, AGENCY_DIAL_ACTIVITY_TIMING } from '../../agency';
+
+/**
  * The reserved break codes (the soft phone's, the mobile app's pauses) and their
  * labels, declared once in the dialer contract: a console renders a reserved code
  * from these, never from a campaign catalog, which lists none of them.

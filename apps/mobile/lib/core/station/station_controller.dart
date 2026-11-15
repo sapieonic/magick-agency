@@ -184,7 +184,8 @@ class StationController extends Notifier<StationView?>
   /// Late binding: "Dialling a customer…" held through the gap after a hidden
   /// dial ends unanswered ([dialGapHold]), while it runs. Dropped at once by a
   /// `reserved`, the next dial ringing, the agent leaving available, the
-  /// campaign stopping or the socket dropping ([_dropDialGapHoldIfOver]).
+  /// campaign stopping, the socket dropping or the queue stating nothing due
+  /// ([_dropDialGapHoldIfOver]).
   Timer? _dialGapTimer;
 
   /// The catalog rebuilt from a refusal's `allowed_codes`, for this call only.
@@ -2929,8 +2930,13 @@ class StationController extends Notifier<StationView?>
   /// unanswered (late binding). The server sends the next dial's
   /// `dial_activity` about 0.3–2 s after the last one ended; without the hold
   /// the waiting screen (and its live region) would flick to "Waiting for a
-  /// call" and back between every pair of dials. The console's `DIAL_GAP_HOLD_MS`.
-  static const dialGapHold = Duration(seconds: 4);
+  /// call" and back between every pair of dials. It bridges the gap to the
+  /// next dial only: a `queue` stating nothing due ends it (no next dial is
+  /// coming), as [_dropDialGapHoldIfOver] says. The contract's
+  /// `AGENCY_DIAL_ACTIVITY_TIMING.GAP_HOLD_MS` (the console's
+  /// `DIAL_GAP_HOLD_MS`); `dial_activity_copy_test.dart` holds it to
+  /// `packages/contracts/fixtures/agent/literals.json`.
+  static const dialGapHold = Duration(milliseconds: 4000);
 
   void _startDialGapHold() {
     _dialGapTimer?.cancel();
@@ -2945,13 +2951,17 @@ class StationController extends Notifier<StationView?>
     _dialGapTimer = null;
   }
 
-  /// The hold belongs to the gap between two hidden dials while the agent waits: anything
-  /// else (a `reserved`, which clears the activity; the next dial ringing; leaving the slot,
-  /// [StationState.dialSlotOpen]) ends it at once.
+  /// The hold belongs to the gap between two hidden dials while the agent waits for the
+  /// next one: anything else (a `reserved`, which clears the activity; the next dial
+  /// ringing; leaving the slot, [StationState.dialSlotOpen]; the agent's `queue` stating
+  /// nothing due, so no next dial is coming) ends it at once. One rule, run after every
+  /// change, so a hold started on a dial that ends while nothing is due is dropped before
+  /// any view shows it.
   void _dropDialGapHoldIfOver() {
     if (_dialGapTimer == null) return;
     final a = _station.dialActivity;
-    if (a == null || a.ringing || !_station.dialSlotOpen) _cancelDialGapHold();
+    final nothingDue = _station.queue?.due == false;
+    if (a == null || a.ringing || !_station.dialSlotOpen || nothingDue) _cancelDialGapHold();
   }
 
   void _setInboundNotice(String? text) {

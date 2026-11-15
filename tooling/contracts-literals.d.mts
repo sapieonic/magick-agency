@@ -11,6 +11,7 @@ export type LiteralsDocument = { _comment: string } & Record<string, LiteralVoca
 
 export const LITERALS_PATH: string;
 export function stripComments(text: string): string;
+export function braceBody(text: string, from: number): { body: string; end: number } | null;
 export function buildLiterals(): LiteralsDocument;
 export function renderLiterals(doc?: LiteralsDocument): string;
 

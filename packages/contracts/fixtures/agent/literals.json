@@ -126,6 +126,12 @@
       "INTERNAL_ERROR": 1011
     }
   },
+  "dial_activity_timing": {
+    "source": "packages/contracts/src/agency/station.ts#AGENCY_DIAL_ACTIVITY_TIMING",
+    "values": {
+      "GAP_HOLD_MS": 4000
+    }
+  },
   "station_server_events": {
     "source": "packages/contracts/src/agency/station.ts#AgencyStationServerFrame",
     "values": [

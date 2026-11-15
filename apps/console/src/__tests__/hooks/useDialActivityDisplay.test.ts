@@ -9,13 +9,15 @@ import type { AgencyDialActivity } from '../../types/agency';
  * next, and is dropped at once by anything that makes it untrue.
  */
 
-type Props = { activity: AgencyDialActivity | null; eligible: boolean };
+type Props = { activity: AgencyDialActivity | null; eligible: boolean; nothingDue?: boolean };
 
 const ringing = (n: number): AgencyDialActivity => ({ ringing: true, unanswered_in_a_row: n });
 const ended = (n: number): AgencyDialActivity => ({ ringing: false, unanswered_in_a_row: n });
 
 function mount(initial: Props) {
-  return renderHook((p: Props) => useDialActivityDisplay(p.activity, p.eligible), { initialProps: initial });
+  return renderHook((p: Props) => useDialActivityDisplay(p.activity, p.eligible, p.nothingDue ?? false), {
+    initialProps: initial,
+  });
 }
 
 describe('useDialActivityDisplay', () => {
@@ -78,6 +80,31 @@ describe('useDialActivityDisplay', () => {
     expect(view.result.current).toBeNull();
     view.rerender({ activity: ended(1), eligible: true });
     expect(view.result.current).toEqual({ dialling: false, unansweredInARow: 1 });
+  });
+
+  it('the queue stating nothing due ends the hold at once: no next dial is coming', () => {
+    const view = mount({ activity: ringing(0), eligible: true });
+    view.rerender({ activity: ended(1), eligible: true });
+    expect(view.result.current?.dialling).toBe(true);
+    view.rerender({ activity: ended(1), eligible: true, nothingDue: true });
+    expect(view.result.current).toEqual({ dialling: false, unansweredInARow: 1 });
+    expect(vi.getTimerCount()).toBe(0);
+    // Something falling due again does not bring the hold back.
+    view.rerender({ activity: ended(1), eligible: true, nothingDue: false });
+    expect(view.result.current).toEqual({ dialling: false, unansweredInARow: 1 });
+  });
+
+  it('a dial ending while nothing is due starts no hold', () => {
+    const view = mount({ activity: ringing(0), eligible: true, nothingDue: true });
+    view.rerender({ activity: ended(1), eligible: true, nothingDue: true });
+    expect(view.result.current).toEqual({ dialling: false, unansweredInARow: 1 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a ringing dial outranks the queue: "dialling" while nothing is due', () => {
+    const view = mount({ activity: ended(2), eligible: true, nothingDue: true });
+    view.rerender({ activity: ringing(2), eligible: true, nothingDue: true });
+    expect(view.result.current).toEqual({ dialling: true, unansweredInARow: 2 });
   });
 
   it('a dial ringing while the slot is not shown is not shown', () => {

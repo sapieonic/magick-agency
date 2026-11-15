@@ -17,9 +17,11 @@
  * The contracts package's Vitest suite runs the same comparison (`agent-fixtures.test.ts`),
  * so `pnpm test` fails on a stale file too.
  *
- * It also writes `labels.json` beside it: the contract's label maps the app shows as they are
- * (`ATTEMPT_STATE_LABELS`, …), so the app's tests hold its own copy of those words to the
- * contract's ("Dialling", not "Dialing"). `--check` covers both files.
+ * It also writes `labels.json` beside it: the contract's label maps and copy the app shows as
+ * they are (`ATTEMPT_STATE_LABELS`, …, the hidden dials' `AGENCY_DIAL_ACTIVITY_COPY`), so the
+ * app's tests hold its own copy of those words to the contract's ("Dialling", not "Dialing").
+ * Number objects the app must match go in `literals.json` (`AGENCY_STATION_CLOSE`, the gap hold
+ * `AGENCY_DIAL_ACTIVITY_TIMING`). `--check` covers both files.
  *
  * ── How it reads TypeScript without a TypeScript toolchain ──────────────────
  * No dependencies, deliberately: it reads the source text, strips comments with a small
@@ -116,14 +118,42 @@ function constNumberObject(file, name) {
 }
 
 /**
+ * The text between the `{` just before `from` and its matching `}`, skipping quoted strings, so
+ * a brace inside a value (a `{count}` placeholder) neither opens nor closes anything. Returns
+ * the body and the index just past the closing brace, or null when the braces never balance.
+ */
+export function braceBody(text, from) {
+  let depth = 1;
+  let i = from;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "'" || c === '"' || c === '`') {
+      i++;
+      while (i < text.length && text[i] !== c) i += text[i] === '\\' ? 2 : 1;
+    } else if (c === '{') {
+      depth++;
+    } else if (c === '}' && --depth === 0) {
+      return { body: text.slice(from, i), end: i + 1 };
+    }
+    i++;
+  }
+  return null;
+}
+
+/**
  * `export const NAME = { a: 'A', b: 'B' } satisfies …` (or `as const`) → `{ a: 'A', b: 'B' }`.
- * Every entry must be a bare key and a single-quoted string; anything else throws.
+ * Every entry must be a bare key and a single-quoted string; anything else throws. A value may
+ * hold braces (`'… the last {count} numbers'`): the object is brace-matched outside strings.
  */
 function constStringObject(file, name) {
-  const m = new RegExp(`export const ${name}\\s*(?::[^=]*)?=\\s*\\{([^}]*)\\}\\s*(?:as const|satisfies)`).exec(source(file));
-  if (!m) throw new Error(`const ${name} not found in ${file}`);
+  const text = source(file);
+  const head = new RegExp(`export const ${name}\\s*(?::[^=]*)?=\\s*\\{`).exec(text);
+  const object = head ? braceBody(text, head.index + head[0].length) : null;
+  if (!object || !/^\s*(?:as const|satisfies)/.test(text.slice(object.end))) {
+    throw new Error(`const ${name} not found in ${file}`);
+  }
   const out = {};
-  const rest = m[1].replace(/\s*([a-z_][a-z0-9_]*)\s*:\s*'([^']*)'\s*,?/g, (_, key, value) => {
+  const rest = object.body.replace(/\s*([a-z_][a-z0-9_]*)\s*:\s*'([^']*)'\s*,?/g, (_, key, value) => {
     out[key] = value;
     return '';
   });
@@ -218,6 +248,11 @@ const VOCABULARIES = {
     () => fieldUnion('agency/station.ts', 'AgencyStationBridgeStatusFrame', 'status'),
   ],
   station_close_codes: ['agency/station.ts#AGENCY_STATION_CLOSE', () => constNumberObject('agency/station.ts', 'AGENCY_STATION_CLOSE')],
+  // Late binding's gap hold (ms): the app's `StationController.dialGapHold` is held to it.
+  dial_activity_timing: [
+    'agency/station.ts#AGENCY_DIAL_ACTIVITY_TIMING',
+    () => constNumberObject('agency/station.ts', 'AGENCY_DIAL_ACTIVITY_TIMING'),
+  ],
   station_server_events: [
     'agency/station.ts#AgencyStationServerFrame',
     () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts', 'agency/inbound.ts']),
@@ -424,6 +459,11 @@ const LABELS = {
   attempt_outcome_labels: [
     'api/agency/agency-spine.ts#ATTEMPT_OUTCOME_LABELS',
     () => constStringObject('api/agency/agency-spine.ts', 'ATTEMPT_OUTCOME_LABELS'),
+  ],
+  // Late binding's hidden dials: the station's waiting copy, `{count}` placeholder and all.
+  dial_activity_copy: [
+    'agency/station.ts#AGENCY_DIAL_ACTIVITY_COPY',
+    () => constStringObject('agency/station.ts', 'AGENCY_DIAL_ACTIVITY_COPY'),
   ],
 };
 

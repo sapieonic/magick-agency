@@ -675,6 +675,42 @@ export interface AgencyStationDialActivityFrame extends AgencyDialActivity {
 }
 
 /**
+ * What the console and the agent app say for {@link AgencyDialActivity}, word for word in both:
+ * the headline and hint while a hidden dial rings (or the gap hold runs), and the line under the
+ * headline after hidden dials went unanswered (`unanswered_one` for one, `unanswered_many` for
+ * more, `{count}` replaced by the number). Never anything about the contact.
+ *
+ * Declared here, not in each client, because the app is Dart and cannot import this package:
+ * `tooling/contracts-literals.mjs` copies it into `fixtures/agent/labels.json`
+ * (`dial_activity_copy`), and the app's tests hold its `StationCopy` to that, as the console
+ * imports this object. British English, typographic apostrophe and ellipsis.
+ */
+export const AGENCY_DIAL_ACTIVITY_COPY = {
+  headline: 'Dialling a customer…',
+  hint: 'You’ll be connected as soon as they answer.',
+  unanswered_one: 'No answer from the last number',
+  unanswered_many: 'No answer from the last {count} numbers',
+} as const;
+
+/**
+ * The clients' timing for {@link AgencyDialActivity}. Client-side only: the server sends no frame
+ * for it.
+ *
+ * `GAP_HOLD_MS`: how long "Dialling a customer…" stays up after a hidden dial ends unanswered
+ * while the agent waits. The server sends the next dial's `ringing: true` about 0.3–2 s after the
+ * last one ended, so without a hold the waiting screen (and its live region) would flick to
+ * "Waiting for a call" and back between every pair of dials. The hold bridges that gap and only
+ * that: anything that makes it untrue ends it at once (a `reserved`, the agent leaving
+ * `available`, the campaign stopping, the socket dropping, and the agent's `queue` stating
+ * nothing due, since then no next dial is coming). A ringing dial outranks the queue.
+ *
+ * Copied into `fixtures/agent/literals.json` (`dial_activity_timing`) for the app.
+ */
+export const AGENCY_DIAL_ACTIVITY_TIMING = {
+  GAP_HOLD_MS: 4000,
+} as const;
+
+/**
  * Why the campaign changed state. `status` alone is not enough: `paused` by a
  * supervisor and `paused` by the Phase 4 abandonment guardrail are the same status
  * and very different messages to a human, and they will coexist.

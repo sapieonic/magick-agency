@@ -337,6 +337,38 @@ describe('the waiting screen says when a customer is being dialled', () => {
     expect(headline()).toBe(DIALLING);
   });
 
+  it('the last due dial ringing out ends the gap hold on the queue\'s nothing-due, in the server\'s order', async () => {
+    vi.useFakeTimers();
+    await available();
+    // A strict or preferred campaign: the tick that dials for the agent has stated something due.
+    await emit({ event: 'queue', campaign_id: 'camp-1', due: true });
+    await emit(dial(true, 0));
+    expect(headline()).toBe(DIALLING);
+
+    // The dialer's release (the closing `dial_activity` ahead of the `agent_state` it sends),
+    // then the next pacing tick's `queue` frame: nothing left due.
+    await emit(dial(false, 1), { event: 'agent_state', state: 'available', since: '2026-08-11T10:00:30.000Z' });
+    expect(headline()).toBe(DIALLING); // the gap hold, until the queue says otherwise
+    await emit({ event: 'queue', campaign_id: 'camp-1', due: false, reason: 'queue_empty' });
+
+    // At once, not after DIAL_GAP_HOLD_MS: nothing is being dialled and no call is coming.
+    expect(screen.getByTestId('idle-nothing-due')).toBeTruthy();
+    expect(headline()).toBe('Waiting for a call');
+    expect(within(panel()).queryByText(DIALLING_HINT)).toBeNull();
+    expect(railLabel()).toBe('Waiting for a call');
+    expect(unanswered()).toBeNull();
+    // And it stays that way once the hold would have run out.
+    await act(async () => { await vi.advanceTimersByTimeAsync(DIAL_GAP_HOLD_MS); });
+    expect(screen.getByTestId('idle-nothing-due')).toBeTruthy();
+    expect(railLabel()).toBe('Waiting for a call');
+
+    // A dial that does ring (something fell due) still outranks it.
+    await emit({ event: 'queue', campaign_id: 'camp-1', due: true }, dial(true, 1));
+    expect(screen.queryByTestId('idle-nothing-due')).toBeNull();
+    expect(headline()).toBe(DIALLING);
+    expect(railLabel()).toBe(DIALLING);
+  });
+
   it('"Nothing due now" with no dial ringing leaves out the count line, as the agent app does', async () => {
     vi.useFakeTimers();
     await available();

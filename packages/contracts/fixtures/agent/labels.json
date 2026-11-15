@@ -25,5 +25,14 @@
       "orphaned": "Interrupted by a system fault",
       "canceled": "Stopped by us before answer"
     }
+  },
+  "dial_activity_copy": {
+    "source": "packages/contracts/src/agency/station.ts#AGENCY_DIAL_ACTIVITY_COPY",
+    "labels": {
+      "headline": "Dialling a customer…",
+      "hint": "You’ll be connected as soon as they answer.",
+      "unanswered_one": "No answer from the last number",
+      "unanswered_many": "No answer from the last {count} numbers"
+    }
   }
 }

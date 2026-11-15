@@ -236,6 +236,8 @@ export default function AgentConsolePage() {
     slot and the rail, and only there: the agent is available, the campaign dials, nothing
     (outbound or inbound) is on screen and the socket is open. Outside that it is not shown and
     the gap hold is dropped. Early binding is never sent the frame, so this stays null there.
+    A stated nothing-due ends the gap hold (no next dial is coming), so after the last due
+    contact rings out the guide says "Nothing due now", not "Dialling a customer…".
   */
   const dialActivity = useDialActivityDisplay(
     station.dialActivity,
@@ -244,7 +246,9 @@ export default function AgentConsolePage() {
       && connection === 'open'
       && panelAttempt === null // null whenever `live` is: it is `live.attempt` first
       && !inboundActive,
+    nothingDue !== null,
   );
+  // Ringing, or inside a gap hold the queue has not ended.
   const diallingCustomer = dialActivity?.dialling === true;
   // "Nothing due now" with no dial ringing: the guide says no call is coming, so the panel
   // leaves out "No answer from the last N numbers" too, as the agent app does. A dial ringing

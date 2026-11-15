@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { DIAL_GAP_HOLD_MS } from '../../hooks/useDialActivityDisplay';
+import { AGENCY_DIAL_ACTIVITY_COPY, AGENCY_DIAL_ACTIVITY_TIMING } from '../../types/agency';
 import {
+  DIALLING_HEADLINE,
+  DIALLING_HINT,
   IDLE_GUIDE_HEADING,
   IDLE_GUIDE_INTRO,
   IDLE_KEYS_NOW,
@@ -71,6 +75,21 @@ describe('unansweredLine', () => {
     expect(unansweredLine(1)).toBe('No answer from the last number');
     expect(unansweredLine(2)).toBe('No answer from the last 2 numbers');
     expect(unansweredLine(10)).toBe('No answer from the last 10 numbers');
+  });
+});
+
+describe('the hidden dials\' words are the contract\'s (the agent app is held to the same)', () => {
+  it('headline, hint and count lines come from AGENCY_DIAL_ACTIVITY_COPY, byte for byte', () => {
+    expect(DIALLING_HEADLINE).toBe(AGENCY_DIAL_ACTIVITY_COPY.headline);
+    expect(DIALLING_HINT).toBe(AGENCY_DIAL_ACTIVITY_COPY.hint);
+    expect(unansweredLine(1)).toBe(AGENCY_DIAL_ACTIVITY_COPY.unanswered_one);
+    expect(unansweredLine(7)).toBe(AGENCY_DIAL_ACTIVITY_COPY.unanswered_many.replace('{count}', '7'));
+    expect(DIALLING_HEADLINE).toBe('Dialling a customer…');
+    expect(DIALLING_HINT).toBe('You’ll be connected as soon as they answer.');
+  });
+
+  it('the gap hold is the contract\'s', () => {
+    expect(DIAL_GAP_HOLD_MS).toBe(AGENCY_DIAL_ACTIVITY_TIMING.GAP_HOLD_MS);
   });
 });
 
