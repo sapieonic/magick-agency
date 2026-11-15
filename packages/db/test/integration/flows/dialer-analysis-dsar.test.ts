@@ -11,7 +11,7 @@ const { dialerAnalysisJobRepository: jobs } = await import('../../../src/reposit
 describe('dialer analysis DSAR scenario', () => {
   beforeEach(truncateAll); afterAll(closeTestPool);
   it('does not resurrect transcript or analysis when a job completes after erasure, but still completes', async () => {
-    const call = await insertWebrtcCall({ recording_url: 'https://rec.example/a.wav', conversation_log: JSON.stringify([{ content: 'sensitive' }]), call_analysis: JSON.stringify({ secret: 'summary' }), analysis_status: 'pending' });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: 'https://rec.example/a.wav', conversation_log: JSON.stringify([{ content: 'sensitive' }]), call_analysis: JSON.stringify({ secret: 'summary' }), analysis_status: 'pending' });
     const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     const [claim] = await jobs.claimRunnable(1);
     await getTestPool().query(`UPDATE agency_calls SET conversation_log = NULL, call_analysis = NULL, transcript_meta = NULL, analysis_status = 'deleted' WHERE id = $1`, [call.id]);

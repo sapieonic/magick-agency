@@ -73,7 +73,7 @@ const fleets: Fleet[] = [];
 async function enqueue(n: number): Promise<string[]> {
   const ids: string[] = [];
   for (let i = 0; i < n; i++) {
-    const call = await insertWebrtcCall({ recording_url: `https://${HOST}/r/${i}.mp3`, recording_duration_seconds: 100, talk_time_seconds: 100 });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: `https://${HOST}/r/${i}.mp3`, recording_duration_seconds: 100, talk_time_seconds: 100 });
     const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     expect(job.status).toBe('queued');
     ids.push(call.id);

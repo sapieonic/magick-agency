@@ -45,6 +45,23 @@ describe('analysis config block', () => {
     expect(parse({ VOICELINK_RECORDING_HOSTS: ' a.test, b.test ,,' }).voicelinkRecording.allowedHosts).toEqual(['a.test', 'b.test']);
   });
 
+  // RC4: off by default (no redirect from media.plivo.com is followed); a list of bare hosts.
+  it('PLIVO_RECORDING_REDIRECT_HOSTS: empty by default, unset or blank; a trimmed, lower-cased comma list', () => {
+    expect(parse().plivoRecording.redirectHosts).toEqual([]);
+    expect(parse({ PLIVO_RECORDING_REDIRECT_HOSTS: '' }).plivoRecording.redirectHosts).toEqual([]);
+    expect(parse({ PLIVO_RECORDING_REDIRECT_HOSTS: ' Files.Example.com , cdn.example.net,,' }).plivoRecording.redirectHosts)
+      .toEqual(['files.example.com', 'cdn.example.net']);
+  });
+
+  it.each([
+    'https://files.example.com', 'files.example.com/path', 'files.example.com:443', '*.example.com',
+    '169.254.169.254', '10.0.0.1', 'localhost', 'api.localhost', 'example', 'user@files.example.com', '[::1]',
+  ])('PLIVO_RECORDING_REDIRECT_HOSTS refuses %s at load', (host) => {
+    const r = parseConfig({ ...base, PLIVO_RECORDING_REDIRECT_HOSTS: host });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(JSON.stringify(r.issues)).toContain('PLIVO_RECORDING_REDIRECT_HOSTS');
+  });
+
   it('post-call analysis key falls back to OPENAI_API_KEY, or GEMINI_API_KEY for gemini', () => {
     expect(parse({ OPENAI_API_KEY: 'o' }).postCallAnalysis.apiKey).toBe('o');
     expect(parse({ POST_CALL_ANALYSIS_PROVIDER: 'gemini', GEMINI_API_KEY: 'g', OPENAI_API_KEY: 'o' }).postCallAnalysis.apiKey).toBe('g');

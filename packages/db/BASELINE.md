@@ -1438,6 +1438,18 @@ stays (0035 keeps it for rollback). **Down** re-creates them as 0001 defined the
 `test/integration/db/drop-duplicate-indexes-migration.test.ts` (gone, each lookup's plan on its
 covering index, down then up) and the down → up inventory suite.
 
+### 0044 — `migrations/0044_recording_honours_request.sql`
+
+No schema change (RC1). From this release a call whose `recording_requested` is false has no
+recording: `agency-call.repository.ts`'s `update` stores a non-null `recording_url` only on a row
+that asked for one, and every read takes the URL through one predicate (`recordingUrlSql`,
+`hasRecordingSql`, `honourRecordingRequest`). The Insights rollup had already counted such calls
+as recorded, so the Up marks the bucket of every attempt whose call holds a URL it did not ask
+for in `agency_insights_rollup_dirty`, and the job recomputes it. The URLs stay on the rows
+(nulling them is an operator's opt-in, `docs/operations.md`). One read of `agency_calls`.
+**Down** is a no-op. **Tests**: `test/integration/db/recording-honours-request-migration.test.ts`
+(only those buckets marked, the URLs kept, down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

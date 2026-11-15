@@ -53,6 +53,7 @@ import {
 } from './bridge/bridge-types.js';
 import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
+import { UnrequestedRecordings } from './bridge/unrequested-recording.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 import { trackCarrierDialRefusal, trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import {
@@ -290,6 +291,12 @@ export class WebRtcBridgeManager {
    * which the carrier answers "already gone".
    */
   private readonly carrierLegsSettled = new Map<string, 'terminal' | 'hung_up'>();
+  /**
+   * Recordings a carrier delivered for a call that did not ask for one (RC1): discarded at
+   * every door ({@link recordingUrlFor}, {@link persistLateCarrierData}), logged and counted
+   * once per call.
+   */
+  private readonly unrequestedRecordings = new UnrequestedRecordings();
   private readonly telephonyRegistry: TelephonyProviderRegistry;
   private readonly webhookUrls = new WebhookUrlBuilder();
   private readonly keyPrefix: string;
@@ -2537,14 +2544,15 @@ export class WebRtcBridgeManager {
         // authoritative first-write-wins anchor.
         const answered = facts.wasAnswered || session.answeredAt != null;
         const { status, outcome, rawCause } = facts.classify(answered);
-        if (facts.recordingUrl) session.recordingUrl = facts.recordingUrl;
+        const recordingUrl = this.recordingUrlFor(session, facts.recordingUrl, 'terminal');
+        if (recordingUrl) session.recordingUrl = recordingUrl;
         await this.endCall(callId, {
           status,
           outcome,
           ...(status === 'failed' && !answered
             ? { errorCode: 'TELEPHONY_ERROR', errorMessage: rawCause || undefined }
             : {}),
-          recordingUrl: facts.recordingUrl,
+          recordingUrl,
           hangupProvider: false,
         });
         return;
@@ -2681,6 +2689,22 @@ export class WebRtcBridgeManager {
   }
 
   /**
+   * The recording URL a live call may keep (RC1): `url` when the call asked for a recording
+   * (`recordEnabled`, its `recording_requested`), else nothing, the discard noted once per
+   * call. Every live-session door goes through here; the late door checks the row's own flag.
+   */
+  private recordingUrlFor(
+    session: WebRtcBridgeSession,
+    url: string | null | undefined,
+    where: 'live' | 'terminal',
+  ): string | undefined {
+    if (!url) return undefined;
+    if (session.recordEnabled) return url;
+    this.unrequestedRecordings.discard(session.callId, session.provider, where);
+    return undefined;
+  }
+
+  /**
    * Fill a call row's recording URL and carrier id from a carrier event that has no live
    * session to go to, and wake a dialer-analysis job waiting on the recording. Idempotent:
    * a recording URL already on the row is kept. A row placed on another carrier is left
@@ -2700,8 +2724,15 @@ export class WebRtcBridgeManager {
         log.warn({ callId, provider, callProvider: existing.provider }, 'Late carrier event from another carrier than the call was placed on — ignoring');
         return;
       }
+      // RC1: a call that did not ask for a recording keeps none (the row's own flag, which an
+      // inbound call's refused admission may have taken back after the leg was answered).
+      let recordingUrl = facts.recordingUrl;
+      if (recordingUrl && !existing.recording_requested) {
+        this.unrequestedRecordings.discard(callId, provider, 'late');
+        recordingUrl = undefined;
+      }
       const patch: Record<string, unknown> = {};
-      if (facts.recordingUrl && !existing.recording_url) patch.recording_url = facts.recordingUrl;
+      if (recordingUrl && !existing.recording_url) patch.recording_url = recordingUrl;
       if (facts.carrierCallId && facts.carrierCallId !== existing.provider_call_id) {
         patch.provider_call_id = facts.carrierCallId;
       }
@@ -2730,7 +2761,7 @@ export class WebRtcBridgeManager {
     if (!recording.recordingUrl) return;
     const session = this.sessions.get(callId);
     if (session && session.provider === provider && !session.endHandled) {
-      session.recordingUrl = recording.recordingUrl;
+      session.recordingUrl = this.recordingUrlFor(session, recording.recordingUrl, 'live') ?? null;
       return;
     }
     await this.persistLateCarrierData(
@@ -2908,10 +2939,11 @@ export class WebRtcBridgeManager {
     if (!session || session.endHandled) return;
     session.clearEndConfirmationTimer();
     const intent = session.pendingEnd ?? { status: 'completed', outcome: 'ended_by_user' };
-    if (facts?.recordingUrl) session.recordingUrl = facts.recordingUrl;
+    const recordingUrl = this.recordingUrlFor(session, facts?.recordingUrl, 'terminal');
+    if (recordingUrl) session.recordingUrl = recordingUrl;
     await this.endCall(callId, {
       ...intent,
-      recordingUrl: facts?.recordingUrl ?? session.recordingUrl ?? undefined,
+      recordingUrl: recordingUrl ?? session.recordingUrl ?? undefined,
       // WS already closed in localHangup; nothing more to hang up.
       hangupProvider: false,
     });
@@ -3153,7 +3185,8 @@ export class WebRtcBridgeManager {
     // Hang up the carrier leg if it's still up (best effort, never throws).
     if (opts.hangupProvider) await this.hangupProviderLeg(session);
 
-    const recordingUrl = opts.recordingUrl ?? session.recordingUrl ?? undefined;
+    // The terminal write's one door for a recording (RC1): whatever brought the URL here.
+    const recordingUrl = this.recordingUrlFor(session, opts.recordingUrl ?? session.recordingUrl ?? undefined, 'terminal');
     // A `ringing`/`in_progress` write still in flight would otherwise be free to land
     // after this one (two pool connections, no order between them) and leave a live
     // status on a terminal row. None can start from here on: every progress path

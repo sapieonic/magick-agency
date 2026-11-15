@@ -257,7 +257,7 @@ describe('VoiceLink WebRTC lifecycle — answered call to completion (real paylo
     //    no-live-session late path persists the recording without re-settling.
     const completedEvent = parseVoicelinkWebhook(CALL_COMPLETED_BODY, 'call-1')!;
     expect(completedEvent.eventType).toBe('hangup'); // ANSWERED → hangup
-    mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_url: null, provider_call_id: CARRIER_CALL_ID });
+    mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_requested: true, recording_url: null, provider_call_id: CARRIER_CALL_ID });
     await mgr.handleVoicelinkStatus('call-1', completedEvent);
     const latePatch = mockRepo.update.mock.calls.map((c: any[]) => c[1]).filter(Boolean);
     expect(latePatch.some((u: any) => u.recording_url === CALL_COMPLETED_BODY.call.recordingUrl)).toBe(true);

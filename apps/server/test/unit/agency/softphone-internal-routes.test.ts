@@ -68,7 +68,7 @@ vi.mock('../../../src/utils/recording-proxy.js', () => ({
   proxyCallRecording: vi.fn(async (_c: unknown, _req: unknown, reply: { code: (n: number) => { send: (b: unknown) => unknown } }) =>
     reply.code(200).send('bytes')),
 }));
-vi.mock('../../../src/config/index.js', () => ({ config: { voicelinkRecording: { allowedHosts: [] }, redis: { keyPrefix: '' }, telephony: {} } }));
+vi.mock('../../../src/config/index.js', () => ({ config: { voicelinkRecording: { allowedHosts: [] }, plivoRecording: { redirectHosts: [] }, redis: { keyPrefix: '' }, telephony: {} } }));
 
 import { registerSoftphoneRoutes } from '../../../src/api/routes/agency/softphone.js';
 import { SOFTPHONE_REFUSAL_STATUS } from '../../../src/api/routes/agency/softphone-answer.js';

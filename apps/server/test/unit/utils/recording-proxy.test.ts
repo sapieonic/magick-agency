@@ -132,7 +132,7 @@ describe('proxyCallRecording', () => {
     vi.stubGlobal('fetch', fetchMock);
     const r = reply();
     await proxyCallRecording(vl(GOOD), { headers: {} } as any, r, access(HOSTS));
-    expect(fetchMock).toHaveBeenCalledWith(GOOD, { headers: {}, redirect: 'manual' });
+    expect(fetchMock).toHaveBeenCalledWith(GOOD, { headers: {}, redirect: 'manual', signal: expect.any(AbortSignal) });
     expect(r.sent.code).toBe(200);
     expect(r.sent.body).toBe('bytes');
     expect(r.sent.headers['Content-Type']).toBe('audio/mpeg');
@@ -146,7 +146,7 @@ describe('proxyCallRecording', () => {
     vi.stubGlobal('fetch', fetchMock);
     const r = reply();
     await proxyCallRecording(vl(GOOD), { headers: { range: 'bytes=0-3' } } as any, r, access(HOSTS));
-    expect(fetchMock).toHaveBeenCalledWith(GOOD, { headers: { Range: 'bytes=0-3' }, redirect: 'manual' });
+    expect(fetchMock).toHaveBeenCalledWith(GOOD, { headers: { Range: 'bytes=0-3' }, redirect: 'manual', signal: expect.any(AbortSignal) });
     expect(r.sent.code).toBe(206);
     expect(r.sent.headers['Content-Range']).toBe('bytes 0-3/10');
   });

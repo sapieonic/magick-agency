@@ -46,7 +46,7 @@ export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes:
             COUNT(*) FILTER (WHERE cardinality(a.override_applied) > 0)::text AS overrides_used,
             COUNT(*) FILTER (WHERE a.callback_at IS NOT NULL)::text AS callbacks_booked,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0
-                               AND EXISTS (SELECT 1 FROM agency_calls k WHERE k.id = a.webrtc_call_id AND k.recording_url IS NOT NULL))::text AS recorded_connected,
+                               AND EXISTS (SELECT 1 FROM agency_calls k WHERE k.id = a.webrtc_call_id AND k.recording_requested AND k.recording_url IS NOT NULL))::text AS recorded_connected,
             COUNT(*) FILTER (WHERE a.outcome = 'failed')::text AS failed,
             MAX(a.updated_at) AS as_of
        FROM agency_call_attempts a JOIN agency_campaigns c ON c.id = a.campaign_id

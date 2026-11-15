@@ -9,7 +9,7 @@ vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: jobs } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
 
 async function claimed() {
-  const call = await insertWebrtcCall({ recording_url: 'https://rec.example/a.wav' });
+  const call = await insertWebrtcCall({ recording_requested: true, recording_url: 'https://rec.example/a.wav' });
   const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
   const [claim] = await jobs.claimRunnable(1);
   return { call, job, claim: claim! };
@@ -41,7 +41,7 @@ describe('dialer analysis failure scenarios', () => {
     expect(await jobs.markSkipped(erased.job.id, erased.call.id, erased.claim.claim_generation, 'TRANSCRIPTION_EMPTY', 'silent')).toBe(true);
     expect((await getTestPool().query(`SELECT analysis_status FROM agency_calls WHERE id = $1`, [erased.call.id])).rows[0]!.analysis_status).toBe('deleted');
 
-    const noRecording = await insertWebrtcCall({ recording_url: null });
+    const noRecording = await insertWebrtcCall({ recording_requested: true, recording_url: null });
     const waiting = (await jobs.enqueueFromCall({ call_id: noRecording.id }))!;
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET created_at = now() - interval '1 hour' WHERE id = $1`, [waiting.id]);
     const [expired] = await jobs.expireAwaitingRecording(new Date());

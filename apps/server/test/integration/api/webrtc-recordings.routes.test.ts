@@ -73,7 +73,7 @@ describe('webrtc recording playback (integration)', () => {
   });
 
   async function signed(callOverrides: Record<string, unknown> = {}, ttlSeconds?: number) {
-    const call = await insertWebrtcCall({ recording_url: URL_OK, status: 'completed', ...callOverrides });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: URL_OK, status: 'completed', ...callOverrides });
     const { path } = signRecordingUrl({
       callId: call.id, tenantId: call.tenant_id, accountId: call.account_id, basePath: REC_PREFIX, ...(ttlSeconds ? { ttlSeconds } : {}),
     });
@@ -132,7 +132,7 @@ describe('webrtc recording playback (integration)', () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
     const a = await signed();
-    const b = await insertWebrtcCall({ recording_url: URL_OK });
+    const b = await insertWebrtcCall({ recording_requested: true, recording_url: URL_OK });
     const res = await app.inject({ method: 'GET', url: a.url.replace(a.call.id, b.id) });
     expect(res.statusCode).toBe(403);
     expect(mockFetch).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe('webrtc recording playback (integration)', () => {
   it("returns 404 when the token's principal is not the call's owner", async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
-    const call = await insertWebrtcCall({ recording_url: URL_OK });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: URL_OK });
     const { path } = signRecordingUrl({ callId: call.id, tenantId: OTHER_TENANT, accountId: DEFAULTS.accountId, basePath: REC_PREFIX });
     expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(404);
     expect(mockFetch).not.toHaveBeenCalled();

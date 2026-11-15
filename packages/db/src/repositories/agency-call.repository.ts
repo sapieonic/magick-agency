@@ -1,5 +1,6 @@
 import { getPool } from '../connection.js';
 import { buildUpdateSet } from '../utils/sql-update.js';
+import { honourRecordingRequest } from '../utils/recording-request.js';
 import { AGENCY_FLAGS } from '@magick-agency/contracts/flags';
 import type { FlagDefinition } from '@magick-agency/contracts/flags';
 import type {
@@ -80,6 +81,11 @@ export function callSentimentLabelSql(column: string): string {
     ${column}->'common'->'overall_sentiment'->>'label',
     ${column}->'overall_sentiment'->>'label'
   )`;
+}
+
+/** A returned row as every reader sees it (RC1, `utils/recording-request.ts`). */
+function honoured(row: WebRtcCallRecord | undefined): WebRtcCallRecord | null {
+  return row ? honourRecordingRequest(row) : null;
 }
 
 /**
@@ -246,7 +252,7 @@ export class WebRtcCallRepository {
     );
     const row = result.rows[0];
     if (!row) throw new TelephonyCredentialNotActiveError(credentialId!);
-    return row;
+    return honourRecordingRequest(row);
   }
 
   async findById(id: string): Promise<WebRtcCallRecord | null> {
@@ -255,7 +261,7 @@ export class WebRtcCallRepository {
       'SELECT * FROM agency_calls WHERE id = $1',
       [id],
     );
-    return result.rows[0] || null;
+    return honoured(result.rows[0]);
   }
 
   /**
@@ -290,7 +296,7 @@ export class WebRtcCallRepository {
          AND ${scopeClause(scope)}`,
       [id, tenantId, accountId],
     );
-    return result.rows[0] || null;
+    return honoured(result.rows[0]);
   }
 
   /**
@@ -344,20 +350,32 @@ export class WebRtcCallRepository {
       dataValues,
     );
 
-    return { rows: dataResult.rows, total };
+    return { rows: dataResult.rows.map((r) => honourRecordingRequest(r)), total };
   }
 
+  /**
+   * A partial update. A non-null `recording_url` (or its duration) lands only on a row that
+   * asked for a recording (RC1): on any other row the column keeps what it holds, in the same
+   * statement, so no writer can store a recording the call did not ask for. Nulling always applies.
+   */
   async update(id: string, input: UpdateWebRtcCallInput): Promise<WebRtcCallRecord | null> {
     const { clauses, values } = buildUpdateSet(input, WEBRTC_UPDATABLE_COLUMNS, WEBRTC_JSON_COLUMNS);
     if (clauses.length === 0) return this.findById(id);
 
+    const guarded = clauses.map((clause) => {
+      const m = /^(recording_url|recording_duration_seconds) = (\$\d+)$/.exec(clause);
+      if (!m) return clause;
+      const column = m[1]!;
+      const param = `${m[2]!}::${column === 'recording_url' ? 'text' : 'int'}`;
+      return `${column} = CASE WHEN recording_requested OR ${param} IS NULL THEN ${param} ELSE ${column} END`;
+    });
     values.push(id);
     const pool = getPool();
     const result = await pool.query<WebRtcCallRecord>(
-      `UPDATE agency_calls SET ${clauses.join(', ')} WHERE id = $${values.length} RETURNING *`,
+      `UPDATE agency_calls SET ${guarded.join(', ')} WHERE id = $${values.length} RETURNING *`,
       values,
     );
-    return result.rows[0] || null;
+    return honoured(result.rows[0]);
   }
 
   /**
@@ -380,7 +398,7 @@ export class WebRtcCallRepository {
        RETURNING *`,
       [[...ids], `stuck active call: ${reason}`],
     );
-    return result.rows;
+    return result.rows.map((r) => honourRecordingRequest(r));
   }
 
   /**
@@ -423,7 +441,7 @@ export class WebRtcCallRepository {
        RETURNING c.*`,
       [olderThan, exclude, limit],
     );
-    return result.rows;
+    return result.rows.map((r) => honourRecordingRequest(r));
   }
 }
 

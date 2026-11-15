@@ -10,6 +10,7 @@
 
 import { getPool } from '../connection.js';
 import type { PoolClient } from 'pg';
+import { hasRecordingSql } from '../utils/recording-request.js';
 import type {
   DialerAnalysisJobRecord,
   EnqueueDialerAnalysisJobInput,
@@ -44,7 +45,7 @@ export class DialerAnalysisJobRepository {
 
   /**
    * Idempotent enqueue driven by a DB read of the call row (B1): the job lands in
-   * `queued` when the recording already arrived, else `awaiting_recording` — never
+   * `queued` when the recording already arrived (`hasRecordingSql`, RC1), else `awaiting_recording` — never
    * from (possibly stale) session state, so a recording that beat `endCall` isn't
    * hidden. `ON CONFLICT (call_id) DO NOTHING` makes a duplicate webhook a no-op.
    * Mirrors the derived state onto the call row's `analysis_status` in the SAME
@@ -61,7 +62,7 @@ export class DialerAnalysisJobRepository {
          INSERT INTO dialer_analysis_jobs
            (call_id, tenant_id, account_id, profile_id, profile_snapshot, analysis_language, status)
          SELECT c.id, c.tenant_id, c.account_id, $2, $3::jsonb, $4,
-                CASE WHEN c.recording_url IS NOT NULL THEN 'queued' ELSE 'awaiting_recording' END
+                CASE WHEN ${hasRecordingSql('c')} THEN 'queued' ELSE 'awaiting_recording' END
          FROM agency_calls c WHERE c.id = $1
          ON CONFLICT (call_id) DO NOTHING
          RETURNING *
@@ -184,7 +185,7 @@ export class DialerAnalysisJobRepository {
 
   /**
    * Sweep promotion (B1): any `awaiting_recording` job whose call row now carries a
-   * `recording_url` is queued — this self-heals every lost-wake cause. MUST run
+   * recording it asked for (`hasRecordingSql`, RC1) is queued — this self-heals every lost-wake cause. MUST run
    * before {@link expireAwaitingRecording}. Returns the number promoted.
    */
   async promoteRecordingReady(settleSeconds = 0, limit = 500): Promise<number> {
@@ -205,7 +206,7 @@ export class DialerAnalysisJobRepository {
          WHERE j.id = picked.id
            AND j.call_id = c.id
            AND j.status = 'awaiting_recording'
-           AND c.recording_url IS NOT NULL
+           AND ${hasRecordingSql('c')}
          RETURNING j.call_id
        ),
        mirror AS (
@@ -225,7 +226,7 @@ export class DialerAnalysisJobRepository {
 
   /**
    * Expire `awaiting_recording` jobs older than `olderThan` whose call still has no
-   * recording_url — the carrier never delivered. Runs AFTER promotion, so a
+   * recording it asked for (`hasRecordingSql`, RC1) — the carrier never delivered. Runs AFTER promotion, so a
    * delivered-but-unpromoted job is never wrongly expired. Mirrors
    * `analysis_status='expired'` onto each swept call row in the SAME statement (a
    * CTE, atomic) so the UI's `expired` state renders and the retry route is
@@ -240,7 +241,7 @@ export class DialerAnalysisJobRepository {
          JOIN agency_calls c ON c.id = j.call_id
          WHERE j.status = 'awaiting_recording'
            AND j.created_at < $1
-           AND c.recording_url IS NULL
+           AND NOT ${hasRecordingSql('c')}
          ORDER BY j.created_at
          LIMIT $2
          FOR UPDATE SKIP LOCKED

@@ -79,6 +79,7 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
     analysisService,
     config: analysisConfig,
     recordingHosts: opts.overrides?.recordingHosts ?? config.voicelinkRecording.allowedHosts,
+    plivoRedirectHosts: config.plivoRecording.redirectHosts,
   });
 
   let exiting = false;

@@ -35,6 +35,8 @@ export interface AnalysisChildDeps {
   analysisService: PostCallAnalysisService;
   config: DialerAnalysisConfig;
   recordingHosts: readonly string[];
+  /** Hosts a Plivo recording's redirect may go to (`plivoRecording.redirectHosts`, RC4). */
+  plivoRedirectHosts?: readonly string[];
   /** Tests only: the breaker, so its clock can be driven. */
   breaker?: VendorRateLimitBreaker;
 }
@@ -61,6 +63,7 @@ export function startAnalysisChild(deps: AnalysisChildDeps): AnalysisChild {
     analysisService: deps.analysisService,
     config: deps.config,
     recordingHosts: deps.recordingHosts,
+    ...(deps.plivoRedirectHosts ? { plivoRedirectHosts: deps.plivoRedirectHosts } : {}),
     breaker,
   });
 

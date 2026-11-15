@@ -10,7 +10,7 @@ const { dialerAnalysisJobRepository: jobs } = await import('../../../src/reposit
 describe('dialer analysis B1 races', () => {
   beforeEach(truncateAll); afterAll(closeTestPool);
   it('webhook-before-job and duplicate webhooks yield one queued job that never expires', async () => {
-    const call = await insertWebrtcCall({ recording_url: 'https://rec.example/early.wav' });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: 'https://rec.example/early.wav' });
     expect(await jobs.markRecordingReady(call.id)).toBeNull(); // webhook before enqueue
     const first = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     const duplicate = await jobs.markRecordingReady(call.id);
@@ -21,7 +21,7 @@ describe('dialer analysis B1 races', () => {
   });
 
   it('promotion sweep rescues a lost wake before expiry', async () => {
-    const call = await insertWebrtcCall({ recording_url: null });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: null });
     const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     await getTestPool().query(`UPDATE agency_calls SET recording_url = 'https://rec.example/lost-wake.wav' WHERE id = $1`, [call.id]);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET created_at = now() - interval '2 hours' WHERE id = $1`, [job.id]);

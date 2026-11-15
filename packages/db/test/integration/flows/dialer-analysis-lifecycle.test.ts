@@ -11,7 +11,7 @@ const { dialerAnalysisJobRepository: jobs } = await import('../../../src/reposit
 describe('dialer analysis lifecycle scenario', () => {
   beforeEach(truncateAll); afterAll(closeTestPool);
   it('moves recording-ready work through transcript-before-analysis completion', async () => {
-    const call = await insertWebrtcCall({ recording_url: null, recording_duration_seconds: 90, talk_time_seconds: 90 });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: null, recording_duration_seconds: 90, talk_time_seconds: 90 });
     const job = (await jobs.enqueueFromCall({ call_id: call.id, profile_snapshot: { custom_dimensions: [] } }))!;
     expect(job.status).toBe('awaiting_recording');
     await getTestPool().query(`UPDATE agency_calls SET recording_url = 'https://rec.example/a.wav' WHERE id = $1`, [call.id]);

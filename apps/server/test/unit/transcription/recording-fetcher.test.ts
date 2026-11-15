@@ -10,6 +10,11 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
+const { track } = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  trackRecordingFetchFailure: track,
+}));
 
 const { fetchRecordingBytes } = await import('../../../src/transcription/recording-fetcher.js');
 
@@ -243,5 +248,36 @@ describe('fetchRecordingBytes', () => {
     const result = await fetchRecordingBytes('https://recordings.voicelink.test/clip.wav', OPTS);
     expect(result.mimeType).toBe('audio/wav');
     expect(result.bytes.toString()).toBe('audio');
+  });
+});
+
+// RC3: the analysis worker's failed fetches are counted with the playback proxy's reasons.
+describe('fetchRecordingBytes — failures counted by reason (RC3)', () => {
+  const origFetch = global.fetch;
+  beforeEach(() => { global.fetch = vi.fn(); track.mockClear(); });
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); });
+
+  it.each([
+    [401, 'upstream_unauthorized'],
+    [404, 'upstream_not_found'],
+    [500, 'upstream_status'],
+  ] as const)('a %i is counted as %s for the call\'s provider', async (status, reason) => {
+    (global.fetch as any).mockResolvedValueOnce(streamResponse([], { status }));
+    await expect(fetchRecordingBytes(URL_OK, { ...OPTS, provider: 'voicelink' })).rejects.toBeTruthy();
+    expect(track).toHaveBeenCalledWith('voicelink', 'analysis', reason);
+  });
+
+  it('an off-list host is host_not_allowed; a refused redirect is redirect_refused', async () => {
+    await expect(fetchRecordingBytes('https://evil.example/x.mp3', { ...OPTS, provider: 'voicelink' })).rejects.toBeTruthy();
+    expect(track).toHaveBeenLastCalledWith('voicelink', 'analysis', 'host_not_allowed');
+    (global.fetch as any).mockResolvedValueOnce(redirect('https://evil.example/x.mp3'));
+    await expect(fetchRecordingBytes(URL_OK, { ...OPTS, provider: 'voicelink' })).rejects.toBeTruthy();
+    expect(track).toHaveBeenLastCalledWith('voicelink', 'analysis', 'redirect_refused');
+  });
+
+  it('no provider given: nothing is counted', async () => {
+    (global.fetch as any).mockResolvedValueOnce(streamResponse([], { status: 500 }));
+    await expect(fetchRecordingBytes(URL_OK, OPTS)).rejects.toBeTruthy();
+    expect(track).not.toHaveBeenCalled();
   });
 });

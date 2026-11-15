@@ -296,7 +296,7 @@ describe('DialerAnalysisRunner.run', () => {
       expect(creds.resolve).toHaveBeenCalledWith('cred-1', 'recording');
       expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
         allowedHosts: ['media.plivo.com'], headers: { Authorization: AUTH }, exactHosts: true,
-        maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs,
+        maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs, provider: 'plivo',
       });
     });
 
@@ -416,7 +416,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
     expect(mockFetchRecordingBytes.mock.calls[0]![0]).toBe('https://rec/call-1.wav');
     expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
-      allowedHosts: ['rec'], maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs,
+      allowedHosts: ['rec'], maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs, provider: 'voicelink',
     });
     expect(analysisService.analyze.mock.calls[0]![3]).toHaveProperty('audio');
     expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();

@@ -175,11 +175,15 @@ const talked = (t: Date, code: string | null, talkS = 60) => ({
   disposition_code: code,
 });
 
-function analysedCall(f: TenantFloor, campaignId: string | null, attemptId: string | null, analysis: unknown, recorded: boolean): string {
+/**
+ * `recorded`: true asked for a recording and has one; `'unasked'` holds a link the call never
+ * asked for (a carrier that records anyway, a row from before RC1), which reads as not recorded.
+ */
+function analysedCall(f: TenantFloor, campaignId: string | null, attemptId: string | null, analysis: unknown, recorded: boolean | 'unasked'): string {
   const id = randomUUID();
   calls.push({
     id, tenant_id: f.tenant, account_id: f.account, caller_id: '+919000000001', destination_phone: '+919800000000',
-    status: 'completed', recording_url: recorded ? `https://rec.example/${id}.mp3` : null,
+    status: 'completed', recording_url: recorded ? `https://rec.example/${id}.mp3` : null, recording_requested: recorded === true,
     analysis_status: analysis === null ? null : 'completed', call_analysis: analysis, campaign_id: campaignId, agency_attempt_id: attemptId,
   });
   return id;
@@ -288,7 +292,8 @@ function seedAgent(i: number, campaigns: [string, string]): void {
       const sp = L(day, '14:00');
       const spId = session(floor, { agent: a, campaign: null, joined: sp, left: L(day, '14:30'), steps: [['break', sp, 'soft_phone'], ['offline', L(day, '14:30'), null]] });
       softphoneSession = spId;
-      const spCall = analysedCall(floor, null, null, { common: { overall_sentiment: { label: 'positive', score: 0.9 } } }, false);
+      // VoiceLink recorded it anyway: the link it sent must not make the call "Recorded" (RC1).
+      const spCall = analysedCall(floor, null, null, { common: { overall_sentiment: { label: 'positive', score: 0.9 } } }, 'unasked');
       manual.push({ id: randomUUID(), tenant_id: floor.tenant, account_id: floor.account, session_id: spId, agent_user_id: a, destination_e164: '+919812340000',
         caller_id: '+919000000001', state: 'ended', outcome: 'connected', dialed_at: L(day, '14:05'), bridged_at: L(day, '14:05:10'),
         ended_at: L(day, '14:07:10'), created_at: L(day, '14:05'), webrtc_call_id: spCall, settled_at: L(day, '14:07:10') });
@@ -353,7 +358,7 @@ beforeAll(async () => {
   await bulkInsert(pool, 'agency_contacts', [['id', 'uuid'], ['campaign_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['phone_e164', 'text'], ['context', 'jsonb'], ['state', 'text']], contacts);
   await bulkInsert(pool, 'agency_agent_sessions', [['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['campaign_id', 'uuid'], ['agent_user_id', 'uuid'], ['kind', 'text'], ['state', 'text'], ['joined_at', 'timestamptz'], ['left_at', 'timestamptz']], sessions);
   await bulkInsert(pool, 'agency_agent_session_events', [['id', 'uuid'], ['session_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['campaign_id', 'uuid'], ['agent_user_id', 'uuid'], ['to_state', 'text'], ['at', 'timestamptz'], ['break_reason', 'text']], events);
-  await bulkInsert(pool, 'agency_calls', [['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['caller_id', 'text'], ['destination_phone', 'text'], ['status', 'text'], ['recording_url', 'text'], ['analysis_status', 'text'], ['call_analysis', 'jsonb'], ['campaign_id', 'uuid'], ['agency_attempt_id', 'uuid']], calls);
+  await bulkInsert(pool, 'agency_calls', [['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['caller_id', 'text'], ['destination_phone', 'text'], ['status', 'text'], ['recording_url', 'text'], ['recording_requested', 'bool'], ['analysis_status', 'text'], ['call_analysis', 'jsonb'], ['campaign_id', 'uuid'], ['agency_attempt_id', 'uuid']], calls);
   await bulkInsert(pool, 'agency_call_attempts', [
     ['id', 'uuid'], ['campaign_id', 'uuid'], ['contact_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['attempt_number', 'int'],
     ['caller_id', 'text'], ['reserved_agent_id', 'uuid'], ['state', 'text'], ['outcome', 'text'], ['disposition_code', 'text'],

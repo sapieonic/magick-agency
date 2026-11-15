@@ -261,7 +261,7 @@ describe('bridge → analysis seam (docs/seams.md)', () => {
     let resolveHook!: () => void;
     hooks.onRecordingReady.mockReturnValue(new Promise<void>((r) => { resolveHook = r; }));
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
-    mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_url: null, provider_call_id: null });
+    mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_requested: true, recording_url: null, provider_call_id: null });
 
     let settled = false;
     const handled = mgr.handleVoicelinkStatus('call-1', {
