@@ -1573,6 +1573,26 @@ Every new guard was mutation-checked (the reset at the bind, the close not repea
 clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
 carrier, browser or phone.
 
+### Do Not Call scope 2026-11-15 (DS1–DS8)
+
+Reshma: marking a contact DNC applied across the whole tenant; she asked for one campaign beside
+a separate every-campaign option. The station, the soft phone and inbound already wrote one
+campaign (or the call's account) unless someone chose wider; the Do Not Call page's Add numbers
+always wrote every campaign, with no choice. Now:
+
+- **Page.** Add numbers asks where (every campaign, this account, one campaign), with nothing
+  preselected, and says what each blocks; the summary splits out numbers a wider entry already
+  blocks ("4 already blocked in every campaign"). The list names each entry's scope ("Every
+  campaign", "North account", "Campaign: Q4 Renewals"), filters by scope or campaign, and a
+  removal says who may dial again and which other entries still block the number.
+- **Server.** `POST /dnc` takes a stated `scope`; a campaign must be the tenant's and in an
+  account the caller manages (else one 404); every campaign needs a membership of the whole
+  organisation, on the page and on the station's escalation (DS3). An account admin lists and
+  removes their campaigns' entries too (DS6). No migration.
+- **Words.** The same scope words on customer history and the soft phone, console and mobile.
+- **Open (DS8).** A station `suppress` outcome (web, mobile, a supervisor's) writes no list entry,
+  while the mobile wrap-up says it does; the disposition route belongs to the outcome workstream.
+
 ## Test counts
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch

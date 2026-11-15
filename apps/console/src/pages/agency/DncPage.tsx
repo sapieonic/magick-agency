@@ -170,7 +170,7 @@ export function DncPage() {
   const mayEveryCampaign = mayManageEveryCampaignDnc(memberships, tenantId, accountId);
   /** A member of the whole organisation lists every entry; anyone else, their account's. */
   const seesEverything = actsForWholeOrganisation(memberships, tenantId, accountId);
-  const accountName = accounts.find((a) => a.id === accountId)?.name ?? null;
+  const accountName = (accounts ?? []).find((a) => a.id === accountId)?.name ?? null;
 
   /** This account's campaigns: the add's campaign choice and the list's campaign filter. */
   useEffect(() => {

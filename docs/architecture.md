@@ -789,7 +789,11 @@ One table, `dnc_entries`. Ingest drops suppressed numbers before they enter a ro
 (tenant, account, campaign), and **fails closed**: a database error halts the dial and aborts the
 claimed batch. An agent's mark (`agency/dnc-mark.ts`) is campaign-scoped by default and written in
 the same transaction as the attempt bookkeeping. Operators manage the list at `/dnc`
-(`dnc/dnc.service.ts`, E.164 required).
+(`dnc/dnc.service.ts`, E.164 required), choosing every campaign, one account or one campaign for
+each add (DS1–DS4: every campaign needs a membership of the whole organisation; a campaign add is
+stored as the station's mark is; a number a wider entry already blocks is reported
+`already_covered`, not written). An account admin lists and removes what belongs to their account,
+its campaigns' entries included (DS6). Scope is shown in the same words everywhere (DS7).
 
 ## Audit (B7) and notifications
 
