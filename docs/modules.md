@@ -103,7 +103,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-ingest-idempotency.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-ingest-job-repository-sql.test.ts` | ~12 |
 | `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | 13 |
-| `apps/server/test/integration/agency/agency-ingest-reimport.test.ts` (check then import then fix and re-import, IM1–IM4, IM7: a check writes nothing and reports what its import does; re-imports skip and never duplicate or change a contact; a Do Not Call row claims no key; a file over one batch; key-parts paging; one live import per campaign, one import per check; a missing upload) | 14 |
+| `apps/server/test/integration/agency/agency-ingest-reimport.test.ts` (check then import then fix and re-import, IM1–IM4, IM7: a check writes nothing and reports what its import does; re-imports skip and never duplicate or change a contact; a Do Not Call row claims no key; a file over one batch; key-parts paging; one live import per campaign, one import per check; a missing upload; a NUL past the encoding probe dropped from a data cell and refused in a header, IM6) | 16 |
 | `apps/server/test/integration/agency/agency-ingest-route-seam.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
@@ -198,7 +198,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-internal-ingest-ownership.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-join-result.test.ts` | 7 |
 | `apps/server/test/unit/agency/agency-proxy-path-traversal.test.ts` | 83 |
-| `apps/server/test/unit/agency/agency-rejected-csv.test.ts` | 6 |
+| `apps/server/test/unit/agency/agency-rejected-csv.test.ts` (and the spreadsheet-formula guard on every cell, no reason led by a formula character, a guarded download read back by the import as the values it had, IM6) | 9 |
 | `apps/server/test/unit/agency/agency-repository.test.ts` | 43 |
 | `apps/server/test/unit/agency/agent-attempts-repository.test.ts` | 9 |
 | `apps/server/test/unit/agency/agent-grouped-repository.test.ts` | 62 |
@@ -564,7 +564,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-agent-caller-ids.test.ts` | 17 |
 | `apps/server/test/integration/api/agency-contact-assignment.test.ts` | 13 |
 | `apps/server/test/integration/api/agency-ingest-job-owner.test.ts` | ~3 |
-| `apps/server/test/integration/api/agency-ingest-check-import.test.ts` (`POST /ingest/jobs/:id/import` and `GET …/skipped.csv` through the real app, IM2, IM3, IM7: the checked file and mapping imported once, refusals by code, a sibling account's check a 404 everywhere, an agent refused, an expired download 410) | 12 |
+| `apps/server/test/integration/api/agency-ingest-check-import.test.ts` (`POST /ingest/jobs/:id/import` and `GET …/skipped.csv` through the real app, IM2, IM3, IM7: the checked file and mapping imported once, a failed or cancelled import lets its check go and Import starts another, a check held in another account refused `check_imported_elsewhere` without its id, a schema without 0042 refused `check_import_unavailable`, refusals by code, a sibling account's check a 404 everywhere, an agent refused, an expired download 410) | 16 |
 | `apps/server/test/integration/api/agency-my-campaigns.routes.test.ts` | ~27 |
 | `apps/server/test/integration/api/agency-my-contact-actions.test.ts` | 8 |
 | `apps/server/test/integration/api/agency-offboarding-staffing.test.ts` | ~17 |
@@ -1602,7 +1602,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/ingest-dedupe-columns-migration.test.ts` | 6 |
-| `packages/db/test/integration/db/ingest-check-and-skipped-migration.test.ts` (0042) | 4 |
+| `packages/db/test/integration/db/ingest-check-and-skipped-migration.test.ts` (0042; the check's unique index holds pending, running and completed imports only) | 4 |
 | `packages/db/test/integration/db/wrapup-redial-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/insights-foundation-migration.test.ts` | 8 |
 | `packages/db/test/integration/db/insights-pacing-history-migration.test.ts` | 6 |
@@ -2083,7 +2083,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgencyAttemptCallPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 45 |
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 36 |
-| `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` (and check, review, Import N contacts, the downloads, the import compared with its check, IM1–IM3) | 15 |
+| `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` (and check, review, Import N contacts, the downloads, the import compared with its check, IM1–IM3; the check's expiry, a check already imported followed to its import, the skipped download cut short, Import again after a failed or stopped import while the check is valid, analytics: a check is never a completed import, a failed check says so) | 24 |
 | `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
@@ -2115,7 +2115,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.carrier.test.tsx` | ~6 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 26 |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` (and after a check or an import that did not finish: a corrected file or another mapping, Import again while the check is valid) | 29 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` (the add's stated scope, the scope filter, what a removal un-blocks; DS1–DS7) | 36 |
 | `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 20 |
@@ -2213,7 +2213,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyFieldFilter.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 17 |
-| `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 34 |
+| `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 37 |
 | `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |
