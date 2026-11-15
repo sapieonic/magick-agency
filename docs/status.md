@@ -1750,24 +1750,23 @@ follow-ups as booked callbacks. **Not verified:** no browser or phone run.
 
 ## Test counts
 
-**Reshma's feedback: recording, promise to pay, Do Not Call scope, soft-phone results, import check, navigation labels, 2026-11-15 (after the merge, the review fixes and DS8).** Branch
-`ccr-bfd860dd-nhdhej` on `1c4c2bd`, run on `9a82b29` (the full run on the commit before it, whose
-only later change is one console test waiting for a settled label; the console and server unit
-suites re-run on `9a82b29`). Each package from inside its directory, on a local Postgres 16 and Redis
-on the agency ports with no other run sharing them, integration with 4 workers; the server's
-integration as two lanes run one after the other; `mpg123` and `sndfile-programs` installed.
-`pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and
-`pnpm test:tooling` 20 pass; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label
-maps). `packages/contracts` 534 (15 files); `packages/domain` 277 (14 files); `packages/db` unit
-457 (28 files), integration 807 (87 files); `packages/observability` 21 (5 files);
-`packages/web-ui` 240 (20 files). `apps/server`: unit 10166 passed + 1 expected fail (511 files);
-rest lane 2947 passed, 9 expected fail, 2 skipped (266 files passed, 2 skipped); wall-clock lane
-26 (6 files). `apps/console` 7025 (376 files); `apps/super-admin` 506 (37 files);
-`apps/report-renderer` 92 passed, 2 skipped (12 files, 1 skipped). `apps/mobile`: `flutter analyze`
-118 infos, all `deprecated_member_use`, no warnings; 1956 (`flutter test`); `agency_wire` 685
-(`dart test`, run outside the Flutter workspace). Earlier runs that day, with other suites beside
+**Reshma's feedback: recording, promise to pay, Do Not Call scope, soft-phone results, import check, navigation labels, 2026-11-15 (after the merge, the review fixes, DS8 and Manas's rulings).** Branch
+`ccr-bfd860dd-nhdhej` on `1c4c2bd`, run on `c53d2e7` (this entry's commit changes docs only). Each
+package from inside its directory, on a local Postgres 16 and Redis on the agency ports with no
+other run sharing them, integration with 4 workers; the server's integration as two lanes run one
+after the other; `mpg123` and `sndfile-programs` installed. `pnpm lint` clean; `pnpm build`
+clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and `pnpm test:tooling` 20 pass;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `packages/contracts`
+534 (15 files); `packages/domain` 277 (14 files); `packages/db` unit 457 (28 files), integration
+807 (87 files); `packages/observability` 21 (5 files); `packages/web-ui` 240 (20 files).
+`apps/server`: unit 10168 passed + 1 expected fail (511 files); rest lane 2948 passed, 9 expected
+fail, 2 skipped (266 files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 7025
+(376 files); `apps/super-admin` 506 (37 files); `apps/report-renderer` 92 passed, 2 skipped (12
+files, 1 skipped). `apps/mobile`: `flutter analyze` 118 infos, all `deprecated_member_use`, no
+warnings; 1956 (`flutter test`); `agency_wire` 685 (`dart test`, run outside the Flutter
+workspace). One run, no failures, no reruns. Earlier runs that day, with other suites beside
 them, failed `test/integration/load/voicelink-media-ws-load.test.ts` "start negotiation failures"
-twice under CPU load; it passed alone three times and in this run.
+twice under CPU load; it passed alone three times and in the last three full runs.
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
 `ccr-43b095f3-7qzgsk` on `62ea1f6`, run on the branch's final tree (this entry changes docs only).
