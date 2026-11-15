@@ -4,7 +4,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { getPool } from '@magick-agency/db';
-import { agencyAttemptRepository, agencyContactRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAttemptRepository, agencyContactRepository, promiseDateText } from '../../../db/repositories/agency.repository.js';
 import {
   checkActor,
   dispositionRefusal,
@@ -138,7 +138,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       : null;
     const promiseZone = promiseZoneFor(contactRow?.timezone, campaign.default_timezone);
     const now = new Date();
-    const fields = validateDispositionFields(resolved.entry, body, now, todayIn(promiseZone, now) ?? undefined);
+    // A same-code replay may send the date already stored on the attempt after that day has
+    // passed (a queued retry, a supervisor correcting the amount): it is not a new promise.
+    const recordedPromiseDate = attempt.disposition_code === resolved.entry.code
+      ? promiseDateText(attempt.promise_date ?? null)
+      : null;
+    const fields = validateDispositionFields(
+      resolved.entry, body, now, todayIn(promiseZone, now) ?? undefined, recordedPromiseDate);
     if (!fields.ok) return sendActionError(reply, 400, fields.code);
     // PT2: the entry's follow-up, when it has one. It takes the callback arm below exactly as a
     // `callback_at` would (the two cannot meet: a catalogue entry may not set both
@@ -386,8 +392,11 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     }
 
     // ── 5b. The contact's latest promise (PT6, PT7) ─────────────────────────
-    // Before the wrap-up release, and not swallowed: if it fails the agent sees the save fail
-    // and saves again, and the replay writes it (the outcome itself is idempotent on the code).
+    // Its own statement, NOT in a transaction with the outcome (neither is the contact release
+    // above; only a suppress outcome's first write opens one, for its DNC entry). Before the
+    // wrap-up release, and not swallowed: if it fails the agent sees the save fail and saves
+    // again, and the replay writes it (the outcome itself is idempotent on the code, the write
+    // idempotent on the call). The soft phone and inbound write it inside their transaction.
     // A promise replaces the contact's earlier one unless a later call already holds it; any
     // other outcome marks an earlier promise followed up when this call qualifies.
     const callAt = new Date(attempt.created_at);
@@ -508,6 +517,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       const resolved = resolveDisposition(campaign.disposition_catalog, body.disposition_code);
       if (!resolved.ok) {
         return sendActionError(reply, 400, 'unknown_disposition_code', resolved.allowed);
+      }
+      // A promise outcome needs its date (PT1, PT8), and this route takes none: recording the
+      // code bare would show a promise with no promised day on the attempt. Refused with the
+      // disposition route's own code, before anything is written; the mark itself is the agent's
+      // to send again without the code (or with another).
+      if (resolved.entry.requires_promise === true) {
+        return sendActionError(reply, 400, 'promise_required');
       }
       // A disposition is the record of who said what about a customer, so it is
       // never written unattributed. The public API layer sends the authenticated

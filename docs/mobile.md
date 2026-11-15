@@ -276,8 +276,16 @@ hand port of the shared module (`lib/core/station/promise_rules.dart`). The cont
 promise rides on the `reserved` frame (`attempt.promise`) and shows under the contact's name while
 ringing, on call and in Details, with its state ("Due today", "Missed": no outcome since the
 date, not unpaid); each prior attempt shows its own. The amount has no currency (PT5) and is
-grouped as the console groups it (`12,500`, `1,25,000`). An older app that does not know the
-field gets the server's refusal text ("update it or pick another outcome") on a promise outcome.
+grouped as the console groups it (`12,500`, `1,25,000`). The date picker offers the agent's
+yesterday to 31 days ahead (`promisePickerBounds`), the days the client rule accepts; the server
+decides the edge in the customer's zone. A refused promise shows its reason in the console's words
+on the station, the soft phone and inbound (`promiseRefusalCopy`). On a tagged soft-phone call that
+claimed no roster contact (`contact.claimed` false or no contact) the pad offers no promise
+entries (PT13). An older app that does not know the field gets the server's refusal text ("update
+it or pick another outcome") on the station only; on the soft phone and inbound it shows its own
+generic outcome line, since the refusal's code is one it knows (PT8). The app does not show a soft-phone
+or inbound call's own saved promise (only the contact's and the prior attempts'), so its `ManualCall`
+and `InboundCall` do not read `promise_date` / `promise_amount`.
 
 ## My contacts (contact assignment)
 

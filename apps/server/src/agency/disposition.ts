@@ -141,6 +141,12 @@ export function validateDispositionFields(
    * no promise to judge, since only a campaign catalogue may ask for one).
    */
   promiseToday?: PromiseDay,
+  /**
+   * The promised date stored on the call when it already carries THIS entry's code (a same-code
+   * replay): sent again, it is not refused for its day having passed (`validatePromiseFields`).
+   * Absent or null on a first save.
+   */
+  recordedPromiseDate?: string | null,
 ): { ok: true; notes: string | null; callbackAt: Date | null; promise: ValidPromise | null }
   | { ok: false; code: AgencyActionErrorCode } {
   const notesRaw = typeof body.notes === 'string' ? body.notes : null;
@@ -165,7 +171,7 @@ export function validateDispositionFields(
   }
 
   // Promise to pay (PT8): after the note and the callback, in the order the pad shows them.
-  const promise = validatePromiseFields(entry, body, promiseToday ?? todayIn('UTC', now)!);
+  const promise = validatePromiseFields(entry, body, promiseToday ?? todayIn('UTC', now)!, recordedPromiseDate);
   if (!promise.ok) return { ok: false, code: promise.code };
 
   return { ok: true, notes: notesRaw, callbackAt, promise: promise.promise };
@@ -220,8 +226,14 @@ export function dispositionErrorMessage(code: AgencyActionErrorCode): string {
   }
 }
 
-/** The station's copy for a promise refusal (PT8), or null for any other reason. */
+/**
+ * The copy for a promise refusal (PT8), or null for any other reason: the station's four, and
+ * the soft phone's `promise_needs_contact` (PT13).
+ */
 export function promiseRefusalMessage(reason: string): string | null {
+  if (reason === 'promise_needs_contact') {
+    return 'A promise to pay cannot be saved on this call: the number is not an open contact on the campaign\'s list. Pick another outcome and put the promise in the note.';
+  }
   return reason === 'promise_required' || reason === 'invalid_promise_date'
     || reason === 'invalid_promise_amount' || reason === 'promise_not_expected'
     ? dispositionErrorMessage(reason)

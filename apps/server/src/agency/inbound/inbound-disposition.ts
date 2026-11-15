@@ -56,6 +56,7 @@ import {
   agencyContactRepository,
   agencyInboundCallRepository,
   agencyInboundRouteRepository,
+  promiseDateText,
   type AgencyInboundCallRecord,
 } from '../../db/repositories/agency.repository.js';
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
@@ -85,7 +86,8 @@ export type InboundCallRefusal =
   | { code: 'inbound_outcome_already_saved' }
   | {
     code: 'inbound_disposition_invalid';
-    reason: AgencySoftphoneDispositionInvalidRefusal['reason'];
+    /** The soft phone's rules but its own `promise_needs_contact` (a matched call has its contact). */
+    reason: Exclude<AgencySoftphoneDispositionInvalidRefusal['reason'], 'promise_needs_contact'>;
     allowed_codes?: string[];
   };
 
@@ -235,14 +237,16 @@ export class InboundCallService {
       catalog, code: req.code, notes: req.notes, callbackAt: req.callbackAt,
       promiseDate: req.promiseDate, promiseAmount: req.promiseAmount,
       promiseToday: todayIn(promiseZone, now) ?? undefined,
+      recorded: { code: row.disposition_code, promiseDate: promiseDateText(row.promise_date ?? null) },
       callFields: [], submittedFields: undefined, storedFields: {}, now,
     });
     if (!prepared.ok) {
       const r = prepared.refusal;
-      if (r.code === 'disposition_invalid') {
+      if (r.code === 'disposition_invalid' && r.reason !== 'promise_needs_contact') {
         return refuse({ code: 'inbound_disposition_invalid', reason: r.reason, ...(r.allowed_codes ? { allowed_codes: r.allowed_codes } : {}) });
       }
-      // No call fields on an inbound call (IQ22): unreachable with none in force.
+      // No call fields on an inbound call (IQ22), and `promise_needs_contact` is the soft
+      // phone's own check, never `prepareManualDisposition`'s: unreachable.
       return refuse({ code: 'inbound_disposition_invalid', reason: 'unknown_code' });
     }
     const { entry, notes, callbackAt, promise } = prepared.prepared;
@@ -287,6 +291,17 @@ export class InboundCallService {
           await agencyContactRepository.suppressByPhone(
             row.matched_campaign_id, row.from_e164, decision.suppressedReason ?? 'dnc', {}, { client },
           );
+        }
+      } else if (settlement.kind === 'callback') {
+        // A replay that corrected the callback time or the promised date: the contact the first
+        // save booked moves with it, as the soft phone's replay does (only while it is still
+        // `pending` on this code). Nothing else runs twice: no DNC mark, no settlement.
+        const moved = await agencyContactRepository.rescheduleFromInboundReplay({
+          inboundCallId: row.id, dispositionCode: entry.code, nextAttemptAt: settlement.at,
+        }, { client });
+        if (moved) {
+          contactState = moved.state;
+          nextAt = moved.nextAttemptAt;
         }
       }
       // The matched contact's latest promise, or an earlier one followed up (PT6, PT7); on a

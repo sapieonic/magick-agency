@@ -136,7 +136,7 @@ export {
   waitingSql,
 } from './agency/insights-sql.js';
 export type { RosterBucket } from './agency/insights-sql.js';
-export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
+export { manualCallRequiresDisposition, projectManualCallRow, promiseDateText } from './agency/projections.js';
 export type { AgencyManualCallJoinedRow } from './agency/projections.js';
 // The drill-down predicates: one definition of each roster bucket and attempt slice, read by
 // the Contacts / Call attempts lists and their totals and by the insights reads.

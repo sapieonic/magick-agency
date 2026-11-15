@@ -1777,9 +1777,19 @@ optionally the amount), show it, and let supervisors follow promises up.
 
 Mutation-checked: the follow-up booked whatever the entry says (the PT3 cases go red), the
 past-date refusal (the server's "yesterday in Kolkata" case and the domain cases), the contact
-write's "later call wins" guard, the console's date window. **Pending Manas:** the 180-day bound,
-the 1–14 follow-up range, no currency (PT5), the `followed_up` state, Insights not counting
-follow-ups as booked callbacks. **Not verified:** no browser or phone run.
+write's "later call wins" guard, the console's date window. **Pending Manas:** the 1–14 follow-up
+range, no currency (PT5), the `followed_up` state, Insights not counting follow-ups as booked
+callbacks (the 30-day bound is decided, PT4). **Not verified:** no browser or phone run.
+
+**Review fix round (2026-11-15).** A replay of the promise's own call that keeps its date keeps a
+later call's follow-up mark (PT7); a same-code replay may send its stored date after the day has
+passed, on all three paths, and an inbound replay with a corrected date moves the follow-up (PT1);
+a promise outcome on a soft-phone call that claimed no roster contact is refused
+`promise_needs_contact` and hidden from both pads, and Mark DNC refuses a promise code (PT13); the
+app shows each promise refusal in the console's words on the soft phone and inbound, its date
+picker reaches today + 31, and a test holds its two constants to the contract (PT8). PT2 now says
+CA4 ownership is the station's only. Each fix mutation-checked (the test named in its commit goes
+red without it).
 
 ## Test counts
 

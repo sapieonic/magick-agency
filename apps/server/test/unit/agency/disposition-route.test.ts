@@ -76,11 +76,13 @@ const { repos } = vi.hoisted(() => ({
     session: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn() },
   },
 }));
-vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
+vi.mock('../../../src/db/repositories/agency.repository.js', async () => ({
   agencyAttemptRepository: repos.attempt,
   agencyCampaignRepository: repos.campaign,
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
+  // Pure (a DATE column read as `YYYY-MM-DD`): the real one.
+  promiseDateText: (await import('../../../src/db/repositories/agency/projections.js')).promiseDateText,
 }));
 
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';

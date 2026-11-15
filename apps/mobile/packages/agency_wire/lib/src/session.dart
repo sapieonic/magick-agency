@@ -141,7 +141,8 @@ final class Disposition {
   final bool? requiresPromise;
 
   /// PT2: the server books a call this many days after the promised date
-  /// (1–[Promise.followUpDaysMax]); null when it books none.
+  /// (1–14, the contract's `AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX`); null when it
+  /// books none.
   final int? promiseFollowUpDays;
 
   bool get noteRequired => requiresNote ?? false;

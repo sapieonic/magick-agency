@@ -47,6 +47,23 @@ void main() {
     );
   });
 
+  test('a promise refusal (PT8, PT13) names its rule in the console’s words, not the generic line', () {
+    ErrorBody invalid(String reason) => ErrorBody.fromJson(
+          {'error': 'Bad Request', 'code': 'disposition_invalid', 'message': 'The server’s words', 'reason': reason},
+        );
+    expect(refusalCopy(invalid('promise_required')), 'This outcome needs the date the customer promised to pay.');
+    expect(refusalCopy(invalid('invalid_promise_date')), contains('before the customer’s today or too far ahead'));
+    expect(refusalCopy(invalid('invalid_promise_amount')), contains('up to two decimal places'));
+    expect(refusalCopy(invalid('promise_not_expected')), contains('doesn’t record a promise to pay'));
+    expect(
+      refusalCopy(invalid('promise_needs_contact')),
+      'A promise to pay can’t be saved on this call: the number isn’t an open contact on the campaign’s list. '
+      'Pick another outcome and put the promise in the note.',
+    );
+    // Any other rule keeps the outcome's own line.
+    expect(refusalCopy(invalid('note_required')), softphoneRefusalCopy[SoftphoneErrorCode.dispositionInvalid]);
+  });
+
   test('a code this build does not know shows the server’s own sentence', () {
     expect(refusalCopy(body('boom'), context: SoftphoneRefusalContext.status), 'The server’s words');
     expect(refusalCopy(body('boom', '')), isNotEmpty);

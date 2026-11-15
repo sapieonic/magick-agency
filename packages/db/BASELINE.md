@@ -1451,12 +1451,13 @@ next day's start in the customer's zone, computed by the server, so the list's s
 comparison of instants with no zone arithmetic in SQL), **`promise_call_at`** (when the recording
 call started: a later call's promise replaces it, the same call's replay corrects it) and
 **`promise_followed_up_at`** (a later call's outcome on or after the day: "followed up", else
-"missed"); `ck_agency_contact_promise` keeps them all-or-none. All four CHECKs are added NOT VALID
+"missed"; a replay of the promise's own call that keeps its date keeps the mark);
+`ck_agency_contact_promise` keeps them all-or-none. All four CHECKs are added NOT VALID
 (new NULL columns; enforced on writes, no scan), so the file is catalogue changes only under
-ACCESS EXCLUSIVE; 0044 validates the CHECKs and 0045 builds the list's index. **Down** drops the
-CHECKs and columns (the promises are lost; outcomes stay). **Tests**:
-`test/integration/db/promise-to-pay-migration.test.ts` (column types, each CHECK, NOT VALID, no
-index of its own, down then up) and the down → up inventory suite.
+ACCESS EXCLUSIVE; 0044 validates the CHECKs and 0045 builds the list's index (the list filters by
+promise, it is not ordered by it). **Down** drops the CHECKs and columns (the promises are lost;
+outcomes stay). **Tests**: `test/integration/db/promise-to-pay-migration.test.ts` (column types,
+each CHECK, NOT VALID, no index of its own, down then up) and the down → up inventory suite.
 
 ### 0042 — `migrations/0042_ingest_check_and_skipped.sql`
 

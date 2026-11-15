@@ -65,6 +65,9 @@ export const PROMISE_REFUSAL_COPY: Readonly<Record<string, string>> = {
   invalid_promise_date: 'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.',
   invalid_promise_amount: DISPOSITION_BLOCK_COPY.promise_amount_invalid,
   promise_not_expected: 'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.',
+  // PT13: a tagged call with no claimed roster contact (the pad hides promise entries there).
+  promise_needs_contact:
+    'A promise to pay can’t be saved on this call: the number isn’t an open contact on the campaign’s list. Pick another outcome and put the promise in the note.',
 };
 
 /** The `status` context's sentences, for the codes whose meaning it changes. */

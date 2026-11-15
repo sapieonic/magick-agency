@@ -490,12 +490,22 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const callerId = call ? call.caller_id : draftCallerId;
   const callerIdAutomatic = call === null && draftCampaign !== null && callerIdOptions.length > 0;
 
-  const baseCatalog: AgencyDisposition[] = call?.tag
+  const tagCatalog: AgencyDisposition[] = call?.tag
     ? (taggableCampaigns.find((c) => c.campaign_id === call.tag!.campaign_id)?.disposition_catalog
       ?? callCampaign?.disposition_catalog
       ?? bootstrap?.untagged.disposition_catalog
       ?? [])
     : (bootstrap?.untagged.disposition_catalog ?? []);
+  // A promise needs a roster contact this call claimed (PT13): on a tagged call with none (the
+  // number is not on the list, or its contact is closed and only linked) the server refuses it
+  // (`promise_needs_contact`), so the pad does not offer it.
+  const noClaimedContact = call !== null && call.contact?.claimed !== true;
+  const baseCatalog = useMemo(
+    () => (noClaimedContact && tagCatalog.some((e) => e.requires_promise)
+      ? tagCatalog.filter((e) => !e.requires_promise)
+      : tagCatalog),
+    [noClaimedContact, tagCatalog],
+  );
   const catalog = call && catalogOverride?.callId === call.id ? catalogOverride.catalog : baseCatalog;
 
   // ── A call arriving, and a call settling ─────────────────────────────────

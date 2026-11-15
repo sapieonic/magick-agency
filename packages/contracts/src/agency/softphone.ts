@@ -794,7 +794,14 @@ export interface AgencySoftphoneDispositionInvalidRefusal extends AgencySoftphon
     | 'promise_required'
     | 'invalid_promise_date'
     | 'invalid_promise_amount'
-    | 'promise_not_expected';
+    | 'promise_not_expected'
+    /**
+     * A promise outcome on a call that did not claim a roster contact (PT13): untagged calls
+     * never see one (PT10), and a tagged call whose number is not on the roster, or whose
+     * contact it only linked, has no contact it settles to keep the promise or book its
+     * follow-up on. The pads hide promise entries on such calls (`contact.claimed`).
+     */
+    | 'promise_needs_contact';
 }
 
 /**

@@ -301,6 +301,59 @@ describe('PT1, PT6: what is stored, replays and later promises', () => {
   });
 });
 
+describe('PT1, PT4, PT7: a same-code replay', () => {
+  it('keeps a later call\'s follow-up mark when it keeps the date (an amount corrected); a moved date starts unmarked', async () => {
+    const a = await parked({ createdAt: new Date(Date.now() - 3_600_000) });
+    expect((await dispose(a, { disposition_code: 'ptp', promise_date: dayIn('UTC', 0) })).statusCode).toBe(200);
+    // Call B, made today after A, records another outcome: A's promise is followed up.
+    const b = await parked({ campaignId: a.campaign, contactId: a.contact });
+    expect((await dispose(b, { disposition_code: 'reached' })).statusCode).toBe(200);
+    const marked = (await contactRow(a.contact)).promise_followed_up_at as Date;
+    expect(marked).not.toBeNull();
+    // A is saved again with the same date (its amount corrected, or a queued retry): still followed up.
+    const replay = await dispose(a, { disposition_code: 'ptp', promise_date: dayIn('UTC', 0), promise_amount: '75' }, supervisor);
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(await contactRow(a.contact)).toMatchObject({ promise_amount: '75.00', promise_followed_up_at: marked });
+    // A moves the date: a new day, not known to be followed up.
+    expect((await dispose(a, { disposition_code: 'ptp', promise_date: dayIn('UTC', 1) })).statusCode).toBe(200);
+    expect(await contactRow(a.contact)).toMatchObject({ promise_date: dayIn('UTC', 1), promise_followed_up_at: null });
+  });
+
+  it('is not refused for the stored date having passed (a retry queued across midnight); a new past date is', async () => {
+    const c = await parked();
+    expect((await dispose(c, { disposition_code: 'ptp', promise_date: dayIn('UTC', 0) })).statusCode).toBe(200);
+    // The promise was for yesterday: as if the first save landed yesterday.
+    await getTestPool().query('UPDATE agency_call_attempts SET promise_date = $2::date WHERE id = $1', [c.attempt, dayIn('UTC', -1)]);
+    const kept = await dispose(c, { disposition_code: 'ptp', promise_date: dayIn('UTC', -1), promise_amount: '20' });
+    expect(kept.statusCode, kept.body).toBe(200);
+    expect(await attemptRow(c.attempt)).toEqual({ disposition_code: 'ptp', promise_date: dayIn('UTC', -1), promise_amount: '20.00' });
+    const moved = await dispose(c, { disposition_code: 'ptp', promise_date: dayIn('UTC', -2) });
+    expect(moved.statusCode, moved.body).toBe(400);
+    expect(moved.json()).toMatchObject({ code: 'invalid_promise_date' });
+    // A first save of the same past date on another call is refused as before.
+    const other = await parked({ campaignId: c.campaign, contactId: c.contact });
+    const first = await dispose(other, { disposition_code: 'ptp', promise_date: dayIn('UTC', -1) });
+    expect(first.statusCode, first.body).toBe(400);
+    expect(first.json()).toMatchObject({ code: 'invalid_promise_date' });
+  });
+});
+
+describe('PT13: Mark DNC with an outcome', () => {
+  it('refuses a promise outcome (it carries no date) with `promise_required`, before anything is written', async () => {
+    const c = await parked();
+    const res = await post(`/proxy/agency/attempts/${c.attempt}/dnc`, agent, { disposition_code: 'ptp' });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'promise_required' });
+    expect(await attemptRow(c.attempt)).toMatchObject({ disposition_code: null });
+    expect((await contactRow(c.contact)).state).toBe('connected');
+    const { rows } = await getTestPool().query('SELECT count(*)::int AS n FROM dnc_entries');
+    expect(rows[0]!.n).toBe(0);
+    // Another outcome is taken as before.
+    const ok = await post(`/proxy/agency/attempts/${c.attempt}/dnc`, agent, { disposition_code: 'reached' });
+    expect(ok.statusCode, ok.body).toBe(200);
+  });
+});
+
 describe('PT7, PT12: the Contacts list, its filter and the exports', () => {
   async function promised(state: 'upcoming' | 'due_today' | 'missed' | 'followed_up', campaign?: string) {
     const c = await parked(campaign ? { campaignId: campaign } : {});

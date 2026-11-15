@@ -281,6 +281,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   // ── Mapping caches ──
   List<Disposition>? _optionsSource;
+  bool _optionsHidePromise = false;
   List<DispositionOption> _options = const [];
 
   SoftphoneApi get _api => ref.read(softphoneApiProvider);
@@ -1992,11 +1993,15 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _actions.setCallDisplayName(call.id, name);
   }
 
-  List<DispositionOption> _optionsFor(List<Disposition> catalog) {
-    if (identical(catalog, _optionsSource)) return _options;
+  /// The pad's outcomes. [hidePromise]: the call claimed no roster contact (none
+  /// on the list, or one only linked), so a promise outcome has nowhere to be
+  /// kept and the server refuses it (`promise_needs_contact`, PT13): not offered.
+  List<DispositionOption> _optionsFor(List<Disposition> catalog, {bool hidePromise = false}) {
+    if (identical(catalog, _optionsSource) && hidePromise == _optionsHidePromise) return _options;
     _optionsSource = catalog;
+    _optionsHidePromise = hidePromise;
     return _options = List.unmodifiable(
-      catalog.map(
+      catalog.where((d) => !(hidePromise && d.promiseRequired)).map(
         (d) => DispositionOption(
           code: d.code,
           label: d.label,
@@ -2105,7 +2110,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       notes: _autosave.view,
       notesEnabled: notesEnabled,
       notesDisabledReason: notesEnabled ? null : softphoneNotesDisabledCopy,
-      outcomes: _optionsFor(_catalog),
+      outcomes: _optionsFor(_catalog, hidePromise: call != null && call.contact?.claimed != true),
       outcomeCode: _outcomeCode,
       callbackAt: _callbackAt,
       promiseDate: _promiseDate,

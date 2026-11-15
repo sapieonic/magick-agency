@@ -635,6 +635,45 @@ void main() {
       expect(h.view.outcomes.first.code, 'interested');
     });
 
+    softphoneTest('PT13: a promise outcome is offered only on a call that claimed its roster contact', (h) {
+      h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
+        200,
+        bootstrapJson({
+          'taggable_campaigns': [
+            {
+              ...campaignJson,
+              'disposition_catalog': [
+                ...(campaignJson['disposition_catalog']! as List<Object?>),
+                {'code': 'ptp', 'label': 'Promised to pay', 'requires_promise': true, 'promise_follow_up_days': 2},
+              ],
+            },
+          ],
+        }),
+      );
+      h.run(h.actions.retry());
+      Map<String, Object?> contact({required bool claimed}) => {
+            'contact_id': 'c-1',
+            'state': claimed ? 'in_flight' : 'completed',
+            'claimed': claimed,
+            'context': <String, Object?>{},
+            'prior_attempts': <Object?>[],
+          };
+      // No roster contact: nowhere to keep the promise.
+      h.openWith(call: owed({'tag': tag}));
+      expect(h.view.outcomes.map((o) => o.code), ['interested', 'callback', 'documents', 'do_not_call']);
+      // A contact the call only linked (it is closed): not settled by this call.
+      h.host.frame(owed({'id': 'mc-2', 'tag': tag, 'contact': contact(claimed: false),
+        'created_at': '2026-10-30T10:05:00.000Z', 'updated_at': '2026-10-30T10:06:00.000Z'}));
+      h.pump();
+      expect(h.view.outcomes.map((o) => o.code), isNot(contains('ptp')));
+      // A claimed contact: offered.
+      h.host.frame(owed({'id': 'mc-3', 'tag': tag, 'contact': contact(claimed: true),
+        'created_at': '2026-10-30T10:07:00.000Z', 'updated_at': '2026-10-30T10:08:00.000Z'}));
+      h.pump();
+      expect(h.view.outcomes.map((o) => o.code), ['interested', 'callback', 'documents', 'do_not_call', 'ptp']);
+      expect(h.view.outcomes.last.requiresPromise, isTrue);
+    });
+
     softphoneTest('disposition_invalid re-syncs the pad from allowed_codes', (h) {
       h.openWith(call: owed());
       h.refuse('POST $callsPath/mc-1/disposition', 'disposition_invalid', status: 422, extra: {
