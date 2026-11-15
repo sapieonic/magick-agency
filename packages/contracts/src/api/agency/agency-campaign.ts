@@ -236,7 +236,7 @@ export interface AgencyIngestStartResponse {
  * while the check is valid. Refusals carry a `code`: 409 `not_a_check` /
  * `check_not_finished` / `check_failed` / `import_in_progress` /
  * `check_imported_elsewhere` (held by an import the caller cannot see) /
- * `check_import_unavailable` (the server's database lacks migration 0042), 410
+ * `check_import_unavailable` (the server's database lacks 0042's `check_job_id`), 410
  * `check_expired`, 404 for a job the caller cannot see.
  */
 export interface AgencyIngestImportResponse extends AgencyIngestStartResponse {

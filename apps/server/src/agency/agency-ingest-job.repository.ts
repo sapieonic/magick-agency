@@ -24,7 +24,7 @@ function isUndefinedColumnError(err: unknown): boolean {
  */
 export class IngestCheckImportUnavailableError extends Error {
   constructor() {
-    super('Importing a checked file needs migration 0042 (agency_ingest_jobs.check_job_id).');
+    super('Importing a checked file needs agency_ingest_jobs.check_job_id (0042_ingest_check_and_skipped.sql).');
     this.name = 'IngestCheckImportUnavailableError';
   }
 }

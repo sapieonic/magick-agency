@@ -445,7 +445,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
    *   409 `not_a_check` / `check_not_finished` / `check_failed` / `import_in_progress`,
    *       or `check_imported_elsewhere` (an import this caller cannot see holds it).
    *   410 `check_expired` — the check finished more than {@link CHECK_VALID_HOURS} h ago.
-   *   409 `check_import_unavailable` — the database has not had migration 0042 yet.
+   *   409 `check_import_unavailable` — the database does not have 0042's `check_job_id` yet.
    *   400 — a campaign that is not the check's, or none at all.
    *
    * `campaign_id` in the body: required when the check named none (the builder
