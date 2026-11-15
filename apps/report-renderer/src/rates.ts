@@ -73,6 +73,54 @@ export function campaignFigures(d: CampaignReportDataset): CallFigures {
   return callFigures(d.activity.calls, answered, abandoned, d.floors.campaign_rate_min_first_dials);
 }
 
+/**
+ * The soft-phone calls logged to the campaign and the All calls total beside the dialler's
+ * figures (SR1–SR3, SR8); `null` when the report shows none. Shown when the window holds any
+ * placed soft-phone call (the console's rule for a soft phone switched off, SR5: a report has no
+ * flag to read) and never when the dataset predates them. The PDF and the workbook both gate on
+ * this, so the two files show the same rows.
+ */
+export interface CampaignSoftphoneFigures {
+  placed: number;
+  connected: number;
+  humanConnects: number;
+  /** People reached ÷ placed: every soft-phone call is a first dial (SR2). */
+  connect: Rate;
+  /** The dialler's counts and the soft phone's added (SR3). */
+  all: {
+    /** Dials (wrap-up redials included) + soft-phone calls placed. */
+    placed: number;
+    connected: number;
+    humanConnects: number;
+    /** The rate's denominator: the dialler's first dials + soft-phone calls placed. */
+    firstCalls: number;
+    /** (People reached + soft-phone people reached) ÷ first calls, under the one floor on its own denominator. */
+    connect: Rate;
+  };
+}
+
+export function campaignSoftphoneFigures(d: CampaignReportDataset): CampaignSoftphoneFigures | null {
+  const calls = d.activity.calls;
+  const soft = calls.softphone;
+  if (!soft || soft.placed <= 0) return null;
+  const floor = d.floors.campaign_rate_min_first_dials;
+  const firstCalls = calls.dials - calls.redials.placed + soft.placed;
+  const humanConnects = calls.human_connects + soft.human_connects;
+  return {
+    placed: soft.placed,
+    connected: soft.connected,
+    humanConnects: soft.human_connects,
+    connect: rate(soft.human_connects, soft.placed, floor),
+    all: {
+      placed: calls.dials + soft.placed,
+      connected: calls.connected + soft.connected,
+      humanConnects,
+      firstCalls,
+      connect: rate(humanConnects, firstCalls, floor),
+    },
+  };
+}
+
 /** One campaign row's or the account totals' figures, rates recomputed from the counts. */
 export function accountFigures(f: AccountReportFigures, floor: number): CallFigures {
   return callFigures(f.calls, f.answered, f.abandoned, floor);

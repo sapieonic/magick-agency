@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react';
 import type { CampaignReportDataset } from '@magick-agency/contracts/reports';
 import { bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, unknownUser } from '../../format';
-import { campaignFigures, recordingShare } from '../../rates';
+import { campaignFigures, campaignSoftphoneFigures, recordingShare } from '../../rates';
 import { HourColumns, StackedColumns, tickEvery } from '../charts';
 import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, STATUS_WORDS, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
@@ -54,6 +54,7 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
   const calls = d.activity.calls;
   const { firstDials, answered, abandoned, connect, success, abandonment, talk, wrap, handle } = campaignFigures(d);
   const conversations = calls.conversations;
+  const soft = campaignSoftphoneFigures(d);
   return (
     <div className="page" data-page="overview">
       <PageHeader
@@ -69,7 +70,8 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
           items={[
             { id: 'dials', label: 'Dials', value: count(calls.dials), detail: `${count(firstDials)} first dials · ${count(calls.redials.placed)} redials` },
             { id: 'connected', label: 'Connected', value: count(calls.connected), detail: `${count(conversations)} conversations` },
-            rateKpi('Connect rate', connect, `${count(calls.human_connects)} people / ${count(firstDials)} first dials`, 'connect_rate'),
+            // "Dialler connect rate" where the soft phone's figures show beside it (SR1).
+            rateKpi(soft ? 'Dialler connect rate' : 'Connect rate', connect, `${count(calls.human_connects)} people / ${count(firstDials)} first dials`, 'connect_rate'),
             rateKpi('Success rate', success, `${count(calls.successes)} successes / ${count(conversations)} conversations`, 'success_rate'),
             rateKpi('Abandonment', abandonment, `${count(abandoned)} of ${count(answered)} answered`, 'abandonment'),
             talk === null || handle === null
@@ -135,12 +137,16 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
           </dd>
           <dt>Do Not Call</dt>
           <dd>{plural(d.activity.dnc_marked.total, 'number')} marked by agents</dd>
-          {/* Beside the dialler's figures, in none of them (SR1); only when there were any. */}
-          {calls.softphone && calls.softphone.placed > 0 ? (
+          {/* Beside the dialler's figures, in none of them, and All calls the two added (SR1, SR3); only when there were any. */}
+          {soft ? (
             <>
               <dt>Soft-phone calls</dt>
               <dd data-testid="softphone-calls">
-                {plural(calls.softphone.placed, 'call')} placed and logged to this campaign, {count(calls.softphone.connected)} connected, {plural(calls.softphone.human_connects, 'person', 'people')} reached (connect rate {rateText(rate(calls.softphone.human_connects, calls.softphone.placed, d.floors.campaign_rate_min_first_dials))}); not in the dialler’s figures above
+                {plural(soft.placed, 'call')} placed and logged to this campaign, {count(soft.connected)} connected, {plural(soft.humanConnects, 'person', 'people')} reached (connect rate {rateText(soft.connect)}); not in the dialler’s figures above
+              </dd>
+              <dt>All calls</dt>
+              <dd data-testid="all-calls">
+                {plural(soft.all.placed, 'call')} placed by the dialler and the soft phone together, {count(soft.all.connected)} connected, {plural(soft.all.humanConnects, 'person', 'people')} reached (connect rate {rateText(soft.all.connect)}, over {count(soft.all.firstCalls)} first dials and soft-phone calls)
               </dd>
             </>
           ) : null}
