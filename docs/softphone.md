@@ -548,6 +548,17 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   path stays `/manual-calls`). **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
+- **Campaign results** (SR1–SR10, [`decisions.md`](decisions.md)). A tagged call is counted on its
+  campaign by one definition (`db/repositories/agency/softphone-campaign-sql.ts`): placed
+  (`dialed_at` set), connected (outcome `connected`), reached a person (bridged, coded neither
+  voicemail nor `no_disposition`), `created_at` in `[from, to)`. Insights' `calls.softphone` and
+  `/stats` `softphone` (lifetime) serve the three counts; the Calls tab, the Overview's connect
+  rate and each Analytics card show the soft phone's placed, connected and connect rate (reached ÷
+  placed) and an **All calls** total beside the dialler's figures, never inside the dialler's
+  connect rate, which they then label "Dialler connect rate". They show while the flag is on or
+  when the counts hold any call. The campaign call export (`attempts.csv`) carries the tagged calls
+  as `soft_phone` rows (its last column, `source`), and the campaign report a Soft-phone calls
+  block. Untagged calls are in no campaign's results.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
 - **Roster contact detail.** Where the flag is on and the caller holds `agency.supervise`, a
   "Soft-phone calls" section below the attempts lists the soft-phone calls that matched the contact
