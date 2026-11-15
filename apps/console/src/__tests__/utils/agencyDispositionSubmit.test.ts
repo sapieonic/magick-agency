@@ -344,3 +344,26 @@ describe('a callback moved into calling hours', () => {
     ).toBe(confirmationCopy({ dispositionLabel: 'Callback', nextAttemptAt: DIALLED }));
   });
 });
+
+describe('a suppress outcome whose Do Not Call entry could not be written (DS8)', () => {
+  it('carries `dnc_recorded` only when the response says it', () => {
+    expect(classifySubmitOutcome({ status: 200, body: { attempt_id: A, dnc_recorded: false } }))
+      .toEqual({ kind: 'saved', nextAttemptAt: null, dncRecorded: false });
+    expect(classifySubmitOutcome({ status: 200, body: { attempt_id: A, dnc_recorded: true } }))
+      .toEqual({ kind: 'saved', nextAttemptAt: null, dncRecorded: true });
+    // Absent (another outcome, a replay, an older server) or not a boolean: nothing is carried.
+    expect(classifySubmitOutcome({ status: 200, body: { attempt_id: A, dnc_recorded: 'no' } }))
+      .toEqual({ kind: 'saved', nextAttemptAt: null });
+  });
+
+  it('says the number could not go on the list on false, and claims nothing about the list otherwise', () => {
+    expect(confirmationCopy({ dispositionLabel: 'Do not call', nextAttemptAt: null, dncRecorded: false })).toBe(
+      'Saved — Do not call. This contact won’t be dialled again. It couldn’t go on this campaign’s Do Not Call list '
+      + 'because the number isn’t in a form the list can hold, so a new upload could bring it back. Ask an admin to check the number.',
+    );
+    expect(confirmationCopy({ dispositionLabel: 'Do not call', nextAttemptAt: null, dncRecorded: true }))
+      .toBe('Saved — Do not call.');
+    expect(confirmationCopy({ dispositionLabel: 'Do not call', nextAttemptAt: null }))
+      .toBe('Saved — Do not call.');
+  });
+});

@@ -85,6 +85,7 @@ const BOOTSTRAP: AgencySessionBootstrap = {
     // Deliberately NOT called `callback`: the built-in codes are conventions and
     // a campaign may rename them, so the shortcut must key on the flag.
     { code: 'ring_me_later', label: 'Ring me later', requires_datetime: true },
+    { code: 'do_not_call', label: 'Do not call', suppress: true },
   ],
   wrapup_seconds: 30,
   wrapup_auto_return: true,
@@ -328,6 +329,41 @@ describe('the confirmation after a callback is saved', () => {
     await waitFor(() => expect(live.textContent).toContain('We'));
     // No invented time.
     expect(live.textContent).not.toContain('not-a-date');
+  });
+});
+
+describe('the confirmation after a suppress outcome is saved (DS8)', () => {
+  const saved = (dnc: Record<string, unknown>) => ({
+    attempt_id: 'att-1',
+    contact_id: 'c-1',
+    disposition_code: 'do_not_call',
+    contact_state: 'suppressed',
+    next_attempt_at: null,
+    agent_state: 'wrapup',
+    ...dnc,
+  });
+
+  async function saveDoNotCall() {
+    await onCall();
+    fireEvent.click(await screen.findByRole('button', { name: /Do not call/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save disposition/i }));
+    });
+    return assertiveRegion();
+  }
+
+  it('says the number could not go on the list when the server wrote no entry', async () => {
+    mocks.submitDisposition.mockResolvedValue(saved({ dnc_recorded: false }));
+    const live = await saveDoNotCall();
+    await waitFor(() => expect(live.textContent).toContain('Saved — Do not call.'));
+    expect(live.textContent).toContain('It couldn’t go on this campaign’s Do Not Call list');
+  });
+
+  it('adds nothing when the entry is on the list', async () => {
+    mocks.submitDisposition.mockResolvedValue(saved({ dnc_recorded: true }));
+    const live = await saveDoNotCall();
+    await waitFor(() => expect(live.textContent).toContain('Saved — Do not call.'));
+    expect(live.textContent).not.toContain('couldn’t go on');
   });
 });
 

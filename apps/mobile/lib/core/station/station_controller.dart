@@ -2697,6 +2697,12 @@ class StationController extends Notifier<StationView?>
           return;
         }
         _saved = (attemptId: attemptId, code: code);
+        // A suppress outcome whose number could not go on the list (DS8): the confirmation
+        // promised an entry, so say it was not written. Absent or true: nothing to add.
+        if (r.dncRecorded == false) {
+          _log.warn('suppress outcome saved; its Do Not Call entry could not be written');
+          _dncOutcome = (attemptId: attemptId, text: suppressOutcomeNotListedCopy);
+        }
       } on ApiError catch (e) {
         if (!_live(s)) return;
         final current = _station.currentAttemptId;

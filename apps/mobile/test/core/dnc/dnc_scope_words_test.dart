@@ -36,5 +36,7 @@ void main() {
     expect(dncScopeLabel(entry('account', account: 'North')), 'North account');
     expect(dncScopeLabel(entry('account')), 'An account');
     expect(dncScopeLabel(entry('campaign', account: 'North', campaign: 'Q4 Renewals')), 'Campaign: Q4 Renewals (North)');
+    // A scope a newer server sends: the widest words, never its wire code.
+    expect(dncScopeLabel(entry('region')), 'Every campaign');
   });
 }

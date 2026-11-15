@@ -433,9 +433,9 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       // `reserved` frame can reach the console before this response does.
       agent_state: live?.state ?? 'offline',
     };
-    // `dnc_entry` is for the public layer's audit row only (it strips it): the entry DS8 wrote,
-    // or that it could not (`recorded: false`, a number not usable E.164). Absent when no entry
-    // was attempted (another outcome, or a replay).
+    // `dnc_entry` is for the public layer (it strips it): the audit row's facts, and whether the
+    // entry DS8 attempted is on the list (`recorded: false`, a number not usable E.164), which it
+    // passes on as `dnc_recorded`. Absent when no entry was attempted (another outcome, or a replay).
     const dncEntry = dncMark
       ? { recorded: dncMark.recorded, id: dncMark.written?.id ?? null, created: dncMark.recorded && !dncMark.alreadyPresent }
       : null;
@@ -540,6 +540,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     let forwarded!: Awaited<ReturnType<typeof markDnc>>;
     let noteDispositionFor: string | null = null;
     const client = await getPool().connect();
+    let failure: Error | undefined;
     try {
       await client.query('BEGIN');
       // ── 2. Suppress the roster rows ──────────────────────────────────────
@@ -659,10 +660,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       }, { client });
       await client.query('COMMIT');
     } catch (err) {
+      failure = err instanceof Error ? err : new Error(String(err));
       await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
       throw err;
     } finally {
-      client.release();
+      // A failed transaction's connection is discarded, never handed back to the pool (as the
+      // disposition route's): a ROLLBACK that failed leaves it mid-transaction.
+      client.release(failure);
     }
     if (noteDispositionFor) {
       await runtime.wrapup.noteDisposition(noteDispositionFor, attempt.id);

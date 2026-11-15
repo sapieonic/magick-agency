@@ -185,6 +185,16 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
   promise_date?: string | null;
   promise_amount?: string | null;
   /**
+   * A `suppress` outcome's Do Not Call entry (DS8): `true` when this campaign's entry is on
+   * the list (written now, or already there), `false` when the contact's number is not in a
+   * form the list can hold and no entry was written (only this contact is suppressed, and a
+   * new upload could bring the number back). **Absent when no entry was attempted**: another
+   * outcome, or a same-code replay (which never writes one). A client says "on the list" only
+   * on `true`, and the `false` copy on `false`; absent, it claims nothing about the list.
+   * The public API layer sets it from the internal answer.
+   */
+  dnc_recorded?: boolean;
+  /**
    * The agent's state after release.
    *
    * **ADVISORY — a point-in-time snapshot, and NOT the authority.** The station

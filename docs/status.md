@@ -1705,8 +1705,15 @@ always wrote every campaign, with no choice. Now:
   removes their campaigns' entries too (DS6). No migration.
 - **Words.** The same scope words on customer history and the soft phone, console and mobile.
 - **Fixed (DS8).** A station `suppress` outcome (web, mobile, a supervisor's) wrote no list entry
-  while the mobile wrap-up said it did. The disposition route now writes the campaign entry, as the
-  soft phone and inbound do (`test/integration/api/station-suppress-dnc.test.ts`, mutation-checked).
+  while the mobile wrap-up said it did. The disposition route now writes the campaign entry with
+  its audit row and sweeps the campaign's other rows on the number, as the soft phone and inbound
+  do; a number the list cannot hold is told to the agent after saving (`dnc_recorded: false` on
+  the disposition answer) (`test/integration/api/station-suppress-dnc.test.ts`, mutation-checked).
+- **Review fixes.** A removal says a number stays blocked only by entries that reach where the
+  removed one did, and names the rest as blocking it elsewhere (DS5); the agent report's DNC count
+  no longer takes other accounts' campaign marks; the DNC route discards a failed transaction's
+  connection; campaign settings and the app's customer history say a suppress outcome and an
+  unknown scope as they are. DS6 carries the reviewer's open question for Manas.
 
 ### Soft-phone calls in campaign results 2026-11-15 (SR1–SR10, [`decisions.md`](decisions.md))
 

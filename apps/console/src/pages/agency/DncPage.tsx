@@ -18,6 +18,7 @@ import {
   entryScopeWords,
   removalCopy,
   removedToast,
+  stillBlocked,
   type DncAddChoice,
 } from './dnc/dncPageCopy';
 import { useTeam } from '../../hooks/useTeam';
@@ -315,7 +316,8 @@ export function DncPage() {
   const onRemove = useCallback(async () => {
     if (!removing) return;
     const entry = removing;
-    const stillBlocked = (removingOthers?.length ?? 0) > 0;
+    // Only the entries that reach where this one did keep it blocked there (DS5).
+    const blocked = stillBlocked(entry, removingOthers ?? null);
     setRemoving(null);
     try {
       await removeDncEntry(entry.id, tenantId ?? undefined, accountId ?? undefined);
@@ -327,7 +329,7 @@ export function DncPage() {
         this number, so it is the one that most has to be right: what changed is
         that agency campaigns may dial it, and nothing else.
       */
-      showToast(removedToast(entry, stillBlocked), 'success');
+      showToast(removedToast(entry, blocked), 'success');
       // Removing the only row on a later page would otherwise reload that same
       // offset, now past the end, and the pager is rendered only when there are
       // rows — so the operator lands on "Nothing on the list" while the earlier

@@ -231,6 +231,10 @@ describe('the outcome card’s own copy', () => {
       });
       expect(summary).toContain('suppressed');
       expect(summary).not.toContain('finished on this campaign');
+      // This campaign's list only (DS8), never "nothing dials them again".
+      expect(summary).toContain('this campaign’s Do Not Call list');
+      expect(summary).toContain('Other campaigns still can.');
+      expect(summary).not.toMatch(/nothing dials/);
     });
 
     it('reads the disposition’s own retry rule, which nothing on screen used to show', () => {

@@ -24,6 +24,14 @@ void main() {
       expect(DispositionResponse.fromJson(json).callbackRequestedAt, isNull);
     });
 
+    test('a suppress outcome says whether its Do Not Call entry was written, and only then', () {
+      final unlisted = DispositionResponse.fromJson(fixture('actions.json', 'disposition_response_suppress_unlisted'));
+      expect(unlisted.contactState, ContactState.suppressed);
+      expect(unlisted.dncRecorded, isFalse);
+      // Absent on any other outcome (and from an older server): nothing is claimed.
+      expect(DispositionResponse.fromJson(fixture('actions.json', 'disposition_response_completed')).dncRecorded, isNull);
+    });
+
     test('a redial names the new attempt and the one it redials', () {
       final r = RedialResponse.fromJson(fixture('actions.json', 'redial_response'));
       expect(r.attemptId, '6b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8');

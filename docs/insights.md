@@ -339,7 +339,7 @@ or four times its compute time.
 | `callbacks` timing classes, `by_owner` | `callbackTiming` (IN4), the callbacks whose booked time is in range |
 | `callbacks.open_due_today`, `open_overdue` | as of now: the allocation's totals, through the cache under the allocation's own key (the polled allocation and this read share one computation) |
 | `activity.agents` state seconds, `never_joined` | `agentStateSeconds` (the occupancy intervals); never joined = staffed with neither state time nor a dial in range |
-| `dnc_marked` | agent DNC entries scoped to the campaign, created in range (`idx_dnc_entries_tenant_created`) |
+| `dnc_marked` | agent DNC entries scoped to the campaign, created in range (`idx_dnc_entries_tenant_created`): Mark DNC presses on the station, the soft phone's and inbound's marks, and (since DS8) every station outcome that suppresses, which writes the same entry; an agent's tenant-wide escalation names no campaign and is not counted |
 | `trends.buckets`, `best_hours` | the rollup's `trends` read; `agents_online_peak` from `agentsOnlinePeak`, joined on the bucket label |
 | `health.abandonment.rolling_24h` | the guardrail's window for this campaign (`abandonmentWindowStatement`: ended, answered in the last 24 h; read as a day of the campaign's dials) |
 | `health.abandonment.auto_pauses` | the guardrail's `agency_campaign.auto_paused` audit rows in range (at most 200): reason `abandonment_ceiling`, or none (its oldest rows); the carrier-account pause's rows (`carrier_auth`, `carrier_account_unavailable`, `carrier_refusing_calls`) share the event and are left out |

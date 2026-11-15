@@ -21,7 +21,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *
  * Mutation-checked: never writing the entry reds the first, replay-free cases; writing it on
  * every write (replays too) reds "a replay after an admin removed the entry"; dropping the
- * audit row or the sweep reds their cases.
+ * audit row or the sweep reds their cases; not passing the entry's `recorded` on as
+ * `dnc_recorded` reds the first and the not-usable-number cases.
  */
 
 const mocks = vi.hoisted(() => {
@@ -84,12 +85,12 @@ const post = (url: string, who: { tok: string }, body: unknown) => app.inject({
 interface Call { campaign: string; contact: string; attempt: string }
 
 /** A campaign, a contact on {@link PHONE} and an ended, bridged attempt parked in the agent's wrap-up. */
-async function parked(campaignId?: string): Promise<Call> {
+async function parked(campaignId?: string, phone = PHONE): Promise<Call> {
   const campaign = campaignId ?? (await insertAgencyCampaign({
     status: 'running', disposition_catalog: CATALOG, tenant_id: tenant, account_id: account,
   })).id as string;
   const contact = (await insertAgencyContact(campaign, {
-    tenant_id: tenant, account_id: account, phone_e164: PHONE, state: 'connected', attempt_count: 1, last_outcome: 'connected',
+    tenant_id: tenant, account_id: account, phone_e164: phone, state: 'connected', attempt_count: 1, last_outcome: 'connected',
   })).id as string;
   const session = (await insertAgentSession(campaign, {
     tenant_id: tenant, account_id: account, agent_user_id: agent.id, state: 'wrapup',
@@ -168,8 +169,9 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
       added_by: agent.id, phone_e164: PHONE,
     }]);
     expect(await registry.check(tenant, PHONE, { accountId: account, campaignId: c.campaign })).toBe('suppressed');
-    // The internal answer's audit facts stay on the server.
+    // The internal answer's audit facts stay on the server; the client is told the entry is listed.
     expect(res.json()).not.toHaveProperty('dnc_entry');
+    expect(res.json()).toMatchObject({ dnc_recorded: true });
     // Campaign scope, never the escalation: another campaign of the account may still call.
     expect(await registry.check(tenant, PHONE, { accountId: account, campaignId: sibling })).not.toBe('suppressed');
   });
@@ -177,7 +179,10 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
   it('a same-code replay writes nothing more', async () => {
     const c = await parked();
     expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
-    expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
+    const replay = await dispose(c, { disposition_code: 'do_not_call' });
+    expect(replay.statusCode).toBe(200);
+    // The replay attempted no entry, so it claims nothing about the list.
+    expect(replay.json()).not.toHaveProperty('dnc_recorded');
     expect(await dncRows()).toHaveLength(1);
     // One audit row, on the new entry, naming the outcome; none for the replay.
     const { rows: [row] } = await getTestPool().query('SELECT id FROM dnc_entries WHERE tenant_id = $1', [tenant]);
@@ -271,9 +276,21 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
     expect(await dncRows()).toEqual([expect.objectContaining({ campaign_id: c.campaign, added_by: supervisor.id })]);
   });
 
-  it('an outcome that does not suppress writes no entry', async () => {
+  it('an outcome that does not suppress writes no entry, and says nothing about the list', async () => {
     const c = await parked();
-    expect((await dispose(c, { disposition_code: 'reached' })).statusCode).toBe(200);
+    const res = await dispose(c, { disposition_code: 'reached' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty('dnc_recorded');
     expect(await dncRows()).toEqual([]);
+  });
+
+  it('a number the list cannot hold: the outcome is saved, no entry or audit row, and the agent is told (dnc_recorded false)', async () => {
+    const c = await parked(undefined, '0981230');
+    const res = await dispose(c, { disposition_code: 'do_not_call' });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ contact_state: 'suppressed', dnc_recorded: false });
+    expect(res.json()).not.toHaveProperty('dnc_entry');
+    expect(await dncRows()).toEqual([]);
+    expect(await dncAudits()).toEqual([]);
   });
 });

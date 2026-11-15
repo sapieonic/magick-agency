@@ -218,6 +218,7 @@ const ACTIONS = {
   disposition_request_plain: fits<AppBody<Core.AgencyDispositionRequest>>()(actions.disposition_request_plain),
   disposition_response_callback: fits<Core.AgencyDispositionResponse>()(actions.disposition_response_callback),
   disposition_response_completed: fits<Core.AgencyDispositionResponse>()(actions.disposition_response_completed),
+  disposition_response_suppress_unlisted: fits<Core.AgencyDispositionResponse>()(actions.disposition_response_suppress_unlisted),
   notes_request: fits<AppBody<Core.AgencyNotesRequest>>()(actions.notes_request),
   notes_response: fits<Core.AgencyNotesResponse>()(actions.notes_response),
   dnc_request: fits<AppBody<Core.AgencyDncRequest>>()(actions.dnc_request),

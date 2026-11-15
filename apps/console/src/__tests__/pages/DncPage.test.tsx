@@ -533,6 +533,7 @@ describe('DNC — removal is permission-gated and consequence-aware', () => {
   it('removing an every-campaign entry says which narrower entries still block the number', async () => {
     const campaignEntry = entry({
       id: 'dnc-2', campaign_id: 'camp-1', scope: 'campaign', campaign_name: 'Q4 Renewals', account_name: 'North',
+      scope_account_id: 'account-1',
     });
     mocks.listDncEntries.mockImplementation(async (params: { phone?: string }) => (
       params.phone ? page([entry(), campaignEntry]) : page([entry()])
@@ -541,12 +542,70 @@ describe('DNC — removal is permission-gated and consequence-aware', () => {
     render(<DncPage />);
     fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
 
-    await waitFor(() => expect(document.body.textContent).toMatch(/It stays blocked by another entry: Campaign: Q4 Renewals\./));
+    // A campaign entry blocks it in part of what every campaign covered, not all of it.
+    await waitFor(() => expect(document.body.textContent).toMatch(/It stays blocked only where another entry applies: Campaign: Q4 Renewals\./));
     fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalled());
     expect(mocks.showToast.mock.calls[0]![0]).toBe(
       '+919820041772 removed — agency campaigns in every account can dial it again, except where another entry still blocks it.',
     );
+  });
+
+  /** Removing `removed` while `others` stay: the dialog's body and the toast afterwards (DS5). */
+  async function removeWith(removed: DncEntry, others: DncEntry[]): Promise<{ body: string; toast: string }> {
+    mocks.listDncEntries.mockImplementation(async (params: { phone?: string }) => (
+      params.phone ? page([removed, ...others]) : page([removed])
+    ));
+    render(<DncPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
+    await waitFor(() => expect(document.body.textContent).toMatch(/If it was added at a customer/));
+    const body = document.body.textContent ?? '';
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalled());
+    return { body, toast: mocks.showToast.mock.calls[0]![0] as string };
+  }
+
+  const q4 = entry({
+    id: 'dnc-q4', campaign_id: 'camp-q4', scope: 'campaign', campaign_name: 'Q4 Renewals',
+    account_name: 'North', scope_account_id: 'account-1',
+  });
+
+  it('removing a campaign entry does not say another campaign\'s entry keeps it blocked there (DS5)', async () => {
+    const summer = entry({
+      id: 'dnc-summer', campaign_id: 'camp-summer', scope: 'campaign', campaign_name: 'Summer',
+      account_name: 'North', scope_account_id: 'account-1',
+    });
+    const { body, toast } = await removeWith(q4, [summer]);
+
+    expect(body).toMatch(/and Q4 Renewals will be able to dial it again\. No other entry blocks it there\. Another entry blocks it elsewhere: Campaign: Summer\./);
+    expect(body).not.toMatch(/stays blocked/);
+    expect(toast).toBe('+919820041772 removed — Q4 Renewals can dial it again.');
+  });
+
+  it('removing a campaign entry under its account\'s entry, or an every-campaign one, says it stays blocked there (DS5)', async () => {
+    const north = entry({ id: 'dnc-north', account_id: 'account-1', scope: 'account', account_name: 'North', scope_account_id: 'account-1' });
+    const { body, toast } = await removeWith(q4, [north, entry({ id: 'dnc-every' })]);
+
+    expect(body).toMatch(/but Q4 Renewals still won’t dial it\. It stays blocked by other entries: North account; Every campaign\./);
+    expect(toast).toBe('+919820041772 removed — another entry still blocks it for Q4 Renewals.');
+  });
+
+  it('another account\'s entry, or a campaign whose account is unknown, never keeps it blocked there (DS5)', async () => {
+    const south = entry({ id: 'dnc-south', account_id: 'account-2', scope: 'account', account_name: 'South', scope_account_id: 'account-2' });
+    const gone = entry({ id: 'dnc-gone', campaign_id: 'camp-gone', scope: 'campaign', scope_account_id: null });
+    const northEntry = entry({ id: 'dnc-north', account_id: 'account-1', scope: 'account', account_name: 'North', scope_account_id: 'account-1' });
+    const { body, toast } = await removeWith(northEntry, [south, gone]);
+
+    expect(body).toMatch(/No other entry blocks it there\. Other entries block it elsewhere: South account; A campaign that no longer exists\./);
+    expect(toast).toBe('+919820041772 removed — the North account’s campaigns can dial it again.');
+  });
+
+  it('removing an account entry over one of its campaigns says it stays blocked only there (DS5)', async () => {
+    const northEntry = entry({ id: 'dnc-north', account_id: 'account-1', scope: 'account', account_name: 'North', scope_account_id: 'account-1' });
+    const { body, toast } = await removeWith(northEntry, [q4]);
+
+    expect(body).toMatch(/It stays blocked only where another entry applies: Campaign: Q4 Renewals\./);
+    expect(toast).toBe('+919820041772 removed — the North account’s campaigns can dial it again, except where another entry still blocks it.');
   });
 
   it('removing a campaign entry names the campaign that may dial again', async () => {
