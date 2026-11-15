@@ -449,6 +449,10 @@ describe('campaigns', () => {
     ]);
     const headers = within(dialog()).getAllByRole('presentation').map((h) => h.textContent);
     expect(headers.indexOf('Recent campaigns')).toBe(headers.indexOf('Pages') + 1);
+    // The group's label wears the console's one group-label look and is no option (NV1).
+    const label = within(dialog()).getAllByRole('presentation').find((h) => h.textContent === 'Recent campaigns')!;
+    expect(label.hasAttribute('data-nav-section-label')).toBe(true);
+    expect(label.closest('[role="option"]')).toBeNull();
     fireEvent.click(within(group).getAllByRole('option')[1]!);
     expect(where()).toBe('/agency/campaigns/c-2');
   });

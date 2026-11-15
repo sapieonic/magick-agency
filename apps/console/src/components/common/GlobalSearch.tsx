@@ -16,6 +16,7 @@ import {
   searchPlaceholder,
   type SearchResult,
 } from '../../utils/consoleSearch';
+import { NavSectionLabel } from './NavSectionLabel';
 import styles from './GlobalSearch.module.css';
 
 /** Where customer history opens inside the console shell (`docs/customer-history.md` §5). */
@@ -267,7 +268,9 @@ function Palette({ onClose }: DialogProps) {
           ) : (
             answer.groups.map((group) => (
               <div key={group.id} role="group" aria-labelledby={`${id}-group-${group.id}`}>
-                <div className={styles.sectionHeader} id={`${id}-group-${group.id}`} role="presentation">{group.title}</div>
+                <NavSectionLabel as="div" id={`${id}-group-${group.id}`} className={styles.sectionHeader} role="presentation">
+                  {group.title}
+                </NavSectionLabel>
                 {group.results.map((result) => {
                   flatIndex++;
                   const idx = flatIndex;

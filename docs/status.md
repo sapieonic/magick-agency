@@ -1573,6 +1573,25 @@ Every new guard was mutation-checked (the reset at the bind, the close not repea
 clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
 carrier, browser or phone.
 
+### Navigation group labels 2026-11-15 (NV1, NV2)
+
+Reshma: the Settings hub's group headings and the campaign bar's Monitor, Data and Set up looked
+too much like the entries beside them. Console styling only; no label, id, route, gate or event
+changed.
+
+- **One label.** `components/common/NavSectionLabel` renders every navigation group label (the
+  Settings hub, the campaign bar, the search's result groups): small, uppercase, muted, a
+  hairline to the end of its group, not interactive, and the name of its group
+  (`aria-labelledby`).
+- **Items.** Tabs (campaign bar and section bars, one shared `TabBar` style) are in
+  `--text-secondary`, no longer the label's grey; Settings entries carry a chevron and an inset
+  focus ring. The campaign bar's labels sit above their tabs and stay on a phone (NV2, amends IN14).
+- **Tests.** `navSectionLabel.test.ts` (the CSS rules), new cases in `SettingsHub.test.tsx`,
+  `CampaignTabs.test.tsx` and `GlobalSearch.test.tsx` (groups named by their labels, labels not
+  links or tab stops, keyboard order the items alone); each mutation-checked. **Not verified:**
+  seen only in an isolated render harness (dark, light, phone width, reduced motion), not in a
+  signed-in console against a backend.
+
 ## Test counts
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
