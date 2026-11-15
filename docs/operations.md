@@ -730,34 +730,25 @@ Since RC1 such a recording is never kept: the bridge discards it on arrival (liv
 late), logs `Carrier delivered a recording for a call that did not ask for one — discarded, not
 stored` at warn with `callId`, `provider` and `where` (never the URL), and counts it once per
 call in `recording_discarded_unrequested_total{provider}`. The repository refuses to store one
-too. A steady count for `voicelink` means VoiceLink keeps recording calls set not to record: the
-audio exists at VoiceLink even though we neither store nor show it, so raise it with VoiceLink
-(their account's recording default) for the tenants concerned.
+too. A steady count for `voicelink` means VoiceLink keeps recording calls set not to record. That
+needs no action: we never honour such a recording, whatever VoiceLink does with it (RC2).
 
-**Rows from before RC1.** A call row may still hold a link it did not ask for. Every read now
-treats it as "not recorded" (call detail, playback, the soft phone's and customer history's
-recording state, Insights, report workbooks, analysis), and `0043_recording_honours_request.sql` had Insights recount
-the buckets it touched. Nothing was deleted. To remove the links too, an operator may run, after
-a review and a backup (`DEPLOYMENT.md` section 12):
+**Rows from before RC1.** A call row stored before this release may still hold a link it did not
+ask for. Every read treats it as "not recorded" (call detail, playback, the soft phone's and
+customer history's recording state, Insights, report workbooks, analysis), and
+`0043_recording_honours_request.sql` had Insights recount the buckets it touched. The retention
+purge then clears the link and its duration on every run, whatever its windows (RC5,
+`unrequested_recordings_cleared` on the report and in the Slack summary): the first run after
+the release clears the old ones and later runs report 0. To see what is left before it runs:
 
 ```sql
--- 1. Review: how many, per tenant, account, carrier and month.
 SELECT tenant_id, account_id, provider, date_trunc('month', created_at) AS month, count(*)
   FROM agency_calls
  WHERE recording_url IS NOT NULL AND NOT recording_requested
  GROUP BY 1, 2, 3, 4 ORDER BY 1, 2, 3, 4;
-
--- 2. Opt in: null the links, in batches (the Insights trigger re-marks each bucket it touches).
---    Narrow with AND tenant_id = '<uuid>' to do one tenant at a time; repeat until 0 rows.
-UPDATE agency_calls SET recording_url = NULL, recording_duration_seconds = NULL
- WHERE id IN (SELECT id FROM agency_calls
-               WHERE recording_url IS NOT NULL AND NOT recording_requested
-               LIMIT 5000);
 ```
 
-This removes our link only. **The audio stays at the carrier**: for VoiceLink, ask VoiceLink to
-delete those recordings (run step 1 with `provider_call_id` to list the calls) and to stop
-recording for the account; nulling the link first loses the list, so export it before step 2.
+This removes our link only; any audio a carrier kept is the carrier's (RC2).
 
 ### Recordings that will not play
 

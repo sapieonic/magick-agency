@@ -1603,6 +1603,19 @@ Every new guard was mutation-checked (the reset at the bind, the close not repea
 clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
 carrier, browser or phone.
 
+### Manas's rulings on the feedback branch, 2026-11-15
+
+- **Recordings with recording off (RC5):** got rid of. The retention purge clears the link of every
+  call that did not ask for a recording, on every run.
+- **VoiceLink (RC2):** whatever VoiceLink does with its recordings, we never honour a recording
+  callback for a call with recording off; nothing is asked of VoiceLink.
+- **Promise date (PT4):** at most 30 days ahead (was 180).
+- **Promise follow-ups and Insights (PT2):** the split stands as built.
+- **The open questions for Reshma** (which carrier each tenant dials on, where a DNC mark was made,
+  existing "Promise to pay" entries that book a callback): closed with the defaults, starting
+  fresh. No data was migrated or purged for them; Do Not Call entries are compliance records and
+  were left as they are.
+
 ### Navigation group labels 2026-11-15 (NV1, NV2)
 
 Reshma: the Settings hub's group headings and the campaign bar's Monitor, Data and Set up looked
@@ -1636,9 +1649,10 @@ recordings often would not play ("We could not reach the service that stores thi
   `recording_url` only on a row that asked, and every reader goes through one predicate
   (`packages/db/src/utils/recording-request.ts`): call detail and playback (campaign, soft phone,
   signed), customer history, Insights, the agent workbook's Recorded column, the analysis queue
-  and runner. Rows from before keep their links (nothing deleted) and read as not recorded;
-  `0043_recording_honours_request.sql` has Insights recount their buckets; an opt-in, reviewed SQL
-  to null them is in `operations.md`, and the audio stays at VoiceLink.
+  and runner. Rows from before read as not recorded; `0043_recording_honours_request.sql` has
+  Insights recount their buckets, and the retention purge clears their links on every run (RC5,
+  Manas: get rid of them). We discard a recording a call did not ask for whatever the carrier
+  does with it (RC2, Manas); nothing is asked of VoiceLink.
 - **Will not play (RC3, RC4).** Every recording, VoiceLink's included, reaches the console through
   our proxy, and any answer but 403/404 reads "could not reach". Each such answer now logs a
   bounded `reason` with call id, provider and hosts (never a URL) and counts in

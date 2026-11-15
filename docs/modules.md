@@ -1062,8 +1062,8 @@ Files: `retention-purge.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` (and the inbound voicemail step: an aged voicemail's object deleted and forgotten, a recent one kept, the dry run) | 7 |
-| `apps/server/test/unit/maintenance/retention-purge.test.ts` (and the voicemail step, last: delete then forget, a failed delete counted and the rest gone on with, no bucket skipped, the keyset past a batch, the dry run) | 21 |
+| `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` (the RC5 step: recording links of calls that did not ask for one cleared on every run, any age, and nothing else; and the inbound voicemail step: an aged voicemail's object deleted and forgotten, a recent one kept, the dry run) | 8 |
+| `apps/server/test/unit/maintenance/retention-purge.test.ts` (the RC5 recording step every run, counted in a dry run; and the voicemail step, last: delete then forget, a failed delete counted and the rest gone on with, no bucket skipped, the keyset past a batch, the dry run) | 23 |
 
 ### `apps/server/src/notifications/`
 
