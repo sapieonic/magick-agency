@@ -872,7 +872,7 @@ void main() {
               'dnc_recorded': false,
             });
         app.run(app.controller.markDnc());
-        expect(app.view!.dncOutcome, contains('We’re still adding it'));
+        expect(app.view!.dncOutcome, contains('It couldn’t go on'));
         app.releasedFrame('att-1', requiresDisposition: false);
         app.agentStateFrame('available');
         app.reserved('att-2');

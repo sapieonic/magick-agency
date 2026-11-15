@@ -246,8 +246,9 @@ String dncFailureCopy(Object error) {
 /// Campaign scope only: the agent role cannot reach the workspace-wide list.
 String dncOutcomeCopy(DncResponse response) => response.dncRecorded
     ? '${response.phoneE164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.'
-    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. We’re still adding it to '
-        'this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.';
+    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. It couldn’t go on '
+        'this campaign’s Do Not Call list because the number isn’t in a form the list can hold, so a new upload could '
+        'bring it back. Ask an admin to check the number.';
 
 const dncNeedsCallCopy = 'Available while you are on a call';
 
