@@ -464,6 +464,9 @@ export interface AgencyInboundCall {
   notes: string | null;
   /** A callback asked for in the outcome. */
   callback_at: string | null;
+  /** The promise to pay saved with the outcome (PT1), or null; absent from an older server. */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   /** Who saved the outcome, which is not always who took the call. */
   dispositioned_by_user_id: string | null;
   dispositioned_on_behalf: boolean;
@@ -535,6 +538,13 @@ export interface AgencyInboundCallDispositionRequest extends AgencyActorFields {
   notes?: string;
   /** ISO-8601; required when the catalog entry sets `requires_datetime`. */
   callback_at?: string;
+  /**
+   * Promise to pay (PT1, PT4, PT5): `YYYY-MM-DD`, required when the catalog entry sets
+   * `requires_promise` and refused on any other; the amount optional, a decimal string ≥ 0
+   * with at most two places. As on the station's `AgencyDispositionRequest`.
+   */
+  promise_date?: string;
+  promise_amount?: string;
 }
 
 export interface AgencyInboundCallDispositionResponse {

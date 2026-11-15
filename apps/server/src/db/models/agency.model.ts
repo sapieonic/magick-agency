@@ -405,6 +405,19 @@ export interface AgencyContactRecord {
   /** Outcome override (0009): one dial outside calling hours, with a note. */
   override_calling_hours: boolean;
   override_granted_at: Date | null;
+  /**
+   * Promise to pay (0041, PT6): the contact's latest promise. `promise_date` is a DATE, which
+   * `pg` reads as a Date at LOCAL midnight: format it with `promiseDateText`, never
+   * `toISOString`. The day bounds are instants in the customer's zone; `promise_call_at` orders
+   * promises by the call that recorded them; `promise_followed_up_at` is "followed up" (PT7).
+   * All NULL without a promise.
+   */
+  promise_date: Date | string | null;
+  promise_amount: string | null;
+  promise_due_from: Date | null;
+  promise_due_until: Date | null;
+  promise_call_at: Date | null;
+  promise_followed_up_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -503,6 +516,9 @@ export interface AgencyCallAttemptRecord {
   auto_disposition_code: string | null;
   notes: string | null;
   callback_at: Date | null;
+  /** Promise to pay (0041, PT1): read `promise_date` through `promiseDateText`. NULL: none. */
+  promise_date: Date | string | null;
+  promise_amount: string | null;
   /**
    * The `users.id` of whoever recorded the disposition.
    *
@@ -603,6 +619,9 @@ export interface AgencyManualCallRecord {
   disposition_source: AgencyManualCallDispositionSource | null;
   notes: string | null;
   callback_at: Date | null;
+  /** Promise to pay (0041, PT1): read `promise_date` through `promiseDateText`. NULL: none. */
+  promise_date: Date | string | null;
+  promise_amount: string | null;
   fields: AgencyCallFieldValues;
   recording_requested: boolean;
   analysis_profile_id: string | null;

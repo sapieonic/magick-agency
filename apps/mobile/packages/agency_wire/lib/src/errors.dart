@@ -100,6 +100,20 @@ enum AgencyErrorCode implements WireEnum {
   /// app with their phone ringing for inbound callers. Nothing changed. Never sent to the app
   /// (a supervisor's route), listed because the contract's list is the whole union.
   agentAwayRing('agent_away_ring'),
+
+  // ── Promise to pay (PT8), 400s on the outcome; nothing was written.
+
+  /// The outcome asks for the date the customer promised to pay and none came.
+  promiseRequired('promise_required'),
+
+  /// Not a real date, before the customer's today, or too far ahead.
+  invalidPromiseDate('invalid_promise_date'),
+
+  /// Not a number ≥ 0 with at most two decimal places.
+  invalidPromiseAmount('invalid_promise_amount'),
+
+  /// A promise sent with an outcome that does not ask for one.
+  promiseNotExpected('promise_not_expected'),
   unknown('');
 
   const AgencyErrorCode(this.wire);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatPromise } from '../../utils/format/promise';
 import { Link, useParams } from 'react-router-dom';
 import { Info, MessageSquare, PhoneOff, PhoneMissed, SearchX } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
@@ -265,6 +266,15 @@ function agencyDispositionCard(
   // and a permanent "--" row for it is noise on every other attempt.
   if (attempt.callback_at !== null) {
     facts.push({ label: 'Call back', value: formatSpineTimestamp(attempt.callback_at) });
+  }
+
+  // Promise to pay (PT1): only when this call recorded one, for the same reason.
+  if (attempt.promise_date) {
+    facts.push({
+      label: 'Promise to pay',
+      value: formatPromise({ date: attempt.promise_date, amount: attempt.promise_amount ?? null }),
+      hint: 'The date the customer promised to pay, as the agent recorded it. Not a payment record.',
+    });
   }
 
   facts.push({

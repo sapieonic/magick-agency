@@ -34,6 +34,7 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
+import type { ContactPromiseWrite } from '../../../agency/promise-to-pay.js';
 import { contactBucketSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
@@ -2312,6 +2313,7 @@ export class AgencyContactRepository {
              c.last_outcome, c.last_disposition, c.next_attempt_at,
              c.suppressed_reason, c.timezone, c.csv_line_number,
              c.assigned_user_id, c.assigned_at,
+             c.promise_date, c.promise_amount, c.promise_due_from, c.promise_due_until, c.promise_followed_up_at,
              c.created_at, c.updated_at,
              ${keysetAtSql('c.created_at')} AS cursor_at
         FROM agency_contacts c
@@ -2379,6 +2381,64 @@ export class AgencyContactRepository {
       [id],
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * Copy a recorded promise onto the contact as its latest (0041, PT6): date, amount, the
+   * promised day's bounds and the recording call's start, and a fresh follow-up mark.
+   *
+   * **Only while no LATER call holds the contact's promise** (`promise_call_at <= callAt`): a
+   * promise from a later call replaces an earlier one; a replay of the same call (equal
+   * `callAt`) corrects it, as the outcome's notes and callback are corrected; a replay of an
+   * older call, long after a newer promise, writes nothing. One guarded statement, so two
+   * outcomes saved at once cannot leave the older one on top. Returns whether it landed.
+   *
+   * Writes nothing else: the contact's state and next dial are the disposition's own write.
+   * A promise never schedules a dial (PT3).
+   */
+  async recordContactPromise(
+    input: { contactId: string; promise: ContactPromiseWrite },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<boolean> {
+    const p = input.promise;
+    const { rowCount } = await (deps.client ?? getPool()).query(
+      `UPDATE agency_contacts
+          SET promise_date = $2::date,
+              promise_amount = $3::numeric,
+              promise_due_from = $4::timestamptz,
+              promise_due_until = $5::timestamptz,
+              promise_call_at = $6::timestamptz,
+              promise_followed_up_at = NULL,
+              updated_at = now()
+        WHERE id = $1::uuid
+          AND (promise_call_at IS NULL OR promise_call_at <= $6::timestamptz)`,
+      [input.contactId, p.date, p.amount, p.dueFrom, p.dueUntil, p.callAt],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * An outcome that records no promise was saved on the contact by a call that started at
+   * `callAt` (PT7): when that call started after the promise's call and on or after the
+   * promised day, the promise is followed up (the list then reads `followed_up`, not
+   * `missed`). The first such outcome is the one kept. A no-op, by primary key, for the
+   * contacts without a promise, which is nearly all of them.
+   */
+  async notePromiseFollowUp(
+    input: { contactId: string; callAt: Date },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<boolean> {
+    const { rowCount } = await (deps.client ?? getPool()).query(
+      `UPDATE agency_contacts
+          SET promise_followed_up_at = now(), updated_at = now()
+        WHERE id = $1::uuid
+          AND promise_date IS NOT NULL
+          AND promise_followed_up_at IS NULL
+          AND promise_call_at < $2::timestamptz
+          AND promise_due_from <= $2::timestamptz`,
+      [input.contactId, input.callAt],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   /**

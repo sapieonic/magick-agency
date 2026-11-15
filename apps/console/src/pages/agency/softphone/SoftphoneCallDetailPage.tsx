@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { formatPromise } from '../../../utils/format/promise';
 import { usePageCrumbs } from '../../../components/layout/PageCrumbs';
 import { Info, Lock, MessageSquare, PhoneMissed, PhoneOff, SearchX } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
@@ -96,6 +97,10 @@ export function manualOutcomeCard(
     },
   ];
   if (call.callback_at) facts.push({ label: 'Call back', value: formatSpineTimestamp(call.callback_at) });
+  // Promise to pay (PT1): only when the outcome recorded one.
+  if (call.promise_date) {
+    facts.push({ label: 'Promise to pay', value: formatPromise({ date: call.promise_date, amount: call.promise_amount ?? null }) });
+  }
   facts.push({ label: 'Notes', value: call.notes ?? 'None', muted: call.notes === null, prose: true });
   return { title: 'Outcome', facts, source: 'Agent' };
 }

@@ -77,4 +77,5 @@ export * from './agency/breaks';
 export * from './agency/assignment';
 export * from './agency/inbound';
 export * from './agency/push-devices';
+export * from './agency/promise';
 export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';

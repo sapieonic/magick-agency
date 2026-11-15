@@ -13,6 +13,7 @@ import 'callback_picker.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
 import 'on_call_view.dart' show QueuedBreakChip;
+import 'promise_picker.dart';
 import 'sheets.dart';
 
 /// Wrap-up: pick the outcome, a callback time when it needs one, notes, save;
@@ -81,6 +82,19 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
             ),
           ),
         ],
+        if (selected != null && selected.requiresPromise && saved == null) ...[
+          const SizedBox(height: Space.lg),
+          LinkGate(
+            child: PromisePicker(
+              form: _form,
+              option: selected,
+              attemptId: attemptId,
+              enabled: !locked,
+              onDate: (day) => setState(() => _form = _form.withPromiseDate(day)),
+              onAmount: (amount) => setState(() => _form = _form.withPromiseAmount(amount)),
+            ),
+          ),
+        ],
         const SizedBox(height: Space.lg),
         StationNotesField(controller: widget.notes, required: selected?.requiresNote ?? false),
         const SizedBox(height: Space.md),
@@ -132,7 +146,13 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
       );
       if (!ok || !mounted || !scope(ref.read(stationViewProvider))) return;
     }
-    await ref.read(stationActionsProvider).submitDisposition(submit.code, notes: submit.notes, callbackAt: submit.callbackAt);
+    await ref.read(stationActionsProvider).submitDisposition(
+          submit.code,
+          notes: submit.notes,
+          callbackAt: submit.callbackAt,
+          promiseDate: submit.promiseDate,
+          promiseAmount: submit.promiseAmount,
+        );
   }
 }
 

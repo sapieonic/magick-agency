@@ -363,6 +363,53 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(left.statusCode, left.body).toBeLessThan(300);
   });
 
+  it('promise to pay on a tagged call (PT1, PT2, PT6): refused without a date, saved with one onto the call and the contact, its follow-up booked', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({
+      status: 'paused', tenant_id: tenant, account_id: account, name: 'Collections',
+      disposition_catalog: JSON.stringify([
+        { code: 'ptp', label: 'Promised to pay', requires_promise: true, promise_follow_up_days: 2 },
+        { code: 'interested', label: 'Interested', terminal: true },
+      ]),
+      caller_ids: ['+919000000001'],
+    });
+    const contact = await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: '+919811200777' });
+    await staff(campaign.id, agent.id);
+    const { sessionId, station } = await openSoftphone(agent);
+    const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '9811200777', campaign_id: campaign.id });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const call = placed.json();
+    const leg = await legOf(call.id);
+    answer(leg);
+    await waitFor('bridged', () => lastCall(station)?.state === 'bridged');
+    await post(`/proxy/agency/softphone/calls/${call.id}/hangup`, agent);
+    await carrierEnded(leg);
+    await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+
+    const missing = await post(`/proxy/agency/softphone/calls/${call.id}/disposition`, agent, { code: 'ptp', fields: {} });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ code: 'disposition_invalid', reason: 'promise_required' });
+    expect(missing.json().message).toMatch(/promised to pay/);
+    const wrong = await post(`/proxy/agency/softphone/calls/${call.id}/disposition`, agent, {
+      code: 'interested', promise_date: '2099-01-01', fields: {},
+    });
+    expect(wrong.json()).toMatchObject({ code: 'disposition_invalid', reason: 'promise_not_expected' });
+
+    const date = new Date(Date.now() + 4 * 86_400_000).toISOString().slice(0, 10);
+    const saved = await post(`/proxy/agency/softphone/calls/${call.id}/disposition`, agent, {
+      code: 'ptp', promise_date: date, promise_amount: '2500.5', fields: {},
+    });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json()).toMatchObject({
+      contact_state: 'pending', call: { disposition_code: 'ptp', promise_date: date, promise_amount: '2500.50' },
+    });
+    const [y, m, d] = date.split('-').map(Number);
+    expect(saved.json().next_attempt_at).toBe(new Date(Date.UTC(y!, m! - 1, d! + 2)).toISOString());
+    const { rows: [row] } = await getTestPool().query(
+      'SELECT state, promise_date::text AS d, promise_amount FROM agency_contacts WHERE id = $1', [contact.id]);
+    expect(row).toEqual({ state: 'pending', d: date, promise_amount: '2500.50' });
+  });
+
   it('a tagged call over HTTP: session → place → answer → hang up → outcome → list/detail → audit', async () => {
     const agent = await user(tenant, account, 'agent');
     const colleague = await user(tenant, account, 'agent');

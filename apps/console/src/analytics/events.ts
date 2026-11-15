@@ -1008,6 +1008,9 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     suppress: boolean;
     requires_note: boolean;
     requires_datetime: boolean;
+    /** Promise to pay (PT1): the outcome asks for one, and one was sent. No date or amount (PII-free). */
+    requires_promise: boolean;
+    has_promise: boolean;
     has_note: boolean;
     scheduled_callback: boolean;
     selection_method: 'number_key' | 'click';
@@ -1517,6 +1520,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     selection_method: 'number_key' | 'click';
     field_count: number;
     has_callback: boolean;
+    /** Promise to pay (PT1): a promised date was saved with the outcome. */
+    has_promise: boolean;
   };
   /** {@link trackAgencySoftphoneHangup} */
   agency_softphone_hangup: {

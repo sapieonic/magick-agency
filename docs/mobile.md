@@ -261,6 +261,24 @@ Telemetry: `agency_redial_requested` / `agency_redial_refused`, as on the consol
 `agency_redial_refused` is sent for every failure, with no `code` when none came back, so pressed
 minus refused is not the number placed.
 
+## Promise to pay
+
+An outcome whose catalogue entry sets `requires_promise` (decisions PT1–PT14) shows "When will
+the customer pay?" under the pad: chips for Today, Tomorrow and In a week, a date picker (a day
+before today up to 180 days ahead; the server judges the customer's today), and an optional
+amount (digits and a point). Save stays disabled with the reason until a date is picked and the
+amount reads as a number with at most two places; the request carries `promise_date` and the
+amount's two-place string only for that outcome. The line under it says whether saving books a
+call ("We'll call again N days after this date, in calling hours", from the entry's
+`promise_follow_up_days`) or not. The same picker serves the station's wrap-up, an inbound call's
+outcome and the soft phone (`lib/features/station/parts/promise_picker.dart`); the rules are a
+hand port of the shared module (`lib/core/station/promise_rules.dart`). The contact's latest
+promise rides on the `reserved` frame (`attempt.promise`) and shows under the contact's name while
+ringing, on call and in Details, with its state ("Due today", "Missed": no outcome since the
+date, not unpaid); each prior attempt shows its own. The amount has no currency (PT5) and is
+grouped as the console groups it (`12,500`, `1,25,000`). An older app that does not know the
+field gets the server's refusal text ("update it or pick another outcome") on a promise outcome.
+
 ## My contacts (contact assignment)
 
 Behind `agency_contact_assignment_enabled` (decisions CA1–CA15), which the app reads per

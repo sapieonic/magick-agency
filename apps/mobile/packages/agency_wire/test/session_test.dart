@@ -24,6 +24,7 @@ void main() {
         'callback',
         'do_not_call',
         'promise_to_pay',
+        'promised_payment',
       ]);
       expect(b.dispositionFor('interested')!.isSuccess, isTrue);
       expect(b.dispositionFor('not_interested')!.isSuccess, isNull, reason: 'absent stays absent');
@@ -94,6 +95,17 @@ void main() {
       expect(ptp.overrideGrant!.kinds, [OverrideKind.extraAttempts, OverrideKind.retryDelay]);
       expect(ptp.overrideGrant!.callingHours, isNull, reason: 'absent stays absent');
       expect(b.dispositionFor('callback')!.overrideGrant, isNull);
+    });
+
+    test('promise to pay (PT1, PT2): the ask and its follow-up; absent on every other outcome', () {
+      final b = SessionBootstrap.fromJson(json);
+      final promise = b.dispositionFor('promised_payment')!;
+      expect(promise.promiseRequired, isTrue);
+      expect(promise.promiseFollowUpDays, 3);
+      expect(promise.datetimeRequired, isFalse);
+      expect(b.dispositionFor('promise_to_pay')!.promiseRequired, isFalse, reason: 'a callback-style entry asks for no promise');
+      expect(b.dispositionFor('promise_to_pay')!.promiseFollowUpDays, isNull);
+      expect(promise, isNot(const Disposition(code: 'promised_payment', label: 'Promised to pay on a date', isSuccess: true)));
     });
 
     test('contact assignment: an older server is a pool campaign with no queue and no retry', () {

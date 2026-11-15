@@ -9,6 +9,7 @@ import '../station_copy.dart';
 import '../station_providers.dart';
 import '../widgets/ticking.dart';
 import 'banners.dart';
+import 'contact_details.dart' show PromiseLine;
 import 'hang_up.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
@@ -57,14 +58,17 @@ class _CallSummary extends ConsumerWidget {
             .join('\n'),
       ),
     );
+    // PT9: the contact's promise to pay, so the agent can raise it while they talk.
+    final promise = ref.watch(stationViewProvider.select((v) => v?.call?.promise));
     final t = context.tokens;
     final facts = summary.isEmpty ? const <String>[] : summary.split('\n');
     final redialNumber = redial.n;
-    if (!recording && facts.isEmpty && redialNumber == null) return const SizedBox.shrink();
+    if (!recording && facts.isEmpty && redialNumber == null && promise == null) return const SizedBox.shrink();
     return Wrap(
       spacing: Space.sm,
       runSpacing: Space.sm,
       children: [
+        if (promise != null) PromiseLine(promise: promise),
         if (redialNumber != null) RedialTag(number: redialNumber, limit: redial.of),
         if (recording)
           StatusPill(

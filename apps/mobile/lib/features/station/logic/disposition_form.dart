@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../core/station/promise_rules.dart';
 import '../../../core/station/station_view.dart';
 
 /// The wrap-up form's rules (mirrors the console's `agencyDispositionForm`).
@@ -13,27 +14,77 @@ enum CallbackChoice { inOneHour, tomorrowMorning, tomorrowEvening, picked }
 
 @immutable
 class DispositionForm {
-  const DispositionForm({this.code, this.callbackAt, this.callbackChoice});
+  const DispositionForm({this.code, this.callbackAt, this.callbackChoice, this.promiseDate, this.promiseAmount = ''});
 
   final String? code;
   final DateTime? callbackAt;
   final CallbackChoice? callbackChoice;
 
-  /// Selecting a code keeps the callback the agent already chose: switching
-  /// between two callback-type codes must not throw the time away.
-  DispositionForm select(String code) => DispositionForm(code: code, callbackAt: callbackAt, callbackChoice: callbackChoice);
+  /// Promise to pay (PT1): the promised day (only its date is read) and the
+  /// amount as typed.
+  final DateTime? promiseDate;
+  final String promiseAmount;
 
-  DispositionForm withCallback(DateTime at, CallbackChoice choice) => DispositionForm(code: code, callbackAt: at, callbackChoice: choice);
+  /// Selecting a code keeps the callback the agent already chose: switching
+  /// between two callback-type codes must not throw the time away. The
+  /// promise is kept the same way; it is sent only with an outcome that asks.
+  DispositionForm select(String code) => DispositionForm(
+    code: code,
+    callbackAt: callbackAt,
+    callbackChoice: callbackChoice,
+    promiseDate: promiseDate,
+    promiseAmount: promiseAmount,
+  );
+
+  DispositionForm withCallback(DateTime at, CallbackChoice choice) => DispositionForm(
+    code: code,
+    callbackAt: at,
+    callbackChoice: choice,
+    promiseDate: promiseDate,
+    promiseAmount: promiseAmount,
+  );
+
+  DispositionForm withPromiseDate(DateTime day) => DispositionForm(
+    code: code,
+    callbackAt: callbackAt,
+    callbackChoice: callbackChoice,
+    promiseDate: DateTime(day.year, day.month, day.day),
+    promiseAmount: promiseAmount,
+  );
+
+  DispositionForm withPromiseAmount(String amount) => DispositionForm(
+    code: code,
+    callbackAt: callbackAt,
+    callbackChoice: callbackChoice,
+    promiseDate: promiseDate,
+    promiseAmount: amount,
+  );
+
+  /// `YYYY-MM-DD`, or null when no date is chosen.
+  String? get promiseDay => promiseDate == null ? null : promiseDayString(promiseDate!);
 
   @override
   bool operator ==(Object other) =>
-      other is DispositionForm && other.code == code && other.callbackAt == callbackAt && other.callbackChoice == callbackChoice;
+      other is DispositionForm &&
+      other.code == code &&
+      other.callbackAt == callbackAt &&
+      other.callbackChoice == callbackChoice &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount;
   @override
-  int get hashCode => Object.hash(code, callbackAt, callbackChoice);
+  int get hashCode => Object.hash(code, callbackAt, callbackChoice, promiseDate, promiseAmount);
 }
 
 /// Why "Save outcome" is disabled. Null means it is enabled.
-enum DispositionBlock { noSelection, noteRequired, callbackRequired, callbackInPast }
+enum DispositionBlock {
+  noSelection,
+  noteRequired,
+  callbackRequired,
+  callbackInPast,
+  promiseRequired,
+  promiseDateInvalid,
+  promiseAmountInvalid,
+}
 
 DispositionOption? findDisposition(List<DispositionOption> options, String? code) =>
     code == null ? null : options.firstWhereOrNull((o) => o.code == code);
@@ -52,6 +103,15 @@ DispositionBlock? dispositionBlock(List<DispositionOption> options, DispositionF
     if (at == null) return DispositionBlock.callbackRequired;
     if (!at.isAfter(now)) return DispositionBlock.callbackInPast;
   }
+  // Promise to pay (PT4, PT5): the server judges the customer's today; the
+  // app allows a day either side of the agent's own.
+  if (option.requiresPromise) {
+    final day = form.promiseDate;
+    if (day == null) return DispositionBlock.promiseRequired;
+    if (!promiseDayAllowed(day, now)) return DispositionBlock.promiseDateInvalid;
+    final amount = form.promiseAmount.trim();
+    if (amount.isNotEmpty && normalisePromiseAmount(amount) == null) return DispositionBlock.promiseAmountInvalid;
+  }
   return null;
 }
 
@@ -60,16 +120,25 @@ DispositionBlock? dispositionBlock(List<DispositionOption> options, DispositionF
 /// takes one.
 @immutable
 class DispositionSubmit {
-  const DispositionSubmit({required this.code, this.notes, this.callbackAt});
+  const DispositionSubmit({required this.code, this.notes, this.callbackAt, this.promiseDate, this.promiseAmount});
   final String code;
   final String? notes;
   final DateTime? callbackAt;
 
+  /// `YYYY-MM-DD` and the amount's two-place string, for a promise outcome only.
+  final String? promiseDate;
+  final String? promiseAmount;
+
   @override
   bool operator ==(Object other) =>
-      other is DispositionSubmit && other.code == code && other.notes == notes && other.callbackAt == callbackAt;
+      other is DispositionSubmit &&
+      other.code == code &&
+      other.notes == notes &&
+      other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount;
   @override
-  int get hashCode => Object.hash(code, notes, callbackAt);
+  int get hashCode => Object.hash(code, notes, callbackAt, promiseDate, promiseAmount);
 }
 
 DispositionSubmit? buildSubmit(List<DispositionOption> options, DispositionForm form, String notes, DateTime now) {
@@ -80,6 +149,8 @@ DispositionSubmit? buildSubmit(List<DispositionOption> options, DispositionForm 
     code: option.code,
     notes: trimmed.isEmpty ? null : trimmed,
     callbackAt: option.requiresCallbackTime ? form.callbackAt : null,
+    promiseDate: option.requiresPromise ? form.promiseDay : null,
+    promiseAmount: option.requiresPromise ? normalisePromiseAmount(form.promiseAmount) : null,
   );
 }
 

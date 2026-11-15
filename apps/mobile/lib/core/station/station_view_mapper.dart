@@ -357,6 +357,8 @@ class StationViewMapper {
         requiresCallbackTime: d.datetimeRequired,
         isSuccess: d.isSuccess ?? false,
         suppresses: d.suppress ?? false,
+        requiresPromise: d.promiseRequired,
+        promiseFollowUpDays: d.promiseFollowUpDays,
       ),
     ));
   }
@@ -415,6 +417,7 @@ class StationViewMapper {
         recording: recording,
         redialNumber: previous.redialNumber,
         redialLimit: previous.redialLimit,
+        promise: previous.promise,
       );
     }
     _callOffset = _offset;
@@ -442,6 +445,7 @@ class StationViewMapper {
       recording: recording,
       redialNumber: attempt.redial?.number,
       redialLimit: attempt.redial?.limit,
+      promise: promiseViewFor(attempt.promise),
     );
   }
 

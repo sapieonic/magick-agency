@@ -13,6 +13,7 @@ import '../auth/app_gate.dart';
 import '../lifecycle/app_lifecycle.dart';
 import '../station/contact_context.dart';
 import '../station/disposition_rules.dart';
+import '../station/promise_rules.dart';
 import '../station/server_clock.dart';
 import '../station/station_copy.dart' show agentStateLabel, catalogChangedCopy;
 import '../station/station_deps.dart' show notesStoreProvider, stationNowProvider;
@@ -255,6 +256,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   // ── Outcome ──
   String? _outcomeCode;
   DateTime? _callbackAt;
+  DateTime? _promiseDate;
+  String _promiseAmount = '';
   ({String callId, List<Disposition> catalog})? _catalogOverride;
   String? _padRejection;
   bool _saving = false;
@@ -374,6 +377,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _fieldsTouched = false;
     _outcomeCode = null;
     _callbackAt = null;
+    _promiseDate = null;
+    _promiseAmount = '';
     _catalogOverride = null;
     _padRejection = null;
     _hangupFailure = null;
@@ -606,6 +611,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       if (_number.isEmpty) _number = call.destinationE164;
       _outcomeCode = call.dispositionCode;
       _callbackAt = null;
+      _promiseDate = null;
+      _promiseAmount = '';
       _padRejection = null;
       _hangupFailure = null;
       _dncOutcome = null;
@@ -1708,6 +1715,20 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   }
 
   @override
+  void setPromiseDate(DateTime? day) {
+    if (_call == null || _saving) return;
+    _promiseDate = day == null ? null : DateTime(day.year, day.month, day.day);
+    _emit();
+  }
+
+  @override
+  void setPromiseAmount(String amount) {
+    if (_call == null || _saving) return;
+    _promiseAmount = amount;
+    _emit();
+  }
+
+  @override
   Future<void> saveOutcome() async {
     final call = _call;
     final host = _host;
@@ -1733,6 +1754,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       notes: _autosave.text,
       callbackAt: _callbackAt,
       now: now,
+      promiseDate: _promiseDate == null ? null : promiseDayString(_promiseDate!),
+      promiseAmount: _promiseAmount,
     );
     if (payload == null) return;
     _autosave.cancelPending();
@@ -1749,6 +1772,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       code: payload.dispositionCode,
       notes: notes,
       callbackAt: payload.callbackAt,
+      promiseDate: payload.promiseDate,
+      promiseAmount: payload.promiseAmount,
       // Absent until the field set is known: the server then keeps (and checks) the stored values.
       fields: _fieldsKnown ? cleanFieldValues(_fields, _fieldValues) : null,
     );
@@ -1979,6 +2004,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
           requiresCallbackTime: d.datetimeRequired,
           isSuccess: d.isSuccess ?? false,
           suppresses: d.suppress ?? false,
+          requiresPromise: d.promiseRequired,
+          promiseFollowUpDays: d.promiseFollowUpDays,
         ),
       ),
     );
@@ -2081,6 +2108,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       outcomes: _optionsFor(_catalog),
       outcomeCode: _outcomeCode,
       callbackAt: _callbackAt,
+      promiseDate: _promiseDate,
+      promiseAmount: _promiseAmount,
       padEnabled: padEnabled,
       padDisabledReason: padEnabled ? null : softphonePadDisabledCopy,
       padRejection: _padRejection,

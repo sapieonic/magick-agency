@@ -102,6 +102,21 @@ export interface AgencyDispositionRequest extends AgencyActorFields {
    *  `preferred_agent_user_id`: agent-facing copy must say "we'll call you back",
    *  never "I'll call you back". */
   callback_at?: string;
+  /**
+   * Promise to pay (PT1, PT4): the date the customer promised to pay, `YYYY-MM-DD` on their
+   * calendar. Required when the catalog entry sets `requires_promise`, refused
+   * (`promise_not_expected`) on any other entry. Not before the customer's today (the
+   * contact's timezone, else the campaign's) and at most `AGENCY_PROMISE_MAX_DAYS_AHEAD`
+   * days after it. Recording it never makes the dialler call (PT3).
+   */
+  promise_date?: string;
+  /**
+   * The promised amount, optional (PT5): a decimal string, ≥ 0, at most two places
+   * (`"12500"`, `"12500.5"`, `"12500.50"`). No currency: the number is what the agent typed.
+   * Only with `promise_date`. Like `notes` and `callback_at`, a same-code replay's promise is
+   * last-write-wins (an honest correction).
+   */
+  promise_amount?: string;
 }
 
 export interface AgencyDispositionResponse extends AgencyCampaignScoped {
@@ -163,6 +178,12 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    * meaning is being made *more* correct, not different.
    */
   callback_requested_at?: string | null;
+  /**
+   * The promise recorded (PT1), echoed as stored: `YYYY-MM-DD` and the amount as a two-place
+   * decimal string. Null (or absent, from a server that predates it) without one.
+   */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   /**
    * The agent's state after release.
    *

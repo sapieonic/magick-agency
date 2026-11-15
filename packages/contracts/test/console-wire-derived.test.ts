@@ -66,6 +66,9 @@ interface OldAgencyDispositionResponse {
   contact_state: string;
   next_attempt_at: string | null;
   callback_requested_at?: string | null;
+  // Added deliberately (promise to pay, PT1): the promise echoed as stored.
+  promise_date?: string | null;
+  promise_amount?: string | null;
   agent_state: Api.AgencyAgentState;
 }
 
@@ -206,6 +209,9 @@ interface OldAgencyDispositionEntry {
   retry?: Api.AgencyRetryRule;
   // Added deliberately (contact assignment, phase 2): the outcome's override grant.
   override?: Api.AgencyDispositionOverride;
+  // Added deliberately (promise to pay, PT1/PT2): the promise ask and its follow-up.
+  requires_promise?: boolean;
+  promise_follow_up_days?: number;
 }
 
 interface OldAgencyRetryRule {
@@ -230,6 +236,9 @@ interface OldAgencyAttempt {
   auto_disposition_code?: string | null;
   notes: string | null;
   callback_at: string | null;
+  // Added deliberately (promise to pay, PT1): the promise recorded with the outcome.
+  promise_date?: string | null;
+  promise_amount?: string | null;
   dispositioned_by_user_id: string | null;
   dispositioned_at: string | null;
   dispositioned_on_behalf: boolean;

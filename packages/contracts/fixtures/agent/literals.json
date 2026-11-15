@@ -210,7 +210,11 @@
       "redial_blocked",
       "station_on_other_device",
       "session_in_other_tenant",
-      "agent_away_ring"
+      "agent_away_ring",
+      "promise_required",
+      "invalid_promise_date",
+      "invalid_promise_amount",
+      "promise_not_expected"
     ]
   },
   "roles": {
@@ -673,7 +677,11 @@
       "unknown_code",
       "note_required",
       "datetime_required",
-      "invalid_callback_at"
+      "invalid_callback_at",
+      "promise_required",
+      "invalid_promise_date",
+      "invalid_promise_amount",
+      "promise_not_expected"
     ]
   },
   "inbound_offer_channels": {
@@ -749,6 +757,15 @@
       "push_unavailable",
       "no_push_device",
       "ring_disabled"
+    ]
+  },
+  "promise_states": {
+    "source": "packages/contracts/src/agency/promise.ts#AGENCY_PROMISE_STATES",
+    "values": [
+      "upcoming",
+      "due_today",
+      "missed",
+      "followed_up"
     ]
   }
 }

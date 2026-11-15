@@ -79,6 +79,8 @@ export const NON_SELECTOR_CONTACT_FILTERS = {
   // are dropped loudly rather than translated into something that means a different set.
   waiting: true,
   attempted: true,
+  // Promise to pay (PT7): due today, missed and the rest move with the calendar; not a cohort.
+  promise: true,
 } as const satisfies Record<Exclude<keyof AgencyContactFilters, RetrySelectorKey>, true>;
 
 export type NonSelectorContactFilter = keyof typeof NON_SELECTOR_CONTACT_FILTERS;
@@ -106,6 +108,7 @@ const DROPPED_FILTER_LABEL: Record<NonSelectorContactFilter, string> = {
   to: 'the “to” date',
   waiting: 'the “Waiting” filter',
   attempted: 'the “Attempted” filter',
+  promise: 'the “Promise to pay” filter',
 };
 
 /**

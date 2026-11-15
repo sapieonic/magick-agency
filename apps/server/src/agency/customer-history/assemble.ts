@@ -328,6 +328,9 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
         notes: showNotes ? a.notes : null,
         notes_hidden: !showNotes && hadNotes,
         callback_at: iso(a.callback_at),
+        // Not gated like the notes: the outcome's own fields, as `disposition_code` is (PT1).
+        promise_date: a.promise_date ?? null,
+        promise_amount: a.promise_amount ?? null,
         redial_of_attempt_id: a.redial_of_attempt_id,
         chain_attempt_id: a.chain_attempt_id,
         redial_number: a.redial_number,
@@ -365,6 +368,8 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
         dnc_override_note: showNotes ? m.dnc_override_note : null,
         hours_override_note: showNotes ? m.hours_override_note : null,
         callback_at: iso(m.callback_at),
+        promise_date: m.promise_date ?? null,
+        promise_amount: m.promise_amount ?? null,
         recording: recordingState(m.webrtc_call_id, data.mediaLegs, m.recording_requested),
         call_page: canOpenCallPage(viewer, m.account_id) ? { account_id: m.account_id, manual_call_id: m.id } : null,
       },

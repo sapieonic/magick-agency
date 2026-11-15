@@ -331,6 +331,8 @@ export function useDispositionSubmit(options: {
               suppress: submittedDisposition?.suppress ?? false,
               requires_note: submittedDisposition?.requires_note ?? false,
               requires_datetime: submittedDisposition?.requires_datetime ?? false,
+              requires_promise: submittedDisposition?.requires_promise ?? false,
+              has_promise: Boolean(payload.promise_date),
               has_note: Boolean((notes || form.notes).trim()),
               scheduled_callback: outcome.nextAttemptAt != null,
               selection_method: selectionMethodRef.current,

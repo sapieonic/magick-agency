@@ -56,6 +56,9 @@ import type { StationRegistry } from '../station-registry.js';
 import { submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import { runManualPredial, softphoneCarrier } from './manual-predial.js';
 import { manualDispositionDecision, prepareManualDisposition, resolveManualCatalog } from './manual-disposition.js';
+import { promiseZoneFor } from '../disposition.js';
+import { contactPromiseWrite, promiseFollowUpAt } from '../promise-to-pay.js';
+import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import type { ManualDialer } from './manual-dialer.js';
 import { onSoftphoneBreak, setAvailableGuarded } from './session-guard.js';
 import { UUID_RE } from '../../utils/uuid.js';
@@ -84,6 +87,9 @@ export interface SubmitDispositionRequest {
   notes?: string;
   /** ISO-8601. */
   callbackAt?: string;
+  /** Promise to pay (PT1): `YYYY-MM-DD` and the amount, as the wire sends them; validated here. */
+  promiseDate?: unknown;
+  promiseAmount?: unknown;
   fields?: AgencyCallFieldValues;
 }
 
@@ -520,22 +526,30 @@ export class SoftphoneService {
     const settings = await agencySoftphoneSettingsRepository.get(actor.tenantId, actor.accountId);
     const { catalog, source } = resolveManualCatalog(tag, row.campaign_id !== null, settings);
     const now = new Date();
+    // The contact up front: a promise's "today" is the customer's (PT4).
+    const contact = row.contact_id ? await agencyContactRepository.findById(row.contact_id) : null;
+    const promiseZone = promiseZoneFor(contact?.timezone, tag?.default_timezone);
     const prepared = prepareManualDisposition({
       catalog,
       code: req.code,
       notes: req.notes,
       callbackAt: req.callbackAt,
+      promiseDate: req.promiseDate,
+      promiseAmount: req.promiseAmount,
+      promiseToday: todayIn(promiseZone, now) ?? undefined,
       callFields: settings.call_fields,
       submittedFields: req.fields,
       storedFields: row.fields ?? {},
       now,
     });
     if (!prepared.ok) return prepared;
-    const { entry, notes, callbackAt } = prepared.prepared;
-
-    const contact = row.contact_id ? await agencyContactRepository.findById(row.contact_id) : null;
+    const { entry, notes, callbackAt, promise } = prepared.prepared;
+    // A promise is only ever asked by a campaign catalogue (the soft phone's own refuses
+    // `requires_promise`), so an untagged call never has one. Its follow-up (PT2) takes the
+    // callback arm; without one a promise books nothing (PT3).
+    const followUpAt = promiseFollowUpAt(entry, promise, promiseZone);
     const { decision, nextAttemptAt } = manualDispositionDecision({
-      entry, now, callbackAt, placed: row.dialed_at !== null, contact, tag,
+      entry, now, callbackAt: callbackAt ?? followUpAt, placed: row.dialed_at !== null, contact, tag,
     });
 
     const client = await getPool().connect();
@@ -551,6 +565,8 @@ export class SoftphoneService {
         source,
         notes,
         callbackAt,
+        promiseDate: promise?.date ?? null,
+        promiseAmount: promise?.amount ?? null,
         ...(prepared.prepared.fields !== undefined ? { fields: prepared.prepared.fields } : {}),
         actorUserId: actor.userId,
         onBehalf: found.onBehalf,
@@ -595,7 +611,7 @@ export class SoftphoneService {
             row.campaign_id, row.destination_e164, decision.suppressedReason ?? 'dnc', {}, { client },
           );
         }
-      } else if (callbackAt && nextAttemptAt && decision.contactState === 'pending') {
+      } else if ((callbackAt || followUpAt) && nextAttemptAt && decision.contactState === 'pending') {
         // A replay that corrected the callback time: the call row took the new
         // `callback_at` above, and the contact this call settled moves with it, as the
         // station's replay does through `releaseFromDisposition` (only while the contact
@@ -608,6 +624,14 @@ export class SoftphoneService {
           contactState = moved.state;
           nextAt = moved.nextAttemptAt;
         }
+      }
+      // The contact's latest promise, or an earlier one followed up (PT6, PT7), in this
+      // transaction; on a replay too, so a corrected promise reaches the contact.
+      if (row.contact_id) {
+        const callAt = new Date(row.created_at);
+        const write = promise ? contactPromiseWrite(promise, promiseZone, callAt) : null;
+        if (write) await agencyContactRepository.recordContactPromise({ contactId: row.contact_id, promise: write }, { client });
+        else await agencyContactRepository.notePromiseFollowUp({ contactId: row.contact_id, callAt }, { client });
       }
       await client.query('COMMIT');
       recorded = { call: result.call, replay: result.replay };

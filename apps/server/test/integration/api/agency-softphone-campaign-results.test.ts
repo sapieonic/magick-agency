@@ -260,6 +260,22 @@ describe('the campaign call export carries the tagged soft-phone calls (SR6)', (
     expect(dialler.every((r) => r.attempt_number === '1')).toBe(true);
   });
 
+  it('a soft-phone row carries its own promise to pay (PT12), column for column with the dialler\'s', async () => {
+    // The two halves of the call log are one UNION: a column added to the attempt half and not
+    // the soft-phone half fails every export. The soft-phone call's own promise fills it.
+    const id = softId.get('reached-1')!;
+    await q(`UPDATE agency_manual_calls SET promise_date = DATE '2026-11-20', promise_amount = 12500.50 WHERE id = $1`, [id]);
+    try {
+      const rows = await exportRows();
+      expect(rows.find((r) => r.attempt_id === id)).toMatchObject({
+        source: 'soft_phone', promise_date: '2026-11-20', promise_amount: '12500.50',
+      });
+      expect(rows.filter((r) => r.attempt_id !== id).every((r) => r.promise_date === '' && r.promise_amount === '')).toBe(true);
+    } finally {
+      await q(`UPDATE agency_manual_calls SET promise_date = NULL, promise_amount = NULL WHERE id = $1`, [id]);
+    }
+  });
+
   it('source=dialler is the file as it was; source=soft_phone the tagged calls alone', async () => {
     const dialler = await exportRows('&source=dialler');
     expect(dialler).toHaveLength(DIALLER.length);

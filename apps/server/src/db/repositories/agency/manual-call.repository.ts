@@ -397,6 +397,9 @@ export class AgencyManualCallRepository {
       source: AgencyManualCallDispositionSource;
       notes: string | null;
       callbackAt: Date | null;
+      /** Promise to pay (PT1): `YYYY-MM-DD` and the two-place amount; last-write-wins on a replay. */
+      promiseDate?: string | null;
+      promiseAmount?: string | null;
       /** Replaces the stored values when given; already validated (required fields filled). */
       fields?: AgencyCallFieldValues;
       actorUserId: string;
@@ -420,6 +423,8 @@ export class AgencyManualCallRepository {
               fields = COALESCE($6::jsonb, m.fields),
               dispositioned_by_user_id = $7,
               dispositioned_on_behalf = $8,
+              promise_date = $9::date,
+              promise_amount = $10::numeric,
               dispositioned_at = now(),
               settled_at = COALESCE(m.settled_at, now()),
               updated_at = now()
@@ -434,6 +439,7 @@ export class AgencyManualCallRepository {
         input.id, input.code, input.source, input.notes, input.callbackAt,
         input.fields === undefined ? null : JSON.stringify(input.fields),
         input.actorUserId, input.onBehalf,
+        input.promiseDate ?? null, input.promiseAmount ?? null,
       ],
     );
     const row = rows[0];

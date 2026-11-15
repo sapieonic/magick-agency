@@ -52,6 +52,25 @@ void main() {
       expect(const DispositionRequest(dispositionCode: 'interested').toJson(), {'disposition_code': 'interested'});
     });
 
+    test('a promise to pay (PT1) goes as the date and the amount, each only when set', () {
+      expect(
+        const DispositionRequest(dispositionCode: 'ptp', promiseDate: '2026-11-18', promiseAmount: '12500.00').toJson(),
+        {'disposition_code': 'ptp', 'promise_date': '2026-11-18', 'promise_amount': '12500.00'},
+      );
+      expect(const DispositionRequest(dispositionCode: 'ptp', promiseDate: '2026-11-18').toJson(), {
+        'disposition_code': 'ptp',
+        'promise_date': '2026-11-18',
+      });
+      expect(
+        ManualCallDispositionRequest(code: 'ptp', promiseDate: '2026-11-18', promiseAmount: '5.00').toJson(),
+        {'code': 'ptp', 'promise_date': '2026-11-18', 'promise_amount': '5.00'},
+      );
+      expect(const InboundCallDispositionRequest(code: 'ptp', promiseDate: '2026-11-18').toJson(), {
+        'code': 'ptp',
+        'promise_date': '2026-11-18',
+      });
+    });
+
     test('DNC is always campaign-scoped and explicit', () {
       expect(const DncRequest().toJson(), {'scope': 'campaign'});
       expect(const DncRequest(reason: 'r', dispositionCode: 'do_not_call').toJson(), {

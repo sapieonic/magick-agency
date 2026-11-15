@@ -76,7 +76,8 @@ function attempt(id: string, createdIso: string, over: Partial<CustomerHistoryAt
   return {
     id, contact_id: uid(100), campaign_id: ROOT, account_id: ACC_A, attempt_number: 1, webrtc_call_id: null,
     agent_user_id: OTHER, state: 'ended', outcome: 'connected', disposition_code: 'ptp', auto_disposition_code: null, notes: 'Spoke to her',
-    callback_at: null, dialed_at: created, ended_at: new Date(created.getTime() + 60_000), talk_seconds: 50,
+    callback_at: null, promise_date: null, promise_amount: null,
+    dialed_at: created, ended_at: new Date(created.getTime() + 60_000), talk_seconds: 50,
     dispositioned_by_user_id: null, dispositioned_at: null, redial_of_attempt_id: null, chain_attempt_id: id, redial_number: 0,
     override_applied: [], override_note: null, record_calls: true, created_at: created, at: micro(createdIso), ...over,
   };
@@ -87,7 +88,7 @@ function manual(id: string, createdIso: string, over: Partial<CustomerHistoryMan
   return {
     id, account_id: ACC_A, agent_user_id: ME, campaign_id: null, contact_id: null, webrtc_call_id: null,
     destination_e164: '+919876543210', state: 'ended', outcome: 'no_answer', disposition_code: null, notes: null,
-    callback_at: null, fields: {}, dnc_override_note: null, hours_override_note: null, recording_requested: false,
+    callback_at: null, promise_date: null, promise_amount: null, fields: {}, dnc_override_note: null, hours_override_note: null, recording_requested: false,
     dialed_at: created, ended_at: created, talk_seconds: null, dispositioned_by_user_id: null, dispositioned_at: null,
     created_at: created, at: micro(createdIso), ...over,
   };

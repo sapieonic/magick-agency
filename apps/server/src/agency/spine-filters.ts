@@ -15,7 +15,7 @@ import type {
   AgencyDisposition,
   AgencyRetrySelector,
 } from '@magick-agency/contracts/agency';
-import { RETRY_NO_OUTCOME } from '@magick-agency/contracts/agency';
+import { AGENCY_PROMISE_FILTERS, RETRY_NO_OUTCOME, type AgencyPromiseFilter } from '@magick-agency/contracts/agency';
 import { BUILT_IN_DISPOSITION_CODES } from './disposition-policy.js';
 import type { AgencyContactWaiting as ContactWaitingBucket } from '@magick-agency/contracts/api/agency/agency-spine';
 
@@ -178,6 +178,12 @@ export interface AgencyContactFilters {
   waiting?: ContactWaitingBucket;
   /** `?attempted=1|0`: at least one dial placed (`dials_placed > 0`), or none. List filter only. */
   attempted?: boolean;
+  /**
+   * `?promise=any|upcoming|due_today|missed|followed_up` (repeated or comma-separated, ORed):
+   * contacts holding a promise to pay, or in those states (PT7, `promiseFilterSql`). A list
+   * filter only, never a retry-selector dimension.
+   */
+  promise?: AgencyPromiseFilter[];
 }
 
 /** `?assigned_to=`: owners to match (lower-cased ids) and whether the pool matches too. */
@@ -629,6 +635,7 @@ export function parseContactFilters(query: Record<string, unknown>): FilterParse
     issues.push({ param: 'waiting', message: 'waiting contacts are pending: add state=pending or drop the state filter' });
   }
   const attempted = parseFlagParam('attempted', query['attempted'], issues);
+  const promise = validateEnum('promise', multiParam(query['promise']), AGENCY_PROMISE_FILTERS, issues);
   if (issues.length > 0) return { ok: false, issues };
 
   return {
@@ -636,6 +643,7 @@ export function parseContactFilters(query: Record<string, unknown>): FilterParse
     filters: {
       ...(waiting ? { waiting } : {}),
       ...(attempted !== undefined ? { attempted } : {}),
+      ...(promise ? { promise } : {}),
       ...(states ? { states } : {}),
       ...(suppressedReasons ? { suppressedReasons } : {}),
       ...(lastOutcomes ? { lastOutcomes } : {}),

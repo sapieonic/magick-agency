@@ -493,7 +493,8 @@ describe('the CSV exports', () => {
     expect(res.statusCode).toBe(200);
     expect(mocks.proxyToCore.mock.calls[1]![0].path).toBe(`/agency-campaigns/${CAMPAIGN}/call-log`);
     expect(mocks.proxyToCore.mock.calls[1]![0].query).toEqual(expect.objectContaining({ source: 'soft_phone' }));
-    expect(res.body.trim().split('\n')[1]!.endsWith(',soft_phone')).toBe(true);
+    // Read by the column's name: the promise-to-pay columns (PT12) were appended after `source`.
+    expect(res.body.trim().split('\n')[1]!.split(',')[ATTEMPT_CSV_COLUMNS.indexOf('source')]).toBe('soft_phone');
 
     const list = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts?source=soft_phone` });
     expect(list.statusCode).toBe(400);
@@ -518,6 +519,8 @@ describe('the CSV exports', () => {
     // Appended, so a consumer reading by position keeps every earlier column; and its own
     // column, so `disposition_code` stays what a person recorded (OD4).
     expect(ATTEMPT_CSV_COLUMNS.indexOf('auto_disposition_code')).toBe(22);
+    // Followed by `source` (SR6), then the promise-to-pay columns (PT12), each appended in turn.
+    expect(ATTEMPT_CSV_COLUMNS.slice(-4)).toEqual(['auto_disposition_code', 'source', 'promise_date', 'promise_amount']);
     const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
     const auto = {
       ...ATTEMPT, outcome: 'no_answer', disposition_code: null, notes: null,

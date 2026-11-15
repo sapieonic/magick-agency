@@ -70,7 +70,13 @@ final class HangupResponse {
 /// Contract: `AgencyDispositionRequest`.
 @immutable
 final class DispositionRequest {
-  const DispositionRequest({required this.dispositionCode, this.notes, this.callbackAt});
+  const DispositionRequest({
+    required this.dispositionCode,
+    this.notes,
+    this.callbackAt,
+    this.promiseDate,
+    this.promiseAmount,
+  });
 
   final String dispositionCode;
 
@@ -80,10 +86,19 @@ final class DispositionRequest {
   /// Required when the catalog entry sets `requires_datetime`.
   final DateTime? callbackAt;
 
+  /// Promise to pay (PT1): `YYYY-MM-DD` on the customer's calendar. Required
+  /// when the entry sets `requires_promise`, refused on any other.
+  final String? promiseDate;
+
+  /// The promised amount, a decimal string (≥ 0, at most two places), optional.
+  final String? promiseAmount;
+
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'disposition_code': dispositionCode};
     putIfSet(json, 'notes', notes);
     putIfSet(json, 'callback_at', callbackAt == null ? null : isoUtc(callbackAt!));
+    putIfSet(json, 'promise_date', promiseDate);
+    putIfSet(json, 'promise_amount', promiseAmount);
     return json;
   }
 
@@ -92,10 +107,12 @@ final class DispositionRequest {
       other is DispositionRequest &&
       other.dispositionCode == dispositionCode &&
       other.notes == notes &&
-      other.callbackAt == callbackAt;
+      other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount;
 
   @override
-  int get hashCode => Object.hash(dispositionCode, notes, callbackAt);
+  int get hashCode => Object.hash(dispositionCode, notes, callbackAt, promiseDate, promiseAmount);
 }
 
 /// Contract: `AgencyDispositionResponse`.

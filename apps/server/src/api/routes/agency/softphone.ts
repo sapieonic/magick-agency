@@ -567,7 +567,10 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
   sub.post<{ Params: { id: string } }>('/softphone/calls/:id/disposition', async (request, reply) => {
     const actor = bodyActor(request, reply);
     if (!actor) return reply;
-    const body = request.body as { code?: unknown; notes?: string; callback_at?: string; fields?: AgencyCallFieldValues };
+    const body = request.body as {
+      code?: unknown; notes?: string; callback_at?: string; fields?: AgencyCallFieldValues;
+      promise_date?: unknown; promise_amount?: unknown;
+    };
     if (typeof body.code !== 'string') {
       return reply.code(400).send({ error: 'Validation failed', details: { code: 'required' } });
     }
@@ -575,6 +578,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       code: body.code,
       ...(body.notes !== undefined ? { notes: body.notes } : {}),
       ...(body.callback_at !== undefined ? { callbackAt: body.callback_at } : {}),
+      ...(body.promise_date !== undefined ? { promiseDate: body.promise_date } : {}),
+      ...(body.promise_amount !== undefined ? { promiseAmount: body.promise_amount } : {}),
       ...(body.fields !== undefined ? { fields: body.fields } : {}),
     });
     if (!saved.ok) return sendSoftphoneRefusal(reply, saved.refusal);

@@ -436,6 +436,30 @@ void main() {
       expect(find.text('Goes back to the campaign queue. It may not be you who calls.'), findsOneWidget);
     });
 
+    testWidgets('a promise outcome asks for the date and amount, and blocks Save until the date (PT1)', (tester) async {
+      const options = [
+        ...outcomes,
+        DispositionOption(code: 'ptp', label: 'Promised to pay', requiresPromise: true),
+      ];
+      final h = await pumpSoftphone(tester, callView(SoftphonePhase.outcome, outcomeCode: 'ptp', outcomeOptions: options));
+      expect(find.byKey(const Key('promise-picker')), findsOneWidget);
+      expect(find.text('This outcome needs the date the customer promised to pay.'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('promise-Tomorrow')));
+      await tester.tap(find.byKey(const Key('promise-Tomorrow')));
+      expect(h.actions.args['setPromiseDate'], [DateTime(2026, 10, 31).add(const Duration(days: 1))]);
+      await tester.enterText(find.byKey(const Key('promise-amount')), '700');
+      expect(h.actions.args['setPromiseAmount'], ['700']);
+      await h.setView(callView(
+        SoftphonePhase.outcome,
+        outcomeCode: 'ptp',
+        outcomeOptions: options,
+        promiseDate: DateTime(2026, 11, 1),
+        promiseAmount: '700',
+      ));
+      expect(find.byKey(const Key('softphone-save-reason')), findsNothing);
+      expect(find.text('Promised 1 Nov 2026 · 700'), findsOneWidget);
+    });
+
     testWidgets('a callback on a contact the campaign is not waiting on stays on the call', (tester) async {
       await pumpSoftphone(
         tester,

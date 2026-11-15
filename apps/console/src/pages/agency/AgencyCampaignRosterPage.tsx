@@ -54,6 +54,7 @@ import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
 import { retryCreatedToast, selectorFromContactFilters } from '../../utils/agencyRetrySelector';
 import { formatCount } from '../../utils/format/number';
 import {
+  PROMISE_FILTER_LABELS,
   isRosterFiltered,
   rosterFilterGroupCount,
   rosterFiltersFromParams,
@@ -61,6 +62,9 @@ import {
   rosterLinkFilterChips,
 } from '../../utils/agencyRosterFilters';
 import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
+import { PromiseStateTag } from '../../components/agency/PromiseNote';
+import { formatPromiseAmount, formatPromiseDate, PROMISE_STATE_HINTS } from '../../utils/format/promise';
+import { AGENCY_PROMISE_FILTERS, type AgencyPromiseFilter } from '@magick-agency/contracts/agency';
 import {
   AGENCY_UNASSIGNED_FILTER,
   CONTACT_STATE_LABELS,
@@ -191,6 +195,7 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
   /** Apply was pressed on a phone filter with no digit: say so even for a bare "+". */
   const [phoneChecked, setPhoneChecked] = useState(false);
   const [draftAssignees, setDraftAssignees] = useState<string[]>(() => filters.assigned_to ?? []);
+  const [draftPromise, setDraftPromise] = useState<AgencyPromiseFilter[]>(() => filters.promise ?? []);
   const [retryOpen, setRetryOpen] = useState(false);
 
   const canExport = hasPermission(role, 'agency.supervise');
@@ -350,6 +355,7 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
     setDraftDispositions(filters.last_disposition ?? []);
     setDraftPhone(filters.phone ?? '');
     setDraftAssignees(filters.assigned_to ?? []);
+    setDraftPromise(filters.promise ?? []);
   }, [filters]);
 
   const onLoadMore = useCallback(async () => {
@@ -420,9 +426,10 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
       ...(draftReasons.length > 0 ? { suppressed_reason: draftReasons } : {}),
       ...(draftDispositions.length > 0 ? { last_disposition: draftDispositions } : {}),
       ...(draftAssignees.length > 0 ? { assigned_to: draftAssignees } : {}),
+      ...(draftPromise.length > 0 ? { promise: draftPromise } : {}),
       ...(draftPhone.trim() ? { phone: draftPhone.trim() } : {}),
     });
-  }, [applyToUrl, filters, draftStates, draftReasons, draftDispositions, draftAssignees, draftPhone]);
+  }, [applyToUrl, filters, draftStates, draftReasons, draftDispositions, draftAssignees, draftPromise, draftPhone]);
 
   const clearFilters = useCallback(() => {
     applyToUrl({});
@@ -635,6 +642,28 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
           </fieldset>
         )}
 
+        {/*
+          Promise to pay (PT7): who promised, and where each promise stands. "Missed" is
+          about follow-up (no outcome since the promised day), never about payment: nothing
+          here knows whether anyone paid, and the chip's hover says so.
+        */}
+        <fieldset className={styles.stateFilter} data-testid="roster-promise-filter">
+          <legend className={spine.filterLegend}>Promise to pay</legend>
+          <div className={styles.options}>
+            {AGENCY_PROMISE_FILTERS.map((value) => (
+              <FilterChip
+                key={value}
+                label={PROMISE_FILTER_LABELS[value]}
+                checked={draftPromise.includes(value)}
+                onChange={(checked) => setDraftPromise((current) => (
+                  checked ? [...current, value] : current.filter((v) => v !== value)
+                ))}
+              />
+            ))}
+          </div>
+          <p className={styles.promiseHint}>{PROMISE_STATE_HINTS.missed}</p>
+        </fieldset>
+
         {canAssign && (
           <fieldset className={styles.stateFilter} data-testid="roster-assignee-filter">
             <legend className={spine.filterLegend}>Assigned to</legend>
@@ -785,6 +814,7 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
                   <th>Attempts</th>
                   <th>Last outcome</th>
                   <th>Last disposition</th>
+                  <th>Promised for</th>
                   <th>Why suppressed</th>
                   <th>Next attempt</th>
                   {canAssign && <th>Assigned to</th>}
@@ -853,6 +883,18 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
                       <td>
                         {dispositionLabel(contact.last_disposition, campaign?.disposition_catalog)
                           ?? <span className={styles.mutedCell}>—</span>}
+                      </td>
+                      <td data-testid={`roster-promise-${contact.id}`}>
+                        {/* The contact's latest promise (PT6, PT7): its date, amount and state. */}
+                        {contact.promise ? (
+                          <span className={styles.promiseCell}>
+                            <span>{formatPromiseDate(contact.promise.date)}</span>
+                            {contact.promise.amount ? (
+                              <span className={styles.promiseAmount}>{formatPromiseAmount(contact.promise.amount)}</span>
+                            ) : null}
+                            <PromiseStateTag state={contact.promise.state} />
+                          </span>
+                        ) : <span className={styles.mutedCell}>—</span>}
                       </td>
                       <td>
                         {reason

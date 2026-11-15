@@ -1,4 +1,5 @@
 import { memo, useMemo, type ReactNode } from 'react';
+import { formatPromise } from '../../../utils/format/promise';
 import type {
   CustomerTimelineCampaignCall,
   CustomerTimelineEntry,
@@ -119,6 +120,9 @@ function CampaignCallRow({ entry, chains }: { entry: CustomerTimelineCampaignCal
           </li>
         )}
         {entry.callback_at && <li>Callback booked for {formatWhen(entry.callback_at)}</li>}
+        {entry.promise_date && (
+          <li data-testid="customer-promise">{formatPromise({ date: entry.promise_date, amount: entry.promise_amount ?? null })}</li>
+        )}
       </ul>
       <Notes notes={entry.notes} hidden={entry.notes_hidden} />
       {entry.override_applied.length > 0 && (
@@ -137,9 +141,12 @@ function SoftphoneCallRow({ entry }: { entry: CustomerTimelineSoftphoneCall }) {
   return (
     <Row entry={entry} title={<>Soft-phone call{entry.campaign ? ` · ${entry.campaign.name}` : ''}</>}>
       <CallFacts entry={entry} />
-      {entry.callback_at && (
+      {(entry.callback_at || entry.promise_date) && (
         <ul className={styles.meta}>
-          <li>Callback booked for {formatWhen(entry.callback_at)}</li>
+          {entry.callback_at && <li>Callback booked for {formatWhen(entry.callback_at)}</li>}
+          {entry.promise_date && (
+            <li data-testid="customer-promise">{formatPromise({ date: entry.promise_date, amount: entry.promise_amount ?? null })}</li>
+          )}
         </ul>
       )}
       <Notes notes={entry.notes} hidden={entry.notes_hidden} />

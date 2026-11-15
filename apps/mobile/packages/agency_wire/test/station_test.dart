@@ -105,6 +105,22 @@ void main() {
       expect(a.priorAttempts[1].campaignName, 'Q3 Winback');
     });
 
+    test('promise to pay (PT9): the contact\'s latest promise and the attempt that recorded it', () {
+      final a = sample<ReservedFrame>('reserved_promise').attempt;
+      expect(a.promise, ContactPromise(date: '2026-11-18', amount: '12500.00', state: PromiseState.dueToday));
+      expect(a.priorAttempts.first.promiseDate, '2026-11-18');
+      expect(a.priorAttempts.first.promiseAmount, '12500.00');
+      expect(a.priorAttempts[1].promiseDate, isNull);
+      // A server that predates it, or a contact with none: no promise, and the call still decodes.
+      expect(sample<ReservedFrame>('reserved').attempt.promise, isNull);
+      expect(ContactPromise.tryFromJson({'date': '', 'state': 'missed'}), isNull);
+      expect(ContactPromise.tryFromJson('2026-11-18'), isNull);
+      final newer = ContactPromise.tryFromJson({'date': '2026-11-18', 'state': 'paid'})!;
+      expect(newer.state, PromiseState.unknown);
+      expect(newer.stateRaw, 'paid');
+      expect(newer.amount, isNull);
+    });
+
     test('a wrap-up redial names the call it redials and how many are left', () {
       final a = sample<ReservedFrame>('reserved_redial').attempt;
       expect(a.redial, const RedialInfo(ofAttemptId: 'b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d', number: 1, remaining: 1));

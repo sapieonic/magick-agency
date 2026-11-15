@@ -13,7 +13,7 @@ import {
   type AgencyContactFilters,
   type PhoneFilter,
 } from '../../../agency/spine-filters.js';
-import type { AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
+import type { AgencyPromiseFilter, AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
 import { contactPhoneDigitsSql } from './sql-fragments.js';
 import { endsWithDigitsSql } from '../../sql-utils.js';
@@ -206,7 +206,28 @@ export function contactListFilterConditions(
     ));
   }
   if (filters.attempted !== undefined) conditions.push(attemptedContactSql(filters.attempted, alias));
+  if (filters.promise?.length) conditions.push(promiseFilterSql(filters.promise, alias));
   return conditions;
+}
+
+/**
+ * `?promise=` (PT7) as SQL: `any` is every contact holding a promise; each state is the
+ * comparison `contactPromise` (`projections.ts`) makes in the app, on the same stored instants,
+ * so a row the filter lists reads that state. `promise_date IS NOT NULL` leads every arm, so
+ * the planner can serve it from `idx_agency_contacts_promise (campaign_id, promise_date)`.
+ * Literal text: the members are this rule, already validated, never input.
+ */
+export function promiseFilterSql(filters: readonly AgencyPromiseFilter[], alias: string): string {
+  const c = alias;
+  const arm: Record<AgencyPromiseFilter, string> = {
+    any: 'true',
+    upcoming: `now() < ${c}.promise_due_from`,
+    due_today: `now() >= ${c}.promise_due_from AND now() < ${c}.promise_due_until`,
+    missed: `now() >= ${c}.promise_due_until AND ${c}.promise_followed_up_at IS NULL`,
+    followed_up: `now() >= ${c}.promise_due_until AND ${c}.promise_followed_up_at IS NOT NULL`,
+  };
+  const arms = filters.includes('any') ? ['true'] : [...new Set(filters)].map((f) => `(${arm[f]})`);
+  return `(${c}.promise_date IS NOT NULL AND (${arms.join(' OR ')}))`;
 }
 
 /**

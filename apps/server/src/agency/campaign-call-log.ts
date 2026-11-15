@@ -53,6 +53,9 @@ export interface CampaignSoftphoneLogRow {
   auto_disposition_code: null;
   notes: string | null;
   callback_at: string | null;
+  /** The soft-phone call's own promise to pay (PT1): `YYYY-MM-DD`, and the amount's two-place string. */
+  promise_date: string | null;
+  promise_amount: string | null;
   dispositioned_by_user_id: string | null;
   dispositioned_at: string | null;
   dispositioned_on_behalf: boolean;

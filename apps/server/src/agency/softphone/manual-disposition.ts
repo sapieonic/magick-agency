@@ -11,8 +11,10 @@ import {
   type AgencyDisposition,
   type AgencyManualCallDispositionSource,
   type AgencyManualCallOutcome,
+  type AgencySoftphoneDispositionInvalidRefusal,
   type AgencySoftphoneSettings,
 } from '@magick-agency/contracts/agency';
+import type { PromiseDay, ValidPromise } from '@magick-agency/domain/promise-to-pay';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../../db/models/agency.model.js';
 import { resolveDisposition, validateDispositionFields } from '../disposition.js';
 import { resolveDispositionDecision, type DispositionDecision } from '../disposition-policy.js';
@@ -54,11 +56,19 @@ export function resolveManualCatalog(
   };
 }
 
+/** The field refusals a soft-phone or inbound outcome names as its `reason`, as the station's codes. */
+const MANUAL_DISPOSITION_REASONS: ReadonlySet<string> = new Set([
+  'note_required', 'datetime_required', 'invalid_callback_at',
+  'promise_required', 'invalid_promise_date', 'invalid_promise_amount', 'promise_not_expected',
+]);
+
 /** A submitted outcome, validated: the catalog entry, notes, callback and the fields to store. */
 export interface PreparedManualDisposition {
   entry: AgencyDisposition;
   notes: string | null;
   callbackAt: Date | null;
+  /** The promise to pay (PT1), validated in the customer's zone; null without one. */
+  promise: ValidPromise | null;
   /** Present when the request carried `fields` (they replace the stored values). */
   fields: AgencyCallFieldValues | undefined;
 }
@@ -76,6 +86,10 @@ export function prepareManualDisposition(input: {
   code: unknown;
   notes?: unknown;
   callbackAt?: unknown;
+  promiseDate?: unknown;
+  promiseAmount?: unknown;
+  /** The customer's today for a promised date (PT4); absent: today in UTC. */
+  promiseToday?: PromiseDay;
   callFields: readonly AgencyCallField[];
   submittedFields: unknown;
   storedFields: AgencyCallFieldValues;
@@ -85,9 +99,19 @@ export function prepareManualDisposition(input: {
   if (!resolved.ok) {
     return { ok: false, refusal: { code: 'disposition_invalid', reason: 'unknown_code', allowed_codes: resolved.allowed } };
   }
-  const fields = validateDispositionFields(resolved.entry, { notes: input.notes, callback_at: input.callbackAt }, input.now);
+  const fields = validateDispositionFields(
+    resolved.entry,
+    {
+      notes: input.notes, callback_at: input.callbackAt,
+      promise_date: input.promiseDate, promise_amount: input.promiseAmount,
+    },
+    input.now,
+    input.promiseToday,
+  );
   if (!fields.ok) {
-    const reason = fields.code === 'note_required' || fields.code === 'datetime_required' ? fields.code : 'invalid_callback_at';
+    const reason = MANUAL_DISPOSITION_REASONS.has(fields.code)
+      ? fields.code as AgencySoftphoneDispositionInvalidRefusal['reason']
+      : 'invalid_callback_at';
     return { ok: false, refusal: { code: 'disposition_invalid', reason } };
   }
   const submitted = submittedCallFields(input.callFields, input.submittedFields);
@@ -103,6 +127,7 @@ export function prepareManualDisposition(input: {
       entry: resolved.entry,
       notes: fields.notes,
       callbackAt: fields.callbackAt,
+      promise: fields.promise,
       fields: submitted === undefined ? undefined : values.values,
     },
   };

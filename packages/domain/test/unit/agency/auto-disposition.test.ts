@@ -27,6 +27,9 @@ describe('autoDispositionRefusal (OD3)', () => {
     expect(autoDispositionRefusal(catalog, 'gone')).toBe('missing');
     expect(autoDispositionRefusal(catalog, 'do_not_call')).toBe('suppress');
     expect(autoDispositionRefusal(catalog, 'sale')).toBe('terminal');
+    // PT11: an unanswered call cannot carry a promise to pay.
+    expect(autoDispositionRefusal([{ code: 'ptp', label: 'Promised to pay', requires_promise: true }], 'ptp'))
+      .toBe('promise');
   });
 
   it('reads the FIRST entry with the code, as every catalog lookup does', () => {

@@ -239,7 +239,7 @@ export async function forceAgentAvailable(
  */
 export async function submitDisposition(
   attemptId: string,
-  payload: { disposition_code: string; notes?: string; callback_at?: string },
+  payload: { disposition_code: string; notes?: string; callback_at?: string; promise_date?: string; promise_amount?: string },
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyDispositionResponse> {

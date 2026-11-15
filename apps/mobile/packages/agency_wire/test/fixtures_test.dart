@@ -48,6 +48,7 @@ final Map<String, Map<String, Decoder>> decoders = {
       'agent_state_soft_phone',
       'agent_state_switch_queued',
       'reserved_redial',
+      'reserved_promise',
       'wrapup_redial_offered',
       'wrapup_redial_used_up',
       'queue_nothing_due',

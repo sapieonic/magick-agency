@@ -211,16 +211,30 @@ export type AgencyActionErrorCode =
    * them available on (the release would write them `offline` and end their ringing). Nothing
    * changed; force-break and sign-off work as before.
    */
-  | 'agent_away_ring';
+  | 'agent_away_ring'
+  // ── Promise to pay (PT8): the disposition's promise fields. 400s; nothing was written.
+  /** The catalog entry sets `requires_promise` and `promise_date` was absent. */
+  | 'promise_required'
+  /**
+   * `promise_date` is not a real `YYYY-MM-DD` date, is before the customer's today (the
+   * contact's timezone, else the campaign's) or more than `AGENCY_PROMISE_MAX_DAYS_AHEAD`
+   * days after it.
+   */
+  | 'invalid_promise_date'
+  /** `promise_amount` is not a decimal ≥ 0 with at most two places and twelve digits before them. */
+  | 'invalid_promise_amount'
+  /** A promise was sent with an outcome whose entry does not set `requires_promise`. */
+  | 'promise_not_expected';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **29 members** — 16 before `session_on_other_campaign` and
+ * ⚠️ **33 members** — 16 before `session_on_other_campaign` and
  * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`, 20 before
  * the six wrap-up redial codes, 26 before `station_on_other_device` and
- * `session_in_other_tenant` (OS1, OS3), 28 before `agent_away_ring` (Mode B).
+ * `session_in_other_tenant` (OS1, OS3), 28 before `agent_away_ring` (Mode B), 29 before the
+ * four promise-to-pay codes (PT8).
  * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
@@ -255,6 +269,10 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'station_on_other_device',
   'session_in_other_tenant',
   'agent_away_ring',
+  'promise_required',
+  'invalid_promise_date',
+  'invalid_promise_amount',
+  'promise_not_expected',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**
