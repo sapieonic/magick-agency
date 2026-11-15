@@ -720,6 +720,14 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
       disposition_catalog: JSON.stringify([]),
     });
     await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100070' });
+    // Keeps the campaign open: once the call to the contact above ends, the roster
+    // owes nothing, and a pacing tick before the second contact goes in below would
+    // complete the campaign (`maybeFinalize`), which then never ticks `no_agents` (seen
+    // on CI). Due tomorrow, so no claim takes it before then.
+    await insertAgencyContact(campaign.id, {
+      tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100079',
+      next_attempt_at: new Date(Date.now() + 86_400_000),
+    });
     const session = await campaignSession(campaign.id, agent);
     const station = await openStation(session.id);
     await runtime.agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
