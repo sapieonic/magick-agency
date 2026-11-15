@@ -74,6 +74,36 @@ export type AgencyIngestReasonCode =
   | 'row_too_large'
   | 'dnc_suppressed';
 
+/**
+ * Why a row was skipped rather than rejected (IM3): nothing is wrong with it, the
+ * campaign already holds it (its duplicate key, or an exact copy). Counted in
+ * `AgencyIngestJob.skipped`, never in `rejected`; nothing about the existing contact changes.
+ */
+export type AgencyIngestSkipCode = 'already_in_campaign';
+
+/**
+ * The widest Do Not Call entry that suppressed a rejected row (IM5): the whole
+ * organisation (`tenant`), the account, or the campaign. `unknown` when the list said
+ * "suppressed" but its scope could not be read back.
+ */
+export type AgencyIngestDncScope = 'tenant' | 'account' | 'campaign' | 'unknown';
+
+/** One rejected row as the review screen shows it (`AgencyIngestJob.rejected_sample`). */
+export interface AgencyIngestRowSample {
+  /** The line in the uploaded file. */
+  row_number: number;
+  /** The column the reason is about, or null for a whole-row problem. */
+  column: string | null;
+  /** The phone cell as the file has it (cut at 80 characters). */
+  raw_value: string;
+  reason_code: AgencyIngestReasonCode | string;
+  /** Plain words, saying how to fix the row. */
+  reason: string;
+}
+
+/** How long a finished check may be imported from (`POST …/ingest/jobs/:id/import`). */
+export const AGENCY_INGEST_CHECK_VALID_HOURS = 24;
+
 /** Why the whole file was unusable. Nothing is ingested. */
 export type AgencyIngestFailureCode =
   | 'malformed_csv'
@@ -193,16 +223,42 @@ export interface AgencyIngestRequest {
 export interface AgencyIngestStartResponse {
   job_id: string;
   status: AgencyIngestJobStatus;
+  /** The semantics the server applied (`append` unless a replace was asked for). */
+  mode?: 'append' | 'replace';
 }
+
+/**
+ * `POST /proxy/agency/ingest/jobs/:id/import` (IM2): import the file a finished check
+ * validated, with the check's own column mapping. Body: `{ campaign_id? }`, required
+ * only when the check named no campaign. 202 started; 200 with `already_started: true`
+ * when this check was imported before (that import's id). Refusals carry a `code`:
+ * 409 `not_a_check` / `check_not_finished` / `check_failed` / `import_in_progress`,
+ * 410 `check_expired`, 404 for a job the caller cannot see.
+ */
+export interface AgencyIngestImportResponse extends AgencyIngestStartResponse {
+  check_job_id: string;
+  already_started: boolean;
+}
+
+/** The `code` of an import refusal (`POST …/ingest/jobs` and `…/ingest/jobs/:id/import`). */
+export type AgencyIngestImportRefusalCode =
+  | 'not_a_check'
+  | 'check_not_finished'
+  | 'check_failed'
+  | 'check_expired'
+  | 'import_in_progress';
 
 /**
  * `GET /proxy/agency/ingest/jobs/:id`.
  *
  * **The counter contract, restated because it is the whole point of the summary
- * screen:** `accepted + rejected = rows_read`, exactly. `duplicates` — and the
- * `dnc_suppressed` entry in `rejected_by_reason` — are breakdowns *of*
- * `rejected`, never a third or fourth addend. The public API layer's ingest service moves
- * DNC-suppressed rows from accepted to rejected for precisely this reason.
+ * screen:** `accepted + skipped + rejected = rows_read`, exactly (IM3; `skipped` is 0
+ * on a job that skipped nothing, so the older `accepted + rejected = rows_read` still
+ * holds for it). `duplicates` — and the `dnc_suppressed` entry in `rejected_by_reason`
+ * — are breakdowns *of* `rejected`, never a further addend.
+ *
+ * A check (`dry_run`) reports what its import would do against the roster as it
+ * stood: `accepted` is "ready to import", `skipped` "already in this campaign".
  */
 export interface AgencyIngestJob {
   job_id: string;
@@ -221,8 +277,23 @@ export interface AgencyIngestJob {
   rows_read: number;
   accepted: number;
   rejected: number;
+  /** Rows the campaign already held: skipped, not rejected, and not changed (IM3). */
+  skipped: number;
   duplicates: number;
   rejected_by_reason: Partial<Record<AgencyIngestReasonCode, number>>;
+  /** The Do Not Call rejections by the widest scope that suppressed them (IM5). */
+  dnc_by_scope: Partial<Record<AgencyIngestDncScope, number>>;
+  /** The first rejected rows in file order (at most 20), for the review screen (IM2). */
+  rejected_sample: AgencyIngestRowSample[];
+  has_skipped_export: boolean;
+  skipped_row_count: number;
+  skipped_truncated: boolean;
+  /** On an import: the check it was started from, or null. */
+  check_job_id: string | null;
+  /** On a check: the import started from it, or null (a second tab finds it here). */
+  import_job_id: string | null;
+  /** On a finished check: until when it may be imported; null otherwise. */
+  check_expires_at: string | null;
   /**
    * Rows the dialer runtime's roster **refused on arrival** because it already held them.
    *

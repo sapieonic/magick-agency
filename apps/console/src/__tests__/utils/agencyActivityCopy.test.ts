@@ -276,6 +276,11 @@ describe('activityDetailSummary', () => {
     const counts = { rows_read: 1200, accepted: 1150, rejected: 50, duplicates: 20 };
     expect(activityDetailSummary(row({ action: 'agency_campaign.roster_upload_completed', detail: { status: 'completed', ...counts } })))
       .toBe('1,200 rows read: 1,150 accepted, 50 rejected (20 duplicates).');
+    // A re-import (IM3): the server writes `skipped` only when there were any.
+    expect(activityDetailSummary(row({
+      action: 'agency_campaign.roster_upload_completed',
+      detail: { status: 'completed', rows_read: 1200, accepted: 100, skipped: 1050, rejected: 50, duplicates: 0 },
+    }))).toBe('1,200 rows read: 100 accepted, 1,050 already in the campaign, 50 rejected.');
     expect(activityDetailSummary(row({
       action: 'agency_campaign.roster_upload_failed',
       detail: { status: 'failed', error_code: 'dnc_unavailable', rows_read: 0, accepted: 0, rejected: 0, duplicates: 0 },

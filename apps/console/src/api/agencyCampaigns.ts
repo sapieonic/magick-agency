@@ -8,6 +8,7 @@ import type {
   AgencyCampaignLineage,
   AgencyCampaignStats,
   AgencyColumnAnalysis,
+  AgencyIngestImportResponse,
   AgencyIngestJob,
   AgencyIngestLimits,
   AgencyIngestRequest,
@@ -160,8 +161,49 @@ export async function downloadRejectedRows(
   tenantId?: string,
   accountId?: string,
 ): Promise<Blob> {
+  return downloadRowsExport(jobId, 'rejected', tenantId, accountId);
+}
+
+/**
+ * Download the skipped rows (IM3): the rows the campaign already held, in the same
+ * shape as the rejected rows (the operator's columns plus `_row` and `_reason`).
+ */
+export async function downloadSkippedRows(
+  jobId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<Blob> {
+  return downloadRowsExport(jobId, 'skipped', tenantId, accountId);
+}
+
+/**
+ * Import the file a finished check validated (IM2), with the check's own column
+ * mapping: `POST /ingest/jobs/:id/import`. `campaignId` is needed only when the check
+ * named none (the builder checks before its draft exists). A second call for the same
+ * check answers 200 with the first import (`already_started`), never a second import.
+ */
+export async function importCheckedFile(
+  checkJobId: string,
+  campaignId: string | undefined,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyIngestImportResponse> {
+  return apiFetch<AgencyIngestImportResponse>(
+    `${AGENCY_BASE}/ingest/jobs/${checkJobId}/import`,
+    { method: 'POST', body: JSON.stringify(campaignId ? { campaign_id: campaignId } : {}) },
+    tenantId,
+    accountId,
+  );
+}
+
+async function downloadRowsExport(
+  jobId: string,
+  which: 'rejected' | 'skipped',
+  tenantId?: string,
+  accountId?: string,
+): Promise<Blob> {
   const headers = await buildAuthHeaders(tenantId, accountId);
-  const url = `${AGENCY_BASE}/ingest/jobs/${jobId}/rejected.csv`;
+  const url = `${AGENCY_BASE}/ingest/jobs/${jobId}/${which}.csv`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
     let details: unknown;

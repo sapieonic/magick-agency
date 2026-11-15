@@ -19,12 +19,25 @@ const mocks = vi.hoisted(() => ({
     reapStaleJobs: vi.fn().mockResolvedValue(0),
   },
   filterSuppressed: vi.fn(),
+  suppressionScopes: vi.fn(),
+  presence: {
+    phonesPresent: vi.fn(),
+    exactRowsPresent: vi.fn(),
+    keyPartsPage: vi.fn(),
+  },
+}));
+
+// The roster reads behind "already in this campaign" (IM3). Empty by default, so the
+// cases that are not about re-import see a campaign that holds none of their rows.
+vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
+  agencyRosterPresenceRepository: mocks.presence,
 }));
 
 vi.mock('../../../src/storage/s3.js', () => ({
   getFileStream: mocks.getFileStream,
   headFile: mocks.headFile,
   uploadFile: mocks.uploadFile,
+  isS3NotFound: (err: { name?: string }) => err?.name === 'NoSuchKey' || err?.name === 'NotFound',
 }));
 vi.mock('../../../src/agency/agency-roster.client.js', async () => {
   const actual = await vi.importActual<typeof import('../../../src/agency/agency-roster.client.js')>(
@@ -54,7 +67,7 @@ vi.mock('../../../src/dnc/dnc.service.js', async () => {
   const actual = await vi.importActual<typeof import('../../../src/dnc/dnc.service.js')>(
     '../../../src/dnc/dnc.service.js',
   );
-  return { ...actual, dncService: { filterSuppressed: mocks.filterSuppressed } };
+  return { ...actual, dncService: { filterSuppressed: mocks.filterSuppressed, suppressionScopes: mocks.suppressionScopes } };
 });
 
 import { RosterSupersedeError } from '../../../src/agency/agency-roster.client.js';
@@ -136,6 +149,10 @@ describe('AgencyIngestService', () => {
     // Nothing suppressed by default, so the pre-existing cases keep asking their
     // own questions rather than becoming DNC tests by accident.
     mocks.filterSuppressed.mockResolvedValue(new Set<string>());
+    mocks.suppressionScopes.mockResolvedValue(new Map());
+    mocks.presence.phonesPresent.mockResolvedValue(new Set());
+    mocks.presence.exactRowsPresent.mockResolvedValue(new Set());
+    mocks.presence.keyPartsPage.mockResolvedValue([]);
     mocks.supersedeRoster.mockResolvedValue({
       superseded: 5000,
       retained: 0,
@@ -497,19 +514,70 @@ describe('AgencyIngestService', () => {
     expect(progress).toMatchObject({ accepted: 2, rejected: 1, duplicates: 1 });
   });
 
-  // Ruled 2026-11-11 (docs/decisions.md §4, "DNC row claims its key"): kept as built.
-  // The key is claimed in the CSV pass and the DNC check runs later per batch, so a
-  // suppressed row still holds its key and a later row with the same key, even on a
-  // callable number, is dropped as a duplicate.
-  it('a DNC-suppressed row keeps its duplicate key: a later row with the same key is a duplicate', async () => {
+  // IM4 (docs/decisions.md, supersedes "DNC row claims its key"): the DNC check runs
+  // per batch BEFORE any row of the batch claims its key, so a suppressed row holds no
+  // key, and a later row with the same key on a callable number is imported. Before
+  // IM4 that loan was never called, and fixing and re-importing the file could not
+  // change it: the same row was "a duplicate" of a row that was itself never imported.
+  it('a DNC-suppressed row does not keep its duplicate key: a later row with the same key is imported', async () => {
     mocks.filterSuppressed.mockResolvedValue(new Set(['+919876543210']));
     csvStream('Mobile,Loan No,Branch\n+919876543210,LN-1,Pune\n+919800000002,LN-1,Pune\n');
     await service.run({ job: job({ dedupe_columns: ['Loan No', 'Branch'] }) });
 
     const sent = mocks.sendRosterChunk.mock.calls.flatMap((call) => (call[0] as { contacts: Array<{ phone_e164: string }> }).contacts);
-    expect(sent).toEqual([]);
-    const { progress } = mocks.repo.complete.mock.calls[0]![1];
-    expect(progress).toMatchObject({ duplicates: 1 });
+    expect(sent.map((c) => c.phone_e164)).toEqual(['+919800000002']);
+    const { progress, rejected_by_reason } = mocks.repo.complete.mock.calls[0]![1];
+    expect(progress).toMatchObject({ accepted: 1, rejected: 1, duplicates: 0 });
+    expect(rejected_by_reason).toEqual({ dnc_suppressed: 1 });
+  });
+
+  it('a row the campaign already holds is SKIPPED, not rejected, and nothing of it is sent (IM3)', async () => {
+    // The roster holds +919876543210 from an earlier import.
+    mocks.presence.phonesPresent.mockResolvedValue(new Set(['919876543210']));
+    csvStream('Mobile,Name\n9876543210,Asha\n9123456780,Ravi\n9876543210,Asha again\n');
+    await service.run({ job: job() });
+
+    const sent = mocks.sendRosterChunk.mock.calls.flatMap((call) => (call[0] as { contacts: Array<{ phone_e164: string }> }).contacts);
+    expect(sent.map((c) => c.phone_e164)).toEqual(['+919123456780']);
+    const done = mocks.repo.complete.mock.calls[0]![1];
+    // Row 4 repeats row 2's number in the file, and that number is in the campaign: skipped
+    // too, not a duplicate: nothing about either row would be imported.
+    expect(done.progress).toMatchObject({ rows_read: 3, accepted: 1, skipped: 2, rejected: 0, duplicates: 0 });
+    expect(done.progress.accepted + done.progress.skipped + done.progress.rejected).toBe(done.progress.rows_read);
+    expect(done).toMatchObject({ skipped_row_count: 2, skipped_s3_key: 'agency-ingest/tenant-1/job-1/skipped-rows.csv' });
+    const skippedCsv = (mocks.uploadFile.mock.calls.find((c) => String(c[0]).endsWith('skipped-rows.csv'))![1] as Buffer).toString('utf8');
+    expect(skippedCsv).toBe(
+      '_row,Mobile,Name,_reason\n'
+      + '2,9876543210,Asha,"Already in this campaign from an earlier import, so it was skipped. Nothing about that contact was changed."\n'
+      + '4,9876543210,Asha again,"Already in this campaign from an earlier import, so it was skipped. Nothing about that contact was changed."\n',
+    );
+    // Asked with the job itself, so the import cannot find the rows it writes itself.
+    expect(mocks.presence.phonesPresent).toHaveBeenCalledWith('campaign-1', 'job-1', ['919876543210', '919123456780']);
+  });
+
+  it('says which Do Not Call list a rejected row is on, and counts them by scope (IM5)', async () => {
+    mocks.filterSuppressed.mockResolvedValue(new Set(['+919876543210', '+919123456780']));
+    mocks.suppressionScopes.mockResolvedValue(new Map([['+919876543210', 'tenant'], ['+919123456780', 'campaign']]));
+    csvStream('Mobile\n9876543210\n9123456780\n');
+    await service.run({ job: job() });
+
+    const done = mocks.repo.complete.mock.calls[0]![1];
+    expect(done.dnc_by_scope).toEqual({ tenant: 1, campaign: 1 });
+    expect(done.rejected_sample.map((r: { reason: string }) => r.reason)).toEqual([
+      expect.stringContaining('on the Do Not Call list for every campaign in your organisation'),
+      expect.stringContaining('on the Do Not Call list for this campaign'),
+    ]);
+  });
+
+  it('a Do Not Call scope that cannot be read still rejects the row, with plainer words', async () => {
+    mocks.filterSuppressed.mockResolvedValue(new Set(['+919876543210']));
+    mocks.suppressionScopes.mockRejectedValue(new Error('scope read failed'));
+    csvStream('Mobile\n9876543210\n');
+    await service.run({ job: job() });
+
+    expect(mocks.sendRosterChunk.mock.calls.flatMap((call) => (call[0] as { contacts: unknown[] }).contacts)).toEqual([]);
+    const done = mocks.repo.complete.mock.calls[0]![1];
+    expect(done.dnc_by_scope).toEqual({ unknown: 1 });
   });
 
   // ── DNC suppression at ingest ──────────────────────────────
@@ -604,7 +672,7 @@ describe('AgencyIngestService', () => {
       // bug. The original columns come back so the row is identifiable.
       // The export carries the human LABEL, not the code — `_reason` is what an
       // operator reads in a spreadsheet. The code lives in `rejected_by_reason`.
-      expect(document).toContain('On the Do Not Call list');
+      expect(document).toContain('on the Do Not Call list');
       expect(document).toContain('Asha');
       const { rejected_row_count } = mocks.repo.complete.mock.calls[0]![1];
       expect(rejected_row_count).toBe(1);

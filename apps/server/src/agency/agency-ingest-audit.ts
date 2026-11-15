@@ -81,11 +81,14 @@ function writeRosterUploadEnded(job: AgencyIngestJobRecord): void {
       file_name: job.file_name,
       mode: job.mode ?? 'append',
       status: job.status,
-      // accepted + rejected = rows_read; duplicates is a breakdown of rejected.
+      // accepted + skipped + rejected = rows_read; duplicates is a breakdown of rejected.
       rows_read: Number(job.rows_read),
       accepted: Number(job.accepted),
       rejected: Number(job.rejected),
       duplicates: Number(job.duplicates),
+      // Rows already in the campaign (IM3), only when there were any, so a row written
+      // before 0043, or an import that skipped nothing, reads as it always did.
+      ...(Number(job.skipped ?? 0) > 0 ? { skipped: Number(job.skipped) } : {}),
       ...(job.error_code ? { error_code: job.error_code } : {}),
       ...(job.replace_superseded_contacts !== null && job.replace_superseded_contacts !== undefined
         ? { replace_superseded_contacts: Number(job.replace_superseded_contacts) }

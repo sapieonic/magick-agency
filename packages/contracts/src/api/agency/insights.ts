@@ -609,6 +609,8 @@ export interface AgencyInsightsUpload {
   rows_read: number;
   accepted: number;
   rejected: number;
+  /** Rows already in the campaign, skipped (IM3): `accepted + skipped + rejected = rows_read`. 0 before it existed. */
+  skipped: number;
   rejected_by_reason: Record<string, number>;
   duplicates: number;
   /** The columns that together marked a duplicate. Empty = phone. */

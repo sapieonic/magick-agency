@@ -41,19 +41,30 @@ const PREFIX = 'agency-ingest';
 /** The basename every rejected-rows export is written under. */
 export const REJECTED_EXPORT_FILE_NAME = 'rejected-rows.csv';
 
+/** The basename every skipped-rows export is written under (IM3): rows the campaign already held. */
+export const SKIPPED_EXPORT_FILE_NAME = 'skipped-rows.csv';
+
+/** The server-written exports' basenames: never an upload, so never a client-supplied key. */
+const EXPORT_FILE_NAMES: readonly string[] = [REJECTED_EXPORT_FILE_NAME, SKIPPED_EXPORT_FILE_NAME];
+
 /** Where the ingest service writes a job's rejected rows. */
 export function rejectedExportKey(tenantId: string, jobId: string): string {
   return `${PREFIX}/${tenantId}/${jobId}/${REJECTED_EXPORT_FILE_NAME}`;
 }
 
+/** Where the ingest service writes a job's skipped rows. Same shape, same refusal. */
+export function skippedExportKey(tenantId: string, jobId: string): string {
+  return `${PREFIX}/${tenantId}/${jobId}/${SKIPPED_EXPORT_FILE_NAME}`;
+}
+
 /**
  * The key the upload route mints. `safeName` is the already-sanitised file name;
- * a name that would collide with the rejected export's is prefixed so the key
- * stays recognisable as an upload.
+ * a name that would collide with an export's is prefixed so the key stays
+ * recognisable as an upload.
  */
 export function uploadKey(tenantId: string, uploadId: string, safeName: string): string {
   const base = safeName.length > 0 ? safeName : 'upload.csv';
-  const name = base === REJECTED_EXPORT_FILE_NAME ? `upload-${base}` : base;
+  const name = EXPORT_FILE_NAMES.includes(base) ? `upload-${base}` : base;
   return `${PREFIX}/${tenantId}/${uploadId}/${name}`;
 }
 
@@ -72,6 +83,6 @@ export function isTenantUploadKey(key: string, tenantId: string): boolean {
   if (parts.length !== 4) return false;
   const [prefix, tenant, id, name] = parts as [string, string, string, string];
   if (prefix !== PREFIX || tenant !== tenantId) return false;
-  if (id.length === 0 || name.length === 0 || name === REJECTED_EXPORT_FILE_NAME) return false;
+  if (id.length === 0 || name.length === 0 || EXPORT_FILE_NAMES.includes(name)) return false;
   return true;
 }

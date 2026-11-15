@@ -1,15 +1,15 @@
-import { getFileStream, headFile, uploadFile } from '../storage/s3.js';
+import { getFileStream, headFile, isS3NotFound, uploadFile } from '../storage/s3.js';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   ingestAgencyCsv,
   AgencyIngestError,
   AGENCY_INGEST_BATCH_SIZE,
-  rejectionLabel,
-  type AgencyIngestContact,
   type AgencyIngestRejection,
+  type AgencyIngestSkip,
   type AgencyIngestSummary,
 } from './agency-csv-ingest.js';
-import { dncService, DncUnavailableError } from '../dnc/dnc.service.js';
+import { DncUnavailableError } from '../dnc/dnc.service.js';
+import { createIngestScreen } from './agency-ingest-screen.js';
 import { rejectedCsvHeader, rejectedCsvRow } from './agency-rejected-csv.js';
 import {
   sendRosterChunk,
@@ -22,9 +22,10 @@ import {
   type AgencyIngestJobFailureCode,
   type AgencyIngestJobRecord,
   type IngestProgress,
+  type IngestRowSample,
 } from './agency-ingest-job.repository.js';
 
-import { rejectedExportKey } from './agency-ingest-keys.js';
+import { rejectedExportKey, skippedExportKey } from './agency-ingest-keys.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { publishCacheInvalidation } from '../cache/cache-invalidation.js';
 import { CAMPAIGN_STATS_CACHE } from './campaign-stats-reads.js';
@@ -140,6 +141,7 @@ export class AgencyIngestService {
       rows_read: 0,
       accepted: 0,
       rejected: 0,
+      skipped: 0,
       duplicates: 0,
       bytes_read: 0,
       chunks_sent: 0,
@@ -257,68 +259,33 @@ export class AgencyIngestService {
       await agencyIngestJobRepository.fail(job.id, code, `${message}${retirementNote('the failure')}`);
     };
     /**
-     * Rows dropped for being on the DNC list.
-     *
-     * Counted separately because the CSV module cannot see them — it has no
-     * database — so its `summary.accepted`/`rejected` include them as accepted,
-     * and the totals below have to move them across. The asserted
-     * invariant (`accepted + rejected = rows_read`, `duplicates` a breakdown
-     * rather than a fourth addend) holds either way; a third addend would have
-     * broken an operator's reconciliation against their own spreadsheet.
+     * Rows the campaign already held (IM3), retained for their own download like
+     * the rejections: the operator reviews what was skipped, and fixes what was
+     * rejected. Bounded by the same `MAX_EXPORT_ROWS`.
      */
-    let dncSuppressed = 0;
+    const retainedSkips: AgencyIngestSkip[] = [];
+    let skippedTruncated = false;
 
     /**
-     * Drop the DNC-listed contacts from a batch and record each as a rejection.
+     * The Do Not Call list and the campaign's roster, asked per batch by the CSV
+     * pass BEFORE any row of the batch claims its duplicate key (IM4).
      *
-     * **Fail-closed: this can throw, and the ingest must die rather than send an
+     * **Fail-closed: it can throw, and the ingest must die rather than send an
      * unchecked batch.** `filterSuppressed` throws when the list cannot be read,
      * which is the whole point — an empty result would be a well-formed "none of
-     * these are suppressed" and every one of them would be dialed.
+     * these are suppressed" and every one of them would be dialled. The CSV pass
+     * hands the caller's error back unchanged (`fromCaller`), so it reaches the
+     * `DncUnavailableError` arm below.
+     *
+     * Built from the job alone, so a check (`dry_run`) and the import it previews
+     * read the same list and the same roster (each as it stood when that job began).
      */
-    const dropSuppressed = async (
-      contacts: AgencyIngestContact[],
-    ): Promise<AgencyIngestContact[]> => {
-      if (contacts.length === 0) return contacts;
-
-      const suppressed = await dncService.filterSuppressed(
-        {
-          tenantId: job.tenant_id,
-          accountId: job.account_id,
-          // Campaign-scoped rows must be caught here as well as at dial time, so the
-          // campaign is part of the lookup.
-          campaignId: campaignId ?? null,
-        },
-        contacts.map((c) => c.phone_e164),
-      );
-      if (suppressed.size === 0) return contacts;
-
-      const kept: AgencyIngestContact[] = [];
-      for (const contact of contacts) {
-        if (!suppressed.has(contact.phone_e164)) {
-          kept.push(contact);
-          continue;
-        }
-
-        dncSuppressed += 1;
-        // Retained for the export like any other rejection: the operator needs to
-        // reconcile 10,000 uploaded rows against 9,957 dialable ones, and "43 on
-        // your Do Not Call list" is the only answer that does not look like a bug.
-        if (retainedRejections.length < MAX_EXPORT_ROWS) {
-          retainedRejections.push({
-            row_number: contact.source_row_number,
-            column: job.phone_column,
-            raw_value: contact.phone_e164,
-            reason_code: 'dnc_suppressed',
-            reason: rejectionLabel('dnc_suppressed'),
-            context: contact.context,
-          });
-        } else {
-          exportTruncated = true;
-        }
-      }
-      return kept;
-    };
+    const screen = createIngestScreen({
+      tenantId: job.tenant_id,
+      accountId: job.account_id,
+      campaignId: campaignId ?? null,
+      jobId: job.id,
+    });
 
     const flushProgress = async (force = false): Promise<void> => {
       const now = Date.now();
@@ -407,7 +374,17 @@ export class AgencyIngestService {
       // The object is opened first so its `ContentLength` can be recorded with the
       // running state — S3 is the trusted source for the size, and it is what turns
       // the wizard's progress bar from indeterminate into bytes-read-over-total.
-      const { body, contentLength } = await getFileStream(job.s3_key);
+      let opened: Awaited<ReturnType<typeof getFileStream>>;
+      try {
+        opened = await getFileStream(job.s3_key);
+      } catch (err) {
+        // The stored upload is gone (expired or never written): a sentence the
+        // operator can act on, not `unexpected_error` with an S3 message.
+        if (!isS3NotFound(err)) throw err;
+        await failJob('upload_missing', 'The uploaded file is no longer stored. Upload it again.');
+        return;
+      }
+      const { body, contentLength } = opened;
 
       await agencyIngestJobRepository.markRunning(job.id, null, contentLength);
 
@@ -421,18 +398,16 @@ export class AgencyIngestService {
         // NULL, or no key on a row read before 0031: `dedupe_phones` decides.
         ...(job.dedupe_columns?.length ? { dedupeColumns: job.dedupe_columns } : {}),
         batchSize: AGENCY_INGEST_BATCH_SIZE,
+        screen,
 
         onBatch: async (contacts, streamProgress) => {
           progress.rows_read = streamProgress.rows_read;
           progress.bytes_read = streamProgress.bytes_read;
 
-          // BEFORE the accepted counter and before anything is sent. One query
-          // per batch, served by `idx_dnc_entries_tenant_phone` — the plain index
-          // the DNC design requires precisely because the COALESCE unique index cannot
-          // answer a per-number lookup.
-          const dialable = await dropSuppressed(contacts);
+          // The screen has already removed the Do Not Call rows and the rows the
+          // campaign holds: what arrives here is what the import sends.
+          const dialable = contacts;
           progress.accepted += dialable.length;
-          progress.rejected += contacts.length - dialable.length;
 
           // Cancellation is checked BETWEEN chunks, never mid-chunk: a chunk
           // already in flight must be allowed to finish or its idempotency key
@@ -497,15 +472,25 @@ export class AgencyIngestService {
             exportTruncated = true;
           }
         },
+
+        onSkipped: async (skip: AgencyIngestSkip) => {
+          progress.skipped = (progress.skipped ?? 0) + 1;
+          if (retainedSkips.length < MAX_EXPORT_ROWS) {
+            retainedSkips.push(skip);
+          } else {
+            skippedTruncated = true;
+          }
+        },
       });
 
       progress.rows_read = summary.rows_read;
       progress.bytes_read = summary.bytes_read;
-      // The CSV module counted every DNC-listed row as accepted — it cannot see
-      // the list. Move them across rather than adding a third addend, so
-      // `accepted + rejected = rows_read` still holds exactly.
-      progress.accepted = summary.accepted - dncSuppressed;
-      progress.rejected = summary.rejected + dncSuppressed;
+      // The CSV pass now settles Do Not Call and "already in this campaign" itself
+      // (the screen), so its counts are the job's: `accepted + skipped + rejected =
+      // rows_read`, exactly.
+      progress.accepted = summary.accepted;
+      progress.rejected = summary.rejected;
+      progress.skipped = summary.skipped;
       progress.duplicates = summary.duplicates;
 
       // Final chunk: an empty terminator when the row count divided evenly, so
@@ -563,33 +548,42 @@ export class AgencyIngestService {
        * does not undo the import, and must not be reported as though it did.
        */
       let rejectedKey: string | null = null;
+      let skippedKey: string | null = null;
       try {
-        rejectedKey = await this.writeRejectedExport(
-          job,
+        rejectedKey = await this.writeRowsExport(
+          rejectedExportKey(job.tenant_id, job.id),
           resolvedPhoneHeader,
           summary.context_columns,
           retainedRejections,
         );
+        skippedKey = await this.writeRowsExport(
+          skippedExportKey(job.tenant_id, job.id),
+          resolvedPhoneHeader,
+          summary.context_columns,
+          retainedSkips,
+        );
       } catch (err) {
         log.error(
           { err, jobId: job.id, campaignId },
-          'Could not write the rejected-rows export — completing the job anyway, the roster is already applied',
+          'Could not write the rejected- or skipped-rows export — completing the job anyway, the roster is already applied',
         );
       }
 
       await agencyIngestJobRepository.complete(job.id, {
         progress,
-        rejected_by_reason: {
-          ...summary.rejected_by_reason,
-          // Only when there were any: a `dnc_suppressed: 0` key would render as a
-          // zero row in the wizard's rejection breakdown on every clean import.
-          ...(dncSuppressed > 0 ? { dnc_suppressed: dncSuppressed } : {}),
-        },
+        // `dnc_suppressed` is in it only when there were any: a zero key would
+        // render as a zero row in the wizard's rejection breakdown on every clean import.
+        rejected_by_reason: summary.rejected_by_reason,
         headers: summary.headers,
         context_columns: summary.context_columns,
         rejected_s3_key: rejectedKey,
         rejected_row_count: retainedRejections.length,
         rejected_truncated: exportTruncated,
+        skipped_s3_key: skippedKey,
+        skipped_row_count: retainedSkips.length,
+        skipped_truncated: skippedTruncated,
+        dnc_by_scope: summary.dnc_by_scope,
+        rejected_sample: sampleOf(retainedRejections),
       });
 
       log.info(
@@ -599,8 +593,9 @@ export class AgencyIngestService {
           dryRun: job.dry_run,
           accepted: progress.accepted,
           rejected: progress.rejected,
+          skipped: progress.skipped,
           duplicates: progress.duplicates,
-          dncSuppressed,
+          dncSuppressed: summary.rejected_by_reason['dnc_suppressed'] ?? 0,
           coreRejectedDuplicateRows: progress.core_rejected_duplicate_rows,
           // Logged so a support question about a summary that "doesn't add up"
           // can be answered from the log line alone, without the job row.
@@ -736,27 +731,57 @@ export class AgencyIngestService {
     }
   }
 
-  /** Write the rejected-rows CSV. Returns null when there was nothing to write. */
-  private async writeRejectedExport(
-    job: AgencyIngestJobRecord,
+  /**
+   * Write a rows export (the rejected rows, or the skipped ones) under `key`, in
+   * file order. Returns null when there was nothing to write.
+   *
+   * Sorted here because the CSV pass settles a batch's Do Not Call, duplicate and
+   * skipped rows when the batch is screened, after the structural rejections read
+   * since: the operator works down the file, so the download does too.
+   *
+   * The key shapes are owned by `agency-ingest-keys.ts`, which is also what refuses
+   * them as a client-supplied `s3_key`, so the writer and the checker cannot drift.
+   */
+  private async writeRowsExport(
+    key: string,
     phoneColumn: string,
     contextColumns: string[],
-    rejections: AgencyIngestRejection[],
+    rows: Array<AgencyIngestRejection | AgencyIngestSkip>,
   ): Promise<string | null> {
-    if (rejections.length === 0) return null;
+    if (rows.length === 0) return null;
 
+    rows.sort((a, b) => a.row_number - b.row_number);
     let document = rejectedCsvHeader(phoneColumn, contextColumns);
-    for (const rejection of rejections) {
-      document += rejectedCsvRow(rejection, contextColumns);
+    for (const row of rows) {
+      document += rejectedCsvRow(row, contextColumns);
     }
 
-    // Shape owned by `agency-ingest-keys.ts`, which is also what refuses this key
-    // as a client-supplied `s3_key` — the writer and the checker share one
-    // definition so they cannot drift apart.
-    const key = rejectedExportKey(job.tenant_id, job.id);
     await uploadFile(key, Buffer.from(document, 'utf8'), 'text/csv');
     return key;
   }
+}
+
+/** Rejected rows shown on the review screen without a download (IM2). */
+export const REJECTED_SAMPLE_SIZE = 20;
+/** A sampled value longer than this is cut: the sample names the row, the download carries it whole. */
+const SAMPLE_VALUE_MAX = 80;
+
+/**
+ * The first rejections in file order, for the review screen: line, column, the
+ * phone cell as the file has it, the code and the reason. Never the other columns:
+ * those stay in the download, which the operator asked for.
+ */
+export function sampleOf(rejections: readonly AgencyIngestRejection[]): IngestRowSample[] {
+  return [...rejections]
+    .sort((a, b) => a.row_number - b.row_number)
+    .slice(0, REJECTED_SAMPLE_SIZE)
+    .map((r) => ({
+      row_number: r.row_number,
+      column: r.column,
+      raw_value: Array.from(r.raw_value).slice(0, SAMPLE_VALUE_MAX).join(''),
+      reason_code: r.reason_code,
+      reason: r.reason,
+    }));
 }
 
 /** Internal sentinel — the only way to stop a `for await` from inside a callback. */

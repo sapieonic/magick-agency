@@ -211,7 +211,7 @@ definition, `insights-sql.ts`, for the summary and the contacts list's drill-dow
 | `GET /proxy/agency/campaigns/:id/insights/summary` | header, settings, status headline, roster | yes |
 | `GET /proxy/agency/campaigns/:id/insights/readiness` | the draft checklist | no |
 | `GET /proxy/agency/campaigns/:id/insights/allocation` | per-agent allocation, imbalance, at risk, history | yes |
-| `GET /proxy/agency/campaigns/:id/insights/uploads` | committed uploads, newest first (at most 200) | no |
+| `GET /proxy/agency/campaigns/:id/insights/uploads` | committed uploads, newest first (at most 200), with `skipped` (rows already in the campaign, IM3) beside accepted and rejected | no |
 
 The range reads (`activity`, `trends`, `health`) are the next section.
 

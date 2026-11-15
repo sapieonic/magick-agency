@@ -344,6 +344,19 @@ export class DncService {
     }
   }
 
+  /**
+   * Which list each suppressed number is on (its widest entry's scope), for the
+   * roster import's wording only. NOT a gate: {@link filterSuppressed} decides; a
+   * number it suppressed and this cannot place is still suppressed. Throws on a
+   * lookup failure like any read; the caller decides what a missing label costs.
+   */
+  async suppressionScopes(
+    scope: DncLookupScope,
+    phones: readonly string[],
+  ): Promise<Map<string, 'tenant' | 'account' | 'campaign'>> {
+    return dncRepository.findSuppressionScopes(scope, phones);
+  }
+
   /** The list, each entry with the words its scope is named by (DS7). */
   async list(filter: DncListFilter): Promise<{ entries: DncListedEntry[]; total: number }> {
     const { entries, total } = await dncRepository.list(filter);

@@ -382,6 +382,8 @@ export interface InsightsUploadRow {
   rows_read: number;
   accepted: number;
   rejected: number;
+  /** Rows already in the campaign (IM3; 0 before 0043): accepted + skipped + rejected = rows_read. */
+  skipped: number;
   rejected_by_reason: Record<string, unknown> | null;
   duplicates: number;
   /** The upload's duplicate key, in order; empty = phone (or no check). */
@@ -555,7 +557,9 @@ export class AgencyInsightsReadRepository {
     const { rows } = await getPool().query<Record<string, unknown>>(
       `SELECT j.id, j.file_name, j.created_by, j.created_at, j.finished_at, j.status, j.mode, j.phone_column,
               j.rows_read, j.accepted, j.rejected, j.rejected_by_reason, j.duplicates, j.dedupe_columns,
-              (j.rejected_s3_key IS NOT NULL) AS has_rejected_export
+              (j.rejected_s3_key IS NOT NULL) AS has_rejected_export,
+              -- 0043; read through to_jsonb so a schema without it reads NULL rather than failing.
+              (to_jsonb(j) ->> 'skipped')::bigint AS skipped
          FROM agency_ingest_jobs j
         WHERE j.campaign_id = $1::uuid AND j.tenant_id = $2::uuid AND NOT j.dry_run
           AND (NOT $3::boolean OR j.status = 'completed')
@@ -575,6 +579,7 @@ export class AgencyInsightsReadRepository {
       rows_read: num(r['rows_read']),
       accepted: num(r['accepted']),
       rejected: num(r['rejected']),
+      skipped: num(r['skipped']),
       rejected_by_reason: (r['rejected_by_reason'] as Record<string, unknown> | null) ?? null,
       duplicates: num(r['duplicates']),
       dedupe_columns: (r['dedupe_columns'] as string[] | null) ?? [],

@@ -496,6 +496,36 @@ accepted row, and a row with any of them blank is kept.
   "duplicates on phone" for an upload sent with no duplicate check (`dedupe_phones: false` is not on
   the uploads read); unchanged by this work.
 
+### Contact import: check, review, import, re-import 2026-11-15 (IM1–IM7)
+
+Reshma's asks: check a CSV and review it before anything is written, then import the checked
+file; correct and re-import without duplicating anyone, with imported, skipped and rejected rows
+each shown and downloadable. Rulings: [`decisions.md`](decisions.md), "Rulings of 2026-11-15:
+contact import check and re-import (IM)".
+
+- **Server.** The CSV pass asks a per-batch screen (`agency-ingest-screen.ts`: the Do Not Call
+  list with its scope, and the campaign's roster through `roster-presence.repository.ts`) before
+  any row claims its duplicate key; the check (`dry_run`) and the import run it alike. Rows the
+  campaign already holds are skipped (`skipped`, a `skipped-rows.csv` download). `POST
+  /ingest/jobs/:id/import` imports a finished check's upload with its mapping, once (24 h). One live
+  import per campaign (409 `import_in_progress`). Reasons rewritten in plain words; the downloads
+  in file order with the phone cell as written. A missing upload fails `upload_missing`; a missing
+  download is 410.
+- **Migration** `0043_ingest_check_and_skipped.sql`: `skipped`, the skipped download, `dnc_by_scope`,
+  `rejected_sample`, `check_job_id` (unique).
+- **Contract:** `AgencyIngestJob` gains `skipped`, `dnc_by_scope`, `rejected_sample`, the skipped
+  download, `check_job_id`, `import_job_id`, `check_expires_at`; `AgencyIngestImportResponse`;
+  `AgencyInsightsUpload.skipped`. Not mirrored by the agent app.
+- **Console:** "Check the file" leads; the review shows the counts (ready, already in this campaign,
+  rejected), the rejected rows with what to fix, both downloads and **Import N contacts**; the
+  import's result says how it differs from its check. In the builder and on Add contacts. The
+  activity row and Insights' upload history show rows already in the campaign.
+- **Behaviour changes** (pending Manas): a top-up row whose number (or key) is already in the
+  campaign is skipped rather than landed as a second contact; a Do Not Call row no longer claims
+  its key (supersedes "DNC row claims its key"); a second import into a campaign while one runs
+  is refused. The load suite's concurrent-import cases were rewritten for the last.
+- Not done: no S3 lifecycle rule for uploads (a retention decision); the agent app has no import.
+
 ### Wrap-up redial 2026-11-03
 
 A connected call can drop for reasons on any side. With the campaign setting "Allow redial from

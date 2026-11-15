@@ -63,6 +63,13 @@
   margin-top: 16px;
 }
 
+/* Above a check's numbers: nothing is in the campaign yet. */
+.checkNote {
+  margin: 16px 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .progress {
   display: flex;
   flex-direction: column;

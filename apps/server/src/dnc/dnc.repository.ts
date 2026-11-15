@@ -367,6 +367,33 @@ export class DncRepository {
   }
 
   /**
+   * For each of `phones` that {@link findSuppressed} matches, the WIDEST entry's
+   * scope (tenant-wide, then account, then campaign): the roster import says in
+   * words which list a rejected row is on (IM5). Same predicate and index as
+   * `findSuppressed`; a number that matches nothing is absent.
+   */
+  async findSuppressionScopes(
+    scope: DncLookupScope,
+    phones: readonly string[],
+  ): Promise<Map<string, 'tenant' | 'account' | 'campaign'>> {
+    if (phones.length === 0) return new Map();
+    const result = await getPool().query<{ phone_e164: string; scope: 'tenant' | 'account' | 'campaign' }>(
+      `SELECT DISTINCT ON (phone_e164) phone_e164,
+              CASE WHEN campaign_id IS NOT NULL THEN 'campaign'
+                   WHEN account_id IS NOT NULL THEN 'account'
+                   ELSE 'tenant' END AS scope
+         FROM dnc_entries
+        WHERE tenant_id = $1
+          AND phone_e164 = ANY($2::varchar[])
+          AND (account_id  IS NULL OR account_id  = $3::uuid)
+          AND (campaign_id IS NULL OR campaign_id = $4::uuid)
+        ORDER BY phone_e164, (campaign_id IS NOT NULL), (account_id IS NOT NULL)`,
+      [scope.tenantId, phones as string[], scope.accountId ?? null, scope.campaignId ?? null],
+    );
+    return new Map(result.rows.map((r) => [r.phone_e164, r.scope]));
+  }
+
+  /**
    * The ENTRY that suppresses `phone` for this scope — {@link findSuppressed}'s
    * predicate exactly, for the one caller that must show the agent what it hit:
    * the soft phone's `dnc_listed` refusal and its override (docs/softphone.md SP1),

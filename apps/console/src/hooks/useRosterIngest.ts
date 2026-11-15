@@ -3,8 +3,10 @@ import {
   analyzeRosterColumns,
   cancelIngestJob,
   downloadRejectedRows,
+  downloadSkippedRows,
   getIngestJob,
   getIngestLimits,
+  importCheckedFile,
   startRosterIngest,
   uploadRosterCsv,
 } from '../api/agencyCampaigns';
@@ -81,6 +83,14 @@ export interface UseRosterIngestOptions {
    */
   resolveCampaignId: () => Promise<string | undefined>;
   /**
+   * The campaign a CHECK compares against, without creating anything: the campaign
+   * already known (the Contacts page), or the builder's draft once it exists. A check
+   * that names a campaign also reports the rows already in it and the campaign's own
+   * Do Not Call entries (IM1); one that names none (a builder with no draft yet) has no
+   * roster to compare and says so through its counts.
+   */
+  peekCampaignId?: () => string | undefined;
+  /**
    * Runs **before** the ingest is submitted, once the campaign id is resolved,
    * and its failure **blocks** the ingest — a rejection surfaces as "Could not
    * start the import" and nothing is sent.
@@ -134,6 +144,9 @@ export function useRosterIngest(
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<AgencyIngestJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The finished check an import was started from, kept to compare with the import's result (IM2). */
+  const [checkJob, setCheckJob] = useState<AgencyIngestJob | null>(null);
+  const [importing, setImporting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -226,6 +239,7 @@ export function useRosterIngest(
       setError(null);
       setJob(null);
       setJobId(null);
+      setCheckJob(null);
       setPhase('uploading');
       try {
         const uploaded = await uploadRosterCsv(file, tenantId, accountId);
@@ -247,8 +261,11 @@ export function useRosterIngest(
     async (dryRun: boolean) => {
       if (!mapping || !upload) return;
       setError(null);
+      setCheckJob(null);
       try {
-        const id = dryRun ? undefined : await optionsRef.current.resolveCampaignId();
+        const id = dryRun
+          ? optionsRef.current.peekCampaignId?.()
+          : await optionsRef.current.resolveCampaignId();
         const request = buildIngestRequest(mapping, {
           s3Key: upload.s3_key,
           fileName: upload.file_name,
@@ -285,6 +302,46 @@ export function useRosterIngest(
     [mapping, upload, tenantId, accountId],
   );
 
+  /**
+   * Import the file the finished check validated (IM2): the server re-reads the same
+   * stored upload with the check's own mapping, so nothing is uploaded again and the
+   * mapping cannot drift from what was checked. The import is a new job, polled like
+   * any other; the check is kept to compare its numbers with what the import did.
+   *
+   * A second click is harmless: the server answers with the first import. A refusal
+   * (an import already running into the campaign, a check older than its validity)
+   * arrives as the server's own sentence.
+   */
+  const importChecked = useCallback(async () => {
+    const check = job;
+    if (!check || !check.dry_run || check.status !== 'completed' || !mapping || importing) return;
+    setError(null);
+    setImporting(true);
+    try {
+      const id = await optionsRef.current.resolveCampaignId();
+      if (!id) return;
+      await optionsRef.current.onIngestStarted?.(id, mapping);
+      const roles = Object.values(mapping.roles);
+      trackAgencyRosterIngestStarted({
+        campaign_id: id,
+        source: optionsRef.current.source,
+        dry_run: false,
+        column_count: roles.length,
+        mapped_variable_count: roles.filter((role) => role === 'detail' || role === 'hero').length,
+        hero_field_count: mapping.heroOrder.length,
+      });
+      const started = await importCheckedFile(check.job_id, id, tenantId, accountId);
+      setCheckJob(check);
+      setPhase('ingesting');
+      setJob(null);
+      setJobId(started.job_id);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not start the import.');
+    } finally {
+      setImporting(false);
+    }
+  }, [job, mapping, importing, tenantId, accountId]);
+
   const onCancelIngest = useCallback(async () => {
     if (!job) return;
     try {
@@ -296,16 +353,18 @@ export function useRosterIngest(
     }
   }, [job, tenantId, accountId]);
 
-  const onDownloadRejected = useCallback(async () => {
+  const download = useCallback(async (which: 'rejected' | 'skipped') => {
     if (!job) return;
     setDownloading(true);
     setDownloadError(null);
     try {
-      const blob = await downloadRejectedRows(job.job_id, tenantId, accountId);
+      const blob = which === 'rejected'
+        ? await downloadRejectedRows(job.job_id, tenantId, accountId)
+        : await downloadSkippedRows(job.job_id, tenantId, accountId);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${job.file_name.replace(/\.csv$/i, '')}-rejected-rows.csv`;
+      anchor.download = `${job.file_name.replace(/\.csv$/i, '')}-${which}-rows.csv`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
@@ -314,6 +373,8 @@ export function useRosterIngest(
       setDownloading(false);
     }
   }, [job, tenantId, accountId]);
+  const onDownloadRejected = useCallback(() => download('rejected'), [download]);
+  const onDownloadSkipped = useCallback(() => download('skipped'), [download]);
 
   /** Back to a clean upload, keeping the campaign context around it. */
   const reset = useCallback(() => {
@@ -323,6 +384,7 @@ export function useRosterIngest(
     setMapping(null);
     setJobId(null);
     setJob(null);
+    setCheckJob(null);
     setError(null);
     setDownloadError(null);
   }, []);
@@ -332,6 +394,8 @@ export function useRosterIngest(
   // no-job-read-yet case wrong, which is the case that renders "Starting…".
   const running = jobId !== null && (!job || !isTerminal(job.status));
   const finished = job !== null && isTerminal(job.status);
+  /** A finished, successful check: the review, whose next step is Import (IM2). */
+  const reviewing = finished && job.dry_run && job.status === 'completed';
 
   return {
     limits,
@@ -340,6 +404,11 @@ export function useRosterIngest(
     setPhase,
     running,
     finished,
+    reviewing,
+    checkJob,
+    importing,
+    importChecked,
+    onDownloadSkipped,
     upload,
     analysis,
     mapping,

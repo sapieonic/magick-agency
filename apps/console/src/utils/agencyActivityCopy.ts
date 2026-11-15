@@ -302,8 +302,11 @@ export function activityDetailSummary(row: ActivityRow): string | null {
     const accepted = num(detail['accepted']);
     const rejected = num(detail['rejected']);
     const duplicates = num(detail['duplicates']);
+    // Rows already in the campaign (IM3); the server writes the key only when there were any.
+    const skipped = num(detail['skipped']);
     const counts = read !== null && accepted !== null && rejected !== null
       ? `${read.toLocaleString()} rows read: ${accepted.toLocaleString()} accepted, `
+        + (skipped ? `${skipped.toLocaleString()} already in the campaign, ` : '')
         + `${rejected.toLocaleString()} rejected`
         + (duplicates ? ` (${duplicates.toLocaleString()} duplicates)` : '') + '.'
       : null;
