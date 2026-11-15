@@ -267,14 +267,15 @@ async function harness(opts: { lateBinding: boolean; bindSucceeds?: boolean } = 
   const stations = new StationRegistry(null, '', 'r1');
   const agents = reservedAgents();
   const bridge = fakeBridge({ bindSucceeds: opts.bindSucceeds });
-  const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+  const breaks = fakeBreaks();
+  const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, breaks as any);
   dialer.start();
   const ws = fakeWs();
   await stations.attach({
     sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
     agentUserId: 'user-1', ws: ws as any,
   });
-  return { stations, agents, bridge, dialer, ws };
+  return { stations, agents, bridge, dialer, ws, breaks };
 }
 
 /** Frames the console received, by event name. */
@@ -293,6 +294,8 @@ function callEvents(ws: { sent: any[] }): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` keeps implementations: undo a session row a case below modelled.
+  repos.session.setState.mockResolvedValue(undefined);
   flags.lateBinding = false;
   // A test that threw between arming the gate and resolving it would otherwise
   // park the next test's `bridged` write forever, failing it somewhere unrelated.
@@ -451,6 +454,123 @@ describe('late binding: a dial that rings out', () => {
     expect(events(h.ws)).toEqual(['reserved', 'released', 'agent_state']);
     expect(h.bridge.createBridgedCall).toHaveBeenCalledTimes(1);
     expect(h.bridge.createUnboundBridgedCall).not.toHaveBeenCalled();
+  });
+});
+
+// ─── The wait a hidden dial does not end ────────────────────────────────────
+
+describe('late binding: the release keeps the wait the agent was in', () => {
+  // The agent's screen never left `available` through a dial they were not shown, so the
+  // release's `agent_state` must date the wait they are still in, not restart it: the console's
+  // rail, the app's "Available for" and the supervisor's floor (the row's `state_since`) all read
+  // it. Modelled on the row as `setState` writes it: `keepSinceIfUnchanged` keeps `state_since`
+  // only when the row already holds the state and reason being written.
+  const WAIT_BEGAN = new Date('2026-01-05T09:00:00.000Z');
+  let sessionRow: { state: string; break_reason: string | null; state_since: Date };
+  beforeEach(() => {
+    sessionRow = { state: 'available', break_reason: null, state_since: WAIT_BEGAN };
+    repos.session.setState.mockImplementation(async (
+      _id: string, state: string, reason: string | null = null, opts: { keepSinceIfUnchanged?: boolean } = {},
+    ) => {
+      const unchanged = sessionRow.state === state && sessionRow.break_reason === reason;
+      sessionRow = {
+        state, break_reason: reason, state_since: opts.keepSinceIfUnchanged && unchanged ? sessionRow.state_since : new Date(),
+      };
+      return sessionRow.state_since;
+    });
+  });
+  const agentStates = (ws: { sent: any[] }) => ws.sent.filter((f) => f.event === 'agent_state');
+  async function ringOut(h: Awaited<ReturnType<typeof harness>>, attemptId = 'att-1') {
+    rows.current = {
+      state: 'queued', outcome: null, dialed_at: null,
+      answered_at: null, bridged_at: null, ended_at: null, talk_seconds: null,
+    };
+    await h.dialer.executeDial({ ...makeCmd(), attemptId });
+    h.bridge.emit({ callId: 'call-1', correlationId: attemptId, phase: 'ended', status: 'no_answer', answered: false });
+    await settle();
+  }
+
+  it('a dial that rings out: `agent_state available` carries the since the wait began, each time', async () => {
+    const h = await harness({ lateBinding: true });
+    await ringOut(h, 'att-1');
+    await ringOut(h, 'att-2');
+    await ringOut(h, 'att-3');
+
+    expect(agentStates(h.ws)).toEqual([1, 2, 3].map(() => ({
+      event: 'agent_state', state: 'available', since: WAIT_BEGAN.toISOString(),
+    })));
+    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'available', null, { keepSinceIfUnchanged: true });
+    expect(sessionRow.state_since).toBe(WAIT_BEGAN);
+    // Redis's `since` still moves (pacing's longest-idle order reads it): untouched by this.
+    expect(h.agents.set).toHaveBeenCalledWith('s1', 'available', expect.objectContaining({ announce: false }));
+  });
+
+  it('a dial abandoned before it was placed keeps it too: the agent saw nothing', async () => {
+    const h = await harness({ lateBinding: true });
+    vi.spyOn(h.agents, 'transition').mockResolvedValue(false); // lost the lease
+    await h.dialer.executeDial(makeCmd());
+
+    expect(agentStates(h.ws)).toEqual([{ event: 'agent_state', state: 'available', since: WAIT_BEGAN.toISOString() }]);
+  });
+
+  it('a dial its customer superseded, when no inbound take follows, keeps it too', async () => {
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+    expect(h.dialer.supersedeForInbound('att-1', { inboundCallId: 'in-1', settled: vi.fn() })).toBe(true);
+    await settle();
+
+    expect(agentStates(h.ws)).toEqual([{ event: 'agent_state', state: 'available', since: WAIT_BEGAN.toISOString() }]);
+  });
+
+  it('a break queued mid-ring applies with a new since: the state changed', async () => {
+    const h = await harness({ lateBinding: true });
+    h.breaks.take.mockReturnValueOnce({ code: 'tea' } as any);
+    await ringOut(h);
+
+    const [frame] = agentStates(h.ws);
+    expect(frame).toMatchObject({ event: 'agent_state', state: 'break', break_reason: 'tea' });
+    expect(frame.since).not.toBe(WAIT_BEGAN.toISOString());
+    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'break', 'tea');
+    expect(sessionRow.state_since).not.toBe(WAIT_BEGAN);
+  });
+
+  it('a row that is not `available` (rewritten meanwhile) dates a new wait', async () => {
+    const h = await harness({ lateBinding: true });
+    sessionRow = { state: 'offline', break_reason: null, state_since: WAIT_BEGAN };
+    await ringOut(h);
+
+    expect(agentStates(h.ws)[0].since).not.toBe(WAIT_BEGAN.toISOString());
+  });
+
+  it('a mirror that fails still sends the frame, dated now', async () => {
+    const h = await harness({ lateBinding: true });
+    repos.session.setState.mockRejectedValueOnce(new Error('pool exhausted'));
+    const before = Date.now();
+    await ringOut(h);
+
+    const [frame] = agentStates(h.ws);
+    expect(frame).toMatchObject({ event: 'agent_state', state: 'available' });
+    expect(Date.parse(frame.since)).toBeGreaterThanOrEqual(before);
+  });
+
+  it('a panel the agent was shown, then cleared (bind refused), starts a new wait', async () => {
+    const h = await harness({ lateBinding: true, bindSucceeds: false });
+    await h.dialer.executeDial(makeCmd());
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
+    await settle();
+
+    expect(events(h.ws)).toEqual(['dial_activity', 'reserved', 'released', 'agent_state']);
+    expect(agentStates(h.ws)[0].since).not.toBe(WAIT_BEGAN.toISOString());
+    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'available', null);
+  });
+
+  it('early binding is unchanged: the agent was shown `reserved`, so a new wait starts', async () => {
+    const h = await harness({ lateBinding: false });
+    await ringOut(h);
+
+    expect(events(h.ws)).toEqual(['reserved', 'released', 'agent_state']);
+    expect(agentStates(h.ws)[0].since).not.toBe(WAIT_BEGAN.toISOString());
+    expect(repos.session.setState).toHaveBeenCalledWith('s1', 'available', null);
   });
 });
 

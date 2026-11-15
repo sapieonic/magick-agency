@@ -899,7 +899,9 @@ export class AgencyDialer {
     // not they were told a call had been reserved for them. Suppressing the frame
     // must never suppress the release, or a silent abandon would leave the agent
     // `reserved` against an attempt that no longer exists until the lease lapsed.
-    await this.releaseAgent(cmd.sessionId);
+    // A dial the agent was never shown (no panel sent, by the caller's account or the live
+    // record's) returns them to the wait they were in (`unshownDial`).
+    await this.releaseAgent(cmd.sessionId, { unshownDial: !notifyAgent && live?.panelDelivered !== true });
   }
 
   /**
@@ -1522,6 +1524,9 @@ export class AgencyDialer {
       return;
     }
     const contactAfterDial = live.placing && live.answeredAt === null && live.bridgedAt === null;
+    // Read before anything is forgotten or settled: a dial the agent never saw returns them to the
+    // wait they were in (`releaseAgent`'s `unshownDial`).
+    const unshownDial = isUnannounced(live);
     // Before the settle below, so the closing `dial_activity` reaches the agent ahead of the
     // `agent_state` its release sends. Counted unanswered only when the carrier said the
     // customer's phone did not take it (`isCustomerNoAnswerEnd`, an allow-list: rang out,
@@ -1544,7 +1549,7 @@ export class AgencyDialer {
         // A wrap-up redial owes the conversation's outcome whatever its own (unless the
         // catalog changed underneath it): never to the pool from here.
         if (cmd.redial && (settled?.needsDisposition ?? true)) await this.releaseOwingOutcome(cmd.sessionId);
-        else await this.releaseAgent(cmd.sessionId);
+        else await this.releaseAgent(cmd.sessionId, { unshownDial });
       }
     }
     if (contactAfterDial) await this.settleContactAfterDial(live, settled);
@@ -1645,6 +1650,7 @@ export class AgencyDialer {
     clash: NonNullable<LiveAttempt['supersededByInbound']>,
   ): Promise<void> {
     const cmd = live.cmd;
+    const unshownDial = isUnannounced(live);
     // The customer rang in themselves: not a number that went unanswered.
     this.forgetAttempt(cmd);
     try {
@@ -1663,7 +1669,7 @@ export class AgencyDialer {
         this.noteUnrecordedEnd(cmd.attemptId, false);
         log.error({ err, attemptId: cmd.attemptId }, 'Could not settle a dial its customer superseded — the reaper ends it');
       }
-      if (!isUnannounced(live)) {
+      if (!unshownDial) {
         const reason: AgencyReleaseReason = 'inbound_call';
         const message = releaseMessageFor(reason);
         if (!this.sendReleased(cmd, reason, false, message)) {
@@ -1672,11 +1678,13 @@ export class AgencyDialer {
           });
         }
       }
-      log.info({ attemptId: cmd.attemptId, inboundCallId: clash.inboundCallId, lateBinding: live.lateBinding, announced: !isUnannounced(live) },
+      log.info({ attemptId: cmd.attemptId, inboundCallId: clash.inboundCallId, lateBinding: live.lateBinding, announced: !unshownDial },
         'Agency attempt ended: its customer rang in');
     } finally {
       try {
-        await this.releaseAgent(cmd.sessionId);
+        // The release hook usually takes them for the caller (a new state, a new `since`); only
+        // when it does not does an unshown dial's agent go back to the wait they were in.
+        await this.releaseAgent(cmd.sessionId, { unshownDial });
       } finally {
         clash.settled(true);
       }
@@ -2118,8 +2126,20 @@ export class AgencyDialer {
    * session holds an inbound call, docs/inbound.md §6). The supervisor's
    * force-available answers either as a 409 rather than claiming the agent is back.
    * The settle paths ignore it.
+   *
+   * `unshownDial`: the release ends a dial the agent was never shown (late binding's
+   * hidden dial, {@link isUnannounced}, or one abandoned before its panel was sent).
+   * Their screen never left `available`, so an agent who goes back to the `available`
+   * the session row still holds keeps the wait they were in: the row's `state_since`
+   * is kept (`setState`'s `keepSinceIfUnchanged`) and the `agent_state` frame carries
+   * it, so the console's rail, the app and the supervisor's floor all go on counting
+   * from when the wait began. Anything that changes the state (a queued break, an
+   * inbound take) dates a new one as before. The frame is still sent: it applies a
+   * break queued mid-ring and clears a cancelled one on a second console. Redis's
+   * `since` is restamped whatever: pacing's longest-idle order reads it, and a hidden
+   * dial counts as the agent's turn.
    */
-  async releaseAgent(sessionId: string): Promise<AgentReleaseResult> {
+  async releaseAgent(sessionId: string, opts: { unshownDial?: boolean } = {}): Promise<AgentReleaseResult> {
     // ── NOT purely replica-local, contrary to an earlier version of this note ──
     //
     // On the settle path this does run on the bridging replica, and there the
@@ -2224,15 +2244,24 @@ export class AgencyDialer {
       log.info({ sessionId }, 'Release to available refused — the session holds an inbound call');
       return { state, result: set };
     }
-    await mirrored(
-      agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null),
-      sessionId, 'Could not mirror released agent state',
-    );
+    // A dial the agent never saw, back to the `available` they were in: the wait goes on, dated
+    // by the row's `state_since`, which the write keeps when the row was already `available`
+    // (see the note above). A row that was not (a reconnect rewrote it), or a write that failed,
+    // dates a new wait from now, as every other release does.
+    const keepWait = opts.unshownDial === true && state === 'available';
+    const mirror = keepWait
+      ? agencyAgentSessionRepository.setState(sessionId, state, null, { keepSinceIfUnchanged: true })
+      : agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null);
+    const rowSince = await mirror.catch((err: unknown) => {
+      log.warn({ err, sessionId }, 'Could not mirror released agent state');
+      return null;
+    });
+    const frameSince = keepWait && rowSince instanceof Date ? rowSince : since;
 
     this.stations.send(sessionId, {
       event: 'agent_state',
       state,
-      since: since.toISOString(),
+      since: frameSince.toISOString(),
       ...(queuedBreak ? { break_reason: queuedBreak.code } : {}),
     });
     if (state === 'available' && set === 'ok') this.agents.announceAvailable(sessionId);

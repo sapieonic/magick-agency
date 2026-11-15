@@ -480,6 +480,10 @@ final class AgentStateFrame extends StationFrame {
 
   /// Present when [state] is `break`.
   final String? breakReason;
+
+  /// When the agent entered [state] as they were shown it: the anchor of time in state. An
+  /// `available` that ends a dial the agent was never shown (late binding) carries the `since` of
+  /// the wait they are still in, not a new one.
   final DateTime since;
 
   /// A queued transition; null means nothing is queued (clear any badge).

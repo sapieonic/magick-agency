@@ -560,7 +560,16 @@ export interface AgencyStationAgentStateFrame {
   state: AgencyAgentState;
   /** Present when `state` is `break`. */
   break_reason?: string;
-  /** ISO-8601. */
+  /**
+   * ISO-8601: when the agent entered `state` as they were shown it, the anchor of a client's
+   * time in state (the break elapsed, "Available for"). Usually the frame's own transition. The
+   * exception is a release from a dial the agent was never shown (late binding's hidden dial
+   * that rang out, was cancelled by the customer ringing in, or was abandoned before its panel
+   * was sent): their screen never left `available`, so the `available` that ends it carries the
+   * `since` of the wait they are still in, the session's `state_since`, which the supervisor's
+   * floor reads too. A frame with an unchanged `state` and `since` is still a statement (it
+   * carries the break queue), never a new wait.
+   */
   since: string;
   /**
    * **P2.** A transition the agent asked for that has been accepted but not yet

@@ -125,7 +125,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agent-occupancy-window.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agent-record-tenant-isolation.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agent-stats-timezone-buckets.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agent-transition-ordering.test.ts` | ~11 |
+| `apps/server/test/integration/agency/agent-transition-ordering.test.ts` (with `setState`'s `keepSinceIfUnchanged`) | ~11 |
 | `apps/server/test/integration/agency/agent-window-boundaries.test.ts` | ~11 |
 | `apps/server/test/integration/agency/assignment-repository.test.ts` | 19 |
 | `apps/server/test/integration/agency/assignment-sql.test.ts` | 19 |
@@ -252,7 +252,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/exhaustion-completion.test.ts` | 21 |
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
-| `apps/server/test/unit/agency/late-binding.test.ts` (with the hidden dial's `dial_activity`) | 47 |
+| `apps/server/test/unit/agency/late-binding.test.ts` (with the hidden dial's `dial_activity`, and the release keeping the wait's `since`) | 47 |
 | `apps/server/test/unit/agency/left-session-guards.test.ts` | 62 |
 | `apps/server/test/unit/agency/end-idle-session-elsewhere.test.ts` (OS7; Mode B: a parked phone told `left`) | 15 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 21 |
@@ -2575,7 +2575,7 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~67 |
 | `apps/mobile/test/core/station/station_device_test.dart` | 4 |
-| `apps/mobile/test/core/station/station_dial_activity_test.dart` (late binding's hidden dials through the controller, from the server's frame sequences: ringing, the unanswered count, the 4 s gap hold (ended at once by the queue's nothing-due after the last due dial rings out), `reserved`, `ready`, a dropped socket, paused, break, an inbound caller's cancel, another campaign's frame, early binding unchanged, the timer on dispose, a mid-ring reconnect's real `ready`, "Available for" kept across hidden dials) | 23 |
+| `apps/mobile/test/core/station/station_dial_activity_test.dart` (late binding's hidden dials through the controller, from the server's frame sequences: ringing, the unanswered count, the 4 s gap hold (ended at once by the queue's nothing-due after the last due dial rings out), `reserved`, `ready`, a dropped socket, paused, break, an inbound caller's cancel, another campaign's frame, early binding unchanged, the timer on dispose, a mid-ring reconnect's real `ready`, "Available for" running on across hidden dials, whose release restates the wait's `since`) | 23 |
 | `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
 | `apps/mobile/test/core/station/station_inbound_test.dart` (an inbound call through the core from the contract's frames, in the server's frame order: offer to settled, the chime once per offer, why a call left, the reconnect check and its refusals, "Your customer is waiting", `device_away` queued, the actions and their refusals, a let-go copy kept gone, the notes on a refused outcome and on leaving) | ~31 |
 | `apps/mobile/test/core/station/station_queue_test.dart` | ~11 |

@@ -871,9 +871,17 @@ export class AgencyAgentSessionRepository {
      * `stateSince`: the `state_since` to write (default now), for a state that continues an earlier
      * one (the `device_away` that ends an `away_ring` absence keeps the absence's start). Only with a
      * `breakReason` given.
+     *
+     * `keepSinceIfUnchanged`: when the row already holds this state with this break reason (the
+     * write moves nothing), keep its `state_since` rather than restamp it. For the release from a
+     * dial the agent was never shown (`AgencyDialer.releaseAgent`'s `unshownDial`): the row stayed
+     * `available` through the dial (an outbound reservation is never mirrored, `pacing-engine.ts`),
+     * so the agent's wait goes on, and the floor's time in state and the `agent_state` frame's
+     * `since` keep dating it from when it began. A write that changes the state or the reason
+     * stamps a new one as before. Ignored by a reason-less `offline`, which always restamps.
      */
-    opts: { stateSince?: Date | null } = {},
-  ): Promise<void> {
+    opts: { stateSince?: Date | null; keepSinceIfUnchanged?: boolean } = {},
+  ): Promise<Date | null> {
     const keepReason = state === 'offline' && breakReason === undefined;
     // Mode B (N1, IQ62): `away_ring_since` is the reconcile's key, so every real end of `away_ring`
     // clears it here, in the same write: `available`, `offline` with a reason, and any break but
@@ -893,17 +901,24 @@ export class AgencyAgentSessionRepository {
               WHEN $2::varchar IN ('reserved', 'on_call', 'wrapup') THEN s.away_ring_since
               ELSE NULL END`;
     const ringMisses = keepReason ? 's.ring_misses' : "CASE WHEN $2::varchar = 'available' THEN 0 ELSE s.ring_misses END";
-    const { rows } = await getPool().query<AgencySessionTransitionRow>(
-      sessionTransitionSql({
+    // "Unchanged" is decided against `prev`, the row this statement locked (`sessionTransitionSql`),
+    // so it is the state actually being left, as the transition log decides a move.
+    const stateSince = `CASE WHEN $5::boolean AND prev.state = $2::varchar AND prev.break_reason IS NOT DISTINCT FROM $3::varchar
+                             THEN s.state_since ELSE COALESCE($4::timestamptz, now()) END`;
+    const { rows } = await getPool().query<AgencySessionTransitionRow & { state_since: Date }>(
+      `${sessionTransitionSql({
         prevWhere: 'id = $1',
         set: keepReason
           ? `state = $2::varchar, state_since = now(), updated_at = now(), away_ring_since = ${awayRingSince}`
-          : `state = $2::varchar, break_reason = $3::varchar, state_since = COALESCE($4::timestamptz, now()), updated_at = now(),
+          : `state = $2::varchar, break_reason = $3::varchar, state_since = ${stateSince}, updated_at = now(),
              away_ring_since = ${awayRingSince}, ring_misses = ${ringMisses}`,
-      }),
-      keepReason ? [id, state] : [id, state, breakReason ?? null, opts.stateSince ?? null],
+      })}, s.state_since`,
+      keepReason
+        ? [id, state]
+        : [id, state, breakReason ?? null, opts.stateSince ?? null, opts.keepSinceIfUnchanged === true],
     );
     await this.recordTransitions(rows);
+    return rows[0]?.state_since ?? null;
   }
 
   // ─── Mode B: `away_ring` (IQ66, IQ67, N1) ───────────────────────────────────

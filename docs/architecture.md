@@ -449,6 +449,13 @@ every account the caller belongs to (CH2) where every internal handler is single
   did not happen). Server-side decisions (pacing, the lease, `breakMustWait`, the reaper) read the
   real state from Redis; the supervisor floor reads the session row, where an outbound reservation
   is never mirrored, so it shows such an agent `available` too.
+  A dial the agent was never shown (rang out, cancelled by the customer ringing in, or abandoned
+  before its panel was sent) releases them with `releaseAgent(…, { unshownDial })`: back to the
+  `available` the session row held through the dial, the row keeps its `state_since`
+  (`setState`'s `keepSinceIfUnchanged`) and the `agent_state` frame carries it, so the console, the
+  app and the supervisor's floor all date the wait from when it began. A queued break, an inbound
+  take or a row rewritten meanwhile dates a new one. Redis's `since` is restamped as on every
+  release: pacing's longest-idle order reads it, so a hidden dial still counts as the agent's turn.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);

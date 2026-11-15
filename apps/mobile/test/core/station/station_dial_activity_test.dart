@@ -450,23 +450,26 @@ void main() {
     group('"Available for" dates the whole wait', () {
       const t0 = '2026-11-01T09:00:00.000Z';
       const t1 = '2026-11-01T09:00:42.000Z';
-      const t2 = '2026-11-01T09:01:30.000Z';
       final gap = DateTime.parse(t1).difference(DateTime.parse(t0));
 
-      test('late binding: a hidden dial that rang out keeps the since; each further one too', () {
+      // After a hidden dial rings out the server's release restates `available` with the `since`
+      // the agent was last shown (`releaseAgent` keeps the session's `state_since` when a dial
+      // they never saw returns them to the `available` they were in), so the app adopts it as
+      // it adopts every `since`, and the timer runs on. (No heartbeat is answered between: a
+      // pong moves the clock offset `phaseSince` is corrected by, which is not the point here.)
+      test('late binding: hidden dials that ring out restate the since; the timer runs on', () {
         fakeAsync((async) {
           final app = App(async)..start();
           app.readyFrame('available');
           app.agentStateFrame('available', since: t0);
           final since0 = app.view!.phaseSince!;
-          _dial(app, ringing: true, unanswered: 0);
-          _dial(app, ringing: false, unanswered: 1);
-          app.agentStateFrame('available', since: t1);
-          expect(app.view!.phaseSince, since0, reason: 'the agent never left the waiting screen');
-          _dial(app, ringing: true, unanswered: 1);
-          _dial(app, ringing: false, unanswered: 2);
-          app.agentStateFrame('available', since: t2);
-          expect(app.view!.phaseSince, since0);
+          for (var n = 0; n < 3; n++) {
+            _dial(app, ringing: true, unanswered: n);
+            _dial(app, ringing: false, unanswered: n + 1);
+            app.agentStateFrame('available', since: t0);
+            expect(app.view!.phase, AgentPhase.available);
+            expect(app.view!.phaseSince, since0, reason: 'the agent never left the waiting screen');
+          }
           app.dispose();
         });
       });
@@ -502,9 +505,11 @@ void main() {
           app.agentStateFrame('available', since: t1);
           expect(app.view!.phaseSince, since0.add(gap));
 
-          // An inbound caller, the server's order (`realInboundCallFrames`), then a hidden dial.
+          // An inbound caller, the server's order (`realInboundCallFrames`), then a hidden dial
+          // that rings out: its release restates the `available` the inbound call returned to.
           app.agentStateFrame('available', since: t0);
-          for (final (step: _, :frame) in realInboundCallFrames()) {
+          final inbound = realInboundCallFrames();
+          for (final (step: _, :frame) in inbound) {
             app.frame(frame);
           }
           expect(app.view!.phase, AgentPhase.available);
@@ -512,7 +517,7 @@ void main() {
           expect(afterInbound, isNot(since0));
           _dial(app, ringing: true, unanswered: 0);
           _dial(app, ringing: false, unanswered: 1);
-          app.agentStateFrame('available', since: t2);
+          app.agentStateFrame('available', since: inbound.firstWhere((f) => f.step == 'available').frame['since']! as String);
           expect(app.view!.phaseSince, afterInbound, reason: 'the wait after the inbound call goes on');
 
           // A break between: the wait after it is a new one.

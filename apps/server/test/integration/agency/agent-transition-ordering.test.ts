@@ -532,7 +532,7 @@ describe('agent transition log ordering (integration)', () => {
     await getTestPool().query(`ALTER TABLE ${EVENTS} RENAME TO ${EVENTS}_parked`);
     try {
       // Resolves. This is the assertion.
-      await expect(agencyAgentSessionRepository.setState(id, 'on_call')).resolves.toBeUndefined();
+      await expect(agencyAgentSessionRepository.setState(id, 'on_call')).resolves.toBeInstanceOf(Date);
       // And the state write really happened — the transition was not rolled back.
       const { rows } = await getTestPool().query<{ state: string }>(
         'SELECT state FROM agency_agent_sessions WHERE id = $1', [id],
@@ -547,5 +547,93 @@ describe('agent transition log ordering (integration)', () => {
     // missing, which is the documented cost.
     const { byAt } = await events(id);
     expect(byAt).toEqual([]);
+  });
+});
+
+/**
+ * `setState`'s `keepSinceIfUnchanged`: the release from a late-binding dial the agent was never
+ * shown (`AgencyDialer.releaseAgent`'s `unshownDial`) writes `available` over the `available` the
+ * row held through the dial, and the agent's wait goes on. `state_since` is what the supervisor's
+ * floor counts time in state from and what the `agent_state` frame then carries, so it must stay
+ * put; a write that changes the state or the break reason must still date a new one. Decided in
+ * SQL against the row the statement locked, so a real database is the only honest test.
+ */
+describe('setState keepSinceIfUnchanged (integration)', () => {
+  const WAIT_BEGAN = new Date('2026-01-05T09:00:00.000Z');
+
+  beforeEach(async () => {
+    await truncateAll();
+  });
+
+  afterAll(async () => {
+    await closeTestPool();
+  });
+
+  async function sessionIn(state: string, breakReason: string | null = null) {
+    const campaign = await insertAgencyCampaign({ status: 'stopped' });
+    // The factory's own agent per session: one live session per agent (0035).
+    const session = await insertAgentSession(campaign.id as string, {
+      state, break_reason: breakReason, state_since: WAIT_BEGAN, ring_misses: 2,
+    });
+    return session.id as string;
+  }
+
+  async function row(id: string) {
+    const { rows } = await getTestPool().query<{ state: string; break_reason: string | null; state_since: Date; ring_misses: number }>(
+      'SELECT state, break_reason, state_since, ring_misses FROM agency_agent_sessions WHERE id = $1', [id],
+    );
+    return rows[0]!;
+  }
+
+  it('available over available keeps state_since, returns it, and logs nothing', async () => {
+    const id = await sessionIn('available');
+
+    const written = await agencyAgentSessionRepository.setState(id, 'available', null, { keepSinceIfUnchanged: true });
+
+    expect(written).toEqual(WAIT_BEGAN);
+    const after = await row(id);
+    expect(after.state_since).toEqual(WAIT_BEGAN);
+    expect(after.state).toBe('available');
+    // The rest of the `available` write still applies.
+    expect(after.ring_misses).toBe(0);
+    expect((await events(id)).byAt).toEqual([]);
+  });
+
+  it('without the option, available over available restamps, as every other caller wants', async () => {
+    const id = await sessionIn('available');
+
+    const written = await agencyAgentSessionRepository.setState(id, 'available', null);
+
+    expect(written!.getTime()).toBeGreaterThan(WAIT_BEGAN.getTime());
+    expect((await row(id)).state_since).toEqual(written);
+  });
+
+  it('a change of state dates a new one: available → break, offline → available', async () => {
+    const toBreak = await sessionIn('available');
+    const fromOffline = await sessionIn('offline');
+
+    const breakSince = await agencyAgentSessionRepository.setState(toBreak, 'break', 'tea', { keepSinceIfUnchanged: true });
+    const availableSince = await agencyAgentSessionRepository.setState(fromOffline, 'available', null, { keepSinceIfUnchanged: true });
+
+    expect(breakSince!.getTime()).toBeGreaterThan(WAIT_BEGAN.getTime());
+    expect((await row(toBreak)).state_since).toEqual(breakSince);
+    expect(availableSince!.getTime()).toBeGreaterThan(WAIT_BEGAN.getTime());
+    expect((await events(fromOffline)).byAt.map((e) => e.to_state)).toEqual(['available']);
+  });
+
+  it('a change of break reason dates a new one; the same reason keeps it', async () => {
+    const changed = await sessionIn('break', 'lunch');
+    const same = await sessionIn('break', 'tea');
+
+    const changedSince = await agencyAgentSessionRepository.setState(changed, 'break', 'tea', { keepSinceIfUnchanged: true });
+    const sameSince = await agencyAgentSessionRepository.setState(same, 'break', 'tea', { keepSinceIfUnchanged: true });
+
+    expect(changedSince!.getTime()).toBeGreaterThan(WAIT_BEGAN.getTime());
+    expect(sameSince).toEqual(WAIT_BEGAN);
+  });
+
+  it('a session with no row returns null', async () => {
+    await expect(agencyAgentSessionRepository.setState(uuidFor('no-such-session'), 'available', null, { keepSinceIfUnchanged: true }))
+      .resolves.toBeNull();
   });
 });

@@ -324,7 +324,10 @@ it, because the server resets its count there and sends nothing to say so. A rin
 them through `labels.json` and `literals.json`. It names no contact. An early-binding account
 is never sent the frame and its screen is unchanged; the app does not know which kind it is on.
 The waiting hint no longer says the customer's details appear before they pick up, which is false
-under late binding.
+under late binding. Each hidden dial that rings out still ends with `agent_state: available`, but
+the server's release keeps the `since` of the wait the agent is in (`docs/architecture.md`, late
+binding), so the app adopts it as it adopts every `since` and "Available for" runs on, the same
+figure the console and the supervisor's floor show.
 
 ## The soft phone
 

@@ -368,6 +368,25 @@ describe('stationReducer — dial activity (late binding)', () => {
     }
   });
 
+  it('hidden dials that ring out leave agentStateSince where the wait began', () => {
+    // The server's sequence per dial: `dial_activity{ringing}` → `dial_activity{!ringing, n+1}` →
+    // `agent_state{available}` carrying the `since` the agent was last shown (the release keeps
+    // the session's `state_since` for a dial they never saw). Adopted as it comes: no restart.
+    const waitBegan = '2026-08-11T10:00:00.000Z';
+    const available = { type: 'agent_state' as const, frame: { event: 'agent_state' as const, state: 'available' as const, since: waitBegan } };
+    const state = run([
+      available,
+      ...[0, 1, 2].flatMap((n): StationAction[] => [
+        { type: 'dial_activity', activity: { ringing: true, unanswered_in_a_row: n } },
+        { type: 'dial_activity', activity: { ringing: false, unanswered_in_a_row: n + 1 } },
+        available,
+      ]),
+    ]);
+    expect(state.agentState).toBe('available');
+    expect(state.agentStateSince).toBe(waitBegan);
+    expect(state.dialActivity).toEqual({ ringing: false, unanswered_in_a_row: 3 });
+  });
+
   it('ready with an active attempt clears it, whatever else it carries', () => {
     const held = run([{ type: 'dial_activity', activity: ringing }]);
     const state = stationReducer(held, {

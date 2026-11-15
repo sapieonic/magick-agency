@@ -119,8 +119,10 @@ describe('setState records the transition it just performed', () => {
     expect(sql).toContain('prev.state AS from_state');
     expect(sql).toContain('s.state AS to_state');
     // The mirror's own behaviour is unchanged — the log is additive. (`$4` is the caller's
-    // `stateSince`, null unless a pause continues an earlier one: the end of `away_ring`.)
-    expect(sql).toContain('state_since = COALESCE($4::timestamptz, now())');
+    // `stateSince`, null unless a pause continues an earlier one: the end of `away_ring`; `$5`
+    // its `keepSinceIfUnchanged`, which keeps `state_since` only for a write that moves nothing.)
+    expect(sql).toContain('ELSE COALESCE($4::timestamptz, now()) END');
+    expect(pool.query.mock.calls[0]![1]).toEqual(['sess-1', 'on_call', null, null, false]);
   });
 
   it('appends one event carrying the identity the occupancy read needs', async () => {
@@ -414,7 +416,8 @@ describe('a failed event write never fails the transition', () => {
 
   it('setState resolves, and the state write still happened', async () => {
     failEvents([transition()]);
-    await expect(agencyAgentSessionRepository.setState('sess-1', 'on_call')).resolves.toBeUndefined();
+    // Resolves (null: this double's row projects no `state_since`).
+    await expect(agencyAgentSessionRepository.setState('sess-1', 'on_call')).resolves.toBeNull();
     // The transition reached the database — which is the whole point. Folding the
     // insert into the same statement would have rolled this back, and `on_call`
     // failing to land is an agent stuck off the floor or a call with no mirror.
