@@ -47,12 +47,27 @@ abstract final class StationCopy {
 
   // ── Waiting ──
   static const waitingHeadline = 'Waiting for a call';
-  static const waitingHint = 'Keep this screen open so the next customer reaches you. Their details appear before they pick up.';
+  // Says nothing about when the customer's details appear: on a late-binding account they
+  // appear only when the customer answers, and the app does not know which kind it is on.
+  static const waitingHint = 'Keep this screen open so the next customer reaches you.';
   // A paused campaign stops campaign calls only: the inbound router does not read campaign
   // status, so customers who ring in still reach an available agent.
   static const pausedHeadline = 'Campaign paused — no campaign calls for now';
   static const pausedHint = 'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
   static String availableFor(String clock) => 'Available for $clock';
+
+  // ── Hidden dials (late binding): the console's `agencyStationIdle.ts` ──
+  // A dial ringing for this agent that they are shown only if it is answered. Never the
+  // number, the name or anything else about the contact.
+  static const diallingHeadline = 'Dialling a customer…';
+  static const diallingHint = 'You’ll be connected as soon as they answer.';
+
+  /// The line under the headline after hidden dials went unanswered; null for none.
+  static String? unansweredLine(int unansweredInARow) => unansweredInARow <= 0
+      ? null
+      : unansweredInARow == 1
+          ? 'No answer from the last number'
+          : 'No answer from the last $unansweredInARow numbers';
 
   // ── Nothing due (contact assignment: a strict or preferred campaign) ──
   static const nothingDueHeadline = 'Nothing due now';

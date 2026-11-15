@@ -417,6 +417,39 @@ class QueueView {
   int get hashCode => Object.hash(due, reason, nextDueAt);
 }
 
+/// Late binding's hidden dials, as the waiting screen shows them: the dialer
+/// rings a customer for this agent and shows them nothing unless the customer
+/// answers, so without this a phone ringing for them, nothing due and a stuck
+/// station all look the same. Never the number, the name or anything else
+/// about the contact.
+///
+/// Set only while the agent is available with the socket open, the campaign
+/// dialling and no call on screen, and only when there is something to say
+/// (dialling, or unanswered dials to count); null otherwise, and the screen
+/// keeps its usual words.
+@immutable
+class DialActivityView {
+  const DialActivityView({required this.dialling, required this.unansweredInARow});
+
+  /// A hidden dial is ringing, or one ended unanswered moments ago and the
+  /// next is likely on its way (the controller's `dialGapHold`): "Dialling a customer…".
+  final bool dialling;
+
+  /// Hidden dials in a row that ended unanswered, since the last campaign call
+  /// the agent was shown (`reserved`); an inbound or soft-phone call does not
+  /// reset it.
+  final int unansweredInARow;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DialActivityView && other.dialling == dialling && other.unansweredInARow == unansweredInARow;
+  @override
+  int get hashCode => Object.hash(dialling, unansweredInARow);
+
+  @override
+  String toString() => 'DialActivityView(dialling: $dialling, unanswered: $unansweredInARow)';
+}
+
 /// Where an inbound call on the station is (`docs/inbound.md` §6).
 enum InboundStage {
   /// Offered: the panel is up, the chime has played, and the caller's audio binds at
@@ -626,6 +659,7 @@ class StationView {
     this.actionError,
     this.fatal,
     this.queue,
+    this.dialActivity,
     this.myContactsOffered = false,
     this.inbound,
     this.customerWaiting,
@@ -686,6 +720,10 @@ class StationView {
   /// where the waiting screen keeps its usual words.
   final QueueView? queue;
 
+  /// Late binding's hidden dials, when the waiting screen has something to say
+  /// about them ([DialActivityView]); null otherwise.
+  final DialActivityView? dialActivity;
+
   /// Whether this campaign has a My contacts for the agent (contact
   /// assignment), as the join bootstrap says: it assigns contacts (not
   /// `pool`) or lets agents retry the ones they did not reach. The
@@ -743,6 +781,7 @@ class StationView {
       other.actionError == actionError &&
       other.fatal == fatal &&
       other.queue == queue &&
+      other.dialActivity == dialActivity &&
       other.myContactsOffered == myContactsOffered &&
       other.inbound == inbound &&
       other.customerWaiting == customerWaiting &&

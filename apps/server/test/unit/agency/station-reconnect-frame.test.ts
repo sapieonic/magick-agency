@@ -101,6 +101,10 @@ interface Harness {
   sent: any[];
   wrapupState: { value: typeof WRAPUP_STATE | null };
   activeAttempt: { value: unknown };
+  /** What `dialer.dialActivityFor` answers (default null: nothing ringing, count 0). */
+  dialActivity: { value: null | { ringing: boolean; unanswered_in_a_row: number } };
+  /** What `dialer.hasUnannouncedAttempt` answers (default false). */
+  unannounced: { value: boolean };
   /** The state the rehydrate answers (default `wrapup`). */
   rehydrateAgent: ReturnType<typeof vi.fn>;
 }
@@ -110,6 +114,8 @@ async function harness(): Promise<Harness> {
   const sent: any[] = [];
   const wrapupState = { value: null as typeof WRAPUP_STATE | null };
   const activeAttempt = { value: null as unknown };
+  const dialActivity = { value: null as null | { ringing: boolean; unanswered_in_a_row: number } };
+  const unannounced = { value: false };
   /** What `attach` last registered — see the `stations` double below. */
   const holder: { ws: unknown } = { ws: undefined };
 
@@ -158,6 +164,8 @@ async function harness(): Promise<Harness> {
     dialer: {
       reattachStation: vi.fn(() => activeAttempt.value),
       takeMissedRelease: vi.fn(() => null),
+      dialActivityFor: vi.fn(() => dialActivity.value),
+      hasUnannouncedAttempt: vi.fn(() => unannounced.value),
       hasLiveAttempt: vi.fn(() => false),
       // Arms the pre-bind grace for an unannounced dial. Reached SYNCHRONOUSLY from
       // the station socket's `close` handler, BEFORE it awaits anything — so a
@@ -178,7 +186,7 @@ async function harness(): Promise<Harness> {
   await app.register(websocket);
   await app.register(async (a) => registerStationSocket(a as never, runtime as never), { prefix: '/api/v1/agency' });
   await app.ready();
-  return { app, breaks, sent, wrapupState, activeAttempt, rehydrateAgent: runtime.rehydrateAgent };
+  return { app, breaks, sent, wrapupState, activeAttempt, dialActivity, unannounced, rehydrateAgent: runtime.rehydrateAgent };
 }
 
 /** Open the station socket and return the `ready` frame it produced. */
@@ -379,5 +387,58 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
       await ready(h);
       expect(events).toEqual([]);
     });
+  });
+});
+
+describe('a reconnect mid-ring is told a hidden dial is ringing (late binding)', () => {
+  // FALSIFIED: with `dial_activity` dropped from the frame the first case reds. Without it a
+  // socket that drops while a hidden dial rings comes back to a screen that looks idle until
+  // the next `dial_activity`, up to a whole ring later: the "is it stuck?" this exists for.
+  it('carries the dialer\'s dial activity on `ready`', async () => {
+    h.dialActivity.value = { ringing: true, unanswered_in_a_row: 2 };
+
+    const frame = await ready(h);
+
+    expect(frame.dial_activity).toEqual({ ringing: true, unanswered_in_a_row: 2 });
+  });
+
+  it('omits it when there is nothing to say, and beside a resumed attempt', async () => {
+    expect('dial_activity' in await ready(h)).toBe(false);
+
+    await h.app.close();
+    h = await harness();
+    h.activeAttempt.value = { attempt_id: 'att-1', bridged_at: null, state: 'ringing' };
+    h.dialActivity.value = { ringing: true, unanswered_in_a_row: 2 };
+    expect('dial_activity' in await ready(h)).toBe(false);
+  });
+});
+
+describe('a reconnect mid-ring is told the state the agent was last shown (late binding)', () => {
+  // FALSIFIED: with `state: resumedState` restored the first case reds. The agent is `reserved`
+  // server-side while a hidden dial rings, but was never told; `reserved` with no attempt made
+  // the console show "Ringing — get ready" and the app "A call is coming through" for a call
+  // that may never be answered.
+  it('says `available` while only a hidden dial holds the agent', async () => {
+    h.rehydrateAgent.mockResolvedValue('reserved');
+    h.unannounced.value = true;
+    h.dialActivity.value = { ringing: true, unanswered_in_a_row: 1 };
+
+    const frame = await ready(h);
+
+    expect(frame.state).toBe('available');
+    expect(frame.active_attempt).toBeUndefined();
+    expect(frame.dial_activity).toEqual({ ringing: true, unanswered_in_a_row: 1 });
+  });
+
+  it('says `reserved` for a call the agent was shown, and for any reservation that is not a hidden dial', async () => {
+    h.rehydrateAgent.mockResolvedValue('reserved');
+    h.activeAttempt.value = { attempt_id: 'att-1', bridged_at: null, state: 'ringing' };
+    h.unannounced.value = true;
+    expect((await ready(h)).state).toBe('reserved');
+
+    await h.app.close();
+    h = await harness();
+    h.rehydrateAgent.mockResolvedValue('reserved');
+    expect((await ready(h)).state).toBe('reserved');
   });
 });

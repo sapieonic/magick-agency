@@ -37,12 +37,15 @@ import { carrierCancelsRinging } from '../telephony/carrier-ringing.js';
 import type {
   AgencyActiveAttempt,
   AgencyAgentState,
+  AgencyDialActivity,
   AgencyAttemptOutcome,
   AgencyMissedRelease,
   AgencyPriorAttempt,
   AgencyReleaseReason,
   AgencyAbandonReason,
+  AgencyReservedAttempt,
 } from '@magick-agency/contracts/agency';
+import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import type { WrapupManager } from './wrapup-manager.js';
 import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
@@ -170,6 +173,11 @@ type AbandonedContactFate = 'hold_unknown' | 'suppress_invalid' | 'return_now' |
  */
 const MISSED_RELEASE_TTL_MS = 5 * 60_000;
 
+/** A hidden-dial count untouched this long belongs to a session that has very likely ended. */
+export const DIAL_ACTIVITY_TTL_MS = 12 * 60 * 60_000;
+/** Far above the agents one process serves: bounds only what departed agents leave behind. */
+const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
+
 /**
  * Await a write to the durable agent-session mirror without letting it fail the
  * caller: Redis is the authority on agent state, so a mirror that could not be
@@ -274,6 +282,22 @@ export class AgencyDialer {
    * which is what makes the two binding modes agree.
    */
   private readonly unboundStationGrace = new Map<string, NodeJS.Timeout>();
+  /**
+   * sessionId → hidden dials in a row that ended unanswered: the count on the `dial_activity`
+   * frame (`AgencyDialActivity.unanswered_in_a_row`). An entry exists only while the count is
+   * above 0; any `reserved` ({@link sendReserved}) drops it.
+   *
+   * Process memory only, written at most once per dial: no database, no Redis, no timer. The
+   * dialer that counts is the one that dials, and the station socket it tells lives in the same
+   * process (with media workers `slotFor(sessionId)` puts a session's dials and its socket in one
+   * worker, `docs/architecture.md` "Several processes"), so nothing is shared. A restart starts
+   * every count from 0, which the contract states: a reassurance figure, not a record. Nothing
+   * tells the dialer a session ended, so entries expire after {@link DIAL_ACTIVITY_TTL_MS}
+   * untouched and the LRU cap bounds what departed agents leave behind.
+   */
+  private readonly unansweredInARow = new TtlCache<number>({
+    ttlMs: DIAL_ACTIVITY_TTL_MS, maxEntries: DIAL_ACTIVITY_MAX_ENTRIES, name: 'dial-activity',
+  });
   private unsubscribeLifecycle: (() => void) | null = null;
   /** {@link registerInboundTake}: the inbound connector's release hook, while one runs. */
   private inboundTake: InboundReleaseHook | null = null;
@@ -330,6 +354,7 @@ export class AgencyDialer {
     for (const timer of this.unboundStationGrace.values()) clearTimeout(timer);
     this.unboundStationGrace.clear();
     this.missedReleases.clear();
+    this.unansweredInARow.clear();
   }
 
   /**
@@ -451,7 +476,7 @@ export class AgencyDialer {
     // write and the `liveByAttempt` registration all still happen in this order
     // and still happen before the dial.
     if (!lateBinding) {
-      const delivered = this.stations.send(sessionId, { event: 'reserved', attempt });
+      const delivered = this.sendReserved(sessionId, attempt);
       if (!delivered) {
         log.warn({ attemptId, sessionId }, 'Could not deliver reserved frame — releasing');
         await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
@@ -535,7 +560,7 @@ export class AgencyDialer {
     let dialReturned!: (outcomeUnknown: boolean) => void;
     const live: LiveAttempt = {
       cmd, state: 'dialing', bridgedAt: null, answeredAt: null, priors,
-      lateBinding, panel: attempt, panelDelivered, dialedAt,
+      lateBinding, panel: attempt, panelDelivered, dialedAt, dialActivityShown: false,
       abandonReason: null, placing: false, outcomeUnknownEnd: false,
       dialSettled: new Promise<boolean>((resolve) => { dialReturned = resolve; }),
     };
@@ -681,6 +706,24 @@ export class AgencyDialer {
     }
     live.placing = false;
     dialReturned(false);
+    // ── Tell the agent a hidden dial is ringing for them ────────────────────
+    //
+    // Late binding only: the agent sees nothing of this dial unless it is answered, and an idle
+    // screen that cannot tell "ringing" from "stuck" is the complaint this answers. No contact,
+    // number or attempt id goes out (`AgencyDialActivity`); one in-process socket write.
+    //
+    // HERE, once the carrier has taken the dial: before it, every refusal (the bridge's own or
+    // the carrier's) would announce a dial no phone rang, and a systemic one would hold
+    // "Dialling a customer…" on screen while nothing is dialled. `dialWasSent` excludes a
+    // teardown at the calls-per-second gate; the record check, a dial the `ended` arm settled
+    // inside the call; `answeredAt`, one answered inside it. Synchronous to the send.
+    if (
+      lateBinding && dialWasSent(record) && this.liveByAttempt.get(attemptId) === live
+      && !live.panelDelivered && live.answeredAt === null
+    ) {
+      live.dialActivityShown = true;
+      this.sendDialActivity(cmd, true, this.unansweredInARow.get(cmd.sessionId) ?? 0);
+    }
     // Placed: the carrier took the create-call, so any refusal streak is broken (PL11). Not
     // awaited: the reset is off the dial path. Its Redis DEL is queued on the connection
     // before this returns, so a later refusal's INCR still lands after it. `notePlaced`
@@ -1096,7 +1139,7 @@ export class AgencyDialer {
       // not OPEN or not the incumbent, and `bindBorrowedBrowserLeg` refuses a
       // closed one, an already-bound one and an ending call. So every way this
       // can fail lands on the same answer, and none of them is checked twice.
-      if (socket && this.stations.send(cmd.sessionId, { event: 'reserved', attempt: live.panel }, socket)) {
+      if (socket && this.sendReserved(cmd.sessionId, live.panel, socket)) {
         // ⚠️ Set from the SEND, never from the bind, and the two facts are kept
         // independent because they are independent: whether the agent has SEEN
         // this call, and whether their audio got attached to it.
@@ -1109,6 +1152,8 @@ export class AgencyDialer {
         // fix for exactly that complaint. `hasUnannouncedAttempt` would
         // mis-word `/leave`'s refusal for the same reason.
         live.panelDelivered = true;
+        // Shown now, so no closing `dial_activity` is owed: the client clears it on `reserved`.
+        live.dialActivityShown = false;
         bindFailed = !this.bridge.bindBorrowedBrowserLeg(cmd.attemptId, socket);
       } else {
         // No panel on the wire ⇒ no bind attempted. Nothing was announced, so
@@ -1467,7 +1512,12 @@ export class AgencyDialer {
       return;
     }
     const contactAfterDial = live.placing && live.answeredAt === null && live.bridgedAt === null;
-    this.forgetAttempt(cmd);
+    // Before the settle below, so the closing `dial_activity` reaches the agent ahead of the
+    // `agent_state` its release sends. Counted unanswered only when no one answered and the
+    // agent was still there: the pre-bind grace ends a dial whose station stayed gone
+    // `agent_disconnected`, which is not a customer who did not pick up. A carrier refusal
+    // ends inside the dial, before `ringing: true` was sent, so it closes nothing here.
+    this.forgetAttempt(cmd, { unanswered: live.answeredAt === null && ev.outcome !== 'agent_disconnected' });
 
     let settled: EndedSettlement | null = null;
     try {
@@ -1578,6 +1628,7 @@ export class AgencyDialer {
     clash: NonNullable<LiveAttempt['supersededByInbound']>,
   ): Promise<void> {
     const cmd = live.cmd;
+    // The customer rang in themselves: not a number that went unanswered.
     this.forgetAttempt(cmd);
     try {
       try {
@@ -2282,9 +2333,8 @@ export class AgencyDialer {
    * describes half of it.
    */
   hasUnannouncedAttempt(sessionId: string): boolean {
-    const attemptId = this.attemptIdFor(sessionId);
-    if (!attemptId) return false;
-    return isUnannounced(this.liveByAttempt.get(attemptId)!);
+    const live = this.liveFor(sessionId);
+    return live !== undefined && isUnannounced(live);
   }
 
   /**
@@ -2375,11 +2425,63 @@ export class AgencyDialer {
   }
 
   /**
+   * The hidden dials for this agent now, for the `ready` frame of a (re)connecting station:
+   * null when nothing is ringing and the count is 0, which the frame says by leaving
+   * `dial_activity` out. Memory only, like everything the `ready` frame reads from here.
+   */
+  dialActivityFor(sessionId: string): AgencyDialActivity | null {
+    const live = this.liveFor(sessionId);
+    // `dialActivityShown` implies unannounced (the bind clears it). Not once answered: a
+    // customer is on the line (being told no agent could take it, on the abandoned path),
+    // which is not a ringing dial.
+    const ringing = live?.dialActivityShown === true && live.answeredAt === null;
+    const unanswered = this.unansweredInARow.get(sessionId) ?? 0;
+    return ringing || unanswered > 0 ? { ringing, unanswered_in_a_row: unanswered } : null;
+  }
+
+  /**
+   * Every `reserved` frame goes through here: an agent shown a campaign call starts their
+   * hidden-dial count again from 0, whichever binding showed it (`AgencyDialActivity`).
+   */
+  private sendReserved(sessionId: string, attempt: AgencyReservedAttempt, socket?: WebSocket): boolean {
+    if (!this.stations.send(sessionId, { event: 'reserved', attempt }, socket)) return false;
+    this.unansweredInARow.invalidate(sessionId);
+    return true;
+  }
+
+  /** The `dial_activity` frame to the attempt's agent. Not delivered to a socket that has gone. */
+  private sendDialActivity(cmd: DialCommand, ringing: boolean, unansweredInARow: number): void {
+    this.stations.send(cmd.sessionId, {
+      event: 'dial_activity',
+      campaign_id: cmd.campaignId,
+      ringing,
+      unanswered_in_a_row: unansweredInARow,
+    });
+  }
+
+  private liveFor(sessionId: string): LiveAttempt | undefined {
+    const attemptId = this.attemptIdFor(sessionId);
+    return attemptId ? this.liveByAttempt.get(attemptId) : undefined;
+  }
+
+  /**
    * Drop an attempt this replica no longer drives: its live record, its lease
    * renewer and — paired with the renewer — any pre-bind grace armed against it,
    * which has nothing left to end and must not outlive it into the next dial.
+   *
+   * Every path that drops an attempt comes through here, so a hidden dial the agent was told
+   * is ringing is always closed (`ringing: false`), and counted when `unanswered`. Only such a
+   * dial: the bind clears {@link LiveAttempt.dialActivityShown}, so a call the agent was shown
+   * closes nothing.
    */
-  private forgetAttempt(cmd: DialCommand): void {
+  private forgetAttempt(cmd: DialCommand, { unanswered = false }: { unanswered?: boolean } = {}): void {
+    const live = this.liveByAttempt.get(cmd.attemptId);
+    if (live?.dialActivityShown) {
+      live.dialActivityShown = false;
+      let count = this.unansweredInARow.get(cmd.sessionId) ?? 0;
+      if (unanswered) this.unansweredInARow.set(cmd.sessionId, ++count);
+      this.sendDialActivity(cmd, false, count);
+    }
     this.liveByAttempt.delete(cmd.attemptId);
     this.stopLeaseRenewal(cmd.attemptId);
     this.clearUnboundStationGrace(cmd.sessionId);

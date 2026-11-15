@@ -181,6 +181,12 @@ class StationController extends Notifier<StationView?>
   String? _inboundNotice;
   Timer? _inboundNoticeTimer;
 
+  /// Late binding: "Dialling a customer…" held through the gap after a hidden
+  /// dial ends unanswered ([dialGapHold]), while it runs. Dropped at once by a
+  /// `reserved`, the next dial ringing, the agent leaving available, the
+  /// campaign stopping or the socket dropping ([_dropDialGapHoldIfOver]).
+  Timer? _dialGapTimer;
+
   /// The catalog rebuilt from a refusal's `allowed_codes`, for this call only.
   ({String callId, List<Disposition> catalog})? _inboundCatalog;
   ({String callId, String code})? _inboundSaved;
@@ -719,6 +725,7 @@ class StationController extends Notifier<StationView?>
     _everOpened = false;
     _inboundShown = null;
     _setInboundNotice(null);
+    _cancelDialGapHold();
     _inboundCatalog = null;
     _inboundSaved = null;
     _inboundDnc = null;
@@ -847,6 +854,16 @@ class StationController extends Notifier<StationView?>
           break;
         }
         _dispatch(QueueAction(queue));
+      case DialActivityFrame(:final campaignId, :final activity):
+        // Late binding's hidden dials: this station's campaign only. Carries no contact data.
+        if (campaignId != _s?.hosted.campaignId) {
+          _log.debug('dial_activity frame for another campaign', {'campaign_id': campaignId});
+          break;
+        }
+        // Started before the dispatch, so no view between one dial and the next says
+        // "Waiting". The next dial ringing ends it in the dispatch ([_dropDialGapHoldIfOver]).
+        if (!activity.ringing && (_station.dialActivity?.ringing ?? false)) _startDialGapHold();
+        _dispatch(DialActivityAction(activity));
       case PongFrame():
         // The socket hands pongs to [_onPong] itself; none arrive here.
         break;
@@ -1023,6 +1040,7 @@ class StationController extends Notifier<StationView?>
     if (_redialOverride != null && _redialOverride!.attemptId != _station.wrapup?.attemptId) _redialOverride = null;
     if (_dncOutcome != null && _dncOutcome!.attemptId != _station.currentAttemptId) _dncOutcome = null;
     _inboundChanged();
+    _dropDialGapHoldIfOver();
     // The ring's mute belongs to one call: the next one rings again.
     final callId = _station.manualCall?.id;
     if (callId != _ringCallId) {
@@ -1114,6 +1132,7 @@ class StationController extends Notifier<StationView?>
       inboundNotice: _inboundNotice,
       awayRang: _absence.rang,
       awayNoRing: _absence.noRing == null || _absence.ringStopped ? null : RingCopy.blockerWhy(_absence.noRing!),
+      dialGapHeld: _dialGapTimer != null,
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -2904,6 +2923,35 @@ class StationController extends Notifier<StationView?>
       _calls.inboundChanged(now);
     }
     _armOfferBackstop();
+  }
+
+  /// How long "Dialling a customer…" stays up after a hidden dial ends
+  /// unanswered (late binding). The server sends the next dial's
+  /// `dial_activity` about 0.3–2 s after the last one ended; without the hold
+  /// the waiting screen (and its live region) would flick to "Waiting for a
+  /// call" and back between every pair of dials. The console's `DIAL_GAP_HOLD_MS`.
+  static const dialGapHold = Duration(seconds: 4);
+
+  void _startDialGapHold() {
+    _dialGapTimer?.cancel();
+    _dialGapTimer = Timer(dialGapHold, () {
+      _dialGapTimer = null;
+      _emit();
+    });
+  }
+
+  void _cancelDialGapHold() {
+    _dialGapTimer?.cancel();
+    _dialGapTimer = null;
+  }
+
+  /// The hold belongs to the gap between two hidden dials while the agent waits: anything
+  /// else (a `reserved`, which clears the activity; the next dial ringing; leaving the slot,
+  /// [StationState.dialSlotOpen]) ends it at once.
+  void _dropDialGapHoldIfOver() {
+    if (_dialGapTimer == null) return;
+    final a = _station.dialActivity;
+    if (a == null || a.ringing || !_station.dialSlotOpen) _cancelDialGapHold();
   }
 
   void _setInboundNotice(String? text) {

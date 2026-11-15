@@ -42,6 +42,10 @@ enum StationEvent implements WireEnum {
   /// Contact assignment: this agent's own queue changed (strict / preferred).
   queue('queue'),
 
+  /// Late binding: a dial for this agent that they are not shown unless it is
+  /// answered started or ended unanswered. See [DialActivityFrame].
+  dialActivity('dial_activity'),
+
   /// Inbound calls: sent only to a station that declared [StationCapability.inbound]
   /// on its upgrade (`caps=inbound`). See [InboundCallFrame].
   inboundCall('inbound_call'),
@@ -106,6 +110,7 @@ sealed class StationFrame {
         'ended' => BridgeEndedFrame.fromJson(decoded),
         'manual_call' => ManualCallFrame.fromJson(decoded),
         'queue' => QueueFrame.fromJson(decoded),
+        'dial_activity' => DialActivityFrame.fromJson(decoded),
         'inbound_call' => InboundCallFrame.fromJson(decoded),
         'customer_waiting' => CustomerWaitingFrame.fromJson(decoded),
         _ => UnknownFrame(raw: text, eventRaw: event, reason: 'unknown event'),
@@ -188,6 +193,7 @@ final class ReadyFrame extends StationFrame {
     String? pendingStateRaw,
     this.pendingBreakReason,
     this.queue,
+    this.dialActivity,
   }) : stateRaw = stateRaw ?? state.wire,
        pendingStateRaw = pendingStateRaw ?? pendingState?.wire;
 
@@ -210,6 +216,7 @@ final class ReadyFrame extends StationFrame {
       pendingStateRaw: pending,
       pendingBreakReason: j.strOrNull('pending_break_reason'),
       queue: queue == null ? null : QueueState.fromJson(queue),
+      dialActivity: DialActivity.tryFromJson(j['dial_activity']),
     );
   }
 
@@ -220,6 +227,12 @@ final class ReadyFrame extends StationFrame {
   /// This agent's own queue now, on a `strict` or `preferred` campaign;
   /// null otherwise (and from a server older than contact assignment).
   final QueueState? queue;
+
+  /// The hidden dials for this agent now (late binding): present when one is
+  /// ringing or the unanswered count is above 0. Null reads as not ringing,
+  /// count 0. Never set beside [activeAttempt]. Read leniently: a malformed
+  /// one is null here, never the whole snapshot lost to an [UnknownFrame].
+  final DialActivity? dialActivity;
 
   /// The break's code when [state] is `break` (e.g. `device_away`: the app was
   /// paused for leaving the foreground). Null when not on break, on a break
@@ -250,7 +263,8 @@ final class ReadyFrame extends StationFrame {
       other.missedRelease == missedRelease &&
       other.pendingStateRaw == pendingStateRaw &&
       other.pendingBreakReason == pendingBreakReason &&
-      other.queue == queue;
+      other.queue == queue &&
+      other.dialActivity == dialActivity;
 
   @override
   int get hashCode => Object.hash(
@@ -263,6 +277,7 @@ final class ReadyFrame extends StationFrame {
     pendingStateRaw,
     pendingBreakReason,
     queue,
+    dialActivity,
   );
 
   @override
@@ -787,6 +802,37 @@ final class QueueFrame extends StationFrame {
   String toString() => 'QueueFrame($campaignId, $queue)';
 }
 
+/// Late binding: a campaign dial placed for this agent, which they are shown
+/// only if the customer answers (the `reserved` frame), started ringing
+/// ([DialActivity.ringing] true) or ended unanswered (false). Sent to this
+/// agent's socket only, two frames at most per dial; the `ready` frame's
+/// [ReadyFrame.dialActivity] carries the same state at reconnect. Carries no
+/// contact, number or attempt id on purpose.
+///
+/// Contract: `AgencyStationDialActivityFrame` (`agency/station.ts`).
+final class DialActivityFrame extends StationFrame {
+  const DialActivityFrame({required this.campaignId, required this.activity});
+
+  factory DialActivityFrame.fromJson(Map<String, Object?> j) =>
+      DialActivityFrame(campaignId: j.str('campaign_id'), activity: DialActivity.fromJson(j));
+
+  final String campaignId;
+  final DialActivity activity;
+
+  @override
+  StationEvent get event => StationEvent.dialActivity;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DialActivityFrame && other.campaignId == campaignId && other.activity == activity;
+
+  @override
+  int get hashCode => Object.hash(campaignId, activity);
+
+  @override
+  String toString() => 'DialActivityFrame($campaignId, $activity)';
+}
+
 /// An inbound call offered to or connected with this station changed: the
 /// whole call, on every change, and once more right after `ready` on a
 /// reconnect. Play the inbound chime once per call id, on `offered`.
@@ -937,6 +983,58 @@ final class QueueState {
 
   @override
   String toString() => due ? 'QueueState(due)' : 'QueueState($reasonRaw, next: $nextDueAt)';
+}
+
+/// What the dialer is doing for this agent that their screen cannot otherwise
+/// show (late binding): whether a hidden dial is ringing now, and how many in a
+/// row ended unanswered since the last campaign call they were shown
+/// (`reserved`). A `reserved` frame resets the count server-side; the client
+/// clears it there. An inbound or soft-phone call does not reset it.
+///
+/// Contract: `AgencyDialActivity` (`agency/station.ts`).
+@immutable
+final class DialActivity {
+  const DialActivity({required this.ringing, required this.unansweredInARow});
+
+  factory DialActivity.fromJson(Map<String, Object?> j) {
+    final unanswered = j.integer('unanswered_in_a_row');
+    // A count, as the console's `parseDialActivity` holds it: never below 0.
+    if (unanswered < 0) throw FormatException('unanswered_in_a_row must not be negative: $unanswered');
+    return DialActivity(ringing: j.boolean('ringing'), unansweredInARow: unanswered);
+  }
+
+  /// [value] as dial activity, or null when absent or unreadable. For the
+  /// optional `ready.dial_activity`: a cosmetic field this build cannot read
+  /// must never cost the agent the reconnect snapshot it rides on. The
+  /// `dial_activity` frame itself stays strict ([DialActivityFrame.fromJson]).
+  static DialActivity? tryFromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    try {
+      return DialActivity.fromJson(value);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// A hidden dial for this agent is ringing now.
+  final bool ringing;
+
+  /// Hidden dials in a row that ended unanswered, since the last campaign
+  /// call the agent was shown (`reserved`); an inbound or soft-phone call does
+  /// not reset it.
+  final int unansweredInARow;
+
+  Map<String, Object?> toJson() => <String, Object?>{'ringing': ringing, 'unanswered_in_a_row': unansweredInARow};
+
+  @override
+  bool operator ==(Object other) =>
+      other is DialActivity && other.ringing == ringing && other.unansweredInARow == unansweredInARow;
+
+  @override
+  int get hashCode => Object.hash(ringing, unansweredInARow);
+
+  @override
+  String toString() => 'DialActivity(ringing: $ringing, unanswered: $unansweredInARow)';
 }
 
 /// The contact handed to the agent at reservation.

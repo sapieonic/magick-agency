@@ -33,6 +33,7 @@ import {
   withDeadline,
 } from '../utils/agencyStationLiveness';
 import { INITIAL_STATION_STATE, stationReducer } from '../utils/agencyStationReducer';
+import { parseDialActivity } from '../utils/agencyStationIdle';
 import { toAbsoluteWsUrl } from '../utils/agencyStationWsUrl';
 import { useStationUnloadGuard } from './useStationUnloadGuard';
 import type {
@@ -210,6 +211,7 @@ export function useAgencyStation(
     queue,
     inboundCall,
     customerWaiting,
+    dialActivity,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
   if (diagnosticsRef.current === null) {
@@ -1028,6 +1030,34 @@ export function useAgencyStation(
           return;
         }
 
+        case 'dial_activity': {
+          /**
+           * Late binding: a dial placed for this agent that they are shown only if the customer
+           * answers started ringing (`ringing: true`) or ended unanswered (`ringing: false`). It
+           * moves the idle copy and the rail's waiting label, nothing else: no agent state, no
+           * panel, no cue. Cleared by the next `reserved` (the reducer), never by a frame.
+           *
+           * Guarded like `queue`: a malformed frame must cost one frame. The check is
+           * `parseDialActivity`, the one `ready.dial_activity` gets in the reducer, so the two
+           * paths cannot disagree on what a stated activity is. A frame for another campaign
+           * than this station's is dropped rather than shown as this one's.
+           */
+          const activity = parseDialActivity(frame);
+          if (!activity) {
+            logDiagnostic('dial_activity_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          const stationCampaign = bootstrapRef.current?.campaign_id ?? null;
+          if (stationCampaign && typeof frame.campaign_id === 'string' && frame.campaign_id !== stationCampaign) {
+            logDiagnostic('dial_activity_other_campaign', frame.campaign_id);
+            return;
+          }
+          // Not logged, as `queue` is not: two per dial would push everything else out of the
+          // diagnostic ring within a shift. Only the dropped frames above are logged.
+          dispatch({ type: 'dial_activity', activity });
+          return;
+        }
+
         case 'inbound_call': {
           /**
            * **An inbound call's every change** (P2, `docs/inbound.md` §6), and its restatement
@@ -1638,6 +1668,7 @@ export function useAgencyStation(
     queue,
     inboundCall,
     customerWaiting,
+    dialActivity,
     reconnect,
     sendMedia,
     mediaFormat: socketFormat,

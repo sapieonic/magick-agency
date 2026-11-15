@@ -299,6 +299,24 @@ comes from the bootstrap, `ready` (an absent `queue` clears it) and the `queue` 
 body); the app's telemetry layer sends no null properties, so there the property is absent, which
 PostHog reads the same way.
 
+On a late-binding account (`FF_AGENCY_LATE_BINDING`) the dialer rings a customer for an idle agent
+and shows the call only if it is answered, so the waiting screen says when that is happening, from
+the `dial_activity` frame and `ready`'s `dial_activity` (`DialActivityFrame` in
+`packages/agency_wire/lib/src/station.dart`): "Dialling a customer…" with "You’ll be connected as
+soon as they answer.", and "No answer from the last N numbers" once hidden dials have gone
+unanswered (the count resets at the next campaign call the agent is shown, `reserved`; an
+inbound or soft-phone call does not reset it). A dial refused before or by the carrier is never
+announced, and a reconnect mid-ring gets `ready` with `state: available` and the dial activity
+(the server said `reserved` before, which showed "A call is coming through"). The controller holds
+"Dialling…" for 4 s after a dial ends (`dialGapHold`) so the screen does not flick to "Waiting for
+a call" between one dial and the next; the hold drops at once on `reserved`, when the agent leaves
+available, when the campaign stops dialling or when the socket drops. Any `reserved` clears it,
+because the server resets its count there and sends nothing to say so. A ringing dial outranks
+"Nothing due now"; a paused campaign keeps its copy. It names no contact. An early-binding account
+is never sent the frame and its screen is unchanged; the app does not know which kind it is on.
+The waiting hint no longer says the customer's details appear before they pick up, which is false
+under late binding.
+
 ## The soft phone
 
 The console's soft phone ([`softphone.md`](softphone.md)) on the phone: dial a typed number

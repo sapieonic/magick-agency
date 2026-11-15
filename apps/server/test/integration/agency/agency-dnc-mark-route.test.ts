@@ -77,6 +77,7 @@ function runtimeStub() {
     dialer: {
       hasLiveAttempt: vi.fn(() => false), reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
+      dialActivityFor: vi.fn(() => null),
     },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: { mint: vi.fn(), verifyAndConsume: vi.fn() },

@@ -79,7 +79,9 @@ package root.
   `AgencyDisposition`, `AgencyContextDisplay`, `AgencyBreakReason`, `AgencyRetryContext`,
   `AgencyActiveAttempt`, `AgencyMissedRelease`, `AgencyReservedAttempt`, `AgencyPriorAttempt`, and
   the media / reserved / countdown / bridged / released / agent_state / campaign_state / pong /
-  error / bridge_ended frames; for the wrap-up redial, `AgencyRedialInfo`, `AgencyRedialResponse`
+  error / bridge_ended frames; contact assignment's `queue` frame with `AgencyQueueState` and
+  `AgencyQueueIdleReason`; late binding's `dial_activity` frame with `AgencyDialActivity`; for the
+  wrap-up redial, `AgencyRedialInfo`, `AgencyRedialResponse`
   and the constants `AGENCY_WRAPUP_REDIAL_LIMIT` and `AGENCY_REDIALED_DISPOSITION_CODE`
   (`AgencyRedialRequest` is not re-exported: see §5).
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,

@@ -95,6 +95,15 @@ export interface LiveAttempt {
    */
   panelDelivered: boolean;
   /**
+   * Was the agent told that this hidden dial is ringing (a `dial_activity` frame with
+   * `ringing: true`)? Late binding only, set once the carrier has taken the dial (never for a
+   * dial refused before or by the carrier), and cleared by the bind or once the closing
+   * `dial_activity` has gone out, so the dial is closed exactly once. Every path that drops the
+   * attempt before the agent is shown it closes it (`AgencyDialer.endDialActivity`); a dial
+   * that never set it has nothing to close.
+   */
+  dialActivityShown: boolean;
+  /**
    * Set when the answered call found no agent and took the abandoned path.
    *
    * Recorded so the `ended` handler can tell an abandoned teardown from an
@@ -153,10 +162,13 @@ export interface LiveAttempt {
  * Is this attempt one the agent has never been told about?
  *
  * Only reachable under late binding, where a dial that rings out, is busy, fails
- * or finds an unreachable handset must reach the console as **nothing at all**
- * — no `reserved`, no `released`, no state change. That silence is the product
- * ask behind `FF_AGENCY_LATE_BINDING`: a ringing popup is one agents dismiss
- * (and, on VoiceLink, dismiss without cancelling anything).
+ * or finds an unreachable handset must reach the console as **nothing about the
+ * call** — no `reserved`, no `released`, no state change. That silence is the
+ * product ask behind `FF_AGENCY_LATE_BINDING`: a ringing popup is one agents
+ * dismiss (and, on VoiceLink, dismiss without cancelling anything). The agent is
+ * told only that a dial is ringing for them and how many before it went
+ * unanswered (`dial_activity`, `LiveAttempt.dialActivityShown`), which names no
+ * contact, so an idle screen can tell a ringing dial from a stuck station.
  *
  * ⚠️ **The question is "has the agent SEEN this call", not "did this call
  * bridge".** Those come apart in exactly one place — the `answered` arm, where

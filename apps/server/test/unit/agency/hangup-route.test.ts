@@ -120,6 +120,7 @@ function makeRuntime() {
       noteStationClosed: vi.fn(),
       reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
+      dialActivityFor: vi.fn(() => null),
     },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: { mint: vi.fn(), verifyAndConsume: vi.fn() },

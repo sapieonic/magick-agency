@@ -7,6 +7,7 @@ import {
 } from '../../utils/agencyStationReducer';
 import type { WrapupAnchor } from '../../utils/agencyWrapup';
 import type {
+  AgencyDialActivity,
   AgencyReservedAttempt,
   AgencyStationReadyFrame,
   AgencyStationReleasedFrame,
@@ -313,5 +314,67 @@ describe('stationReducer — an unchanged value costs no render', () => {
     expect(noSample.missedPings).toBe(0);
     expect(noSample.clockOffsetMs).toBe(0);
     expect(stationReducer(missing, { type: 'pong', offsetMs: -10_000 }).clockOffsetMs).toBe(-10_000);
+  });
+});
+
+describe('stationReducer — dial activity (late binding)', () => {
+  const ringing = { ringing: true, unanswered_in_a_row: 2 };
+
+  it('starts null, and a dial_activity frame states it', () => {
+    expect(INITIAL_STATION_STATE.dialActivity).toBeNull();
+    const state = run([{ type: 'dial_activity', activity: ringing }]);
+    expect(state.dialActivity).toEqual(ringing);
+  });
+
+  it('a restated activity costs no render', () => {
+    const state = run([{ type: 'dial_activity', activity: ringing }]);
+    expect(stationReducer(state, { type: 'dial_activity', activity: { ...ringing } })).toBe(state);
+  });
+
+  it('any reserved clears it: the server reset its count and says nothing more', () => {
+    const state = run([
+      { type: 'dial_activity', activity: ringing },
+      { type: 'reserved', attempt: ATTEMPT },
+    ]);
+    expect(state.dialActivity).toBeNull();
+  });
+
+  it('ready is a snapshot: present is taken, absent clears', () => {
+    const held = run([{ type: 'dial_activity', activity: ringing }]);
+    const withActivity = stationReducer(held, {
+      type: 'ready',
+      frame: ready({ dial_activity: { ringing: false, unanswered_in_a_row: 3 } }),
+      wrapup: null,
+    });
+    expect(withActivity.dialActivity).toEqual({ ringing: false, unanswered_in_a_row: 3 });
+    const without = stationReducer(held, { type: 'ready', frame: ready(), wrapup: null });
+    expect(without.dialActivity).toBeNull();
+  });
+
+  it('ready with a malformed dial_activity reads it as absent, as the frame handler does', () => {
+    const held = run([{ type: 'dial_activity', activity: ringing }]);
+    for (const bad of [
+      { ringing: 'yes', unanswered_in_a_row: 2 },
+      { ringing: true, unanswered_in_a_row: -1 },
+      { ringing: true, unanswered_in_a_row: 1.5 },
+      { ringing: true },
+    ]) {
+      const state = stationReducer(held, {
+        type: 'ready',
+        frame: ready({ dial_activity: bad as unknown as AgencyDialActivity }),
+        wrapup: null,
+      });
+      expect(state.dialActivity).toBeNull();
+    }
+  });
+
+  it('ready with an active attempt clears it, whatever else it carries', () => {
+    const held = run([{ type: 'dial_activity', activity: ringing }]);
+    const state = stationReducer(held, {
+      type: 'ready',
+      frame: ready({ state: 'reserved', active_attempt: { ...ATTEMPT, bridged_at: null, state: 'ringing' }, dial_activity: ringing }),
+      wrapup: null,
+    });
+    expect(state.dialActivity).toBeNull();
   });
 });

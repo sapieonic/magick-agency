@@ -610,6 +610,10 @@ export async function handleStationSocket(
   // Consumed exactly once — read it here, not inline in the frame, because
   // `takeMissedRelease` clears as it reads and a second call would return null.
   const missedRelease = activeAttempt ? null : runtime.dialer.takeMissedRelease(sessionId);
+  // A hidden dial ringing for this agent, and how many before it went unanswered (late
+  // binding): a socket that dropped mid-ring comes back to "Dialling a customer…", not to a
+  // screen that looks idle. Never beside a resumed attempt, which is on screen already.
+  const dialActivity = activeAttempt ? null : runtime.dialer.dialActivityFor(sessionId);
   // PEEKED. A queued break is announced only by the HTTP response that queued it
   // and the `agent_state` frame beside it, both of which died with the old socket —
   // and the next `agent_state` this agent gets is the one `releaseAgent` sends when
@@ -624,14 +628,27 @@ export async function handleStationSocket(
   // The break's code beside the state, so a client that lost the `agent_state` frame
   // naming it (the mobile app relaunched after the OS killed it while paused) can say why.
   const breakReason = breakReasonFor(resumedState, attachedRow);
+  // ── A hidden dial is not a state the agent can see ───────────────────────
+  // Under late binding the agent is `reserved` server-side for as long as a dial they have not
+  // been shown rings; nothing ever told them so, and their screen says they are waiting. Saying
+  // `reserved` here, with no `active_attempt`, made a socket that reconnected mid-ring show
+  // "Ringing — get ready" (console) or "A call is coming through" (app) for a call that may never
+  // be answered: the popup late binding exists to remove, through the reconnect. So the frame
+  // says what the agent was last told, `available`. The authority is unchanged: pacing, the
+  // lease and the break route still read `reserved` from Redis, and the answer's `reserved`
+  // frame moves the screen on exactly as it does without a reconnect.
+  const shownState = resumedState === 'reserved' && !activeAttempt && runtime.dialer.hasUnannouncedAttempt(sessionId)
+    ? 'available'
+    : resumedState;
   const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
-    state: resumedState,
+    state: shownState,
     ...(breakReason ? { break_reason: breakReason } : {}),
     ...(activeAttempt ? { active_attempt: activeAttempt } : {}),
     ...(activeWrapup ? { active_wrapup: activeWrapup } : {}),
     ...(queue ? { queue } : {}),
+    ...(dialActivity ? { dial_activity: dialActivity } : {}),
     // Only meaningful when nothing was resumed: an attempt that ended while the
     // socket was away, so the agent is told what happened to the call they were on
     // rather than finding an empty console.

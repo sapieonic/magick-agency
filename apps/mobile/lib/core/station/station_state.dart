@@ -33,6 +33,17 @@ import '../softphone/call_state.dart' show newerCall;
 /// * `queue` (contact assignment): the agent's own queue on a `strict` or
 ///   `preferred` campaign, from the bootstrap, the `ready` snapshot and the
 ///   `queue` frame. Nothing else moves it, and it moves nothing else.
+/// * `dialActivity` (late binding): the hidden dials for this agent, from the
+///   `dial_activity` frame and the `ready` snapshot. A `reserved` clears it
+///   (the server resets its count there and sends no frame to say so). The
+///   gap held between one dial and the next is the controller's, not this.
+/// * `callShownSinceStated`: whether a call was on the station since
+///   [agentStateSince] was last stated. Each hidden dial that rings out ends
+///   with `agent_state: available` and a fresh `since`, though the agent never
+///   left the waiting screen; an `available` restated over an `available` with
+///   no call shown in between keeps the `since` held, so "Available for" counts
+///   the whole wait. Early binding shows every call (`reserved`), so its timer
+///   restarts after each one as before.
 /// * `inboundCall` and `customerWaiting` (inbound calls, `docs/inbound.md` §6):
 ///   the console keeps them in its own hooks beside the reducer; here they sit
 ///   in it, so the phase can follow an inbound call as it follows a campaign
@@ -168,6 +179,7 @@ final class StationState {
     this.connection = StationConnection.idle,
     this.agentState = AgentState.offline,
     this.agentStateSince,
+    this.callShownSinceStated = false,
     this.breakReasonCode,
     this.pendingBreakCode,
     this.pendingBreakStatements = 0,
@@ -184,6 +196,7 @@ final class StationState {
     this.missedPings = 0,
     this.manualCall,
     this.queue,
+    this.dialActivity,
     this.inboundCall,
     this.customerWaiting,
     this.retiredInbound = const [],
@@ -196,6 +209,13 @@ final class StationState {
 
   /// `agent_state.since` (server clock): the ONLY anchor for break elapsed time.
   final DateTime? agentStateSince;
+
+  /// A call came onto the station (a campaign attempt, an inbound call:
+  /// [effectiveState] stepping off `available`; or a new soft-phone call) since
+  /// [agentStateSince] was last stated by `agent_state`. False keeps that
+  /// `since` across an `available` restated over `available` (late binding's
+  /// hidden dials, which the agent is never shown).
+  final bool callShownSinceStated;
   final String? breakReasonCode;
   final String? pendingBreakCode;
 
@@ -224,6 +244,11 @@ final class StationState {
   /// The agent's own queue (contact assignment): due, or nothing due and why.
   /// Null on a `pool` campaign (and from a server older than the feature).
   final QueueState? queue;
+
+  /// Late binding's hidden dials for this agent: one ringing now, and how many
+  /// in a row ended unanswered. Null reads as neither (and is all an
+  /// early-binding account ever has).
+  final DialActivity? dialActivity;
 
   /// The station's inbound call: the newest copy seen, from an `inbound_call`
   /// frame or an adopted HTTP answer (`newerInboundCall`, the frame winning a
@@ -290,10 +315,20 @@ final class StationState {
     return agentState;
   }
 
+  /// The waiting screen's slot for late binding's hidden dials: the agent is
+  /// available with the socket open and the campaign dialling. [effectiveState]
+  /// is `available` only with no attempt live and no inbound call on the
+  /// station, so nothing is on screen. The one rule for showing the dial
+  /// activity (`StationViewMapper.dialActivityOf`) and for keeping the
+  /// controller's gap hold; the console's `useDialActivityDisplay` `eligible`.
+  bool get dialSlotOpen =>
+      effectiveState == AgentState.available && connection == StationConnection.open && dialing;
+
   StationState _with({
     StationConnection? connection,
     AgentState? agentState,
     Object? agentStateSince = _keep,
+    bool? callShownSinceStated,
     Object? breakReasonCode = _keep,
     Object? pendingBreakCode = _keep,
     int? pendingBreakStatements,
@@ -310,6 +345,7 @@ final class StationState {
     int? missedPings,
     Object? manualCall = _keep,
     Object? queue = _keep,
+    Object? dialActivity = _keep,
     Object? inboundCall = _keep,
     Object? customerWaiting = _keep,
     List<InboundCall>? retiredInbound,
@@ -318,6 +354,7 @@ final class StationState {
         connection: connection ?? this.connection,
         agentState: agentState ?? this.agentState,
         agentStateSince: identical(agentStateSince, _keep) ? this.agentStateSince : agentStateSince as DateTime?,
+        callShownSinceStated: callShownSinceStated ?? this.callShownSinceStated,
         breakReasonCode: identical(breakReasonCode, _keep) ? this.breakReasonCode : breakReasonCode as String?,
         pendingBreakCode: identical(pendingBreakCode, _keep) ? this.pendingBreakCode : pendingBreakCode as String?,
         pendingBreakStatements: pendingBreakStatements ?? this.pendingBreakStatements,
@@ -334,6 +371,7 @@ final class StationState {
         missedPings: missedPings ?? this.missedPings,
         manualCall: identical(manualCall, _keep) ? this.manualCall : manualCall as ManualCall?,
         queue: identical(queue, _keep) ? this.queue : queue as QueueState?,
+        dialActivity: identical(dialActivity, _keep) ? this.dialActivity : dialActivity as DialActivity?,
         inboundCall: identical(inboundCall, _keep) ? this.inboundCall : inboundCall as InboundCall?,
         customerWaiting:
             identical(customerWaiting, _keep) ? this.customerWaiting : customerWaiting as CustomerWaitingFrame?,
@@ -355,7 +393,7 @@ final class StationState {
   String toString() => 'StationState($connection, $agentState, live: ${live?.attemptId}, '
       'retained: ${retainedAttempt?.attemptId}, wrapup: ${wrapup?.attemptId}, release: ${release?.reasonRaw}, '
       'pendingBreak: $pendingBreakCode, missedPings: $missedPings, manual: $manualCall, queue: $queue, '
-      'inbound: $inboundCall, waiting: ${customerWaiting?.inboundCallId})';
+      'dial: $dialActivity, inbound: $inboundCall, waiting: ${customerWaiting?.inboundCallId})';
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -475,6 +513,13 @@ final class QueueAction extends StationAction {
   final QueueState queue;
 }
 
+/// A `dial_activity` frame's state (late binding). The `ready` snapshot states
+/// it through [ReadyAction].
+final class DialActivityAction extends StationAction {
+  const DialActivityAction(this.activity);
+  final DialActivity activity;
+}
+
 /// An `inbound_call` frame's call (a frame whose call did not read is never
 /// dispatched). The frame is the authority: it wins a tie.
 final class InboundCallAction extends StationAction {
@@ -518,7 +563,17 @@ final class CustomerWaitingAction extends StationAction {
     );
 
 StationState stationReducer(StationState state, StationAction action) {
-  final next = _reduce(state, action);
+  var next = _reduce(state, action);
+  // A call came onto the station since `since` was stated: the next `available` dates a new
+  // wait. Only the step off `available` counts: an `available` the server states while the
+  // call's outcome screen is still up (an inbound call's return comes before its settled copy)
+  // dates the wait that follows that screen.
+  if (!identical(next, state) &&
+      !next.callShownSinceStated &&
+      ((state.effectiveState == AgentState.available && next.effectiveState != AgentState.available) ||
+          next.manualCall?.id != state.manualCall?.id)) {
+    next = next._with(callShownSinceStated: true);
+  }
   // "Your customer is waiting" belongs to the call it waits behind: once the
   // station leaves reserved / on a call / wrap-up, the caller is the agent's
   // next offer (or gone), and the server says which.
@@ -574,6 +629,9 @@ StationState _reduce(StationState state, StationAction action) {
         // The agent's own queue, replaced like every other field: absent on a
         // `pool` campaign, so a snapshot without it clears it.
         queue: frame.queue,
+        // Absent means not ringing, count 0. Never beside a live attempt: the
+        // call it would describe is the one on screen.
+        dialActivity: active == null ? frame.dialActivity : null,
         // Re-sent after `ready` while the caller still waits.
         customerWaiting: null,
       );
@@ -613,9 +671,16 @@ StationState _reduce(StationState state, StationAction action) {
     case AgentStateAction(:final frame):
       final previous = state.agentState;
       final queue = _breakQueue(state, frame.pendingState, frame.pendingBreakReason);
+      // Still the same wait: `available` restated over `available` with no call shown since
+      // (a late-binding hidden dial that rang out). The `since` held dates the wait.
+      final sameWait = frame.state == AgentState.available &&
+          previous == AgentState.available &&
+          state.agentStateSince != null &&
+          !state.callShownSinceStated;
       var next = state._with(
         agentState: frame.state,
-        agentStateSince: frame.since,
+        agentStateSince: sameWait ? state.agentStateSince : frame.since,
+        callShownSinceStated: false,
         breakReasonCode: frame.breakReason,
         pendingBreakCode: queue.code,
         pendingBreakStatements: queue.statements,
@@ -649,6 +714,9 @@ StationState _reduce(StationState state, StationAction action) {
         wrapup: null,
         missedRelease: null,
         live: LiveAttempt(attempt: attempt),
+        // The server resets its unanswered count on delivering `reserved` and
+        // says nothing more: the next `dial_activity` starts again from 0.
+        dialActivity: null,
       );
 
     case BridgedAction(:final attemptId, :final bridgedAt):
@@ -719,6 +787,9 @@ StationState _reduce(StationState state, StationAction action) {
 
     case QueueAction(:final queue):
       return queue == state.queue ? state : state._with(queue: queue);
+
+    case DialActivityAction(:final activity):
+      return activity == state.dialActivity ? state : state._with(dialActivity: activity);
 
     case SessionStateAction(:final response):
       if (response.state != state.agentState || state.agentStateSince != null) return state;

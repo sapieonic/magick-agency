@@ -578,3 +578,31 @@ describe('the reconnect window', () => {
     ).toBe(plain);
   });
 });
+
+describe('describeRail — hidden dials (late binding)', () => {
+  const base = {
+    agentState: 'available' as AgencyAgentState,
+    connection: 'open' as const,
+    live: null,
+    release: null,
+    wrapup: null,
+    dialing: true,
+    breakReasonLabel: null,
+  };
+
+  it('says a customer is being dialled while one rings for an available agent', () => {
+    expect(describeRail({ ...base, diallingCustomer: true }).label).toBe('Dialling a customer…');
+  });
+
+  it('is today’s label without it (early binding)', () => {
+    expect(describeRail(base).label).toBe('Waiting for a call');
+    expect(describeRail({ ...base, diallingCustomer: false }).label).toBe('Waiting for a call');
+  });
+
+  it('never outranks a paused campaign, a break or a call on screen', () => {
+    expect(describeRail({ ...base, dialing: false, diallingCustomer: true }).label)
+      .toBe('Campaign paused — no campaign calls for now');
+    expect(describeRail({ ...base, agentState: 'break', diallingCustomer: true }).label).toBe('On break');
+    expect(describeRail({ ...base, live: liveRinging, diallingCustomer: true }).label).toBe('Ringing — get ready');
+  });
+});

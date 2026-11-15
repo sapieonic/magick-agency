@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-13.
+"is it done". As of 2026-11-15.
 
 ## Summary
 
@@ -1516,7 +1516,79 @@ pooler forwards `application_name` and clears session state between clients (the
 depends on either; `db-hygiene.md` 4.1 has the post-deploy check); every operator step in
 `db-hygiene.md` (they run against production).
 
+### Hidden dials on the waiting screen 2026-11-15 (late binding)
+
+Manas: under late binding (`FF_AGENCY_LATE_BINDING`) an idle agent is shown a dial only if the
+customer answers, so their waiting screen looked the same whether a phone was ringing for them,
+nothing was due, or the station was stuck, and agents took it for hung. Over-dialling (more than
+one dial per idle agent) is a separate question, deferred by Manas; nothing here changes pacing.
+
+- **Contract.** `dial_activity` (`AgencyDialActivity`: `ringing`, `unanswered_in_a_row`;
+  `agency/station.ts`) and `ready.dial_activity`. It names no contact, number or attempt.
+  Fixtures `dial_activity_ringing`, `dial_activity_unanswered`, `ready_dial_activity`; the Dart
+  `DialActivityFrame` beside them.
+- **Server.** The dialer sends `ringing: true` once the carrier has taken a hidden dial (never
+  for one refused before or by the carrier, so a systemic refusal cannot hold "Dialling…" on
+  screen) and `ringing: false` when it ends unseen: two frames at most per dial, to that agent's
+  socket only. The count is process memory (`AgencyDialer`'s `unansweredInARow`, a `TtlCache`), no database or Redis
+  work: counted only for a dial no customer answered (not one ended because the station stayed
+  gone, or cancelled by the customer ringing in), reset by the next campaign call the agent is
+  shown (`reserved`; an inbound or soft-phone call does not reset it), expired after 12 hours
+  untouched. A reconnect mid-ring gets `ready` with `state: available` (it said `reserved`, which
+  showed "Ringing — get ready" and "A call is coming through" for a call nobody had answered).
+  Early binding and wrap-up redials never send it, so neither client needs the flag
+  (`architecture.md`, "Dialer").
+- **Console and app.** The waiting screen says "Dialling a customer…" ("You’ll be connected as
+  soon as they answer.") while one rings, and "No answer from the last N numbers" once some went
+  unanswered; the console's rail says "Dialling a customer…" too. A 4 s client-side hold covers the
+  gap between one dial and the next, dropped at once on `reserved`, leaving available, a paused
+  campaign or a lost socket. A ringing dial outranks "Nothing due now" (with nothing due and
+  nothing ringing, both hide the count line); a paused campaign, a break, wrap-up and inbound
+  calls are unchanged. Malformed dial activity is dropped (the app keeps the rest of a `ready`).
+  The app's "Available for" timer no longer restarts at every hidden dial (each ends with
+  `agent_state: available`; it restarts only after a call the agent was shown), its headline is a
+  live region only while dialling, and its waiting hint no longer says the customer's details
+  appear before they pick up (false under late binding).
+- **Review (same day, three fresh-context reviewers).** Found and fixed: a mid-ring reconnect
+  showed a call coming in on both clients (`ready` said `reserved`); a carrier refusal was counted
+  as "No answer", and a dial refused before the carrier was announced; the contract and docs
+  overstated when the count resets; tests that sent frames the server never sends; missing
+  cases (the real inbound and carrier-refusal sequences, a dial answered or ended inside the dial
+  call, a reconnect mid-ring, a queued break mid-ring). Accepted, not changed: the console's
+  status rail re-announces "Dialling a customer…" once per dial when dials are more than 4 s
+  apart (`useDialActivityDisplay.ts`).
+- **Simplify pass (same day).** The tally class became the shared `TtlCache` (12 h TTL, LRU cap);
+  the close of a hidden dial moved into `forgetAttempt`, the one way an attempt is dropped, and
+  the count's reset into `sendReserved`, the one way a `reserved` is sent; the console hook's two
+  states became one, and one `waitingHeadline` serves the idle panel and the rail; the app's slot
+  rule is one `StationState.dialSlotOpen` for the view and the gap hold, and `DialActivity`
+  refuses a negative count as the console does. Left as follow-ups: `agent_state.since` restarted
+  by the release after every unanswered dial (the server-side fix would also mend the supervisor
+  floor's time in state and let the app drop `callShownSinceStated`); the HTTP break and
+  soft-phone responses still saying `reserved` during a hidden dial (no client shows it); the
+  display rules and the 4 s hold kept by hand in both clients, with no shared fixture pinning them.
+
+Every new guard was mutation-checked (the reset at the bind, the close not repeated after a
+`reserved`, the uncounted ends, the early-binding gate, `ready`, the count's expiry; the clients'
+clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
+carrier, browser or phone.
+
 ## Test counts
+
+**Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
+`ccr-43b095f3-7qzgsk` on `62ea1f6`, run on the branch's final tree (this entry changes docs only).
+Each package from inside its directory, one suite at a time, on a local Postgres 16 and Redis on
+the agency ports with no other run sharing them; the server's integration as two lanes run one
+after the other; `mpg123` and `sndfile-programs` installed. `pnpm lint` clean; `pnpm test:grafana`
+33, `pnpm test:release` 10 and `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to
+date (70 vocabularies, 2 label maps). `packages/contracts` 533 (15 files). `apps/server`: unit
+10058 passed + 1 expected fail (506 files; the tally's own suite went with the class, its expiry
+now one `late-binding.test.ts` case); rest lane 2868 passed, 9 expected fail, 2 skipped (259
+files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 6964 (373 files).
+`apps/mobile`: `flutter analyze` clean; 1939 (`flutter test`); `agency_wire` 679 (`dart test`).
+No failures in these runs. Earlier in the day, runs made while other suites ran beside them had
+one flake each (a soft-phone reconnect case in the rest lane, which passed alone, and an unnamed
+console test); neither recurred. Other packages untouched by the branch were not re-run.
 
 **Database hygiene, 2026-11-14 (after the PR review fixes).** Branch `claude-mgkvc/epic-shannon-lesp56`
 on `182fab4`, run on `560cfe5` (this entry's commit changes docs only). Each package from inside
