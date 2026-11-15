@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.12.0...mobile-v0.13.0) (2026-11-15)
+
+
+### Features
+
+* **server,console,mobile:** show "Dialling a customer…" while a hidden dial rings ([#88](https://github.com/sapieonic/magick-agency/issues/88)) ([fc2527c](https://github.com/sapieonic/magick-agency/commit/fc2527c8ef15021d5ba7b44aff06f4c3a8b0b2fb))
+
 ## [0.12.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.11.0...mobile-v0.12.0) (2026-11-13)
 
 
