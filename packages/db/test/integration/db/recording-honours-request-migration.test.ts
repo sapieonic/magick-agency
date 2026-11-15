@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0044_recording_honours_request.sql (RC1). globalSetup has applied every
+// Real Postgres: migrations/0043_recording_honours_request.sql (RC1). globalSetup has applied every
 // migration. Pins that its Up marks for an Insights recompute exactly the buckets of attempts whose
 // call holds a recording URL it did not ask for, writes nothing else (the URLs stay), and that
 // down then up runs.
@@ -16,9 +16,9 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const FILE = '0044_recording_honours_request.sql';
+const FILE = '0043_recording_honours_request.sql';
 
-/** Re-run 0044's Up (and every later migration's down and up around it). */
+/** Re-run 0043's Up (and every later migration's down and up around it). */
 async function rerun(): Promise<void> {
   const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
   await migrate('down', files.length - files.indexOf(FILE));
@@ -31,7 +31,7 @@ async function marks(): Promise<Array<{ campaign_id: string; bucket_start: strin
   return rows;
 }
 
-describe('0044 — recordings a call did not ask for', () => {
+describe('0043 — recordings a call did not ask for', () => {
   beforeEach(() => truncateAll());
 
   it("marks only the buckets of attempts whose call holds a recording it did not ask for, and keeps the URLs", async () => {

@@ -1580,7 +1580,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/table-storage-settings-migration.test.ts` (0038: exactly these autovacuum and fillfactor parameters on exactly these tables, down then up) | 2 |
 | `packages/db/test/integration/db/retention-purge-indexes-migration.test.ts` (0039: the two definitions, each purge read's plan, no plain `created_at` index, the refusal of an invalid pre-built index, down then up) | 6 |
 | `packages/db/test/integration/db/drop-duplicate-indexes-migration.test.ts` (0040: the seven gone, each lookup an index scan on its covering unique index, down then up) | 9 |
-| `packages/db/test/integration/db/recording-honours-request-migration.test.ts` (0044: only the buckets of attempts whose call holds a link it did not ask for are marked for a recount, the links kept, down then up) | 2 |
+| `packages/db/test/integration/db/recording-honours-request-migration.test.ts` (0043: only the buckets of attempts whose call holds a link it did not ask for are marked for a recount, the links kept, down then up) | 2 |
 | `packages/db/test/integration/db/inbound-ring-migration.test.ts` (0036, Mode B: the push devices table, its CHECKs and partial token indexes, the ring columns, the session's `ring_misses` and `away_ring_since`, each CHECKed list equal to its contract list, the down) | ~11 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the inbound reached trigger and its races, the summary's index and its plan, down and up) | 8 |
@@ -1601,7 +1601,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/ingest-dedupe-columns-migration.test.ts` | 6 |
-| `packages/db/test/integration/db/ingest-check-and-skipped-migration.test.ts` (0043) | 4 |
+| `packages/db/test/integration/db/ingest-check-and-skipped-migration.test.ts` (0042) | 4 |
 | `packages/db/test/integration/db/wrapup-redial-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/insights-foundation-migration.test.ts` | 8 |
 | `packages/db/test/integration/db/insights-pacing-history-migration.test.ts` | 6 |

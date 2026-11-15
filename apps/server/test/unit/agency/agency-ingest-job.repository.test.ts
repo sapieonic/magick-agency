@@ -271,7 +271,7 @@ describe('AgencyIngestJobRepository', () => {
       // three dialer-side columns, tier 1 names the two exact-count columns, tier 2 names none. A
       // database without them rejects the first two.
       mocks.query
-        .mockRejectedValueOnce(undefinedColumnError) // 0043's widest tier
+        .mockRejectedValueOnce(undefinedColumnError) // 0042's widest tier
         .mockRejectedValueOnce(undefinedColumnError)
         .mockRejectedValueOnce(undefinedColumnError)
         .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -318,7 +318,7 @@ describe('AgencyIngestJobRepository', () => {
       );
       (err as Error & { code: string }).code = '42703';
       mocks.query
-        .mockRejectedValueOnce(err) // 0043's widest tier
+        .mockRejectedValueOnce(err) // 0042's widest tier
         .mockRejectedValueOnce(err)
         .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
@@ -454,7 +454,7 @@ describe('AgencyIngestJobRepository', () => {
         // Two rejections to walk past the middle rung — see the ladder in
         // `writeWideningDown`.
         mocks.query
-          .mockRejectedValueOnce(undefinedColumnError()) // 0043's widest tier
+          .mockRejectedValueOnce(undefinedColumnError()) // 0042's widest tier
           .mockRejectedValueOnce(undefinedColumnError())
           .mockRejectedValueOnce(undefinedColumnError())
           .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -478,7 +478,7 @@ describe('AgencyIngestJobRepository', () => {
       it('keeps the count when only the lower-bound flag column is missing', async () => {
         // The rung that stops the window producing a confident wrong zero.
         mocks.query
-          .mockRejectedValueOnce(undefinedColumnError()) // 0043's widest tier
+          .mockRejectedValueOnce(undefinedColumnError()) // 0042's widest tier
           .mockRejectedValueOnce(undefinedColumnError())
           .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 

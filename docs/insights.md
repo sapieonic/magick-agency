@@ -111,7 +111,7 @@ own expressions:
 | redials | placed (`redial_number > 0`), connected, chains at `AGENCY_WRAPUP_REDIAL_LIMIT` |
 | agent retries | `agent_reopened` and `agent_manual` dials, and their connected |
 | overrides used | `override_applied` non-empty; the granting code is the contact's latest dispositioned attempt before the dial |
-| recorded | `connected` calls whose `agency_calls` row (`webrtc_call_id`) asked for a recording and has a `recording_url` (`hasRecordingSql`, RC1: a link the carrier sent for a call that did not ask is not a recording; 0044 recounted the buckets that held one) |
+| recorded | `connected` calls whose `agency_calls` row (`webrtc_call_id`) asked for a recording and has a `recording_url` (`hasRecordingSql`, RC1: a link the carrier sent for a call that did not ask is not a recording; `0043_recording_honours_request.sql` recounted the buckets that held one) |
 | callbacks booked | `callback_at` set, at the booking dial's bucket |
 | human connects | `HUMAN_CONNECT_ATTEMPT_SQL` (`sql-fragments.ts`): conversations coded neither `voicemail` nor `no_disposition`; a stored measure on buckets, agents and the `caller_id` / `local_hour` facets (0014); the connect rate's numerator |
 | no outcome | conversations coded NULL or `no_disposition` (`/stats` `unclassified_connects`), by wrap-up resolution |

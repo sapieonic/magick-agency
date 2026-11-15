@@ -511,7 +511,7 @@ contact import check and re-import (IM)".
   import per campaign (409 `import_in_progress`). Reasons rewritten in plain words; the downloads
   in file order with the phone cell as written. A missing upload fails `upload_missing`; a missing
   download is 410.
-- **Migration** `0043_ingest_check_and_skipped.sql`: `skipped`, the skipped download, `dnc_by_scope`,
+- **Migration** `0042_ingest_check_and_skipped.sql`: `skipped`, the skipped download, `dnc_by_scope`,
   `rejected_sample`, `check_job_id` (unique).
 - **Contract:** `AgencyIngestJob` gains `skipped`, `dnc_by_scope`, `rejected_sample`, the skipped
   download, `check_job_id`, `import_job_id`, `check_expires_at`; `AgencyIngestImportResponse`;
@@ -1637,7 +1637,7 @@ recordings often would not play ("We could not reach the service that stores thi
   (`packages/db/src/utils/recording-request.ts`): call detail and playback (campaign, soft phone,
   signed), customer history, Insights, the agent workbook's Recorded column, the analysis queue
   and runner. Rows from before keep their links (nothing deleted) and read as not recorded;
-  `0044_recording_honours_request.sql` has Insights recount their buckets; an opt-in, reviewed SQL
+  `0043_recording_honours_request.sql` has Insights recount their buckets; an opt-in, reviewed SQL
   to null them is in `operations.md`, and the audio stays at VoiceLink.
 - **Will not play (RC3, RC4).** Every recording, VoiceLink's included, reaches the console through
   our proxy, and any answer but 403/404 reads "could not reach". Each such answer now logs a

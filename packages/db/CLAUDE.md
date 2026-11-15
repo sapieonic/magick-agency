@@ -16,8 +16,8 @@ before writing a repository or a migration.
   ring: the agent app's push devices, the ring on the inbound spine, and the away break's misses
   and start on the session, 0037 the partial index of the sessions on that away break, 0038 per-table autovacuum thresholds
   and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped, 0041
-  promise to pay: the promise on each call table and the contact's latest one, 0043 the
-  roster import's check-then-import and skipped rows, 0044 no schema change: the Insights buckets of
+  promise to pay: the promise on each call table and the contact's latest one, 0042 the
+  roster import's check-then-import and skipped rows, 0043 no schema change: the Insights buckets of
   calls holding a recording they did not ask for are recounted). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one

@@ -1,4 +1,4 @@
--- 0043_ingest_check_and_skipped.sql — a roster import's check-then-import, and the rows it skips.
+-- 0042_ingest_check_and_skipped.sql — a roster import's check-then-import, and the rows it skips.
 --
 -- Rulings IM1–IM7 (docs/decisions.md, "Rulings of 2026-11-15: contact import check and
 -- re-import (IM)"). On `agency_ingest_jobs`:

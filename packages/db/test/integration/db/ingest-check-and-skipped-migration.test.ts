@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0043_ingest_check_and_skipped.sql. globalSetup has applied every
+// Real Postgres: migrations/0042_ingest_check_and_skipped.sql. globalSetup has applied every
 // migration. The server writes and reads the columns (agency-ingest-job.repository.ts); this
 // pins their shapes and defaults (a job written without them reads as one that skipped
 // nothing), the shape CHECKs, the one-import-per-check unique index, and down then up.
@@ -18,7 +18,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const FILE = '0043_ingest_check_and_skipped.sql';
+const FILE = '0042_ingest_check_and_skipped.sql';
 const COLUMNS = ['skipped', 'skipped_s3_key', 'skipped_row_count', 'skipped_truncated', 'dnc_by_scope', 'rejected_sample', 'check_job_id'];
 
 async function insertJob(extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -34,7 +34,7 @@ async function insertJob(extra: Record<string, unknown> = {}): Promise<Record<st
   return rows[0]!;
 }
 
-describe('0043 — agency_ingest_jobs: the check, the skipped rows', () => {
+describe('0042 — agency_ingest_jobs: the check, the skipped rows', () => {
   it('adds the columns with defaults that read as "skipped nothing"', async () => {
     const { rows } = await pool().query<{ column_name: string; data_type: string; is_nullable: string; column_default: string | null }>(
       `SELECT column_name, data_type, is_nullable, column_default

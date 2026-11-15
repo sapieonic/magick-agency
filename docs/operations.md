@@ -736,7 +736,7 @@ audio exists at VoiceLink even though we neither store nor show it, so raise it 
 
 **Rows from before RC1.** A call row may still hold a link it did not ask for. Every read now
 treats it as "not recorded" (call detail, playback, the soft phone's and customer history's
-recording state, Insights, report workbooks, analysis), and `0044_recording_honours_request.sql` had Insights recount
+recording state, Insights, report workbooks, analysis), and `0043_recording_honours_request.sql` had Insights recount
 the buckets it touched. Nothing was deleted. To remove the links too, an operator may run, after
 a review and a backup (`DEPLOYMENT.md` section 12):
 

@@ -1097,7 +1097,7 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
     rows_read: Number(job.rows_read),
     accepted: Number(job.accepted),
     rejected: Number(job.rejected),
-    // IM3: accepted + skipped + rejected = rows_read. `?? 0` for a row read before 0043.
+    // IM3: accepted + skipped + rejected = rows_read. `?? 0` for a row read before 0042.
     skipped: Number(job.skipped ?? 0),
     duplicates: Number(job.duplicates),
     rejected_by_reason: job.rejected_by_reason,

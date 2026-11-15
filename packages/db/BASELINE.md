@@ -1458,7 +1458,7 @@ columns (the promises are lost; outcomes stay). **Tests**:
 `test/integration/db/promise-to-pay-migration.test.ts` (column types, each CHECK, NOT VALID, the
 index definition, down then up) and the down → up inventory suite.
 
-### 0043 — `migrations/0043_ingest_check_and_skipped.sql`
+### 0042 — `migrations/0042_ingest_check_and_skipped.sql`
 
 Contact import, check then import, and the rows a re-import skips (rulings IM1–IM7). On
 **`agency_ingest_jobs`**: `skipped` `BIGINT NOT NULL DEFAULT 0` (rows the campaign already held,
@@ -1473,12 +1473,12 @@ ON DELETE SET NULL` (the check an import was started from). CHECKs
 `ck_agency_ingest_jobs_rejected_sample` (an array). **`uq_agency_ingest_jobs_check_job`** on
 `(check_job_id) WHERE check_job_id IS NOT NULL`: one check, one import. Every existing row reads
 as an import that skipped nothing. Written only through the widest tier of the repository's write
-ladders, so the server runs on a schema without them; a server before 0043 names none of them.
+ladders, so the server runs on a schema without them; a server before 0042 names none of them.
 **Down** drops the index, the CHECKs and the columns. **Tests**:
 `test/integration/db/ingest-check-and-skipped-migration.test.ts` (shapes and defaults, the CHECKs,
 the unique index and the `SET NULL`, down then up) and the down → up inventory suite.
 
-### 0044 — `migrations/0044_recording_honours_request.sql`
+### 0043 — `migrations/0043_recording_honours_request.sql`
 
 No schema change (RC1). From this release a call whose `recording_requested` is false has no
 recording: `agency-call.repository.ts`'s `update` stores a non-null `recording_url` only on a row

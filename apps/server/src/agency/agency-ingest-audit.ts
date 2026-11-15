@@ -87,7 +87,7 @@ function writeRosterUploadEnded(job: AgencyIngestJobRecord): void {
       rejected: Number(job.rejected),
       duplicates: Number(job.duplicates),
       // Rows already in the campaign (IM3), only when there were any, so a row written
-      // before 0043, or an import that skipped nothing, reads as it always did.
+      // before 0042, or an import that skipped nothing, reads as it always did.
       ...(Number(job.skipped ?? 0) > 0 ? { skipped: Number(job.skipped) } : {}),
       ...(job.error_code ? { error_code: job.error_code } : {}),
       ...(job.replace_superseded_contacts !== null && job.replace_superseded_contacts !== undefined

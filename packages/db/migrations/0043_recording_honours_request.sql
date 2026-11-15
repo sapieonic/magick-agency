@@ -1,4 +1,4 @@
--- 0044_recording_honours_request.sql — Insights recounts "recorded" without the recordings a
+-- 0043_recording_honours_request.sql — Insights recounts "recorded" without the recordings a
 -- call did not ask for (RC1).
 --
 -- From this release a call that did not ask for a recording (`agency_calls.recording_requested`

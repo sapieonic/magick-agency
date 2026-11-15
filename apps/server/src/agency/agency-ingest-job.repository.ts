@@ -165,9 +165,9 @@ export interface AgencyIngestJobRecord {
    */
   core_rejected_duplicate_rows_may_undercount: boolean;
   /**
-   * 0043 (IM3): rows the campaign already held, skipped rather than rejected.
+   * 0042 (IM3): rows the campaign already held, skipped rather than rejected.
    * `accepted + skipped + rejected = rows_read`. Optional on the type because a row
-   * read from a schema before 0043 has no such key; readers default it.
+   * read from a schema before 0042 has no such key; readers default it.
    */
   skipped?: string;
   skipped_s3_key?: string | null;
@@ -239,7 +239,7 @@ export interface IngestProgress {
   rows_read: number;
   accepted: number;
   rejected: number;
-  /** Rows the campaign already held (IM3); 0043's column, written by the widest ladder tier only. */
+  /** Rows the campaign already held (IM3); 0042's column, written by the widest ladder tier only. */
   skipped?: number;
   duplicates: number;
   bytes_read: number;
@@ -418,7 +418,7 @@ export class AgencyIngestJobRepository {
     // (the 0031 Down fails a combined-key job that has not finished instead).
     const optional: [string, unknown][] = [];
     if (input.mode === 'replace') optional.push(['mode', input.mode]);
-    // 0043: only an import committed from a check names it.
+    // 0042: only an import committed from a check names it.
     if (input.check_job_id) optional.push(['check_job_id', input.check_job_id]);
     if (input.dedupe_columns?.length) {
       optional.push(['dedupe_columns', input.dedupe_columns]);
@@ -630,7 +630,7 @@ export class AgencyIngestJobRepository {
                 duplicates = $5, bytes_read = $6, chunks_sent = $7`;
 
     await this.writeWideningDown([
-      // 0043's `skipped` too. Without it, the tiers below write what they always did.
+      // 0042's `skipped` too. Without it, the tiers below write what they always did.
       {
         sql: `UPDATE agency_ingest_jobs
             SET ${BASE_SET},
@@ -687,7 +687,7 @@ export class AgencyIngestJobRepository {
       rejected_s3_key: string | null;
       rejected_row_count: number;
       rejected_truncated: boolean;
-      /** 0043 (IM2, IM3, IM5). Written by the widest tier only. */
+      /** 0042 (IM2, IM3, IM5). Written by the widest tier only. */
       skipped_s3_key?: string | null;
       skipped_row_count?: number;
       skipped_truncated?: boolean;
