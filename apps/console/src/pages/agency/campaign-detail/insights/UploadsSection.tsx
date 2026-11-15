@@ -99,6 +99,15 @@ export function UploadsSection({
         ) : '—',
       csv: (u) => (u.has_rejected_export ? `/proxy/agency/ingest/jobs/${u.job_id}/rejected.csv` : null),
     },
+    // Rows already in the campaign, skipped by a re-import (IM3): accepted + this +
+    // rejected = rows read. Last, so the table's CSV keeps every earlier column where it was.
+    {
+      key: 'skipped',
+      header: 'Already in the campaign',
+      numeric: true,
+      render: (u) => formatCount(u.skipped ?? 0),
+      csv: (u) => u.skipped ?? 0,
+    },
   ];
 
   return (

@@ -53,7 +53,7 @@ export function rejectedCsvHeader(phoneColumn: string, contextColumns: string[])
 }
 
 export function rejectedCsvRow(
-  rejection: AgencyIngestRejection,
+  rejection: Pick<AgencyIngestRejection, 'row_number' | 'raw_value' | 'context' | 'reason'>,
   contextColumns: string[],
 ): string {
   return toCsvLine([

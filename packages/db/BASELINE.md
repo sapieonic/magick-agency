@@ -1438,6 +1438,26 @@ stays (0035 keeps it for rollback). **Down** re-creates them as 0001 defined the
 `test/integration/db/drop-duplicate-indexes-migration.test.ts` (gone, each lookup's plan on its
 covering index, down then up) and the down → up inventory suite.
 
+### 0043 — `migrations/0043_ingest_check_and_skipped.sql`
+
+Contact import, check then import, and the rows a re-import skips (rulings IM1–IM7). On
+**`agency_ingest_jobs`**: `skipped` `BIGINT NOT NULL DEFAULT 0` (rows the campaign already held,
+skipped rather than rejected: `accepted + skipped + rejected = rows_read`), `skipped_s3_key`
+`TEXT NULL`, `skipped_row_count` `INTEGER NOT NULL DEFAULT 0`, `skipped_truncated` `BOOLEAN NOT
+NULL DEFAULT FALSE` (the skipped-rows download, as for the rejected rows), `dnc_by_scope` `JSONB NOT
+NULL DEFAULT '{}'` (Do Not Call rejections by the widest scope that suppressed them),
+`rejected_sample` `JSONB NOT NULL DEFAULT '[]'` (the first 20 rejected rows for the review screen:
+line, column, the phone cell, code, reason), and `check_job_id` `UUID NULL` → `agency_ingest_jobs(id)
+ON DELETE SET NULL` (the check an import was started from). CHECKs
+`ck_agency_ingest_jobs_skipped` (non-negative), `ck_agency_ingest_jobs_dnc_by_scope` (an object),
+`ck_agency_ingest_jobs_rejected_sample` (an array). **`uq_agency_ingest_jobs_check_job`** on
+`(check_job_id) WHERE check_job_id IS NOT NULL`: one check, one import. Every existing row reads
+as an import that skipped nothing. Written only through the widest tier of the repository's write
+ladders, so the server runs on a schema without them; a server before 0043 names none of them.
+**Down** drops the index, the CHECKs and the columns. **Tests**:
+`test/integration/db/ingest-check-and-skipped-migration.test.ts` (shapes and defaults, the CHECKs,
+the unique index and the `SET NULL`, down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

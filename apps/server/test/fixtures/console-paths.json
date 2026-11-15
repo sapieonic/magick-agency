@@ -185,6 +185,20 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/ingest/jobs/:id/skipped.csv",
+      "source": "apps/console/src/api/agencyCampaigns.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/ingest/jobs/:id/import",
+      "source": "apps/console/src/api/agencyCampaigns.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns",
       "source": "apps/console/src/api/agencyCampaigns.ts",
       "status": "served",

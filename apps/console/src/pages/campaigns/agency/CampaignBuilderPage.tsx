@@ -4,7 +4,7 @@ import { Upload } from 'lucide-react';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
 import { ColumnMapper } from './ColumnMapper';
-import { IngestSummary } from './IngestSummary';
+import { IngestSummary, ReviewNextSteps } from './IngestSummary';
 import { CampaignBehaviourSection } from './CampaignBehaviourSection';
 import { CallerIdPicker } from '../../agency/CallerIdPicker';
 import { CampaignCarrierField } from '../../../components/agency/CampaignCarrierField';
@@ -234,6 +234,10 @@ export default function CampaignBuilderPage() {
     setPhase,
     running,
     finished,
+    reviewing,
+    checkJob,
+    importing,
+    importChecked,
     upload,
     analysis,
     mapping,
@@ -247,9 +251,14 @@ export default function CampaignBuilderPage() {
     startIngest,
     onCancelIngest,
     onDownloadRejected,
+    onDownloadSkipped,
+    reset: resetUpload,
   } = useRosterIngest(tenantId ?? undefined, accountId ?? undefined, {
     source: 'builder',
     resolveCampaignId: ensureCampaign,
+    // A check never creates the draft; once the draft exists (a second file), it is
+    // compared with the draft's roster like any other campaign's.
+    peekCampaignId: () => campaignId ?? undefined,
     // Hero fields are campaign config, not ingest config — they are what the
     // Agent Console reads to decide which fields get the big type.
     onIngestStarted: async (id, currentMapping) => {
@@ -647,25 +656,29 @@ export default function CampaignBuilderPage() {
                         state={mapping}
                         onChange={setMapping}
                         fileName={upload?.file_name ?? ''}
-                        disabled={phase === 'ingesting'}
+                        // Locked once a check or import has run: the review's Import
+                        // uses the mapping that was checked, so editing it here would
+                        // show one mapping and import another. "Change the column
+                        // mapping" re-opens it, and the file is checked again.
+                        disabled={phase !== 'mapping'}
                       />
                       {phase === 'mapping' ? (
                         <div className={styles.ingestActions}>
                           <button
                             type="button"
-                            className="btn-secondary"
+                            className="btn-primary"
                             disabled={mappingBlockReason(mapping) !== null}
                             onClick={() => void startIngest(true)}
                           >
-                            Check the file first
+                            Check the file
                           </button>
                           <button
                             type="button"
-                            className="btn-primary"
+                            className="btn-secondary"
                             disabled={mappingBlockReason(mapping) !== null || !basicsReady}
                             onClick={() => void startIngest(false)}
                           >
-                            Import contacts
+                            Import without checking
                           </button>
                           {!basicsReady ? (
                             <span className={styles.blockReason}>
@@ -694,7 +707,7 @@ export default function CampaignBuilderPage() {
                           : 'Starting…'}
                       </p>
                       <button type="button" className="btn-secondary" onClick={() => void onCancelIngest()}>
-                        Stop the import
+                        {job?.dry_run ? 'Stop the check' : 'Stop the import'}
                       </button>
                     </div>
                   ) : null}
@@ -708,11 +721,30 @@ export default function CampaignBuilderPage() {
                       ) : null}
                       <IngestSummary
                         job={job}
+                        checkJob={checkJob}
                         onBackToMapping={backToMapping}
                         onDownloadRejected={() => void onDownloadRejected()}
+                        onDownloadSkipped={() => void onDownloadSkipped()}
                         downloading={downloading}
                         downloadError={downloadError}
-                      />
+                      >
+                        {reviewing ? (
+                          <ReviewNextSteps
+                            check={job}
+                            importing={importing}
+                            blockReason={
+                              basicsReady
+                                ? null
+                                : name.trim().length === 0
+                                  ? 'Name the campaign first.'
+                                  : 'Pick at least one caller ID first.'
+                            }
+                            onImport={() => void importChecked()}
+                            onChangeMapping={backToMapping}
+                            onUploadCorrected={resetUpload}
+                          />
+                        ) : null}
+                      </IngestSummary>
                     </>
                   ) : null}
                 </div>

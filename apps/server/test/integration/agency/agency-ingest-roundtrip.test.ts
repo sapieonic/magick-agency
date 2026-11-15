@@ -110,6 +110,9 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(Number(done.rejected)).toBe(5);
     expect(Number(done.duplicates)).toBe(1);
     expect(done.rejected_by_reason).toMatchObject({ dnc_suppressed: 3, invalid_phone: 1 });
+    // IM5: which list each one is on, by the real `dnc_entries` rows.
+    expect(done.dnc_by_scope).toEqual({ tenant: 1, account: 1, campaign: 1 });
+    expect(Number(done.skipped)).toBe(0);
     expect(Number(done.core_rejected_duplicate_rows)).toBe(0);
     expect(done.chunks_sent).toBe(1);
 
@@ -121,12 +124,18 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(done.rejected_s3_key).toBe(rejectedKey);
     const csv = s3.uploads.get(rejectedKey)!;
     expect(csv.split('\n')[0]).toBe('_row,Mobile,Name,_reason');
-    expect(csv.match(/On the Do Not Call list/g)).toHaveLength(3);
-    expect(csv).toContain("'not-a-number' is not a valid phone number.");
-    expect(csv).toContain('already appears earlier in this file');
-    for (const phone of ['+919876543002', '+919876543003', '+919876543004', 'not-a-number']) {
+    expect(csv.match(/This number is on the Do Not Call list/g)).toHaveLength(3);
+    expect(csv).toContain('3,+919876543002,Bhim,"This number is on the Do Not Call list for every campaign in your organisation,');
+    expect(csv).toContain('4,9876543003,Chitra,"This number is on the Do Not Call list for every campaign in this account,');
+    expect(csv).toContain('5,9876543004,Dev,"This number is on the Do Not Call list for this campaign,');
+    expect(csv).toContain("'not-a-number' is not a phone number we can dial.");
+    expect(csv).toContain('+919876543001 is already on row 2 of this file');
+    // The phone cell as the file has it, so the operator fixes the text they wrote.
+    for (const phone of ['+919876543002', '9876543003', '9876543004', 'not-a-number']) {
       expect(csv).toContain(phone);
     }
+    // In file order, whatever order the rows were settled in.
+    expect(csv.trim().split('\n').slice(1).map((line) => Number(line.split(',')[0]))).toEqual([3, 4, 5, 9, 10]);
     expect(csv).not.toContain('+919876543005');
   });
 
@@ -149,7 +158,7 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(rows.map((r) => r.idempotency_key).sort()).toEqual([rosterChunkKey(job.id, 0), rosterChunkKey(job.id, 1)]);
   });
 
-  it('a second upload of the same file under a new job adds no duplicate people and reports what the roster refused', async () => {
+  it('a second upload of the same file under a new job adds no duplicate people and says they were skipped (IM3)', async () => {
     await agencyIngestService.run({ job: await newJob(), campaignId });
     const again = await newJob();
     await agencyIngestService.run({ job: again, campaignId });
@@ -157,8 +166,12 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(await contactPhones()).toHaveLength(4);
     const done = (await agencyIngestJobRepository.findById(again.id, TENANT))!;
     expect(done.status).toBe('completed');
-    expect(Number(done.accepted)).toBe(4); // the operator's file still had four dialable rows
-    expect(Number(done.core_rejected_duplicate_rows)).toBe(4); // and the roster refused all four verbatim repeats
+    // The four imported the first time are skipped, not sent and refused: the summary's
+    // own numbers say so, rather than an "accepted" the roster then turned down.
+    // Row 10 repeats row 2's number: in the campaign too, so skipped with it.
+    expect([done.accepted, done.skipped, done.rejected, done.rows_read]).toEqual(['0', '5', '4', '9']);
+    expect(Number(done.core_rejected_duplicate_rows)).toBe(0);
+    expect(done.skipped_row_count).toBe(5);
   });
 
   describe('duplicates on a chosen column, through to agency_contacts', () => {
@@ -191,7 +204,7 @@ describe('agency ingest round trip on real Postgres', () => {
       expect(await loansOn('+919876543102')).toEqual([]);
 
       const csv = s3.uploads.get(rejectedExportKey(TENANT, job.id))!;
-      expect(csv).toContain('4,9876543102,Ravi,ln-001,Duplicate Loan No of an earlier row in this file.');
+      expect(csv).toContain('4,9876543102,Ravi,ln-001,"Same Loan No as row 2 of this file, so this row was left out.');
     });
 
     it('the same file deduped on the phone keeps one contact per number, as before', async () => {

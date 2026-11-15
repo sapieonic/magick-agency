@@ -15,7 +15,8 @@ before writing a repository or a migration.
   one live session per agent across tenants and the device that holds the station, 0036 Mode B's
   ring: the agent app's push devices, the ring on the inbound spine, and the away break's misses
   and start on the session, 0037 the partial index of the sessions on that away break, 0038 per-table autovacuum thresholds
-  and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped). node-pg-migrate,
+  and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped, 0043 the
+  roster import's check-then-import and skipped rows). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

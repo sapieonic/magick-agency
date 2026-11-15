@@ -7,7 +7,7 @@ import { useRosterIngest } from '../../hooks/useRosterIngest';
 import { hasPermission } from '../../utils/permissions';
 import { mappingBlockReason } from '../../utils/agencyColumnMapping';
 import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
-import { IngestSummary } from '../campaigns/agency/IngestSummary';
+import { IngestSummary, ReviewNextSteps } from '../campaigns/agency/IngestSummary';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignWorkspace, type CampaignWorkspaceSection } from './campaign-detail/CampaignWorkspace';
@@ -82,6 +82,10 @@ function AddContactsSection({
     setPhase,
     running,
     finished,
+    reviewing,
+    checkJob,
+    importing,
+    importChecked,
     upload,
     analysis,
     mapping,
@@ -94,9 +98,12 @@ function AddContactsSection({
     startIngest,
     onCancelIngest,
     onDownloadRejected,
+    onDownloadSkipped,
     reset,
   } = useRosterIngest(tenantId ?? undefined, accountId ?? undefined, {
     source: 'top_up',
+    // A check compares the file with this campaign's roster and its Do Not Call list.
+    peekCampaignId: useCallback(() => id, [id]),
     /**
      * Already known — no draft to create, unlike the builder. But re-read the
      * campaign first.
@@ -218,19 +225,19 @@ function AddContactsSection({
                 <div className={styles.actions}>
                   <button
                     type="button"
-                    className="btn-secondary"
+                    className="btn-primary"
                     onClick={() => void startIngest(true)}
                     disabled={mappingBlock !== null}
                   >
-                    Check without importing
+                    Check the file
                   </button>
                   <button
                     type="button"
-                    className="btn-primary"
+                    className="btn-secondary"
                     onClick={() => void startIngest(false)}
                     disabled={mappingBlock !== null}
                   >
-                    Add to campaign
+                    Import without checking
                   </button>
                 </div>
               )}
@@ -252,25 +259,43 @@ function AddContactsSection({
                   : 'Starting…'}
               </p>
               <button type="button" className="btn-secondary" onClick={() => void onCancelIngest()}>
-                Stop the import
+                {job?.dry_run ? 'Stop the check' : 'Stop the import'}
               </button>
             </div>
           ) : null}
 
           {finished && job ? (
             <>
+              {job.dry_run ? (
+                <p className={styles.checkNote} data-testid="dry-run-note">
+                  This was a check: nothing has been imported yet.
+                </p>
+              ) : null}
               <IngestSummary
                 job={job}
+                checkJob={checkJob}
                 onBackToMapping={() => setPhase('mapping')}
                 onDownloadRejected={() => void onDownloadRejected()}
+                onDownloadSkipped={() => void onDownloadSkipped()}
                 downloading={downloading}
                 downloadError={downloadError}
-              />
-              <div className={styles.actions}>
-                <button type="button" className="btn-secondary" onClick={reset}>
-                  Add another file
-                </button>
-              </div>
+              >
+                {reviewing ? (
+                  <ReviewNextSteps
+                    check={job}
+                    importing={importing}
+                    onImport={() => void importChecked()}
+                    onChangeMapping={() => setPhase('mapping')}
+                    onUploadCorrected={reset}
+                  />
+                ) : (
+                  <div className={styles.actions}>
+                    <button type="button" className="btn-secondary" onClick={reset}>
+                      {job.dry_run ? 'Upload a corrected file' : 'Add another file'}
+                    </button>
+                  </div>
+                )}
+              </IngestSummary>
             </>
           ) : null}
         </>

@@ -23,6 +23,10 @@ const mocks = vi.hoisted(() => ({
     create: vi.fn(),
     findById: vi.fn(),
     requestCancel: vi.fn(),
+    // An import (not a check) goes through the exclusive create (IM7); in these
+    // cases it creates, through `create`, so one mock records every job written.
+    createExclusive: vi.fn(),
+    findImportOfCheck: vi.fn(),
   },
   serviceRun: vi.fn().mockResolvedValue(undefined),
   supersedeRoster: vi.fn(),
@@ -40,10 +44,13 @@ vi.mock('../../../src/storage/s3.js', () => ({
   getFileStream: mocks.getFileStream,
   getFile: mocks.getFileBuffer,
   uploadFile: mocks.uploadFile,
+  isS3NotFound: (err: { name?: string }) => err?.name === 'NoSuchKey' || err?.name === 'NotFound',
 }));
 vi.mock('../../../src/agency/agency-ingest-job.repository.js', () => ({
   agencyIngestJobRepository: mocks.repo,
 }));
+mocks.repo.createExclusive.mockImplementation(async (input: unknown) => ({ outcome: 'created', job: await mocks.repo.create(input) }));
+mocks.repo.findImportOfCheck.mockResolvedValue(null);
 vi.mock('../../../src/agency/agency-ingest.service.js', () => ({
   agencyIngestService: { run: mocks.serviceRun },
 }));
@@ -2354,6 +2361,9 @@ describe('every campaign route carries its RBAC permission', () => {
     ['get', '/ingest/jobs/:id', 'agency.campaigns.read'],
     ['post', '/ingest/jobs/:id/cancel', 'agency.campaigns.write'],
     ['get', '/ingest/jobs/:id/rejected.csv', 'agency.campaigns.read'],
+    // IM2, IM3: import a finished check, and the skipped rows' download.
+    ['post', '/ingest/jobs/:id/import', 'agency.campaigns.write'],
+    ['get', '/ingest/jobs/:id/skipped.csv', 'agency.campaigns.read'],
     ['post', '/ingest/upload', 'agency.campaigns.write'],
     // Destructive, and registered only when `AGENCY_ROSTER_REPLACE_ENABLED` is
     // set — but the guard is asserted from the SOURCE, so the flag does not

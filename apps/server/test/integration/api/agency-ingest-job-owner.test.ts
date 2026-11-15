@@ -111,6 +111,9 @@ describe('POST /proxy/agency/ingest/jobs — the job is stamped with the proven 
     for (const headers of [{ 'x-account-id': account }, {}] as Array<Record<string, string>>) {
       const res = await start({ campaign_id: own }, headers);
       expect(res.statusCode, res.body).toBe(202);
+      // The run is stubbed, so the job would stay `pending` and hold the campaign's one
+      // live import (IM7); finish it as a real run would before the next start.
+      await getTestPool().query(`UPDATE agency_ingest_jobs SET status = 'completed' WHERE status = 'pending'`);
     }
     expect(await jobs()).toEqual([
       { account_id: account, campaign_id: own },

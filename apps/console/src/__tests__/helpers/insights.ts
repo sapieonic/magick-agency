@@ -434,6 +434,7 @@ export function uploads(over: Partial<AgencyInsightsUploads> = {}): AgencyInsigh
         duplicates: 96,
         dedupe_columns: ['Loan No'],
         has_rejected_export: true,
+        skipped: 0,
       },
     ],
     generated_at: '2026-11-04T10:12:08.000Z',

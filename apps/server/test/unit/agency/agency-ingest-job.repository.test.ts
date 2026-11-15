@@ -271,6 +271,7 @@ describe('AgencyIngestJobRepository', () => {
       // three dialer-side columns, tier 1 names the two exact-count columns, tier 2 names none. A
       // database without them rejects the first two.
       mocks.query
+        .mockRejectedValueOnce(undefinedColumnError) // 0043's widest tier
         .mockRejectedValueOnce(undefinedColumnError)
         .mockRejectedValueOnce(undefinedColumnError)
         .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -290,13 +291,13 @@ describe('AgencyIngestJobRepository', () => {
         rejected_truncated: false,
       });
 
-      expect(mocks.query).toHaveBeenCalledTimes(3);
-      const fallbackSql = sqlOf(2);
+      expect(mocks.query).toHaveBeenCalledTimes(4);
+      const fallbackSql = sqlOf(3);
       expect(fallbackSql).not.toContain('core_rejected_duplicate_rows');
       expect(fallbackSql).not.toContain('core_duplicate_source_rows');
       expect(fallbackSql).toContain("status = 'completed'");
       // 13 params: id + the 12 pre-existing columns, no $14/$15/$16.
-      expect(paramsOf(2)).toHaveLength(13);
+      expect(paramsOf(3)).toHaveLength(13);
     });
 
     it('keeps the COUNT in the 055-applied / 056-missing window', async () => {
@@ -317,6 +318,7 @@ describe('AgencyIngestJobRepository', () => {
       );
       (err as Error & { code: string }).code = '42703';
       mocks.query
+        .mockRejectedValueOnce(err) // 0043's widest tier
         .mockRejectedValueOnce(err)
         .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
@@ -335,14 +337,14 @@ describe('AgencyIngestJobRepository', () => {
         rejected_truncated: false,
       });
 
-      expect(mocks.query).toHaveBeenCalledTimes(2);
-      const middleSql = sqlOf(1);
+      expect(mocks.query).toHaveBeenCalledTimes(3);
+      const middleSql = sqlOf(2);
       expect(middleSql).toContain('core_rejected_duplicate_rows = $14');
       expect(middleSql).toContain('core_duplicate_source_rows = $15');
       expect(middleSql).not.toContain('may_undercount');
       // The count survives — that is the whole point of the rung.
-      expect(paramsOf(1)[13]).toBe(5000);
-      expect(paramsOf(1)).toHaveLength(15);
+      expect(paramsOf(2)[13]).toBe(5000);
+      expect(paramsOf(2)).toHaveLength(15);
     });
 
     it('fail truncates a runaway error message', async () => {
@@ -452,6 +454,7 @@ describe('AgencyIngestJobRepository', () => {
         // Two rejections to walk past the middle rung — see the ladder in
         // `writeWideningDown`.
         mocks.query
+          .mockRejectedValueOnce(undefinedColumnError()) // 0043's widest tier
           .mockRejectedValueOnce(undefinedColumnError())
           .mockRejectedValueOnce(undefinedColumnError())
           .mockResolvedValueOnce({ rows: [], rowCount: 1 });
@@ -463,18 +466,19 @@ describe('AgencyIngestJobRepository', () => {
           core_rejected_duplicate_rows_may_undercount: false,
         });
 
-        expect(mocks.query).toHaveBeenCalledTimes(3);
-        const fallbackSql = sqlOf(2);
+        expect(mocks.query).toHaveBeenCalledTimes(4);
+        const fallbackSql = sqlOf(3);
         expect(fallbackSql).not.toContain('core_rejected_duplicate_rows');
         expect(fallbackSql).not.toContain('core_duplicate_source_rows');
         expect(fallbackSql).toContain('rows_read = $2');
         // 7 params: id + the 6 pre-existing columns, no 8th/9th/10th.
-        expect(paramsOf(2)).toEqual(['job-1', 500, 500, 0, 0, 40, 1]);
+        expect(paramsOf(3)).toEqual(['job-1', 500, 500, 0, 0, 40, 1]);
       });
 
       it('keeps the count when only the lower-bound flag column is missing', async () => {
         // The rung that stops the window producing a confident wrong zero.
         mocks.query
+          .mockRejectedValueOnce(undefinedColumnError()) // 0043's widest tier
           .mockRejectedValueOnce(undefinedColumnError())
           .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
@@ -485,11 +489,11 @@ describe('AgencyIngestJobRepository', () => {
           core_rejected_duplicate_rows_may_undercount: true,
         });
 
-        expect(mocks.query).toHaveBeenCalledTimes(2);
-        const middleSql = sqlOf(1);
+        expect(mocks.query).toHaveBeenCalledTimes(3);
+        const middleSql = sqlOf(2);
         expect(middleSql).toContain('core_rejected_duplicate_rows = $8');
         expect(middleSql).not.toContain('may_undercount');
-        expect(paramsOf(1)).toEqual(['job-1', 500, 500, 0, 0, 40, 1, 250, [2, 3]]);
+        expect(paramsOf(2)).toEqual(['job-1', 500, 500, 0, 0, 40, 1, 250, [2, 3]]);
       });
 
       it('does NOT swallow an unrelated database error the same way', async () => {

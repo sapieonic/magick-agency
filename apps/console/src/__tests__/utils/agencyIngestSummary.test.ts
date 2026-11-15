@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildIngestSummary,
+  checkComparison,
+  dncNotice,
   terminalNotice,
   isTerminal,
   HIGH_REJECTION_RATIO,
@@ -41,6 +43,15 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     has_rejected_export: false,
     rejected_row_count: 0,
     rejected_truncated: false,
+    skipped: 0,
+    dnc_by_scope: {},
+    rejected_sample: [],
+    has_skipped_export: false,
+    skipped_row_count: 0,
+    skipped_truncated: false,
+    check_job_id: null,
+    import_job_id: null,
+    check_expires_at: null,
     error_code: null,
     error_message: null,
     created_by: '11111111-2222-4333-8444-555555555555',
@@ -114,7 +125,7 @@ describe('the summary reconciles against a spreadsheet', () => {
 
   it('states the identity in words, with the real numbers', () => {
     const summary = buildIngestSummary(OPERATOR_FILE);
-    expect(summary.reconciliationLine).toContain('11,712 accepted');
+    expect(summary.reconciliationLine).toContain('11,712 imported');
     expect(summary.reconciliationLine).toContain('769 rejected');
     expect(summary.reconciliationLine).toContain('12,481 rows read');
   });
@@ -367,5 +378,68 @@ describe('terminal notices', () => {
     expect(isTerminal('cancelled')).toBe(true);
     expect(isTerminal('pending')).toBe(false);
     expect(isTerminal('running')).toBe(false);
+  });
+});
+
+describe('re-import: rows already in the campaign are skipped, not rejected (IM3)', () => {
+  const REIMPORT = job({
+    rows_read: 10, accepted: 3, skipped: 5, rejected: 2, duplicates: 0,
+    rejected_by_reason: { invalid_phone: 2 },
+  });
+
+  it('adds imported + already in this campaign + rejected to the rows read', () => {
+    const summary = buildIngestSummary(REIMPORT);
+    expect(summary.counters.map((c) => [c.key, c.label, c.value])).toEqual([
+      ['rows_read', 'rows read', 10],
+      ['accepted', 'imported', 3],
+      ['skipped', 'already in this campaign', 5],
+      ['rejected', 'rejected', 2],
+    ]);
+    expect(summary.reconciles).toBe(true);
+    expect(summary.reconciliationLine).toBe('3 imported + 5 already in this campaign + 2 rejected = 10 rows read');
+    expect(summary.skippedNotice).toContain('5 rows are already in this campaign from an earlier import, so they were skipped');
+    // Skipped rows are not a rejection: the high-rejection warning reads the rejected only.
+    expect(summary.rejectionRatio).toBeCloseTo(0.2);
+  });
+
+  it('a check speaks in the future, and an import that skipped nothing shows three tiles as before', () => {
+    const check = buildIngestSummary({ ...REIMPORT, dry_run: true });
+    expect(check.counters.map((c) => c.label)).toEqual(['rows in the file', 'ready to import', 'already in this campaign', 'rejected']);
+    expect(check.skippedNotice).toContain('they will be skipped');
+    expect(check.reconciliationLine).toBe('3 ready + 5 already in this campaign + 2 rejected = 10 rows in the file');
+    expect(buildIngestSummary(job({ rows_read: 4, accepted: 4 })).counters.map((c) => c.key)).toEqual(['rows_read', 'accepted', 'rejected']);
+    // A job served before `skipped` existed reads as one that skipped nothing.
+    const legacy = { ...job({ rows_read: 4, accepted: 3, rejected: 1 }) } as Partial<AgencyIngestJob>;
+    delete legacy.skipped;
+    expect(buildIngestSummary(legacy as AgencyIngestJob).reconciles).toBe(true);
+  });
+
+  it('a stopped import says to import the same file again, since what landed is skipped', () => {
+    expect(terminalNotice(job({ status: 'cancelled', rows_read: 900, accepted: 500 })))
+      .toBe('Stopped. 500 of 900 rows read so far were imported. To add the rest, import the same file again: the rows already imported are skipped, not added twice.');
+    expect(terminalNotice(job({ status: 'cancelled', dry_run: true, rows_read: 900 }))).toContain('nothing was imported');
+  });
+});
+
+describe('the Do Not Call line names the list (IM5)', () => {
+  it('says how many are on which list, and that correcting the file does not import them', () => {
+    const notice = dncNotice(3, { tenant: 2, campaign: 1 }, false)!;
+    expect(notice).toContain('3 numbers are on the Do Not Call list (2 for every campaign in your organisation, 1 for this campaign only), so they were not imported.');
+    expect(notice).toContain('Correcting the file does not change this');
+    expect(dncNotice(1, { account: 1 }, true)).toContain('1 number is on the Do Not Call list (1 for every campaign in this account), so it will not be imported.');
+    expect(dncNotice(0, {}, false)).toBeNull();
+    // A job served before the scopes existed still gets the sentence, without the brackets.
+    expect(dncNotice(2, {}, false)).toContain('2 numbers are on the Do Not Call list, so they were not imported.');
+  });
+});
+
+describe('an import compared with its check (IM2)', () => {
+  it('says nothing when they agree, and explains the difference when they do not', () => {
+    const check = job({ dry_run: true, rows_read: 10, accepted: 8, skipped: 0, rejected: 2 });
+    expect(checkComparison(check, job({ rows_read: 10, accepted: 8, rejected: 2 }))).toBeNull();
+    expect(checkComparison(check, job({ rows_read: 10, accepted: 6, skipped: 2, rejected: 2 })))
+      .toContain('The check expected 8 to import; 6 were imported.');
+    // A stopped import is not compared: its numbers are partial by definition.
+    expect(checkComparison(check, job({ status: 'cancelled', accepted: 1 }))).toBeNull();
   });
 });

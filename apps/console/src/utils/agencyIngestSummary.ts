@@ -1,5 +1,6 @@
 import {
   dedupeKeyName,
+  type AgencyIngestDncScope,
   type AgencyIngestJob,
   type AgencyIngestReasonCode,
 } from '../types/agency-campaign';
@@ -38,9 +39,13 @@ import { combinationMatch } from './agencyColumnMapping';
  * upper bound presented as a fact.
  */
 
-/** A displayed counter. `addend` tiles sum to `rows_read`; breakdowns do not. */
+/**
+ * A displayed counter. `accepted`, `skipped` and `rejected` sum to `rows_read`
+ * (IM3); breakdowns do not. `skipped` is shown only when the job skipped any, so an
+ * import into an empty campaign reads as it always did.
+ */
 export interface IngestCounter {
-  key: 'rows_read' | 'accepted' | 'rejected';
+  key: 'rows_read' | 'accepted' | 'skipped' | 'rejected';
   label: string;
   value: number;
 }
@@ -72,10 +77,14 @@ export const REJECTION_LABELS: Record<AgencyIngestReasonCode, string> = {
 export const HIGH_REJECTION_RATIO = 0.2;
 
 export interface IngestSummaryModel {
-  /** The three tiles that genuinely reconcile. */
+  /** The tiles that genuinely reconcile: rows read, then its three (or two) parts. */
   counters: IngestCounter[];
-  /** True iff `accepted + rejected === rows_read`. */
+  /** True iff `accepted + skipped + rejected === rows_read`. */
   reconciles: boolean;
+  /** Rows the campaign already held (IM3): skipped, not rejected. */
+  skipped: number;
+  /** What a skipped row means, or null when nothing was skipped. */
+  skippedNotice: string | null;
   /**
    * Rendered under the tiles, always — an operator who cannot see the identity
    * has to trust it, and this screen exists so they do not have to.
@@ -152,7 +161,10 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
     // that reorders while an operator is reading it looks like the numbers moved.
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
 
-  const reconciles = accepted + rejected === rowsRead;
+  // `?? 0`: a job served before IM3 skipped nothing.
+  const skipped = job.skipped ?? 0;
+  const check = job.dry_run;
+  const reconciles = accepted + skipped + rejected === rowsRead;
   const rejectionRatio = rowsRead > 0 ? rejected / rowsRead : 0;
 
   // `?? 0` / `?? []`: The API serves these and defaults them
@@ -164,17 +176,29 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
 
   return {
     counters: [
-      { key: 'rows_read', label: 'rows read', value: rowsRead },
-      { key: 'accepted', label: 'accepted', value: accepted },
+      { key: 'rows_read', label: check ? 'rows in the file' : 'rows read', value: rowsRead },
+      { key: 'accepted', label: check ? 'ready to import' : 'imported', value: accepted },
+      ...(skipped > 0 ? [{ key: 'skipped' as const, label: 'already in this campaign', value: skipped }] : []),
       { key: 'rejected', label: 'rejected', value: rejected },
     ],
     reconciles,
+    skipped,
+    skippedNotice:
+      skipped > 0
+        ? `${formatCount(skipped)} ${skipped === 1 ? 'row is' : 'rows are'} already in this campaign from an earlier import, so ${
+          check ? (skipped === 1 ? 'it will be' : 'they will be') : (skipped === 1 ? 'it was' : 'they were')
+        } skipped. Nothing about ${skipped === 1 ? 'that contact' : 'those contacts'} changes, and ${
+          skipped === 1 ? 'it is' : 'they are'
+        } not an error. To call them again, start a retry campaign.`
+        : null,
     /**
      * Stated as the identity, with the real numbers in it. `duplicates` is named
      * on its own line below rather than inside this sum, because putting it here
      * is exactly the mistake the module header describes.
      */
-    reconciliationLine: `${formatCount(accepted)} accepted + ${formatCount(rejected)} rejected = ${formatCount(rowsRead)} rows read`,
+    reconciliationLine: `${formatCount(accepted)} ${check ? 'ready' : 'imported'} + ${
+      skipped > 0 ? `${formatCount(skipped)} already in this campaign + ` : ''
+    }${formatCount(rejected)} rejected = ${formatCount(rowsRead)} rows ${check ? 'in the file' : 'read'}`,
     duplicates: job.duplicates,
     duplicateMeaning:
       keyColumns.length > 1
@@ -183,10 +207,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
           ? `a ${dedupeKey} value that already appeared earlier in the file.`
           : 'a number that already appeared earlier in the file.',
     dncSuppressed,
-    dncNotice:
-      dncSuppressed > 0
-        ? `${formatCount(dncSuppressed)} ${dncSuppressed === 1 ? 'number is' : 'numbers are'} on your Do Not Call list and ${dncSuppressed === 1 ? 'was' : 'were'} skipped. ${dncSuppressed === 1 ? 'It is' : 'They are'} counted in the rejected total.`
-        : null,
+    dncNotice: dncNotice(dncSuppressed, job.dnc_by_scope ?? {}, check),
     coreRefused,
     /**
      * Deliberately says what it is *separate from*, and deliberately quotes no
@@ -196,11 +217,11 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
      */
     coreRefusedNotice:
       coreRefused > 0
-        ? `At least ${formatCount(coreRefused)} of the accepted ${
+        ? `At least ${formatCount(coreRefused)} of the imported ${
             coreRefused === 1 ? 'rows was' : 'rows were'
           } already in this campaign, so the roster did not take ${
             coreRefused === 1 ? 'it' : 'them'
-          } again. That is separate from the ${formatCount(rejected)} rejected above — those never left here — so the accepted count overstates what was actually added. “At least”, because a chunk we had to re-send reports nothing back.`
+          } again. That is separate from the ${formatCount(rejected)} rejected above — those never left here — so the imported count overstates what was actually added. “At least”, because a chunk we had to re-send reports nothing back.`
         : null,
     coreRefusedSample:
       coreRefused > 0 && coreSample.length > 0
@@ -213,6 +234,54 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
         ? `${Math.round(rejectionRatio * 100)}% of your rows were rejected. That usually means the wrong column is mapped as the phone number — check the mapping before you start this campaign.`
         : null,
   };
+}
+
+/** Each Do Not Call scope, in words (IM5), widest first. */
+const DNC_SCOPE_WORDS: ReadonlyArray<[AgencyIngestDncScope, string]> = [
+  ['tenant', 'for every campaign in your organisation'],
+  ['account', 'for every campaign in this account'],
+  ['campaign', 'for this campaign only'],
+  ['unknown', 'on a list we could not name'],
+];
+
+/**
+ * The Do Not Call line: how many, which list each is on, and what the operator can
+ * and cannot do about it. Correcting the file does not import a Do Not Call row, so
+ * the sentence says so rather than leaving the operator to find out on re-import.
+ */
+export function dncNotice(
+  count: number,
+  byScope: Partial<Record<AgencyIngestDncScope, number>>,
+  check: boolean,
+): string | null {
+  if (count <= 0) return null;
+  const parts = DNC_SCOPE_WORDS
+    .filter(([scope]) => (byScope[scope] ?? 0) > 0)
+    .map(([scope, words]) => `${formatCount(byScope[scope]!)} ${words}`);
+  const where = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+  const verb = check ? (count === 1 ? 'will not be' : 'will not be') : (count === 1 ? 'was not' : 'were not');
+  return `${formatCount(count)} ${count === 1 ? 'number is' : 'numbers are'} on the Do Not Call list${where}, so ${
+    count === 1 ? 'it' : 'they'
+  } ${verb} imported. Correcting the file does not change this: delete ${
+    count === 1 ? 'the row' : 'those rows'
+  }, or, if the customer has agreed to be called, ask an admin to remove the number from the Do Not Call list first. Counted in the rejected total.`;
+}
+
+/**
+ * How the import came out against the check it was started from (IM2), or null when
+ * they agree. The roster or the Do Not Call list can change in between (another
+ * import, a colleague's Do Not Call entry), and the import's own counts are what
+ * happened; this says so instead of letting two different numbers sit unexplained.
+ */
+export function checkComparison(check: AgencyIngestJob, imported: AgencyIngestJob): string | null {
+  if (imported.status !== 'completed') return null;
+  const same = imported.accepted === check.accepted
+    && (imported.skipped ?? 0) === (check.skipped ?? 0)
+    && imported.rejected === check.rejected;
+  if (same) return null;
+  return `The check expected ${formatCount(check.accepted)} to import; ${formatCount(imported.accepted)} ${
+    imported.accepted === 1 ? 'was' : 'were'
+  } imported. The campaign or its Do Not Call list changed between the check and the import (another import, or a new Do Not Call entry). The numbers above are what happened.`;
 }
 
 /** Thousands separators, in the operator's own locale. */
@@ -229,7 +298,8 @@ export function formatCount(value: number): string {
  */
 export function terminalNotice(job: AgencyIngestJob): string | null {
   if (job.status === 'cancelled') {
-    return `Stopped. ${formatCount(job.accepted)} of ${formatCount(job.rows_read)} rows read so far were imported — you can start with these, or clear and re-upload.`;
+    if (job.dry_run) return `Stopped. The check read ${formatCount(job.rows_read)} rows before it stopped; nothing was imported.`;
+    return `Stopped. ${formatCount(job.accepted)} of ${formatCount(job.rows_read)} rows read so far were imported. To add the rest, import the same file again: the rows already imported are skipped, not added twice.`;
   }
   if (job.status === 'failed') {
     return job.error_message ?? 'The import failed. Your file was kept — you can try again.';
