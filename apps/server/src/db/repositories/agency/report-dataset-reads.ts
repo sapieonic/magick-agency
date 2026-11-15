@@ -339,6 +339,10 @@ export class AgencyReportDatasetRepository {
    * Do Not Call entries the agent wrote (`source = 'agent'`, `added_by` their user id, bare or
    * `user:`-prefixed) in the window, for this account's campaigns or tenant-wide. The tenant's
    * entries of the range on `idx_dnc_entries_tenant_created`, as Insights' DNC read takes them.
+   * "This account's" is the Do Not Call list's ownership rule (`ownedByAccountSql`, DS6): the
+   * account's own rows, and rows of its campaigns, which are stored `account_id NULL` as the
+   * station writes them; a NULL account alone would also take every other account's campaign
+   * marks. A campaign that no longer exists belongs to no account and is not counted.
    */
   async agentDncMarked(q: ReportAgentScope): Promise<number> {
     const { rows } = await getPool().query<{ n: number }>(
@@ -348,7 +352,10 @@ export class AgencyReportDatasetRepository {
           AND d.created_at >= $2::timestamptz AND d.created_at < $3::timestamptz
           AND d.source = 'agent'
           AND (d.added_by = $1::text OR d.added_by = 'user:' || $1::text)
-          AND (d.account_id = $5::uuid OR d.account_id IS NULL)`,
+          AND (d.account_id = $5::uuid
+               OR (d.account_id IS NULL AND d.campaign_id IS NULL)
+               OR (d.account_id IS NULL AND d.campaign_id IN (
+                     SELECT c.id FROM agency_campaigns c WHERE c.tenant_id = $4::uuid AND c.account_id = $5::uuid)))`,
       agentValues(q),
     );
     return n(rows[0]?.n);
