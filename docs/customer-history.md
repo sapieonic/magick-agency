@@ -143,10 +143,13 @@ that.
 **Recording state**: `no_call` (no media leg: `webrtc_call_id` null); a leg that still exists is
 `available` with a `recording_url` it asked for (`recordingUrlSql`, RC1: a link the carrier sent for a call that did not ask reads `not_recorded`), else `not_recorded`; a leg retention purged (the `agency_calls`
 row is gone) is `expired` only when the call asked for a recording (the campaign's `record_calls`
-for a campaign call, the call's own `recording_requested` for a soft-phone call), else
-`not_recorded`, because retention purges every old leg, recorded or not. Caveat: `record_calls` is
-the campaign's CURRENT setting, so a campaign that turned recording on or off later is judged by
-today's value for its older calls.
+for a campaign call, the call's own `recording_requested` for a soft-phone call, decided at the dial
+under the account's `allow_recording`), else `not_recorded`, because retention purges every old
+leg, recorded or not. Caveat: an attempt keeps no flag of its own, so `record_calls` is the
+campaign's CURRENT setting without the account ceiling: a campaign that turned recording on or off
+later is judged by today's value for its older calls, and an account whose recording was off reads
+`expired` for a purged leg of a campaign set to record. A soft-phone call dialled before the dial
+applied the ceiling keeps the flag it was stored with.
 
 **Filters** (`CustomerTimelineFilters`): `campaign_ids` (root campaigns, retries included; under
 it, tenant- and account-wide DNC marks and untagged soft-phone calls drop out, and only

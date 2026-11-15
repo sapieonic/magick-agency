@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { closePool, initDbPool } from '@magick-agency/db';
 import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import { DEFAULTS, insertWebrtcCall } from '../../../../../packages/db/test/integration/setup/factories.js';
+import { insertAttempt, insertCampaign, insertContact } from '../../../../../packages/db/test/integration/fixtures.js';
 
 /*
  * Real Postgres 5436, against the agency slice of the purge
@@ -192,6 +193,45 @@ describe('agency retention purge (integration)', () => {
 
     // A second run finds nothing left to clear.
     expect((await runRetentionPurge()).unrequested_recordings_cleared).toBe(0);
+  });
+
+  it('skips a call another transaction holds (never waits on it) and clears it next run; a cleared campaign call marks its Insights bucket (RC5)', async () => {
+    const pool = getTestPool();
+    const campaign = await insertCampaign();
+    const contact = await insertContact(campaign.id);
+    const held = await insertWebrtcCall({});
+    const free = await insertWebrtcCall({});
+    await pool.query(
+      `UPDATE agency_calls SET recording_requested = false, recording_url = 'https://recording.app.voicelink.co.in/r/' || id,
+              recording_duration_seconds = 30
+        WHERE id IN ($1, $2)`, [held.id, free.id]);
+    const dialedAt = new Date('2026-11-01T10:05:00Z');
+    await insertAttempt(campaign.id, contact.id, { webrtc_call_id: free.id, dialed_at: dialedAt, state: 'ended', outcome: 'connected' });
+    await pool.query('DELETE FROM agency_insights_rollup_dirty');
+
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM agency_calls WHERE id = $1 FOR UPDATE', [held.id]);
+      const report = await runRetentionPurge();
+      expect(report.unrequested_recordings_error).toBeUndefined();
+      expect(report.unrequested_recordings_cleared).toBe(1);
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+    const url = async (id: string) =>
+      (await pool.query<{ recording_url: string | null }>('SELECT recording_url FROM agency_calls WHERE id = $1', [id])).rows[0]!.recording_url;
+    expect(await url(free.id)).toBeNull();
+    expect(await url(held.id)).not.toBeNull();
+    // 0012's row trigger: one mark for the cleared call's attempt bucket (the recompute counts as before).
+    const marks = await pool.query<{ campaign_id: string; same_bucket: boolean }>(
+      `SELECT campaign_id, bucket_start = agency_insights_bucket($1::timestamptz) AS same_bucket FROM agency_insights_rollup_dirty`, [dialedAt]);
+    expect(marks.rows).toEqual([{ campaign_id: campaign.id, same_bucket: true }]);
+
+    const next = await runRetentionPurge();
+    expect(next.unrequested_recordings_cleared).toBe(1);
+    expect(await url(held.id)).toBeNull();
   });
 
   it('a clean row (no transcript) is not touched by the transcript step', async () => {

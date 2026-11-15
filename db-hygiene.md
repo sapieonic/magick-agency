@@ -27,7 +27,9 @@ operator applies to Supabase or to the server's environment (sections 2 to 6).
 | Per-table autovacuum thresholds; `fillfactor` 80 on agent sessions and 85 on pacing minutes | `packages/db/migrations/0038_table_storage_settings.sql` | Catalog only, instant, no rewrite |
 | Two partial indexes for the daily retention purge (the transcript step and the voicemail walk) | `0039_retention_purge_indexes.sql` | Builds 2 indexes; see section 2 for large tables. Fails if a pre-built one is invalid |
 | Seven indexes that duplicated a unique index dropped | `0040_drop_duplicate_indexes.sql` | Instant (small tables) |
-| `SET LOCAL lock_timeout = '10s'` in each new migration | the three files above | A migration blocked by a lock fails in 10 s instead of hanging the deploy (section 6 says what to do then) |
+| The Contacts list's promise index, out of 0041's ACCESS EXCLUSIVE | `0045_promise_contacts_index.sql` | One read of `agency_contacts` under SHARE, writing an empty index (the column is new); cannot be pre-built. Fails if one left under its name is invalid |
+| A partial index for the purge's recording step (RC5: clears the links of calls that did not ask for a recording, every run, in keyset batches of 5000 picked `FOR UPDATE SKIP LOCKED`; a failure of that step is logged and reported, and the other steps still run) | `0046_unrequested_recordings_index.sql` | Builds 1 index on `agency_calls`; see section 2 for large tables. Fails if a pre-built one is invalid. Each cleared campaign call fires 0012's Insights trigger once (one dirty mark), on the first run only |
+| `SET LOCAL lock_timeout = '10s'` in each new migration | each migration file above | A migration blocked by a lock fails in 10 s instead of hanging the deploy (section 6 says what to do then) |
 | Every connection carries an `application_name` (`magick-agency-server`, `-media<N>`, `-analysis<N>`, `-migrate`, `-cli`), sent at connect and set again as SQL | `packages/db/src/connection.ts`, `apps/server/src/db-session.ts` | `pg_stat_activity` shows which process holds each connection |
 | TCP keepalive on pool connections, first probe after 30 s idle | `packages/db/src/connection.ts` | A connection dropped on the network path is found dead in minutes instead of hours |
 | A connection that Postgres ends while a request holds it is logged and discarded | `packages/db/src/connection.ts` | Before, that ended the server process (no `'error'` listener on a checked-out client) |
@@ -70,10 +72,12 @@ the code; each turned out not to need a change now:
 
 Migrations run while the server is stopped, and a plain `CREATE INDEX` blocks writes to its table
 while it builds. On a small database this is seconds. If `agency_calls` holds more than about a
-million rows, build `0039_retention_purge_indexes.sql`'s two indexes beforehand with
-`CONCURRENTLY` (no write lock, the server keeps running). The migration's
-`CREATE INDEX IF NOT EXISTS` then finds them (taking only a brief lock), adds their comments and
-records itself.
+million rows, build `0039_retention_purge_indexes.sql`'s two indexes and
+`0046_unrequested_recordings_index.sql`'s one beforehand with `CONCURRENTLY` (no write lock, the
+server keeps running). The migration's `CREATE INDEX IF NOT EXISTS` then finds them (taking only a
+brief lock), adds their comments and records itself. A migration cannot use `CONCURRENTLY` itself:
+node-pg-migrate runs each SQL file in a transaction. `0045_promise_contacts_index.sql`'s index cannot
+be built this way (its column is 0041's, in the same release); its build writes an empty index.
 
 Check the sizes first (Supabase SQL editor):
 
@@ -104,6 +108,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_inbound_calls_voicemail
   WHERE voicemail_key IS NOT NULL;
 ```
 
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_calls_recording_unrequested
+  ON agency_calls (id)
+  WHERE recording_url IS NOT NULL AND NOT recording_requested;
+```
+
 Check what was built. `IF NOT EXISTS` checks the name only, so the definitions must match the
 migration exactly, and a build that was cancelled or failed leaves an **invalid** index under the
 name (the migration refuses to run on one):
@@ -111,12 +121,13 @@ name (the migration refuses to run on one):
 ```sql
 SELECT c.relname, i.indisvalid, pg_get_indexdef(i.indexrelid) AS definition
   FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
- WHERE c.relname IN ('idx_agency_calls_transcript_pending', 'idx_agency_inbound_calls_voicemail');
+ WHERE c.relname IN ('idx_agency_calls_transcript_pending', 'idx_agency_inbound_calls_voicemail',
+                     'idx_agency_calls_recording_unrequested');
 ```
 
 Every `indisvalid` must be `t`, and each definition must read as in
-`packages/db/migrations/0039_retention_purge_indexes.sql` (Postgres adds `public.`, `USING btree`
-and brackets). For a wrong or invalid one: `DROP INDEX CONCURRENTLY <name>;` and build it again.
+`packages/db/migrations/0039_retention_purge_indexes.sql` or `0046_unrequested_recordings_index.sql`
+(Postgres adds `public.`, `USING btree` and brackets). For a wrong or invalid one: `DROP INDEX CONCURRENTLY <name>;` and build it again.
 
 As before every release with a migration, take a dump or a provider snapshot first
 (`DEPLOYMENT.md` 3.3 and 12 "Logs, monitoring, backups").

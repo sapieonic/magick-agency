@@ -200,8 +200,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    its claimed contact is held (§5). When the call ends unanswered while the dial is still out
    (the agent hangs up during `add_lead`), the agent gets the ended `manual_call` at once and the
    contact waits for the dial's answer before it is settled.
-   Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
-   `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
+   Recording: tag's `record_calls`, else settings' `record_calls`, under the account's
+   `allow_recording` (NULL or an unreadable row: off). The call's `recording_requested` takes the
+   ceiling (so the "Recording" badge and customer history never claim a recording the account
+   cannot make), and the bridge applies it again to the media leg. Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).
 5. **Lifecycle → station frames.** Every state change sends `manual_call` (the full
    `AgencyManualCall` wire row). `bridged` starts audio both ways. The client plays ringback: the console

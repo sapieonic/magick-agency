@@ -1,9 +1,9 @@
 // Real Postgres: migrations/0041_promise_to_pay.sql (docs/decisions.md, PT1–PT14).
 // globalSetup has applied every migration. Pins the promise columns on the three call tables
 // (exact NUMERIC, an amount only beside a date, a promise only beside an outcome), the contact's
-// latest-promise columns and their all-or-none CHECK, the partial index, the CHECKs added NOT
-// VALID (no scan of the big tables) and validated by 0044_promise_checks_validate.sql, and down
-// then up.
+// latest-promise columns and their all-or-none CHECK, the CHECKs added NOT VALID (no scan of the
+// big tables) and validated by 0044_promise_checks_validate.sql, the partial index built by
+// 0045_promise_contacts_index.sql and not under 0041's ACCESS EXCLUSIVE, and down then up.
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +21,15 @@ const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
 const FILE = '0041_promise_to_pay.sql';
+const INDEX_FILE = '0045_promise_contacts_index.sql';
+const INDEX_DEF =
+  'CREATE INDEX idx_agency_contacts_promise ON public.agency_contacts USING btree (campaign_id, promise_date) WHERE (promise_date IS NOT NULL)';
+
+async function promiseIndexDef(): Promise<string | undefined> {
+  const { rows } = await pool().query<{ indexdef: string }>(
+    `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_agency_contacts_promise'`);
+  return rows[0]?.indexdef;
+}
 
 async function column(table: string, name: string) {
   const { rows } = await pool().query<{ data_type: string; is_nullable: string; numeric_precision: number | null; numeric_scale: number | null }>(
@@ -110,13 +119,55 @@ describe('0041 — promise to pay', () => {
   });
 
   it('idx_agency_contacts_promise is partial on contacts holding a promise', async () => {
-    const { rows } = await pool().query<{ def: string }>(
-      `SELECT pg_get_indexdef('idx_agency_contacts_promise'::regclass) AS def`);
-    expect(rows[0]!.def).toBe(
-      'CREATE INDEX idx_agency_contacts_promise ON public.agency_contacts USING btree (campaign_id, promise_date) WHERE (promise_date IS NOT NULL)');
+    expect(await promiseIndexDef()).toBe(INDEX_DEF);
   });
 
-  it('down drops every column, CHECK and the index; up adds them back', async () => {
+  it('0041 builds no index (its ALTERs hold ACCESS EXCLUSIVE until commit); 0045 builds it in its own transaction', async () => {
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    await migrate('down', files.length - files.indexOf(FILE));
+    try {
+      await migrate('up', 1); // 0041 on its own
+      expect(await promiseIndexDef()).toBeUndefined();
+      // Nothing between 0041 and 0045 builds it either.
+      await migrate('up', files.indexOf(INDEX_FILE) - files.indexOf(FILE) - 1);
+      expect(await promiseIndexDef()).toBeUndefined();
+      await migrate('up', 1); // 0045
+      expect(await promiseIndexDef()).toBe(INDEX_DEF);
+    } finally {
+      await migrate('up');
+    }
+  });
+
+  it('0045 fails on an invalid index left under its name by a failed CREATE INDEX CONCURRENTLY', async () => {
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    await migrate('down', files.length - files.indexOf(INDEX_FILE));
+    try {
+      // What a failed concurrent build leaves: the index exists, marked not valid.
+      await pool().query(`CREATE INDEX idx_agency_contacts_promise ON agency_contacts (campaign_id, promise_date) WHERE promise_date IS NOT NULL`);
+      await pool().query(`UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_agency_contacts_promise'::regclass`);
+      await expect(migrate('up')).rejects.toThrow(/invalid index.*idx_agency_contacts_promise/);
+      const { rows } = await pool().query(`SELECT name FROM pgmigrations WHERE name = $1`, [INDEX_FILE.replace(/\.sql$/, '')]);
+      expect(rows).toEqual([]);
+    } finally {
+      await pool().query('DROP INDEX IF EXISTS idx_agency_contacts_promise');
+      await migrate('up');
+    }
+    expect(await promiseIndexDef()).toBe(INDEX_DEF);
+  });
+
+  it('0045 down drops the index and leaves the columns; up builds it again', async () => {
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    await migrate('down', files.length - files.indexOf(INDEX_FILE));
+    try {
+      expect(await promiseIndexDef()).toBeUndefined();
+      expect(await column('agency_contacts', 'promise_date')).toMatchObject({ data_type: 'date' });
+    } finally {
+      await migrate('up');
+    }
+    expect(await promiseIndexDef()).toBe(INDEX_DEF);
+  });
+
+  it('down (through 0045) drops every column, CHECK and the index; up adds them back', async () => {
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
     await migrate('down', files.length - files.indexOf(FILE));
     try {

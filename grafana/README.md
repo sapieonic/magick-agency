@@ -174,6 +174,10 @@ and `service_name=~"$service_name"`. The rows:
 - **Voice, capacity and storage**: WebSockets, telephony lease release,
   provider concurrency admission, rate-limit rejections, S3, the carrier
   credential keyring and sweeps, carrier dial refusals.
+- **Recordings**: recording fetches that did not return the audio by surface (playback, analysis),
+  provider and reason (`recording_fetch_failures_total`, RC3), and recordings discarded because
+  the call did not ask for one, by provider (`recording_discarded_unrequested_total`, RC1). No
+  rule: a failing recording is one call's, and VoiceLink's discards are expected (RC2).
 - **Identity and mail**: sign-in attempts; invite emails and claims.
 - **Analysis**: dialer analysis and its latency.
 - **Runtime and telemetry**: event-loop delay and utilization, heap,

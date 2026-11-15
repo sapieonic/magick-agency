@@ -346,7 +346,7 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | ~15 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 11 |
 | `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 21 |
-| `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | ~50 |
+| `apps/server/test/unit/agency/softphone/manual-predial.test.ts` (with the account's `allow_recording` as the recording ceiling) | 52 |
 
 ### `apps/server/src/agency/pacing/`
 
@@ -685,7 +685,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/device-away-break.test.ts` | 77 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 50 |
 | `apps/server/test/integration/api/promise-to-pay-routes.test.ts` | 20 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 23 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 24 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 | `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 49 |
 | `apps/server/test/integration/api/away-ring-routes.test.ts` (Mode B: the push-device routes, the test ring and its limit, the `away_ring` refusals and switch, the close keeping it, force-available refused, the opt-out (`PATCH ring_enabled=false`, the Me toggle), the switch leaving nothing queued, the return, the take-over, a leave from another device telling the parked phone `left`, a named break the row missed never switched, the opt-out's and the removal's end audited as the agent) | 13 |
@@ -898,7 +898,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/config/analysis-config.test.ts` (with `PLIVO_RECORDING_REDIRECT_HOSTS`, RC4: empty by default, a lower-cased list, and the refusals at load) | 24 |
+| `apps/server/test/unit/config/analysis-config.test.ts` (with `PLIVO_RECORDING_REDIRECT_HOSTS`, RC4: empty by default, a lower-cased list, and the refusals at load) | 25 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
 | `apps/server/test/unit/config/config.test.ts` | 21 |
@@ -941,7 +941,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | ~44 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`) | 45 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
 | `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 22 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
@@ -965,7 +965,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline; `playClipSequenceThenHangUp`) | 12 |
+| `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline, a `no_capacity` call recording nothing; `playClipSequenceThenHangUp`) | 13 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind (the playback already stopped when the bind returns), the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token, `onPreambleDone`; a non-connectable call's `parkedSeconds` as a budget floor; `isCallEnding`) | 28 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
 | `apps/server/test/unit/core/webrtc-bridge-unrequested-recording.test.ts` (RC1: a recording for a call that did not ask, campaign off or account ceiling, is discarded at the terminal, ending, live-callback and late doors, warned and counted once per call; the late door reads the row's flag (an inbound leg's refused admission); a call that asked keeps it; another carrier's event counts nothing) | 10 |
@@ -1056,14 +1056,16 @@ Files: `invite-issuer.ts`, `membership-invite-state.ts`, `membership-provisionin
 
 ### `apps/server/src/maintenance/`
 
-Retention purge for analysis jobs, calls and transcripts.
+Retention purge for analysis jobs, calls and transcripts, inbound voicemails, and the recording
+links of calls that did not ask for one (RC5: every run, keyset batches on 0046's index, its
+failure its own).
 
 Files: `retention-purge.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` (the RC5 step: recording links of calls that did not ask for one cleared on every run, any age, and nothing else; and the inbound voicemail step: an aged voicemail's object deleted and forgotten, a recent one kept, the dry run) | 8 |
-| `apps/server/test/unit/maintenance/retention-purge.test.ts` (the RC5 recording step every run, counted in a dry run; and the voicemail step, last: delete then forget, a failed delete counted and the rest gone on with, no bucket skipped, the keyset past a batch, the dry run) | 23 |
+| `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` (the RC5 step: recording links of calls that did not ask for one cleared on every run, any age, and nothing else; a row another transaction holds skipped, never waited on, and cleared next run; a cleared campaign call's Insights mark; and the inbound voicemail step: an aged voicemail's object deleted and forgotten, a recent one kept, the dry run) | 9 |
+| `apps/server/test/unit/maintenance/retention-purge.test.ts` (the RC5 recording step every run, counted in a dry run, its `MATERIALIZED` + `SKIP LOCKED` batch walked by id until a short batch, its failure its own (the later steps run, the report and Slack say so); and the voicemail step, last: delete then forget, a failed delete counted and the rest gone on with, no bucket skipped, the keyset past a batch, the dry run) | 25 |
 
 ### `apps/server/src/notifications/`
 
@@ -1253,7 +1255,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 35 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
 | `apps/server/test/unit/utils/recording-proxy.test.ts` | ~36 |
-| `apps/server/test/unit/utils/recording-proxy-diagnosis.test.ts` (RC1 404 for a call that did not ask; RC3 every "could not reach" answer's status, `reason`, log fields and counter, hosts only, never the URL; the 504 headers timeout; RC4 redirect hosts off by default, exact, hops only, no credential) | 25 |
+| `apps/server/test/unit/utils/recording-proxy-diagnosis.test.ts` (RC1 404 for a call that did not ask; RC3 every "could not reach" answer's status, `reason`, log fields and counter, hosts only, never the URL; the 504 headers timeout; RC4 redirect hosts off by default, exact, hops only, no credential) | 21 |
 | `apps/server/test/unit/utils/client-header.test.ts` | 5 |
 | `apps/server/test/unit/utils/recording-url.test.ts` | 13 |
 | `apps/server/test/unit/utils/trace-context.test.ts` | 4 |
@@ -1582,6 +1584,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/retention-purge-indexes-migration.test.ts` (0039: the two definitions, each purge read's plan, no plain `created_at` index, the refusal of an invalid pre-built index, down then up) | 6 |
 | `packages/db/test/integration/db/drop-duplicate-indexes-migration.test.ts` (0040: the seven gone, each lookup an index scan on its covering unique index, down then up) | 9 |
 | `packages/db/test/integration/db/recording-honours-request-migration.test.ts` (0043: only the buckets of attempts whose call holds a link it did not ask for are marked for a recount, the links kept, down then up) | 2 |
+| `packages/db/test/integration/db/unrequested-recordings-index-migration.test.ts` (0046: the definition, the purge's batch pick on it in id order from the keyset and its dry-run count, the invalid-index refusal, down then up) | 5 |
 | `packages/db/test/integration/db/inbound-ring-migration.test.ts` (0036, Mode B: the push devices table, its CHECKs and partial token indexes, the ring columns, the session's `ring_misses` and `away_ring_since`, each CHECKed list equal to its contract list, the down) | ~11 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the inbound reached trigger and its races, the summary's index and its plan, down and up) | 8 |
@@ -1602,6 +1605,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/ingest-dedupe-columns-migration.test.ts` | 6 |
+| `packages/db/test/integration/db/promise-to-pay-migration.test.ts` (0041, 0044, 0045: the columns and CHECKs, NOT VALID then validated, no index under 0041's lock, 0045's index and its invalid-index refusal, down then up) | 10 |
 | `packages/db/test/integration/db/ingest-check-and-skipped-migration.test.ts` (0042) | 4 |
 | `packages/db/test/integration/db/wrapup-redial-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/insights-foundation-migration.test.ts` | 8 |

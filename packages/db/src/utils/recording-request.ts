@@ -20,8 +20,9 @@
  *    nulled unless `recording_requested` ({@link honourRecordingRequest}), and raw SQL
  *    elsewhere reads it through {@link recordingUrlSql} / {@link hasRecordingSql}. So a
  *    row written before RC1 with a link it never asked for reads as "not recorded"
- *    everywhere (detail, playback, analysis, customer history, Insights, reports)
- *    without deleting anything (`docs/operations.md` "Recordings a call did not ask for").
+ *    everywhere (detail, playback, analysis, customer history, Insights, reports) until
+ *    the retention purge clears the link (RC5; `docs/operations.md` "Recordings a call did
+ *    not ask for").
  *
  * One predicate, three spellings of it: these two SQL helpers and the TS function.
  */

@@ -86,6 +86,15 @@ function campaignWire(row: CustomerHistoryCampaignRow): CustomerHistoryCampaign 
  * is `expired` only when the call asked for a recording (`recorded`: the campaign's
  * `record_calls`, a soft-phone call's `recording_requested`), else `not_recorded`: retention purges
  * every old leg, recorded or not, and "Recording expired" must not claim a recording existed.
+ *
+ * A soft-phone call's `recording_requested` is decided at its dial under the account's
+ * `allow_recording` (`manual-predial.ts`), as the media leg's is. A campaign attempt keeps no flag
+ * of its own, so `recorded` there is an approximation: the campaign's CURRENT `record_calls`,
+ * without the account ceiling. A purged leg of a campaign that has since turned recording on, or
+ * of an account whose recording was off, can read "Recording expired" though nothing was
+ * recorded; one whose campaign has since turned it off reads "Not recorded". Calls dialled before
+ * the soft phone's ceiling (a manual call that asked under an account that could not record) keep
+ * the flag they were stored with.
  */
 export function recordingState(
   webrtcCallId: string | null,

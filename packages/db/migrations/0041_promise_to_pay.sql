@@ -10,9 +10,10 @@
 -- campaign) and agency_inbound_calls (an inbound call matched to a campaign contact) each get:
 --   promise_date   DATE           the customer's calendar date; NULL: no promise.
 --   promise_amount NUMERIC(14,2)  exact (never a float), >= 0, only beside a date; NULL: none given.
--- ck_<table>_promise: an amount needs a date, is not negative, and a promise needs an outcome
--- (disposition_code). NOT VALID on all three: the columns are new and NULL, the CHECK is enforced
--- on every write from now, and adding it validated would scan each table under its lock.
+-- ck_agency_attempt_promise, ck_agency_manual_call_promise, ck_agency_inbound_call_promise: an
+-- amount needs a date, is not negative, and a promise needs an outcome (disposition_code). NOT
+-- VALID on all three: the columns are new and NULL, the CHECK is enforced on every write from now,
+-- and adding it validated would scan each table under its lock (0044 validates them).
 --
 -- ── On the contact: its latest promise (denormalised, PT6) ────────────────────
 --   promise_date, promise_amount   as above, copied from the call that recorded it.
@@ -37,20 +38,18 @@
 -- filter (contacts with a promise, missed ones) could not use an index. The copy is one row write
 -- beside the disposition's own contact write, in the same transaction.
 --
--- idx_agency_contacts_promise (campaign_id, promise_date) WHERE promise_date IS NOT NULL: the
--- Contacts list's promise filter and the "Promised for" order read only contacts holding a
--- promise. Partial, so it is the size of the promises, not the roster. `IF NOT EXISTS`, so a
--- deployment can build it CONCURRENTLY first (db-hygiene.md).
+-- The Contacts list's promise index (idx_agency_contacts_promise) is 0045's, not this file's: an
+-- index built here would scan the roster under this file's ACCESS EXCLUSIVE.
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────
--- ADD COLUMN without a default and ADD CONSTRAINT … NOT VALID are catalogue changes under ACCESS
--- EXCLUSIVE held for an instant. The index build scans agency_contacts under SHARE (writes wait).
+-- ADD COLUMN without a default and ADD CONSTRAINT … NOT VALID are catalogue changes: ACCESS
+-- EXCLUSIVE on each table until commit, with no scan or rewrite, so the transaction is short.
 -- `SET LOCAL lock_timeout = '10s'` first: a lock not granted within 10 s fails the migration (the
 -- deploy can be retried) instead of queueing every other query behind the wait.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
--- Drops the index, the CHECKs and the columns. Every recorded promise is lost; the outcomes
--- themselves (disposition_code) are untouched.
+-- Drops the CHECKs and the columns (0045's Down has dropped the index first). Every recorded
+-- promise is lost; the outcomes themselves (disposition_code) are untouched.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).
@@ -126,13 +125,7 @@ COMMENT ON COLUMN agency_contacts.promise_call_at IS
 COMMENT ON COLUMN agency_contacts.promise_followed_up_at IS
   'When an outcome was first recorded by a later call on or after the promised day (PT7). NULL with the day passed: missed.';
 
-CREATE INDEX IF NOT EXISTS idx_agency_contacts_promise
-  ON agency_contacts (campaign_id, promise_date)
-  WHERE promise_date IS NOT NULL;
-
 -- Down Migration
-
-DROP INDEX IF EXISTS idx_agency_contacts_promise;
 
 ALTER TABLE agency_contacts
   DROP CONSTRAINT IF EXISTS ck_agency_contact_promise,

@@ -56,8 +56,10 @@
  *     `dnc_listed` with the entry unless `dnc_note` overrides it; a lookup failure
  *     is `dnc_unavailable` and is NEVER overridable (fail closed, SP1).
  *
- * Then what the dial uses: recording (the tag's `record_calls`, else the settings')
- * and the analysis profile (the tag's, else the settings', else null — the
+ * Then what the dial uses: recording (the tag's `record_calls`, else the settings', under the
+ * account's `allow_recording`: the bridge applies the same ceiling to the media leg, and the
+ * manual call's `recording_requested` is what its readers see, the soft phone's "Recording" badge
+ * and customer history's "Recording expired" among them) and the analysis profile (the tag's, else the settings', else null — the
  * analysis hook falls back to the account default).
  */
 import {
@@ -105,6 +107,8 @@ export interface ManualPredialInput {
   /** Untagged calls: the account's assigned numbers, default first. */
   accountNumbers: readonly string[];
   settings: AgencySoftphoneSettings;
+  /** The account's recording ceiling (`allow_recording`; unset or unreadable is false). */
+  allowRecording: boolean;
   overrides?: { dnc_note?: unknown; hours_note?: unknown } | null;
   now: Date;
   /** Who is dialling: the owner check of a `strict` tag (step 4) reads both. */
@@ -392,7 +396,8 @@ export async function runManualPredial(
       contact,
       dncOverride,
       hoursOverrideNote,
-      recordingRequested: input.tag ? input.tag.record_calls === true : input.settings.record_calls === true,
+      recordingRequested: input.allowRecording
+        && (input.tag ? input.tag.record_calls === true : input.settings.record_calls === true),
       analysisProfileId: manualAnalysisProfileId(input.tag, input.settings),
     },
   };
