@@ -63,6 +63,7 @@
  */
 import type { QueryResultRow } from 'pg';
 import { getPool } from '@magick-agency/db';
+import { recordingUrlSql } from '@magick-agency/db/utils/recording-request';
 import { keysetAtSql } from '@magick-agency/domain/keyset-cursor';
 import { AGENCY_ATTEMPT_LIVE_STATES } from '../../models/agency.model.js';
 
@@ -661,9 +662,12 @@ export const CUSTOMER_HISTORY_SQL = {
        AND g.tenant_id = $1::uuid
        AND g.account_id = ANY($2::uuid[])`,
 
-  /** The calls' media legs (primary key): present or purged, and recorded or not. $1 tenant, $2 accounts, $3 ids. */
+  /**
+   * The calls' media legs (primary key): present or purged, and recorded or not (a link the call did
+   * not ask for reads as none, RC1). $1 tenant, $2 accounts, $3 ids.
+   */
   mediaLegs: `
-    SELECT k.id, k.recording_url
+    SELECT k.id, ${recordingUrlSql('k')} AS recording_url
       FROM agency_calls k
      WHERE k.id = ANY($3::uuid[])
        AND k.tenant_id = $1::uuid

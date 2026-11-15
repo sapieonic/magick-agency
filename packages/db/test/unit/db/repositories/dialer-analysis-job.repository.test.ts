@@ -56,7 +56,7 @@ describe('DialerAnalysisJobRepository', () => {
 
       const text = poolText();
       // Status is a CASE on the call row, never chosen by the caller.
-      expect(text).toContain("CASE WHEN c.recording_url IS NOT NULL THEN 'queued' ELSE 'awaiting_recording'");
+      expect(text).toContain("CASE WHEN (c.recording_requested AND c.recording_url IS NOT NULL) THEN 'queued' ELSE 'awaiting_recording'");
       expect(text).toContain('FROM agency_calls c WHERE c.id = $1');
       expect(text).toContain('ON CONFLICT (call_id) DO NOTHING');
 
@@ -109,24 +109,24 @@ describe('DialerAnalysisJobRepository', () => {
   });
 
   describe('promoteRecordingReady before expireAwaitingRecording (B1 ordering)', () => {
-    it('promotion joins the call row and requires a recording_url', async () => {
+    it('promotion joins the call row and requires a recording the call asked for (RC1)', async () => {
       mocks.poolQuery.mockResolvedValueOnce({ rowCount: 3 });
       const promoted = await repo.promoteRecordingReady(0, 500);
       const text = poolText();
       expect(text).toContain("j.status = 'awaiting_recording'");
-      expect(text).toContain('c.recording_url IS NOT NULL');
+      expect(text).toContain('AND (c.recording_requested AND c.recording_url IS NOT NULL)');
       expect(text).toContain('FOR UPDATE SKIP LOCKED');
       expect(text).toContain("SET analysis_status = 'pending'");
       expect(promoted).toBe(3);
     });
 
-    it('expiry only touches rows whose call has NO recording_url', async () => {
+    it('expiry only touches rows whose call has NO recording it asked for (RC1)', async () => {
       mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'j1' }], rowCount: 1 });
       await repo.expireAwaitingRecording(new Date('2026-07-28T00:00:00Z'));
       const text = poolText();
       expect(text).toContain("status = 'expired'");
       expect(text).toContain("error_code = 'RECORDING_NEVER_ARRIVED'");
-      expect(text).toContain('c.recording_url IS NULL');
+      expect(text).toContain('AND NOT (c.recording_requested AND c.recording_url IS NOT NULL)');
     });
   });
 
@@ -326,7 +326,7 @@ describe('DialerAnalysisJobRepository', () => {
       const text = poolText();
       expect(text).toContain("status = 'expired'");
       expect(text).toContain("error_code = 'RECORDING_NEVER_ARRIVED'");
-      expect(text).toContain('c.recording_url IS NULL');
+      expect(text).toContain('AND NOT (c.recording_requested AND c.recording_url IS NOT NULL)');
       // Mirror CTE onto the call row, DSAR-guarded.
       expect(text).toContain('UPDATE agency_calls');
       expect(text).toContain("analysis_status = 'expired'");

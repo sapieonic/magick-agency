@@ -786,7 +786,7 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     // No dial — session absent. Repo.findById returns a terminal-ish row.
-    mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_url: null, provider_call_id: null });
+    mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_requested: true, recording_url: null, provider_call_id: null });
 
     await mgr.handleVoicelinkStatus('call-1', {
       providerCallId: 'carrier-9', callId: 'call-1', eventType: 'hangup', timestamp: new Date(),

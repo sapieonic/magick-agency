@@ -3,11 +3,13 @@ import { blankAsUnset, envBoolean, type Env } from '../env.js';
 
 /**
  * Analysis config (decision B4: one config block per area, so blocks never collide):
- * `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`
- * and `retention`.
+ * `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `plivoRecording`,
+ * `recordingUrlSigningSecret` and `retention`.
  *  - `voicelinkRecording.allowedHosts`: the allow-list the recording fetcher and playback
  *    proxy enforce; defaults to VoiceLink's recording host when `VOICELINK_RECORDING_HOSTS`
  *    is unset (Manas, 2026-10-09);
+ *  - `plivoRecording.redirectHosts`: hosts a Plivo recording fetch may follow a redirect to
+ *    (`PLIVO_RECORDING_REDIRECT_HOSTS`, empty by default: no redirect followed, RC4);
  *  - `recordingUrlSigningSecret` is read through config, never straight off `process.env`;
  *  - `retention` has no run-level window: `agencyRetentionDays` is optional and unset
  *    means the row purge does not run (Manas, 2026-10-09: deleting call records is not a
@@ -229,6 +231,35 @@ const voicelinkRecordingSchema = z.object({
   allowedHosts: z.array(z.string().min(1)).default([DEFAULT_VOICELINK_RECORDING_HOST]),
 });
 
+/**
+ * Is `host` a plain public DNS hostname: lowercase labels, at least two, no scheme, port, path,
+ * userinfo or wildcard, not an IP literal (the last label is never all digits) and not
+ * `localhost`? The redirect allow-list ({@link plivoRecordingSchema}) takes only these, so a
+ * typo can never widen it to an address the server should not fetch from.
+ */
+export function isPlainRecordingHost(host: string): boolean {
+  if (host.length > 253 || host === 'localhost' || host.endsWith('.localhost')) return false;
+  const labels = host.split('.');
+  if (labels.length < 2) return false;
+  if (/^\d+$/.test(labels[labels.length - 1]!)) return false;
+  return labels.every((l) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(l));
+}
+
+/**
+ * Plivo recordings (RC4, **default, pending Manas**). A Plivo recording is fetched with the
+ * tenant's credential from exactly `media.plivo.com` (`telephony/recording-access.ts`, B21), and
+ * a redirect from there is refused unless its host is on `redirectHosts`
+ * (`PLIVO_RECORDING_REDIRECT_HOSTS`, comma-separated, exact hosts). Empty, the default: no
+ * redirect is followed, as before RC4. A redirect hop never carries the credential, whatever
+ * the list holds. Set it only to a host a refused fetch named in the server's log
+ * (`docs/operations.md` "Recordings that will not play"); never guess one.
+ */
+const plivoRecordingSchema = z.object({
+  redirectHosts: z.array(z.string().refine(isPlainRecordingHost, {
+    message: 'PLIVO_RECORDING_REDIRECT_HOSTS takes bare lowercase hostnames (e.g. files.example.com): no scheme, port, path, wildcard, IP address or localhost',
+  })).default([]),
+});
+
 const retentionSchema = z.object({
   /** Slack incoming-webhook URL for purge run summaries. Unset = no Slack report. */
   slackWebhookUrl: z.string().url().optional(),
@@ -269,6 +300,7 @@ export const analysisConfigSchema = z.object({
   postCallAnalysis: postCallAnalysisSchema.default({}),
   dialerAnalysis: dialerAnalysisSchema.optional(),
   voicelinkRecording: voicelinkRecordingSchema.default({}),
+  plivoRecording: plivoRecordingSchema.default({}),
   /** HMAC key for signed recording playback URLs (>= 16 chars); else an ephemeral key. */
   recordingUrlSigningSecret: z.string().optional(),
   retention: retentionSchema.default({}),
@@ -335,6 +367,12 @@ export function readAnalysisEnv(env: Env): Record<string, unknown> {
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean),
+    },
+    plivoRecording: {
+      redirectHosts: (env['PLIVO_RECORDING_REDIRECT_HOSTS'] ?? '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
     },
     recordingUrlSigningSecret: env['RECORDING_URL_SIGNING_SECRET'],
     retention: {

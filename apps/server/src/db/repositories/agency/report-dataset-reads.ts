@@ -25,6 +25,7 @@
  */
 import { getPool } from '@magick-agency/db';
 import { callSentimentLabelSql } from '@magick-agency/db/repositories/agency-call.repository';
+import { hasRecordingSql } from '@magick-agency/db/utils/recording-request';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
 import type { SentimentLabel } from '@magick-agency/contracts/api/agency/webrtc-call';
 import { REPORT_BUILD_TIMEOUT_MS } from '../../../agency/reports/datasets/types.js';
@@ -558,7 +559,7 @@ export function agentCallsStatement(q: ReportAgentScope & { analysis: boolean })
   const label = callSentimentLabelSql('k.call_analysis');
   const extra = q.analysis
     ? `,
-                (k.recording_url IS NOT NULL) AS recorded,
+                ${hasRecordingSql('k')} AS recorded,
                 CASE WHEN k.analysis_status = 'completed' THEN lower(${label}) END AS sentiment`
     : '';
   const callJoin = (alias: string) => (q.analysis ? `\n           LEFT JOIN agency_calls k ON k.id = ${alias}.webrtc_call_id` : '');

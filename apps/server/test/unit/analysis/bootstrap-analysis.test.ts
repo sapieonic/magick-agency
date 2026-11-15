@@ -40,6 +40,7 @@ function ctx(over: Record<string, unknown> = {}): AppContext {
     config: {
       dialerAnalysis: { enabled: true, pollIntervalMs: 60000 },
       voicelinkRecording: { allowedHosts: ['voicelink.test'] },
+      plivoRecording: { redirectHosts: ['files.plivo.test'] },
       retention: { purgeIntervalMs: 1000 },
       ...over,
     },
@@ -82,6 +83,7 @@ describe('startAnalysis', () => {
     const stop = await startAnalysis(ctx());
     expect(mocks.initWorker).toHaveBeenCalledWith(expect.objectContaining({
       recordingHosts: ['voicelink.test'],
+      plivoRedirectHosts: ['files.plivo.test'],
       config: expect.objectContaining({ enabled: true }),
     }));
     expect(mocks.worker.wake).toHaveBeenCalledOnce();

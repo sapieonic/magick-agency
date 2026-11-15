@@ -4,7 +4,14 @@
  * the tenant's credential for a BYOC carrier, sent to the first URL only.
  */
 import { createChildLogger } from '@magick-agency/observability';
-import { fetchWithAllowedRedirects, RecordingHostRefusedError } from '../utils/recording-proxy.js';
+import { trackRecordingFetchFailure, type RecordingFetchFailureReason } from '@magick-agency/observability/metrics/voice';
+import {
+  discardResponseBody,
+  fetchWithAllowedRedirects,
+  RecordingHostRefusedError,
+  recordingFetchErrorReason,
+  recordingUpstreamStatusReason,
+} from '../utils/recording-proxy.js';
 import { TranscriptionError } from './types.js';
 
 const log = createChildLogger({ component: 'recording-fetcher' });
@@ -26,6 +33,13 @@ export interface FetchRecordingOptions {
   headers?: Readonly<Record<string, string>>;
   /** Match hosts exactly, no subdomains (set whenever `headers` carries a credential). */
   exactHosts?: boolean;
+  /** Further hosts a redirect hop may go to, exactly (`RecordingAccess.redirectHosts`, RC4). */
+  redirectHosts?: readonly string[];
+  /**
+   * The call's carrier, for `recording_fetch_failures_total{surface="analysis"}` (RC3). Absent:
+   * a failure is not counted.
+   */
+  provider?: string;
 }
 
 export interface FetchedRecording {
@@ -69,6 +83,9 @@ export async function fetchRecordingBytes(
   recordingUrl: string,
   opts: FetchRecordingOptions,
 ): Promise<FetchedRecording> {
+  const failed = (reason: RecordingFetchFailureReason): void => {
+    if (opts.provider) trackRecordingFetchFailure(opts.provider, 'analysis', reason);
+  };
   let res: Response;
   try {
     // Allow-list checked on the first URL AND every redirect hop (SSRF).
@@ -79,12 +96,17 @@ export async function fetchRecordingBytes(
         ...(opts.headers ? { headers: { ...opts.headers } } : {}),
       },
       opts.allowedHosts,
-      { exactHosts: opts.exactHosts === true },
+      { exactHosts: opts.exactHosts === true, ...(opts.redirectHosts ? { redirectHosts: opts.redirectHosts } : {}) },
     );
   } catch (err) {
+    const reason = recordingFetchErrorReason(err);
+    failed(reason);
     if (err instanceof RecordingHostRefusedError) {
-      // Non-retryable: no number of attempts makes an off-list host acceptable.
-      log.warn({ host: err.host, reason: err.reason, hop: err.hop }, 'Recording URL is not on the recording-host allow-list; refusing to fetch');
+      // Non-retryable: no number of attempts makes an off-list host acceptable. Hosts only.
+      log.warn(
+        { host: err.host, redirectedFrom: err.redirectedFrom, reason, hop: err.hop, provider: opts.provider },
+        'Recording URL is not on the recording-host allow-list; refusing to fetch',
+      );
       throw new TranscriptionError('TRANSCRIPTION_FAILED', err.message, false);
     }
     // AbortSignal.timeout rejects with a TimeoutError (name === 'TimeoutError').
@@ -100,7 +122,10 @@ export async function fetchRecordingBytes(
   if (!res.ok) {
     // A permanently unfetchable recording (auth failure, gone) must not burn retries.
     const nonRetryable = res.status === 401 || res.status === 403 || res.status === 404;
-    log.warn({ status: res.status, nonRetryable }, 'Recording fetch returned non-2xx');
+    const reason = recordingUpstreamStatusReason(res.status);
+    failed(reason);
+    await discardResponseBody(res);
+    log.warn({ upstreamStatus: res.status, reason, nonRetryable, provider: opts.provider }, 'Recording fetch returned non-2xx');
     throw new TranscriptionError(
       'TRANSCRIPTION_FAILED',
       `Recording fetch failed with status ${res.status}`,
@@ -147,8 +172,10 @@ export async function fetchRecordingBytes(
   } catch (err) {
     if (err instanceof TranscriptionError) throw err;
     if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+      failed('timeout');
       throw new TranscriptionError('TIMEOUT', `Recording stream timed out after ${opts.timeoutMs}ms`);
     }
+    failed('network');
     throw new TranscriptionError(
       'TRANSCRIPTION_FAILED',
       `Error while streaming recording: ${(err as Error).message}`,

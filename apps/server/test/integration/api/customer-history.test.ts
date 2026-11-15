@@ -263,8 +263,8 @@ beforeAll(async () => {
       ...(i === 0 ? { auto_disposition_code: 'callback' } : {}),
       dialed_at: at(5 * DAY), ended_at: at(5 * DAY), created_at: at(5 * DAY) });
   }
-  await q(`INSERT INTO agency_calls (id, tenant_id, account_id, caller_id, destination_phone, recording_url)
-           VALUES ($1, $2, $3, '+919000000001', $4, 'https://recordings.example.com/1')`, [ids.leg1, floor.tenant, floor.account, NUMBER]);
+  await q(`INSERT INTO agency_calls (id, tenant_id, account_id, caller_id, destination_phone, recording_url, recording_requested)
+           VALUES ($1, $2, $3, '+919000000001', $4, 'https://recordings.example.com/1', true)`, [ids.leg1, floor.tenant, floor.account, NUMBER]);
   // leg2 has no agency_calls row: purged by retention; C0 records its calls → "expired".
   // A campaign mark, as the dialer writes it: no account, the campaign.
   await dncRow({ id: ids.dncA, tenant_id: floor.tenant, account_id: null, campaign_id: C0, phone_e164: NUMBER, source: 'agent',
@@ -763,6 +763,19 @@ describe('the timeline (§4)', () => {
     expect(byKey.get(`dnc_mark:${ids.dncA}`)).toMatchObject({ account_id: floor.account,
       entry: { scope: 'campaign', reason: 'Asked not to be called', added_by: 'account_admin 0.0' } });
     expect(byKey.get(`dnc_mark:${ids.dncTenant}`)).toMatchObject({ account_id: null, entry: { scope: 'tenant', added_by: 'import:registry.csv' } });
+  });
+
+  // RC1: a leg holding a link its call never asked for (a carrier that recorded anyway, a row from
+  // before RC1) is "not recorded", in the timeline and the export alike.
+  it('a link the call did not ask for reads not_recorded', async () => {
+    await q('UPDATE agency_calls SET recording_requested = false WHERE id = $1', [ids.leg1]);
+    try {
+      const body = await search(sup());
+      const entry = body.timeline.entries.find((e: { key: string }) => e.key === `campaign_call:${ids.a1}`);
+      expect(entry).toMatchObject({ recording: 'not_recorded' });
+    } finally {
+      await q('UPDATE agency_calls SET recording_requested = true WHERE id = $1', [ids.leg1]);
+    }
   });
 
   it('keyset pages: no duplicates, no skips, across entries sharing one instant', async () => {

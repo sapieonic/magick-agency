@@ -28,6 +28,7 @@ export const analysisPlugin: FastifyPluginAsync<AnalysisPluginOptions> = async (
       ? {
         resolveRecordingAccess: createRecordingAccessResolver({
           voicelinkHosts: opts.ctx.config.voicelinkRecording.allowedHosts,
+          plivoRedirectHosts: opts.ctx.config.plivoRecording.redirectHosts,
           credentials: processCredentialSource,
         }),
       }

@@ -1,7 +1,7 @@
 /**
  * The insights rollup's SQL: the bucket width, the measures, the claim and the recompute
- * (migration 0012, `docs/insights.md` "Shape"). A leaf: it imports the domain's definitions and
- * `sql-fragments.ts`, nothing else in this folder.
+ * (migration 0012, `docs/insights.md` "Shape"). A leaf: it imports the domain's definitions, the call
+ * table's recording predicate (`hasRecordingSql`, a leaf, RC1) and `sql-fragments.ts`, nothing else in this folder.
  *
  * The rollup is a pure function of `agency_call_attempts`. Every measure below is spelled from
  * the definition the supervisor dashboard (`campaign-stats.ts`) counts with, imported rather
@@ -20,6 +20,7 @@ import {
 } from '@magick-agency/contracts/agency';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { CONVERSATION_ATTEMPT_SQL, HUMAN_CONNECT_ATTEMPT_SQL, WRAPUP_MEASURED_RESOLUTIONS_SQL } from './sql-fragments.js';
+import { hasRecordingSql } from '@magick-agency/db/utils/recording-request';
 
 /**
  * The system's disposition codes, which record an event and never the customer's outcome:
@@ -182,7 +183,7 @@ const MEASURE_SELECT = INSIGHTS_MEASURES.map(([column, agg]) => `${agg} AS ${col
  *    for the rare dial whose `override_applied` is non-empty. It reads an attempt that can sit in
  *    another bucket, so a re-disposition of that attempt after the override was spent does not
  *    re-mark this bucket; the overrides read can lag that one edit until the bucket is next written.
- *  - `recorded`: the call row (`webrtc_call_id`) carries a recording; `call_error_code` is that
+ *  - `recorded`: the call row (`webrtc_call_id`) asked for a recording and carries one (RC1, `hasRecordingSql`); `call_error_code` is that
  *    row's `error_code` (the `carrier_error` facet, 0014).
  *
  * Facet columns: `n` the key's dials (conversations for `no_outcome`); `connected` `/stats`'
@@ -210,7 +211,7 @@ export const INSIGHTS_RECOMPUTE_SQL = `WITH k AS (${KEYS_SQL}),
                      AND p.disposition_code NOT IN (${SYSTEM_CODES_SQL})
                    ORDER BY p.attempt_number DESC LIMIT 1)
                 END AS override_code,
-                (call.recording_url IS NOT NULL) AS recorded,
+                ${hasRecordingSql('call')} AS recorded,
                 call.error_code AS call_error_code,
                 (${CONVERSATION_ATTEMPT_SQL}) AS is_conversation,
                 (${HUMAN_CONNECT_ATTEMPT_SQL}) AS is_human_connect

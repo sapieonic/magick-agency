@@ -10,6 +10,7 @@ vi.mock('../../../src/connection.js', () => ({
 }));
 
 const { webrtcCallRepository } = await import('../../../src/repositories/agency-call.repository.js');
+const { honourRecordingRequest, recordingUrlSql, hasRecordingSql } = await import('../../../src/utils/recording-request.js');
 
 // Ids are UUIDs; the table is `agency_calls`; the only scope is `'agency'`, so the
 // factory rows carry a campaign_id; the default provider is 'voicelink'. The
@@ -265,7 +266,7 @@ describe('webrtcCallRepository (integration)', () => {
     });
 
     it('update() persists recording_url and recording_duration_seconds (on the allow-list)', async () => {
-      const created = await insertWebrtcCall({ status: 'completed' });
+      const created = await insertWebrtcCall({ status: 'completed', recording_requested: true });
       const updated = await webrtcCallRepository.update(created.id, {
         recording_url: 'https://vobiz.ai/rec/abc.wav',
         recording_duration_seconds: 123,
@@ -306,6 +307,74 @@ describe('webrtcCallRepository (integration)', () => {
       expect(found!.recording_requested).toBe(true);
       expect(found!.recording_url).toBe('https://vobiz.ai/rec/x.wav');
       expect(found!.recording_duration_seconds).toBe(55);
+    });
+  });
+
+  // ── RC1: a call that did not ask for a recording has none ─────────────────
+  describe('a recording the call did not ask for (RC1)', () => {
+    const URL_X = 'https://recording.example/x.mp3';
+
+    it('update() does not store a recording_url (or duration) on a row that did not ask for one', async () => {
+      const created = await insertWebrtcCall({ status: 'in_progress', recording_requested: false });
+      const updated = await webrtcCallRepository.update(created.id, {
+        status: 'completed', recording_url: URL_X, recording_duration_seconds: 42,
+      });
+      // The rest of the patch lands; the recording does not.
+      expect(updated!.status).toBe('completed');
+      expect(updated!.recording_url).toBeNull();
+      const raw = await getTestPool().query('SELECT recording_url, recording_duration_seconds FROM agency_calls WHERE id = $1', [created.id]);
+      expect(raw.rows[0]).toEqual({ recording_url: null, recording_duration_seconds: null });
+    });
+
+    it('update() leaves a link already on such a row as it is (no data is deleted), and still nulls on request', async () => {
+      const created = await insertWebrtcCall({ status: 'completed', recording_requested: false, recording_url: URL_X });
+      await webrtcCallRepository.update(created.id, { recording_url: 'https://recording.example/other.mp3' });
+      const kept = await getTestPool().query('SELECT recording_url FROM agency_calls WHERE id = $1', [created.id]);
+      expect(kept.rows[0].recording_url).toBe(URL_X);
+      await webrtcCallRepository.update(created.id, { recording_url: null });
+      const nulled = await getTestPool().query('SELECT recording_url FROM agency_calls WHERE id = $1', [created.id]);
+      expect(nulled.rows[0].recording_url).toBeNull();
+    });
+
+    it('every read returns a link the call did not ask for as null (a row from before RC1)', async () => {
+      const legacy = await insertWebrtcCall({
+        status: 'completed', recording_requested: false, recording_url: URL_X, recording_duration_seconds: 9,
+      });
+      const asked = await insertWebrtcCall({ status: 'completed', recording_requested: true, recording_url: URL_X });
+
+      const byId = await webrtcCallRepository.findById(legacy.id);
+      expect(byId!.recording_url).toBeNull();
+      expect(byId!.recording_duration_seconds).toBeNull();
+      const scoped = await webrtcCallRepository.findByIdScoped(legacy.id, TENANT, ACCOUNT, 'agency');
+      expect(scoped!.recording_url).toBeNull();
+      const listed = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency', 50, 0);
+      const byRow = new Map(listed.rows.map((r) => [r.id, r.recording_url]));
+      expect(byRow.get(legacy.id)).toBeNull();
+      expect(byRow.get(asked.id)).toBe(URL_X);
+      const returned = await webrtcCallRepository.update(legacy.id, { outcome: 'x' });
+      expect(returned!.recording_url).toBeNull();
+      // The row itself still holds it: nothing was deleted.
+      const raw = await getTestPool().query('SELECT recording_url FROM agency_calls WHERE id = $1', [legacy.id]);
+      expect(raw.rows[0].recording_url).toBe(URL_X);
+    });
+
+    it('the SQL predicates agree with the row function', async () => {
+      const legacy = await insertWebrtcCall({ recording_requested: false, recording_url: URL_X });
+      const asked = await insertWebrtcCall({ recording_requested: true, recording_url: URL_X });
+      const none = await insertWebrtcCall({ recording_requested: true });
+      const { rows } = await getTestPool().query<{ id: string; url: string | null; has: boolean }>(
+        `SELECT k.id, ${recordingUrlSql('k')} AS url, ${hasRecordingSql('k')} AS has FROM agency_calls k WHERE k.id = ANY($1::uuid[])`,
+        [[legacy.id, asked.id, none.id]]);
+      const got = Object.fromEntries(rows.map((r) => [r.id, { url: r.url, has: r.has }]));
+      expect(got).toEqual({
+        [legacy.id]: { url: null, has: false },
+        [asked.id]: { url: URL_X, has: true },
+        [none.id]: { url: null, has: false },
+      });
+      for (const id of [legacy.id, asked.id, none.id]) {
+        const raw = (await getTestPool().query('SELECT * FROM agency_calls WHERE id = $1', [id])).rows[0];
+        expect(honourRecordingRequest(raw).recording_url).toBe(got[id]!.url);
+      }
     });
   });
 

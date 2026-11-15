@@ -228,6 +228,7 @@ production.
 | `MOBILE_MIN_SUPPORTED_VERSION`, `MOBILE_LATEST_VERSION` | `0.1.0`, `0.1.0` | `GET /client-config`; `MAJOR.MINOR.PATCH`, and the minimum may not be newer than the latest (boot refuses) |
 | `MOBILE_IOS_STORE_URL`, `MOBILE_ANDROID_STORE_URL` | unset | Store links on `GET /client-config`; https only |
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |
+| `PLIVO_RECORDING_REDIRECT_HOSTS` | empty | Hosts a Plivo recording fetch may follow a redirect to (exact, no credential); empty follows none (RC4, "Recordings that will not play") |
 | `DIALER_ANALYSIS_CONCURRENCY` | `8` (1-256) | Analysis jobs in flight in this process; see "Sizing the analysis worker" |
 | `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` | `536870912` (512 MiB) | Recording bytes the analysis slots may hold; at least 2 × `DIALER_MAX_RECORDING_BYTES` |
 | `MEDIA_WORKERS` | `0` (0-64) | Media worker processes ([`scaling.md`](scaling.md)). 0 = one process, as before. N = a primary plus N workers that hold the agents' sockets and relay the audio. On 2 vCPUs more than 1 buys little; 500 calls needs more cores whatever the layout (§8.1) |
@@ -698,8 +699,9 @@ an HMAC-signed query (`RECORDING_URL_SIGNING_SECRET`), and the console's attempt
 A VoiceLink account can deliver recordings from another host (one dev account's are on
 `voiceflowai.elisiontec.com`). When the host of a stored `recording_url` is not on the list:
 
-- the server logs `Recording URL is not on the VoiceLink recording-host allow-list; refusing to
-  proxy` (playback) or `... refusing to fetch` (analysis), with the refused `host`;
+- the server logs `Recording URL is not on the recording-host allow-list; refusing to proxy`
+  (playback) or `... refusing to fetch` (analysis), with the refused `host` and `reason:
+  host_not_allowed`;
 - playback answers 502 "The recording is not hosted on an allowed carrier host";
 - the analysis job fails at once, not retried, as `TRANSCRIPTION_FAILED`.
 
@@ -715,6 +717,89 @@ revoked, shredded, another tenant's or unopenable cannot be fetched: playback an
 `recording_unavailable`, and its analysis job fails at once, not retried (a missing keyring key is
 retried, and recovers once the key is restored). Revoking a credential therefore ends playback and
 analysis of that tenant's earlier recordings on it.
+
+### Recordings a call did not ask for
+
+A call records only when it asked to (`agency_calls.recording_requested`, decided at the dial or
+the arrival: the campaign's, the soft phone's or the inbound route's `record_calls`, under the
+account's `allow_recording`). Plivo is told (`<Record>` only then). **VoiceLink is not**: its
+`add_lead` has no recording field, so it records on its own account default and posts a
+`recordingUrl` on `call.completed` whatever the call asked (RC2).
+
+Since RC1 such a recording is never kept: the bridge discards it on arrival (live, terminal or
+late), logs `Carrier delivered a recording for a call that did not ask for one — discarded, not
+stored` at warn with `callId`, `provider` and `where` (never the URL), and counts it once per
+call in `recording_discarded_unrequested_total{provider}`. The repository refuses to store one
+too. A steady count for `voicelink` means VoiceLink keeps recording calls set not to record: the
+audio exists at VoiceLink even though we neither store nor show it, so raise it with VoiceLink
+(their account's recording default) for the tenants concerned.
+
+**Rows from before RC1.** A call row may still hold a link it did not ask for. Every read now
+treats it as "not recorded" (call detail, playback, the soft phone's and customer history's
+recording state, Insights, report workbooks, analysis), and `0044_recording_honours_request.sql` had Insights recount
+the buckets it touched. Nothing was deleted. To remove the links too, an operator may run, after
+a review and a backup (`DEPLOYMENT.md` section 12):
+
+```sql
+-- 1. Review: how many, per tenant, account, carrier and month.
+SELECT tenant_id, account_id, provider, date_trunc('month', created_at) AS month, count(*)
+  FROM agency_calls
+ WHERE recording_url IS NOT NULL AND NOT recording_requested
+ GROUP BY 1, 2, 3, 4 ORDER BY 1, 2, 3, 4;
+
+-- 2. Opt in: null the links, in batches (the Insights trigger re-marks each bucket it touches).
+--    Narrow with AND tenant_id = '<uuid>' to do one tenant at a time; repeat until 0 rows.
+UPDATE agency_calls SET recording_url = NULL, recording_duration_seconds = NULL
+ WHERE id IN (SELECT id FROM agency_calls
+               WHERE recording_url IS NOT NULL AND NOT recording_requested
+               LIMIT 5000);
+```
+
+This removes our link only. **The audio stays at the carrier**: for VoiceLink, ask VoiceLink to
+delete those recordings (run step 1 with `provider_call_id` to list the calls) and to stop
+recording for the account; nulling the link first loses the list, so export it before step 2.
+
+### Recordings that will not play
+
+The console says "We could not reach the service that stores this recording. The call itself is
+fine — try again in a few minutes." for every answer of the recording route but a 403 (recording
+not enabled for the account) or a 404 (not recorded, purged, or the credential cannot serve it).
+Every recording reaches the console through our proxy, VoiceLink's included (the public call
+detail always points the player at `/proxy/agency/.../recording`), so this covers both carriers.
+The server's answers that land there (RC3):
+
+| Status | `reason` in the log and in `recording_fetch_failures_total{surface="playback"}` | What it means |
+|---|---|---|
+| 502 | `host_not_allowed` | The stored URL's host is not the carrier's recording host (VoiceLink: `VOICELINK_RECORDING_HOSTS`; Plivo: exactly `media.plivo.com`). The log names `host` |
+| 502 | `redirect_refused` | The carrier's host redirected to a host off its list. The log names `redirectHost` (the target) and `redirectedFrom`, hosts only (a signed URL's query is a secret) |
+| 502 | `too_many_redirects` | More than 3 hops |
+| 502 | `upstream_unauthorized` | The carrier answered 401 or 403 (`upstreamStatus` logged): for Plivo, the tenant's credential is wrong for the recording, or a redirect that came back to the media host without the credential |
+| 502 | `upstream_not_found` | 404 or 410: the recording is not (yet, or any longer) at the carrier |
+| 502 | `upstream_status` | Any other non-2xx (5xx, 429), `upstreamStatus` logged |
+| 504 | `timeout` | No response headers within 20 s; before RC3 the request hung until the browser gave up |
+| 502 | `network` | DNS, refused, reset or TLS failure: our egress cannot reach the host (VoiceLink's host has been unreachable from some clouds) |
+| 502 | `access_error` | Resolving the call's access threw (database or credential store) |
+
+`access_refused` (a 404) is counted too, though the console shows it as not recorded. Also
+"unreachable" to the console, with no proxy log: a 401 (the viewer's session expired), a 429 (the
+rate limiter), any 5xx before the proxy runs. The analysis worker counts its own fetches as
+`surface="analysis"` with the same reasons.
+
+To find the cause: `sum by (provider, reason) (increase(recording_fetch_failures_total[1d]))`,
+then the warn and error logs of component `recording-proxy` for the reason (`callId`, `provider`,
+`host`, `upstreamStatus`, `redirectHost`). Fix by the reason: a VoiceLink host
+(`host_not_allowed`) goes on `VOICELINK_RECORDING_HOSTS` once VoiceLink confirms it is theirs;
+`network` or `timeout` to VoiceLink is our egress; `upstream_unauthorized` on Plivo is the
+tenant's credential (verify it in the super-admin console); `redirect_refused` on Plivo is below.
+
+**Following a Plivo redirect (RC4, default, pending Manas).** Whether `media.plivo.com` answers a
+recording with a redirect has not been seen live (Plivo step 5 is open, `docs/status.md`). If the
+logs show `reason: redirect_refused` for Plivo with a stable `redirectHost`, an operator may list
+that host in `PLIVO_RECORDING_REDIRECT_HOSTS` (comma list of exact, bare lowercase hostnames;
+refused at boot otherwise: no scheme, port, path, wildcard, IP address or `localhost`) and
+restart. A listed host is accepted for a redirect hop only, never as the first URL, and the hop
+never carries the credential (only `Range`). Empty, the default, follows no redirect, as before.
+Never list a host the logs did not name.
 
 ## Postgres TLS
 

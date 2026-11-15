@@ -156,6 +156,10 @@ export async function seedWorld(pool: pg.Pool, opts: { campaigns: number; contac
               id: callId, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId, caller_id: row['caller_id'],
               destination_phone: contact.phone_e164, provider: 'voicelink', status: 'completed', metadata: {},
               campaign_id: id, recording_url: rng.chance(0.6) ? `https://recording.example/${callId}.mp3` : null,
+              // About one in five asked for no recording (RC1): those with a link the carrier made anyway
+              // (a row from before RC1) count as not recorded. From the dial's minute, not a new
+              // rng draw, so the rest of the world is the seed it always was.
+              recording_requested: minute % 5 !== 0,
               error_code: null,
             });
           } else if (row['outcome'] === 'failed' && number % 4 !== 0) {
@@ -167,7 +171,7 @@ export async function seedWorld(pool: pg.Pool, opts: { campaigns: number; contac
             calls.push({
               id: callId, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId, caller_id: row['caller_id'],
               destination_phone: contact.phone_e164, provider: 'voicelink', status: 'failed', metadata: {},
-              campaign_id: id, recording_url: null,
+              campaign_id: id, recording_url: null, recording_requested: false,
               error_code: [null, 'TELEPHONY_ERROR', 'TELEPHONY_INIT_FAILED'][number % 3],
             });
           }
@@ -189,7 +193,7 @@ export async function seedWorld(pool: pg.Pool, opts: { campaigns: number; contac
   await bulkInsert(pool, 'agency_calls', [
     ['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['caller_id', 'text'], ['destination_phone', 'text'],
     ['provider', 'text'], ['status', 'text'], ['metadata', 'jsonb'], ['campaign_id', 'uuid'], ['recording_url', 'text'],
-    ['error_code', 'text'],
+    ['recording_requested', 'bool'], ['error_code', 'text'],
   ], calls);
   await bulkInsert(pool, 'agency_call_attempts', ATTEMPT_COLUMNS, attempts);
   return { campaigns, attempts: attempts.length };

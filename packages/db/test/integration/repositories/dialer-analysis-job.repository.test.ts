@@ -15,7 +15,7 @@ vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: repo } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
 
 async function callWithRecording(overrides: Record<string, unknown> = {}) {
-  return insertWebrtcCall({ recording_url: 'https://recording.example/call.wav', ...overrides });
+  return insertWebrtcCall({ recording_requested: true, recording_url: 'https://recording.example/call.wav', ...overrides });
 }
 async function enqueue(call: { id: string }) {
   return (await repo.enqueueFromCall({ call_id: call.id, profile_snapshot: { custom_dimensions: [] } }))!;
@@ -47,7 +47,7 @@ describe('dialerAnalysisJobRepository (integration)', () => {
   });
 
   it('guards recording readiness, applies settle delay, and promotion rescues delivered recordings before expiry', async () => {
-    const call = await insertWebrtcCall({ recording_url: null });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: null });
     const job = await enqueue(call);
     expect(job.status).toBe('awaiting_recording');
     expect(await callStatus(call.id)).toBe('awaiting_recording');
@@ -57,7 +57,7 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect(await callStatus(call.id)).toBe('pending');
     expect(await repo.markRecordingReady(call.id, 15)).toBeNull();
 
-    const strandedCall = await insertWebrtcCall({ recording_url: 'https://recording.example/late.wav' });
+    const strandedCall = await insertWebrtcCall({ recording_requested: true, recording_url: 'https://recording.example/late.wav' });
     const stranded = await enqueue(strandedCall);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET status = 'awaiting_recording', created_at = now() - interval '2 hours' WHERE id = $1`, [stranded.id]);
     expect(await repo.promoteRecordingReady()).toBe(1);
@@ -66,9 +66,19 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect(await repo.expireAwaitingRecording(new Date())).toEqual([]);
   });
 
+  it('a link the call did not ask for is no recording: never queued, never promoted, expired (RC1)', async () => {
+    const legacy = await insertWebrtcCall({ recording_requested: false, recording_url: 'https://recording.example/unasked.wav' });
+    const job = await enqueue(legacy);
+    expect(job.status).toBe('awaiting_recording');
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET created_at = now() - interval '2 hours' WHERE id = $1`, [job.id]);
+    expect(await repo.promoteRecordingReady()).toBe(0);
+    const expired = await repo.expireAwaitingRecording(new Date(Date.now() - 30 * 60_000));
+    expect(expired.map((j) => j.id)).toEqual([job.id]);
+  });
+
   it('expires only awaiting jobs whose call still has no recording, mirroring expired (never onto deleted)', async () => {
-    const waiting = await insertWebrtcCall({ recording_url: null });
-    const erased = await insertWebrtcCall({ recording_url: null });
+    const waiting = await insertWebrtcCall({ recording_requested: true, recording_url: null });
+    const erased = await insertWebrtcCall({ recording_requested: true, recording_url: null });
     const wJob = await enqueue(waiting);
     const eJob = await enqueue(erased);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET created_at = now() - interval '2 hours'`);

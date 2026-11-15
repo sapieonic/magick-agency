@@ -247,7 +247,7 @@ async function seed(): Promise<void> {
       const callId = randomUUID();
       calls.push({
         ...base, id: callId, caller_id: '+919000000001', destination_phone: '+919800000000', status: 'completed',
-        recording_url: `https://rec.example/${callId}.mp3`, analysis_status: 'completed', campaign_id: campaign(), agency_attempt_id: null,
+        recording_url: `https://rec.example/${callId}.mp3`, recording_requested: true, analysis_status: 'completed', campaign_id: campaign(), agency_attempt_id: null,
         call_analysis: { common: { overall_sentiment: { label: i === 0 ? ['positive', 'mixed', 'negative'][k] : 'neutral', score: 0.5 } } },
       });
       attempt({ ...mine, dialed_at: at(0), ...talked(at(0), 'interested', 60), webrtc_call_id: callId });
@@ -269,7 +269,7 @@ async function seed(): Promise<void> {
   await bulkInsert(pool, 'agency_contacts', [['id', 'uuid'], ['campaign_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['phone_e164', 'text'], ['context', 'jsonb'], ['state', 'text']], contacts);
   await bulkInsert(pool, 'agency_agent_sessions', [['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['campaign_id', 'uuid'], ['agent_user_id', 'uuid'], ['kind', 'text'], ['state', 'text'], ['joined_at', 'timestamptz'], ['left_at', 'timestamptz']], sessions);
   await bulkInsert(pool, 'agency_agent_session_events', [['id', 'uuid'], ['session_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['campaign_id', 'uuid'], ['agent_user_id', 'uuid'], ['to_state', 'text'], ['at', 'timestamptz'], ['break_reason', 'text']], events);
-  await bulkInsert(pool, 'agency_calls', [['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['caller_id', 'text'], ['destination_phone', 'text'], ['status', 'text'], ['recording_url', 'text'], ['analysis_status', 'text'], ['call_analysis', 'jsonb'], ['campaign_id', 'uuid'], ['agency_attempt_id', 'uuid']], calls);
+  await bulkInsert(pool, 'agency_calls', [['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['caller_id', 'text'], ['destination_phone', 'text'], ['status', 'text'], ['recording_url', 'text'], ['recording_requested', 'bool'], ['analysis_status', 'text'], ['call_analysis', 'jsonb'], ['campaign_id', 'uuid'], ['agency_attempt_id', 'uuid']], calls);
   await bulkInsert(pool, 'agency_call_attempts', [
     ['id', 'uuid'], ['campaign_id', 'uuid'], ['contact_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['attempt_number', 'int'],
     ['caller_id', 'text'], ['reserved_agent_id', 'uuid'], ['state', 'text'], ['outcome', 'text'], ['disposition_code', 'text'],

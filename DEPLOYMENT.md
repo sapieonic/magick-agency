@@ -1027,6 +1027,8 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | A Plivo campaign pauses by itself (`carrier_auth`, `carrier_account_unavailable` or `carrier_refusing_calls`) | Plivo refused the credential (401), the credential is no longer active, or Plivo refused five dials in a row (a destination not enabled, no credit, a caller ID it rejects) | `docs/operations.md`, "Enabling Plivo for a tenant", "Automatic pauses" |
 | Uploads fail with "S3 client not initialized" | `S3_AUDIO_BUCKET` / `AWS_*` missing | Step 3.4 |
 | Recording playback answers 502 "not hosted on an allowed carrier host" | Recordings come from another VoiceLink host | `VOICELINK_RECORDING_HOSTS` (`docs/operations.md`, "Recordings") |
+| The console says "We could not reach the service that stores this recording" | One of the proxy's failure reasons (host, redirect, carrier status, timeout, network) | `recording_fetch_failures_total` by `reason`, then the `recording-proxy` logs (`docs/operations.md`, "Recordings that will not play") |
+| Calls are recorded with recording off | The carrier records anyway (VoiceLink is never told); we discard and count it | `recording_discarded_unrequested_total` (`docs/operations.md`, "Recordings a call did not ask for") |
 | Recording links stop working after every restart | `RECORDING_URL_SIGNING_SECRET` unset | Set it once and keep it |
 | Agents' station sockets drop every minute | A load balancer idle timeout at its default | 3600 s (section 10) |
 | All users hit rate limits together | `TRUST_PROXY_HOPS` lower than the real chain (for example 1 behind Caddy, or 2 behind Cloudflare's proxy) | Match it to the number of proxies |

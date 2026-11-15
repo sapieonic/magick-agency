@@ -698,7 +698,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   - *Status and recording.* Status callbacks drive ring, answer and terminal through the module's
     `lifecycle` reader (outcomes pinned by `plivo-carrier.fixture.json`); the recording callback
     persists `recording_url` and fires recording-ready, after teardown too
-    (`handleCarrierRecording`).
+    (`handleCarrierRecording`), only for a call that asked for a recording (RC1: any other is
+    discarded, logged and counted; `recording_discarded_unrequested_total`).
   - *Ending.* Before the answer a teardown cancels the dial by its request id (`DELETE
     …/Request/{request_uuid}/`, `cancelDialRequest`); after it, hangs up by the call id (`DELETE
     …/Call/{call_uuid}/`); neither with an empty or malformed id (PL8). So a soft-phone hang-up
