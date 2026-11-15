@@ -70,6 +70,14 @@ export const TOTAL_QUERY_PARAMS = ['include_total'] as const;
 export const PREAMBLE_QUERY_PARAMS = ['preamble'] as const;
 
 /**
+ * The campaign call export's own filter (decision SR6): `source=dialler|soft_phone` keeps one
+ * of the two sources of the campaign's call log; absent, the file carries both. Forwarded to
+ * the call log's internal read, which validates it. Not on the JSON attempt list, whose rows
+ * are the dialler's alone (the soft phone's are Call log's other view).
+ */
+export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source'] as const;
+
+/**
  * The outcome of narrowing a query down to the params a route forwards.
  *
  * A result type rather than a bare record, because an unrecognised param is now
@@ -169,9 +177,17 @@ export function forwardAllowedQuery(
 // renames a field must degrade to a blank cell rather than throw mid-export.
 
 export interface SpineAttemptRow {
+  /**
+   * Where the row came from (the call log, decision SR6): `dialler` for an attempt,
+   * `soft_phone` for a soft-phone call tagged to the campaign. Absent on the JSON attempt
+   * list, whose rows are all the dialler's.
+   */
+  source?: 'dialler' | 'soft_phone';
   id: string;
-  contact_id: string;
-  attempt_number: number;
+  /** Null on a soft-phone row whose number matched no roster contact. */
+  contact_id: string | null;
+  /** Null on a soft-phone row: the soft phone does not number its calls per contact. */
+  attempt_number: number | null;
   phone_e164: string;
   caller_id: string;
   agent_user_id: string | null;
@@ -394,6 +410,14 @@ export const ATTEMPT_CSV_COLUMNS = [
   // consumer reading by position keeps its columns. Its own column, never merged into
   // `disposition_code`: that one stays what a person recorded.
   'auto_disposition_code',
+  // Where the row came from (decision SR6): `dialler` (an attempt) or `soft_phone` (a soft-phone
+  // call an agent logged to this campaign). Appended LAST, like every column added after the
+  // first release, so a consumer reading by position keeps its columns. A soft-phone row
+  // fills the attempt columns from the soft-phone call's own fields: `attempt_id` is the
+  // soft-phone call's id, `contact_id` the roster contact its number matched (empty for none),
+  // `phone` the number dialled, `recording_call_id` its media leg; `attempt_number`,
+  // `wrapup_seconds` and `auto_disposition_code` are empty (the soft phone has none).
+  'source',
 ] as const;
 
 export const CONTACT_CSV_COLUMNS = [
@@ -439,6 +463,8 @@ export function attemptCsvRow(row: SpineAttemptRow): string {
     cell(row.created_at), cell(row.dialed_at), cell(row.answered_at), cell(row.bridged_at),
     cell(row.ended_at), cell(row.talk_seconds), cell(row.wrapup_seconds),
     cell(row.webrtc_call_id), cell(row.auto_disposition_code),
+    // A row with no `source` is an attempt: the JSON attempt list's rows carry none.
+    cell(row.source ?? 'dialler'),
   ]);
 }
 
@@ -507,7 +533,7 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
     preambleLine(
       input.kind === 'attempts'
         // The product name, decision B17.
-        ? 'Magick Agency — campaign call-attempt export (one row per dial)'
+        ? 'Magick Agency — campaign call export (one row per dial, and one per soft-phone call logged to the campaign)'
         : 'Magick Agency — campaign contact roster export (one row per contact)',
     ),
     preambleLine(`Generated: ${input.generatedAt.toISOString()} (UTC)`),
@@ -526,10 +552,19 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
       + 'time in the console and are deliberately not exported in bulk.',
     ),
     ...(input.kind === 'attempts'
-      ? [preambleLine(
-        'Rows with no agent and no recording are real: an attempt that was abandoned, failed or '
-        + 'never answered has neither. They are the rows a call list cannot show.',
-      )]
+      ? [
+        preambleLine(
+          'Rows with no agent and no recording are real: an attempt that was abandoned, failed or '
+          + 'never answered has neither. They are the rows a call list cannot show.',
+        ),
+        preambleLine(
+          'The last column, source, says where each row came from: dialler (the campaign\'s own '
+          + 'dial) or soft_phone (a call an agent placed on the soft phone and logged to this '
+          + 'campaign; its attempt_number, wrapup_seconds and auto_disposition_code are empty). '
+          + 'Soft-phone calls logged to no campaign are not in this file. Pass ?source=dialler '
+          + 'for the dialler\'s rows alone.',
+        ),
+      ]
       : [preambleLine(
         'Suppressed contacts appear here with the reason they were suppressed, including ones '
         + 'that were never dialled at all.',

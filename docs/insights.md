@@ -334,7 +334,7 @@ or four times its compute time.
 |---|---|
 | `activity.calls`, `outcomes`, `overrides`, `no_outcome`, the agents' dial columns, `reconciliation`, `as_of` | the rollup's `activity` read: ONE `REPEATABLE READ` snapshot, so every reconciliation is checked against the numbers served beside it |
 | `calls.redials.refused_at_limit` | the pacing history |
-| `calls.softphone_calls` | `agency_manual_calls` tagged to the campaign, placed, `created_at` in range (`idx_agency_manual_calls_campaign`) |
+| `calls.softphone` (and `calls.softphone_calls`, its `placed`) | `agency_manual_calls` tagged to the campaign, `created_at` in range: placed, connected and reached a person by the soft phone's one definition (`softphone-campaign-sql.ts`, SR2), one statement on `idx_agency_manual_calls_campaign`. Beside the dialler's figures, never in them (SR1): the console adds the soft phone's connect rate and All calls, and shows them while the soft phone is on or the range holds any (SR5) |
 | `callbacks.booked` | the rollup (by the booking dial's time) |
 | `callbacks` timing classes, `by_owner` | `callbackTiming` (IN4), the callbacks whose booked time is in range |
 | `callbacks.open_due_today`, `open_overdue` | as of now: the allocation's totals, through the cache under the allocation's own key (the polled allocation and this read share one computation) |
@@ -393,6 +393,11 @@ redials_placed`), and it is one dial per clash, which is rare.
   pins Insights, `/stats`, the roster and the scorecard to one number on a seed with voicemail,
   no-disposition and unwritten connects, redial chains and never-placed queued attempts.
 - `range.clamped` (IN12) and `health.carrier_failures_by_code` (0014) added.
+- `calls.softphone` `{ placed, connected, human_connects }` (SR1–SR3, 2026-11-15): the tagged
+  soft-phone calls by their one definition; `softphone_calls` stays, equal to `placed`.
+  `test/integration/api/agency-softphone-campaign-results.test.ts` checks the counts on real rows
+  (placed, ringing, never placed, voicemail, lapsed, unwritten, untagged, another campaign's,
+  another tenant's, the range's two edges) and that the dialler's connect rate does not move.
 
 **Drill-downs, end to end.** `apps/server/test/fixtures/insights-drilldowns.json` lists every number
 that opens a list, the list, and its params. `test/integration/api/agency-insights-drilldowns.test.ts`

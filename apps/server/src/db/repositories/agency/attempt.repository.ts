@@ -29,9 +29,16 @@ import type {
   AgencyKeysetPage,
   AgencyOverrideKind,
 } from '@magick-agency/contracts/agency';
-import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from './query-builders.js';
+import {
+  attemptFilterConditions,
+  keysetCondition,
+  params,
+  softphoneLogFilterConditions,
+  toKeysetPage,
+} from './query-builders.js';
 import { attemptAgentUserSql } from './drilldown-sql.js';
-import { projectAttemptRow } from './projections.js';
+import { projectAttemptRow, projectSoftphoneLogRow, type SoftphoneLogRaw } from './projections.js';
+import type { CampaignCallLogRow, CampaignCallSource } from '../../../agency/campaign-call-log.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import { unclaimContactUncharged } from './contact-unclaim-sql.js';
 
@@ -755,6 +762,79 @@ export class AgencyAttemptRepository {
       bind.values,
     );
     return Number(rows[0]?.n ?? 0);
+  }
+
+  /**
+   * The campaign's call log (decision SR6, `agency/campaign-call-log.ts`): its attempts, as
+   * {@link listForCampaign} lists them, and the soft-phone calls tagged to it in the tenant,
+   * newest first on ONE keyset `(created_at DESC, id DESC)` across both, so a page boundary
+   * neither drops nor repeats a row of either. `source` limits it to one of the two.
+   *
+   * One statement: each branch is its own keyset range with its own `LIMIT n + 1` (the
+   * attempts on `idx_agency_attempts_campaign_created`, the tagged calls on
+   * `idx_agency_manual_calls_campaign`), and the outer sort takes the newest `n + 1` of the at
+   * most `2n + 2`. The filters mean on a soft-phone call what they mean on an attempt
+   * (`softphoneLogFilterConditions`). An untagged soft-phone call belongs to no campaign (SR4).
+   */
+  async listCallLogForCampaign(input: {
+    campaignId: string;
+    tenantId: string;
+    filters: AgencyAttemptFilters;
+    source: CampaignCallSource | null;
+    after?: AgencyKeysetPosition;
+    limit: number;
+  }): Promise<AgencyKeysetPage<CampaignCallLogRow>> {
+    const bind = params();
+    const limit = bind.add(input.limit + 1);
+    const branches: string[] = [];
+    if (input.source !== 'soft_phone') {
+      const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
+      if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
+      branches.push(`(
+        SELECT 'dialler'::text AS source, ${ATTEMPT_ROW_SELECT_SQL},
+               ${keysetAtSql('a.created_at')} AS cursor_at
+          FROM agency_call_attempts a
+          ${ATTEMPT_CONTACT_JOIN_SQL}
+          LEFT JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY a.created_at DESC, a.id DESC
+         LIMIT ${limit})`);
+    }
+    if (input.source !== 'dialler') {
+      const conditions = [
+        `m.campaign_id = ${bind.add(input.campaignId)}::uuid`,
+        `m.tenant_id = ${bind.add(input.tenantId)}::uuid`,
+        ...softphoneLogFilterConditions(input.filters, bind),
+      ];
+      if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
+      // Column for column with ATTEMPT_ROW_SELECT_SQL: NULL where the soft phone has no such thing.
+      branches.push(`(
+        SELECT 'soft_phone'::text AS source, m.id, m.campaign_id, m.contact_id, NULL::int AS attempt_number,
+               m.destination_e164 AS phone_e164, m.caller_id,
+               m.agent_user_id, NULL::uuid AS reserved_agent_id, m.state, m.outcome,
+               m.disposition_code, NULL::varchar AS auto_disposition_code, m.notes, m.callback_at,
+               m.dispositioned_by_user_id, m.dispositioned_at, m.dispositioned_on_behalf,
+               m.webrtc_call_id, m.dialed_at, m.answered_at, m.bridged_at, m.ended_at,
+               m.talk_seconds, NULL::int AS wrapup_seconds, NULL::uuid AS redial_of_attempt_id,
+               NULL::int AS redial_number, m.created_at,
+               ${keysetAtSql('m.created_at')} AS cursor_at
+          FROM agency_manual_calls m
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT ${limit})`);
+    }
+    const sql = `
+      SELECT * FROM (${branches.join('\n        UNION ALL\n        ')}) log
+       ORDER BY log.created_at DESC, log.id DESC
+       LIMIT ${limit}`;
+
+    const { rows } = await getPool().query<AgencyCallAttemptRecord & {
+      source: CampaignCallSource; phone_e164: string; agent_user_id: string | null; cursor_at: string;
+    }>(sql, bind.values);
+
+    return toKeysetPage(rows, input.limit, (row): CampaignCallLogRow => (row.source === 'dialler'
+      ? { source: 'dialler', ...projectAttemptRow(row) }
+      : projectSoftphoneLogRow(row as unknown as SoftphoneLogRaw)));
   }
 
   /**

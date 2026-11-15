@@ -54,8 +54,11 @@ const { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } = await impo
  * them at the roster and start passing vacuously.
  */
 const isRoster = (sql: unknown): boolean => String(sql).includes('agency_agent_sessions s');
+/** The tagged soft-phone counts (SR1–SR3): their own statement, on the tag's index, holding no rate of the dialler's. */
+const isSoftphone = (sql: unknown): boolean => String(sql).includes('FROM agency_manual_calls m');
+const isAggregate = (sql: unknown): boolean => !isRoster(sql) && !isSoftphone(sql);
 const aggregateCall = (): unknown[] =>
-  (pool.query.mock.calls.filter((c) => !isRoster(c[0]))[0] ?? []) as unknown[];
+  (pool.query.mock.calls.filter((c) => isAggregate(c[0]))[0] ?? []) as unknown[];
 const sqlOf = (): string => String(aggregateCall()[0] ?? '');
 const paramsOf = (): unknown[] => (aggregateCall()[1] ?? []) as unknown[];
 
@@ -193,10 +196,15 @@ describe('the stats payload produces every field the contract declares', () => {
       'agents_by_state',
       'machine_connects_available',
       'previous_hour',
+      // The tagged soft-phone calls: an object of three counts, each checked below.
+      'softphone',
     ]);
     for (const [key, value] of Object.entries(stats)) {
       if (notPlainNumbers.has(key)) continue;
       expect(typeof value, `${key} must be a number, not a pg string`).toBe('number');
+    }
+    for (const [key, value] of Object.entries(stats.softphone)) {
+      expect(typeof value, `softphone.${key} must be a number, not a pg string`).toBe('number');
     }
   });
 });
@@ -294,7 +302,7 @@ describe('the guardrail source is the table, not a counter', () => {
       expect(aggregateSql, alias).toContain(alias);
     }
     expect(
-      pool.query.mock.calls.filter((c) => !isRoster(c[0])),
+      pool.query.mock.calls.filter((c) => isAggregate(c[0])),
       'the aggregates must be read by exactly one statement',
     ).toHaveLength(1);
   });

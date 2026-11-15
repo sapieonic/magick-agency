@@ -384,6 +384,16 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Wrap-up redials placed', value: calls.redials.placed, type: 'int' },
     { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
+    // The soft-phone calls logged to the campaign (SR1-SR3), last, beside the dialler's figures
+    // above and in none of them. A dataset from a server that predates them carries none.
+    ...(calls.softphone
+      ? [
+        { metric: 'Soft-phone calls placed', value: calls.softphone.placed, type: 'int' as const, definition: def(d, 'softphone_calls') },
+        { metric: 'Soft-phone calls connected', value: calls.softphone.connected, type: 'int' as const },
+        { metric: 'Soft-phone people reached', value: calls.softphone.human_connects, type: 'int' as const },
+        { metric: 'Soft-phone connect rate', value: rateCell(rate(calls.softphone.human_connects, calls.softphone.placed, floor)), type: 'percent' as const },
+      ]
+      : []),
   ]);
   const dates = d.trends.buckets.map((b) => bucketDate(b.bucket_start, d.range.timezone));
   await writeTable(

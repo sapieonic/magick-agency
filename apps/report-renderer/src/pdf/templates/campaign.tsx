@@ -135,6 +135,15 @@ function OverviewPage({ d }: { d: CampaignReportDataset }) {
           </dd>
           <dt>Do Not Call</dt>
           <dd>{plural(d.activity.dnc_marked.total, 'number')} marked by agents</dd>
+          {/* Beside the dialler's figures, in none of them (SR1); only when there were any. */}
+          {calls.softphone && calls.softphone.placed > 0 ? (
+            <>
+              <dt>Soft-phone calls</dt>
+              <dd data-testid="softphone-calls">
+                {plural(calls.softphone.placed, 'call')} placed and logged to this campaign, {count(calls.softphone.connected)} connected, {plural(calls.softphone.human_connects, 'person', 'people')} reached (connect rate {rateText(rate(calls.softphone.human_connects, calls.softphone.placed, d.floors.campaign_rate_min_first_dials))}); not in the dialler’s figures above
+              </dd>
+            </>
+          ) : null}
         </dl>
       </Section>
     </div>

@@ -11,6 +11,7 @@ import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { resolveAgentNames } from '../../../agency/agency-agent-identity.js';
 import {
   ATTEMPT_QUERY_PARAMS,
+  CALL_LOG_EXPORT_QUERY_PARAMS,
   CONTACT_QUERY_PARAMS,
   PAGING_QUERY_PARAMS,
   TOTAL_QUERY_PARAMS,
@@ -391,7 +392,10 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   }, async (request, reply) => {
     // `preamble` is consumed here (`wantsPreamble` below) and deliberately never
     // forwarded to the internal handler, so it must not read as an unknown param.
-    const forwarded = forwardAllowedQuery(request.query, ATTEMPT_QUERY_PARAMS, PREAMBLE_QUERY_PARAMS);
+    // `source` (SR6) is the export's own filter, forwarded to the call log's read.
+    const forwarded = forwardAllowedQuery(
+      request.query, [...ATTEMPT_QUERY_PARAMS, ...CALL_LOG_EXPORT_QUERY_PARAMS], PREAMBLE_QUERY_PARAMS,
+    );
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const filters = forwarded.query;
 
@@ -402,9 +406,11 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     if (!owned) return reply;
 
     try {
+      // The campaign's call log (SR6): its attempts and the soft-phone calls tagged to it,
+      // newest first on one keyset, each row marked with its `source`.
       const drained = await drainSpineExport<SpineAttemptRow>({
         request,
-        path: `/agency-campaigns/${request.params.id}/attempts`,
+        path: `/agency-campaigns/${request.params.id}/call-log`,
         filters,
         header: attemptCsvHeader(),
         renderRow: attemptCsvRow,

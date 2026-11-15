@@ -168,6 +168,16 @@ describe('campaign report', () => {
     expect(text(block(html, 'data-kpi', 'success_rate'))).toContain(pct((calls.successes / calls.conversations) * 100));
   });
 
+  it('prints the soft-phone calls logged to the campaign beside the dialler\'s figures, and only when there are any (SR1)', () => {
+    const line = text(block(html, 'data-testid', 'softphone-calls'));
+    expect(line).toContain('42 calls placed and logged to this campaign, 30 connected, 18 people reached');
+    expect(line).toContain(`connect rate ${pct((18 / 42) * 100)}`);
+    expect(line).toContain('not in the dialler’s figures above');
+    const none = structuredClone(d);
+    none.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0 };
+    expect(renderReportHtml(none, NO_FONTS)).not.toContain('data-testid="softphone-calls"');
+  });
+
   it('draws trends, best hours, agents, callbacks and health', () => {
     for (const id of ['headline', 'outcomes', 'trends', 'best-hours', 'agents', 'callbacks', 'stalls', 'caller-ids']) expect(html).toContain(`data-block="${id}"`);
     expect(text(block(html, 'data-block', 'agents'))).toContain('Arjun Mehta');

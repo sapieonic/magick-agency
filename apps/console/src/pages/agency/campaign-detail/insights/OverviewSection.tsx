@@ -11,8 +11,12 @@ import { formatCount, plural } from '../../../../utils/format/number';
 import { ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
 import {
   abandonmentRate,
+  allCallsConnectRate,
+  allCallsCounts,
   callsConnectRate,
   penetrationRate,
+  showSoftphoneFigures,
+  softphoneConnectRate,
   successRate,
 } from '../../../../utils/agency/insights/rates';
 import { attemptsLink, rosterBucketLink } from '../../../../utils/agency/insights/links';
@@ -70,6 +74,11 @@ export function OverviewKpis({
   const reached = rateFigure(penetrationRate(roster), 'contacts');
   const calls = activity?.calls ?? null;
   const connect = calls ? rateFigure(callsConnectRate(calls)) : null;
+  // The soft phone's tagged calls beside the dialler's rate, never in it (SR1, SR5).
+  const soft = calls && showSoftphoneFigures(ctx.softphoneEnabled ?? false, calls.softphone) ? calls.softphone : null;
+  const softAndAll = calls && soft
+    ? ` · soft phone ${rateFigure(softphoneConnectRate(soft)).value} · all calls ${rateFigure(allCallsConnectRate(allCallsCounts(calls, soft))).value}`
+    : '';
   const success = calls ? rateFigure(successRate(calls.successes, calls.conversations)) : null;
   const abandonment = health ? rateFigure(abandonmentRate(health.abandonment.rolling_24h)) : null;
   const overdue = allocation?.totals.callbacks_overdue ?? null;
@@ -93,10 +102,10 @@ export function OverviewKpis({
         testId="overview-kpi-dials"
       />
       <Kpi
-        label={`Connect rate · ${rangeLabel}`}
+        label={`${soft ? 'Dialler connect rate' : 'Connect rate'} · ${rangeLabel}`}
         value={connect ? connect.value : pending('activity')}
         withheld={!connect || connect.withheld}
-        sub={calls ? `${formatCount(calls.connected)} connected calls` : undefined}
+        sub={calls ? `${formatCount(calls.connected)} connected calls${softAndAll}` : undefined}
         testId="overview-kpi-connect"
       />
       <Kpi

@@ -32,6 +32,7 @@ import { REPORT_BUILD_TIMEOUT_MS } from '../../../agency/reports/datasets/types.
 import type { InsightsCallbackClass } from './insights-range-reads.js';
 import { CALLBACK_BOOKING_COLUMNS_SQL, callbackClassSql } from './insights-range-reads.js';
 import { INSIGHTS_MEASURES } from './insights-rollup-sql.js';
+import { SOFTPHONE_PLACED_SQL } from './softphone-campaign-sql.js';
 import {
   AGENCY_ATTEMPT_METRICS_SQL,
   AGENT_LEG_TALK_ATTEMPT_SQL,
@@ -354,9 +355,9 @@ export class AgencyReportDatasetRepository {
   }
 
   /**
-   * Soft-phone calls the agent placed in this account: Insights' soft-phone count (`created_at`
-   * in range, `dialed_at` set) by agent instead of by campaign tag, on the manual calls' agent
-   * index.
+   * Soft-phone calls the agent placed in this account: the soft phone's one definition of placed
+   * (`SOFTPHONE_PLACED_SQL`, SR2; Insights' and `/stats`' count, `created_at` in range) by agent
+   * instead of by campaign tag, tagged or not, on the manual calls' agent index.
    */
   async agentSoftphoneCalls(q: ReportAgentScope): Promise<number> {
     const { rows } = await getPool().query<{ n: number }>(
@@ -366,7 +367,7 @@ export class AgencyReportDatasetRepository {
           AND m.account_id = $5::uuid
           AND m.agent_user_id = $1::uuid
           AND m.created_at >= $2::timestamptz AND m.created_at < $3::timestamptz
-          AND m.dialed_at IS NOT NULL`,
+          AND ${SOFTPHONE_PLACED_SQL}`,
       agentValues(q),
     );
     return n(rows[0]?.n);

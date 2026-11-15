@@ -306,7 +306,8 @@ export function buildCampaign(spec: CampaignSpec, options: { attemptsCap?: numbe
       by_outcome: byOutcome,
       redials: { placed: redials, connected: Math.round(redials * 0.4), chains_at_limit: Math.round(redials * 0.1), refused_at_limit: 3 },
       agent_retries: { reopened_dials: Math.round(dials * 0.004), reopened_connected: Math.round(dials * 0.002), manual_dials: Math.round(dials * 0.002), manual_connected: Math.round(dials * 0.001) },
-      softphone_calls: 0,
+      softphone_calls: 42,
+      softphone: { placed: 42, connected: 30, human_connects: 18 },
       talk_seconds: sumOf(all, 'talk'),
       wrapup_seconds: sumOf(all, 'wrapup'),
       wrapup_measured: sumOf(all, 'wrapupMeasured'),
@@ -614,5 +615,6 @@ export function campaignDefinitions() {
     { key: 'stalls', label: 'Stalled minutes', text: 'Minutes in which at least half of the dialler\'s checks on the running campaign placed no call, by the main reason.' },
     { key: 'predial_blocks', label: 'Blocked before dialling', text: 'Contacts the dialler skipped because they were on the Do Not Call list, had an invalid number, or were outside calling hours.' },
     { key: 'recording_share', label: 'Recording share', text: 'Connected calls with a recording ÷ connected calls.' },
+    { key: 'softphone_calls', label: 'Soft-phone calls', text: 'Calls agents placed on the soft phone and logged to this campaign, counted when the call was started: placed, connected and people reached. Their connect rate is people reached ÷ placed. They are outside every dialler figure above; soft-phone calls logged to no campaign are in no campaign report.' },
   ];
 }

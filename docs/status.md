@@ -1646,6 +1646,33 @@ always wrote every campaign, with no choice. Now:
 - **Open (DS8).** A station `suppress` outcome (web, mobile, a supervisor's) writes no list entry,
   while the mobile wrap-up says it does; the disposition route belongs to the outcome workstream.
 
+### Soft-phone calls in campaign results 2026-11-15 (SR1–SR10, [`decisions.md`](decisions.md))
+
+Reshma: soft-phone calls in the campaign results, the exported CSV, the connect rate and the
+analytics. Built beside the dialler's figures, never blended into its connect rate (SR1).
+
+- **One definition** (`softphone-campaign-sql.ts`, SR2): a call tagged to the campaign in its
+  tenant is placed (`dialed_at` set), connected (outcome `connected`), reached a person (bridged,
+  coded neither voicemail nor `no_disposition`); `created_at` in `[from, to)`. Served as Insights'
+  `calls.softphone` and `/stats` `softphone` (lifetime); the agent report's count uses the same
+  placed rule.
+- **Console.** The Calls tab shows Soft-phone calls (placed, connected, connect rate) and All calls
+  beside the dialler's figures; the Overview's connect rate and each Analytics card say "Dialler
+  connect rate" and add the soft phone's and all calls' rates. Shown while the soft phone is on or
+  when there are any (SR5). Call log's Export CSV says the file holds them.
+- **Export** (SR6). `attempts.csv` drains the campaign call log: attempts and tagged soft-phone
+  calls newest first on one keyset; a new last column `source` (`dialler` | `soft_phone`); the
+  attempt filters mapped onto the soft-phone call; `?source=dialler|soft_phone`. Existing columns
+  unchanged.
+- **Campaign report** (SR8): Summary rows and a PDF line; the account report is a follow-up.
+- **Left as the dialler's** (SR7): Agents tab, Trends, Health, the Insights CSV tables, Home, the
+  agent record. No index needed (SR9, measured on 2M soft-phone calls). The mobile app is
+  unaffected (it reads none of these payloads).
+
+Mutation-checked: blending the soft phone into `/stats`' or Insights' dialler rate, dropping the
+tenant check, the voicemail exclusion, the soft-phone branch's keyset, the export's tenant scope
+and the attempt-only filters, and blending in the console's Calls and Overview rates each go red.
+
 ## Test counts
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch

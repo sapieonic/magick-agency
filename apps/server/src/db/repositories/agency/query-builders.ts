@@ -444,6 +444,52 @@ export function attemptFilterConditions(
 }
 
 /**
+ * The attempt list's filters on a SOFT-PHONE call tagged to the campaign (`m`), for the
+ * campaign call log's `soft_phone` rows (decision SR6, `agency/campaign-call-log.ts`). Every
+ * filter means on a soft-phone call what it means on an attempt, on the manual call's own
+ * column (state, outcome, code, agent, matched contact, number dialled, caller ID, `created_at`
+ * inclusive, `dialed_at` half-open, placed). The four attempt-only dimensions have no
+ * soft-phone counterpart: a soft-phone call is never a wrap-up redial, an agent's retry from
+ * the campaign queue, a reopened dial or a dial that spent an outcome override, so `=1`
+ * selects no soft-phone call and `=0` leaves them all in.
+ */
+export function softphoneLogFilterConditions(f: AgencyAttemptFilters, bind: ReturnType<typeof params>): string[] {
+  const conditions: string[] = [];
+  if (f.states?.length) conditions.push(`m.state = ANY(${bind.add(f.states)}::varchar[])`);
+  if (f.outcomes?.length) conditions.push(`m.outcome = ANY(${bind.add(f.outcomes)}::varchar[])`);
+  if (f.dispositionCodes?.length) {
+    conditions.push(`m.disposition_code = ANY(${bind.add(f.dispositionCodes)}::varchar[])`);
+  }
+  if (f.agentUserId) conditions.push(`m.agent_user_id = ${bind.add(f.agentUserId)}::uuid`);
+  if (f.contactId) conditions.push(`m.contact_id = ${bind.add(f.contactId)}::uuid`);
+  if (f.phone) {
+    // The number dialled, digits only, matched as `phoneCondition` matches a contact's.
+    const digits = "regexp_replace(m.destination_e164, '[^0-9]', '', 'g')";
+    const term = f.phone.value.replace(/\D/g, '');
+    conditions.push(term.length === 0
+      ? 'FALSE'
+      : f.phone.mode === 'exact' ? `${digits} = ${bind.add(term)}` : endsWithDigitsSql(digits, term, bind.add));
+  }
+  if (f.from) conditions.push(`m.created_at >= ${bind.add(f.from)}`);
+  if (f.to) conditions.push(`m.created_at <= ${bind.add(f.to)}`);
+  if (f.callerId) conditions.push(`m.caller_id = ${bind.add(f.callerId)}`);
+  if (f.redial === true || f.agentManual === true || f.agentReopened === true || f.overrideApplied === true) {
+    conditions.push('FALSE');
+  }
+  if (f.dialedFrom || f.dialedTo) {
+    conditions.push(dialedRangeSql(
+      'm',
+      f.dialedFrom ? bind.add(f.dialedFrom) : undefined,
+      f.dialedTo ? bind.add(f.dialedTo) : undefined,
+    ));
+  } else if (f.placed === true) {
+    conditions.push(placedDialSql('m'));
+  }
+  if (f.placed === false) conditions.push('m.dialed_at IS NULL');
+  return conditions;
+}
+
+/**
  * The keyset predicate, as a row-wise comparison.
  *
  * `(created_at, id) < ($a, $b)` rather than the expanded

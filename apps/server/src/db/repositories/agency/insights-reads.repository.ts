@@ -44,6 +44,11 @@ import {
 } from './insights-sql.js';
 import { neverSeededSuppressionSql, params, retrySelectionConditions } from './query-builders.js';
 import { INSIGHTS_BUCKET_SQL_INTERVAL } from './insights-rollup-sql.js';
+import {
+  readSoftphoneCampaignCounts,
+  softphoneCampaignCountsStatement,
+  type SoftphoneCampaignCounts,
+} from './softphone-campaign-sql.js';
 import type { AgencyRetrySelector } from '@magick-agency/contracts/agency';
 import { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } from '@magick-agency/domain/abandonment-predicate';
 
@@ -245,22 +250,14 @@ export function allocationCountersStatement(campaignId: string): InsightsStateme
 // ─── Range reads that are neither the rollup nor the pacing history ────────
 
 /**
- * Soft-phone calls tagged to the campaign and PLACED (`dialed_at` set), created in `[from, to)`:
- * a range of `idx_agency_manual_calls_campaign (campaign_id, created_at DESC) WHERE campaign_id IS
+ * Soft-phone calls tagged to the campaign, created in `[from, to)`: placed, connected and reached
+ * a person, the soft phone's ONE campaign definition (`softphone-campaign-sql.ts`, SR1–SR3). A
+ * range of `idx_agency_manual_calls_campaign (campaign_id, created_at DESC) WHERE campaign_id IS
  * NOT NULL`. On `created_at` because that is the column the tag's index orders (a call is placed
  * seconds after it is created); tenant-checked because the tag carries no foreign key.
  */
 export function softphoneCallsStatement(q: { campaignId: string; tenantId: string; from: Date; to: Date }): InsightsStatement {
-  return {
-    text: `
-      SELECT count(*)::int AS n
-        FROM agency_manual_calls m
-       WHERE m.campaign_id = $1::uuid
-         AND m.created_at >= $2::timestamptz AND m.created_at < $3::timestamptz
-         AND m.tenant_id = $4::uuid
-         AND m.dialed_at IS NOT NULL`,
-    values: [q.campaignId, q.from, q.to, q.tenantId],
-  };
+  return softphoneCampaignCountsStatement(q);
 }
 
 /**
@@ -505,11 +502,11 @@ export class AgencyInsightsReadRepository {
     }]));
   }
 
-  /** {@link softphoneCallsStatement}'s count. */
-  async softphoneCalls(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<number> {
+  /** {@link softphoneCallsStatement}'s three counts. */
+  async softphoneCalls(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<SoftphoneCampaignCounts> {
     const { text, values } = softphoneCallsStatement(q);
-    const { rows } = await getPool().query<{ n: number }>(text, values);
-    return num(rows[0]?.n);
+    const { rows } = await getPool().query<SoftphoneCampaignCounts>(text, values);
+    return readSoftphoneCampaignCounts(rows[0]);
   }
 
   /** {@link dncMarkedStatement}'s rows, most first; `added_by` as stored. */

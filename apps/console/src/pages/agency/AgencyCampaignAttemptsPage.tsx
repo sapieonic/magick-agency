@@ -13,6 +13,7 @@ import {
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { listCampaignAgents } from '../../api/agency';
@@ -177,6 +178,15 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
   }, [filters]);
 
   const canExport = hasPermission(role, 'agency.supervise');
+  /**
+   * The export is the campaign's call log (SR6): its dials and the soft-phone calls logged to it,
+   * each row's `source` column saying which. Said beside the button while the soft phone is on;
+   * a row from a soft phone switched off since still says what it is.
+   */
+  const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const exportTitle = softphoneOn
+    ? 'Download everything matching the filters above, not just the rows on screen, with the soft-phone calls logged to this campaign (the last column, source, says which)'
+    : 'Download everything matching the filters above, not just the rows on screen';
 
   /**
    * Guards against a slow first page landing after a newer one — without it,
@@ -410,7 +420,7 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
               className={`${spine.actionButton} btn-secondary`}
               onClick={() => void onExport()}
               disabled={exporting || loading}
-              title="Download everything matching the filters above, not just the rows on screen"
+              title={exportTitle}
             >
               <Download size={16} />
               {exporting ? 'Preparing…' : 'Export CSV'}
@@ -426,6 +436,9 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
           'Attempts with no agent are real rows — the call was abandoned, failed, or never answered.',
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
+          ...(softphoneOn
+            ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its last column, source.']
+            : []),
         ]}
       />
 

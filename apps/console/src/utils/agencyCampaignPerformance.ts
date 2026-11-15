@@ -347,6 +347,86 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
   };
 }
 
+// ── The soft phone beside the dialler (SR1–SR5) ─────────────────────────────
+
+/**
+ * Whether the card shows the soft phone's figures (SR5): while the soft phone is on for the
+ * account, or whenever the campaign holds tagged soft-phone calls. Never when the payload does
+ * not carry them (an older server).
+ */
+export function showsSoftphone(stats: AgencyCampaignStats | null, softphoneEnabled: boolean): boolean {
+  const soft = stats?.softphone;
+  if (!soft) return false;
+  return softphoneEnabled || soft.placed > 0;
+}
+
+/** A rate over `placed`, as the connect rate's readout states one; withheld below the floor. */
+function placedRateReadout(input: {
+  humans: number;
+  placed: number;
+  connected: number;
+  noun: string;
+  detail: string;
+}): PerformanceReadout {
+  const { humans, placed, connected, noun, detail } = input;
+  if (placed === 0) {
+    return { value: 'No data', detail: `No ${noun} have been placed on this campaign yet.`, caveat: null, denominator: null, scale: null, known: false };
+  }
+  if (placed < RATE_MIN_ATTEMPTS) return volumeWithheldReadout(placed);
+  const rate = (humans / placed) * 100;
+  return {
+    value: pct(rate),
+    detail,
+    caveat: null,
+    denominator: {
+      lead: formatCount(humans),
+      rest: `people answered, of ${plural(placed, noun.replace(/s$/, ''))} placed · ${formatCount(connected)} connected`,
+    },
+    scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
+    known: true,
+  };
+}
+
+/**
+ * The soft phone's connect rate on this campaign: people reached over the soft-phone calls
+ * agents placed and logged to it. Beside the dialler's rate, never in it (SR1): agents choose
+ * whom to ring on the soft phone, so the two measure different things.
+ */
+export function softphoneConnectRateReadout(stats: AgencyCampaignStats | null): PerformanceReadout {
+  const soft = stats?.softphone;
+  if (!soft) {
+    return { value: '—', detail: 'The soft phone’s figures didn’t load.', caveat: null, denominator: null, scale: null, known: false };
+  }
+  return placedRateReadout({
+    humans: soft.human_connects,
+    placed: soft.placed,
+    connected: soft.connected,
+    noun: 'soft-phone calls',
+    detail: 'Calls agents placed on the soft phone and logged to this campaign where a person answered. Not part of the dialler’s rate; calls logged to no campaign are not counted.',
+  });
+}
+
+/**
+ * Every call on this campaign, the dialler's and the soft phone's: people reached over the
+ * dialler's first dials and the soft phone's calls placed (SR1's "All calls").
+ */
+export function allCallsConnectRateReadout(stats: AgencyCampaignStats | null): PerformanceReadout {
+  const soft = stats?.softphone;
+  const humans = stats?.human_connects;
+  const firstDials = stats?.first_dials_placed;
+  const connected = stats?.attempts_connected;
+  if (!soft || typeof humans !== 'number' || typeof firstDials !== 'number' || typeof connected !== 'number') {
+    return { value: '—', detail: 'The all-calls figures didn’t load.', caveat: null, denominator: null, scale: null, known: false };
+  }
+  return placedRateReadout({
+    humans: humans + soft.human_connects,
+    placed: firstDials + soft.placed,
+    connected: connected + soft.connected,
+    noun: 'calls',
+    detail: 'The dialler’s first dials and the soft-phone calls logged to this campaign, together: where a person answered.',
+  });
+}
+
 /**
  * Conversion rate — successes over **connected calls**, not over dials.
  *

@@ -105,6 +105,8 @@ export const REPORT_DEFINITION_KEYS = {
     'stalls',
     'predial_blocks',
     'recording_share',
+    // The soft-phone calls logged to the campaign (SR1-SR3), beside the dialler's figures.
+    'softphone_calls',
   ],
   account: [
     'dials',
