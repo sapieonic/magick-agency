@@ -16,8 +16,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * never puts back a number an admin removed, and a failed entry records no outcome, so the
  * agent's retry writes both.
  *
+ * Like every other surface that lists a number, it writes the entry's `dnc_entry.created` audit
+ * row (once, on the new row) and takes the campaign's other rows on that number off the roster.
+ *
  * Mutation-checked: never writing the entry reds the first, replay-free cases; writing it on
- * every write (replays too) reds "a replay after an admin removed the entry".
+ * every write (replays too) reds "a replay after an admin removed the entry"; dropping the
+ * audit row or the sweep reds their cases.
  */
 
 const mocks = vi.hoisted(() => {
@@ -47,6 +51,7 @@ import type { AppContext } from '../../../src/app-context.js';
 import { resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
 import { resetVoiceEngineForTests } from '../../../src/bootstrap/voice.js';
 import { DncRegistry } from '../../../src/agency/dnc-registry.js';
+import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 
 const CATALOG = JSON.stringify([
   { code: 'do_not_call', label: 'Do not call', suppress: true },
@@ -98,6 +103,14 @@ async function parked(campaignId?: string): Promise<Call> {
 
 const dispose = (c: Call, body: Record<string, unknown>, who = agent) =>
   post(`/proxy/agency/attempts/${c.attempt}/disposition`, who, body);
+
+async function dncAudits() {
+  await platformAuditLogger.shutdown();
+  const { rows } = await getTestPool().query(
+    `SELECT resource_id, user_id, campaign_id, details FROM platform_audit_log
+      WHERE tenant_id = $1 AND action = 'dnc_entry.created'`, [tenant]);
+  return rows;
+}
 
 async function dncRows() {
   const { rows } = await getTestPool().query(
@@ -155,6 +168,8 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
       added_by: agent.id, phone_e164: PHONE,
     }]);
     expect(await registry.check(tenant, PHONE, { accountId: account, campaignId: c.campaign })).toBe('suppressed');
+    // The internal answer's audit facts stay on the server.
+    expect(res.json()).not.toHaveProperty('dnc_entry');
     // Campaign scope, never the escalation: another campaign of the account may still call.
     expect(await registry.check(tenant, PHONE, { accountId: account, campaignId: sibling })).not.toBe('suppressed');
   });
@@ -164,6 +179,33 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
     expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
     expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
     expect(await dncRows()).toHaveLength(1);
+    // One audit row, on the new entry, naming the outcome; none for the replay.
+    const { rows: [row] } = await getTestPool().query('SELECT id FROM dnc_entries WHERE tenant_id = $1', [tenant]);
+    expect(await dncAudits()).toEqual([{
+      resource_id: row!.id, user_id: agent.id, campaign_id: c.campaign,
+      details: { attempt_id: c.attempt, scope: 'campaign', disposition_code: 'do_not_call', campaign_id: c.campaign },
+    }]);
+  });
+
+  it('takes the campaign\'s other rows on the number off the roster, and no other campaign\'s', async () => {
+    const c = await parked();
+    const housemate = (await insertAgencyContact(c.campaign, {
+      tenant_id: tenant, account_id: account, phone_e164: PHONE, state: 'pending',
+    })).id as string;
+    const elsewhereCampaign = (await insertAgencyCampaign({
+      status: 'running', disposition_catalog: CATALOG, tenant_id: tenant, account_id: account,
+    })).id as string;
+    const elsewhere = (await insertAgencyContact(elsewhereCampaign, {
+      tenant_id: tenant, account_id: account, phone_e164: PHONE, state: 'pending',
+    })).id as string;
+
+    expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
+    const { rows } = await getTestPool().query<{ id: string; state: string; suppressed_reason: string | null }>(
+      'SELECT id, state, suppressed_reason FROM agency_contacts WHERE id = ANY($1::uuid[])', [[c.contact, housemate, elsewhere]]);
+    const by = new Map(rows.map((r) => [r.id, r]));
+    expect(by.get(c.contact)).toMatchObject({ state: 'suppressed', suppressed_reason: 'dnc' });
+    expect(by.get(housemate)).toMatchObject({ state: 'suppressed', suppressed_reason: 'dnc' });
+    expect(by.get(elsewhere)).toMatchObject({ state: 'pending' });
   });
 
   it('a replay after an admin removed the entry does not put the number back', async () => {
@@ -175,6 +217,7 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
     const replay = await dispose(c, { disposition_code: 'do_not_call' });
     expect(replay.statusCode, replay.body).toBe(200);
     expect(await dncRows()).toEqual([]);
+    expect(await dncAudits()).toHaveLength(1);
   });
 
   it('the outcome and its entry land together: a failed entry records no outcome, and the retry writes both', async () => {

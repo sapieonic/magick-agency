@@ -715,8 +715,32 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
           ...(actor.actor.on_behalf ? { on_behalf: true } : {}),
         },
       });
+      // A suppress outcome's Do Not Call entry (DS8) gets the same `dnc_entry.created` row as
+      // the station's Mark DNC, the soft phone's and inbound's, so the DNC trail lists every
+      // entry whatever surface made it. Only when a NEW row was recorded; no phone number.
+      const dncEntry = dispositionDncEntry(result.body);
+      if (dncEntry?.created && dncEntry.id) {
+        platformAuditLogger.log({
+          ...accountAudit(request),
+          ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
+          action: 'dnc_entry.created',
+          resource_type: 'dnc_entry',
+          resource_id: dncEntry.id,
+          ...(campaignId ? { campaign_id: campaignId } : {}),
+          details: {
+            attempt_id: request.params.id,
+            scope: 'campaign',
+            disposition_code: parsed.data.disposition_code,
+            ...(campaignId ? { campaign_id: campaignId } : {}),
+            ...(actor.actor.on_behalf ? { on_behalf: true } : {}),
+          },
+        });
+      } else if (dncEntry && !dncEntry.recorded) {
+        log.warn({ tenantId: request.tenantId, attemptId: request.params.id },
+          'Suppress outcome recorded, but the contact\'s number is not usable E.164: no Do Not Call entry was written');
+      }
     }
-    return reply.code(result.status).send(result.body);
+    return reply.code(result.status).send(withoutDncEntry(result.body));
   });
 
   /**
@@ -886,4 +910,24 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     }
     return reply.code(result.status).send(result.body);
   });
+}
+
+/** The internal disposition answer's DS8 entry facts (read defensively off the untyped body). */
+function dispositionDncEntry(body: unknown): { recorded: boolean; id: string | null; created: boolean } | null {
+  if (!body || typeof body !== 'object') return null;
+  const raw = (body as Record<string, unknown>)['dnc_entry'];
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  return {
+    recorded: e['recorded'] === true,
+    id: typeof e['id'] === 'string' ? e['id'] : null,
+    created: e['created'] === true,
+  };
+}
+
+/** The disposition answer as the contract has it: `dnc_entry` is the audit's, never the client's. */
+function withoutDncEntry(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || !('dnc_entry' in body)) return body;
+  const { dnc_entry: _audit, ...rest } = body as Record<string, unknown>;
+  return rest;
 }

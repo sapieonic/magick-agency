@@ -170,19 +170,27 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // route's optional disposition): a failed entry rolls the outcome back, so the agent's
     // retry is a first write again and writes both. A same-code REPLAY (a queued retry, a
     // supervisor re-filing from history) writes no entry, so it never puts back a number an
-    // admin has since removed from the list. Two first writes racing both write: the entry is
-    // idempotent. A number that is not usable E.164 writes nothing, as `markDnc` always has.
+    // admin has since removed from the list. "First" is decided on the attempt row locked in
+    // this transaction, not on the read above: of two submissions racing, the second waits
+    // for the first's COMMIT and then sees its code. A number that is not usable E.164 writes
+    // nothing, as `markDnc` always has; the response says so (`dnc_recorded: false` on the
+    // internal answer's `dnc_entry`), and the proxy writes the entry's audit row.
     const dncPhone = resolved.entry.suppress === true && attempt.disposition_code === null
       ? (contactRow?.phone_e164 ?? (await agencyContactRepository.findById(attempt.contact_id))?.phone_e164 ?? null)
       : null;
     let updated: Awaited<ReturnType<typeof agencyAttemptRepository.recordDisposition>>;
+    let dncMark: Awaited<ReturnType<typeof markDnc>> | null = null;
     if (dncPhone) {
       const client = await getPool().connect();
+      let failure: Error | undefined;
       try {
         await client.query('BEGIN');
+        const locked = await client.query<{ disposition_code: string | null }>(
+          'SELECT disposition_code FROM agency_call_attempts WHERE id = $1 FOR UPDATE', [attempt.id]);
+        const firstWrite = locked.rows[0]?.disposition_code === null;
         updated = await agencyAttemptRepository.recordDisposition(dispositionWrite, { client });
-        if (updated) {
-          await markDnc({
+        if (updated && firstWrite) {
+          dncMark = await markDnc({
             tenantId: attempt.tenant_id,
             campaignId: campaign.id,
             phoneE164: dncPhone,
@@ -192,10 +200,12 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
         }
         await client.query('COMMIT');
       } catch (err) {
+        failure = err instanceof Error ? err : new Error(String(err));
         await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
         throw err;
       } finally {
-        client.release();
+        // A failed transaction's connection is discarded, never handed back to the pool.
+        client.release(failure);
       }
     } else {
       updated = await agencyAttemptRepository.recordDisposition(dispositionWrite);
@@ -360,6 +370,21 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       );
     }
 
+    // ── 5a. The rest of the campaign's roster on that number (DS8) ───────────
+    // As the soft phone, inbound and Mark DNC do: every other row of this campaign carrying the
+    // number leaves the roster now, rather than staying `pending` until pacing claims it and
+    // the dial-time check suppresses it. After the release, so this call's own contact is
+    // settled by its decision first; a swept row keeps any reason it was already suppressed
+    // for. Outside the transaction on purpose: the entry already blocks every one of those rows
+    // at dial time, so a failure here costs nothing but that early sweep, and it must not turn
+    // a recorded outcome into an error the agent would retry as a replay.
+    if (dncMark?.recorded && dncPhone) {
+      await agencyContactRepository.suppressByPhone(campaign.id, dncPhone, 'dnc').catch((err: unknown) => {
+        log.warn({ err, campaignId: campaign.id, attemptId: attempt.id },
+          'Suppress outcome recorded and listed; sweeping the roster\'s other rows on the number failed (the dial-time check still blocks them)');
+      });
+    }
+
     // ── 5b. The contact's latest promise (PT6, PT7) ─────────────────────────
     // Before the wrap-up release, and not swallowed: if it fails the agent sees the save fail
     // and saves again, and the replay writes it (the outcome itself is idempotent on the code).
@@ -408,7 +433,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       // `reserved` frame can reach the console before this response does.
       agent_state: live?.state ?? 'offline',
     };
-    return reply.send(response);
+    // `dnc_entry` is for the public layer's audit row only (it strips it): the entry DS8 wrote,
+    // or that it could not (`recorded: false`, a number not usable E.164). Absent when no entry
+    // was attempted (another outcome, or a replay).
+    const dncEntry = dncMark
+      ? { recorded: dncMark.recorded, id: dncMark.written?.id ?? null, created: dncMark.recorded && !dncMark.alreadyPresent }
+      : null;
+    return reply.send(dncEntry ? { ...response, dnc_entry: dncEntry } : response);
   });
 
   // ── POST /attempts/:id/dnc ─────────────────────────────────────────────
