@@ -324,8 +324,15 @@ export function activityDetailSummary(row: ActivityRow): string | null {
 
   if (row.action === 'dnc_entry.created' || row.action === 'dnc_entry.deleted') {
     const scope = str(detail['scope']);
-    const verb = row.action === 'dnc_entry.created' ? 'Suppressed' : 'Un-suppressed';
-    return scope ? `${verb}, scope: ${scope}.` : null;
+    const verb = row.action === 'dnc_entry.created' ? 'Added to Do Not Call' : 'Removed from Do Not Call';
+    // The audit's scope label (`dncScopeLabel` on the server), in the scope words every
+    // surface uses (DS7); an account-and-campaign row matches one campaign. A label this
+    // build does not know is shown as it came.
+    const where = scope === 'tenant' ? 'every campaign'
+      : scope === 'account' ? 'every campaign of one account'
+      : scope === 'campaign' || scope === 'account_campaign' ? 'one campaign'
+      : scope;
+    return where ? `${verb}, for ${where}.` : null;
   }
 
   const from = str(detail['from']);

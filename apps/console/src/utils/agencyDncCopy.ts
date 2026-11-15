@@ -22,13 +22,13 @@ import { errorCode } from './agencyErrors';
  * harder-to-reach control an agent must choose on purpose. Absent `scope` is
  * defined server-side as campaign-scoped too, so an older client that sends
  * neither fails safe into the narrower reading rather than escalating by
- * accident; the API additionally floors `scope: 'tenant'` at `agency.dnc.manage`.
+ * accident; the API additionally floors `scope: 'tenant'` at `agency.dnc.manage` on a
+ * membership of the whole organisation (DS3).
  *
- * The tenant-wide scope is still genuinely tenant-wide: The API's
- * `/internal/agency/dnc` **refuses** an `account_id` rather than ignoring it,
- * precisely because an account-scoped row never enters the server's flat
- * `dnc:{tenantId}` Redis set and so would never suppress a dial. So that
- * escalation's confirmation may say "any campaign in this workspace" — but only
+ * The tenant-wide scope is genuinely tenant-wide: the mark writes a `dnc_entries` row
+ * with no account and no campaign, and the dial-time check reads that table itself,
+ * widened by scope (decision B8; there is no copy of the list anywhere else). So that
+ * escalation's confirmation may say "any campaign in this organisation" — but only
  * once `dnc_recorded` says the list write landed. Until then the honest claim is
  * the narrower one the server can make on its own: this campaign will not dial them
  * again.
@@ -81,18 +81,13 @@ export function dncTenantConfirmHint(phoneE164: string): string {
  * not yet true. Claiming it anyway is exactly the overstatement that rule forbids,
  * and it is the claim an agent may repeat to the customer.
  *
- * **The campaign-scoped mark reads `dnc_recorded` too**, and the reason it once
- * did not is the reason it must. The old justification — "the server suppresses the
- * contact directly, so the promise is true on any success response" — is true of
- * the ROSTER and false of the LIST, and the sentence named the list. The server writes
- * the roster rows `suppressed` itself, then forwards to the API; when that forward
- * cannot land (the server unreachable, or a status the server's `PERMANENT_REJECTION_STATUSES`
- * treats as permanent, which abandons the outbox row) it still answers
- * `200 { contact_state: 'suppressed', dnc_recorded: false }`. No entry exists on
- * any list. The server's own abandon log states the consequence: the campaign's current
- * roster rows are suppressed, but nothing on record stops a re-upload of that
- * number into the same campaign — so it is dialled again at the next top-up,
- * after the agent read the promise out loud.
+ * **The campaign-scoped mark reads `dnc_recorded` too**: it is true of the ROSTER
+ * and of the LIST only when the list row landed. The server writes the roster rows
+ * `suppressed` and the `dnc_entries` row in one transaction (B8), so a failed write
+ * is a 5xx; `200 { dnc_recorded: false }` means the roster number was not usable
+ * E.164 and no entry could be written. The campaign's current roster rows are
+ * suppressed, but nothing on the list stops a re-upload of that number into the same
+ * campaign, so the copy must not claim the list.
  */
 export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): string {
   if (scope === 'campaign') {

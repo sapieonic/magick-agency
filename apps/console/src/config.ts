@@ -199,9 +199,8 @@ export const ENDPOINTS = {
   featureFlags: `${API_BASE}/feature-flags`,
   // There is no `governance.effective` endpoint — per-account
   // settings ride the session payload.
-  // Do Not Call — served by the server itself (NOT proxied). The server
-  // owns `dnc_entries`; the dialer runtime receives only a derived, tenant-flat Redis set for
-  // its dial-time check, so there is no dialer-runtime route behind these.
+  // Do Not Call — served by the server's `/dnc` routes directly (NOT proxied). They read and
+  // write `dnc_entries`, the one table the dial-time check itself reads (decision B8).
   dnc: {
     base: `${API_BASE}/dnc`,
     get: (id: string) => `${API_BASE}/dnc/${id}`,

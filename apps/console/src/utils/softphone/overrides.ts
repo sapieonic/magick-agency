@@ -7,6 +7,7 @@ import {
   type AgencyManualCallOverridesRequest,
 } from '../../types/softphone';
 import type { SoftphoneDncListedRefusal, SoftphoneOutsideHoursRefusal } from '../../api/softphone';
+import { dncScopeWords } from '../dncScopeWords';
 
 /**
  * The two refusals an agent may dial through with a note (SP1 DNC, SP2 calling
@@ -71,23 +72,18 @@ function formatDate(iso: string | null | undefined): string | null {
   return new Intl.DateTimeFormat(DISPLAY_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(ms));
 }
 
-const DNC_SCOPE_COPY = {
-  tenant: 'Every campaign and account in this organisation',
-  account: 'This account',
-} as const;
-
 /**
- * How far a DNC entry reaches, in words. `campaignName` is the campaign the entry is
- * for when the caller knows it (a call logged to that campaign); a campaign entry an
- * UNTAGGED call met is one of the account's campaigns (docs/softphone.md §4.1 step 2),
- * which is all this copy claims.
+ * How far a DNC entry reaches, in the words every surface uses (`dncScopeWords`, DS7).
+ * `campaignName` is the campaign the entry is for when the caller knows it (a call logged
+ * to that campaign); a campaign entry an UNTAGGED call met is one of the account's
+ * campaigns (docs/softphone.md §4.1 step 2), which is all this copy claims. An account
+ * entry the soft phone meets is always the call's own account.
  */
 export function dncEntryReach(
   entry: Pick<SoftphoneDncListedRefusal['entry'], 'scope'>,
   campaignName: string | null,
 ): string {
-  if (entry.scope !== 'campaign') return DNC_SCOPE_COPY[entry.scope];
-  return campaignName ? `The campaign ${campaignName}` : 'One of this account’s campaigns';
+  return dncScopeWords(entry.scope, { campaignName, unnamedCampaign: 'One of this account’s campaigns' });
 }
 
 /** An entry's reason and the date it was added, as the dialog and the call detail show them. */

@@ -378,7 +378,7 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/Callback requested/);
     expect(document.body.textContent).toMatch(/Called through Do Not CallCustomer called in and asked us to ring back/);
     // The entry as the agent saw it — reach, reason, date — never its id.
-    expect(document.body.textContent).toMatch(/Listed forThe campaign Home Loan Renewals/);
+    expect(document.body.textContent).toMatch(/Listed forCampaign: Home Loan Renewals/);
     expect(document.body.textContent).toMatch(/ReasonAsked twice/);
     expect(document.body.textContent).toMatch(/Listed on12 Oct 2026/);
     expect(document.body.textContent).not.toContain('dnc-1');

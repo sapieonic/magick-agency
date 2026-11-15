@@ -183,17 +183,18 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
  * How far a mark-DNC reaches. The **only** thing a client asserts about scope.
  *
  *   * `campaign` — the campaign the marked attempt belongs to, and nothing else.
- *     The public API layer writes a campaign-scoped `dnc_entries` row, which by design does NOT
- *     enter the dialer runtime's flat `dnc:{tenantId}` set, so the in-campaign
- *     enforcement is the dialer runtime's Postgres suppression of every roster row carrying the
- *     number. A customer asking one campaign to stop is not asking to be removed
- *     from campaigns they have never heard from.
+ *     The dialer runtime writes a campaign-scoped `dnc_entries` row (`account_id NULL,
+ *     campaign_id <id>`); the dial-time check reads that table widened by scope (decision
+ *     B8), so the row stops that campaign's dials and no other's, and the mark also
+ *     suppresses every roster row of the campaign carrying the number. A customer asking
+ *     one campaign to stop is not asking to be removed from campaigns they have never
+ *     heard from.
  *   * `tenant` — every campaign the tenant runs, and every campaign it will run.
- *     The public API layer writes an entry with no campaign, which is the kind that reaches the
- *     flat set and blocks the number at dial time everywhere. This is the
- *     ESCALATION: the console gates it behind a permission and labels it in those
- *     words, and an agent may read that promise out to a customer, so it has to be
- *     the thing that actually happens.
+ *     The dialer runtime writes an entry with no account and no campaign, which the
+ *     dial-time check matches for every campaign. This is the ESCALATION: the console
+ *     gates it behind `agency.dnc.manage` on a membership of the whole organisation (DS3)
+ *     and labels it in those words, and an agent may read that promise out to a customer,
+ *     so it has to be the thing that actually happens.
  *
  * Both scopes suppress the roster rows in front of the agent identically — that
  * write is not conditional on scope, because the contact on the line leaves the

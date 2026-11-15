@@ -15,9 +15,10 @@ const { agencyContactRepository } = await import(
  * An agent's mark-DNC used to do two things: suppress ONE contact row by id, and
  * have the public API layer write a TENANT-WIDE `dnc_entries` row that reached a flat
  * `dnc:{tenantId}` set and blocked the number at dial time in every campaign.
- * Making the mark campaign-scoped removes the second half — a campaign-scoped row
- * does not enter the tenant-flat set — which leaves the by-id write as the
- * only in-campaign enforcement there is.
+ * Making the mark campaign-scoped narrowed the second half to one campaign. (Since
+ * decision B8 there is no flat set: the dial-time check reads `dnc_entries` itself,
+ * widened by scope, so the campaign row does stop that campaign's dials. The roster
+ * suppression below is still what keeps the duplicate from being CLAIMED at all.)
  *
  * And the by-id write has a hole. The schema deliberately has no `UNIQUE (campaign_id,
  * phone_e164)` ("two people on one household landline, two contacts

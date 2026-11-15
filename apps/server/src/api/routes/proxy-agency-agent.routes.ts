@@ -817,6 +817,18 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     if (parsed.data.scope === 'tenant') {
       await requireDncManage(request, reply);
       if (reply.sent) return reply;
+      /**
+       * …and on a membership of the WHOLE organisation (DS3), as `POST /dnc` requires for the
+       * same row. The role floor alone let an account admin scoped to one account block a number
+       * in every other account's campaigns from the station, which the Do Not Call page refuses
+       * them. Their station still offers the campaign mark.
+       */
+      if (request.membership?.account_id != null) {
+        return reply.code(403).send({
+          error: 'Forbidden',
+          message: 'Only a member of the whole organisation can block a number in every campaign',
+        });
+      }
     }
 
     const actor = resolveAgencyActor(request);
