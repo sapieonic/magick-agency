@@ -37,7 +37,7 @@ const contact = (id: string, state: string, over: Partial<AgencyContactRecord> =
 function input(over: Partial<ManualPredialInput> = {}): ManualPredialInput {
   return {
     tenantId: 't1', accountId: 'a1', to: '9811100001', defaultCountryCode: '91',
-    tag: tag(), accountNumbers: [], settings: { ...SOFTPHONE_SETTINGS_DEFAULTS }, now: NOW,
+    tag: tag(), accountNumbers: [], settings: { ...SOFTPHONE_SETTINGS_DEFAULTS }, allowRecording: true, now: NOW,
     actor: { userId: AGENT, supervise: false },
     ...over,
   };
@@ -528,6 +528,15 @@ describe('what the dial uses', () => {
       deps(),
     );
     expect(noProfile.ok && noProfile.plan).toMatchObject({ recordingRequested: false, analysisProfileId: 'prof-set' });
+  });
+
+  it('the account\'s allow_recording is the ceiling: off, neither the tag\'s nor the settings\' record_calls asks for a recording', async () => {
+    const tagged = await runManualPredial(input({ allowRecording: false }), deps());
+    expect(tagged.ok && tagged.plan).toMatchObject({ recordingRequested: false, analysisProfileId: 'prof-tag' });
+    const untagged = await runManualPredial(
+      input({ tag: null, allowRecording: false, accountNumbers: ['+15550000001'], settings: { ...SOFTPHONE_SETTINGS_DEFAULTS, record_calls: true } }),
+      deps());
+    expect(untagged.ok && untagged.plan).toMatchObject({ recordingRequested: false });
   });
 
   it('untagged: the settings\' recording and profile, else null (the account default applies later)', async () => {

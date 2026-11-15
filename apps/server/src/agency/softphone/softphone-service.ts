@@ -29,6 +29,7 @@ import {
   type AgencyManualCallDncResponse,
   type AgencySessionStateResponse,
 } from '@magick-agency/contracts/agency';
+import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { breakMustWait, type BreakRegistry } from '@magick-agency/domain/break-manager';
@@ -292,6 +293,14 @@ export class SoftphoneService {
       .map((n) => n.phone_number)
       .filter((n): n is string => typeof n === 'string');
 
+    // The account's recording ceiling, applied to the call's own `recording_requested` as the
+    // bridge applies it to the media leg; NULL or a failed read records nothing (as inbound).
+    const allowRecording = (await accountSettingsRepository.getAllowRecording(actor.tenantId, actor.accountId)
+      .catch((err: unknown) => {
+        log.warn({ err, accountId: actor.accountId }, 'Could not read allow_recording — the soft-phone call is not recorded');
+        return null;
+      })) === true;
+
     const predial = await runManualPredial({
       tenantId: actor.tenantId,
       accountId: actor.accountId,
@@ -301,6 +310,7 @@ export class SoftphoneService {
       tag,
       accountNumbers,
       settings,
+      allowRecording,
       overrides: req.overrides ?? null,
       now: new Date(),
       actor: { userId: actor.userId, supervise: actor.supervise },

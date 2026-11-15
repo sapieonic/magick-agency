@@ -76,6 +76,7 @@ import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { StationTokenUnavailableError } from '../../../src/agency/station-token.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { agencyAgentSessionRepository, agencySoftphoneSettingsRepository } from '../../../src/db/repositories/agency.repository.js';
+import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
 
 const CATALOG = JSON.stringify([
   { code: 'interested', label: 'Interested', is_success: true, terminal: true },
@@ -1098,6 +1099,45 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     ringOut(leg);
     await waitFor('settled frame', () => lastCall(station)?.settled_at);
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('an account whose recording is off: the call does not ask for one, though the soft-phone settings record', async () => {
+    // Settings saved while the account could record, then the account's recording turned off:
+    // the call's own `recording_requested` (the badge, customer history's "Recording expired")
+    // takes the account ceiling, as the media leg does.
+    const pool = getTestPool();
+    const before = (await pool.query<{ record_calls: boolean }>(
+      'SELECT record_calls FROM agency_softphone_settings WHERE tenant_id = $1 AND account_id = $2', [tenant, account])).rows[0];
+    await pool.query(
+      `INSERT INTO agency_softphone_settings (tenant_id, account_id, record_calls) VALUES ($1, $2, true)
+       ON CONFLICT (tenant_id, account_id) DO UPDATE SET record_calls = true`, [tenant, account]);
+    await pool.query('UPDATE account_settings SET allow_recording = false WHERE tenant_id = $1 AND account_id = $2', [tenant, account]);
+    accountSettingsRepository.invalidate(tenant, account);
+    try {
+      const agent = await user(tenant, account, 'agent');
+      const { sessionId, station } = await openSoftphone(agent);
+      const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200051' });
+      expect(placed.statusCode, placed.body).toBe(201);
+      expect(placed.json().recording_requested).toBe(false);
+      const callId = placed.json().id as string;
+      const leg = await legOf(callId);
+      expect((await manualRow(callId)).recording_requested).toBe(false);
+      const { rows: [media] } = await pool.query('SELECT recording_requested FROM agency_calls WHERE id = $1', [leg]);
+      expect(media).toEqual({ recording_requested: false });
+
+      ringOut(leg);
+      await waitFor('settled frame', () => lastCall(station)?.settled_at);
+      expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+    } finally {
+      await pool.query('UPDATE account_settings SET allow_recording = true WHERE tenant_id = $1 AND account_id = $2', [tenant, account]);
+      accountSettingsRepository.invalidate(tenant, account);
+      if (before) {
+        await pool.query('UPDATE agency_softphone_settings SET record_calls = $3 WHERE tenant_id = $1 AND account_id = $2',
+          [tenant, account, before.record_calls]);
+      } else {
+        await pool.query('DELETE FROM agency_softphone_settings WHERE tenant_id = $1 AND account_id = $2', [tenant, account]);
+      }
+    }
   }, 30_000);
 
   // ── Review round 3 (PR review): leaving the soft phone, the reserved break ──────────
