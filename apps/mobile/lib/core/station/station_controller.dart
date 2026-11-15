@@ -2630,11 +2630,26 @@ class StationController extends Notifier<StationView?>
   }
 
   @override
-  Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt}) async {
+  Future<void> submitDisposition(
+    String code, {
+    String? notes,
+    DateTime? callbackAt,
+    String? promiseDate,
+    String? promiseAmount,
+  }) async {
     final s = _s;
     if (s == null) return;
     final inbound = _station.inboundOnScreen;
-    if (inbound != null) return _saveInboundOutcome(inbound, code, notes: notes, callbackAt: callbackAt);
+    if (inbound != null) {
+      return _saveInboundOutcome(
+        inbound,
+        code,
+        notes: notes,
+        callbackAt: callbackAt,
+        promiseDate: promiseDate,
+        promiseAmount: promiseAmount,
+      );
+    }
     final attemptId = _station.currentAttemptId;
     if (attemptId == null) {
       _actionError = noCallForDispositionCopy;
@@ -2646,13 +2661,29 @@ class StationController extends Notifier<StationView?>
     if (_inFlight.contains(StationBusy.redialing) || _redialPlacedFor == attemptId) return;
     final text = notes ?? s.notes.text;
     final now = _now();
-    final block = dispositionBlock(_catalog, code: code, notes: text, callbackAt: callbackAt, now: now);
+    final block = dispositionBlock(
+      _catalog,
+      code: code,
+      notes: text,
+      callbackAt: callbackAt,
+      now: now,
+      promiseDate: promiseDate,
+      promiseAmount: promiseAmount,
+    );
     if (block != null) {
       _actionError = dispositionBlockCopy[block];
       _emit();
       return;
     }
-    final request = buildDispositionRequest(_catalog, code: code, notes: text, callbackAt: callbackAt, now: now)!;
+    final request = buildDispositionRequest(
+      _catalog,
+      code: code,
+      notes: text,
+      callbackAt: callbackAt,
+      now: now,
+      promiseDate: promiseDate,
+      promiseAmount: promiseAmount,
+    )!;
     await _run(StationBusy.savingDisposition, (s) async {
       try {
         final r = await _api.disposition(attemptId, request);
@@ -3047,7 +3078,14 @@ class StationController extends Notifier<StationView?>
   /// The outcome (the soft phone's rules): checked against the call's catalog first; notes the
   /// agent cleared go as `''`, notes never touched are left out, so a save never clears what
   /// another device wrote; the pending notes save is dropped (the outcome carries them).
-  Future<void> _saveInboundOutcome(InboundCall call, String code, {String? notes, DateTime? callbackAt}) async {
+  Future<void> _saveInboundOutcome(
+    InboundCall call,
+    String code, {
+    String? notes,
+    DateTime? callbackAt,
+    String? promiseDate,
+    String? promiseAmount,
+  }) async {
     final s = _s;
     if (s == null) return;
     if (inboundPhase(call) != InboundPhase.outcome) {
@@ -3059,15 +3097,37 @@ class StationController extends Notifier<StationView?>
     final catalog = _inboundCatalogFor(call);
     final text = notes ?? s.inboundNotes.text;
     final now = _now();
-    final block = dispositionBlock(catalog, code: code, notes: text, callbackAt: callbackAt, now: now);
+    final block = dispositionBlock(
+      catalog,
+      code: code,
+      notes: text,
+      callbackAt: callbackAt,
+      now: now,
+      promiseDate: promiseDate,
+      promiseAmount: promiseAmount,
+    );
     if (block != null) {
       _actionError = dispositionBlockCopy[block];
       _emit();
       return;
     }
-    final built = buildDispositionRequest(catalog, code: code, notes: text, callbackAt: callbackAt, now: now)!;
+    final built = buildDispositionRequest(
+      catalog,
+      code: code,
+      notes: text,
+      callbackAt: callbackAt,
+      now: now,
+      promiseDate: promiseDate,
+      promiseAmount: promiseAmount,
+    )!;
     final notesField = built.notes ?? (s.inboundNotes.touched ? '' : null);
-    final request = InboundCallDispositionRequest(code: code, notes: notesField, callbackAt: built.callbackAt);
+    final request = InboundCallDispositionRequest(
+      code: code,
+      notes: notesField,
+      callbackAt: built.callbackAt,
+      promiseDate: built.promiseDate,
+      promiseAmount: built.promiseAmount,
+    );
     await _run(StationBusy.savingDisposition, (s) async {
       s.inboundNotes.cancelPending();
       final result = await _inboundApi.disposition(call.id, request);

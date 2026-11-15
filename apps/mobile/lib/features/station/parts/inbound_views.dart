@@ -17,6 +17,7 @@ import 'contact_details.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
 import 'on_call_view.dart' show ControlTile, QueuedBreakChip;
+import 'promise_picker.dart';
 import 'sheets.dart';
 import 'wrapup_view.dart' show DispositionGrid;
 
@@ -136,6 +137,19 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
             ),
           ),
         ],
+        if (selected != null && selected.requiresPromise && saved == null) ...[
+          const SizedBox(height: Space.lg),
+          LinkGate(
+            child: PromisePicker(
+              form: _form,
+              option: selected,
+              attemptId: call.callId,
+              enabled: !locked,
+              onDate: (day) => setState(() => _form = _form.withPromiseDate(day)),
+              onAmount: (amount) => setState(() => _form = _form.withPromiseAmount(amount)),
+            ),
+          ),
+        ],
         const SizedBox(height: Space.lg),
         StationNotesField(controller: widget.notes, required: selected?.requiresNote ?? false),
         const SizedBox(height: Space.md),
@@ -180,7 +194,13 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
       );
       if (!ok || !mounted || !scope(ref.read(stationViewProvider))) return;
     }
-    await ref.read(stationActionsProvider).submitDisposition(submit.code, notes: submit.notes, callbackAt: submit.callbackAt);
+    await ref.read(stationActionsProvider).submitDisposition(
+          submit.code,
+          notes: submit.notes,
+          callbackAt: submit.callbackAt,
+          promiseDate: submit.promiseDate,
+          promiseAmount: submit.promiseAmount,
+        );
   }
 }
 

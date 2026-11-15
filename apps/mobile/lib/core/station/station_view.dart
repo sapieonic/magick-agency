@@ -108,12 +108,23 @@ class ContactField {
 
 @immutable
 class PriorAttempt {
-  const PriorAttempt({required this.at, required this.outcomeLabel, this.notes, this.sameCampaign = true, this.campaignName});
+  const PriorAttempt({
+    required this.at,
+    required this.outcomeLabel,
+    this.notes,
+    this.sameCampaign = true,
+    this.campaignName,
+    this.promise,
+  });
   final DateTime at;
   final String outcomeLabel;
   final String? notes;
   final bool sameCampaign;
   final String? campaignName;
+
+  /// The promise to pay that call recorded (PT9), written out:
+  /// "Promised 18 Nov 2026 · 12,500"; null without one.
+  final String? promise;
 
   @override
   bool operator ==(Object other) =>
@@ -122,9 +133,29 @@ class PriorAttempt {
       other.outcomeLabel == outcomeLabel &&
       other.notes == notes &&
       other.sameCampaign == sameCampaign &&
-      other.campaignName == campaignName;
+      other.campaignName == campaignName &&
+      other.promise == promise;
   @override
-  int get hashCode => Object.hash(at, outcomeLabel, notes, sameCampaign, campaignName);
+  int get hashCode => Object.hash(at, outcomeLabel, notes, sameCampaign, campaignName, promise);
+}
+
+/// Where a promise stands (PT7). `missed` is "no outcome since the promised
+/// day", never "unpaid": nothing knows whether anyone paid.
+enum PromiseStanding { upcoming, dueToday, missed, followedUp, unknown }
+
+/// A contact's latest promise to pay (PT9), as the station shows it when the
+/// agent reaches them: "Promised 18 Nov 2026 · 12,500" and where it stands.
+@immutable
+class PromiseView {
+  const PromiseView({required this.text, required this.state});
+
+  final String text;
+  final PromiseStanding state;
+
+  @override
+  bool operator ==(Object other) => other is PromiseView && other.text == text && other.state == state;
+  @override
+  int get hashCode => Object.hash(text, state);
 }
 
 /// The call on screen: from `reserved` until the agent leaves wrap-up.
@@ -146,6 +177,7 @@ class CallView {
     this.recording = false,
     this.redialNumber,
     this.redialLimit,
+    this.promise,
   });
 
   final String attemptId;
@@ -180,6 +212,9 @@ class CallView {
   final int? redialNumber;
   final int? redialLimit;
 
+  /// The contact's latest promise to pay (PT9); null without one.
+  final PromiseView? promise;
+
   bool get isBridged => bridgedAt != null;
   bool get isRedial => redialNumber != null;
 
@@ -202,7 +237,8 @@ class CallView {
       other.bridgedAt == bridgedAt &&
       other.recording == recording &&
       other.redialNumber == redialNumber &&
-      other.redialLimit == redialLimit;
+      other.redialLimit == redialLimit &&
+      other.promise == promise;
 
   @override
   int get hashCode =>
@@ -275,6 +311,8 @@ class DispositionOption {
     this.requiresCallbackTime = false,
     this.isSuccess = false,
     this.suppresses = false,
+    this.requiresPromise = false,
+    this.promiseFollowUpDays,
   });
 
   final String code;
@@ -286,6 +324,12 @@ class DispositionOption {
   /// Saving it adds the number to Do Not Call.
   final bool suppresses;
 
+  /// Promise to pay (PT1): the agent enters the promised date (and maybe an
+  /// amount). [promiseFollowUpDays] is set when saving books a call that many
+  /// days after the date (PT2); otherwise saving books none (PT3).
+  final bool requiresPromise;
+  final int? promiseFollowUpDays;
+
   @override
   bool operator ==(Object other) =>
       other is DispositionOption &&
@@ -294,9 +338,13 @@ class DispositionOption {
       other.requiresNote == requiresNote &&
       other.requiresCallbackTime == requiresCallbackTime &&
       other.isSuccess == isSuccess &&
-      other.suppresses == suppresses;
+      other.suppresses == suppresses &&
+      other.requiresPromise == requiresPromise &&
+      other.promiseFollowUpDays == promiseFollowUpDays;
   @override
-  int get hashCode => Object.hash(code, label, requiresNote, requiresCallbackTime, isSuccess, suppresses);
+  int get hashCode => Object.hash(
+    code, label, requiresNote, requiresCallbackTime, isSuccess, suppresses, requiresPromise, promiseFollowUpDays,
+  );
 }
 
 enum NotesStatus { idle, saving, saved, retrying, failed, closed }
@@ -811,7 +859,16 @@ abstract interface class StationActions {
 
   /// Saves the outcome of the call on screen: a campaign wrap-up's, or an inbound call's (from
   /// its own catalog, [StationView.dispositions]).
-  Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt});
+  ///
+  /// [promiseDate] (`YYYY-MM-DD`) and [promiseAmount] are the promise to pay (PT1), sent
+  /// only with an outcome that asks for one.
+  Future<void> submitDisposition(
+    String code, {
+    String? notes,
+    DateTime? callbackAt,
+    String? promiseDate,
+    String? promiseAmount,
+  });
 
   /// Redials the customer of the wrap-up on screen, before its outcome is
   /// saved ([WrapupView.redialRemaining]). [attemptId] is the call the agent

@@ -63,8 +63,13 @@ class FakeStationActions implements StationActions {
   @override
   void updateNotes(String text) => _rec('updateNotes', [text]);
   @override
-  Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt}) =>
-      _rec('submitDisposition', [code, notes, callbackAt]);
+  Future<void> submitDisposition(
+    String code, {
+    String? notes,
+    DateTime? callbackAt,
+    String? promiseDate,
+    String? promiseAmount,
+  }) => _rec('submitDisposition', [code, notes, callbackAt, ?promiseDate, ?promiseAmount]);
   @override
   Future<void> redial({String? attemptId}) => _rec('redial', [attemptId]);
   @override
@@ -393,6 +398,8 @@ CallView call({
   String phone = '+919840012345',
   int? redialNumber,
   int? redialLimit,
+  PromiseView? promise,
+  List<PriorAttempt>? priorAttempts,
 }) => CallView(
   attemptId: attemptId,
   phoneE164: phone,
@@ -410,15 +417,17 @@ CallView call({
   otherFields: [
     for (var i = 0; i < otherFields; i++) ContactField(key: 'f$i', label: 'Field $i', value: i == 3 ? 'Policy 7781' : 'Value $i'),
   ],
-  priorAttempts: [
-    PriorAttempt(at: DateTime(2026, 10, 20, 9, 30), outcomeLabel: 'Busy', sameCampaign: false, campaignName: 'Diwali Offers'),
-    PriorAttempt(at: DateTime(2026, 10, 28, 18, 5), outcomeLabel: 'No answer'),
-  ],
+  priorAttempts: priorAttempts ??
+      [
+        PriorAttempt(at: DateTime(2026, 10, 20, 9, 30), outcomeLabel: 'Busy', sameCampaign: false, campaignName: 'Diwali Offers'),
+        PriorAttempt(at: DateTime(2026, 10, 28, 18, 5), outcomeLabel: 'No answer'),
+      ],
   countdownSeconds: countdown,
   bridgedAt: bridgedAt,
   recording: recording,
   redialNumber: redialNumber,
   redialLimit: redialLimit,
+  promise: promise,
 );
 
 StationView station({
@@ -445,6 +454,7 @@ StationView station({
   QueueView? queue,
   DialActivityView? dialActivity,
   bool myContactsOffered = false,
+  List<DispositionOption>? dispositionOptions,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -459,7 +469,7 @@ StationView station({
   call: call,
   release: release,
   wrapup: wrapup,
-  dispositions: dispositions,
+  dispositions: dispositionOptions ?? dispositions,
   dispositionSaved: dispositionSaved,
   notes: notes,
   audio: audio,

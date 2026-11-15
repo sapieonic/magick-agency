@@ -266,13 +266,24 @@ const leftOfflineCopy =
 
 // ─── Disposition ────────────────────────────────────────────────────────────
 
-enum DispositionBlock { noSelection, noteRequired, datetimeRequired, callbackInPast }
+enum DispositionBlock {
+  noSelection,
+  noteRequired,
+  datetimeRequired,
+  callbackInPast,
+  promiseRequired,
+  promiseDateInvalid,
+  promiseAmountInvalid,
+}
 
 const Map<DispositionBlock, String> dispositionBlockCopy = {
   DispositionBlock.noSelection: 'Pick a disposition to save this call.',
   DispositionBlock.noteRequired: 'This disposition needs a note.',
   DispositionBlock.datetimeRequired: 'This disposition needs a callback time.',
   DispositionBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
+  DispositionBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
+  DispositionBlock.promiseDateInvalid: 'Pick a promised date from today up to 180 days ahead.',
+  DispositionBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
 };
 
 const catalogChangedCopy = "This campaign's outcomes changed. Pick one of these.";

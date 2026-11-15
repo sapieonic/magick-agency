@@ -110,6 +110,7 @@ CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
         recording: c.recording,
         redialNumber: c.redialNumber,
         redialLimit: c.redialLimit,
+        promise: c.promise,
       );
 
 /// "Redial 1 of 2": this call is a wrap-up redial, the agent calling back the
@@ -168,6 +169,8 @@ class CallHeadline extends StatelessWidget {
                 hasName ? '$phone · ${StationCopy.attempt(call.attemptNumber)}' : StationCopy.attempt(call.attemptNumber),
                 style: monoStyle(context, size: 14),
               ),
+          // PT9: the contact's promise to pay, under who they are.
+          if (call.promise != null) ...[const SizedBox(height: Space.sm), PromiseLine(promise: call.promise!)],
         ],
       ),
     );

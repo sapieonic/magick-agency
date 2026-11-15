@@ -404,6 +404,7 @@ Future<void> showDetailsSheet(BuildContext context, CallView call) {
                 style: text.bodySmall,
               ),
               const SizedBox(height: Space.md),
+              if (call.promise != null) ...[PromiseLine(promise: call.promise!), const SizedBox(height: Space.md)],
               HeroFieldsGrid(fields: call.heroFields, configured: call.heroesConfigured),
               const SizedBox(height: Space.md),
               ContactFieldList(fields: call.otherFields, alwaysFilter: call.otherFields.length > 8),

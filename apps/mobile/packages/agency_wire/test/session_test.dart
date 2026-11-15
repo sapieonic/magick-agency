@@ -105,7 +105,7 @@ void main() {
       expect(promise.datetimeRequired, isFalse);
       expect(b.dispositionFor('promise_to_pay')!.promiseRequired, isFalse, reason: 'a callback-style entry asks for no promise');
       expect(b.dispositionFor('promise_to_pay')!.promiseFollowUpDays, isNull);
-      expect(promise, isNot(Disposition(code: 'promised_payment', label: 'Promised to pay on a date', isSuccess: true)));
+      expect(promise, isNot(const Disposition(code: 'promised_payment', label: 'Promised to pay on a date', isSuccess: true)));
     });
 
     test('contact assignment: an older server is a pool campaign with no queue and no retry', () {
