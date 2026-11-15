@@ -433,9 +433,9 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       // `reserved` frame can reach the console before this response does.
       agent_state: live?.state ?? 'offline',
     };
-    // `dnc_entry` is for the public layer's audit row only (it strips it): the entry DS8 wrote,
-    // or that it could not (`recorded: false`, a number not usable E.164). Absent when no entry
-    // was attempted (another outcome, or a replay).
+    // `dnc_entry` is for the public layer (it strips it): the audit row's facts, and whether the
+    // entry DS8 attempted is on the list (`recorded: false`, a number not usable E.164), which it
+    // passes on as `dnc_recorded`. Absent when no entry was attempted (another outcome, or a replay).
     const dncEntry = dncMark
       ? { recorded: dncMark.recorded, id: dncMark.written?.id ?? null, created: dncMark.recorded && !dncMark.alreadyPresent }
       : null;

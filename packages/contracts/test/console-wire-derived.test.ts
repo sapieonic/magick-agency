@@ -69,6 +69,8 @@ interface OldAgencyDispositionResponse {
   // Added deliberately (promise to pay, PT1): the promise echoed as stored.
   promise_date?: string | null;
   promise_amount?: string | null;
+  // Added deliberately (DS8): whether a suppress outcome's Do Not Call entry was written.
+  dnc_recorded?: boolean;
   agent_state: Api.AgencyAgentState;
 }
 

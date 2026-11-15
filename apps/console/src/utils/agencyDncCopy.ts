@@ -75,6 +75,21 @@ export function dncTenantConfirmHint(phoneE164: string): string {
 }
 
 /**
+ * Why a campaign entry could not be written, and what that leaves open: the tail of every
+ * `dnc_recorded: false` sentence for this campaign's list (the Mark DNC button's and a suppress
+ * outcome's).
+ */
+export const DNC_CAMPAIGN_NOT_LISTED =
+  'It couldn’t go on this campaign’s Do Not Call list because the number isn’t in a form the list can hold, so a new upload could bring it back. Ask an admin to check the number.';
+
+/**
+ * A saved outcome that suppresses (DS8) whose Do Not Call entry could not be written
+ * (`dnc_recorded: false` on the disposition answer): only this contact is suppressed, so say
+ * that and no more. On `true` or absent nothing is added (absent: no entry was attempted).
+ */
+export const SUPPRESS_OUTCOME_NOT_LISTED = `This contact won’t be dialled again. ${DNC_CAMPAIGN_NOT_LISTED}`;
+
+/**
  * What to tell the agent once it lands. Scoped to what the agent actually chose
  * AND to what the response promised — `dnc_recorded: false` on the tenant-wide
  * escalation means the wider row is still in flight, so the wider promise is
@@ -94,7 +109,7 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
     if (response.dnc_recorded) {
       return `${response.phone_e164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.`;
     }
-    return `${response.phone_e164} won’t be dialled again by this campaign’s current contacts. It couldn’t go on this campaign’s Do Not Call list because the number isn’t in a form the list can hold, so a new upload could bring it back. Ask an admin to check the number.`;
+    return `${response.phone_e164} won’t be dialled again by this campaign’s current contacts. ${DNC_CAMPAIGN_NOT_LISTED}`;
   }
   if (response.dnc_recorded) {
     /*

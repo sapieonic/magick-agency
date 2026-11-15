@@ -740,7 +740,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
           'Suppress outcome recorded, but the contact\'s number is not usable E.164: no Do Not Call entry was written');
       }
     }
-    return reply.code(result.status).send(withoutDncEntry(result.body));
+    return reply.code(result.status).send(publicDispositionBody(result.body));
   });
 
   /**
@@ -925,9 +925,14 @@ function dispositionDncEntry(body: unknown): { recorded: boolean; id: string | n
   };
 }
 
-/** The disposition answer as the contract has it: `dnc_entry` is the audit's, never the client's. */
-function withoutDncEntry(body: unknown): unknown {
+/**
+ * The disposition answer as the contract has it: `dnc_entry` is the audit's, never the client's;
+ * the client gets only whether the entry is on the list (`dnc_recorded`, DS8), present exactly
+ * when an entry was attempted, so the station never promises an entry that was not written.
+ */
+function publicDispositionBody(body: unknown): unknown {
   if (!body || typeof body !== 'object' || !('dnc_entry' in body)) return body;
   const { dnc_entry: _audit, ...rest } = body as Record<string, unknown>;
-  return rest;
+  const entry = dispositionDncEntry(body);
+  return entry ? { ...rest, dnc_recorded: entry.recorded } : rest;
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:magick_agency_agent/core/station/station_copy.dart' show leftOfflineCopy;
+import 'package:magick_agency_agent/core/station/station_copy.dart' show leftOfflineCopy, suppressOutcomeNotListedCopy;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
 import 'station_harness.dart';
@@ -422,12 +422,19 @@ void main() {
   });
 
   group('wrap-up', () {
-    StationView wrap({WrapupView? w, String? saved, StationBusy busy = StationBusy.none, NotesView notes = const NotesView()}) => station(
+    StationView wrap({
+      WrapupView? w,
+      String? saved,
+      StationBusy busy = StationBusy.none,
+      NotesView notes = const NotesView(),
+      String? dnc,
+    }) => station(
       phase: AgentPhase.wrapup,
       call: call(bridgedAt: t0.subtract(const Duration(minutes: 3))),
       release: hungUpRelease,
       wrapup: w ?? wrapup(),
       dispositionSaved: saved,
+      dncOutcome: dnc,
       busy: busy,
       notes: notes,
     );
@@ -575,6 +582,14 @@ void main() {
       expect(find.text('You’ll be available again when wrap-up ends.'), findsOneWidget);
       final live = tester.getSemantics(find.byKey(const Key('phase-live-region')));
       expect(live.label, 'Outcome saved');
+      expect(find.byKey(const Key('dnc-outcome')), findsNothing);
+    });
+
+    testWidgets('a saved suppress outcome whose number could not go on the list says so (DS8)', (tester) async {
+      await pumpStation(tester, wrap(saved: 'do_not_call', dnc: suppressOutcomeNotListedCopy));
+      expect(find.byKey(const Key('outcome-saved')), findsOneWidget);
+      expect(find.byKey(const Key('dnc-outcome')), findsOneWidget);
+      expect(find.textContaining('It couldn’t go on this campaign’s Do Not Call list'), findsOneWidget);
     });
   });
 }

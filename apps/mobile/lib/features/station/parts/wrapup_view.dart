@@ -172,6 +172,7 @@ class _SaveArea extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final options = ref.watch(stationViewProvider.select((v) => v?.dispositions ?? const <DispositionOption>[]));
     final saved = ref.watch(stationViewProvider.select((v) => v?.dispositionSaved));
+    final dnc = ref.watch(stationViewProvider.select((v) => v?.dncOutcome));
     final autoReturn = ref.watch(stationViewProvider.select((v) => v?.wrapup?.autoReturn ?? true));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
     final saving = busy == StationBusy.savingDisposition;
@@ -199,6 +200,12 @@ class _SaveArea extends ConsumerWidget {
                 ),
               ],
             ),
+            // What the outcome did to the Do Not Call list when it is not what the agent was
+            // promised (DS8: the number could not go on it).
+            if (dnc != null) ...[
+              const SizedBox(height: Space.xs),
+              Text(dnc, key: const Key('dnc-outcome'), style: text.bodySmall),
+            ],
             if (autoReturn) ...[const SizedBox(height: Space.xs), Text(StationCopy.savedReturning, style: text.bodySmall)],
           ],
         ),

@@ -928,6 +928,43 @@ void main() {
         });
       });
 
+      test('a suppress outcome whose number could not go on the list says so; one that did, or another outcome, adds nothing (DS8)', () {
+        fakeAsync((async) {
+          Map<String, Object?> answer(String attemptId, String code, Object? dncRecorded) => {
+                'campaign_id': 'camp-1',
+                'attempt_id': attemptId,
+                'contact_id': 'c-$attemptId',
+                'disposition_code': code,
+                'contact_state': code == 'do_not_call' ? 'suppressed' : 'completed',
+                if (dncRecorded != null) 'dnc_recorded': dncRecorded,
+                'agent_state': 'wrapup',
+              };
+          final app = App(async)..start();
+          app.inWrapup('att-1');
+          app.routes['POST /proxy/agency/attempts/att-1/disposition'] = (_) => json(200, answer('att-1', 'do_not_call', false));
+          app.run(app.controller.submitDisposition('do_not_call'));
+          expect(app.view!.dispositionSaved, 'do_not_call');
+          expect(app.view!.dncOutcome, suppressOutcomeNotListedCopy);
+          expect(app.view!.dncOutcome, contains('It couldn’t go on this campaign’s Do Not Call list'));
+          app.dispose();
+
+          final listed = App(async)..start();
+          listed.inWrapup('att-2');
+          listed.routes['POST /proxy/agency/attempts/att-2/disposition'] = (_) => json(200, answer('att-2', 'do_not_call', true));
+          listed.run(listed.controller.submitDisposition('do_not_call'));
+          expect(listed.view!.dispositionSaved, 'do_not_call');
+          expect(listed.view!.dncOutcome, isNull);
+          listed.dispose();
+
+          final other = App(async)..start();
+          other.inWrapup('att-3');
+          other.routes['POST /proxy/agency/attempts/att-3/disposition'] = (_) => json(200, answer('att-3', 'interested', null));
+          other.run(other.controller.submitDisposition('interested'));
+          expect(other.view!.dncOutcome, isNull);
+          other.dispose();
+        });
+      });
+
       test('notes typed while the outcome is saving are still sent, not dropped with it', () {
         fakeAsync((async) {
           final app = App(async)..start();

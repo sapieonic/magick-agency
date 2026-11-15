@@ -206,6 +206,7 @@ final Map<String, Map<String, Decoder>> decoders = {
     'disposition_request_plain': (j) => DispositionRequest(dispositionCode: j['disposition_code']! as String),
     'disposition_response_callback': DispositionResponse.fromJson,
     'disposition_response_completed': DispositionResponse.fromJson,
+    'disposition_response_suppress_unlisted': DispositionResponse.fromJson,
     'notes_request': (j) => NotesRequest(j['notes']! as String),
     'notes_response': NotesResponse.fromJson,
     'dnc_request': (j) => DncRequest(reason: j['reason'] as String?),
