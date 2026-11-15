@@ -319,6 +319,33 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       );
     }
 
+    // ── 5a. A `suppress` outcome is a Do Not Call mark for this campaign (DS8) ──
+    // The customer asked not to be called, so the number goes on the list, not only this one
+    // contact: without a `dnc_entries` row another contact on the same number stayed dialable
+    // and a re-upload brought the number back. Campaign scope, as the station's own mark
+    // defaults to and as the soft phone and inbound already write for the same outcome
+    // (`disposition:<code>`, by whoever filed it). Written whether or not the contact still
+    // belonged to this attempt above: what the customer said stands either way. Idempotent,
+    // so a same-code replay lands here again harmlessly. Not swallowed, like the promise below:
+    // a failed write fails the save, the agent saves again, and the replay writes it.
+    if (resolved.entry.suppress === true) {
+      const phone = contactRow?.phone_e164
+        ?? (await agencyContactRepository.findById(attempt.contact_id))?.phone_e164
+        ?? null;
+      if (phone) {
+        const marked = await markDnc({
+          tenantId: attempt.tenant_id,
+          campaignId: campaign.id,
+          phoneE164: phone,
+          reason: `disposition:${resolved.entry.code}`,
+          addedBy: actor.actorUserId,
+        });
+        if (!marked.recorded && marked.phoneE164 !== null) {
+          throw new Error('The Do Not Call entry for a suppressing outcome could not be written');
+        }
+      }
+    }
+
     // ── 5b. The contact's latest promise (PT6, PT7) ─────────────────────────
     // Before the wrap-up release, and not swallowed: if it fails the agent sees the save fail
     // and saves again, and the replay writes it (the outcome itself is idempotent on the code).
