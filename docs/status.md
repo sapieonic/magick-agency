@@ -1573,6 +1573,40 @@ Every new guard was mutation-checked (the reset at the bind, the close not repea
 clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
 carrier, browser or phone.
 
+### Recording honours "recording off" 2026-11-15 (RC1–RC6, [`decisions.md`](decisions.md) "Rulings of 2026-11-15: recording honours")
+
+From an ops report on two tenants: one's calls were recorded with recording off, the other's
+recordings often would not play ("We could not reach the service that stores this recording").
+
+- **Recorded with recording off (RC1, RC2).** VoiceLink is never told whether to record (its
+  `add_lead` has no such field; none was invented), records on its account default and posts a
+  `recordingUrl`, which we stored and served whatever the call asked; the call read gated only on
+  the account's `agency.recording`. Now `recording_requested` is the one source of truth: the
+  bridge discards such a URL at every door (warn once per call, never the URL;
+  `recording_discarded_unrequested_total{provider}`), the call repository stores a
+  `recording_url` only on a row that asked, and every reader goes through one predicate
+  (`packages/db/src/utils/recording-request.ts`): call detail and playback (campaign, soft phone,
+  signed), customer history, Insights, the agent workbook's Recorded column, the analysis queue
+  and runner. Rows from before keep their links (nothing deleted) and read as not recorded;
+  `0044_recording_honours_request.sql` has Insights recount their buckets; an opt-in, reviewed SQL
+  to null them is in `operations.md`, and the audio stays at VoiceLink.
+- **Will not play (RC3, RC4).** Every recording, VoiceLink's included, reaches the console through
+  our proxy, and any answer but 403/404 reads "could not reach". Each such answer now logs a
+  bounded `reason` with call id, provider and hosts (never a URL) and counts in
+  `recording_fetch_failures_total{provider,surface,reason}`; the proxy gives up after 20 s without
+  headers (504) instead of hanging. `PLIVO_RECORDING_REDIRECT_HOSTS` (empty by default, validated
+  at load) lets an operator allow a Plivo redirect target named in the logs; the credential never
+  follows a redirect. Which reason the second tenant hits is to be read from production logs.
+- **Not changed (RC6).** A tagged soft-phone call takes the campaign's `record_calls` (SP rulings);
+  retry campaigns inherit it; a campaign dial reads the campaign's flag at dial time. The
+  station's "Recording" badge comes from the join and can be stale after a mid-session toggle
+  (follow-up).
+
+Every new guard was mutation-checked (each bridge door, the repository's write guard, the row
+and SQL predicates against the analysis queue, customer history, the report oracle and the
+Insights oracle, the proxy's 404, reasons, timeout and redirect hosts, the config refusals, the
+migration's filter). **Not verified:** nothing has run against a real VoiceLink or Plivo account.
+
 ## Test counts
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch

@@ -141,7 +141,7 @@ else `created_at`; judged per page, never a paging key). Placed by `due_at + 15 
 that.
 
 **Recording state**: `no_call` (no media leg: `webrtc_call_id` null); a leg that still exists is
-`available` with a `recording_url`, else `not_recorded`; a leg retention purged (the `agency_calls`
+`available` with a `recording_url` it asked for (`recordingUrlSql`, RC1: a link the carrier sent for a call that did not ask reads `not_recorded`), else `not_recorded`; a leg retention purged (the `agency_calls`
 row is gone) is `expired` only when the call asked for a recording (the campaign's `record_calls`
 for a campaign call, the call's own `recording_requested` for a soft-phone call), else
 `not_recorded`, because retention purges every old leg, recorded or not. Caveat: `record_calls` is
