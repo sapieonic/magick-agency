@@ -1149,10 +1149,12 @@ packages/
 
 - **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml` (`mobile-release.yml` reads it from there).
 - **CI:**
-  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart).
-  - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`) and the app's own (Mode B's ring logic, `./gradlew :app:testDevDebugUnitTest`).
-  - An unsigned iOS build on `main`.
+  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart), on a pull request or push touching the app (prose and the release version bump aside) or the contracts.
+  - The builds run only when what they compile beyond Dart changes (`ANDROID_INPUTS` and `IOS_INPUTS` in `tooling/ci-scope.mjs`: `android/` or `ios/`, a plugin's `android/` or `ios/`, the pubspecs, `pubspec.lock`, `env/`, `mobile.yml`); a Dart-only change runs none of them. `docs/operations.md`, "What CI runs".
+  - On a pull request, a debug Android build, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`) and the app's own (Mode B's ring logic, `./gradlew :app:testDevDebugUnitTest`).
   - On `main`, a release build of the `staging` flavour (R8 minify and resource shrinking, debug-signed, not kept): the build the release APK uses, compiled before a release is tagged.
+  - An unsigned iOS build on `main` (macOS, the costly runner), and on a manual run of the Mobile workflow.
+  - Every job but iOS weekly (Monday 03:47 UTC), and every job on a manual run.
   - A signed `staging` release APK on every `mobile` release, attached to its GitHub Release ("The release APK" below).
 - **Android:**
   - minSdk 28, compileSdk 37 (`permission_handler_android` requires it), targetSdk Flutter's default.

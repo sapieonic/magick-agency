@@ -150,6 +150,18 @@ async function campaignWithCaller(contact: Record<string, unknown> = {}, campaig
   const ct = await insertAgencyContact(c.id as string, {
     tenant_id: TENANT, account_id: ACCOUNT, phone_e164: CALLER_E164, source_row_number: 1, ...contact,
   });
+  // The rig runs the real pacing tick, which completes a `running` campaign with no outstanding
+  // contact (`maybeFinalize`), and an inbound callback books only on a running or paused
+  // campaign. A caller who is the roster's only contact and `exhausted` left nothing
+  // outstanding, so a tick landing mid-test completed the campaign and the call booked no
+  // callback (`callback_due_at` null, on a busy CI runner). Another contact, pending but due
+  // tomorrow, keeps the campaign open; no claim takes it before then.
+  if ((c.status as string) === 'running') {
+    await insertAgencyContact(c.id as string, {
+      tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811299999', source_row_number: 2,
+      next_attempt_at: new Date(Date.now() + 86_400_000),
+    });
+  }
   return { campaignId: c.id as string, contactId: ct.id as string };
 }
 

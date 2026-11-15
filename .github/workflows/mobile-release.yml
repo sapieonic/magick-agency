@@ -52,6 +52,8 @@ jobs:
   apk:
     name: Release APK (staging)
     runs-on: ubuntu-26.04
+    # A release build takes 10-20 minutes; a hung one stops here, not at the 6-hour default.
+    timeout-minutes: 45
     # One build per tag; a second request for the same tag waits rather than racing the upload.
     concurrency:
       group: mobile-release-${{ inputs.tag }}

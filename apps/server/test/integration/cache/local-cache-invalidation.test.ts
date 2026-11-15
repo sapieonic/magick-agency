@@ -28,8 +28,30 @@ const CHANNEL = 'test:cache:invalidate';
 
 const localConfig = { enabled: true, ttlMs: 30_000, maxEntries: 100, channel: CHANNEL };
 
-/** Give the pub/sub message a chance to land. */
-const settle = () => new Promise((r) => setTimeout(r, 60));
+/**
+ * Wait until `subscriber` has received, and its listeners applied, every invalidation
+ * `publisher` sent before this call. Not a fixed sleep: a busy CI runner (four integration
+ * workers on one Redis) once took longer than the 60 ms this file used to wait, and four
+ * cases failed together. A barrier invalidation of a fresh key goes out on the publisher's
+ * own connection, after the ones under test (ioredis sends one connection's commands in
+ * order, and `publishInvalidation` does not await its PUBLISH, so only the same connection
+ * keeps the order); Redis delivers to one subscriber connection in publish order, and each
+ * cache registered its listener before this one, so once the barrier arrives every earlier
+ * message has been applied. A negative assertion after it means the message never came.
+ */
+async function delivered(publisher: InstanceType<typeof RedisCache>, subscriber: Redis): Promise<void> {
+  const barrier = `cache:membership:barrier-${randomUUID()}:t0`;
+  const arrived = new Promise<void>((resolve) => {
+    const onMessage = (_channel: string, raw: string) => {
+      if (!raw.includes(barrier)) return;
+      subscriber.off('message', onMessage);
+      resolve();
+    };
+    subscriber.on('message', onMessage);
+  });
+  await publisher.del(barrier);
+  await arrived;
+}
 
 describe('local cache cross-instance invalidation (integration)', () => {
   let redisA: Redis;
@@ -80,7 +102,7 @@ describe('local cache cross-instance invalidation (integration)', () => {
 
     // The revocation lands on A only.
     await cacheA.del('cache:membership:u1:t1');
-    await settle();
+    await delivered(cacheA, subB);
 
     // B must NOT still be handing out the old role.
     expect(await cacheB.get('cache:membership:u1:t1')).toBeNull();
@@ -96,7 +118,7 @@ describe('local cache cross-instance invalidation (integration)', () => {
 
     // Tenant-wide invalidation, as a tenant suspend issues.
     await cacheA.delByPattern('cache:membership:*:t1');
-    await settle();
+    await delivered(cacheA, subB);
 
     expect(await cacheB.get('cache:membership:u1:t1')).toBeNull();
     expect(await cacheB.get('cache:membership:u2:t1')).toBeNull();
@@ -155,7 +177,7 @@ describe('local cache cross-instance invalidation (integration)', () => {
       expect(await cacheB.get('cache:membership:u9:t9')).toEqual([{ role: 'tenant_admin' }]);
 
       await off.del('cache:membership:u9:t9');
-      await settle();
+      await delivered(off, subB);
 
       expect(await cacheB.get('cache:membership:u9:t9')).toBeNull();
     } finally {
@@ -206,16 +228,20 @@ describe('local cache cross-instance invalidation (integration)', () => {
       expect(await cacheB.get(key)).toEqual([{ role: 'tenant_admin' }]);
       await redisA.del(key);
 
-      // The other deployment revokes a key of the same name: not ours to drop.
+      // The other deployment revokes a key of the same name: not ours to drop. The barrier
+      // goes out on the other deployment's connection, so it follows that revocation; it is
+      // heard on the other channel, and B's own channel is flushed with a barrier of ours.
       await other.del(key);
-      await settle();
+      await delivered(other, otherSub);
+      await delivered(cacheA, subB);
       expect(await cacheB.get(key), 'another db\'s invalidation dropped this db\'s copy').toEqual([{ role: 'tenant_admin' }]);
       // Its own broadcast did go out (the listener works)...
       expect(heardByOther).toHaveLength(1);
 
       // ...and ours never reaches it.
       await cacheA.del(key);
-      await settle();
+      await delivered(cacheA, subB);
+      await delivered(other, otherSub);
       expect(heardByOther).toHaveLength(1);
       expect(await cacheB.get(key)).toBeNull();
     } finally {

@@ -1369,7 +1369,7 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 `test-env.ts` (the per-worktree test database and Redis db), the Vitest decorator transform, and the guard over the release-please setup (B24): `release-please-config.json` and `.release-please-manifest.json` at the root, `.github/workflows/release-please.yml` and `pr-title.yml`. See [`operations.md`](operations.md), "Releases and versioning".
 
-`ci-scope.mjs` picks what a pull request's CI runs from its diff, and its guard holds the rules to the files each package's suites read outside the package ([`operations.md`](operations.md), "What CI runs").
+`ci-scope.mjs` picks what CI runs from the diff of a pull request or a push to `main`, and its guard holds the rules to the files each package's suites read outside the package ([`operations.md`](operations.md), "What CI runs").
 
 `contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (62 vocabularies, the inbound ones and `station_capabilities` included), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
 

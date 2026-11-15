@@ -235,6 +235,17 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   }
 
   /**
+   * A dropped station's session `offline` in Redis AND in its row. The close writes Redis
+   * first and mirrors the row after (`AgencyRuntime.releaseStationOnClose`), so waiting on
+   * Redis alone leaves the row write in flight: read straight away it could still say `break`
+   * (it did, on a busy CI runner), or land after whatever the test writes next.
+   */
+  async function offlineEverywhere(id: string): Promise<void> {
+    await waitFor('offline', async () => (await runtime.agents.get(id))?.state === 'offline');
+    await waitFor('the row mirrored offline', async () => (await sessionRow(id))?.state === 'offline');
+  }
+
+  /**
    * A campaign session switched to the soft phone, holding a bridged-then-hung-up call that
    * owes its outcome (docs/softphone.md §4.1 steps 6–7): the state finding 1 is about.
    */
@@ -655,7 +666,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
     // The lid closes: presence goes `offline`, and the row keeps the soft-phone break reason.
     await drop(station);
-    await waitFor('offline', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+    await offlineEverywhere(sessionId);
     expect(await sessionRow(sessionId)).toEqual({ state: 'offline', break_reason: 'soft_phone' });
     // …and the 45 s lease lapses, taking the `manual` field with it.
     await getTestRedis().del(leaseKey(sessionId));
@@ -690,7 +701,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     // (a) A row whose break reason was nulled (an older build's offline write) still
     // rehydrates onto the soft phone: the unsettled call alone makes it soft-phone flavoured.
     await drop(back);
-    await waitFor('offline again', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+    await offlineEverywhere(sessionId);
     await getTestPool().query('UPDATE agency_agent_sessions SET break_reason = NULL WHERE id = $1', [sessionId]);
     await getTestRedis().del(leaseKey(sessionId));
     const minted = await post(`/proxy/agency/sessions/${sessionId}/station-token`, agent);
@@ -1322,7 +1333,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     const { sessionId, station, callId } = await campaignSessionOwingAnOutcome(agent, campaign.id, '+919811200070');
 
     await drop(station);
-    await waitFor('offline', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+    await offlineEverywhere(sessionId);
     if (stopAgency) await stopAgency();
     stopAgency = null;
     await resetAgencyRuntimeForTests();

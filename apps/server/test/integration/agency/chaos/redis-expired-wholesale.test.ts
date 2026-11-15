@@ -121,6 +121,18 @@ describe('Redis expired wholesale (chaos)', () => {
     );
     expect(Number(live.rows[0]!.n)).toBe(0);
     expect((await contactStates(world.campaignId))['pending']).toBeGreaterThan(opts.agents);
+    // And every agent's release has landed in its session row. `tick()` absorbs on the
+    // attempt row; the release follows through the fire-and-forget lifecycle chain and
+    // writes Redis before the row (harness `mirroredAgentState`), so on CI guard 1 read
+    // one row still mid-write. Waited for, bounded: on timeout the case's own
+    // assertion reports the rows it saw.
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      const states = Object.values(await agentSessionStates(world.campaignId));
+      if (states.length === opts.agents && states.every((s) => s === 'available')) break;
+      if (Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
     return world;
   }
 

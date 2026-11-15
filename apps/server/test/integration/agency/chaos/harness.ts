@@ -1181,6 +1181,51 @@ export async function hasOutstandingDialWorkFor(campaignId: string): Promise<boo
   return (rows[0]?.n ?? 0) > 0;
 }
 
+/**
+ * How long {@link contactsSettled} waits for an ended call's contact to leave `in_flight`.
+ *
+ * A bound on a stuck chain, not a performance assertion. It is a time and not a tick count
+ * because the write it waits for is paced by Postgres, not by the pacer: on CI a checkpoint's
+ * fsync stalled writes for most of a second while twenty ticks that dialled nothing took a few
+ * milliseconds between them.
+ */
+export const CONTACT_SETTLE_TIMEOUT_MS = 5_000;
+
+/**
+ * Wait until no contact of this campaign is `in_flight` with every attempt of it `ended`.
+ *
+ * That pair is exactly the end-of-call chain not having landed yet: `bridge.flush()` absorbs
+ * on the attempt row, and the contact's settlement follows through the fire-and-forget
+ * lifecycle subscription (see `runUntilQuiescent`). A call parked live is not waited for (its
+ * attempt is live), so a scenario that parks one pays nothing here.
+ *
+ * Returns `'landed'` when there was something to wait for and it landed (a later tick may now
+ * dial into the freed slot), `'none'` when there was nothing, and `'timeout'` when a contact
+ * was still stuck at the deadline. The caller's assertions then report it; it does not throw.
+ */
+export async function contactsSettled(
+  campaignId: string,
+  timeoutMs = CONTACT_SETTLE_TIMEOUT_MS,
+): Promise<'landed' | 'none' | 'timeout'> {
+  const deadline = Date.now() + timeoutMs;
+  let waited = false;
+  for (;;) {
+    const { rows } = await getTestPool().query<{ n: number }>(
+      `SELECT count(*)::int AS n
+         FROM agency_contacts c
+        WHERE c.campaign_id = $1
+          AND c.state = 'in_flight'
+          AND NOT EXISTS (SELECT 1 FROM agency_call_attempts a
+                           WHERE a.contact_id = c.id AND a.state <> 'ended')`,
+      [campaignId],
+    );
+    if ((rows[0]?.n ?? 0) === 0) return waited ? 'landed' : 'none';
+    if (Date.now() > deadline) return 'timeout';
+    waited = true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<ChaosWorld> {
   const agentCount = opts.agents ?? 5;
   const contactCount = opts.contacts ?? 20;
@@ -1371,6 +1416,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
       let used = 0;
       let idleStreak = 0;
       let settled = 0;
+      let settleTimedOut = false;
       for (; used < maxTicks; used++) {
         const before = bridge.dialed.length;
         await world.tick();
@@ -1380,6 +1426,17 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
           idleStreak = 0;
           settled = 0;
           continue;
+        }
+
+        // First, by time: an ended call whose contact is still `in_flight` holds its slot
+        // until the settlement lands, however many ticks pass meanwhile (the tick-counted
+        // budget below ran out on CI while one write waited out a checkpoint). One timeout
+        // ends this wait for the rest of the run, so a contact stranded on purpose costs
+        // one deadline, not one per tick.
+        if (!settleTimedOut) {
+          const contacts = await contactsSettled(campaignId);
+          if (contacts === 'landed') { idleStreak = 0; continue; }
+          if (contacts === 'timeout') settleTimedOut = true;
         }
 
         // ── Why a tick that dialled nothing is not yet evidence of quiescence ──

@@ -13,7 +13,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 
 import {
-  GLOBAL_FILES, READ_BY, SERVER_REPO_GUARDS, computeScope, readWorkspace, root, ruleCovers,
+  GLOBAL_FILES, MOBILE_PREFIXES, READ_BY, SERVER_REPO_GUARDS, computeScope, onlyVersionChanged, readWorkspace, root, ruleCovers,
 } from './ci-scope.mjs';
 
 const workspace = readWorkspace();
@@ -135,6 +135,78 @@ test('the mobile workflow runs on the app and on what its wire types are checked
   }
   assert.equal(scope('apps/server/src/app.ts').mobile, false);
   assert.equal(scope('packages/domain/src/pacing.ts').mobile, false);
+  assert.equal(scope('apps/mobile/README.md', 'apps/mobile/CHANGELOG.md').mobile, false, 'prose analyzes nothing');
+});
+
+test('the Android and iOS builds run on what they compile beyond Dart, not on Dart alone', () => {
+  for (const f of ['apps/mobile/lib/main.dart', 'apps/mobile/test/x_test.dart', 'packages/contracts/src/x.ts',
+    'apps/mobile/packages/agent_audio/lib/agent_audio.dart', 'apps/mobile/packages/agency_wire/lib/x.dart']) {
+    const s = scope(f);
+    assert.equal(s.mobile, true, f);
+    assert.equal(s.android, false, `${f}: flutter analyze and flutter test cover Dart`);
+    assert.equal(s.ios, false, f);
+  }
+  for (const f of ['apps/mobile/android/app/build.gradle.kts', 'apps/mobile/packages/agent_audio/android/src/main/kotlin/A.kt']) {
+    assert.deepEqual([scope(f).android, scope(f).ios], [true, false], f);
+  }
+  for (const f of ['apps/mobile/ios/Runner/Info.plist', 'apps/mobile/packages/agent_audio/ios/agent_audio/Sources/agent_audio/Chime.swift']) {
+    assert.deepEqual([scope(f).android, scope(f).ios], [false, true], f);
+  }
+  for (const f of ['apps/mobile/pubspec.yaml', 'apps/mobile/pubspec.lock', 'apps/mobile/packages/agent_audio/pubspec.yaml',
+    'apps/mobile/env/staging.json', '.github/workflows/mobile.yml']) {
+    const s = scope(f);
+    assert.deepEqual([s.mobile, s.android, s.ios], [true, true, true], f);
+  }
+  assert.deepEqual([scope('apps/server/src/app.ts').android, scope('apps/server/src/app.ts').ios], [false, false]);
+  const full = computeScope({ files: [], full: true, workspace });
+  assert.deepEqual([full.android, full.ios], [true, true]);
+});
+
+test('a version line alone is a version bump; anything else in the diff is not', () => {
+  const patch = (file, ...lines) => [`diff --git a/${file} b/${file}`, `--- a/${file}`, `+++ b/${file}`, '@@ -3 +3 @@', ...lines].join('\n');
+  assert.equal(onlyVersionChanged(patch('apps/server/package.json', '-  "version": "0.22.0",', '+  "version": "0.23.0",')), true);
+  assert.equal(onlyVersionChanged(patch('apps/mobile/pubspec.yaml', '-version: 0.11.0+13', '+version: 0.12.0+14')), true);
+  assert.equal(onlyVersionChanged(patch('apps/server/package.json',
+    '-  "version": "0.22.0",', '+  "version": "0.23.0",', '-    "pg": "^8.11.0",', '+    "pg": "^8.12.0",')), false, 'a dependency moved too');
+  assert.equal(onlyVersionChanged(patch('apps/server/package.json', '-    "version": "1.0.0"', '+    "version": "1.1.0"')), false, 'a nested key, not the package version');
+  assert.equal(onlyVersionChanged(patch('apps/mobile/pubspec.yaml', '-  version: ^1.0.0', '+  version: ^2.0.0')), false, 'an indented key under a dependency');
+  assert.equal(onlyVersionChanged(''), false, 'no diff is not a bump');
+});
+
+test("release-please's release PR runs the release-please check and nothing else", () => {
+  // The files of a real release commit (chore: release main), every package.json and the
+  // pubspec.yaml changing their version line alone.
+  const bumps = ['apps/console/package.json', 'apps/mobile/pubspec.yaml', 'apps/server/package.json', 'packages/db/package.json'];
+  const files = [...bumps, '.release-please-manifest.json', 'apps/console/CHANGELOG.md', 'apps/mobile/CHANGELOG.md',
+    'apps/server/CHANGELOG.md', 'packages/db/CHANGELOG.md', 'packages/observability/CHANGELOG.md'];
+  const s = computeScope({ files, versionOnly: bumps, workspace });
+  assert.equal(s.full, false);
+  assert.deepEqual(s.packages, []);
+  assert.deepEqual(s.integration, { db: false, server: false });
+  assert.deepEqual([s.mobile, s.android, s.ios, s.grafana], [false, false, false, false]);
+  assert.equal(s.release, true);
+  assert.equal(s.serverGuards, true);
+  // The same files without the version-only knowledge: a real package.json change runs the package.
+  assert.deepEqual(computeScope({ files: ['apps/server/package.json'], workspace }).packages, ['apps/server']);
+  assert.equal(computeScope({ files: ['apps/mobile/pubspec.yaml'], workspace }).android, true);
+});
+
+test("the Mobile workflow's path filter is MOBILE_PREFIXES, so no mobile change starts no run", () => {
+  // mobile.yml's pull request and push triggers share the `&mobile-paths` list; a change outside
+  // it starts no Mobile run at all, so a prefix missing from it would skip analyze and the builds.
+  const lines = readFileSync(join(root, '.github/workflows/mobile.yml'), 'utf8').split('\n');
+  const start = lines.findIndex((l) => /^\s+paths: &mobile-paths\s*$/.test(l));
+  assert.ok(start >= 0, 'mobile.yml has a `paths: &mobile-paths` list');
+  const filter = [];
+  for (const l of lines.slice(start + 1)) {
+    const item = /^\s+-\s+(\S+)\s*$/.exec(l);
+    if (!item) break;
+    filter.push(item[1]);
+  }
+  // A directory prefix is `<dir>/**`, a name prefix (`contracts-literals.`) is `<name>*`.
+  const asGlob = (p) => (p.endsWith('/') ? `${p}**` : p.endsWith('.') ? `${p}*` : p);
+  assert.deepEqual([...filter].sort(), MOBILE_PREFIXES.map(asGlob).sort());
+  assert.ok(lines.some((l) => /^\s+paths: \*mobile-paths\s*$/.test(l)), 'the push trigger reuses the same list');
 });
 
 test('every server repository guard exists', () => {
