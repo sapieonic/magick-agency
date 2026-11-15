@@ -1,0 +1,46 @@
+/*
+  The label of a group of navigation items (decision NV1): the Settings hub's "You", "This
+  account · …" and "People and access", the campaign bar's Monitor, Data and Set up, and the
+  result groups of the search. One look everywhere, and never the look of an item:
+
+  - Small, uppercase and tracked, in `--text-muted`, a step quieter than the items under it,
+    which are sentence case in `--text-secondary` (or brighter) and never take this colour.
+  - A hairline runs from the label to the end of its group, so it reads as the head of what
+    is under it rather than as one more entry beside them.
+  - Nothing about it says "press me": no hover, no pointer, no focus ring, and it is not
+    selectable. The element using it is a heading or a plain span, never a link, a button or
+    a tab stop; its group names itself by it (`aria-labelledby`).
+
+  Rendered by `NavSectionLabel.tsx`; a host passes a class that sets only its own padding and
+  margins, lining the label's text up with the text of the items below it.
+*/
+.label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.label::after {
+  content: '';
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 1px;
+  background: var(--border);
+}
+
+/* The label's words, cut with an ellipsis when the column is narrower than a long account name. */
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

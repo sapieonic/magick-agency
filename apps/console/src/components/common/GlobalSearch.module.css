@@ -79,13 +79,9 @@
   padding: 8px 0;
 }
 
+/* A result group's label (NavSectionLabel, NV1): its text in line with the results' icons. */
 .sectionHeader {
-  padding: 8px 16px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
+  padding: 10px 16px 4px;
 }
 
 .resultItem {

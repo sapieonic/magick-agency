@@ -1,11 +1,12 @@
 import { useEffect, useId, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { ChevronRight, Search } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { CAMPAIGNS_GATE, appliesTo, passesGate, settingsEntryForPath, settingsGroupTitle } from '../../utils/consoleNav';
 import { settingsEntryMatches } from '../../utils/consoleSearch';
 import { plural } from '../../utils/format/number';
 import { rememberSettingsEntry } from '../../utils/settingsLastVisited';
+import { NavSectionLabel } from '../../components/common/NavSectionLabel';
 import { useSettingsNav } from './useSettingsNav';
 import styles from './SettingsLayout.module.css';
 
@@ -113,28 +114,35 @@ export default function SettingsLayout() {
             data-filtering={query === '' ? undefined : ''}
             data-testid="settings-nav"
           >
-            {shown.map((group) => (
-              <section key={group.scope} className={styles.group} data-testid={`settings-group-${group.scope}`}>
-                <h2 className={styles.groupTitle}>{settingsGroupTitle(group.scope, names)}</h2>
-                <ul className={styles.list}>
-                  {group.entries.map((e) => {
-                    const active = entry?.id === e.id;
-                    return (
-                      <li key={e.id}>
-                        <Link
-                          to={e.path}
-                          className={`${styles.item} ${active ? styles.itemActive : ''}`}
-                          aria-current={active ? 'page' : undefined}
-                          data-testid={`settings-nav-${e.id}`}
-                        >
-                          {e.label}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ))}
+            {shown.map((group) => {
+              const titleId = `${filterId}-group-${group.scope}`;
+              return (
+                <section key={group.scope} className={styles.group} data-testid={`settings-group-${group.scope}`}>
+                  {/* A label, not an entry (NV1): its list is named by it, and it is never a link. */}
+                  <NavSectionLabel as="h2" id={titleId} className={styles.groupTitle}>
+                    {settingsGroupTitle(group.scope, names)}
+                  </NavSectionLabel>
+                  <ul className={styles.list} aria-labelledby={titleId}>
+                    {group.entries.map((e) => {
+                      const active = entry?.id === e.id;
+                      return (
+                        <li key={e.id}>
+                          <Link
+                            to={e.path}
+                            className={`${styles.item} ${active ? styles.itemActive : ''}`}
+                            aria-current={active ? 'page' : undefined}
+                            data-testid={`settings-nav-${e.id}`}
+                          >
+                            <span className={styles.itemLabel}>{e.label}</span>
+                            <ChevronRight size={14} aria-hidden="true" className={styles.itemChevron} />
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })}
             {shown.length === 0 && (
               <p className={styles.empty} data-testid="settings-filter-empty">
                 No setting matches “{query}”.

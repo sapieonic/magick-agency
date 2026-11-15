@@ -23,72 +23,47 @@
 }
 
 /*
-  One labelled group of tabs (decision IN14). The label sits inline before its
-  tabs; a group after the first opens with a divider. Labels, not menus.
+  One labelled group of tabs (decisions IN14, NV1). The label (`NavSectionLabel`)
+  sits above its tabs, its text in line with the first tab's, and its hairline
+  spans the group: that is what draws the grouping, so no divider is needed.
+  It is never in the row of tabs, where it read as one more tab. Labels, not menus.
 */
 .group {
   display: flex;
-  align-items: stretch;
-  gap: 2px;
+  flex-direction: column;
   flex-shrink: 0;
+  gap: 2px;
+  padding-top: 2px;
 }
 
 .group + .group {
-  margin-left: 8px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
-  /* Stops short of the underline, so it reads as a gap rather than a cell wall. */
-  border-image: linear-gradient(to bottom, transparent 22%, var(--border) 22%, var(--border) 78%, transparent 78%) 1;
+  margin-left: 14px;
 }
 
 .groupLabel {
-  align-self: center;
-  padding: 0 6px 0 2px;
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  user-select: none;
+  padding: 0 4px 0 14px;
 }
 
+/* Grows to the tallest group's height, so every tab's text sits on one line across groups. */
+.groupTabs {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+/*
+  A tab: the shared tab bar's (sentence case, `--text-secondary`, a step
+  brighter than the group label above it), plus room for a badge.
+*/
 .tab {
-  display: inline-flex;
-  align-items: center;
+  composes: tab from '../common/TabBar.module.css';
   gap: 7px;
-  flex-shrink: 0;
-  margin-bottom: -1px;
-  padding: 10px 14px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-muted);
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1.2;
-  text-decoration: none;
-  white-space: nowrap;
   cursor: pointer;
-  transition: color var(--transition), border-color var(--transition), background var(--transition);
 }
 
-.tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-secondary);
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  border-radius: 6px 6px 0 0;
-}
-
-.tabActive,
-.tabActive:hover {
-  color: var(--accent-hover);
-  border-bottom-color: var(--accent);
-  background: none;
+.tabActive {
+  composes: tabActive from '../common/TabBar.module.css';
 }
 
 /*
@@ -122,14 +97,13 @@
     margin: 14px 0 16px;
   }
 
-  /* The bar scrolls sideways on a phone; the dividers keep the grouping. */
-  .groupLabel {
-    display: none;
+  /* The bar scrolls sideways on a phone; each label rides over its own group. */
+  .group + .group {
+    margin-left: 8px;
   }
 
-  .group + .group {
-    margin-left: 4px;
-    padding-left: 4px;
+  .groupLabel {
+    padding-left: 11px;
   }
 
   .tab {

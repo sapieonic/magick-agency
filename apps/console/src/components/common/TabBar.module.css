@@ -1,5 +1,8 @@
 /* An underlined tab bar: the strip, a tab, its hover and focus ring, the active tab. A section's
-   bar composes these and sets only its own margins (SectionTabs; the campaign bar can too). */
+   bar composes these and sets only its own margins (SectionTabs, the campaign bar).
+
+   A tab is in `--text-secondary`, never in `--text-muted`: muted is the group label's colour
+   (`NavSectionLabel`, decision NV1), and a tab in it read as one more label. */
 .tabs {
   display: flex;
   gap: 2px;
@@ -16,7 +19,7 @@
   margin-bottom: -1px;
   padding: 10px 14px;
   border-bottom: 2px solid transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.2;
