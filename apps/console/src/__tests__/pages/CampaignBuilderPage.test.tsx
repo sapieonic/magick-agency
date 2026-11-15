@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import type { AgencyColumnAnalysis, AgencyIngestJob } from '../../types/agency-campaign';
 
@@ -492,6 +492,48 @@ describe('the page composes the ingest summary', () => {
     expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
     expect(mocks.startRosterIngest).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByTestId('ingest-summary').getAttribute('data-kind')).toBe('import'));
+  });
+
+  it('a check that failed offers the way back Add contacts offers: a corrected file, or another mapping', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'check-1', dry_run: true, campaign_id: null, status: 'failed', error_code: 'malformed_csv',
+      error_message: 'Could not read the CSV: Invalid Closing Quote.',
+    }));
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const recovery = await screen.findByTestId('ingest-recovery', undefined, { timeout: 4000 });
+    expect(within(recovery).getByRole('button', { name: 'Upload a corrected file' })).toBeTruthy();
+
+    fireEvent.click(within(recovery).getByRole('button', { name: 'Change the column mapping' }));
+    expect(screen.queryByTestId('ingest-summary')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
+  });
+
+  it('an import of the checked file that failed offers Import again, while the check is valid (IM2)', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'check-1', dry_run: true, campaign_id: null, rows_read: 3, accepted: 3,
+      check_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    }));
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const importButton = await screen.findByRole('button', { name: 'Import 3 contacts' }, { timeout: 4000 });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'import-1', dry_run: false, status: 'failed', rows_read: 0, accepted: 0, rejected: 0, check_job_id: 'check-1',
+      error_code: 'dnc_unavailable', error_message: 'The Do Not Call list could not be checked, so no contacts were imported. Nothing was dialled. Try the import again.',
+    }));
+    fireEvent.click(importButton);
+
+    const again = await screen.findByRole('button', { name: 'Import again' }, { timeout: 4000 });
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-2', status: 'pending', check_job_id: 'check-1', already_started: false });
+    fireEvent.click(again);
+    await waitFor(() => expect(mocks.importCheckedFile).toHaveBeenCalledTimes(2));
+    expect(mocks.importCheckedFile.mock.calls[1]).toEqual(['check-1', 'camp-1', 't1', 'a1']);
+    expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
   });
 });
 

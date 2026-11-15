@@ -15,7 +15,7 @@ import {
   initialMapping,
   type MappingState,
 } from '../utils/agencyColumnMapping';
-import { HIGH_REJECTION_RATIO, isTerminal } from '../utils/agencyIngestSummary';
+import { HIGH_REJECTION_RATIO, checkStillImportable, isTerminal } from '../utils/agencyIngestSummary';
 import {
   trackAgencyRosterIngestCompleted,
   trackAgencyRosterIngestFailed,
@@ -156,6 +156,14 @@ export function useRosterIngest(
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
+  /**
+   * An import of a checked file that failed or was stopped, whose check can still be
+   * imported (unexpired, and the mapping on screen is the one checked): the next step
+   * is to import the check again (IM2).
+   */
+  const retryable = job !== null && !job.dry_run && (job.status === 'failed' || job.status === 'cancelled')
+    && checkJob !== null && checkStillImportable(checkJob) && mapping === checkedMapping;
+
   // Held in a ref so a caller can pass an inline closure without restarting the
   // poll loop on every render.
   const optionsRef = useRef(options);
@@ -189,6 +197,14 @@ export function useRosterIngest(
         getIngestJob(jobId, tenantId, accountId)
           .then((next) => {
             if (cancelled) return;
+            if (next.dry_run && next.status === 'completed' && next.import_job_id) {
+              // The check is already imported (a second tab, or a click this tab never
+              // saw answered): follow that import rather than offer Import again (IM2).
+              setCheckJob(next);
+              setJob(null);
+              setJobId(next.import_job_id);
+              return;
+            }
             setJob(next);
             if (isTerminal(next.status)) {
               setPhase('done');
@@ -199,12 +215,11 @@ export function useRosterIngest(
                   typeof code === 'string' &&
                   (INGEST_FAILURE_CODES as readonly string[]).includes(code)
                 ) {
-                  trackAgencyRosterIngestFailed({ source, code: code as AgencyIngestFailureCode });
+                  trackAgencyRosterIngestFailed({ source, code: code as AgencyIngestFailureCode, dry_run: next.dry_run });
                 }
-              } else if (next.status === 'completed' && next.campaign_id) {
-                // `campaign_id` is required on this event; a dry run (which
-                // never carries one) is a preview, not something to report as
-                // "ingested".
+              } else if (next.status === 'completed' && next.campaign_id && !next.dry_run) {
+                // An import only: a check names its campaign (IM1) but imports nothing,
+                // so it is a preview, not something to report as "ingested".
                 const byReason = next.rejected_by_reason ?? {};
                 const rejected = next.rejected;
                 const rowsRead = next.rows_read;
@@ -217,7 +232,8 @@ export function useRosterIngest(
                   duplicates: next.duplicates,
                   dnc_suppressed: byReason.dnc_suppressed ?? 0,
                   high_rejection: rowsRead > 0 && rejected / rowsRead >= HIGH_REJECTION_RATIO,
-                  reconciles: next.accepted + rejected === rowsRead,
+                  // IM3: `?? 0` for a job served before `skipped`.
+                  reconciles: next.accepted + (next.skipped ?? 0) + rejected === rowsRead,
                   top_reason: topRejectionReason(byReason),
                 });
               }
@@ -318,9 +334,13 @@ export function useRosterIngest(
    * A second click is harmless: the server answers with the first import. A refusal
    * (an import already running into the campaign, a check older than its validity)
    * arrives as the server's own sentence.
+   *
+   * Also the retry: after an import of the check failed or was stopped, the check is
+   * imported again while it is valid (`retryable`); the server lets a failed or
+   * cancelled import's check go, and the rows that did land are skipped (IM3).
    */
   const importChecked = useCallback(async () => {
-    const check = job;
+    const check = job?.dry_run ? job : retryable ? checkJob : null;
     if (!check || !check.dry_run || check.status !== 'completed' || !mapping || importing) return;
     if (mapping !== checkedMapping) {
       // The import would run with the CHECK's mapping while the campaign saved this one.
@@ -352,7 +372,7 @@ export function useRosterIngest(
     } finally {
       setImporting(false);
     }
-  }, [job, mapping, checkedMapping, importing, tenantId, accountId]);
+  }, [job, checkJob, retryable, mapping, checkedMapping, importing, tenantId, accountId]);
 
   const onCancelIngest = useCallback(async () => {
     if (!job) return;
@@ -405,12 +425,14 @@ export function useRosterIngest(
   /**
    * Re-enter a step. Going back to the mapping after a check sets that check aside: its review
    * and its Import belong to the mapping it ran with, so the file is checked again before an
-   * import (a finished real import is left as it is).
+   * import. So does going back after an import that failed or was stopped (its check with it):
+   * the next step from the mapping is a new check. A completed import is left as it is.
    */
   const enterPhase = useCallback((next: UploadPhase) => {
-    if (next === 'mapping' && job?.dry_run) {
+    if (next === 'mapping' && job && (job.dry_run || job.status === 'failed' || job.status === 'cancelled')) {
       setJob(null);
       setJobId(null);
+      setCheckJob(null);
       setCheckedMapping(null);
     }
     setPhase(next);
@@ -421,8 +443,12 @@ export function useRosterIngest(
   // no-job-read-yet case wrong, which is the case that renders "Starting…".
   const running = jobId !== null && (!job || !isTerminal(job.status));
   const finished = job !== null && isTerminal(job.status);
-  /** A finished, successful check: the review, whose next step is Import (IM2). */
-  const reviewing = finished && job.dry_run && job.status === 'completed' && mapping === checkedMapping;
+  /**
+   * A finished, successful check not yet imported: the review, whose next step is
+   * Import (IM2). A check that names its import is followed to it by the poll instead.
+   */
+  const reviewing = finished && job.dry_run && job.status === 'completed' && !job.import_job_id
+    && mapping === checkedMapping;
 
   return {
     limits,
@@ -432,6 +458,7 @@ export function useRosterIngest(
     running,
     finished,
     reviewing,
+    retryable,
     checkJob,
     importing,
     importChecked,

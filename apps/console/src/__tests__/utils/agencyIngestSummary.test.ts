@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildIngestSummary,
   checkComparison,
+  checkStillImportable,
   dncNotice,
   terminalNotice,
   isTerminal,
@@ -424,9 +425,12 @@ describe('re-import: rows already in the campaign are skipped, not rejected (IM3
 describe('the Do Not Call line names the list (IM5)', () => {
   it('says how many are on which list, and that correcting the file does not import them', () => {
     const notice = dncNotice(3, { tenant: 2, campaign: 1 }, false)!;
-    expect(notice).toContain('3 numbers are on the Do Not Call list (2 for every campaign in your organisation, 1 for this campaign only), so they were not imported.');
+    // "for this campaign", in the words of the server's per-row reason and IM5.
+    expect(notice).toContain('3 numbers are on the Do Not Call list (2 for every campaign in your organisation, 1 for this campaign), so they were not imported.');
     expect(notice).toContain('Correcting the file does not change this');
     expect(dncNotice(1, { account: 1 }, true)).toContain('1 number is on the Do Not Call list (1 for every campaign in this account), so it will not be imported.');
+    expect(dncNotice(2, { account: 2 }, true)).toContain('so they will not be imported.');
+    expect(dncNotice(1, { account: 1 }, false)).toContain('so it was not imported.');
     expect(dncNotice(0, {}, false)).toBeNull();
     // A job served before the scopes existed still gets the sentence, without the brackets.
     expect(dncNotice(2, {}, false)).toContain('2 numbers are on the Do Not Call list, so they were not imported.');
@@ -438,8 +442,34 @@ describe('an import compared with its check (IM2)', () => {
     const check = job({ dry_run: true, rows_read: 10, accepted: 8, skipped: 0, rejected: 2 });
     expect(checkComparison(check, job({ rows_read: 10, accepted: 8, rejected: 2 }))).toBeNull();
     expect(checkComparison(check, job({ rows_read: 10, accepted: 6, skipped: 2, rejected: 2 })))
-      .toContain('The check expected 8 to import; 6 were imported.');
+      .toContain('The import differs from its check: 6 imported where the check expected 8; 2 already in this campaign where the check found 0.');
     // A stopped import is not compared: its numbers are partial by definition.
     expect(checkComparison(check, job({ status: 'cancelled', accepted: 1 }))).toBeNull();
+  });
+
+  it('names what changed when only the skipped or rejected rows differ', () => {
+    const check = job({ dry_run: true, rows_read: 10, accepted: 6, skipped: 2, rejected: 2 });
+    const comparison = checkComparison(check, job({ rows_read: 10, accepted: 6, skipped: 1, rejected: 3 }))!;
+    expect(comparison).toContain('The import differs from its check: 1 already in this campaign where the check found 2; 3 rejected where the check found 2.');
+    expect(comparison).not.toContain('imported where');
+  });
+});
+
+describe('a check can be imported until it expires (IM2)', () => {
+  const now = Date.parse('2026-11-15T12:00:00.000Z');
+  it('only a completed check, before check_expires_at', () => {
+    const check = (over: Partial<AgencyIngestJob>) => job({ dry_run: true, check_expires_at: '2026-11-16T10:00:00.000Z', ...over });
+    expect(checkStillImportable(check({}), now)).toBe(true);
+    expect(checkStillImportable(check({ check_expires_at: '2026-11-15T11:59:59.000Z' }), now)).toBe(false);
+    expect(checkStillImportable(check({ check_expires_at: null }), now)).toBe(false);
+    expect(checkStillImportable(check({ status: 'failed' }), now)).toBe(false);
+    expect(checkStillImportable(job({ check_expires_at: '2026-11-16T10:00:00.000Z' }), now)).toBe(false);
+  });
+});
+
+describe('rows the roster refused on arrival', () => {
+  it('says they may be exact copies of an earlier row, which "Don\'t remove duplicates" lets through to the roster', () => {
+    const summary = buildIngestSummary(job({ core_rejected_duplicate_rows: 2 }));
+    expect(summary.coreRefusedNotice).toContain('already in this campaign, or an exact copy of an earlier row in the file');
   });
 });

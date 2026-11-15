@@ -5,6 +5,7 @@ import {
   formatCount,
   terminalNotice,
 } from '../../../utils/agencyIngestSummary';
+import { formatSpineTimestamp } from '../../../utils/agencySpineCopy';
 import type { AgencyIngestJob } from '../../../types/agency-campaign';
 import styles from './IngestSummary.module.css';
 
@@ -40,6 +41,11 @@ export interface IngestSummaryProps {
 export interface ReviewNextStepsProps {
   check: AgencyIngestJob;
   importing: boolean;
+  /**
+   * An import of this check failed or was stopped, and the check is still valid: the
+   * button imports it again (IM2), the rows that landed being skipped (IM3).
+   */
+  retry?: boolean;
   /** Why Import cannot be pressed yet (the builder's campaign basics), or null. */
   blockReason?: string | null;
   onImport: () => void;
@@ -56,6 +62,7 @@ export interface ReviewNextStepsProps {
 export function ReviewNextSteps({
   check,
   importing,
+  retry = false,
   blockReason = null,
   onImport,
   onChangeMapping,
@@ -74,7 +81,9 @@ export function ReviewNextSteps({
           ? 'Starting the import…'
           : ready === 0
             ? 'Nothing new to import'
-            : `Import ${formatCount(ready)} ${ready === 1 ? 'contact' : 'contacts'}`}
+            : retry
+              ? 'Import again'
+              : `Import ${formatCount(ready)} ${ready === 1 ? 'contact' : 'contacts'}`}
       </button>
       <button type="button" className="btn-secondary" onClick={onUploadCorrected} disabled={importing}>
         Upload a corrected file
@@ -85,10 +94,17 @@ export function ReviewNextSteps({
         </button>
       ) : null}
       <p className={styles.nextStepsNote}>
-        {blockReason ?? (check.rejected > 0
-          ? 'Importing now adds the ready rows and leaves the rejected ones out. You can fix those later and upload them again: anything already imported is skipped, never added twice.'
-          : 'Nothing was imported by the check. The import reads the same file again, with this mapping, so the campaign gets what you see here unless it changes in between.')}
+        {blockReason ?? (retry
+          ? 'The import did not finish. Importing again reads the same checked file with the same mapping; any rows that did land are skipped, never added twice.'
+          : check.rejected > 0
+            ? 'Importing now adds the ready rows and leaves the rejected ones out. You can fix those later and upload them again: anything already imported is skipped, never added twice.'
+            : 'Nothing was imported by the check. The import reads the same file again, with this mapping, so the campaign gets what you see here unless it changes in between.')}
       </p>
+      {check.check_expires_at ? (
+        <p className={styles.nextStepsNote} data-testid="check-expires">
+          This check can be imported until {formatSpineTimestamp(check.check_expires_at)}. After that, check the file again.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -157,6 +173,9 @@ export function IngestSummary({
         {summary.skippedNotice ? (
           <li data-testid="skipped-notice">
             {summary.skippedNotice}
+            {job.skipped_truncated
+              ? ` The download holds the first ${formatCount(job.skipped_row_count)} skipped rows.`
+              : null}
             {job.has_skipped_export && onDownloadSkipped ? (
               <>
                 {' '}

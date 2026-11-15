@@ -235,6 +235,7 @@ export default function CampaignBuilderPage() {
     running,
     finished,
     reviewing,
+    retryable,
     checkJob,
     importing,
     importChecked,
@@ -743,6 +744,27 @@ export default function CampaignBuilderPage() {
                             onChangeMapping={backToMapping}
                             onUploadCorrected={resetUpload}
                           />
+                        ) : retryable && checkJob ? (
+                          // The import of the checked file failed or was stopped and the
+                          // check is still valid: import it again (the draft exists by now).
+                          <ReviewNextSteps
+                            check={checkJob}
+                            retry
+                            importing={importing}
+                            onImport={() => void importChecked()}
+                            onUploadCorrected={resetUpload}
+                          />
+                        ) : job.status !== 'completed' ? (
+                          // A check or an import that failed or was stopped: the same way
+                          // back as on Add contacts, a corrected file or another mapping.
+                          <div className={styles.ingestActions} data-testid="ingest-recovery">
+                            <button type="button" className="btn-secondary" onClick={resetUpload}>
+                              Upload a corrected file
+                            </button>
+                            <button type="button" className="btn-secondary" onClick={backToMapping}>
+                              Change the column mapping
+                            </button>
+                          </div>
                         ) : null}
                       </IngestSummary>
                     </>
