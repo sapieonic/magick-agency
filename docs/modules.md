@@ -92,7 +92,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-crash-recovery.test.ts` | ~6 |
 | `apps/server/test/integration/agency/agency-disposition-contact-write.test.ts` | 9 |
 | `apps/server/test/integration/agency/agency-dnc-campaign-scope.test.ts` | ~10 |
-| `apps/server/test/integration/agency/agency-dnc-mark-route.test.ts` | ~4 |
+| `apps/server/test/integration/agency/agency-dnc-mark-route.test.ts` (a failed write discards its connection) | 5 |
 | `apps/server/test/integration/agency/agency-dnc-resurrection.test.ts` | ~12 |
 | `apps/server/test/integration/agency/agency-dnc-runtime-wiring.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-double-reservation.test.ts` | ~9 |
@@ -413,6 +413,7 @@ Files: `report-keys.ts`, `schedule.ts`
 | `apps/server/test/unit/agency/reports/schedule.test.ts` | 30 |
 | `apps/server/test/unit/agency/reports/report-keys.test.ts` | 6 |
 | `apps/server/test/integration/agency/report-run-repository.test.ts` | 24 |
+| `apps/server/test/integration/agency/report-agent-dnc-marked.test.ts` (the agent report's DNC count: this account's entries and its campaigns', tenant-wide, never another account's campaign marks) | 3 |
 | `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 15 |
 
 The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/`, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, all three under one deadline (`REPORT_BUILD_TIMEOUT_MS`), an `AbortSignal` the builder, the cursor and the uploads honour, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable` (a subscription disabled only when `probeSubscriptionSubject` agrees the subject is gone), `ReportZoneChangedError` → `subject_changed`, anything else `assembly_failed`; the first pass after start reclaims runs orphaned by a restart, and `stop()` waits at most 20 s), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback; `checkInlineRenderer`, the boot-time load under `inline`), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time; during a rotation it also accepts `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` and says which secret matched), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` (a period skipped while `agency_reports_enabled` is off for the account; a campaign's zone by `campaignZone`) with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first; no email while the flag is off), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
@@ -1019,7 +1020,7 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/api/dnc-page-scope.test.ts` (the page's scopes through the real app, then the dial-time check on what landed; DS1–DS6) | 15 |
-| `apps/server/test/integration/api/station-suppress-dnc.test.ts` (a station `suppress` outcome writes the campaign's Do Not Call entry, by whoever filed it, once; the dial-time check blocks that campaign only; DS8) | 4 |
+| `apps/server/test/integration/api/station-suppress-dnc.test.ts` (a station `suppress` outcome writes the campaign's Do Not Call entry, by whoever filed it, once, decided on the locked row, with its audit row and the sweep of the campaign's other rows; the dial-time check blocks that campaign only; `dnc_recorded` on the answer, false for a number the list cannot hold; DS8) | 9 |
 | `apps/server/test/integration/dnc/dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/dnc/dnc-index-usage.test.ts` | ~5 |
 | `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 22 |
@@ -1402,7 +1403,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 | Test file | Cases |
 |---|---|
-| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json` and `inbound.json` included, and the inbound vocabularies of `literals.json`) | 352 |
+| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json` and `inbound.json` included, and the inbound vocabularies of `literals.json`) | 353 |
 | `packages/contracts/test/agent-caller-id.test.ts` | 2 |
 | `packages/contracts/test/assignment.test.ts` | 6 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
@@ -2100,7 +2101,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgentConsolePage.assignment.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 53 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.dialActivity.test.tsx` (late binding's hidden dials on the waiting screen and the rail, from the server's frame sequences: "Dialling a customer…", the unanswered count, the gap hold, `reserved`, `ready`, paused, break, "Nothing due now", early binding unchanged) | 20 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 34 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.redial.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 5 |
@@ -2117,7 +2118,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 26 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
-| `apps/console/src/__tests__/pages/DncPage.test.tsx` (the add's stated scope, the scope filter, what a removal un-blocks; DS1–DS7) | 36 |
+| `apps/console/src/__tests__/pages/DncPage.test.tsx` (the add's stated scope, the scope filter, what a removal un-blocks and what still blocks it where; DS1–DS7) | 40 |
 | `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 20 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
@@ -2207,7 +2208,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyCues.test.ts` (with the inbound chime) | 28 |
 | `apps/console/src/__tests__/utils/agencyDiagnostics.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyDispositionForm.test.ts` | 26 |
-| `apps/console/src/__tests__/utils/agencyDispositionSubmit.test.ts` | 34 |
+| `apps/console/src/__tests__/utils/agencyDispositionSubmit.test.ts` | 36 |
 | `apps/console/src/__tests__/utils/agencyDncCopy.test.ts` | 20 |
 | `apps/console/src/__tests__/utils/dncScopeWords.test.ts` (the scope words everywhere, and who may reach every campaign; DS3, DS7) | 6 |
 | `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 7 |
@@ -2588,7 +2589,7 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/call_autosave_test.dart` (restored text kept over the server's older copy, `outcomeRefused`, `flushNow`) | ~6 |
 | `apps/mobile/test/core/station/clock_and_liveness_test.dart` | ~18 |
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
-| `apps/mobile/test/core/station/station_controller_test.dart` | ~67 |
+| `apps/mobile/test/core/station/station_controller_test.dart` | ~68 |
 | `apps/mobile/test/core/station/station_device_test.dart` | 4 |
 | `apps/mobile/test/core/station/station_dial_activity_test.dart` (late binding's hidden dials through the controller, from the server's frame sequences: ringing, the unanswered count, the 4 s gap hold, `reserved`, `ready`, a dropped socket, paused, break, an inbound caller's cancel, another campaign's frame, early binding unchanged, the timer on dispose, a mid-ring reconnect's real `ready`, "Available for" kept across hidden dials) | 23 |
 | `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
@@ -2814,7 +2815,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
 | `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~15 |
 | `apps/mobile/test/features/station/station_nothing_due_test.dart` | ~9 |
-| `apps/mobile/test/features/station/station_phases_test.dart` | ~38 |
+| `apps/mobile/test/features/station/station_phases_test.dart` | ~39 |
 | `apps/mobile/test/features/station/station_redial_test.dart` | ~12 |
 | `apps/mobile/test/features/station/station_softphone_test.dart` | ~19 |
 
@@ -2856,7 +2857,7 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/packages/agency_wire/test/actions_test.dart` | ~21 |
+| `apps/mobile/packages/agency_wire/test/actions_test.dart` | ~22 |
 | `apps/mobile/packages/agency_wire/test/assignment_test.dart` | ~19 |
 | `apps/mobile/packages/agency_wire/test/customer_history_test.dart` | ~18 |
 | `apps/mobile/packages/agency_wire/test/customer_search_number_test.dart` | ~8 (one runs every row of the shared table) |
