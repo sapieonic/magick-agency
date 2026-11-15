@@ -125,7 +125,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agent-occupancy-window.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agent-record-tenant-isolation.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agent-stats-timezone-buckets.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agent-transition-ordering.test.ts` (with `setState`'s `keepSinceIfUnchanged`) | ~11 |
+| `apps/server/test/integration/agency/agent-transition-ordering.test.ts` (with `setState`'s `keepSinceIfUnchanged`) | 16 |
 | `apps/server/test/integration/agency/agent-window-boundaries.test.ts` | ~11 |
 | `apps/server/test/integration/agency/assignment-repository.test.ts` | 19 |
 | `apps/server/test/integration/agency/assignment-sql.test.ts` | 19 |
@@ -242,7 +242,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/dialer-carrier-refusals.test.ts` | 22 |
 | `apps/server/test/unit/agency/carrier-refusal-breaker.test.ts` | 20 |
 | `apps/server/test/unit/agency/disposition-policy.test.ts` | 90 |
-| `apps/server/test/unit/agency/disposition-route.test.ts` | 43 |
+| `apps/server/test/unit/agency/disposition-route.test.ts` | 44 |
 | `apps/server/test/unit/agency/disposition.test.ts` | 21 |
 | `apps/server/test/unit/agency/dnc-availability.test.ts` | 6 |
 | `apps/server/test/unit/agency/dnc-mark-route.test.ts` | 37 |
@@ -252,8 +252,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/exhaustion-completion.test.ts` | 21 |
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
-| `apps/server/test/unit/agency/late-binding.test.ts` (with the hidden dial's `dial_activity`, and the release keeping the wait's `since`) | 47 |
-| `apps/server/test/unit/agency/left-session-guards.test.ts` | 62 |
+| `apps/server/test/unit/agency/late-binding.test.ts` (with the hidden dial's `dial_activity`, and the release keeping the wait's `since`) | 74 |
+| `apps/server/test/unit/agency/left-session-guards.test.ts` | 64 |
 | `apps/server/test/unit/agency/end-idle-session-elsewhere.test.ts` (OS7; Mode B: a parked phone told `left`) | 15 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 21 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
@@ -297,7 +297,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 7 |
-| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 38 |
+| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 51 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-drilldown-routes.test.ts` | 25 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 27 |
@@ -678,8 +678,9 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
-| `apps/server/test/unit/agency/device-away-break.test.ts` | 77 |
-| `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 50 |
+| `apps/server/test/unit/agency/device-away-break.test.ts` | 80 |
+| `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 58 |
+| `apps/server/test/unit/agency/softphone-switch-shown-state.test.ts` (the soft-phone switch and its withdrawal answer the shown state behind a hidden dial, and the route audits `withdrawn` from the service) | 4 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 22 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 | `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 49 |
@@ -963,7 +964,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline; `playClipSequenceThenHangUp`) | 12 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind (the playback already stopped when the bind returns), the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token, `onPreambleDone`; a non-connectable call's `parkedSeconds` as a budget floor; `isCallEnding`) | 28 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
-| `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 63 |
+| `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 64 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 4 |
@@ -1390,13 +1391,13 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 | Test file | Cases |
 |---|---|
-| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json` and `inbound.json` included, the inbound vocabularies of `literals.json`, the label maps and hidden-dial copy of `labels.json` and the extractor's brace matching) | 352 |
+| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json` and `inbound.json` included, the inbound vocabularies of `literals.json`, the label maps and hidden-dial copy of `labels.json` and the extractor's brace matching) | 355 |
 | `packages/contracts/test/agent-caller-id.test.ts` | 2 |
 | `packages/contracts/test/assignment.test.ts` | 6 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` (the customer-history, report and inbound code lists: a hand-written snapshot and a two-way type guard) | 19 |
-| `packages/contracts/test/exports.test.ts` | 13 |
+| `packages/contracts/test/exports.test.ts` | 15 |
 | `packages/contracts/test/flags.test.ts` | 11 |
 | `packages/contracts/test/rbac.test.ts` | 71 |
 | `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
@@ -2039,7 +2040,7 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useAgencyStation.media.test.ts` | 10 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 77 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.dialActivity.test.ts` (the `dial_activity` frame: follows dials, cleared by `reserved`, restated by `ready`, a malformed or other-campaign frame dropped, the customer ringing in with the connector's real frames) | 8 |
-| `apps/console/src/__tests__/hooks/useDialActivityDisplay.test.ts` (the 4 s gap hold between hidden dials, dropped on `reserved`, leaving the waiting slot or the queue stating nothing due, which also keeps one from starting; a ringing dial outranks the queue) | 8 |
+| `apps/console/src/__tests__/hooks/useDialActivityDisplay.test.ts` (the 4 s gap hold between hidden dials, dropped on `reserved`, leaving the waiting slot or the queue stating nothing due, which also keeps one from starting; a ringing dial outranks the queue) | 11 |
 | `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 24 |
 | `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
@@ -2085,7 +2086,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 47 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.assignment.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 53 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.dialActivity.test.tsx` (late binding's hidden dials on the waiting screen and the rail, from the server's frame sequences: "Dialling a customer…", the unanswered count, the gap hold, `reserved`, `ready`, paused, break, "Nothing due now" (and the last due dial ringing out: the queue's nothing-due ends the hold at once), early binding unchanged) | 20 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.dialActivity.test.tsx` (late binding's hidden dials on the waiting screen and the rail, from the server's frame sequences: "Dialling a customer…", the unanswered count, the gap hold, `reserved`, `ready`, paused, break, "Nothing due now" (and the last due dial ringing out: the queue's nothing-due ends the hold at once), early binding unchanged) | 21 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.redial.test.tsx` | 38 |
@@ -2216,10 +2217,10 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencySpineCopy.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/agencyStaleResponse.test.ts` | 18 |
 | `apps/console/src/__tests__/utils/agencyStationExit.test.ts` | 19 |
-| `apps/console/src/__tests__/utils/agencyStationIdle.test.ts` (with `unansweredLine` and `parseDialActivity`; the hidden dials' words and gap hold are the contract's) | 20 |
+| `apps/console/src/__tests__/utils/agencyStationIdle.test.ts` (with `unansweredLine` and `parseDialActivity`; the hidden dials' words and gap hold are the contract's) | 22 |
 | `apps/console/src/__tests__/utils/agencyStationLiveness.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/agencyStationQueue.test.ts` | 8 |
-| `apps/console/src/__tests__/utils/agencyStationReducer.test.ts` (with `dialActivity`) | 30 |
+| `apps/console/src/__tests__/utils/agencyStationReducer.test.ts` (with `dialActivity`) | 31 |
 | `apps/console/src/__tests__/utils/agencyStatsConsumers.test.ts` | 41 |
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 35 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 23 |
@@ -2575,7 +2576,7 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~67 |
 | `apps/mobile/test/core/station/station_device_test.dart` | 4 |
-| `apps/mobile/test/core/station/station_dial_activity_test.dart` (late binding's hidden dials through the controller, from the server's frame sequences: ringing, the unanswered count, the 4 s gap hold (ended at once by the queue's nothing-due after the last due dial rings out), `reserved`, `ready`, a dropped socket, paused, break, an inbound caller's cancel, another campaign's frame, early binding unchanged, the timer on dispose, a mid-ring reconnect's real `ready`, "Available for" running on across hidden dials, whose release restates the wait's `since`) | 23 |
+| `apps/mobile/test/core/station/station_dial_activity_test.dart` (late binding's hidden dials through the controller, from the server's frame sequences: ringing, the unanswered count, the 4 s gap hold (ended at once by the queue's nothing-due after the last due dial rings out), `reserved`, `ready`, a dropped socket, paused, break, an inbound caller's cancel, another campaign's frame, early binding unchanged, the timer on dispose, a mid-ring reconnect's real `ready`, "Available for" running on across hidden dials, whose release restates the wait's `since`) | 24 |
 | `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
 | `apps/mobile/test/core/station/station_inbound_test.dart` (an inbound call through the core from the contract's frames, in the server's frame order: offer to settled, the chime once per offer, why a call left, the reconnect check and its refusals, "Your customer is waiting", `device_away` queued, the actions and their refusals, a let-go copy kept gone, the notes on a refused outcome and on leaving) | ~31 |
 | `apps/mobile/test/core/station/station_queue_test.dart` | ~11 |
@@ -2793,6 +2794,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/preflight/preflight_screen_test.dart` | ~20 |
 | `apps/mobile/test/features/station/station_a11y_test.dart` | ~15 |
 | `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
+| `apps/mobile/test/features/station/dial_activity_copy_test.dart` (`StationCopy`'s dialling copy and `dialGapHold` held to the contract's `labels.json` and `literals.json`) | 3 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (the waiting screen's "Dialling a customer…", the count line, ringing over "Nothing due now", paused unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |

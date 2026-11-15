@@ -1562,11 +1562,23 @@ one dial per idle agent) is a separate question, deferred by Manas; nothing here
   the count's reset into `sendReserved`, the one way a `reserved` is sent; the console hook's two
   states became one, and one `waitingHeadline` serves the idle panel and the rail; the app's slot
   rule is one `StationState.dialSlotOpen` for the view and the gap hold, and `DialActivity`
-  refuses a negative count as the console does. Left as follow-ups: `agent_state.since` restarted
-  by the release after every unanswered dial (the server-side fix would also mend the supervisor
-  floor's time in state and let the app drop `callShownSinceStated`); the HTTP break and
-  soft-phone responses still saying `reserved` during a hidden dial (no client shows it); the
-  display rules and the 4 s hold kept by hand in both clients, with no shared fixture pinning them.
+  refuses a negative count as the console does.
+- **PR review (#88, same day).** The count is an allow-list of carrier verdicts that the customer
+  did not take the call (`isCustomerNoAnswerEnd`, `outcome-classifier.ts`: rang out, busy,
+  declined, a carrier-reported failure), not "anything but `agent_disconnected`": our own faults,
+  cancels and shutdowns no longer read as "No answer". Every agent-facing answer reports the shown
+  state through one `AgencyDialer.shownStateFor` (the join, break, cancel, app-pause, soft-phone and
+  disposition answers, beside `ready`); `agent_state` frames stay suppressed for a hidden dial. A
+  dial the agent was never shown keeps the row's `state_since` and the frame's `since`
+  (`releaseAgent(…, { unshownDial })`, `setState`'s `keepSinceIfUnchanged`), so the console, the
+  app and the supervisor floor date the wait from its start; Redis's `since` is restamped as before
+  for pacing's longest-idle order, and the app's `callShownSinceStated` is gone. A stated nothing-due
+  (`queue`) ends the 4 s hold on both clients. The copy and the hold are declared once in contracts
+  (`AGENCY_DIAL_ACTIVITY_COPY`, `AGENCY_DIAL_ACTIVITY_TIMING`), extracted to `labels.json` and
+  `literals.json`, and the app is held to them. `dialWasSent` stays in the ringing guard: a teardown
+  can resolve the dial before its `ended` is emitted (a bridge test pins the order). One visible
+  effect: the console's join-conflict screen now offers "Leave and join here" during another
+  station's hidden dial; the leave is refused with "A call is being placed for you…" until it ends.
 
 Every new guard was mutation-checked (the reset at the bind, the close not repeated after a
 `reserved`, the uncounted ends, the early-binding gate, `ready`, the count's expiry; the clients'
@@ -1575,20 +1587,22 @@ carrier, browser or phone.
 
 ## Test counts
 
-**Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
+**Hidden dials on the waiting screen, 2026-11-15 (after the PR #88 review fixes).** Branch
 `ccr-43b095f3-7qzgsk` on `62ea1f6`, run on the branch's final tree (this entry changes docs only).
 Each package from inside its directory, one suite at a time, on a local Postgres 16 and Redis on
 the agency ports with no other run sharing them; the server's integration as two lanes run one
 after the other; `mpg123` and `sndfile-programs` installed. `pnpm lint` clean; `pnpm test:grafana`
 33, `pnpm test:release` 10 and `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to
-date (70 vocabularies, 2 label maps). `packages/contracts` 533 (15 files). `apps/server`: unit
-10058 passed + 1 expected fail (506 files; the tally's own suite went with the class, its expiry
-now one `late-binding.test.ts` case); rest lane 2868 passed, 9 expected fail, 2 skipped (259
-files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 6964 (373 files).
-`apps/mobile`: `flutter analyze` clean; 1939 (`flutter test`); `agency_wire` 679 (`dart test`).
+date (71 vocabularies, 3 label maps). `packages/contracts` 537 (15 files). `apps/server`: unit
+10103 passed + 1 expected fail (507 files); rest lane 2873 passed, 9 expected fail, 2 skipped (259
+files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 6971 (373 files).
+`apps/mobile`: `flutter analyze` clean; 1943 (`flutter test`); `agency_wire` 679 (`dart test`).
 No failures in these runs. Earlier in the day, runs made while other suites ran beside them had
 one flake each (a soft-phone reconnect case in the rest lane, which passed alone, and an unnamed
-console test); neither recurred. Other packages untouched by the branch were not re-run.
+console test); neither recurred. The review fixes' own runs, made beside one another, saw one
+timing failure each in untouched files (`cluster/loop-sampler`, `api/middleware/rate-limit.app-scope`,
+`utils/redact-url`, `agency/reports/assembler`), each green alone and absent from the run above.
+Other packages untouched by the branch were not re-run.
 
 **Database hygiene, 2026-11-14 (after the PR review fixes).** Branch `claude-mgkvc/epic-shannon-lesp56`
 on `182fab4`, run on `560cfe5` (this entry's commit changes docs only). Each package from inside
