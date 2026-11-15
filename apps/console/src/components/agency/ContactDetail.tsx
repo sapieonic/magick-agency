@@ -3,6 +3,8 @@ import { fieldMatchesFilter, highlightSegments } from '../../utils/agencyFieldFi
 import type { ResolvedContext } from '../../utils/agencyContext';
 import type { AgencyDisposition } from '../../types/agency';
 import { PriorAttemptsList, type PriorAttemptsSource } from './PriorAttemptsList';
+import { ContactPromiseLine } from './PromiseNote';
+import type { AgencyContactPromise } from '@magick-agency/contracts/agency';
 import styles from './AgentStation.module.css';
 
 /**
@@ -18,7 +20,8 @@ export function ContactDetail({
   filterInputRef,
   nameCurrentCampaign = false,
 }: {
-  attempt: PriorAttemptsSource;
+  /** `promise`: the contact's latest promise to pay (PT9), on a station call's panel. */
+  attempt: PriorAttemptsSource & { promise?: AgencyContactPromise | null };
   resolved: ResolvedContext;
   currentCatalog: AgencyDisposition[] | undefined;
   /** The page's `/` shortcut focuses the filter through this. */
@@ -85,6 +88,16 @@ export function ContactDetail({
         now describes the field list it was always about, and the history
         renders beside it either way.
       */}
+      {/*
+        The contact's latest promise to pay (PT9), above their fields: an agent reaching a
+        customer who promised to pay says so first ("You promised 12,500 on the 18th").
+      */}
+      {attempt.promise ? (
+        <section className={styles.priorAttempts} data-testid="contact-promise">
+          <h2 className={styles.sectionTitle}>Promise to pay</h2>
+          <ContactPromiseLine promise={attempt.promise} />
+        </section>
+      ) : null}
       {resolved.fields.length === 0 && resolved.empty.length === 0 ? (
         /*
           "no extra details", not "only a phone number". The list can be

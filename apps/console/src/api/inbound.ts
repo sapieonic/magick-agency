@@ -125,6 +125,10 @@ const DISPOSITION_RULES: ReadonlySet<string> = new Set<InboundDispositionRule>([
   'note_required',
   'datetime_required',
   'invalid_callback_at',
+  'promise_required',
+  'invalid_promise_date',
+  'invalid_promise_amount',
+  'promise_not_expected',
 ]);
 
 /** Read an inbound refusal off whatever `apiFetch` threw (`ApiError.details` / `.statusCode`). */

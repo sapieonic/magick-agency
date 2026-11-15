@@ -10,7 +10,11 @@ import {
   type CatalogEdit,
 } from '../../../utils/agencyCampaignConfigForm';
 import type { AgencyDispositionEntry } from '../../../types/agency-campaign';
-import { AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
+  AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX,
+  AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN,
+} from '@magick-agency/contracts/agency';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './CampaignBehaviourSection.module.css';
 
@@ -37,7 +41,19 @@ interface DispositionCatalogEditorProps {
    * it on while the `agency_contact_assignment_enabled` flag is on.
    */
   overrides?: boolean;
+  /**
+   * Offer each outcome's "Promise to pay" group (PT1, PT2). Off by default: the soft phone's
+   * and inbound routes' own catalogues reuse this editor, and the server refuses a promise
+   * there (their calls have no campaign contact to keep it on). The campaign forms turn it on.
+   */
+  promises?: boolean;
 }
+
+/** Copy of the promise group: what the agent is asked, and what it does (PT3). */
+export const PROMISE_FLAG_TITLE = 'Asks for a promise to pay';
+export const PROMISE_FLAG_BLURB =
+  'The agent enters the date the customer promised to pay, and the amount if they gave one. Recording a promise does not book a call by itself.';
+export const PROMISE_FOLLOW_UP_LABEL = 'Call again after the promised date';
 
 /**
  * The outcome catalog: one card per outcome, in the agent's number-key order.
@@ -53,6 +69,7 @@ export function DispositionCatalogEditor({
   onChange,
   errors,
   overrides = false,
+  promises = false,
 }: DispositionCatalogEditorProps) {
   const autoCodeRows = useRef<ReadonlySet<number>>(new Set());
 
@@ -319,6 +336,77 @@ export function DispositionCatalogEditor({
               )}
 
               {/*
+                ── Promise to pay (PT1, PT2) ───────────────────────────────
+                The agent records the date the customer promised to pay. A
+                follow-up is optional, and offered only where the server would
+                accept it: not on an outcome that stops calling or ends the
+                contact, and not beside its own retry.
+              */}
+              {promises ? (
+                <div
+                  className={styles.dispositionRetry}
+                  role="group"
+                  aria-label={`${name}: promise to pay`}
+                  data-testid={`promise-group-${index}`}
+                >
+                  <label className={styles.flag} data-on={entry.requires_promise ? '' : undefined}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(entry.requires_promise)}
+                      aria-describedby={errors.describedBy(`disposition_catalog[${index}].requires_promise`)}
+                      onChange={(event) => edit({ type: 'update', index, patch: { requires_promise: event.target.checked } })}
+                    />
+                    <span className={styles.flagText}>
+                      <span className={styles.flagTitle}>{PROMISE_FLAG_TITLE}</span>
+                      <span className={styles.flagBlurb}>{PROMISE_FLAG_BLURB}</span>
+                    </span>
+                  </label>
+                  {/*
+                    Shown whenever a follow-up is set, too, so one the operator made
+                    impossible (by ticking "Ends this contact", say) can be turned off
+                    where its error is shown.
+                  */}
+                  {(entry.requires_promise && !retryUnreachable && !entry.retry) || entry.promise_follow_up_days !== undefined ? (
+                    <>
+                      <label className={styles.retryToggle}>
+                        <input
+                          type="checkbox"
+                          checked={entry.promise_follow_up_days !== undefined}
+                          onChange={(event) => edit({
+                            type: 'update',
+                            index,
+                            patch: { promise_follow_up_days: event.target.checked ? AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN : undefined },
+                          })}
+                        />
+                        {PROMISE_FOLLOW_UP_LABEL}
+                      </label>
+                      {entry.promise_follow_up_days !== undefined ? (
+                        <div className={styles.retryFields}>
+                          <label className={styles.retryField}>
+                            <input
+                              type="number"
+                              min={AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN}
+                              max={AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX}
+                              aria-label={`${name} follow-up days after the promised date`}
+                              aria-describedby={errors.describedBy(`disposition_catalog[${index}].promise_follow_up_days`)}
+                              value={entry.promise_follow_up_days}
+                              onChange={(event) => edit({
+                                type: 'update',
+                                index,
+                                // 0 or empty would read as "off"; keep it on and let validation say the bound.
+                                patch: { promise_follow_up_days: Number(event.target.value) || AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN },
+                              })}
+                            />
+                            days after the promised date, in calling hours
+                          </label>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/*
                 ── Allows override ─────────────────────────────────────────
                 What filing this outcome lets the contact's agent do next, for
                 this contact only. Hidden where the outcome suppresses or ends
@@ -411,6 +499,8 @@ export function DispositionCatalogEditor({
               {errors.render(`disposition_catalog[${index}].retry.delay_minutes`)}
               {errors.render(`disposition_catalog[${index}].override`)}
               {errors.render(`disposition_catalog[${index}].override.extra_attempts`)}
+              {errors.render(`disposition_catalog[${index}].requires_promise`)}
+              {errors.render(`disposition_catalog[${index}].promise_follow_up_days`)}
             </li>
           );
         })}

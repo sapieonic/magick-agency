@@ -82,6 +82,8 @@ export type SoftphoneCallPendingRefusal = RefusalBase & Omit<AgencySoftphoneCall
 export interface SoftphoneGenericRefusal extends RefusalBase {
   code: Exclude<AgencySoftphoneErrorCode, NarrowedCode>;
   allowed_codes?: string[];
+  /** `disposition_invalid`: which rule refused (`AgencySoftphoneDispositionInvalidRefusal['reason']`). */
+  reason?: string;
   details?: Array<{ path: string; message: string }>;
 }
 
@@ -230,6 +232,7 @@ export function parseSoftphoneRefusal(err: unknown): SoftphoneRefusal {
     }
     default: {
       const generic: SoftphoneGenericRefusal = { code: known, status, message };
+      if (typeof details['reason'] === 'string') generic.reason = details['reason'];
       if (Array.isArray(details['allowed_codes'])) {
         generic.allowed_codes = (details['allowed_codes'] as unknown[]).filter((c): c is string => typeof c === 'string');
       }

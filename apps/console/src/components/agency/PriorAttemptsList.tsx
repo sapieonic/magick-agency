@@ -7,6 +7,7 @@ import {
 import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
 import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
 import { AutoDisposition } from './AutoDisposition';
+import { PromiseNote } from './PromiseNote';
 import styles from './AgentStation.module.css';
 
 /*
@@ -185,6 +186,12 @@ export function PriorAttemptsList({
                       catalog={priorCatalog(group.isCurrent)}
                       secondary={!!prior.disposition_code}
                       testId={`prior-auto-disposition-${group.campaignId}-${prior.attempt_number}`}
+                    />
+                    {/* The promise this call recorded (PT9): the agent reads it before they speak. */}
+                    <PromiseNote
+                      date={prior.promise_date}
+                      amount={prior.promise_amount}
+                      testId={`prior-promise-${group.campaignId}-${prior.attempt_number}`}
                     />
                     {prior.notes ? (
                       <span className={styles.priorNote}>{prior.notes}</span>

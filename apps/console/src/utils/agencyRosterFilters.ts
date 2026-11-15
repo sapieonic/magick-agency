@@ -1,4 +1,5 @@
 import type { AgencyContactFilters, AgencyContactWaiting } from '../types/agency-spine';
+import { AGENCY_PROMISE_FILTERS, type AgencyPromiseFilter } from '@magick-agency/contracts/agency';
 import { AGENCY_CONTACT_WAITING } from '../types/agency-spine';
 
 /**
@@ -84,6 +85,10 @@ export function rosterFiltersFromParams(params: URLSearchParams): AgencyContactF
   }
   const attempted = params.get('attempted');
   if (attempted === '1' || attempted === '0') filters.attempted = attempted;
+  // Promise to pay (PT7): allow-listed like the rest.
+  const promise = params.getAll('promise')
+    .filter((value): value is AgencyPromiseFilter => (AGENCY_PROMISE_FILTERS as readonly string[]).includes(value));
+  if (promise.length > 0) filters.promise = promise;
   return filters;
 }
 
@@ -104,6 +109,7 @@ export function rosterFiltersToParams(filters: AgencyContactFilters): URLSearchP
   if (filters.phone) params.set('phone', filters.phone);
   if (filters.waiting) params.set('waiting', filters.waiting);
   if (filters.attempted) params.set('attempted', filters.attempted);
+  for (const value of filters.promise ?? []) params.append('promise', value);
   return params;
 }
 
@@ -114,8 +120,18 @@ export function rosterFilterGroupCount(filters: AgencyContactFilters): number {
   if (filters.phone) count += 1;
   if (filters.waiting) count += 1;
   if (filters.attempted) count += 1;
+  if (filters.promise?.length) count += 1;
   return count;
 }
+
+/** The Contacts tab's "Promise to pay" chips (PT7), in the order they are offered. */
+export const PROMISE_FILTER_LABELS: Record<AgencyPromiseFilter, string> = {
+  any: 'Any promise',
+  due_today: 'Due today',
+  upcoming: 'Upcoming',
+  missed: 'Missed',
+  followed_up: 'Followed up',
+};
 
 /** How each waiting bucket reads: the Insights tab's own row labels (`RosterSection`). */
 export const WAITING_LABELS: Record<AgencyContactWaiting, string> = {

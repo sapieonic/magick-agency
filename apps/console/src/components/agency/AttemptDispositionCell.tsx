@@ -3,6 +3,7 @@ import type { AgencyAttempt } from '../../types/agency-spine';
 import { dispositionLabel } from '../../utils/agencySpineCopy';
 import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
 import { AutoDisposition } from './AutoDisposition';
+import { PromiseNote } from './PromiseNote';
 import styles from './AttemptDispositionCell.module.css';
 
 /**
@@ -13,6 +14,7 @@ import styles from './AttemptDispositionCell.module.css';
  *   with what wrote it on hover.
  * - A person's write-up is the catalog label (or the code, by `dispositionLabel`'s
  *   fallbacks), then "on behalf" when someone other than the agent on the call filed it.
+ * - A promise to pay recorded with the write-up (PT1) sits under it: "Promised 18 Nov 2026 · 12,500".
  * - The campaign's unanswered-call mapping (`auto_disposition_code`, OD1–OD8) is
  *   shown tagged automatic: under the write-up when there is one, and in place of the
  *   `placeholder` when there is not.
@@ -27,7 +29,8 @@ export function AttemptDispositionCell({
   placeholder,
   testIdPrefix,
 }: {
-  attempt: Pick<AgencyAttempt, 'id' | 'disposition_code' | 'auto_disposition_code' | 'dispositioned_on_behalf'>;
+  attempt: Pick<AgencyAttempt, 'id' | 'disposition_code' | 'auto_disposition_code' | 'dispositioned_on_behalf'>
+    & Partial<Pick<AgencyAttempt, 'promise_date' | 'promise_amount'>>;
   catalog?: readonly AgencyDispositionEntry[];
   /** What the cell says when there is neither a write-up nor an automatic outcome. */
   placeholder: string;
@@ -54,6 +57,12 @@ export function AttemptDispositionCell({
         catalog={catalog}
         secondary={code !== null}
         testId={`${testIdPrefix}-auto-disposition-${attempt.id}`}
+      />
+      {/* The promise to pay recorded with the write-up (PT1), under it. */}
+      <PromiseNote
+        date={attempt.promise_date}
+        amount={attempt.promise_amount}
+        testId={`${testIdPrefix}-promise-${attempt.id}`}
       />
     </>
   );

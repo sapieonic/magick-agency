@@ -1,5 +1,6 @@
 import type { AgencySoftphoneErrorCode } from '../../types/softphone';
 import type { SoftphoneRefusal } from '../../api/softphone';
+import { DISPOSITION_BLOCK_COPY } from '../agencyDispositionForm';
 
 /**
  * The console's sentence for every soft-phone refusal code.
@@ -58,6 +59,14 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
  */
 export type SoftphoneRefusalContext = 'call' | 'status';
 
+/** The promise refusals (`disposition_invalid`'s `reason`, PT8), as the pad words its own checks. */
+export const PROMISE_REFUSAL_COPY: Readonly<Record<string, string>> = {
+  promise_required: DISPOSITION_BLOCK_COPY.promise_required,
+  invalid_promise_date: 'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.',
+  invalid_promise_amount: DISPOSITION_BLOCK_COPY.promise_amount_invalid,
+  promise_not_expected: 'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.',
+};
+
 /** The `status` context's sentences, for the codes whose meaning it changes. */
 export const SOFTPHONE_STATUS_REFUSAL_COPY: Partial<Record<AgencySoftphoneErrorCode, string>> = {
   dial_failed: 'Couldn’t change your status just now; nothing changed. Try again.',
@@ -66,6 +75,11 @@ export const SOFTPHONE_STATUS_REFUSAL_COPY: Partial<Record<AgencySoftphoneErrorC
 /** The line to show for a refusal: ours for a known code, the server's otherwise. */
 export function refusalCopy(refusal: SoftphoneRefusal, context: SoftphoneRefusalContext = 'call'): string {
   if (refusal.code === 'unknown') return refusal.message;
+  // A promise to pay the server refused (PT8): its reason, in the pad's own words.
+  if (refusal.code === 'disposition_invalid' && 'reason' in refusal && refusal.reason) {
+    const promise = PROMISE_REFUSAL_COPY[refusal.reason];
+    if (promise) return promise;
+  }
   return (context === 'status' ? SOFTPHONE_STATUS_REFUSAL_COPY[refusal.code] : undefined)
     ?? SOFTPHONE_REFUSAL_COPY[refusal.code];
 }

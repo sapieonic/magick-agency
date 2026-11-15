@@ -66,6 +66,10 @@ export const INBOUND_DISPOSITION_RULE_COPY = {
   note_required: INBOUND_SAVE_BLOCK_COPY.note_required,
   datetime_required: INBOUND_SAVE_BLOCK_COPY.datetime_required,
   invalid_callback_at: 'That callback time can’t be used. Pick a time in the future.',
+  promise_required: INBOUND_SAVE_BLOCK_COPY.promise_required,
+  invalid_promise_date: 'That promised date can’t be used: it is before the customer’s today or too far ahead. Pick another date.',
+  invalid_promise_amount: INBOUND_SAVE_BLOCK_COPY.promise_amount_invalid,
+  promise_not_expected: 'This outcome doesn’t record a promise to pay. Pick the promise outcome, or clear the promised date.',
 } as const;
 
 export const INBOUND_MUTED_AT_CONNECT_COPY = 'You are muted. The caller can’t hear you — press M to unmute.';
@@ -388,6 +392,8 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
         code: payload.disposition_code,
         ...notesField,
         ...(payload.callback_at ? { callback_at: payload.callback_at } : {}),
+        ...(payload.promise_date ? { promise_date: payload.promise_date } : {}),
+        ...(payload.promise_amount ? { promise_amount: payload.promise_amount } : {}),
       },
       tenantId,
       accountId,

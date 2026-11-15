@@ -33,6 +33,7 @@ import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFla
 import { usePermission } from '../../hooks/usePermission';
 import styles from './AgencyContactDetailPage.module.css';
 import { AttemptDispositionCell } from '../../components/agency/AttemptDispositionCell';
+import { ContactPromiseLine } from '../../components/agency/PromiseNote';
 
 /**
  * One contact's history is short in the ordinary case — the retry budget is
@@ -273,6 +274,13 @@ export function AgencyContactDetailPage() {
       </header>
 
       <p className={styles.summary} data-testid="contact-summary">{contactSummaryLine(contact)}</p>
+
+      {/* The contact's latest promise to pay (PT6, PT7); every promise is on its call below. */}
+      {contact.promise ? (
+        <p className={styles.summary} data-testid="contact-promise">
+          <ContactPromiseLine promise={contact.promise} />
+        </p>
+      ) : null}
 
       {/*
         A suppressed contact gets its reason as a statement, not a table cell.

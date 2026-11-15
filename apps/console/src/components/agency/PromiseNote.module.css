@@ -1,0 +1,51 @@
+/*
+ * A promise to pay (`PromiseNote`): under an outcome, smaller, so the outcome stays the
+ * outcome. The state tag reads by its word first; colour only adds urgency.
+ */
+.note {
+  display: table;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.state {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.7;
+  white-space: nowrap;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-secondary);
+}
+
+.state[data-state='due_today'] {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.state[data-state='missed'] {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.state[data-state='followed_up'] {
+  background: var(--success-subtle);
+  color: var(--success);
+}
