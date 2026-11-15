@@ -1670,6 +1670,23 @@ and SQL predicates against the analysis queue, customer history, the report orac
 Insights oracle, the proxy's 404, reasons, timeout and redirect hosts, the config refusals, the
 migration's filter). **Not verified:** nothing has run against a real VoiceLink or Plivo account.
 
+**Fix round after review (migrations and recording):**
+- `0041_promise_to_pay` no longer builds `idx_agency_contacts_promise` under its ACCESS EXCLUSIVE;
+  `0045_promise_contacts_index` builds it in its own transaction under SHARE (an empty index on
+  the release: every promise is new). A SQL migration cannot use `CONCURRENTLY` (node-pg-migrate
+  wraps each file in a transaction), and this index cannot be pre-built (its column is 0041's).
+- RC5's purge step reads `idx_agency_calls_recording_unrequested`
+  (`0046_unrequested_recordings_index`, pre-buildable `CONCURRENTLY`), picks each batch with
+  `WITH picked AS MATERIALIZED (… FOR UPDATE SKIP LOCKED)` on an id keyset, and fails on its own:
+  the transcript and voicemail steps still run (`unrequested_recordings_error`, Slack "one step
+  failed").
+- A soft-phone call's `recording_requested` takes the account's `allow_recording` at the dial (the
+  "Recording" badge, customer history's "Recording expired"); an inbound call turned away for
+  capacity (`no_capacity`) records nothing on its live session either, so a URL the carrier still
+  sends is discarded at the bridge's door and counted.
+- The analysis runner counts `access_error` on `surface="analysis"`; the dashboard has a
+  Recordings row for the two RC counters.
+
 ### Do Not Call scope 2026-11-15 (DS1–DS8)
 
 Reshma: marking a contact DNC applied across the whole tenant; she asked for one campaign beside
