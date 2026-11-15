@@ -525,6 +525,17 @@ contact import check and re-import (IM)".
   its key (supersedes "DNC row claims its key"); a second import into a campaign while one runs
   is refused. The load suite's concurrent-import cases were rewritten for the last.
 - Not done: no S3 lifecycle rule for uploads (a retention decision); the agent app has no import.
+- **Fix round (review).** A NUL past the encoding probe no longer fails a check or a finished
+  import (dropped from a data cell, a header carrying one refused before anything is sent). The
+  rejected and skipped downloads carry the exports' spreadsheet-formula guard, which the import
+  reads back off; a duplicate's reason names its row in words. A failed or cancelled import lets
+  its check go (0042's index holds pending, running and completed imports only): the console offers
+  **Import again** while the check is valid, and follows a check already imported to its import.
+  A check held in another account is refused `check_imported_elsewhere` without that import's id;
+  a schema without 0042 refuses a check's import `check_import_unavailable` (409, not a masked
+  500). Analytics: a check is no longer sent as a completed import. The builder offers the same
+  way back as Add contacts after a check or import that did not finish. Not done: Insights'
+  upload history offers no skipped-rows download (a new field through the contract and its read).
 
 ### Wrap-up redial 2026-11-03
 

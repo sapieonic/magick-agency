@@ -1,4 +1,5 @@
 import type { AgencyIngestRejection } from './agency-csv-ingest.js';
+import { toCsvLine } from './agency-csv.js';
 
 /**
  * Serializer for the rejected-rows CSV export.
@@ -9,27 +10,16 @@ import type { AgencyIngestRejection } from './agency-csv-ingest.js';
  * reshaped file, renamed headers, a different column order — makes the fix-and-
  * re-upload loop harder, which is the entire point of the artifact.
  *
- * Written by hand rather than with a library because `csv-stringify` is not a
- * dependency of this service and adding one to emit five columns of quoted text
- * is not a trade worth making. The quoting rules below are the whole of RFC 4180
- * that matters here.
+ * Written with the agency exports' own CSV primitives (`agency-csv.ts`): RFC 4180
+ * quoting and the spreadsheet-formula guard, since these files are opened in a
+ * spreadsheet and carry the uploaded file's text as-is. A cell starting `=`, `+`,
+ * `-`, `@`, tab or CR gains a leading apostrophe there (a `+91…` number included),
+ * and the import reads that apostrophe back off (`unguardFormulaSigil`), so a
+ * downloaded row fixed and uploaded again imports as the value it was (IM6).
  *
  * This is a generator so a million rejections stream to S3 without ever being
  * an array in memory — the same constraint that shaped the ingest itself.
  */
-
-/** RFC 4180: quote when the value contains a delimiter, a quote or a newline. */
-function escapeCsvValue(value: string): string {
-  if (value === '') return '';
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
-function toCsvLine(values: string[]): string {
-  return `${values.map(escapeCsvValue).join(',')}\n`;
-}
 
 /** The column appended to every rejected-rows export. */
 export const REJECTED_REASON_COLUMN = '_reason';

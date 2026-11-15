@@ -219,7 +219,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
       coreRefused > 0
         ? `At least ${formatCount(coreRefused)} of the imported ${
             coreRefused === 1 ? 'rows was' : 'rows were'
-          } already in this campaign, so the roster did not take ${
+          } already in this campaign, or an exact copy of an earlier row in the file (every column the same), so the roster did not take ${
             coreRefused === 1 ? 'it' : 'them'
           } again. That is separate from the ${formatCount(rejected)} rejected above — those never left here — so the imported count overstates what was actually added. “At least”, because a chunk we had to re-send reports nothing back.`
         : null,
@@ -240,7 +240,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
 const DNC_SCOPE_WORDS: ReadonlyArray<[AgencyIngestDncScope, string]> = [
   ['tenant', 'for every campaign in your organisation'],
   ['account', 'for every campaign in this account'],
-  ['campaign', 'for this campaign only'],
+  ['campaign', 'for this campaign'],
   ['unknown', 'on a list we could not name'],
 ];
 
@@ -259,7 +259,7 @@ export function dncNotice(
     .filter(([scope]) => (byScope[scope] ?? 0) > 0)
     .map(([scope, words]) => `${formatCount(byScope[scope]!)} ${words}`);
   const where = parts.length > 0 ? ` (${parts.join(', ')})` : '';
-  const verb = check ? (count === 1 ? 'will not be' : 'will not be') : (count === 1 ? 'was not' : 'were not');
+  const verb = check ? 'will not be' : (count === 1 ? 'was not' : 'were not');
   return `${formatCount(count)} ${count === 1 ? 'number is' : 'numbers are'} on the Do Not Call list${where}, so ${
     count === 1 ? 'it' : 'they'
   } ${verb} imported. Correcting the file does not change this: delete ${
@@ -275,13 +275,30 @@ export function dncNotice(
  */
 export function checkComparison(check: AgencyIngestJob, imported: AgencyIngestJob): string | null {
   if (imported.status !== 'completed') return null;
-  const same = imported.accepted === check.accepted
-    && (imported.skipped ?? 0) === (check.skipped ?? 0)
-    && imported.rejected === check.rejected;
-  if (same) return null;
-  return `The check expected ${formatCount(check.accepted)} to import; ${formatCount(imported.accepted)} ${
-    imported.accepted === 1 ? 'was' : 'were'
-  } imported. The campaign or its Do Not Call list changed between the check and the import (another import, or a new Do Not Call entry). The numbers above are what happened.`;
+  // Each count that moved, by name: a skipped or rejected count can change while the
+  // imported one does not, and "6 were imported" would then read as no difference at all.
+  const changed: string[] = [];
+  if (imported.accepted !== check.accepted) {
+    changed.push(`${formatCount(imported.accepted)} imported where the check expected ${formatCount(check.accepted)}`);
+  }
+  if ((imported.skipped ?? 0) !== (check.skipped ?? 0)) {
+    changed.push(`${formatCount(imported.skipped ?? 0)} already in this campaign where the check found ${formatCount(check.skipped ?? 0)}`);
+  }
+  if (imported.rejected !== check.rejected) {
+    changed.push(`${formatCount(imported.rejected)} rejected where the check found ${formatCount(check.rejected)}`);
+  }
+  if (changed.length === 0) return null;
+  return `The import differs from its check: ${changed.join('; ')}. The campaign or its Do Not Call list changed between the check and the import (another import, or a new Do Not Call entry). The numbers above are what happened.`;
+}
+
+/**
+ * Whether a finished check can still be imported (IM2): until `check_expires_at`. A job
+ * served without it (not a finished check) cannot.
+ */
+export function checkStillImportable(check: AgencyIngestJob, now: number = Date.now()): boolean {
+  if (!check.dry_run || check.status !== 'completed' || !check.check_expires_at) return false;
+  const expires = Date.parse(check.check_expires_at);
+  return !Number.isNaN(expires) && expires > now;
 }
 
 /** Thousands separators, in the operator's own locale. */

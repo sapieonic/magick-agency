@@ -30,6 +30,14 @@ const mocks = vi.hoisted(() => ({
   downloadSkippedRows: vi.fn(),
   importCheckedFile: vi.fn(),
   updateAgencyCampaign: vi.fn(),
+  trackCompleted: vi.fn(),
+  trackFailed: vi.fn(),
+}));
+
+vi.mock('../../analytics/events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../analytics/events')>()),
+  trackAgencyRosterIngestCompleted: mocks.trackCompleted,
+  trackAgencyRosterIngestFailed: mocks.trackFailed,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -320,7 +328,8 @@ describe('add contacts — check, review, then import (IM1, IM2, IM3)', () => {
     expect(screen.getByTestId('count-accepted').textContent).toBe('5');
     expect(screen.getByTestId('reconciliation').textContent).toBe('5 imported + 3 already in this campaign + 2 rejected = 10 rows read');
     // The roster moved between the check and the import: said, not left unexplained.
-    expect(screen.getByTestId('check-comparison').textContent).toContain('The check expected 6 to import; 5 were imported.');
+    expect(screen.getByTestId('check-comparison').textContent)
+      .toContain('The import differs from its check: 5 imported where the check expected 6; 3 already in this campaign where the check found 2.');
     expect(screen.queryByTestId('review-next-steps')).toBeNull();
   });
 
@@ -365,6 +374,40 @@ describe('add contacts — check, review, then import (IM1, IM2, IM3)', () => {
     expect(mocks.importCheckedFile).not.toHaveBeenCalled();
   });
 
+  it('shows until when the check can be imported', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob());
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    expect((await screen.findByTestId('check-expires')).textContent)
+      .toBe('This check can be imported until 16 Nov 2026, 10:00 am. After that, check the file again.');
+  });
+
+  it('a check the poll finds already imported (another tab) is followed to its import, never offered again', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockImplementation(async (id: string) => (id === 'check-1'
+      ? finishedJob({ import_job_id: 'import-9' })
+      : finishedJob({ job_id: 'import-9', dry_run: false, check_job_id: 'check-1', check_expires_at: null })));
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+
+    await waitFor(() => expect(screen.getByTestId('ingest-summary').getAttribute('data-kind')).toBe('import'), { timeout: 4000 });
+    expect(mocks.getIngestJob).toHaveBeenCalledWith('import-9', 'tenant-1', 'account-1');
+    expect(screen.queryByRole('button', { name: /^Import \d/ })).toBeNull();
+    expect(mocks.importCheckedFile).not.toHaveBeenCalled();
+  });
+
+  it('says when the skipped-rows download is cut short, as it does for the rejected rows', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ skipped: 60_000, rows_read: 60_008, skipped_row_count: 50_000, skipped_truncated: true }));
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    expect((await screen.findByTestId('skipped-notice')).textContent).toContain('The download holds the first 50,000 skipped rows.');
+  });
+
   it('Upload a corrected file starts again from the file picker', async () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
     mocks.getIngestJob.mockResolvedValue(finishedJob());
@@ -374,5 +417,70 @@ describe('add contacts — check, review, then import (IM1, IM2, IM3)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Upload a corrected file' }));
     expect(screen.queryByTestId('ingest-summary')).toBeNull();
     expect(screen.getByRole('button', { name: 'Choose a CSV' })).toBeTruthy();
+  });
+});
+
+describe('add contacts — an import of a checked file that did not finish (IM2)', () => {
+  async function checkThenImportThat(ended: Record<string, unknown>, check: Record<string, unknown> = {}) {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ check_expires_at: new Date(Date.now() + 3_600_000).toISOString(), ...check }));
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const importButton = await screen.findByRole('button', { name: 'Import 6 contacts' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ job_id: 'import-1', dry_run: false, check_job_id: 'check-1', check_expires_at: null, ...ended }));
+    fireEvent.click(importButton);
+    await waitFor(() => expect(screen.getByTestId('ingest-summary').getAttribute('data-kind')).toBe('import'));
+  }
+
+  it.each([
+    ['failed', { status: 'failed', error_code: 'dnc_unavailable', error_message: 'The Do Not Call list could not be checked, so no contacts were imported. Nothing was dialled. Try the import again.' }],
+    ['stopped', { status: 'cancelled', accepted: 2 }],
+  ])('an import that %s offers Import again, which imports the same check', async (_, ended) => {
+    await checkThenImportThat(ended);
+    const again = screen.getByRole('button', { name: 'Import again' });
+    expect(screen.getByTestId('review-next-steps').textContent).toContain('any rows that did land are skipped');
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-2', status: 'pending', check_job_id: 'check-1', already_started: false });
+    fireEvent.click(again);
+    await waitFor(() => expect(mocks.importCheckedFile).toHaveBeenCalledTimes(2));
+    expect(mocks.importCheckedFile.mock.calls[1]).toEqual(['check-1', 'camp-1', 'tenant-1', 'account-1']);
+  });
+
+  it('offers no Import again once the check has expired: a corrected file instead', async () => {
+    // Expired by the time the import ended (the server would refuse it 410 check_expired).
+    await checkThenImportThat(
+      { status: 'failed', error_code: 'dnc_unavailable', error_message: 'Try the import again.' },
+      { check_expires_at: '2026-01-01T00:00:00.000Z' },
+    );
+    expect(screen.queryByRole('button', { name: 'Import again' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add another file' })).toBeTruthy();
+  });
+});
+
+describe('add contacts — analytics', () => {
+  it('a check is never reported as a completed import; an import is, and it reconciles with its skipped rows', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob());
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const importButton = await screen.findByRole('button', { name: 'Import 6 contacts' });
+    expect(mocks.trackCompleted).not.toHaveBeenCalled();
+
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ job_id: 'import-1', dry_run: false, accepted: 5, skipped: 3, check_job_id: 'check-1', check_expires_at: null }));
+    fireEvent.click(importButton);
+    await waitFor(() => expect(mocks.trackCompleted).toHaveBeenCalledTimes(1));
+    expect(mocks.trackCompleted.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1', accepted: 5, rejected: 2, rows_read: 10, reconciles: true });
+  });
+
+  it('a failed check is reported as one, not as a failed import', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the CSV.' }));
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    await waitFor(() => expect(mocks.trackFailed).toHaveBeenCalledWith({ source: 'top_up', code: 'malformed_csv', dry_run: true }));
   });
 });

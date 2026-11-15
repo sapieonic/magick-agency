@@ -83,6 +83,7 @@ function AddContactsSection({
     running,
     finished,
     reviewing,
+    retryable,
     checkJob,
     importing,
     importChecked,
@@ -286,6 +287,16 @@ function AddContactsSection({
                     importing={importing}
                     onImport={() => void importChecked()}
                     onChangeMapping={() => setPhase('mapping')}
+                    onUploadCorrected={reset}
+                  />
+                ) : retryable && checkJob ? (
+                  // The import of a checked file failed or was stopped, and the check is
+                  // still valid: import it again, or start over with a corrected file.
+                  <ReviewNextSteps
+                    check={checkJob}
+                    retry
+                    importing={importing}
+                    onImport={() => void importChecked()}
                     onUploadCorrected={reset}
                   />
                 ) : (

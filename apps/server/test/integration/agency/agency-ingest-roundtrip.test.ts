@@ -125,11 +125,12 @@ describe('agency ingest round trip on real Postgres', () => {
     const csv = s3.uploads.get(rejectedKey)!;
     expect(csv.split('\n')[0]).toBe('_row,Mobile,Name,_reason');
     expect(csv.match(/This number is on the Do Not Call list/g)).toHaveLength(3);
-    expect(csv).toContain('3,+919876543002,Bhim,"This number is on the Do Not Call list for every campaign in your organisation,');
+    // A cell a spreadsheet would read as a formula (`+91…`) carries the guard's apostrophe (IM6).
+    expect(csv).toContain("3,'+919876543002,Bhim,\"This number is on the Do Not Call list for every campaign in your organisation,");
     expect(csv).toContain('4,9876543003,Chitra,"This number is on the Do Not Call list for every campaign in this account,');
     expect(csv).toContain('5,9876543004,Dev,"This number is on the Do Not Call list for this campaign,');
     expect(csv).toContain("'not-a-number' is not a phone number we can dial.");
-    expect(csv).toContain('+919876543001 is already on row 2 of this file');
+    expect(csv).toContain('10,9876543001,Asha again,"The same phone number is already on row 2 of this file,');
     // The phone cell as the file has it, so the operator fixes the text they wrote.
     for (const phone of ['+919876543002', '9876543003', '9876543004', 'not-a-number']) {
       expect(csv).toContain(phone);

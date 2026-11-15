@@ -215,6 +215,56 @@ describe('POST /ingest/jobs/:id/import (integration)', () => {
     expect((await call('POST', '/ingest/jobs', { ...MAPPING, s3_key: `agency-ingest/${tenant}/u-1/loans.csv`, dry_run: true, campaign_id: own })).statusCode).toBe(202);
   });
 
+  it.each(['failed', 'cancelled'])('an import that %s lets its check go: Import starts a new one while the check is valid', async (ended) => {
+    const checkId = await check(own);
+    const first = (await call('POST', `/ingest/jobs/${checkId}/import`, {})).json().job_id as string;
+    await getTestPool().query(`UPDATE agency_ingest_jobs SET status = $2, finished_at = NOW() WHERE id = $1`, [first, ended]);
+
+    // The check's poll no longer names it, so the console offers Import again.
+    expect((await call('GET', `/ingest/jobs/${checkId}`)).json()).toMatchObject({ import_job_id: null });
+    const again = await call('POST', `/ingest/jobs/${checkId}/import`, {});
+    expect(again.statusCode, again.body).toBe(202);
+    const second = again.json().job_id as string;
+    expect(second).not.toBe(first);
+    expect(await jobRow(second)).toMatchObject({ check_job_id: checkId, status: 'pending' });
+    expect(mocks.run).toHaveBeenCalledTimes(2);
+
+    // The new one holds the check now: a second click finds it, and the poll names it.
+    expect((await call('POST', `/ingest/jobs/${checkId}/import`, {})).json()).toMatchObject({ job_id: second, already_started: true });
+    expect((await call('GET', `/ingest/jobs/${checkId}`)).json()).toMatchObject({ import_job_id: second });
+    expect(mocks.run).toHaveBeenCalledTimes(2);
+  });
+
+  it('a check held by an import in another account is refused with a code, never that import\'s id', async () => {
+    const tenantAdmin = await insertUser();
+    await insertMembership({ user_id: tenantAdmin.id, tenant_id: tenant, account_id: null, role: 'tenant_admin' });
+    // A builder check made before its draft existed, in this account…
+    const checkId = await check(null);
+    // …imported by a tenant admin into a sibling account's campaign.
+    const elsewhere = await call('POST', `/ingest/jobs/${checkId}/import`, { campaign_id: siblings }, `tok:${tenantAdmin.firebase_uid}`, sibling);
+    expect(elsewhere.statusCode, elsewhere.body).toBe(202);
+
+    const res = await call('POST', `/ingest/jobs/${checkId}/import`, { campaign_id: own });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().code).toBe('check_imported_elsewhere');
+    expect(res.body).not.toContain(elsewhere.json().job_id);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('on a schema without 0042 the import of a check is refused 409 with a code, and its poll still answers', async () => {
+    const checkId = await check(own);
+    await getTestPool().query('ALTER TABLE agency_ingest_jobs RENAME COLUMN check_job_id TO check_job_id_hidden');
+    try {
+      const res = await call('POST', `/ingest/jobs/${checkId}/import`, {});
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().code).toBe('check_import_unavailable');
+      expect((await call('GET', `/ingest/jobs/${checkId}`)).json()).toMatchObject({ import_job_id: null });
+      expect(mocks.run).not.toHaveBeenCalled();
+    } finally {
+      await getTestPool().query('ALTER TABLE agency_ingest_jobs RENAME COLUMN check_job_id_hidden TO check_job_id');
+    }
+  });
+
   it("a sibling account's check is a 404 everywhere, exactly like a missing one; an agent cannot import", async () => {
     const checkId = await check(own);
     for (const [method, url] of [

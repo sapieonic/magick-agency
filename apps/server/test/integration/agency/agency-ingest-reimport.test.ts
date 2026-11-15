@@ -329,3 +329,43 @@ describe('the stored upload is gone', () => {
     expect(await contacts()).toEqual([]);
   });
 });
+
+describe('a NUL byte past the encoding probe (the first 512 bytes)', () => {
+  // Postgres refuses U+0000 in text and in jsonb (22021, 22P05). The probe only reads the head
+  // of the file, so a NUL further down used to reach the roster insert, the screen's exact-copy
+  // lookup and the review sample: a finished import was then failed after its chunks landed.
+  const padding = Array.from({ length: 30 }, (_, i) => `Person ${i},98760${String(i).padStart(5, '0')},Pune`);
+
+  it('in a data cell: the NUL is dropped, the import completes, and no NUL reaches the roster or the job', async () => {
+    file('nul', [
+      'Name,Mobile,City',
+      ...padding,                          // rows 2..31, well past byte 512
+      'Zed,98765\u000000001,Pune',         // 32: a NUL inside the number: dialled as 9876500001
+      'Null\u0000 name,9876500002,Pune',   // 33: a NUL in another column
+      'Bad,98\u0000x,Pune',                // 34: still not a number: rejected, sampled without the NUL
+    ]);
+    const check = await run('nul', { dry_run: true, dedupe_phones: false });
+    const { job, counts } = await run('nul', { dedupe_phones: false });
+    expect(counts).toEqual({ rows_read: 33, accepted: 32, skipped: 0, rejected: 1, duplicates: 0 });
+    expect(check.counts).toEqual(counts);
+    expect(job.rejected_sample).toEqual([
+      { row_number: 34, column: 'Mobile', raw_value: '98x', reason_code: 'invalid_phone', reason: expect.stringContaining("'98x'") },
+    ]);
+    expect(JSON.stringify(job)).not.toContain('\\u0000');
+    const landed = await contacts();
+    expect(landed.find((c) => c.phone_e164 === '+919876500001')!.context).toEqual({ Name: 'Zed', City: 'Pune' });
+    expect(landed.find((c) => c.phone_e164 === '+919876500002')!.context).toEqual({ Name: 'Null name', City: 'Pune' });
+    expect(s3.uploads.get(rejectedExportKey(TENANT, job.id))).toContain('34,98x,Bad,Pune,');
+  });
+
+  it('in a header: the file is refused as not UTF-8 before anything is sent', async () => {
+    const wide = Array.from({ length: 40 }, (_, i) => `Column number ${i}`);
+    file('nulhead', [['Mobile', ...wide, 'Bad\u0000header'].join(','), ['9876500001', ...wide.map(() => 'x'), 'y'].join(',')]);
+    const job = await agencyIngestJobRepository.create({
+      tenant_id: TENANT, account_id: ACCOUNT, campaign_id: campaignId, s3_key: key('nulhead'), file_name: 'nulhead.csv', phone_column: 'Mobile',
+    });
+    await agencyIngestService.run({ job, campaignId });
+    expect((await agencyIngestJobRepository.findById(job.id, TENANT))!).toMatchObject({ status: 'failed', error_code: 'unsupported_encoding' });
+    expect(await contacts()).toEqual([]);
+  });
+});

@@ -49,7 +49,12 @@ const digitsOf = (phone: string): string => phone.replace(/[^0-9]/g, '');
 export function createIngestScreen(
   scope: IngestScreenScope,
 ): (candidates: readonly AgencyIngestCandidate[], key: AgencyIngestKeyInfo) => Promise<AgencyIngestScreenResult> {
-  /** The roster's column keys, loaded on the first batch that needs them. */
+  /**
+   * The roster's column keys, loaded on the first batch that needs them and held for
+   * the job: O(contacts already in the campaign), one short string each. A phone key
+   * and an exact copy are asked per batch instead and hold nothing. Checks are not
+   * limited per campaign (IM7 limits imports), so concurrent checks each hold a copy.
+   */
   let rosterKeys: Promise<Set<string>> | null = null;
 
   const loadRosterKeys = async (key: AgencyIngestKeyInfo, campaignId: string): Promise<Set<string>> => {

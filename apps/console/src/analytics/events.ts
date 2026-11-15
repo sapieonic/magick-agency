@@ -1267,6 +1267,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
   agency_roster_ingest_failed: {
     source: 'builder' | 'top_up';
     code: AgencyIngestFailureCode;
+    /** A check (IM1) that failed, not an import: nothing was written either way. */
+    dry_run: boolean;
   };
   /** {@link trackAgencyCampaignBuilderStepViewed} */
   agency_campaign_builder_step_viewed: {

@@ -231,9 +231,13 @@ export interface AgencyIngestStartResponse {
  * `POST /proxy/agency/ingest/jobs/:id/import` (IM2): import the file a finished check
  * validated, with the check's own column mapping. Body: `{ campaign_id? }`, required
  * only when the check named no campaign. 202 started; 200 with `already_started: true`
- * when this check was imported before (that import's id). Refusals carry a `code`:
- * 409 `not_a_check` / `check_not_finished` / `check_failed` / `import_in_progress`,
- * 410 `check_expired`, 404 for a job the caller cannot see.
+ * when an import holds this check (pending, running or completed: that import's id). A
+ * failed or cancelled import lets its check go: importing it again starts a new import
+ * while the check is valid. Refusals carry a `code`: 409 `not_a_check` /
+ * `check_not_finished` / `check_failed` / `import_in_progress` /
+ * `check_imported_elsewhere` (held by an import the caller cannot see) /
+ * `check_import_unavailable` (the server's database lacks 0042's `check_job_id`), 410
+ * `check_expired`, 404 for a job the caller cannot see.
  */
 export interface AgencyIngestImportResponse extends AgencyIngestStartResponse {
   check_job_id: string;
@@ -246,7 +250,9 @@ export type AgencyIngestImportRefusalCode =
   | 'check_not_finished'
   | 'check_failed'
   | 'check_expired'
-  | 'import_in_progress';
+  | 'import_in_progress'
+  | 'check_imported_elsewhere'
+  | 'check_import_unavailable';
 
 /**
  * `GET /proxy/agency/ingest/jobs/:id`.
@@ -290,7 +296,10 @@ export interface AgencyIngestJob {
   skipped_truncated: boolean;
   /** On an import: the check it was started from, or null. */
   check_job_id: string | null;
-  /** On a check: the import started from it, or null (a second tab finds it here). */
+  /**
+   * On a check: the import that holds it (pending, running or completed), or null (a
+   * second tab finds it here). Null again after that import failed or was cancelled.
+   */
   import_job_id: string | null;
   /** On a finished check: until when it may be imported; null otherwise. */
   check_expires_at: string | null;
