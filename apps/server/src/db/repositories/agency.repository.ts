@@ -306,5 +306,5 @@ export {
   INBOUND_SUMMARY_AGENTS_MAX,
 } from './agency/inbound-report.repository.js';
 export type { InboundSummaryAgentRow, InboundSummaryTotalsRow } from './agency/inbound-report.repository.js';
-// What a roster import finds already in its campaign (IM3, src/agency/agency-ingest-existing.ts).
+// What a roster import finds already in its campaign (IM3, src/agency/agency-ingest-screen.ts).
 export { AgencyRosterPresenceRepository, agencyRosterPresenceRepository } from './agency/roster-presence.repository.js';

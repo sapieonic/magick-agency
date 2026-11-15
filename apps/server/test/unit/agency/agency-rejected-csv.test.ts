@@ -5,7 +5,13 @@ import {
   renderRejectedCsv,
   REJECTED_REASON_COLUMN,
 } from '../../../src/agency/agency-rejected-csv.js';
-import type { AgencyIngestRejection } from '../../../src/agency/agency-csv-ingest.js';
+import { Readable } from 'node:stream';
+import {
+  ingestAgencyCsv,
+  ROW_REASON,
+  type AgencyIngestContact,
+  type AgencyIngestRejection,
+} from '../../../src/agency/agency-csv-ingest.js';
 
 function rejection(overrides: Partial<AgencyIngestRejection> = {}): AgencyIngestRejection {
   return {
@@ -79,5 +85,50 @@ describe('rejected-rows CSV export', () => {
         '2,abc,Asha,Mumbai,Not a valid phone number\n' +
         '3,,Ravi,Pune,Empty phone number\n',
     );
+  });
+});
+
+describe('spreadsheet formulas (IM6): the downloads are opened in Excel or Sheets', () => {
+  it('neutralises a cell that would be read as a formula, the phone cell and the operator\'s columns alike', () => {
+    const row = rejectedCsvRow(
+      rejection({ raw_value: '+919876543001', context: { Name: '=HYPERLINK("http://x","y")', City: '@SUM(A1)', Note: ' -2+3' } }),
+      ['Name', 'City', 'Note'],
+    );
+    expect(row).toBe(`88,'+919876543001,"'=HYPERLINK(""http://x"",""y"")",'@SUM(A1),' -2+3,'9820-41772x' is not a valid phone number.\n`);
+    // A header is a cell too.
+    expect(rejectedCsvHeader('+Mobile', ['=Name'])).toBe("_row,'+Mobile,'=Name,_reason\n");
+  });
+
+  it('no reason starts with a formula character: a duplicate names its row in words, never the number', () => {
+    const reasons = [
+      ROW_REASON.missingPhone('Mobile'), ROW_REASON.invalidPhone('+12', '91'), ROW_REASON.duplicatePhone(2),
+      ROW_REASON.duplicateKey('Loan No', 2), ROW_REASON.ragged(4, 3), ROW_REASON.valueTooLarge('Notes', 8192),
+      ROW_REASON.rowTooLarge(65536), ROW_REASON.dnc('campaign'), ROW_REASON.alreadyInCampaign(),
+    ];
+    for (const reason of reasons) expect(reason).not.toMatch(/^[=+\-@\t\r]/);
+    expect(ROW_REASON.duplicatePhone(2)).toBe(
+      'The same phone number is already on row 2 of this file, so this row was left out. Delete one of the two rows, or keep both by choosing "Don\'t remove duplicates".',
+    );
+  });
+
+  it('a downloaded row fixed and uploaded again imports as the values it had, apostrophes and all undone', async () => {
+    const document = rejectedCsvHeader('Mobile', ['Name', 'Balance'])
+      + rejectedCsvRow(rejection({ raw_value: '+919876543001', context: { Name: 'Asha', Balance: '-1200' } }), ['Name', 'Balance'])
+      // A value that only looks guarded keeps its apostrophe: only the guard's own is read back off.
+      + rejectedCsvRow(rejection({ row_number: 89, raw_value: '+919876543002', context: { Name: "'Ravi'", Balance: '0' } }), ['Name', 'Balance']);
+    expect(document).toContain("'+919876543001");
+
+    const contacts: AgencyIngestContact[] = [];
+    const summary = await ingestAgencyCsv({
+      source: Readable.from([Buffer.from(document, 'utf8')]),
+      phoneColumn: 'Mobile',
+      ignoreColumns: ['_row', '_reason'],
+      onBatch: (batch) => { contacts.push(...batch); },
+    });
+    expect(summary.rejected).toBe(0);
+    expect(contacts.map((c) => [c.phone_e164, c.context])).toEqual([
+      ['+919876543001', { Name: 'Asha', Balance: '-1200' }],
+      ['+919876543002', { Name: "'Ravi'", Balance: '0' }],
+    ]);
   });
 });

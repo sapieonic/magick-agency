@@ -5,6 +5,7 @@ import {
   AgencyIngestError,
   EncodingGuard,
   dedupeHeaders,
+  readDataCells,
   dedupeKey,
   AGENCY_MAX_COLUMNS,
 } from './agency-csv-ingest.js';
@@ -202,8 +203,10 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
       }
       rowsSampled += 1;
 
+      // The cells as the ingest reads them, so a sample matches what would be imported.
+      const cells = readDataCells(record);
       for (let i = 0; i < headers.length; i += 1) {
-        const value = record[i]?.trim() ?? '';
+        const value = cells[i]?.trim() ?? '';
         if (value === '') continue;
         nonEmpty[i] = (nonEmpty[i] ?? 0) + 1;
         if (samples[i]!.length < SAMPLE_VALUES_PER_COLUMN) samples[i]!.push(value);

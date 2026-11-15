@@ -1,6 +1,7 @@
 import { parse, type Info } from 'csv-parse';
 import { Transform, type Readable } from 'node:stream';
 import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
+import { unguardFormulaSigil } from './agency-csv.js';
 import { dedupeKeyName } from '@magick-agency/contracts/api/agency/agency-campaign';
 
 /**
@@ -20,7 +21,12 @@ import { dedupeKeyName } from '@magick-agency/contracts/api/agency/agency-campai
  *     a second full copy as row objects. At the 1M-contact target that is
  *     gigabytes resident on the server. Here the source is a `Readable` consumed as
  *     a stream, and accepted rows are handed to `onBatch` in fixed-size batches,
- *     so peak memory is O(batchSize + distinct phone numbers), not O(file).
+ *     so this pass holds O(batchSize + distinct duplicate keys), not O(file).
+ *     Its callers add their own, bounded or not: the ingest service keeps up to
+ *     `MAX_EXPORT_ROWS` (50k) rejected and 50k skipped rows, each with its columns,
+ *     for the downloads, and the screen for a column key holds every key of the
+ *     campaign's roster (O(contacts already in the campaign);
+ *     `agency-ingest-screen.ts`). A check runs the same pass, so it costs the same.
  *  2. **The phone column is mapped, not named.** The operator picks any header
  *     in the column-mapping step; nothing requires it to be called `phone`.
  *  3. **Every other column is retained unchanged** — original header text as the
@@ -257,8 +263,10 @@ export const ROW_REASON = {
     `'${raw}' is not a phone number we can dial. Check the digits${
       countryCode ? `, and add the country code if it is not +${countryCode}` : ', and add the country code'
     }.`,
-  duplicatePhone: (phone: string, firstRow: number) =>
-    `${phone} is already on row ${firstRow} of this file, so this row was left out. Delete one of the two rows, or keep both by choosing "Don't remove duplicates".`,
+  // Names the row it repeats, never the number: a reason that started with `+91…` would be
+  // read as a formula by a spreadsheet, and the phone cell is beside it in the download.
+  duplicatePhone: (firstRow: number) =>
+    `The same phone number is already on row ${firstRow} of this file, so this row was left out. Delete one of the two rows, or keep both by choosing "Don't remove duplicates".`,
   duplicateKey: (keyLabel: string, firstRow: number) =>
     `Same ${keyLabel} as row ${firstRow} of this file, so this row was left out. Delete one of the two rows, or correct the ${keyLabel}.`,
   ragged: (values: number, columns: number) =>
@@ -281,8 +289,9 @@ export const ROW_REASON = {
 
 /**
  * A duplicate key from its parts, the one definition shared by the in-file check
- * (`rowKey` below) and the campaign check (`agency-ingest-existing.ts`, which reads
- * the parts back off contacts already in the campaign): each part compared by
+ * (`rowKey` below) and the campaign check (`agency-ingest-screen.ts`, which reads
+ * the parts back off contacts already in the campaign through
+ * `roster-presence.repository.ts`): each part compared by
  * {@link dedupeKey}, `null` when any part is blank (never a duplicate), one part as
  * itself and several as their JSON array, so `["a,b","c"]` and `["a","b,c"]` stay
  * apart where a joined string would not.
@@ -446,8 +455,8 @@ export interface AgencyIngestOptions {
    * Asking before the claim is what lets a Do Not Call row NOT claim its key (IM4):
    * a later row with the same loan number on a callable number is imported rather
    * than dropped as a duplicate of a row that was never imported. A skipped row
-   * does claim its key, since its key IS in the campaign. Without a screen every
-   * candidate is accepted.
+   * claims no key either: its key is in the campaign, so a later row carrying it is
+   * skipped too (IM3, `flush`). Without a screen every candidate is accepted.
    *
    * The check and the import run this same function, so a check cannot drift from
    * the import it previews (IM1).
@@ -593,6 +602,27 @@ export function dedupeHeaders(headers: string[]): string[] {
  */
 export function dedupeKey(value: string): string {
   return value.trim().toLowerCase();
+}
+
+const hasNul = (value: string): boolean => value.includes('\u0000');
+
+/**
+ * One data row's cells as the import reads them. Two things a spreadsheet does not
+ * show are undone, and nothing else is touched (a row needing neither is returned as is):
+ *
+ *  - **A NUL** past the encoding probe's first 512 bytes is dropped. Postgres stores no
+ *    U+0000 in text or jsonb, so one left in a cell would fail the roster insert, the
+ *    screen's exact-copy lookup or the job's review sample, after earlier chunks
+ *    landed. It is invisible in a spreadsheet, so the cell is read as the operator sees it.
+ *    (A header carrying one is refused instead: headers are the mapping's keys.)
+ *  - **The formula guard's apostrophe** (`'+919876543210`), which our own downloads add
+ *    (`agency-csv.ts`): a rejected row fixed and uploaded again reads as the value it was.
+ *
+ * Shared with the column analysis, so the mapping screen samples the same values.
+ */
+export function readDataCells(record: string[]): string[] {
+  if (!record.some((cell) => hasNul(cell) || cell.charCodeAt(0) === 0x27)) return record;
+  return record.map((cell) => unguardFormulaSigil(hasNul(cell) ? cell.replace(/\u0000/g, '') : cell));
 }
 
 function normalizeHeader(header: string): string {
@@ -786,7 +816,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
               column: phoneHeader,
               raw_value: rawPhone,
               reason_code: 'duplicate_phone',
-              reason: ROW_REASON.duplicatePhone(contact.phone_e164, firstRow),
+              reason: ROW_REASON.duplicatePhone(firstRow),
               context: contact.context,
             }
             : {
@@ -841,7 +871,9 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     // parser and the underlying source stay paused. That is the mechanism by
     // which a 1M-row file never materialises in memory — not an optimisation.
     for await (const item of stream as AsyncIterable<{ info: Info; record: string[] }>) {
-      const { info, record } = item;
+      const { info } = item;
+      // A data row's NULs and formula-guard apostrophes (`readDataCells`); the header row as written.
+      const record = headers.length > 0 ? readDataCells(item.record) : item.record;
       bytesRead = info.bytes;
       const startLine = previousEndLine + 1;
       previousEndLine = info.lines;
@@ -857,13 +889,13 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
 
         headers = dedupeHeaders(record);
 
-        // A replacement character in a HEADER is fatal: headers are the keys the
+        // A replacement character (or a NUL) in a HEADER is fatal: headers are the keys the
         // operator maps against and the keys `context` is written with, so a
         // mangled one is unmappable and unrenderable. The same character inside
         // a data cell is tolerated — see the row loop — because rejecting a
         // million-row file over one accented name in row 900,000 is worse than
         // showing the agent a slightly mangled one.
-        if (headers.some((h) => h.includes('�'))) {
+        if (headers.some((h) => h.includes('�') || hasNul(h))) {
           throw new AgencyIngestError(
             'unsupported_encoding',
             'The column headers contain characters that are not valid UTF-8. Save the file as CSV UTF-8 and upload it again.',

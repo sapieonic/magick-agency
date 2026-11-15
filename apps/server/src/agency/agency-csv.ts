@@ -2,7 +2,9 @@
  * CSV primitives shared by every agency export.
  *
  * A LEAF module — no imports, no I/O. Shared by the activity-trail export
- * (`agency-activity.ts`) and the attempts and roster exports (`agency-spine.ts`).
+ * (`agency-activity.ts`), the attempts and roster exports (`agency-spine.ts`), the
+ * customer-history export and the import's rejected- and skipped-rows downloads
+ * (`agency-rejected-csv.ts`, whose files the import reads back: `unguardFormulaSigil`).
  *
  * ── Why extracted rather than copied ────────────────────────────────────────
  * `guardFormulaSigil` is a security control, not formatting. These files
@@ -37,6 +39,19 @@ const FORMULA_SIGIL = /^[=+\-@\t\r]/;
  */
 export function guardFormulaSigil(cell: string): string {
   return FORMULA_SIGIL.test(cell.replace(/^ +/, '')) ? `'${cell}` : cell;
+}
+
+/** A cell {@link guardFormulaSigil} prefixed: an apostrophe ahead of a sigil (spaces allowed between). */
+const GUARDED_SIGIL = /^'(?= *[=+\-@\t\r])/;
+
+/**
+ * The inverse of {@link guardFormulaSigil}, for a file coming back IN: the roster import
+ * reads a cell an export of ours guarded (a rejected or skipped row fixed in a spreadsheet
+ * and uploaded again, `'+919876543210`) as the value it was. Only the apostrophe the guard
+ * would have added is removed, so any other text is read unchanged.
+ */
+export function unguardFormulaSigil(cell: string): string {
+  return GUARDED_SIGIL.test(cell) ? cell.slice(1) : cell;
 }
 
 /**
