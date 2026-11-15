@@ -2641,6 +2641,10 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] A release with `0039_retention_purge_indexes`: on a database where `agency_calls` holds more
       than about a million rows, its two indexes built `CONCURRENTLY` first and checked valid
       ([`db-hygiene.md`](../db-hygiene.md) §2).
+- [ ] A release with `0041_promise_to_pay`: it builds `idx_agency_contacts_promise` inside its
+      transaction, a scan of `agency_contacts` under SHARE (writes wait). On a large roster, build
+      it `CONCURRENTLY` first (the migration's `IF NOT EXISTS` then skips it) and check it valid.
+      `0044_promise_checks_validate` then validates 0041's CHECKs under SHARE UPDATE EXCLUSIVE.
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
       `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.
