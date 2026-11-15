@@ -293,7 +293,8 @@ describe('Insights — the range', () => {
     expect(await screen.findByText(/figures marked “now” are live; the rest follow the range \(Yesterday\)/)).toBeTruthy();
     expect(screen.getByTestId('overview-kpi-reached').textContent).toContain('Reached · now');
     expect(await screen.findByText('Dials · Yesterday')).toBeTruthy();
-    expect(screen.getByText('Connect rate · Yesterday')).toBeTruthy();
+    // The fixture has soft-phone calls, so the dialler's rate is named as the dialler's (SR1, SR5).
+    expect(screen.getByText('Dialler connect rate · Yesterday')).toBeTruthy();
     expect(screen.getByText('Successes · Yesterday')).toBeTruthy();
     expect(screen.getByText(/Times in Asia\/Kolkata/)).toBeTruthy();
   });

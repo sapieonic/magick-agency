@@ -299,7 +299,8 @@ describe('the roster', () => {
     const csv = await call(app(), 'GET', `/proxy/agency/campaigns/${A()}/contacts.csv?assigned_to=${agent(0).id}&preamble=false`, sup(), floor);
     expect(csv.statusCode, csv.body.slice(0, 300)).toBe(200);
     const lines = csv.body.trim().split('\n');
-    expect(lines[0]!.trim().endsWith('assigned_user_id,assigned_to,assigned_at')).toBe(true);
+    // The owner's three columns, in order; the promise columns (PT12) were appended after them.
+    expect(lines[0]!.trim()).toContain('assigned_user_id,assigned_to,assigned_at');
     expect(lines.length - 1).toBe(await ownedBy(agent(0).id));
     expect(lines[1]).toContain(`${agent(0).id},agent 0.0,`);
   });
