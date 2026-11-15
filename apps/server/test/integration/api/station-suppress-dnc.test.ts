@@ -220,6 +220,33 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
     expect(await dncAudits()).toHaveLength(1);
   });
 
+  it('"first write" is decided on the locked row: a submission that read no code but lands second writes no entry', async () => {
+    const c = await parked();
+    // Another submission of the same outcome holds the attempt row, mid-transaction, and has
+    // written its code (here without an entry, so a second entry would be visible).
+    const other = await getTestPool().connect();
+    try {
+      await other.query('BEGIN');
+      await other.query(`UPDATE agency_call_attempts SET disposition_code = 'do_not_call' WHERE id = $1`, [c.attempt]);
+      // This one reads the attempt before that commits (no code yet), then waits on the row.
+      const pending = dispose(c, { disposition_code: 'do_not_call' });
+      for (let i = 0; i < 200; i += 1) {
+        const { rows } = await getTestPool().query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND query LIKE 'SELECT disposition_code FROM agency_call_attempts%'`);
+        if (rows[0]!.n > 0) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      await other.query('COMMIT');
+      const res = await pending;
+      expect(res.statusCode, res.body).toBe(200);
+    } finally {
+      other.release();
+    }
+    expect(await dncRows()).toEqual([]);
+  });
+
   it('the outcome and its entry land together: a failed entry records no outcome, and the retry writes both', async () => {
     const c = await parked();
     await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_away');
