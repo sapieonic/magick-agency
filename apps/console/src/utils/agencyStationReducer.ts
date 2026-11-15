@@ -1,5 +1,6 @@
 import type {
   AgencyAgentState,
+  AgencyDialActivity,
   AgencyMissedRelease,
   AgencyQueueState,
   AgencyReservedAttempt,
@@ -9,6 +10,7 @@ import type {
   AgencyStationReleasedFrame,
 } from '../types/agency';
 import type { AgencyManualCall } from '../types/softphone';
+import { parseDialActivity } from './agencyStationIdle';
 import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../types/inbound';
 import type { WrapupAnchor } from './agencyWrapup';
 import { newerCall } from './softphone/callState';
@@ -92,6 +94,14 @@ export interface StationState {
    * `offline`: they are not eligible, so the caller goes to the team).
    */
   customerWaiting: AgencyStationCustomerWaitingFrame | null;
+  /**
+   * Late binding: the dials placed for this agent that they are shown only if the customer
+   * answers (`dial_activity`, and `ready.dial_activity` at reconnect). `null` when nothing is
+   * ringing and nothing has gone unanswered, which is also what an early-binding account always
+   * holds (it is never sent the frame). Cleared by ANY `reserved`: the server resets its count
+   * when it delivers that frame and sends nothing to say so, so the client must.
+   */
+  dialActivity: AgencyDialActivity | null;
 }
 
 /** The agent states in which a sticky caller waits for this agent rather than going to them. */
@@ -118,6 +128,7 @@ export const INITIAL_STATION_STATE: StationState = {
   queue: undefined,
   inboundCall: null,
   customerWaiting: null,
+  dialActivity: null,
 };
 
 export type StationAction =
@@ -145,7 +156,9 @@ export type StationAction =
   /** An `inbound_call` frame: the whole row, kept only when it is not older than the copy held. */
   | { type: 'inbound_call'; call: AgencyInboundCall }
   /** A `customer_waiting` frame. */
-  | { type: 'customer_waiting'; frame: AgencyStationCustomerWaitingFrame };
+  | { type: 'customer_waiting'; frame: AgencyStationCustomerWaitingFrame }
+  /** A `dial_activity` frame for this station's campaign. */
+  | { type: 'dial_activity'; activity: AgencyDialActivity };
 
 /**
  * `state` itself when nothing in `changes` differs — so a frame that restates
@@ -206,6 +219,10 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         queue: frame.queue ?? null,
         // Re-sent by the server right after `ready` while the caller still waits.
         customerWaiting: null,
+        // A snapshot too: absent means nothing ringing and a count of 0. Never beside
+        // `active_attempt` by contract; a call on screen wins if a server ever sent both.
+        // Checked as the `dial_activity` frame is (`parseDialActivity`): malformed reads as absent.
+        dialActivity: frame.active_attempt ? null : parseDialActivity(frame.dial_activity),
       };
       if (frame.state === 'wrapup') {
         // A deadline only when this replica still owns the timer; absent, the
@@ -281,6 +298,9 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         wrapup: null,
         missedRelease: null,
         live: { attempt: action.attempt, bridgedAt: null },
+        // The hidden dial was answered (or this is a call shown from the start): the server
+        // reset its count when it delivered this frame, and sends no frame to say so.
+        dialActivity: null,
       };
 
     case 'bridged': {
@@ -348,5 +368,16 @@ export function stationReducer(state: StationState, action: StationAction): Stat
           : state;
       }
       return patch(state, { customerWaiting: action.frame });
+
+    case 'dial_activity': {
+      // Compared by value, like `queue`: a restated activity must cost no render.
+      const held = state.dialActivity;
+      const next = action.activity;
+      if (held && held.ringing === next.ringing && held.unanswered_in_a_row === next.unanswered_in_a_row) {
+        return state;
+      }
+      // `parseDialActivity` already made `next` a fresh object of the two fields.
+      return { ...state, dialActivity: next };
+    }
   }
 }

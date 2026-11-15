@@ -13,7 +13,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // So the property under test is not "the bind happens later". It is:
 //
 //  * a dial that never connects reaches the console as NOTHING about the call —
-//    no `reserved`, no `released`, no missed release, no resumable panel;
+//    no `reserved`, no `released`, no missed release, no resumable panel. All it
+//    gets is `dial_activity`: that a hidden dial is ringing and how many before it
+//    went unanswered, with no contact, number or attempt id on it, so an idle
+//    agent can tell a ringing dial from a stuck station;
 //  * a dial that DOES connect still puts `reserved` on the wire before
 //    `bridged`, inside a single synchronous turn, because the abandonment
 //    predicate gives the whole bind path 1000ms from the answer.
@@ -123,7 +126,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAgentSessionRepository: repos.session,
 }));
 
-import { AgencyDialer } from '../../../src/agency/agency-dialer.js';
+import { AgencyDialer, DIAL_ACTIVITY_TTL_MS } from '../../../src/agency/agency-dialer.js';
 import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import { AGENCY_ATTEMPT_LIVE_STATES } from '../../../src/db/models/agency.model.js';
@@ -139,6 +142,9 @@ function fakeWrapup() {
     noteDisposition: vi.fn(async () => false),
     stop: vi.fn(),
     active: vi.fn(() => 0),
+    // A wrap-up redial's set-up bookkeeping, reached only by the redial case.
+    endRedialSetup: vi.fn(),
+    redialBeingSetUp: vi.fn(() => false),
   };
 }
 
@@ -191,8 +197,10 @@ function fakeBridge(opts: { bindSucceeds?: boolean } = {}) {
     // Params typed so `mock.calls[0][0]` is inspectable — the absence of
     // `browserSocket` on the unbound dial is the assertion, and an untyped double
     // gives it an empty tuple type.
-    createBridgedCall: vi.fn(async (_params: Record<string, unknown>) => ({ id: 'call-1' } as any)),
-    createUnboundBridgedCall: vi.fn(async (_params: Record<string, unknown>) => ({ id: 'call-1' } as any)),
+    // A placed dial: the carrier's handle is what `dialWasSent` reads, and the dialer tells
+    // the agent a hidden dial is ringing only once the carrier has taken it.
+    createBridgedCall: vi.fn(async (_params: Record<string, unknown>) => ({ id: 'call-1', provider_call_id: 'carrier-1' } as any)),
+    createUnboundBridgedCall: vi.fn(async (_params: Record<string, unknown>) => ({ id: 'call-1', provider_call_id: 'carrier-1' } as any)),
     bindBorrowedBrowserLeg: vi.fn((correlationId: string, ws: unknown) => {
       if (opts.bindSucceeds === false) return false;
       bridge.bound.push({ correlationId, ws });
@@ -273,6 +281,15 @@ function events(ws: { sent: any[] }): string[] {
   return ws.sent.map((f) => f.event);
 }
 
+/**
+ * Frames ABOUT a call: every frame but `dial_activity`, which says only that a hidden dial is
+ * ringing and carries nothing about the call. Its own cases are in "late binding: the hidden
+ * dial's activity" below; the cases that pin "nothing about the call" read this.
+ */
+function callEvents(ws: { sent: any[] }): string[] {
+  return events(ws).filter((e) => e !== 'dial_activity');
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   flags.lateBinding = false;
@@ -301,8 +318,12 @@ describe('late binding: the dial', () => {
     // token on `borrowedBrowserLeg`, but a socket smuggled in here would still be
     // relayed to during the ring.
     expect(h.bridge.createUnboundBridgedCall.mock.calls[0]?.[0]).not.toHaveProperty('browserSocket');
-    // The whole point: the phone is ringing and the console is idle.
-    expect(events(h.ws)).toEqual([]);
+    // The whole point: the phone is ringing and the console is idle, told only that a
+    // dial is ringing for it, with nothing about whom.
+    expect(callEvents(h.ws)).toEqual([]);
+    expect(h.ws.sent).toEqual([
+      { event: 'dial_activity', campaign_id: 'camp-1', ringing: true, unanswered_in_a_row: 0 },
+    ]);
     // The attempt is still `dialing` in the row, and still registered as live —
     // late binding hides the call from the AGENT, not from the platform.
     expect(rows.current.state).toBe('dialing');
@@ -378,13 +399,19 @@ describe('late binding: a dial that rings out', () => {
     expect(events(h.ws)).not.toContain('bridged');
     expect(h.dialer.takeMissedRelease('s1')).toBeNull();
 
-    // What DOES arrive is the idle-state refresh from `releaseAgent` — the agent
-    // going back into the pool, which is a fact about the agent and not about the
-    // call. It carries no `attempt_id`, and it must keep being sent: it is the
-    // frame that delivers a break the agent queued mid-ring.
-    expect(events(h.ws)).toEqual(['agent_state']);
-    expect(h.ws.sent[0]).toMatchObject({ event: 'agent_state', state: 'available' });
-    expect(h.ws.sent.some((f) => 'attempt_id' in f)).toBe(false);
+    // What DOES arrive: the hidden dial's activity, opened and closed (counted unanswered),
+    // and then the idle-state refresh from `releaseAgent` — the agent going back into the
+    // pool, which is a fact about the agent and not about the call. It must keep being
+    // sent: it is the frame that delivers a break the agent queued mid-ring. The close
+    // comes first, so a client never shows "ringing" over the refreshed state.
+    expect(events(h.ws)).toEqual(['dial_activity', 'dial_activity', 'agent_state']);
+    expect(h.ws.sent[1]).toEqual({
+      event: 'dial_activity', campaign_id: 'camp-1', ringing: false, unanswered_in_a_row: 1,
+    });
+    expect(h.ws.sent[2]).toMatchObject({ event: 'agent_state', state: 'available' });
+    for (const field of ['attempt_id', 'contact_id', 'phone_e164', 'attempt']) {
+      expect(h.ws.sent.some((f) => field in f), field).toBe(false);
+    }
   });
 
   it('settles the row and releases the contact exactly as before', async () => {
@@ -432,7 +459,8 @@ describe('late binding: the carrier answers', () => {
   it('puts `reserved` then `bridged` on the wire, in that order, in one turn', async () => {
     const h = await harness({ lateBinding: true });
     await h.dialer.executeDial(makeCmd());
-    expect(events(h.ws)).toEqual([]);
+    expect(callEvents(h.ws)).toEqual([]);
+    h.ws.sent.length = 0;
 
     // Synchronous emission, deliberately: the ordering claim is about ONE turn.
     // Nothing is awaited between this line and the assertions below, so a `reserved`
@@ -687,7 +715,7 @@ describe('late binding: the carrier answers', () => {
 
     // No panel is sent to a socket that is gone, and no bind is attempted.
     expect(h.bridge.bindBorrowedBrowserLeg).not.toHaveBeenCalled();
-    expect(events(h.ws)).toEqual([]);
+    expect(callEvents(h.ws)).toEqual([]);
     // A real customer is on the line: they get the apology-then-hangup path, and
     // the answer is still counted in the compliance denominator by the row write.
     expect(h.bridge.forceEndWithOutcome).toHaveBeenCalledWith('att-1', 'abandoned');
@@ -725,10 +753,13 @@ describe('late binding: the carrier answers', () => {
     h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
     await settle();
 
-    // The panel WAS sent — the send is what the agent saw, and it succeeded.
-    expect(events(h.ws)).toEqual(['reserved', 'released', 'agent_state']);
+    // The panel WAS sent — the send is what the agent saw, and it succeeded. The dial's
+    // activity opened before it and is NOT closed after it: the `reserved` the agent got
+    // is what clears it, and a `ringing: false` after the panel would be about a call they
+    // can see.
+    expect(events(h.ws)).toEqual(['dial_activity', 'reserved', 'released', 'agent_state']);
     // …and the release is true of the case: answered, never connected to them.
-    expect(h.ws.sent[1]).toMatchObject({
+    expect(h.ws.sent[2]).toMatchObject({
       event: 'released',
       attempt_id: 'att-1',
       reason: 'abandoned',
@@ -746,7 +777,7 @@ describe('late binding: the carrier answers', () => {
     h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
     await settle();
 
-    expect(events(h.ws)).toEqual([]);
+    expect(callEvents(h.ws)).toEqual([]);
     expect(h.bridge.forceEndWithOutcome).toHaveBeenCalledWith('att-1', 'abandoned');
   });
 
@@ -819,8 +850,9 @@ describe('late binding: a station that reconnects mid-ring', () => {
 
     expect(h.bridge.bindBorrowedBrowserLeg).toHaveBeenCalledWith('att-1', fresh);
     expect(events(fresh)).toEqual(['reserved', 'bridged']);
-    // …and the socket that dropped is never written to.
-    expect(events(h.ws)).toEqual([]);
+    // …and the socket that dropped is never written to after it dropped: all it got was
+    // the dial's activity, before.
+    expect(events(h.ws)).toEqual(['dial_activity']);
   });
 
   it('still resumes an attempt that HAS been bound', async () => {
@@ -990,5 +1022,257 @@ describe('a late `bridged` write cannot resurrect a settled attempt', () => {
 
     expect(rows.current.state).toBe('ended');
     expect(rows.current.ended_at).toBe(h.endedAt);
+  });
+});
+
+// ─── The hidden dial's activity ─────────────────────────────────────────────
+//
+// What an idle agent on a late-binding account IS told: that a dial is ringing for them, and
+// how many before it went unanswered (`dial_activity`, `AgencyDialActivity`). Without it the
+// waiting screen cannot tell a ringing dial from a stuck station. The properties: at most two
+// frames per dial, nothing about the call on either, counted only when a customer did not
+// answer, reset by the first call the agent is shown, and never sent under early binding.
+
+describe('late binding: the hidden dial\'s activity', () => {
+  const cmdFor = (attemptId: string): DialCommand => ({ ...makeCmd(), attemptId });
+  const freshRow = () => {
+    rows.current = {
+      state: 'queued', outcome: null, dialed_at: null,
+      answered_at: null, bridged_at: null, ended_at: null, talk_seconds: null,
+    };
+  };
+  const activity = (ws: { sent: any[] }) => ws.sent.filter((f) => f.event === 'dial_activity');
+  async function ringOut(h: Awaited<ReturnType<typeof harness>>, attemptId: string) {
+    freshRow();
+    await h.dialer.executeDial(cmdFor(attemptId));
+    h.bridge.emit({ callId: 'call-1', correlationId: attemptId, phase: 'ended', status: 'no_answer', answered: false });
+    await settle();
+  }
+
+  it('counts each unanswered dial, and the next dial carries the count', async () => {
+    const h = await harness({ lateBinding: true });
+    await ringOut(h, 'att-1');
+    await ringOut(h, 'att-2');
+
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([
+      [true, 0], [false, 1],
+      [true, 1], [false, 2],
+    ]);
+    // What a station reconnecting now is told on `ready`.
+    expect(h.dialer.dialActivityFor('s1')).toEqual({ ringing: false, unanswered_in_a_row: 2 });
+  });
+
+  it('forgets a count left untouched for DIAL_ACTIVITY_TTL_MS: nothing says when a session ended', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const h = await harness({ lateBinding: true });
+      await ringOut(h, 'att-1');
+      vi.setSystemTime(Date.now() + DIAL_ACTIVITY_TTL_MS - 1);
+      expect(h.dialer.dialActivityFor('s1')).toEqual({ ringing: false, unanswered_in_a_row: 1 });
+
+      vi.setSystemTime(Date.now() + 1);
+      expect(h.dialer.dialActivityFor('s1')).toBeNull();
+      await ringOut(h, 'att-2');
+      expect(activity(h.ws).slice(2).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([[true, 0], [false, 1]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says a dial is ringing to a station that asks mid-ring, and nothing once all is quiet', async () => {
+    const h = await harness({ lateBinding: true });
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+
+    await h.dialer.executeDial(makeCmd());
+    expect(h.dialer.dialActivityFor('s1')).toEqual({ ringing: true, unanswered_in_a_row: 0 });
+  });
+
+  it('starts again from 0 once the agent is shown a call, and closes nothing after the panel', async () => {
+    const h = await harness({ lateBinding: true });
+    await ringOut(h, 'att-1');
+    freshRow();
+    await h.dialer.executeDial(cmdFor('att-2'));
+    h.ws.sent.length = 0;
+
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-2', phase: 'answered', answered: true });
+    await settle();
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-2', phase: 'ended', status: 'completed', answered: true });
+    await settle();
+
+    // The `reserved` is what clears the agent's dial activity; a `ringing: false` after it
+    // would be about a call they are looking at.
+    expect(events(h.ws)[0]).toBe('reserved');
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+
+    await ringOut(h, 'att-3');
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([[true, 0], [false, 1]]);
+  });
+
+  it('is never sent under early binding: the agent sees the ringing panel instead', async () => {
+    const h = await harness({ lateBinding: false });
+    await ringOut(h, 'att-1');
+    freshRow();
+    await h.dialer.executeDial(cmdFor('att-2'));
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-2', phase: 'bridged', answered: true });
+    await settle();
+
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('closes, uncounted, a dial ended because the agent\'s station stayed gone', async () => {
+    // The pre-bind grace ends it `agent_disconnected`: no customer failed to answer.
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+    h.bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended',
+      status: 'canceled', outcome: 'agent_disconnected', answered: false,
+    });
+    await settle();
+
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([[true, 0], [false, 0]]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('announces nothing for a dial the carrier refused: no phone rang', async () => {
+    // The real refusal path: the bridge ends the call (`telephony_init_failed`) inside the dial,
+    // emitting `ended`, and only then rejects. "Dialling a customer…" for it would be false, and
+    // counting it would say "No answer" for a number that never rang.
+    const h = await harness({ lateBinding: true });
+    h.bridge.createUnboundBridgedCall.mockImplementationOnce(async () => {
+      h.bridge.emit({
+        callId: 'call-1', correlationId: 'att-1', phase: 'ended',
+        status: 'failed', outcome: 'telephony_init_failed', answered: false,
+      });
+      throw new Error('carrier refused the call');
+    });
+
+    await h.dialer.executeDial(makeCmd());
+    await settle();
+
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('announces nothing for a dial the bridge refused before the carrier', async () => {
+    // Admission, calls per second, an unusable credential, a setup failure: a systemic one is
+    // refused on every tick, and announcing each would hold "Dialling…" on screen while nothing
+    // is dialled.
+    const h = await harness({ lateBinding: true });
+    h.bridge.createUnboundBridgedCall.mockRejectedValueOnce(new Error('no capacity'));
+
+    await h.dialer.executeDial(makeCmd());
+
+    expect(activity(h.ws)).toEqual([]);
+    expect(rows.current.outcome).toBe('failed');
+  });
+
+  it('announces nothing for a dial that resolved without reaching the carrier', async () => {
+    // A teardown while the dial waited at the calls-per-second gate resolves with no carrier
+    // handle (`dialWasSent` false).
+    const h = await harness({ lateBinding: true });
+    h.bridge.createUnboundBridgedCall.mockResolvedValueOnce({ id: 'call-1' } as any);
+
+    await h.dialer.executeDial(makeCmd());
+
+    expect(activity(h.ws)).toEqual([]);
+  });
+
+  it('closes, uncounted, a dial answered after the agent went away', async () => {
+    // A customer answered into the abandoned path: not a number that went unanswered, and no
+    // longer ringing for a station that reconnects meanwhile.
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+    expect(h.dialer.dialActivityFor('s1')).toEqual({ ringing: true, unanswered_in_a_row: 0 });
+    await h.stations.detach('s1');
+
+    // The hang-up is held open, as the real apology-then-hangup takes seconds: a station
+    // reconnecting in that window must not be told a dial is ringing.
+    h.bridge.forceEndWithOutcome.mockImplementationOnce(async () => true);
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
+    await settle();
+    expect(h.bridge.forceEndWithOutcome).toHaveBeenCalledWith('att-1', 'abandoned');
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'completed', outcome: 'abandoned', answered: true });
+    await settle();
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('announces nothing for a dial answered before the dial call returned', async () => {
+    // A carrier that answers inside the dial: the agent already has the call's `reserved` (or,
+    // with no agent, the customer is on the abandoned path). "Dialling a customer…" after it
+    // would describe a call they are looking at.
+    const h = await harness({ lateBinding: true });
+    h.bridge.createUnboundBridgedCall.mockImplementationOnce(async () => {
+      h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
+      return { id: 'call-1', provider_call_id: 'carrier-1' } as any;
+    });
+
+    await h.dialer.executeDial(makeCmd());
+    await settle();
+
+    expect(events(h.ws)).toEqual(['reserved', 'bridged']);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('announces nothing for a dial that ended before the dial call returned', async () => {
+    // The `ended` arm settled it inside the dial; announcing it afterwards would put up a
+    // `ringing: true` that nothing would ever close: "Dialling…" stuck on screen.
+    const h = await harness({ lateBinding: true });
+    h.bridge.createUnboundBridgedCall.mockImplementationOnce(async () => {
+      h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'no_answer', answered: false });
+      return { id: 'call-1', provider_call_id: 'carrier-1' } as any;
+    });
+
+    await h.dialer.executeDial(makeCmd());
+    await settle();
+
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('never sends it for a wrap-up redial, which is always shown from the start', async () => {
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial({ ...makeCmd(), redial: { ofAttemptId: 'att-0', number: 1 } });
+
+    expect(events(h.ws)[0]).toBe('reserved');
+    expect(activity(h.ws)).toEqual([]);
+  });
+
+  it('closes, uncounted, a dial whose customer rang in themselves', async () => {
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+
+    const settled = vi.fn();
+    expect(h.dialer.supersedeForInbound('att-1', { inboundCallId: 'in-1', settled })).toBe(true);
+    await settle();
+
+    expect(activity(h.ws).map((f) => [f.ringing, f.unanswered_in_a_row])).toEqual([[true, 0], [false, 0]]);
+    expect(settled).toHaveBeenCalled();
+  });
+
+  it('announces no dial it refused to place: the station had already gone', async () => {
+    const h = await harness({ lateBinding: true });
+    await h.stations.detach('s1');
+    await h.dialer.executeDial(makeCmd());
+
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
+  });
+
+  it('announces no dial it refused to place: the station went away while it was prepared', async () => {
+    // Gone during the priors read, after the first socket check: the late re-checks refuse it.
+    const h = await harness({ lateBinding: true });
+    repos.attempt.findPriorForContactLineage.mockImplementationOnce(async () => {
+      await h.stations.detach('s1');
+      return [];
+    });
+    await h.dialer.executeDial(makeCmd());
+
+    expect(h.bridge.createUnboundBridgedCall).not.toHaveBeenCalled();
+    expect(activity(h.ws)).toEqual([]);
+    expect(h.dialer.dialActivityFor('s1')).toBeNull();
   });
 });

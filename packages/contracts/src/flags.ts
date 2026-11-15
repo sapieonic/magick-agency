@@ -124,7 +124,10 @@ export const AGENCY_FLAGS = Object.freeze({
     // NOT client-exposed: the console receives the same frames in the same order,
     // just later, so there is nothing for the console to show or hide. A flag the client
     // can read is a flag the client can branch on, and the whole point here is
-    // that the console needs no knowledge of when the bind happened.
+    // that the console needs no knowledge of when the bind happened. The one frame
+    // only this mode sends, `dial_activity` (a hidden dial is ringing, and how many
+    // before it went unanswered: `agency/station.ts`), keeps that true: the server
+    // decides when to send it, and a client just shows what it is sent.
     owner: 'voice',
     description: 'Agency dialer: bind the agent to a campaign call at the carrier answer instead of before the dial',
   },

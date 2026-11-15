@@ -7,6 +7,7 @@ import { resolveReleaseCopy } from '../../utils/agencyReleaseCopy';
 import { hasWrapup, type WrapupAnchor } from '../../utils/agencyWrapup';
 import { redialTag } from '../../utils/agencyRedialCopy';
 import { VISUAL_CUE_SPECS } from '../../utils/agencyCues';
+import { waitingHeadline } from '../../utils/agencyStationIdle';
 import type { ServerClock } from '../../hooks/useServerClock';
 import type { CueFlash } from '../../hooks/useAgencyCues';
 import type { StationConnection, LiveAttempt } from '../../hooks/useAgencyStation';
@@ -117,6 +118,12 @@ export interface StateRailProps {
    * station reconnects. Null/absent when the bootstrap does not carry it.
    */
   deferredHangupMs?: number | null;
+  /**
+   * Late binding: a dial placed for this agent, that they are shown only if it is answered, is
+   * ringing (or ended under `DIAL_GAP_HOLD_MS` ago). Changes the `available` label only.
+   * Optional so every existing caller is unaffected; early binding never sets it.
+   */
+  diallingCustomer?: boolean;
 }
 
 /**
@@ -135,6 +142,7 @@ export function describeRail(input: {
   breakReasonLabel: string | null;
   waitingForDialer?: string | null;
   deferredHangupMs?: number | null;
+  diallingCustomer?: boolean;
 }): RailDescription {
   const { agentState, connection, live, release, wrapup, dialing, breakReasonLabel } = input;
   const waitingForDialer = input.waitingForDialer ?? null;
@@ -290,7 +298,11 @@ export function describeRail(input: {
       // Driven by `dialing`, never by `campaign_state.status` — deriving the
       // predicate from `status` forces every client to re-derive it and they will
       // disagree.
-      label: dialing ? 'Waiting for a call' : 'Campaign paused — no campaign calls for now',
+      // A hidden dial ringing for them (late binding) is said, so a quiet rail does not read
+      // as a stuck one. Only while the campaign dials: a paused campaign's label stands.
+      label: dialing
+        ? waitingHeadline(input.diallingCustomer === true)
+        : 'Campaign paused — no campaign calls for now',
       detail: null,
     };
   }
@@ -336,6 +348,7 @@ export function StateRail({
   cueFlash = null,
   onReconnect,
   deferredHangupMs = null,
+  diallingCustomer = false,
 }: StateRailProps) {
   /**
    * The two states the agent can act their way out of, and the only two that get
@@ -355,6 +368,7 @@ export function StateRail({
     breakReasonLabel,
     waitingForDialer,
     deferredHangupMs,
+    diallingCustomer,
   });
 
   /**
@@ -401,8 +415,8 @@ export function StateRail({
            merely changes attributes does not replay, so a `disconnect` arriving
            inside the previous flash's window would silently show nothing. Keyed
            on cue *and* attempt, because both change independently.
-        3. **`aria-hidden`, and the geometry never moves.** The rail is this
-           screen's only polite live region and a screen-reader agent already has
+        3. **`aria-hidden`, and the geometry never moves.** The rail is the
+           station's status region and a screen-reader agent already has
            the assertive announcement region; a labelled element here would
            announce on every cue. It is absolutely positioned so a flash cannot
            shift a control by a pixel (frozen-geometry rule 1).
@@ -421,7 +435,7 @@ export function StateRail({
 
       {/*
         The talk timer. `aria-hidden` for the same reason as the wrap-up digits: the
-        rail is this screen's only polite live region, and a timer inside it would
+        rail is the station's status region, and a timer inside it would
         announce every 250ms for the length of every call.
       */}
       {talkAnchor !== null ? <TalkTimer bridgedAt={talkAnchor} clock={clock} /> : null}
@@ -510,7 +524,7 @@ export function CueFlashBand({ flash }: { flash: CueFlash }) {
  *
  * The rail used to be re-rendered four times a second from the console root to
  * advance these digits, which re-rendered every component on the page with it.
- * Ticking here instead keeps the rail — this screen's polite live region — still
+ * Ticking here instead keeps the rail — the station's status region — still
  * between frames, and the digits still recompute from `bridged_at` on every
  * repaint, never from a counter.
  */

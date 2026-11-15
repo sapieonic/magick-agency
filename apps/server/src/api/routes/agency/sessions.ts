@@ -740,7 +740,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // instead was considered and rejected: `state` is authoritative by
       // contract ("the console must not infer state",
       // {@link AgencyStationAgentStateFrame}), so a state we know to be false is
-      // worse than no frame. Nothing is lost by staying quiet — the pending
+      // worse than no frame. (`ready` is the one frame that cannot stay quiet: it
+      // must carry a state, so a reconnect mid-ring says `available`, what the
+      // agent was last shown — `shownState` in `station-socket.ts`, documented on
+      // `AgencyStationReadyFrame.state`.) Nothing is lost by staying quiet — the pending
       // break still reaches the agent by both of its other paths: this HTTP
       // response carries `pending_state`/`break_reason` (the only fields the
       // console's `requestBreak` reads), and a socket that reconnects mid-ring

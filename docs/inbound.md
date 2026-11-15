@@ -474,7 +474,8 @@ NULL; the dial itself is the reserved agent's, so the rollups count it on their 
 `canceled` dial and never as an outcome: docs/insights.md "System dispositions"), its contact back to `pending`
 now, neither `attempt_count` nor the our-fault ledger charged and an agent's reopen marker
 restored (`endSupersededByInbound`, `unclaimUncharged`); the station gets `released` with reason
-`inbound_call` (nothing under late binding, where the agent never saw the dial); and the agent is
+`inbound_call` (under late binding, where the agent never saw the dial, no `released`: only the
+`dial_activity` that closes the hidden dial, uncounted); and the agent is
 released through the inbound release hook, which takes them for the call: offered at once when the
 call is queued; when it is still in its greeting or recording notice (the usual case: the cancel
 lands within a few hundred ms), the agent is HELD for it there and then (CAS from `reserved`, the

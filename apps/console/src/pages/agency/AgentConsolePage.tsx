@@ -33,6 +33,7 @@ import { ContactDetail } from '../../components/agency/ContactDetail';
 import { IdleGuide } from '../../components/agency/IdleGuide';
 import { MyContactsPanel, myContactsLockReason } from '../../components/agency/MyContactsPanel';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { useDialActivityDisplay } from '../../hooks/useDialActivityDisplay';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { effectiveQueue, nothingDueCopy } from '../../utils/agencyStationIdle';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
@@ -228,6 +229,27 @@ export default function AgentConsolePage() {
     mayMarkDnc,
   });
   const inboundActive = inbound.call !== null;
+
+  /*
+    ── Hidden dials (late binding) ──────────────────────────────────────────────
+    A dial placed for this agent that they are shown only if it is answered. Said in the idle
+    slot and the rail, and only there: the agent is available, the campaign dials, nothing
+    (outbound or inbound) is on screen and the socket is open. Outside that it is not shown and
+    the gap hold is dropped. Early binding is never sent the frame, so this stays null there.
+  */
+  const dialActivity = useDialActivityDisplay(
+    station.dialActivity,
+    agentState === 'available'
+      && dialing
+      && connection === 'open'
+      && panelAttempt === null // null whenever `live` is: it is `live.attempt` first
+      && !inboundActive,
+  );
+  const diallingCustomer = dialActivity?.dialling === true;
+  // "Nothing due now" with no dial ringing: the guide says no call is coming, so the panel
+  // leaves out "No answer from the last N numbers" too, as the agent app does. A dial ringing
+  // still outranks "Nothing due now" (the guide below), count line and all.
+  const panelDialActivity = nothingDue !== null && !diallingCustomer ? null : dialActivity;
 
   // Suspended under the soft phone (its own keyboard), under an inbound call (its own) and
   // under My contacts: the panel is a modal with its own focus trap, and a station key behind
@@ -548,6 +570,7 @@ export default function AgentConsolePage() {
           act, because the API gives the station to whoever attaches last.
         */
         onReconnect={station.reconnect}
+        diallingCustomer={diallingCustomer}
       />
 
       {/*
@@ -620,6 +643,7 @@ export default function AgentConsolePage() {
             release={release}
             missedRelease={station.missedRelease}
             lostDisposition={cons.lostDispositionNotice}
+            dialActivity={panelDialActivity}
           />
         </section>
 
@@ -639,7 +663,8 @@ export default function AgentConsolePage() {
               filterInputRef={fieldFilterRef}
             />
           ) : (
-            <IdleGuide dialing={dialing} nothingDue={nothingDue} />
+            // A dial ringing for them outranks "Nothing due now": one is in fact happening.
+            <IdleGuide dialing={dialing} nothingDue={diallingCustomer ? null : nothingDue} />
           )}
         </section>
 

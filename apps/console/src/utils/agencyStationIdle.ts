@@ -1,4 +1,4 @@
-import type { AgencyQueueIdleReason, AgencyQueueState } from '../types/agency';
+import type { AgencyDialActivity, AgencyQueueIdleReason, AgencyQueueState } from '../types/agency';
 
 /**
  * Copy for the station's idle panels — the contact column and the empty
@@ -19,6 +19,53 @@ export const IDLE_WAITING_HINT =
 
 export const IDLE_PAUSED_HINT =
   'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
+
+// ─── Hidden dials (late binding) ────────────────────────────────────────────
+
+/**
+ * On a late-binding account the dialer rings a customer for an idle agent and shows them
+ * nothing unless the customer answers, so "Waiting for a call" read the same whether a phone
+ * was ringing, nothing was due, or something was stuck. These say a dial is happening and how
+ * the recent ones went, from `dial_activity`. Never the number, the name or anything else
+ * about the contact: the agent is shown the call only if it is answered.
+ */
+export const DIALLING_HEADLINE = 'Dialling a customer…';
+
+export const DIALLING_HINT = 'You’ll be connected as soon as they answer.';
+
+/**
+ * What the waiting agent is told while the campaign dials: that a hidden dial is ringing for
+ * them, or "Waiting for a call". One rule for the idle panel and the rail.
+ */
+export function waitingHeadline(diallingCustomer: boolean): string {
+  return diallingCustomer ? DIALLING_HEADLINE : 'Waiting for a call';
+}
+
+/**
+ * The one check for a stated dial activity, from the `dial_activity` frame and from
+ * `ready.dial_activity` alike: `ringing` a boolean and `unanswered_in_a_row` a non-negative
+ * integer, or `null` (treated as absent). Unchecked, `ringing: "yes"` would make the panel say
+ * "Dialling" (truthy) while the rail did not (`=== true`). Returns a fresh object holding only
+ * the two fields, so nothing else the server sent rides into state.
+ */
+export function parseDialActivity(value: unknown): AgencyDialActivity | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { ringing, unanswered_in_a_row: count } = value as Record<string, unknown>;
+  if (typeof ringing !== 'boolean') return null;
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return null;
+  return { ringing, unanswered_in_a_row: count };
+}
+
+/**
+ * The line under the headline after hidden dials went unanswered, or `null` when none did
+ * (count 0: today's copy, unchanged).
+ */
+export function unansweredLine(unansweredInARow: number): string | null {
+  if (!(unansweredInARow > 0)) return null;
+  return unansweredInARow === 1
+    ? 'No answer from the last number'
+    : `No answer from the last ${unansweredInARow} numbers`;
+}
 
 export const IDLE_GUIDE_HEADING = 'When a call connects';
 

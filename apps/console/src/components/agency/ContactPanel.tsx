@@ -1,6 +1,14 @@
 import { heroesWereConfigured, type ResolvedContext } from '../../utils/agencyContext';
 import { resolveReleaseCopy, releaseShape, releaseAccount } from '../../utils/agencyReleaseCopy';
-import { IDLE_PAUSED_HINT, IDLE_WAITING_HINT } from '../../utils/agencyStationIdle';
+import {
+  DIALLING_HEADLINE,
+  DIALLING_HINT,
+  IDLE_PAUSED_HINT,
+  IDLE_WAITING_HINT,
+  unansweredLine,
+  waitingHeadline,
+} from '../../utils/agencyStationIdle';
+import type { DialActivityDisplay } from '../../hooks/useDialActivityDisplay';
 import { redialTag } from '../../utils/agencyRedialCopy';
 import type {
   AgencyMissedRelease,
@@ -23,6 +31,7 @@ export function ContactPanel({
   release,
   missedRelease,
   lostDisposition,
+  dialActivity = null,
 }: {
   /** The contact on screen — `live`'s, or the one retained through wrap-up. */
   attempt: AgencyReservedAttempt | null;
@@ -32,6 +41,8 @@ export function ContactPanel({
   release: AgencyStationReleasedFrame | null;
   missedRelease: AgencyMissedRelease | null;
   lostDisposition: string | null;
+  /** Late binding's hidden dials, smoothed (`useDialActivityDisplay`); null for today's copy. */
+  dialActivity?: DialActivityDisplay | null;
 }) {
   return (
     <>
@@ -67,6 +78,7 @@ export function ContactPanel({
           release={release}
           missedRelease={missedRelease}
           lostDisposition={lostDisposition}
+          dialActivity={dialActivity}
         />
       )}
     </>
@@ -78,12 +90,22 @@ export function IdlePanel({
   release,
   missedRelease,
   lostDisposition,
+  dialActivity = null,
 }: {
   dialing: boolean;
   release: AgencyStationReleasedFrame | null;
   missedRelease: AgencyMissedRelease | null;
   lostDisposition: string | null;
+  /**
+   * Late binding's hidden dials, or null. Only ever set while the agent is available with the
+   * campaign dialling and nothing on screen (the page's condition), so it changes the resting
+   * copy and nothing that outranks it: a release or a missed release still comes first.
+   */
+  dialActivity?: DialActivityDisplay | null;
 }) {
+  const diallingNow = dialActivity?.dialling === true;
+  const unanswered = dialActivity ? unansweredLine(dialActivity.unansweredInARow) : null;
+  const headline = dialing ? waitingHeadline(diallingNow) : 'No calls will come through right now.';
   return (
     <div className={styles.releasePanel}>
       {release && releaseShape(release) === 'dim_and_clear' ? (
@@ -114,9 +136,7 @@ export function IdlePanel({
           <p className={styles.releaseHeadline} data-testid="unexplained-release">
             {releaseAccount(release)}
           </p>
-          <p className={styles.releaseSubtext}>
-            {dialing ? 'Waiting for a call' : 'No calls will come through right now.'}
-          </p>
+          <p className={styles.releaseSubtext}>{headline}</p>
         </>
       ) : missedRelease ? (
         /*
@@ -130,19 +150,36 @@ export function IdlePanel({
           reads, so if the console does not put it on screen the record of the call
           the agent was on is gone for good, and an empty station after a drop
           reads as data loss.
+
+          It keeps the slot while a hidden dial rings (it outranks the resting copy), so the
+          dial is said in a line under it, as the unexplained release says it in its subtext:
+          otherwise the rail would say "Dialling a customer…" and this panel nothing.
         */
         <>
           <p className={styles.releaseHeadline} data-testid="missed-release">
             While you were disconnected: {resolveReleaseCopy(missedRelease).headline}
           </p>
           <p className={styles.releaseSubtext}>{resolveReleaseCopy(missedRelease).subtext}</p>
+          {diallingNow ? (
+            <p className={styles.idleUnanswered} data-testid="missed-release-dialling">{DIALLING_HEADLINE}</p>
+          ) : null}
         </>
       ) : (
+        /*
+          The resting copy. On a late-binding account a dial may be ringing for this agent that
+          they are shown only if it is answered: then it says so, and how the last ones went,
+          so a quiet screen does not read as a stuck one. Not a live region: the rail is the
+          station's status region and already says "Dialling a customer…"; the count line
+          changes with every unanswered dial and must not be read out each time.
+        */
         <>
-          <p className={styles.idleHeadline}>
-            {dialing ? 'Waiting for a call' : 'No calls will come through right now.'}
+          <p className={styles.idleHeadline} data-testid="idle-headline">{headline}</p>
+          {unanswered ? (
+            <p className={styles.idleUnanswered} data-testid="idle-unanswered">{unanswered}</p>
+          ) : null}
+          <p className={styles.idleHint}>
+            {diallingNow ? DIALLING_HINT : dialing ? IDLE_WAITING_HINT : IDLE_PAUSED_HINT}
           </p>
-          <p className={styles.idleHint}>{dialing ? IDLE_WAITING_HINT : IDLE_PAUSED_HINT}</p>
         </>
       )}
       {/*

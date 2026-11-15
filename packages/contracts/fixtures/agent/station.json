@@ -419,6 +419,27 @@
     "reason": null,
     "next_due_at": null
   },
+  "dial_activity_ringing": {
+    "event": "dial_activity",
+    "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+    "ringing": true,
+    "unanswered_in_a_row": 0
+  },
+  "dial_activity_unanswered": {
+    "event": "dial_activity",
+    "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+    "ringing": false,
+    "unanswered_in_a_row": 3
+  },
+  "ready_dial_activity": {
+    "event": "ready",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "state": "available",
+    "dial_activity": {
+      "ringing": true,
+      "unanswered_in_a_row": 2
+    }
+  },
   "inbound_call_offered": {
     "event": "inbound_call",
     "call": {

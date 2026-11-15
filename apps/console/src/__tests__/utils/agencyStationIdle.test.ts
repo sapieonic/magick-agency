@@ -6,7 +6,9 @@ import {
   IDLE_KEYS_ON_CALL,
   IDLE_PAUSED_HINT,
   IDLE_WAITING_HINT,
+  parseDialActivity,
   stationAgentLabel,
+  unansweredLine,
 } from '../../utils/agencyStationIdle';
 
 const IMPLEMENTATION_WORDS = /websocket|session_id|core|bootstrap|payload|enum|uuid/i;
@@ -55,5 +57,44 @@ describe('idle copy', () => {
       'Ctrl + Enter',
       'E then E',
     ]);
+  });
+});
+
+describe('unansweredLine', () => {
+  it('says nothing for none, or for a count that is not a count', () => {
+    expect(unansweredLine(0)).toBeNull();
+    expect(unansweredLine(-1)).toBeNull();
+    expect(unansweredLine(Number.NaN)).toBeNull();
+  });
+
+  it('singular for one, the number for more', () => {
+    expect(unansweredLine(1)).toBe('No answer from the last number');
+    expect(unansweredLine(2)).toBe('No answer from the last 2 numbers');
+    expect(unansweredLine(10)).toBe('No answer from the last 10 numbers');
+  });
+});
+
+describe('parseDialActivity — the one check for both the frame and ready.dial_activity', () => {
+  it('takes a well-formed activity, and only its two fields', () => {
+    expect(parseDialActivity({ ringing: true, unanswered_in_a_row: 0 })).toEqual({ ringing: true, unanswered_in_a_row: 0 });
+    expect(parseDialActivity({ event: 'dial_activity', campaign_id: 'camp-1', ringing: false, unanswered_in_a_row: 3 }))
+      .toEqual({ ringing: false, unanswered_in_a_row: 3 });
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['null', null],
+    ['not an object', 'ringing'],
+    ['ringing a string', { ringing: 'yes', unanswered_in_a_row: 1 }],
+    ['ringing a number', { ringing: 1, unanswered_in_a_row: 1 }],
+    ['ringing missing', { unanswered_in_a_row: 1 }],
+    ['count missing', { ringing: true }],
+    ['count a string', { ringing: true, unanswered_in_a_row: '2' }],
+    ['count negative', { ringing: true, unanswered_in_a_row: -1 }],
+    ['count fractional', { ringing: true, unanswered_in_a_row: 1.5 }],
+    ['count NaN', { ringing: true, unanswered_in_a_row: Number.NaN }],
+    ['count infinite', { ringing: true, unanswered_in_a_row: Number.POSITIVE_INFINITY }],
+  ])('refuses %s', (_name, value) => {
+    expect(parseDialActivity(value)).toBeNull();
   });
 });

@@ -420,6 +420,20 @@ every account the caller belongs to (CH2) where every internal handler is single
   (`carrier-account-pause.ts`; "The voice engine", Plivo). A campaign on a tenant credential whose
   carrier refuses five dials in a row with none placed is paused `carrier_refusing_calls`
   (`carrier-refusal-breaker.ts`, PL11).
+  **Late binding** (`FF_AGENCY_LATE_BINDING`, flag comment in `packages/contracts/src/flags.ts`):
+  the panel is built at the dial and held, the leg is placed with no socket
+  (`createUnboundBridgedCall`), and `reserved` and the bind go out together at the carrier answer;
+  a dial that is never answered sends the agent no `reserved` and no `released`. What the agent
+  IS told is `dial_activity` (`AgencyDialActivity`): `ringing: true` once the carrier has taken
+  the dial (never for one refused before or by the carrier) and `ringing: false` when it ends
+  unseen, with how many hidden dials in a row went unanswered and nothing about the call (no
+  contact, number or attempt id). Sent to that agent's socket only, two frames at most per dial;
+  the count lives in process memory (`AgencyDialer`'s `unansweredInARow`, a `TtlCache`), counts only a dial no customer
+  answered (not one ended because the station stayed gone, or cancelled by the customer ringing
+  in), and starts again from 0 at the next campaign call the agent is shown (`reserved`; an
+  inbound or soft-phone call does not reset it). `ready` carries the same state at a reconnect,
+  and says `available`, not `reserved`, while only a hidden dial holds the agent, as they were
+  last told. Early binding and wrap-up redials never send it, so the clients need not know the flag.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);

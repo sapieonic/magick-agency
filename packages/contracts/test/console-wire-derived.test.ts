@@ -101,6 +101,8 @@ interface OldAgencyStationReadyFrame {
   active_attempt?: Api.AgencyActiveAttempt;
   // Added deliberately (contact assignment): the agent's queue at reconnect.
   queue?: Api.AgencyQueueState;
+  // Added deliberately (late binding): the hidden dials ringing for the agent at reconnect.
+  dial_activity?: Api.AgencyDialActivity;
   active_wrapup?: Api.AgencyWrapupState;
   missed_release?: Api.AgencyMissedRelease;
   pending_state?: Api.AgencyAgentState;

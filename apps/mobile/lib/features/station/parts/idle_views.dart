@@ -29,6 +29,13 @@ import 'sheets.dart';
 /// campaign with nothing due for the agent (contact assignment), it says so
 /// and why ("Nothing due now") instead of the plain waiting words: no call is
 /// on its way, and the agent should know it is not the line.
+///
+/// Late binding ([StationView.dialActivity]): while a hidden dial rings for the
+/// agent (or in the moments between one and the next) it says "Dialling a
+/// customer…", ahead of "Nothing due now"; after unanswered dials it counts
+/// them under the headline. Its headline is a polite live region while
+/// dialling only, so the start of a dialling run is read out and the fall back
+/// to waiting is not.
 class WaitingView extends ConsumerWidget {
   const WaitingView({super.key});
 
@@ -39,11 +46,17 @@ class WaitingView extends ConsumerWidget {
     final message = ref.watch(stationViewProvider.select((v) => v?.campaignMessage));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
     final queue = ref.watch(stationViewProvider.select((v) => v?.queue));
+    final dial = ref.watch(stationViewProvider.select((v) => v?.dialActivity));
     final now = ref.watch(stationClockProvider);
     final t = context.tokens;
-    // A paused campaign says so first: nothing is due because nothing is dialled.
-    final nothingDue = dialing && queue != null && queue.nothingDue;
+    // A paused campaign says so first: nothing is due because nothing is dialled. A dial
+    // ringing for the agent comes next: whatever the queue said, a call may be moments away.
+    // `dial` is set only while the campaign dials (`StationState.dialSlotOpen`).
+    final dialling = dial?.dialling ?? false;
+    final nothingDue = !dialling && dialing && queue != null && queue.nothingDue;
     final next = queue?.nextDueAt;
+    // Counted while dialling and while plainly waiting; the paused and nothing-due words stand alone.
+    final unanswered = dialing && !nothingDue && dial != null ? StationCopy.unansweredLine(dial.unansweredInARow) : null;
 
     return IdleLayout(
       body: [
@@ -51,18 +64,27 @@ class WaitingView extends ConsumerWidget {
         const RangWhileAwayNotice(),
         const RecentReleaseCard(),
         _StateCard(
-          key: Key(nothingDue ? 'nothing-due-card' : 'waiting-card'),
+          key: Key(nothingDue ? 'nothing-due-card' : (dialling ? 'dialling-card' : 'waiting-card')),
           pill: const StatusPill(StationCopy.available, tone: Tone.live, leading: LiveDot()),
           headline: !dialing
               ? StationCopy.pausedHeadline
-              : (nothingDue ? StationCopy.nothingDueHeadline : StationCopy.waitingHeadline),
+              : dialling
+                  ? StationCopy.diallingHeadline
+                  : (nothingDue ? StationCopy.nothingDueHeadline : StationCopy.waitingHeadline),
           headlineColor: dialing ? null : t.warning,
+          // A live region only while dialling, so the start of a dialling run is read
+          // out; the fall back to "Waiting for a call" in every gap past `dialGapHold`
+          // is not, or a count above 0 would re-announce both lines on every dial.
+          headlineLive: dialling,
+          subline: unanswered,
           detail: !dialing
               ? (message != null && message.trim().isNotEmpty ? message : StationCopy.pausedHint)
-              : nothingDue
-                  ? '${StationCopy.nothingDueDetail(queue.reason ?? QueueIdle.other, next == null ? null : formatDueAt(next, now()))} '
-                      '${StationCopy.nothingDueKeepOpen}'
-                  : StationCopy.waitingHint,
+              : dialling
+                  ? StationCopy.diallingHint
+                  : nothingDue
+                      ? '${StationCopy.nothingDueDetail(queue.reason ?? QueueIdle.other, next == null ? null : formatDueAt(next, now()))} '
+                          '${StationCopy.nothingDueKeepOpen}'
+                      : StationCopy.waitingHint,
           footer: since == null
               ? null
               : TickingBuilder(
@@ -404,13 +426,28 @@ class _KeyValue extends StatelessWidget {
 }
 
 class _StateCard extends StatelessWidget {
-  const _StateCard({super.key, required this.pill, required this.headline, required this.detail, this.footer, this.headlineColor});
+  const _StateCard({
+    super.key,
+    required this.pill,
+    required this.headline,
+    required this.detail,
+    this.footer,
+    this.headlineColor,
+    this.headlineLive = false,
+    this.subline,
+  });
 
   final Widget pill;
   final String headline;
   final String detail;
   final Widget? footer;
   final Color? headlineColor;
+
+  /// The headline is a polite live region (its own node, so its changes are read out).
+  final bool headlineLive;
+
+  /// A line between the headline and [detail] (the unanswered hidden dials), or null.
+  final String? subline;
 
   @override
   Widget build(BuildContext context) {
@@ -422,13 +459,25 @@ class _StateCard extends StatelessWidget {
           pill,
           const SizedBox(height: Space.md),
           Semantics(
+            key: const Key('state-headline'),
             header: true,
+            container: headlineLive,
+            liveRegion: headlineLive,
             child: Text(
               headline,
               textAlign: TextAlign.center,
               style: text.headlineSmall!.copyWith(color: headlineColor),
             ),
           ),
+          if (subline != null) ...[
+            const SizedBox(height: Space.xs),
+            Text(
+              subline!,
+              key: const Key('unanswered-line'),
+              textAlign: TextAlign.center,
+              style: text.bodyMedium!.copyWith(color: context.tokens.textPrimary),
+            ),
+          ],
           const SizedBox(height: Space.sm),
           Text(
             detail,

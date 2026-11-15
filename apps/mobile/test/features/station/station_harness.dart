@@ -443,6 +443,7 @@ StationView station({
   String? fatal,
   String campaignId = 'c1',
   QueueView? queue,
+  DialActivityView? dialActivity,
   bool myContactsOffered = false,
 }) => StationView(
   campaignId: campaignId,
@@ -470,6 +471,7 @@ StationView station({
   actionError: actionError,
   fatal: fatal,
   queue: queue,
+  dialActivity: dialActivity,
   myContactsOffered: myContactsOffered,
 );
 

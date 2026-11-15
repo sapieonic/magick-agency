@@ -697,6 +697,13 @@
   line-height: 1.4;
 }
 
+/* Late binding: how the last hidden dials went, under the headline. Read, not alarming. */
+.idleUnanswered {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
 /*
  * The waiting middle column. Calm on purpose: this panel is in view for hours,
  * and it must not look like a dashboard. No controls — see IdleGuide.

@@ -205,6 +205,8 @@ export type AgencyStationServerFrame =
   | AgencyStationManualCallFrame
   // Contact assignment: this agent's own queue (strict / preferred campaigns).
   | AgencyStationQueueFrame
+  // A dial ringing for this agent that they are not shown until it is answered (late binding).
+  | AgencyStationDialActivityFrame
   // Inbound calls (P2, docs/inbound.md §6): the call offered to or connected with this agent,
   // and a sticky caller waiting for them (`./inbound.ts`). Only to a station that can take inbound
   // calls (`AGENCY_STATION_INBOUND_EVENTS`).
@@ -248,6 +250,12 @@ export const AGENCY_STATION_INBOUND_EVENTS = [
 export interface AgencyStationReadyFrame {
   event: 'ready';
   session_id: string;
+  /**
+   * The agent's state as their screen should show it. One difference from the server's own
+   * record: an agent held `reserved` only by a dial they have not been shown (late binding,
+   * {@link AgencyDialActivity}) is said to be `available`, as they were last told; the
+   * `reserved` frame of an answer moves them on as usual.
+   */
   state: AgencyAgentState;
   /**
    * The break's code when `state` is `break`, with the same meaning as
@@ -265,6 +273,12 @@ export interface AgencyStationReadyFrame {
   active_attempt?: AgencyActiveAttempt;
   /** This agent's queue now, on a `strict` or `preferred` campaign; absent otherwise. */
   queue?: AgencyQueueState;
+  /**
+   * The hidden dials for this agent now ({@link AgencyDialActivity}): present when one is ringing
+   * or the count is above 0, absent otherwise (read absence as not ringing, count 0). Never
+   * present beside `active_attempt`.
+   */
+  dial_activity?: AgencyDialActivity;
   /**
    * **P2.** Set when the reconnecting socket is in `wrapup` — the console needs the
    * absolute deadline to resume the countdown, and a wrap-up that survived a
@@ -614,6 +628,49 @@ export interface AgencyQueueState {
  */
 export interface AgencyStationQueueFrame extends AgencyQueueState {
   event: 'queue';
+  campaign_id: string;
+}
+
+/**
+ * What the dialer is doing for an agent that their screen cannot otherwise show: the campaign
+ * dials placed for them that they are not shown unless the customer answers (late binding,
+ * `FF_AGENCY_LATE_BINDING`).
+ *
+ * Without it an idle agent on a late-binding account sees the same "Waiting for a call" whether a
+ * customer's phone is ringing for them, nothing is due, or something is stuck. It carries no
+ * contact, number or attempt id on purpose: the call is shown only if it is answered (the
+ * `reserved` frame), so all this may say is that a dial is ringing and how the recent ones went.
+ *
+ * The console and the app need not know whether late binding is on. A dial the agent is shown from
+ * the start (early binding, every wrap-up redial) never produces this frame, and its panel already
+ * says it is ringing.
+ */
+export interface AgencyDialActivity {
+  /**
+   * A campaign dial placed for this agent is ringing now (the carrier has taken it), and they
+   * will see it only if it is answered. False once it ends unseen (the agent is told nothing
+   * else about it). A dial refused before or by the carrier is never announced.
+   */
+  ringing: boolean;
+  /**
+   * How many of this agent's hidden dials in a row ended without being answered (rang out, busy,
+   * failed or unreachable once the carrier had it), counted since the last campaign call they
+   * were shown, which is a `reserved` frame: a client clears it there, and the next frame the
+   * server sends starts again from 0. An inbound or soft-phone call does not reset it. Not
+   * counted: a dial refused before or by the carrier (never announced at all), one ended because
+   * the agent's station stayed gone, and one the customer cancelled by ringing in themselves
+   * (docs/inbound.md §5.4). Held in the server's memory only, so a restart starts it from 0.
+   */
+  unanswered_in_a_row: number;
+}
+
+/**
+ * A hidden dial for this agent started (`ringing: true`) or ended unanswered (`ringing: false`).
+ * Sent by the dialer to that agent's socket only, never broadcast: two frames at most per dial.
+ * The `ready` frame's `dial_activity` carries the same state at reconnect.
+ */
+export interface AgencyStationDialActivityFrame extends AgencyDialActivity {
+  event: 'dial_activity';
   campaign_id: string;
 }
 

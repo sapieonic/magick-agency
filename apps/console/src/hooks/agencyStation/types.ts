@@ -1,5 +1,6 @@
 import type {
   AgencyAgentState,
+  AgencyDialActivity,
   AgencyMissedRelease,
   AgencyQueueState,
   AgencyReservedAttempt,
@@ -239,6 +240,13 @@ export interface UseAgencyStationResult {
   inboundCall: AgencyInboundCall | null;
   /** "Your customer is waiting" (`customer_waiting`), until something makes it untrue. */
   customerWaiting: AgencyStationCustomerWaitingFrame | null;
+  /**
+   * Late binding: the hidden dials for this agent as the socket last stated them
+   * (`dial_activity`, `ready.dial_activity`). `null` when nothing is ringing and nothing has
+   * gone unanswered, after any `reserved`, and always on an early-binding account. Raw: the
+   * console smooths the gap between one dial and the next (`useDialActivityDisplay`).
+   */
+  dialActivity: AgencyDialActivity | null;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
   reconnect: () => void;
   /**

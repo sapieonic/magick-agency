@@ -107,6 +107,7 @@ class StationViewMapper {
     String? inboundNotice,
     bool awayRang = false,
     String? awayNoRing,
+    bool dialGapHeld = false,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -166,6 +167,7 @@ class StationViewMapper {
       actionError: actionError,
       fatal: fatal,
       queue: _queueFor(s.queue),
+      dialActivity: dialActivityOf(s, gapHeld: dialGapHeld),
       myContactsOffered: myContactsOfferedBy(bootstrap),
       inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure),
       customerWaiting: _waitingFor(s.customerWaiting),
@@ -270,6 +272,18 @@ class StationViewMapper {
   static bool myContactsOfferedBy(wire.SessionBootstrap? bootstrap) =>
       bootstrap != null &&
       (bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire || bootstrap.allowAgentRetry);
+
+  /// Late binding's hidden dials as the waiting screen shows them: only in
+  /// [StationState.dialSlotOpen], and only with something to say. [gapHeld]:
+  /// the controller holds "dialling" through the gap after a dial ends
+  /// unanswered.
+  static DialActivityView? dialActivityOf(StationState s, {required bool gapHeld}) {
+    final a = s.dialActivity;
+    if (a == null || !s.dialSlotOpen) return null;
+    final dialling = a.ringing || gapHeld;
+    if (!dialling && a.unansweredInARow == 0) return null;
+    return DialActivityView(dialling: dialling, unansweredInARow: a.unansweredInARow);
+  }
 
   /// The agent's own queue, its next time on this device's clock.
   QueueView? _queueFor(wire.QueueState? queue) {

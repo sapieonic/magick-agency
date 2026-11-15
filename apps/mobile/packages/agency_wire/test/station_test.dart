@@ -340,6 +340,84 @@ void main() {
         expect(withQueue, isNot(sample<ReadyFrame>('ready_first_join')));
       });
     });
+
+    group('dial_activity (late binding)', () {
+      test('a hidden dial ringing: no contact, the count so far', () {
+        final f = sample<DialActivityFrame>('dial_activity_ringing');
+        expect(f.event, StationEvent.dialActivity);
+        expect(f.campaignId, '8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d');
+        expect(f.activity, const DialActivity(ringing: true, unansweredInARow: 0));
+      });
+
+      test('a hidden dial ended unanswered: not ringing, the count after it', () {
+        final f = sample<DialActivityFrame>('dial_activity_unanswered');
+        expect(f.activity.ringing, isFalse);
+        expect(f.activity.unansweredInARow, 3);
+        expect(f, isNot(sample<DialActivityFrame>('dial_activity_ringing')));
+        expect(f, sample<DialActivityFrame>('dial_activity_unanswered'));
+        expect(f.hashCode, sample<DialActivityFrame>('dial_activity_unanswered').hashCode);
+        expect(
+          f.toString(),
+          'DialActivityFrame(8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d, '
+          'DialActivity(ringing: false, unanswered: 3))',
+        );
+      });
+
+      test('the state round-trips through toJson', () {
+        final json = fixture('station.json', 'dial_activity_unanswered');
+        final f = sample<DialActivityFrame>('dial_activity_unanswered');
+        expect(f.activity.toJson(), {
+          for (final k in ['ringing', 'unanswered_in_a_row']) k: json[k],
+        });
+        expect(DialActivity.fromJson(f.activity.toJson()), f.activity);
+      });
+
+      test('a frame missing `ringing` or with a fractional or negative count is an UnknownFrame, never a throw', () {
+        for (final text in [
+          '{"event":"dial_activity","campaign_id":"c","unanswered_in_a_row":0}',
+          '{"event":"dial_activity","campaign_id":"c","ringing":true,"unanswered_in_a_row":1.5}',
+          '{"event":"dial_activity","campaign_id":"c","ringing":false,"unanswered_in_a_row":-1}',
+          '{"event":"dial_activity","ringing":true,"unanswered_in_a_row":0}',
+        ]) {
+          final f = StationFrame.decode(text);
+          expect(f, isA<UnknownFrame>(), reason: text);
+          expect(f.event, StationEvent.dialActivity);
+        }
+      });
+
+      test('ready carries it at reconnect when present, and absence reads as cleared', () {
+        final f = sample<ReadyFrame>('ready_dial_activity');
+        expect(f.state, AgentState.available);
+        expect(f.activeAttempt, isNull);
+        expect(f.dialActivity, const DialActivity(ringing: true, unansweredInARow: 2));
+        expect(sample<ReadyFrame>('ready_first_join').dialActivity, isNull);
+        final without = decodeAs<ReadyFrame>(
+          jsonEncode({...fixture('station.json', 'ready_dial_activity')}..remove('dial_activity')),
+        );
+        expect(without.dialActivity, isNull);
+        expect(without, isNot(f));
+      });
+
+      test('a malformed ready.dial_activity is dropped, the rest of the snapshot kept', () {
+        final base = fixture('station.json', 'ready_dial_activity');
+        final without = decodeAs<ReadyFrame>(jsonEncode({...base}..remove('dial_activity')));
+        for (final bad in <Object?>[
+          {'unanswered_in_a_row': 2},
+          {'ringing': true, 'unanswered_in_a_row': 1.5},
+          {'ringing': 'yes', 'unanswered_in_a_row': 2},
+          'ringing',
+          [true, 2],
+        ]) {
+          final f = StationFrame.decode(jsonEncode({...base, 'dial_activity': bad}));
+          expect(f, isA<ReadyFrame>(), reason: '$bad');
+          f as ReadyFrame;
+          expect(f.dialActivity, isNull, reason: '$bad');
+          expect(f.sessionId, '6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12');
+          expect(f.state, AgentState.available);
+          expect(f, without, reason: '$bad');
+        }
+      });
+    });
   });
 
   group('StationFrame.decode: tolerance (never throws)', () {

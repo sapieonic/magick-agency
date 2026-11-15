@@ -40,6 +40,8 @@ import type {
   AgencyStationTokenResponse,
   AgencyStationManualCallFrame,
   AgencyStationQueueFrame,
+  AgencyStationDialActivityFrame,
+  AgencyDialActivity,
   AgencyStationInboundCallFrame,
   AgencyStationCustomerWaitingFrame,
   AgencyQueueIdleReason,
@@ -53,6 +55,8 @@ import type { AgencyActionErrorCode, AgencyStationErrorCode } from '../../errors
 
 export type {
   AgencyStationQueueFrame,
+  AgencyStationDialActivityFrame,
+  AgencyDialActivity,
   AgencyQueueIdleReason,
   AgencyQueueState,
   AgencyActionErrorResponse,
@@ -358,6 +362,8 @@ export type AgencyStationServerFrame =
   | AgencyStationManualCallFrame
   // Contact assignment: this agent's own queue; re-exported from the dialer contract unchanged.
   | AgencyStationQueueFrame
+  // A hidden dial ringing for this agent (late binding); re-exported from the dialer contract unchanged.
+  | AgencyStationDialActivityFrame
   // Inbound calls (P2): the call offered to or connected with this agent, and a sticky caller
   // waiting; declared in `../../agency/inbound`, re-exported from `./inbound` unchanged.
   | AgencyStationInboundCallFrame

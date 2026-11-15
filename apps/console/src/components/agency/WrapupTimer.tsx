@@ -99,8 +99,8 @@ export function WrapupTimer({ anchor, now, dispositionSubmitted }: WrapupTimerPr
         The bar is primary and the digits are secondary: a shrinking length is
         legible in peripheral vision and a number is not.
 
-        `aria-hidden` on both, because the rail is this screen's only polite live
-        region and a countdown inside it would announce on every repaint —
+        `aria-hidden` on both, because the rail is the station's status region (a
+        polite live region) and a countdown inside it would announce on every repaint —
         four times a second, for the length of every wrap-up of the shift. The two
         licensed announcements (10s and 3s) are the page's, and they are two
         strings rather than a stream.

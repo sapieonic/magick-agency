@@ -144,6 +144,7 @@
       "media",
       "manual_call",
       "queue",
+      "dial_activity",
       "inbound_call",
       "customer_waiting"
     ]

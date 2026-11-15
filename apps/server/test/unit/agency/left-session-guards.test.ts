@@ -191,6 +191,7 @@ async function harness(): Promise<Harness> {
     dialer: {
       reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
+      dialActivityFor: vi.fn(() => null),
       hasLiveAttempt: vi.fn(() => false),
       // Reached SYNCHRONOUSLY from the station close handler, before it awaits —
       // a double without it throws there, and vitest then exits non-zero while

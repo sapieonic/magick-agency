@@ -168,6 +168,10 @@ const STATION = {
   agent_state_switch_queued: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_switch_queued),
   queue_nothing_due: fits<Core.AgencyStationQueueFrame>()(station.queue_nothing_due),
   queue_due: fits<Core.AgencyStationQueueFrame>()(station.queue_due),
+  // Late binding: a hidden dial ringing, then the count after unanswered ones, and the state at reconnect.
+  dial_activity_ringing: fits<Core.AgencyStationDialActivityFrame>()(station.dial_activity_ringing),
+  dial_activity_unanswered: fits<Core.AgencyStationDialActivityFrame>()(station.dial_activity_unanswered),
+  ready_dial_activity: fits<Core.AgencyStationReadyFrame>()(station.ready_dial_activity),
   // Inbound calls (docs/inbound.md §6): one call through its states, a withheld caller, the wait notice.
   inbound_call_offered: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_offered),
   inbound_call_connected: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_connected),
