@@ -1019,6 +1019,7 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/api/dnc-page-scope.test.ts` (the page's scopes through the real app, then the dial-time check on what landed; DS1–DS6) | 15 |
+| `apps/server/test/integration/api/station-suppress-dnc.test.ts` (a station `suppress` outcome writes the campaign's Do Not Call entry, by whoever filed it, once; the dial-time check blocks that campaign only; DS8) | 4 |
 | `apps/server/test/integration/dnc/dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/dnc/dnc-index-usage.test.ts` | ~5 |
 | `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 22 |

@@ -1673,8 +1673,9 @@ always wrote every campaign, with no choice. Now:
   organisation, on the page and on the station's escalation (DS3). An account admin lists and
   removes their campaigns' entries too (DS6). No migration.
 - **Words.** The same scope words on customer history and the soft phone, console and mobile.
-- **Open (DS8).** A station `suppress` outcome (web, mobile, a supervisor's) writes no list entry,
-  while the mobile wrap-up says it does; the disposition route belongs to the outcome workstream.
+- **Fixed (DS8).** A station `suppress` outcome (web, mobile, a supervisor's) wrote no list entry
+  while the mobile wrap-up said it did. The disposition route now writes the campaign entry, as the
+  soft phone and inbound do (`test/integration/api/station-suppress-dnc.test.ts`, mutation-checked).
 
 ### Soft-phone calls in campaign results 2026-11-15 (SR1–SR10, [`decisions.md`](decisions.md))
 
