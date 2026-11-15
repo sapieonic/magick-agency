@@ -330,6 +330,11 @@
         "manual_connected": 4
       },
       "softphone_calls": 1,
+      "softphone": {
+        "placed": 1,
+        "connected": 0,
+        "human_connects": 0
+      },
       "talk_seconds": 2310.4,
       "wrapup_seconds": 540,
       "wrapup_measured": 22

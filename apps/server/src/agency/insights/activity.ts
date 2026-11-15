@@ -11,9 +11,11 @@
  *    `overrideCodes`), so a catalog edit re-labels history rather than leaving it stale.
  *  - `calls.redials.refused_at_limit`: the pacing history (`redials_refused_at_limit`), the one
  *    place a refused redial is recorded (it never became an attempt).
- *  - `calls.softphone_calls`: soft-phone calls tagged to the campaign and placed, `created_at`
- *    in range (`softphoneCalls`, the tag's index). Outside every other count: a manual call is not
- *    an attempt row (docs/softphone.md).
+ *  - `calls.softphone` (and `calls.softphone_calls`, its `placed`): soft-phone calls tagged to the
+ *    campaign, `created_at` in range, placed, connected and reached a person (`softphoneCalls`,
+ *    the tag's index; the definition is `softphone-campaign-sql.ts`, SR1–SR3). Outside every
+ *    other count: a manual call is not an attempt row (docs/softphone.md), and the dialler's
+ *    connect rate is the dialler's alone (SR1). Untagged calls are in no campaign (SR4).
  *  - `callbacks`: `booked` from the rollup (by the booking dial's time); the IN4 timing classes and
  *    `by_owner` from `callbackTiming` (the callbacks whose booked time is in range); `open_due_today`
  *    and `open_overdue` are as of now, the allocation's totals, read through the shared cache
@@ -114,7 +116,8 @@ export async function computeActivity(
       by_outcome: c.by_outcome,
       redials: { ...c.redials, refused_at_limit: pacing.redials_refused_at_limit },
       agent_retries: c.agent_retries,
-      softphone_calls: softphone,
+      softphone_calls: softphone.placed,
+      softphone,
       talk_seconds: c.talk_seconds,
       wrapup_seconds: c.wrapup_seconds,
       wrapup_measured: c.wrapup_measured,

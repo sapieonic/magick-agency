@@ -55,7 +55,7 @@ import type {
   AgencyCampaignStatus,
 } from '../../agency/enums';
 import type { AgencyAssignmentMode } from '../../agency/assignment';
-import type { AgencyStall, AgencyStallCode, CarrierAccountPauseReason } from '../../agency/campaign-stats';
+import type { AgencySoftphoneCampaignCounts, AgencyStall, AgencyStallCode, CarrierAccountPauseReason } from '../../agency/campaign-stats';
 import type { AllListed } from '../../primitives';
 
 /** Rates on the insights page are withheld below this many calls in the denominator (decision 5). */
@@ -373,8 +373,17 @@ export interface AgencyInsightsCalls {
   /** `refused_at_limit` is the pacing history's (0 before it was recorded). */
   redials: { placed: number; connected: number; chains_at_limit: number; refused_at_limit: number };
   agent_retries: { reopened_dials: number; reopened_connected: number; manual_dials: number; manual_connected: number };
-  /** Soft-phone calls tagged to this campaign and placed, `created_at` in range; outside every other count here. */
+  /**
+   * Soft-phone calls tagged to this campaign and placed, `created_at` in range; outside every
+   * other count here. The same number as `softphone.placed`, kept for the readers that predate it.
+   */
   softphone_calls: number;
+  /**
+   * Soft-phone calls tagged to this campaign, `created_at` in range: placed, connected and
+   * reached a person (SR1–SR3). Beside the dialler's figures, never in them: the dialler's
+   * connect rate above is the dialler's alone.
+   */
+  softphone: AgencySoftphoneCampaignCounts;
   talk_seconds: number;
   wrapup_seconds: number;
   /** Connected calls whose wrap-up was measured (denominator for average wrap-up). */

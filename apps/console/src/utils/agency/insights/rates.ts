@@ -111,6 +111,62 @@ export function agentConnectRate(row: Pick<AgencyInsightsAgentActivityRow, 'dial
   return connectRate({ human_connects: row.human_connects, first_dials: row.dials - row.redials });
 }
 
+// ── The soft phone beside the dialler (SR1–SR5) ─────────────────────────────
+
+/** The tagged soft-phone counts the server serves (`calls.softphone`, `/stats` `softphone`). */
+export interface SoftphoneCounts {
+  placed: number;
+  connected: number;
+  human_connects: number;
+}
+
+/**
+ * Whether a campaign surface shows soft-phone figures (SR5): while the soft phone is on for the
+ * account, or whenever the counts hold any call (a soft phone switched off later does not hide
+ * calls already logged to the campaign). Never when the counts were not served (an older server).
+ */
+export function showSoftphoneFigures(enabled: boolean, counts: SoftphoneCounts | null | undefined): counts is SoftphoneCounts {
+  if (!counts) return false;
+  return enabled || counts.placed > 0;
+}
+
+/**
+ * The soft phone's connect rate: people reached over calls placed. The dialler's rule
+ * ({@link connectRate}) on a soft-phone call, which is always a first dial (no wrap-up redials),
+ * and the page's one floor. Never folded into the dialler's (SR1).
+ */
+export function softphoneConnectRate(counts: SoftphoneCounts): InsightsRate {
+  return connectRate({ human_connects: counts.human_connects, first_dials: counts.placed });
+}
+
+/** The dialler's and the soft phone's counts together: what "All calls" shows (SR1). */
+export interface AllCallsCounts {
+  /** Every placed call: the dialler's dials (wrap-up redials included) and the soft phone's placed. */
+  placed: number;
+  connected: number;
+  human_connects: number;
+  /** The connect rate's denominator: the dialler's first dials and the soft phone's placed. */
+  first_dials: number;
+}
+
+/** The calls block's {@link AllCallsCounts}. */
+export function allCallsCounts(
+  calls: Pick<AgencyInsightsCalls, 'dials' | 'connected' | 'human_connects' | 'redials'>,
+  softphone: SoftphoneCounts,
+): AllCallsCounts {
+  return {
+    placed: calls.dials + softphone.placed,
+    connected: calls.connected + softphone.connected,
+    human_connects: calls.human_connects + softphone.human_connects,
+    first_dials: firstDials(calls) + softphone.placed,
+  };
+}
+
+/** The connect rate over {@link AllCallsCounts}: every person reached over every first call placed. */
+export function allCallsConnectRate(counts: AllCallsCounts): InsightsRate {
+  return connectRate(counts);
+}
+
 /**
  * Abandoned over answered: the guardrail's own definition (`abandoned_24h / answered_24h`).
  * Both count every attempt, redials included (an abandoned redial is an abandoned call).

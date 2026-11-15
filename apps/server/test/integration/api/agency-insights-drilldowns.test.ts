@@ -378,6 +378,8 @@ describe('the range reads', () => {
     expect(a.reconciliation.length).toBeGreaterThan(0);
     for (const check of a.reconciliation) expect(check, check.check).toMatchObject({ ok: true });
     expect(a.calls.softphone_calls).toBe(1);
+    // Placed, ended with no outcome: neither connected nor a person reached (SR2).
+    expect(a.calls.softphone).toEqual({ placed: 1, connected: 0, human_connects: 0 });
     expect(a.calls.redials.refused_at_limit).toBe(1);
     expect(a.calls.conversations).toBeGreaterThan(0);
     expect(a.calls.successes).toBeLessThanOrEqual(a.calls.conversations);

@@ -119,7 +119,8 @@ export function totalFigures(rows: readonly AccountReportFigures[]): AccountRepo
       by_outcome: { null_outcome: 0 } as AccountReportFigures['calls']['by_outcome'],
       redials: { placed: 0, connected: 0, chains_at_limit: 0, refused_at_limit: 0 },
       agent_retries: { reopened_dials: 0, reopened_connected: 0, manual_dials: 0, manual_connected: 0 },
-      softphone_calls: 0, talk_seconds: 0, wrapup_seconds: 0, wrapup_measured: 0,
+      softphone_calls: 0, softphone: { placed: 0, connected: 0, human_connects: 0 },
+      talk_seconds: 0, wrapup_seconds: 0, wrapup_measured: 0,
     },
     callbacks_booked: 0, abandoned: 0, answered: 0, recording_connected: 0, recorded: 0,
   };

@@ -299,3 +299,38 @@ describe('CampaignPerformance', () => {
     expect(container.textContent).not.toContain('Are the rates holding');
   });
 });
+
+describe('the soft phone beside the dialler (SR1, SR5)', () => {
+  const dialled = { first_dials_placed: 200, human_connects: 40, attempts_connected: 52, connect_rate_pct: 20 };
+
+  it('names the dialler\'s rate as the dialler\'s and adds the soft phone\'s and All calls', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 50, connected: 40, human_connects: 30 } })} softphoneEnabled />);
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('Dialler connect rate')).toBeTruthy();
+    // The dialler's own figure, untouched by the soft phone's 60%.
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('20%')).toBeTruthy();
+    const soft = screen.getByTestId('softphone-rate-readout');
+    expect(within(soft).getByText('60%')).toBeTruthy();
+    expect(soft.textContent).toContain('of 50 soft-phone calls placed · 40 connected');
+    const all = screen.getByTestId('all-calls-rate-readout');
+    // (40 + 30) / (200 + 50) = 28%.
+    expect(within(all).getByText('28%')).toBeTruthy();
+    expect(all.textContent).toContain('of 250 calls placed · 92 connected');
+  });
+
+  it('withholds the soft phone\'s rate below the floor', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 4, connected: 3, human_connects: 2 } })} softphoneEnabled />);
+    expect(within(screen.getByTestId('softphone-rate-readout')).getByText('Not enough dials')).toBeTruthy();
+  });
+
+  it('shows nothing of the soft phone while it is off and the campaign holds none', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 0, connected: 0, human_connects: 0 } })} />);
+    expect(screen.queryByTestId('softphone-rate-readout')).toBeNull();
+    expect(screen.queryByTestId('all-calls-rate-readout')).toBeNull();
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('Connect rate')).toBeTruthy();
+  });
+
+  it('shows calls already logged even with the soft phone off since', () => {
+    render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 30, connected: 20, human_connects: 10 } })} />);
+    expect(screen.getByTestId('softphone-rate-readout')).toBeTruthy();
+  });
+});

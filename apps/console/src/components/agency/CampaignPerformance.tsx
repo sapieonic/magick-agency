@@ -1,11 +1,14 @@
 import { AlertTriangle, ChartNoAxesCombined } from 'lucide-react';
 import {
+  allCallsConnectRateReadout,
   connectRateReadout,
   connectsBreakdown,
   conversionRateReadout,
   handleTimeReadout,
   handledCallCost,
   segmentShareText,
+  showsSoftphone,
+  softphoneConnectRateReadout,
   wrapupReadout,
   type ConnectsSegment,
   type PerformanceReadout,
@@ -74,6 +77,11 @@ export interface CampaignPerformanceProps {
    * read against. Optional on `AgencyCampaign`, so it may be absent.
    */
   wrapupSeconds?: number | null;
+  /**
+   * The soft phone's flag for the account. The soft phone's and the all-calls cards show while
+   * it is on, or when the campaign holds tagged soft-phone calls whatever it says (SR5).
+   */
+  softphoneEnabled?: boolean;
 }
 
 /** The bar colour for each bucket of the split — one colour per key, everywhere. */
@@ -189,8 +197,10 @@ function Readout({
   );
 }
 
-export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanceProps) {
+export function CampaignPerformance({ stats, wrapupSeconds, softphoneEnabled = false }: CampaignPerformanceProps) {
   const connectRate = connectRateReadout(stats);
+  // The soft phone's tagged calls beside the dialler's rate, never in it (SR1, SR5).
+  const soft = showsSoftphone(stats, softphoneEnabled);
   const conversionRate = conversionRateReadout(stats);
   const handleTime = handleTimeReadout(stats);
   const wrapup = wrapupReadout(stats, wrapupSeconds);
@@ -217,7 +227,7 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
       </div>
 
       <div className={styles.readouts}>
-        <Readout label="Connect rate" testId="connect-rate-readout" readout={connectRate} />
+        <Readout label={soft ? 'Dialler connect rate' : 'Connect rate'} testId="connect-rate-readout" readout={connectRate} />
         {/*
           Immediately after the connect rate, and labelled with its own
           denominator. The two rates on this payload are measured over DIFFERENT
@@ -234,6 +244,12 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
         />
         <Readout label="Handle time" testId="handle-time-readout" readout={handleTime} />
         <Readout label="Wrap-up" testId="wrapup-readout" readout={wrapup} />
+        {soft ? (
+          <>
+            <Readout label="Soft-phone connect rate" testId="softphone-rate-readout" readout={softphoneConnectRateReadout(stats)} />
+            <Readout label="All calls connect rate" testId="all-calls-rate-readout" readout={allCallsConnectRateReadout(stats)} />
+          </>
+        ) : null}
       </div>
 
       {/*

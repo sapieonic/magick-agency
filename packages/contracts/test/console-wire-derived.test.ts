@@ -164,6 +164,8 @@ interface OldAgencyCampaignStats {
   connect_rate_pct?: number | null;
   // Added deliberately (IN10): the connect rate's own denominator, for its fraction and floor.
   first_dials_placed?: number;
+  // Added deliberately (SR1–SR3): the tagged soft-phone calls, beside the dialler's figures.
+  softphone?: { placed: number; connected: number; human_connects: number };
   human_connects?: number;
   machine_connects?: number;
   unclassified_connects?: number;

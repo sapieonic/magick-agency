@@ -182,7 +182,23 @@ describe('campaign workbook', async () => {
       ['Success rate', 'success_rate'],
       ['Abandonment', 'abandonment_rate'],
       ['Callbacks booked', 'callbacks_booked'],
+      ['Soft-phone calls placed', 'softphone_calls'],
     ]);
+  });
+  it('writes the soft-phone calls logged to the campaign last on the Summary, beside the dialler\'s (SR1)', () => {
+    const summary = wb.getWorksheet('Summary')!;
+    const rows: Array<[string, unknown]> = [];
+    summary.eachRow((r) => { rows.push([String(r.getCell(1).value), r.getCell(2).value]); });
+    const at = (metric: string) => rows.find(([m]) => m === metric)?.[1];
+    expect(at('Soft-phone calls placed')).toBe(42);
+    expect(at('Soft-phone calls connected')).toBe(30);
+    expect(at('Soft-phone people reached')).toBe(18);
+    // 18 / 42, a fraction under the report's percentage format.
+    expect(Number(at('Soft-phone connect rate'))).toBeCloseTo(18 / 42, 6);
+    // The dialler's connect rate is the dialler's alone: people reached over first dials.
+    const firstDials = d.trends.buckets.reduce((s, b) => s + b.first_dials, 0);
+    expect(Number(at('Connect rate'))).toBeCloseTo(d.activity.calls.human_connects / firstDials, 6);
+    expect(rows.map(([m]) => m).slice(-4)).toEqual(['Soft-phone calls placed', 'Soft-phone calls connected', 'Soft-phone people reached', 'Soft-phone connect rate']);
   });
   it('writes one Daily row per day and every attempt', () => {
     expect(wb.getWorksheet('Daily')!.actualRowCount).toBe(d.range.days + 1);

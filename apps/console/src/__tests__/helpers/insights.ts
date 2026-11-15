@@ -272,6 +272,7 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
       redials: { placed: 41, connected: 29, chains_at_limit: 3, refused_at_limit: 1 },
       agent_retries: { reopened_dials: 6, reopened_connected: 2, manual_dials: 8, manual_connected: 3 },
       softphone_calls: 7,
+      softphone: { placed: 7, connected: 4, human_connects: 3 },
       talk_seconds: 400 * 178,
       wrapup_seconds: 380 * 43,
       wrapup_measured: 380,
