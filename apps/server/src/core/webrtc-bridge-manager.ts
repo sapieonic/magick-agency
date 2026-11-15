@@ -1454,6 +1454,11 @@ export class WebRtcBridgeManager {
         log.warn({ err, callId: params.callId, capacity }, 'Inbound call admitted with no telephony slot');
       }
     }
+    // A `no_capacity` call only hears "busy" and is never connected: the router takes its
+    // admission and its recording back (`refuseAdmission`, the spine and the leg row). The session
+    // drops it too, so a recording URL the carrier still sends is discarded at the bridge's door,
+    // logged and counted (RC1), rather than silently by the repository's guard.
+    if (capacity === 'no_capacity') recordEnabled = false;
     // The admission awaited: a retry of the same answer may have registered the leg meanwhile.
     const raced = this.sessions.get(params.callId);
     if (raced) {
