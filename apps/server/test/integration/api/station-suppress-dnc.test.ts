@@ -12,8 +12,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * the agent app told the agent the number was on the list. The soft phone and inbound already
  * wrote a campaign entry for the same outcome; the station now does too.
  *
- * Mutation-checked: removing the write (step 5a in `api/routes/agency/attempts.ts`) reds the
- * first case.
+ * The entry is written with the outcome's FIRST write, in one transaction with it: a replay
+ * never puts back a number an admin removed, and a failed entry records no outcome, so the
+ * agent's retry writes both.
+ *
+ * Mutation-checked: never writing the entry reds the first, replay-free cases; writing it on
+ * every write (replays too) reds "a replay after an admin removed the entry".
  */
 
 const mocks = vi.hoisted(() => {
@@ -159,6 +163,34 @@ describe('a station outcome that suppresses puts the number on the campaign\'s D
     const c = await parked();
     expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
     expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
+    expect(await dncRows()).toHaveLength(1);
+  });
+
+  it('a replay after an admin removed the entry does not put the number back', async () => {
+    const c = await parked();
+    expect((await dispose(c, { disposition_code: 'do_not_call' })).statusCode).toBe(200);
+    // The customer later consented and an admin removed the entry from the list.
+    await getTestPool().query('DELETE FROM dnc_entries WHERE tenant_id = $1', [tenant]);
+    // A queued retry, or a supervisor re-filing the same code from the history, lands.
+    const replay = await dispose(c, { disposition_code: 'do_not_call' });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(await dncRows()).toEqual([]);
+  });
+
+  it('the outcome and its entry land together: a failed entry records no outcome, and the retry writes both', async () => {
+    const c = await parked();
+    await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_away');
+    try {
+      const failed = await dispose(c, { disposition_code: 'do_not_call' });
+      expect(failed.statusCode).toBeGreaterThanOrEqual(500);
+    } finally {
+      await getTestPool().query('ALTER TABLE dnc_entries_away RENAME TO dnc_entries');
+    }
+    const { rows } = await getTestPool().query('SELECT disposition_code FROM agency_call_attempts WHERE id = $1', [c.attempt]);
+    expect(rows[0]!.disposition_code).toBeNull();
+    // The retry is a first write again, so it writes the entry as well as the outcome.
+    const retried = await dispose(c, { disposition_code: 'do_not_call' });
+    expect(retried.statusCode, retried.body).toBe(200);
     expect(await dncRows()).toHaveLength(1);
   });
 

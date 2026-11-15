@@ -149,7 +149,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // ── 4. The write. Same code ⇒ success; different code ⇒ 409 ──────────
     // One guarded UPDATE does both, so a double-click cannot interleave a read
     // with a write and quietly overwrite the record of a conversation.
-    const updated = await agencyAttemptRepository.recordDisposition({
+    const dispositionWrite = {
       attemptId: attempt.id,
       dispositionCode: resolved.entry.code,
       notes: fields.notes,
@@ -158,7 +158,48 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       onBehalf: actor.onBehalf,
       promiseDate: fields.promise?.date ?? null,
       promiseAmount: fields.promise?.amount ?? null,
-    });
+    };
+    // ── A `suppress` outcome is a Do Not Call mark for this campaign (DS8) ──
+    // The customer asked not to be called, so the number goes on the list, not only this one
+    // contact: without a `dnc_entries` row another contact on the same number stayed dialable
+    // and a re-upload brought the number back. Campaign scope, as the station's own mark
+    // defaults to and as the soft phone and inbound write for the same outcome
+    // (`disposition:<code>`, by whoever filed it).
+    //
+    // Only on the outcome's FIRST write, and in one transaction with it (B8, as the DNC
+    // route's optional disposition): a failed entry rolls the outcome back, so the agent's
+    // retry is a first write again and writes both. A same-code REPLAY (a queued retry, a
+    // supervisor re-filing from history) writes no entry, so it never puts back a number an
+    // admin has since removed from the list. Two first writes racing both write: the entry is
+    // idempotent. A number that is not usable E.164 writes nothing, as `markDnc` always has.
+    const dncPhone = resolved.entry.suppress === true && attempt.disposition_code === null
+      ? (contactRow?.phone_e164 ?? (await agencyContactRepository.findById(attempt.contact_id))?.phone_e164 ?? null)
+      : null;
+    let updated: Awaited<ReturnType<typeof agencyAttemptRepository.recordDisposition>>;
+    if (dncPhone) {
+      const client = await getPool().connect();
+      try {
+        await client.query('BEGIN');
+        updated = await agencyAttemptRepository.recordDisposition(dispositionWrite, { client });
+        if (updated) {
+          await markDnc({
+            tenantId: attempt.tenant_id,
+            campaignId: campaign.id,
+            phoneE164: dncPhone,
+            reason: `disposition:${resolved.entry.code}`,
+            addedBy: actor.actorUserId,
+          }, { client });
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      updated = await agencyAttemptRepository.recordDisposition(dispositionWrite);
+    }
     if (!updated) {
       // The predicate only fails on a DIFFERENT code — a same-code replay is a
       // successful write above. Silently rewriting the record of what was said
@@ -317,33 +358,6 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
         { contactId: attempt.contact_id, attemptId: attempt.id, dispositionCode: resolved.entry.code },
         'Disposition recorded; the contact no longer belongs to this attempt and was left as it is',
       );
-    }
-
-    // ── 5a. A `suppress` outcome is a Do Not Call mark for this campaign (DS8) ──
-    // The customer asked not to be called, so the number goes on the list, not only this one
-    // contact: without a `dnc_entries` row another contact on the same number stayed dialable
-    // and a re-upload brought the number back. Campaign scope, as the station's own mark
-    // defaults to and as the soft phone and inbound already write for the same outcome
-    // (`disposition:<code>`, by whoever filed it). Written whether or not the contact still
-    // belonged to this attempt above: what the customer said stands either way. Idempotent,
-    // so a same-code replay lands here again harmlessly. Not swallowed, like the promise below:
-    // a failed write fails the save, the agent saves again, and the replay writes it.
-    if (resolved.entry.suppress === true) {
-      const phone = contactRow?.phone_e164
-        ?? (await agencyContactRepository.findById(attempt.contact_id))?.phone_e164
-        ?? null;
-      if (phone) {
-        const marked = await markDnc({
-          tenantId: attempt.tenant_id,
-          campaignId: campaign.id,
-          phoneE164: phone,
-          reason: `disposition:${resolved.entry.code}`,
-          addedBy: actor.actorUserId,
-        });
-        if (!marked.recorded && marked.phoneE164 !== null) {
-          throw new Error('The Do Not Call entry for a suppressing outcome could not be written');
-        }
-      }
     }
 
     // ── 5b. The contact's latest promise (PT6, PT7) ─────────────────────────
