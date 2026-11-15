@@ -1552,3 +1552,12 @@ for in `agency_insights_rollup_dirty`, and the job recomputes it. The URLs stay 
    re-validates the catalog is refused until it is renamed. Attempts such a campaign dispositioned
    `redialed` by hand read, to the campaign stats, as redialled originals (not counted as a
    conversation). Check imported catalogs for the code before launch.
+
+### 0044 — `migrations/0044_promise_checks_validate.sql`
+
+Validates 0041's four `NOT VALID` CHECKs (`ck_agency_attempt_promise`,
+`ck_agency_manual_call_promise`, `ck_agency_inbound_call_promise`, `ck_agency_contact_promise`) in
+its own transaction under SHARE UPDATE EXCLUSIVE (0010's and 0025's pattern). Down is a no-op.
+**Tests**: `test/integration/db/promise-to-pay-migration.test.ts` (NOT VALID after 0041 alone,
+validated after 0044), `contact-assignment-migration.test.ts` (no CHECK on the contact tables left
+unvalidated) and the down → up inventory suite.

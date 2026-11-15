@@ -18,7 +18,7 @@ before writing a repository or a migration.
   and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped, 0041
   promise to pay: the promise on each call table and the contact's latest one, 0042 the
   roster import's check-then-import and skipped rows, 0043 no schema change: the Insights buckets of
-  calls holding a recording they did not ask for are recounted). node-pg-migrate,
+  calls holding a recording they did not ask for are recounted, 0044 validates 0041's CHECKs). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

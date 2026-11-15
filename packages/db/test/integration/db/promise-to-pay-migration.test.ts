@@ -2,7 +2,8 @@
 // globalSetup has applied every migration. Pins the promise columns on the three call tables
 // (exact NUMERIC, an amount only beside a date, a promise only beside an outcome), the contact's
 // latest-promise columns and their all-or-none CHECK, the partial index, the CHECKs added NOT
-// VALID (no scan of the big tables), and down then up.
+// VALID (no scan of the big tables) and validated by 0044_promise_checks_validate.sql, and down
+// then up.
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -93,15 +94,19 @@ describe('0041 — promise to pay', () => {
     }
   });
 
-  it('the CHECKs are NOT VALID (enforced on writes, no scan of the big tables)', async () => {
-    const { rows } = await pool().query<{ conname: string; convalidated: boolean }>(
-      `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'ck_agency_%promise' ORDER BY conname`);
-    expect(rows).toEqual([
-      { conname: 'ck_agency_attempt_promise', convalidated: false },
-      { conname: 'ck_agency_contact_promise', convalidated: false },
-      { conname: 'ck_agency_inbound_call_promise', convalidated: false },
-      { conname: 'ck_agency_manual_call_promise', convalidated: false },
-    ]);
+  it('0041 adds the CHECKs NOT VALID (enforced on writes, no scan of the big tables); 0044 validates them', async () => {
+    const promiseChecks = async () => (await pool().query<{ conname: string; convalidated: boolean }>(
+      `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'ck_agency_%promise' ORDER BY conname`)).rows;
+    const names = ['ck_agency_attempt_promise', 'ck_agency_contact_promise', 'ck_agency_inbound_call_promise', 'ck_agency_manual_call_promise'];
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    await migrate('down', files.length - files.indexOf(FILE));
+    try {
+      await migrate('up', 1); // 0041 on its own
+      expect(await promiseChecks()).toEqual(names.map((conname) => ({ conname, convalidated: false })));
+    } finally {
+      await migrate('up');
+    }
+    expect(await promiseChecks()).toEqual(names.map((conname) => ({ conname, convalidated: true })));
   });
 
   it('idx_agency_contacts_promise is partial on contacts holding a promise', async () => {
