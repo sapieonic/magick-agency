@@ -1092,7 +1092,7 @@ domain, contracts and console.
   re-check and the console. The internal handler checks every create, PATCH and retry override
   against the stored campaign (or parent), so a catalog edit that would break a mapping is
   refused, keyed on the mapping (OD6); retry campaigns inherit the map (OD8).
-- Reads: the attempt lists and their CSV (a last column), the supervisor's call page, the
+- Reads: the attempt lists and their CSV (column `auto_disposition_code`), the supervisor's call page, the
   agent's calls, the station's prior attempts (and the soft phone's), and the customer-history
   timeline (its CSV export adds it to "Details"). The console tags it "(automatic)", secondary
   under a write-up; the builder's editor offers only eligible outcomes, keeps a stale mapping
@@ -1706,7 +1706,7 @@ analytics. Built beside the dialler's figures, never blended into its connect ra
   connect rate" and add the soft phone's and all calls' rates. Shown while the soft phone is on or
   when there are any (SR5). Call log's Export CSV says the file holds them.
 - **Export** (SR6). `attempts.csv` drains the campaign call log: attempts and tagged soft-phone
-  calls newest first on one keyset; a new last column `source` (`dialler` | `soft_phone`); the
+  calls newest first on one keyset; a new column `source` (`dialler` | `soft_phone`) after `auto_disposition_code`, the promise columns after it; the
   attempt filters mapped onto the soft-phone call; `?source=dialler|soft_phone`. Existing columns
   unchanged.
 - **Campaign report** (SR8): Summary rows and a PDF line; the account report is a follow-up.

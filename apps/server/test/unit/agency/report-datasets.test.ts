@@ -267,6 +267,15 @@ describe('the definitions pages', () => {
     expect(keys(campaignDefinitions())).toEqual([...REPORT_DEFINITION_KEYS.campaign]);
     expect(keys(accountDefinitions())).toEqual([...REPORT_DEFINITION_KEYS.account]);
   });
+
+  it('the account report, which leaves the soft phone\'s figures out, never points at them (SR8)', () => {
+    const campaignRate = campaignDefinitions().find((x) => x.key === 'connect_rate')!;
+    expect(campaignRate.text).toContain('(see Soft-phone calls)');
+    const accountRate = accountDefinitions().find((x) => x.key === 'connect_rate')!;
+    expect(accountRate.label).toBe(campaignRate.label);
+    expect(accountRate.text).toContain('Soft-phone calls are not in it.');
+    for (const def of accountDefinitions()) expect(def.text, def.key).not.toContain('see Soft-phone calls');
+  });
 });
 
 describe('labels', () => {

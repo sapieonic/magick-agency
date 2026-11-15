@@ -185,7 +185,7 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
    */
   const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const exportTitle = softphoneOn
-    ? 'Download everything matching the filters above, not just the rows on screen, with the soft-phone calls logged to this campaign (the last column, source, says which)'
+    ? 'Download everything matching the filters above, not just the rows on screen, with the soft-phone calls logged to this campaign (its source column says which)'
     : 'Download everything matching the filters above, not just the rows on screen';
 
   /**
@@ -437,7 +437,7 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
           ...(softphoneOn
-            ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its last column, source.']
+            ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its source column.']
             : []),
         ]}
       />
