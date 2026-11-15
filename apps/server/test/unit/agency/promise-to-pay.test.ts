@@ -107,6 +107,23 @@ describe('PT4, PT8: the disposition\'s promise fields', () => {
     expect(softphoneRefusalMessage({ code: 'disposition_invalid', reason: 'promise_required' }))
       .toBe(dispositionErrorMessage('promise_required'));
     expect(softphoneRefusalMessage({ code: 'disposition_invalid', reason: 'unknown_code' })).toBe('That outcome cannot be saved as submitted.');
+    // PT13: the soft phone's own, on a call with no claimed contact.
+    expect(softphoneRefusalMessage({ code: 'disposition_invalid', reason: 'promise_needs_contact' }))
+      .toMatch(/not an open contact on the campaign's list\. Pick another outcome/);
+  });
+
+  it('a same-code replay may send its stored date after that day has passed; only that date, only that code', () => {
+    const base = { catalog: [PTP] as AgencyDisposition[], code: 'ptp', callFields: [], submittedFields: undefined, storedFields: {}, now };
+    // `now` is the 15th: the 14th is the past.
+    const replay = prepareManualDisposition({ ...base, promiseDate: '2026-11-14', recorded: { code: 'ptp', promiseDate: '2026-11-14' } });
+    expect(replay.ok && replay.prepared.promise).toMatchObject({ date: '2026-11-14' });
+    expect(prepareManualDisposition({ ...base, promiseDate: '2026-11-13', recorded: { code: 'ptp', promiseDate: '2026-11-14' } }))
+      .toEqual({ ok: false, refusal: { code: 'disposition_invalid', reason: 'invalid_promise_date' } });
+    // Stored under another code: this save is not a replay of it.
+    expect(prepareManualDisposition({ ...base, promiseDate: '2026-11-14', recorded: { code: 'other', promiseDate: '2026-11-14' } }))
+      .toEqual({ ok: false, refusal: { code: 'disposition_invalid', reason: 'invalid_promise_date' } });
+    expect(validateDispositionFields(PTP, { promise_date: '2026-11-14' }, now, undefined, '2026-11-14'))
+      .toMatchObject({ ok: true, promise: { date: '2026-11-14' } });
   });
 
   it('the soft phone and inbound outcome name the promise refusal as their reason', () => {

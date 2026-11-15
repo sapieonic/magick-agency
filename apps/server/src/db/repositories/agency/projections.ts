@@ -78,7 +78,7 @@ export function promiseDateText(value: Date | string | null | undefined): string
 /**
  * A contact's latest promise (PT6, PT7) → the wire shape, or null without one. The state is
  * read from the stored day bounds and follow-up against `now`, the same comparison the
- * Contacts list's `?promise=` filter makes in SQL (`promiseStateSql`).
+ * Contacts list's `?promise=` filter makes in SQL (`promiseFilterSql`).
  */
 export function contactPromise(
   row: Pick<AgencyContactRecord,

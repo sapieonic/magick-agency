@@ -35,10 +35,12 @@
 -- Why denormalised rather than read from the calls (PT6): "the latest promise across three call
 -- tables" is a three-way lateral per contact row on a list sized for a million contacts, and its
 -- filter (contacts with a promise, missed ones) could not use an index. The copy is one row write
--- beside the disposition's own contact write, in the same transaction.
+-- beside the disposition's own contact write: in the outcome's transaction on the soft phone and
+-- inbound; on the station after the outcome's write, as its contact release is, where a failure
+-- fails the save and the agent's retry (a same-code replay) writes it.
 --
 -- idx_agency_contacts_promise (campaign_id, promise_date) WHERE promise_date IS NOT NULL: the
--- Contacts list's promise filter and the "Promised for" order read only contacts holding a
+-- Contacts list's promise filter reads only contacts holding a
 -- promise. Partial, so it is the size of the promises, not the roster. `IF NOT EXISTS`, so a
 -- deployment can build it CONCURRENTLY first (db-hygiene.md).
 --

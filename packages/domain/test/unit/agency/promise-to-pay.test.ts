@@ -133,6 +133,22 @@ describe('validatePromiseFields (PT8)', () => {
     expect(validatePromiseFields(ptp, { promise_date: '2026-11-18', promise_amount: '-5' }, today))
       .toEqual({ ok: false, code: 'invalid_promise_amount' });
   });
+  it('a same-code replay that sends the stored date again is not refused for its day having passed; any other date is checked in full', () => {
+    // Saved on the 14th for the 14th; replayed on the 15th (a retry queued across midnight).
+    expect(validatePromiseFields(ptp, { promise_date: '2026-11-14', promise_amount: '10' }, today, '2026-11-14'))
+      .toEqual({ ok: true, promise: { day: day(2026, 11, 14), date: '2026-11-14', amount: '10.00' } });
+    // A changed date is a new promise: the past is refused.
+    expect(validatePromiseFields(ptp, { promise_date: '2026-11-13' }, today, '2026-11-14'))
+      .toEqual({ ok: false, code: 'invalid_promise_date' });
+    // The forward bound always holds, and a malformed date is never waived.
+    expect(validatePromiseFields(ptp, { promise_date: '2027-01-30' }, today, '2027-01-30'))
+      .toEqual({ ok: false, code: 'invalid_promise_date' });
+    expect(validatePromiseFields(ptp, { promise_date: '2026-02-30' }, today, '2026-02-30'))
+      .toEqual({ ok: false, code: 'invalid_promise_date' });
+    // Without a stored date (a first save), the past is refused.
+    expect(validatePromiseFields(ptp, { promise_date: '2026-11-14' }, today, null))
+      .toEqual({ ok: false, code: 'invalid_promise_date' });
+  });
   it('refuses a promise on an entry that does not ask for one, and passes an entry without one', () => {
     expect(validatePromiseFields({}, { promise_date: '2026-11-18' }, today)).toEqual({ ok: false, code: 'promise_not_expected' });
     expect(validatePromiseFields({}, { promise_amount: '1' }, today)).toEqual({ ok: false, code: 'promise_not_expected' });

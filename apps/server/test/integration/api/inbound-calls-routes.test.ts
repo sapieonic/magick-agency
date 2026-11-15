@@ -235,7 +235,32 @@ describe('promise to pay on an answered inbound call (PT1, PT2, PT6)', () => {
       expect(follow.statusCode, follow.body).toBe(200);
       expect(follow.json()).toMatchObject({ contact_state: 'pending' });
       const [y, m, d] = date.split('-').map(Number);
-      expect(new Date(follow.json().next_attempt_at).getTime()).toBeGreaterThanOrEqual(Date.UTC(y!, m! - 1, d! + 3) - 14 * 3_600_000);
+      const firstAt = new Date(follow.json().next_attempt_at).getTime();
+      expect(firstAt).toBeGreaterThanOrEqual(Date.UTC(y!, m! - 1, d! + 3) - 14 * 3_600_000);
+
+      // A same-code replay correcting the promised date moves the booked follow-up (as the soft
+      // phone's and the station's replays do).
+      const later = new Date(Date.now() + 9 * 86_400_000).toISOString().slice(0, 10);
+      const moved = await call('POST', `/calls/${f.id}/disposition`, agent(0), { code: 'ptp_follow', promise_date: later });
+      expect(moved.statusCode, moved.body).toBe(200);
+      expect(moved.json()).toMatchObject({ contact_state: 'pending', call: { promise_date: later } });
+      const [ly, lm, ld] = later.split('-').map(Number);
+      const movedAt = new Date(moved.json().next_attempt_at).getTime();
+      expect(movedAt).toBeGreaterThanOrEqual(Date.UTC(ly!, lm! - 1, ld! + 3) - 14 * 3_600_000);
+      expect(movedAt).toBeGreaterThan(firstAt);
+      const { rows: [movedRow] } = await q('SELECT state, next_attempt_at FROM agency_contacts WHERE id = $1', [f.contactId]);
+      expect(movedRow).toEqual({ state: 'pending', next_attempt_at: new Date(movedAt) });
+
+      // The promised day has passed (the stored date set back to yesterday): the replay that
+      // sends it again is not refused for it; a new past date still is.
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+      await q('UPDATE agency_inbound_calls SET promise_date = $2::date WHERE id = $1', [f.id, yesterday]);
+      const kept = await call('POST', `/calls/${f.id}/disposition`, agent(0), { code: 'ptp_follow', promise_date: yesterday });
+      expect(kept.statusCode, kept.body).toBe(200);
+      const twoAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+      const refused = await call('POST', `/calls/${f.id}/disposition`, agent(0), { code: 'ptp_follow', promise_date: twoAgo });
+      expect(refused.statusCode, refused.body).toBe(400);
+      expect(refused.json()).toMatchObject({ code: 'inbound_disposition_invalid', reason: 'invalid_promise_date' });
     } finally {
       await q('UPDATE agency_campaigns SET disposition_catalog = $2::jsonb WHERE id = $1', [campaignId, JSON.stringify(before!.disposition_catalog)]);
     }

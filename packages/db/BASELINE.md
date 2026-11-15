@@ -1450,9 +1450,9 @@ next day's start in the customer's zone, computed by the server, so the list's s
 comparison of instants with no zone arithmetic in SQL), **`promise_call_at`** (when the recording
 call started: a later call's promise replaces it, the same call's replay corrects it) and
 **`promise_followed_up_at`** (a later call's outcome on or after the day: "followed up", else
-"missed"); `ck_agency_contact_promise` keeps them all-or-none. All four CHECKs are added NOT VALID
+"missed"; a replay of the promise's own call that keeps its date keeps the mark); `ck_agency_contact_promise` keeps them all-or-none. All four CHECKs are added NOT VALID
 (new NULL columns; enforced on writes, no scan). **`idx_agency_contacts_promise`** `(campaign_id,
-promise_date) WHERE promise_date IS NOT NULL` serves the list's promise filter and order, the size
+promise_date) WHERE promise_date IS NOT NULL` serves the list's promise filter (the list is not ordered by it), the size
 of the promises rather than the roster (`IF NOT EXISTS`). **Down** drops the index, CHECKs and
 columns (the promises are lost; outcomes stay). **Tests**:
 `test/integration/db/promise-to-pay-migration.test.ts` (column types, each CHECK, NOT VALID, the

@@ -191,11 +191,19 @@ export interface ValidPromise {
  *  - an entry with it needs a date (`promise_required`; an amount alone is still that);
  *  - the date must pass {@link promiseDateRefusal} against the customer's `today`;
  *  - the amount, when given, must pass {@link normalisePromiseAmount}.
+ *
+ * `recordedDate` is the promised date already stored on the call when this submission is a
+ * same-code replay of its outcome (a corrected amount, a retry queued across midnight, a
+ * supervisor re-filing from history). Sending that date again is not a new promise: it was
+ * checked against the customer's today when it was first saved, so it is not refused for
+ * having since become the past. Only the past-date check is waived, and only for that exact
+ * date; a changed date is checked in full, and the forward bound always holds.
  */
 export function validatePromiseFields(
   entry: { requires_promise?: unknown },
   body: { promise_date?: unknown; promise_amount?: unknown },
   today: PromiseDay,
+  recordedDate?: string | null,
 ): { ok: true; promise: ValidPromise | null } | { ok: false; code: PromiseFieldRefusal } {
   const hasDate = !(body.promise_date === undefined || body.promise_date === null || body.promise_date === '');
   const hasAmount = hasPromiseAmount(body.promise_amount);
@@ -203,7 +211,9 @@ export function validatePromiseFields(
     return hasDate || hasAmount ? { ok: false, code: 'promise_not_expected' } : { ok: true, promise: null };
   }
   if (!hasDate) return { ok: false, code: 'promise_required' };
-  if (promiseDateRefusal(body.promise_date, today) !== null) return { ok: false, code: 'invalid_promise_date' };
+  const dateRefusal = promiseDateRefusal(body.promise_date, today);
+  const kept = dateRefusal === 'past' && typeof recordedDate === 'string' && body.promise_date === recordedDate;
+  if (dateRefusal !== null && !kept) return { ok: false, code: 'invalid_promise_date' };
   let amount: string | null = null;
   if (hasAmount) {
     amount = normalisePromiseAmount(body.promise_amount);

@@ -1042,3 +1042,38 @@ describe('a tagged call whose campaign can no longer be tagged', () => {
     expect(api.dispositionManualCall).toHaveBeenCalledWith('mc-1', expect.objectContaining({ code: 'interested' }), 't-1', 'a-1');
   });
 });
+
+describe('promise outcomes need a contact the call claimed (PT13)', () => {
+  const PTP_CAMPAIGN = {
+    ...CAMPAIGN,
+    disposition_catalog: [
+      ...CAMPAIGN.disposition_catalog,
+      { code: 'ptp', label: 'Promised to pay', requires_promise: true, promise_follow_up_days: 2 },
+    ],
+  };
+  const owed = (contact: AgencyManualCall['contact']) => manualCall({
+    tag: { campaign_id: CAMPAIGN.campaign_id, campaign_name: CAMPAIGN.campaign_name }, contact,
+    state: 'ended', outcome: 'connected', end_reason: 'remote_hangup', requires_disposition: true,
+    bridged_at: '2026-10-30T10:00:08Z', ended_at: '2026-10-30T10:01:00Z', talk_seconds: 52,
+  });
+
+  it.each([
+    ['no roster contact', null],
+    ['a contact the call only linked', { contact_id: 'ct-1', state: 'completed' as const, claimed: false }],
+  ])('hides them on a tagged call with %s', async (_name, contact) => {
+    api.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, call_fields: [], taggable_campaigns: [PTP_CAMPAIGN], call: owed(contact) });
+    await mount();
+    expect(rail()).toBe('Outcome needed');
+    expect(screen.getByText('Interested, renewing')).toBeTruthy();
+    expect(screen.queryByText('Promised to pay')).toBeNull();
+  });
+
+  it('offers them on a call that claimed its contact', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue({
+      ...BOOTSTRAP, call_fields: [], taggable_campaigns: [PTP_CAMPAIGN],
+      call: owed({ contact_id: 'ct-1', state: 'in_flight', claimed: true }),
+    });
+    await mount();
+    expect(screen.getByText('Promised to pay')).toBeTruthy();
+  });
+});

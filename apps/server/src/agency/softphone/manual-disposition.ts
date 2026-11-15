@@ -90,6 +90,11 @@ export function prepareManualDisposition(input: {
   promiseAmount?: unknown;
   /** The customer's today for a promised date (PT4); absent: today in UTC. */
   promiseToday?: PromiseDay;
+  /**
+   * The call's stored outcome (`disposition_code`, `promise_date` as `YYYY-MM-DD`): when the
+   * submission repeats that code, its stored date is not refused for having passed (a replay).
+   */
+  recorded?: { code: string | null; promiseDate: string | null };
   callFields: readonly AgencyCallField[];
   submittedFields: unknown;
   storedFields: AgencyCallFieldValues;
@@ -107,6 +112,7 @@ export function prepareManualDisposition(input: {
     },
     input.now,
     input.promiseToday,
+    input.recorded && input.recorded.code === resolved.entry.code ? input.recorded.promiseDate : null,
   );
   if (!fields.ok) {
     const reason = MANUAL_DISPOSITION_REASONS.has(fields.code)

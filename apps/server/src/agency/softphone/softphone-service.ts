@@ -39,6 +39,7 @@ import {
   agencyInboundCallRepository,
   agencyManualCallRepository,
   agencySoftphoneSettingsRepository,
+  promiseDateText,
 } from '../../db/repositories/agency.repository.js';
 import {
   isCampaignSession,
@@ -56,7 +57,7 @@ import type { StationRegistry } from '../station-registry.js';
 import { submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import { runManualPredial, softphoneCarrier } from './manual-predial.js';
 import { manualDispositionDecision, prepareManualDisposition, resolveManualCatalog } from './manual-disposition.js';
-import { promiseZoneFor } from '../disposition.js';
+import { promiseZoneFor, resolveDisposition } from '../disposition.js';
 import { contactPromiseWrite, promiseFollowUpAt } from '../promise-to-pay.js';
 import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import type { ManualDialer } from './manual-dialer.js';
@@ -525,6 +526,15 @@ export class SoftphoneService {
     const tag = row.campaign_id ? await agencyCampaignRepository.findById(row.campaign_id) : null;
     const settings = await agencySoftphoneSettingsRepository.get(actor.tenantId, actor.accountId);
     const { catalog, source } = resolveManualCatalog(tag, row.campaign_id !== null, settings);
+    // A promise needs a contact this call settles (PT13): one it CLAIMED from the tag's roster.
+    // With no contact there is nowhere to keep it, and a contact the call only linked (one
+    // already closed, exhausted or suppressed) is not settled by it, so a follow-up would never
+    // be booked though the pad promised one. Refused before the fields, so the agent is told
+    // this rather than asked for a date; the pads hide such entries on these calls.
+    const asked = resolveDisposition(catalog, req.code);
+    if (asked.ok && asked.entry.requires_promise === true && !(row.contact_id && row.contact_claimed)) {
+      return refuse({ code: 'disposition_invalid', reason: 'promise_needs_contact' });
+    }
     const now = new Date();
     // The contact up front: a promise's "today" is the customer's (PT4).
     const contact = row.contact_id ? await agencyContactRepository.findById(row.contact_id) : null;
@@ -537,6 +547,7 @@ export class SoftphoneService {
       promiseDate: req.promiseDate,
       promiseAmount: req.promiseAmount,
       promiseToday: todayIn(promiseZone, now) ?? undefined,
+      recorded: { code: row.disposition_code, promiseDate: promiseDateText(row.promise_date ?? null) },
       callFields: settings.call_fields,
       submittedFields: req.fields,
       storedFields: row.fields ?? {},
@@ -545,8 +556,8 @@ export class SoftphoneService {
     if (!prepared.ok) return prepared;
     const { entry, notes, callbackAt, promise } = prepared.prepared;
     // A promise is only ever asked by a campaign catalogue (the soft phone's own refuses
-    // `requires_promise`), so an untagged call never has one. Its follow-up (PT2) takes the
-    // callback arm; without one a promise books nothing (PT3).
+    // `requires_promise`), and only on a call that claimed its contact (above). Its follow-up
+    // (PT2) takes the callback arm; without one a promise books nothing (PT3).
     const followUpAt = promiseFollowUpAt(entry, promise, promiseZone);
     const { decision, nextAttemptAt } = manualDispositionDecision({
       entry, now, callbackAt: callbackAt ?? followUpAt, placed: row.dialed_at !== null, contact, tag,
