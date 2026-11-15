@@ -1868,6 +1868,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/OutcomeDispositionMap.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/PriorAttemptsList.autoDisposition.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/DispositionPad.test.tsx` | 29 |
+| `apps/console/src/__tests__/components/PromiseToPay.test.tsx` (the promise picker on the pad, its date bounds, the refusal copy) | 10 |
 | `apps/console/src/__tests__/components/DncControl.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/GlobalSearchAccounts.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
