@@ -45,7 +45,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn
 
 const { campaigns, attempts, contacts } = vi.hoisted(() => ({
   campaigns: { findById: vi.fn() },
-  attempts: { listForCampaign: vi.fn() },
+  attempts: { listForCampaign: vi.fn(), listCallLogForCampaign: vi.fn() },
   contacts: { listForCampaign: vi.fn(), findDetailScoped: vi.fn() },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -94,6 +94,7 @@ beforeEach(() => {
   flags.isEnabled.mockResolvedValue(true);
   campaigns.findById.mockResolvedValue(CAMPAIGN);
   attempts.listForCampaign.mockResolvedValue(EMPTY);
+  attempts.listCallLogForCampaign.mockResolvedValue(EMPTY);
   contacts.listForCampaign.mockResolvedValue(EMPTY);
 });
 
@@ -436,6 +437,50 @@ describe('the contact drill-down', () => {
     });
     expect(res.statusCode).toBe(404);
     expect(contacts.findDetailScoped).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('GET /:id/call-log: the campaign call log the export drains (SR6)', () => {
+  it('is behind auth, the dialer flag and the ownership probe, as the attempt list is', async () => {
+    const app = await makeApp();
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log', headers: HEADERS });
+    expect(authSpy).toHaveBeenCalledTimes(1);
+    flags.isEnabled.mockResolvedValue(false);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log', headers: HEADERS })).statusCode).toBe(403);
+    flags.isEnabled.mockResolvedValue(true);
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN, tenant_id: 'someone-else' });
+    expect((await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log', headers: HEADERS })).statusCode).toBe(404);
+    expect(attempts.listCallLogForCampaign).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('reads the caller\'s tenant, the filters, `source` and the keyset', async () => {
+    const app = await makeApp();
+    const cursor = encodeKeysetCursor({ at: '2026-08-17T09:00:00.123456Z', id: '11111111-1111-4111-8111-111111111111' });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/agency-campaigns/c1/call-log?source=soft_phone&outcome=connected&limit=500&cursor=${encodeURIComponent(cursor)}`,
+      headers: HEADERS,
+    });
+    expect(res.statusCode).toBe(200);
+    const input = attempts.listCallLogForCampaign.mock.calls[0]![0];
+    expect(input).toMatchObject({ campaignId: 'c1', tenantId: 't1', source: 'soft_phone', limit: 500 });
+    expect(input.filters.outcomes).toEqual(['connected']);
+    expect(input.after).toEqual({ at: '2026-08-17T09:00:00.123456Z', id: '11111111-1111-4111-8111-111111111111' });
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log', headers: HEADERS });
+    expect(attempts.listCallLogForCampaign.mock.calls[1]![0].source).toBeNull();
+    await app.close();
+  });
+
+  it('refuses an unknown source and a malformed agent before any read', async () => {
+    const app = await makeApp();
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?source=softphone', headers: HEADERS });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().details).toEqual([{ param: 'source', message: 'must be one of: dialler, soft_phone' }]);
+    const agent = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?agent_user_id=nope', headers: HEADERS });
+    expect(agent.statusCode).toBe(400);
+    expect(attempts.listCallLogForCampaign).not.toHaveBeenCalled();
     await app.close();
   });
 });

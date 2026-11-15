@@ -19,6 +19,7 @@ import {
 // The codec-free declaration, not `carrier-modules.js`: that loads every carrier's media
 // codec (and the tables it builds at load) into the repository's import graph.
 import { carrierCancelsRinging } from '../../../telephony/carrier-ringing.js';
+import type { CampaignSoftphoneLogRow } from '../../../agency/campaign-call-log.js';
 
 /**
  * Does this row have enough CONNECTS behind it to quote a rate whose denominator is
@@ -98,6 +99,68 @@ export function projectAttemptRow(row: AgencyCallAttemptRecord & {
     // Wrap-up redial (0008): the chain link, so a history can show "redial 1 of …".
     redial_of_attempt_id: row.redial_of_attempt_id,
     redial_number: row.redial_number,
+    created_at: iso(row.created_at) ?? '',
+  };
+}
+
+/**
+ * A soft-phone branch row of the campaign call log (`listCallLogForCampaign`) as the database
+ * returns it: the manual call's columns under the attempt row's names.
+ */
+export interface SoftphoneLogRaw {
+  id: string;
+  campaign_id: string;
+  contact_id: string | null;
+  phone_e164: string;
+  caller_id: string;
+  agent_user_id: string;
+  state: CampaignSoftphoneLogRow['state'];
+  outcome: CampaignSoftphoneLogRow['outcome'];
+  disposition_code: string | null;
+  notes: string | null;
+  callback_at: Date | null;
+  dispositioned_by_user_id: string | null;
+  dispositioned_at: Date | null;
+  dispositioned_on_behalf: boolean;
+  webrtc_call_id: string | null;
+  dialed_at: Date | null;
+  answered_at: Date | null;
+  bridged_at: Date | null;
+  ended_at: Date | null;
+  talk_seconds: number | null;
+  created_at: Date;
+}
+
+/** {@link SoftphoneLogRaw} → the call log's `soft_phone` row: NULL where the soft phone has no such field. */
+export function projectSoftphoneLogRow(row: SoftphoneLogRaw): CampaignSoftphoneLogRow {
+  return {
+    source: 'soft_phone',
+    id: row.id,
+    campaign_id: row.campaign_id,
+    contact_id: row.contact_id,
+    attempt_number: null,
+    phone_e164: row.phone_e164,
+    caller_id: row.caller_id,
+    agent_user_id: row.agent_user_id,
+    reserved_agent_id: null,
+    state: row.state,
+    outcome: row.outcome,
+    disposition_code: row.disposition_code,
+    auto_disposition_code: null,
+    notes: row.notes,
+    callback_at: iso(row.callback_at),
+    dispositioned_by_user_id: row.dispositioned_by_user_id,
+    dispositioned_at: iso(row.dispositioned_at),
+    dispositioned_on_behalf: row.dispositioned_on_behalf,
+    webrtc_call_id: row.webrtc_call_id,
+    dialed_at: iso(row.dialed_at),
+    answered_at: iso(row.answered_at),
+    bridged_at: iso(row.bridged_at),
+    ended_at: iso(row.ended_at),
+    talk_seconds: row.talk_seconds,
+    wrapup_seconds: null,
+    redial_of_attempt_id: null,
+    redial_number: null,
     created_at: iso(row.created_at) ?? '',
   };
 }
