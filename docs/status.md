@@ -1709,14 +1709,23 @@ analytics. Built beside the dialler's figures, never blended into its connect ra
   calls newest first on one keyset; a new column `source` (`dialler` | `soft_phone`) after `auto_disposition_code`, the promise columns after it; the
   attempt filters mapped onto the soft-phone call; `?source=dialler|soft_phone`. Existing columns
   unchanged.
-- **Campaign report** (SR8): Summary rows and a PDF line; the account report is a follow-up.
+- **Campaign report** (SR8): when the window holds a soft-phone call, Soft-phone calls and All
+  calls rows on the Summary and lines in the PDF's Calls section, and the dialler's rate labelled
+  "Dialler connect rate" in both (one gate, `campaignSoftphoneFigures`); the account report is a
+  follow-up.
+- **Fix round after review:** the report follows SR1 (above); Call log's export tip and title show
+  when the campaign holds soft-phone calls with the flag off; the soft phone's and All calls'
+  withheld rates say "Not enough calls"; the export's preamble names what a soft-phone row leaves
+  out (call details, override notes).
 - **Left as the dialler's** (SR7): Agents tab, Trends, Health, the Insights CSV tables, Home, the
   agent record. No index needed (SR9, measured on 2M soft-phone calls). The mobile app is
   unaffected (it reads none of these payloads).
 
 Mutation-checked: blending the soft phone into `/stats`' or Insights' dialler rate, dropping the
 tenant check, the voicemail exclusion, the soft-phone branch's keyset, the export's tenant scope
-and the attempt-only filters, and blending in the console's Calls and Overview rates each go red.
+and the attempt-only filters, and blending in the console's Calls and Overview rates each go red;
+so do the report's gate, its "Dialler connect rate" label and its All calls denominator, the export
+tip's stats half and the withheld readout's noun.
 
 ### Promise to pay 2026-11-15 (PT1–PT14, [`decisions.md`](decisions.md), "Rulings of 2026-11-15: promise to pay")
 

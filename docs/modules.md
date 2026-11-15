@@ -292,7 +292,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 30 |
 | `apps/server/test/unit/agency/promise-to-pay.test.ts` | 20 |
-| `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 47 |
+| `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 51 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/reaper.test.ts` | 45 |
@@ -1850,7 +1850,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
-| `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 19 |
+| `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/CompareTray.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/ComposerSection.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/ConnectionHealthPill.test.tsx` | 8 |
@@ -2082,7 +2082,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgencyAnalyticsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyAttemptCallPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 45 |
-| `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 36 |
+| `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 50 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` (and check, review, Import N contacts, the downloads, the import compared with its check, IM1–IM3) | 15 |
 | `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
@@ -2425,8 +2425,9 @@ checks the dataset (`parseDataset`, `dataset_version`), renders each requested f
 and the gzipped-NDJSON detail reader), `errors.ts` (`RenderFailure`), `signature.ts` (the callback's
 HMAC, as `packages/contracts` defines it), `rates.ts` (the rates and figures the PDF and the
 workbook both print: the agent's rates, `campaignFigures` / `accountFigures` (first dials, answered
-and abandoned, the three rates, handle time), `recordingShare`, `rosterSuccessReportable`, derived
-once so the files cannot disagree), `definitions.ts` (`DEFINITION_KEYS`: the definition keys each
+and abandoned, the three rates, handle time), `campaignSoftphoneFigures` (the soft phone's figures
+and All calls, and whether the campaign report shows them at all, SR8), `recordingShare`,
+`rosterSuccessReportable`, derived once so the files cannot disagree), `definitions.ts` (`DEFINITION_KEYS`: the definition keys each
 kind carries, mirroring the server's `datasets/definitions.ts`; the workbook's lookup is typed by
 kind, so a key the kind never carries fails `tsc`), `version.ts` (`RENDERER_VERSION`).
 
@@ -2462,7 +2463,7 @@ Files: `charts.tsx`, `chrome.ts`, `components.tsx`, `fonts.ts`, `render-pdf.tsx`
 
 | Test file | Cases |
 |---|---|
-| `apps/report-renderer/test/templates.test.ts` | 22 |
+| `apps/report-renderer/test/templates.test.ts` | 24 |
 | `apps/report-renderer/test/pdf.test.ts` | 9 (8 need a Chrome; the ninth fails in CI without one) |
 | `apps/report-renderer/test/chrome.test.ts` | 2 |
 | `apps/report-renderer/test/preview.test.ts` | 1 (opt-in, `REPORT_PREVIEW_DIR`) |
@@ -2478,7 +2479,7 @@ Files: `sheet.ts`, `workbook.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/report-renderer/test/workbook.test.ts` | 18 |
+| `apps/report-renderer/test/workbook.test.ts` | 20 |
 | `apps/report-renderer/test/workbook-memory.test.ts` | 1 |
 
 ### `apps/report-renderer/src/lambda/` and the Lambda entry

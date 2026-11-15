@@ -557,8 +557,10 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   placed) and an **All calls** total beside the dialler's figures, never inside the dialler's
   connect rate, which they then label "Dialler connect rate". They show while the flag is on or
   when the counts hold any call. The campaign call export (`attempts.csv`) carries the tagged calls
-  as `soft_phone` rows (its `source` column), and the campaign report a Soft-phone calls
-  block. Untagged calls are in no campaign's results.
+  as `soft_phone` rows (its `source` column; the call details and override notes are not
+  exported, as its preamble says), and the Call log names them beside its Export button by the
+  same rule; the campaign report adds Soft-phone calls and All calls lines and labels the
+  dialler's rate when the window holds any. Untagged calls are in no campaign's results.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
 - **Roster contact detail.** Where the flag is on and the caller holds `agency.supervise`, a
   "Soft-phone calls" section below the attempts lists the soft-phone calls that matched the contact
