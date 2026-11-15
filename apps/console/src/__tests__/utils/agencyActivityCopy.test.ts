@@ -221,9 +221,13 @@ describe('activityDetailSummary', () => {
 
   it('reports the scope of a do-not-call mark and its reversal', () => {
     expect(activityDetailSummary(row({ action: 'dnc_entry.created', detail: { scope: 'campaign' } })))
-      .toBe('Suppressed, scope: campaign.');
+      .toBe('Added to Do Not Call, for one campaign.');
     expect(activityDetailSummary(row({ action: 'dnc_entry.deleted', detail: { scope: 'tenant' } })))
-      .toBe('Un-suppressed, scope: tenant.');
+      .toBe('Removed from Do Not Call, for every campaign.');
+    expect(activityDetailSummary(row({ action: 'dnc_entry.created', detail: { scope: 'account' } })))
+      .toBe('Added to Do Not Call, for every campaign of one account.');
+    expect(activityDetailSummary(row({ action: 'dnc_entry.created', detail: { scope: 'account_campaign' } })))
+      .toBe('Added to Do Not Call, for one campaign.');
   });
 
   it('names every changed setting, with before and after where the row carries them (IN8)', () => {

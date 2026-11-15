@@ -206,3 +206,37 @@
     white-space: nowrap;
   }
 }
+
+.scopeChoice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scopeOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.scopeSelect {
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.scopeHint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}

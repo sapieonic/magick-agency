@@ -72,7 +72,7 @@ describe('the DNC override says exactly what matched', () => {
     const d = describeDncRefusal(DNC, { number: '+919820461733', campaignName: 'Home Loan Renewals' });
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
     expect(facts['Number']).toBe('+91 98204 61733');
-    expect(facts['Listed for']).toBe('The campaign Home Loan Renewals');
+    expect(facts['Listed for']).toBe('Campaign: Home Loan Renewals');
     expect(facts['Reason']).toBe('Asked not to be called');
     expect(facts['Added']).toBe('12 Oct 2026');
     expect(d.consequence).toMatch(/logged with your name/);
@@ -84,7 +84,7 @@ describe('the DNC override says exactly what matched', () => {
       { number: '+919820461733', campaignName: null },
     );
     const facts = Object.fromEntries(d.facts.map((f) => [f.label, f.value]));
-    expect(facts['Listed for']).toBe('Every campaign and account in this organisation');
+    expect(facts['Listed for']).toBe('Every campaign');
     expect(facts['Reason']).toBe('No reason was recorded');
   });
 });

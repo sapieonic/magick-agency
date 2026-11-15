@@ -315,8 +315,9 @@ export type AgencyStall =
   | {
       code: 'dnc_unavailable';
       /**
-       * Per-tenant, not per-campaign: the DNC set is tenant-flat, so
-       * every campaign in the tenant is stopped by the same fault.
+       * Per-tenant, not per-campaign: every campaign's dial-time check reads the one
+       * `dnc_entries` table (decision B8), so a fault reading it stops every campaign
+       * in the tenant at once.
        */
       tenant_wide: true;
     }

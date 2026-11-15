@@ -221,14 +221,16 @@ describe('deleteById — the removal side of the delta', () => {
   });
 
   describe('deleteById — accountScope (account-scoped caller IDOR guard)', () => {
-    it('adds an account_id equality predicate when accountScope is passed', async () => {
+    it('requires the row to BELONG to the account when accountScope is passed: its own row, or one of its campaigns\' (DS6)', async () => {
       mockDelete({ id: 'e1', phone_e164: '+15551230001', account_id: ACCOUNT, campaign_id: null });
 
       await repo.deleteById('e1', TENANT, ACCOUNT);
 
-      expect(sqlOf()).toBe(
-        'DELETE FROM dnc_entries WHERE id = $1 AND tenant_id = $2 AND account_id = $3 RETURNING *',
-      );
+      const sql = sqlOf().replace(/\s+/g, ' ');
+      expect(sql).toContain('DELETE FROM dnc_entries WHERE id = $1 AND tenant_id = $2::uuid AND (account_id = $3::uuid OR (account_id IS NULL AND campaign_id IN (');
+      expect(sql).toContain('c.tenant_id = $2::uuid AND c.account_id = $3::uuid');
+      // Never the tenant-wide row: its campaign is NULL, which `IN (…)` never matches.
+      expect(sql).not.toContain('campaign_id IS NULL');
       expect(paramsOf()).toEqual(['e1', TENANT, ACCOUNT]);
     });
 

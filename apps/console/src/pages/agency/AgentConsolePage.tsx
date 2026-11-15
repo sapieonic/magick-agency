@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { mayManageEveryCampaignDnc } from '../../utils/dncScopeWords';
 import { usePermission } from '../../hooks/usePermission';
 import { useAgencyConsole } from './useAgencyConsole';
 import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch } from './station/useStationJoin';
@@ -101,7 +102,7 @@ export default function AgentConsolePage() {
   const [params] = useSearchParams();
   const campaignId = params.get('campaign') ?? '';
   const { tenantId, accountId, role } = useTenant();
-  const { user } = useAuth();
+  const { user, memberships } = useAuth();
 
   const join = useStationJoin({ campaignId, tenantId, accountId, role });
   const { bootstrap } = join;
@@ -118,10 +119,11 @@ export default function AgentConsolePage() {
   // greyed button on this screen reads as an outage.
   const mayMarkDnc = usePermission('agency.dnc.write');
   // The tenant-wide escalation is a DIFFERENT, higher floor — `agency.dnc.manage`
-  // (`account_admin`), the same permission the server requires to remove an entry.
+  // (`account_admin`) on a membership of the WHOLE organisation (DS3), as the server
+  // requires: an admin of one account cannot block a number in other accounts' campaigns.
   // Marking campaign-scoped stays at `agent`; only the wider, harder-to-undo
   // escalation is gated behind this.
-  const mayMarkDncTenantWide = usePermission('agency.dnc.manage');
+  const mayMarkDncTenantWide = mayManageEveryCampaignDnc(memberships ?? [], tenantId, accountId);
 
   const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
   const { station, clock, audio } = cons;

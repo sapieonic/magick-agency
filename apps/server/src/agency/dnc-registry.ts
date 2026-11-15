@@ -1,5 +1,5 @@
 import { createChildLogger } from '@magick-agency/observability';
-import { dncRepository } from '../dnc/dnc.repository.js';
+import { dncEntryScope, dncRepository } from '../dnc/dnc.repository.js';
 
 const log = createChildLogger({ component: 'agency-dnc-registry' });
 
@@ -98,13 +98,11 @@ export function normalizeE164(raw: string | null | undefined): string | null {
 }
 
 /**
- * How far an entry reaches, as the soft phone names it (`dnc_listed`, the call detail):
- * campaign-scoped when it names a campaign (an account-and-campaign row included), else
- * account, else tenant.
+ * How far an entry reaches, as the soft phone, customer history and the Do Not Call page name it:
+ * campaign-scoped when it names a campaign (an account-and-campaign row included), else account,
+ * else tenant. One definition, in the repository.
  */
-export function dncEntryScope(entry: { account_id: string | null; campaign_id: string | null }): 'tenant' | 'account' | 'campaign' {
-  return entry.campaign_id !== null ? 'campaign' : entry.account_id !== null ? 'account' : 'tenant';
-}
+export { dncEntryScope };
 
 /**
  * {@link DncRegistry.checkEntry}'s answer: {@link DncCheck}, with the matching entry

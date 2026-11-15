@@ -1,20 +1,20 @@
 import { ENDPOINTS } from '../config';
 import { apiFetch } from './client';
 import type {
+  DncAddRequest,
   DncAddSummary,
   DncEntry,
   DncListParams,
   DncListResponse,
-  DncSource,
 } from '../types/dnc';
 
 /**
  * The Do Not Call list.
  *
- * **Served by the server itself.** These are not `/proxy/*` routes — the server owns the table and
- * the server only receives a derived Redis set. So unlike the rest of the agency
- * client, nothing here has a server route behind it, and a failure here is a
- * server failure.
+ * **Served directly, not through `/proxy/*`.** The server's `/dnc` routes read and write
+ * `dnc_entries`, the one table every check reads (decision B8): the dial-time check, the roster
+ * import and the soft phone. There is no copy of it anywhere else, so every scope added here is
+ * enforced where it says.
  *
  * Two floors apply, and the UI should respect both: reading is `agency.dnc.read`
  * (`viewer`), while adding and removing are `agency.dnc.manage`
@@ -32,6 +32,7 @@ export async function listDncEntries(
   if (params.phone) qs.set('phone', params.phone);
   if (params.account_id) qs.set('account_id', params.account_id);
   if (params.campaign_id) qs.set('campaign_id', params.campaign_id);
+  if (params.scope) qs.set('scope', params.scope);
   if (params.source) qs.set('source', params.source);
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
   if (params.offset !== undefined) qs.set('offset', String(params.offset));
@@ -41,30 +42,21 @@ export async function listDncEntries(
 }
 
 /**
- * Add numbers.
+ * Add numbers, at the scope the operator chose.
  *
  * Answers **200 with a per-number breakdown**, never a bare success: a bulk add
  * is normally partially redundant, and "412 added, 88 already there, 3 invalid"
  * is the answer an operator needs. Invalid numbers do NOT fail the request, so
  * the caller must read `summary.results` rather than assuming everything landed.
  *
- * `accountId` is deliberately **not** defaulted into the body. Omitting
- * `account_id` means tenant-wide, and tenant-wide is the only scope the server's flat
- * `dnc:{tenantId}` Redis set can express — an account-scoped row never reaches
- * the server and so never suppresses a dial. Passing the active account here would
- * silently produce entries that look suppressed in this list and are not
- * suppressed on the wire. The header still carries the account for auth; the
- * body scope is a separate, deliberate decision.
+ * The scope is always STATED (`scope`, with the account or campaign it names): leaving the ids
+ * out means every campaign, so a body that lost its `campaign_id` on the way would otherwise
+ * widen an add to the whole organisation. With `scope` the server refuses a body whose ids do
+ * not agree with it (`invalid_dnc_scope`). The `X-Account-Id` header is for auth only and is
+ * never read as the scope.
  */
 export async function addDncEntries(
-  input: {
-    phone_numbers: string[];
-    source?: DncSource;
-    reason?: string;
-    /** Pass explicitly to scope the rows. Omit for tenant-wide, which is what suppresses dials. */
-    account_id?: string | null;
-    campaign_id?: string | null;
-  },
+  input: DncAddRequest & Required<Pick<DncAddRequest, 'scope'>>,
   tenantId?: string,
   accountId?: string,
 ): Promise<DncAddSummary> {

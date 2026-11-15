@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 
 import '../../features/performance/logic/en_in_format.dart';
 import '../../features/performance/logic/stats_windows.dart' show DeviceCalendar, LocalCalendar;
+import '../dnc/dnc_scope_words.dart';
 import '../station/server_clock.dart' show correctedInstant;
 import 'call_labels.dart' show formatDialNumber;
 import 'softphone_view.dart';
@@ -83,16 +84,13 @@ String hhmm(String value) => _hhmm.hasMatch(value) ? value.substring(0, 5) : val
 
 // ─── DNC (SP1) ──────────────────────────────────────────────────────────────
 
-/// How far a DNC entry reaches, in words. [campaignName] is the campaign the
-/// entry is for when the caller knows it (a call logged to that campaign); a
-/// campaign entry an UNTAGGED call met is one of the account's campaigns,
-/// which is all this copy claims.
-String dncEntryReach(DncEntryScope scope, String? campaignName) => switch (scope) {
-  DncEntryScope.tenant => 'Every campaign and account in this organisation',
-  DncEntryScope.account => 'This account',
-  DncEntryScope.campaign || DncEntryScope.unknown =>
-    campaignName != null ? 'The campaign $campaignName' : 'One of this account’s campaigns',
-};
+/// How far a DNC entry reaches, in the words every surface uses ([dncScopeWords], DS7).
+/// [campaignName] is the campaign the entry is for when the caller knows it (a call
+/// logged to that campaign); a campaign entry an UNTAGGED call met is one of the
+/// account's campaigns, which is all this copy claims. An account entry the soft phone
+/// meets is always the call's own account.
+String dncEntryReach(DncEntryScope scope, String? campaignName) =>
+    dncScopeWords(scope, campaignName: campaignName, unnamedCampaign: 'One of this account’s campaigns');
 
 /// An entry's reason and the date it was added, as the prompt and the call detail show them.
 List<SoftphoneFact> dncEntryFacts(DncEntry entry, {LocalCalendar calendar = const DeviceCalendar()}) {

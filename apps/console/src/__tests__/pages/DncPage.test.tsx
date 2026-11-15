@@ -20,6 +20,8 @@ import type { DncAddSummary, DncEntry } from '../../types/dnc';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
+  useAuth: vi.fn(),
+  listAgencyCampaigns: vi.fn(),
   useTeam: vi.fn(),
   listDncEntries: vi.fn(),
   addDncEntries: vi.fn(),
@@ -31,6 +33,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: mocks.useAuth }));
+vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
 vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
   SOFTPHONE_FLAG: 'agency_softphone_enabled',
   useFeatureFlagEnabled: (flag: string) => mocks.flags.has(flag),
@@ -58,8 +62,25 @@ function entry(over: Partial<DncEntry> = {}): DncEntry {
     reason: null,
     added_by: 'user-1',
     created_at: '2026-08-01T10:00:00Z',
+    scope: 'tenant',
+    scope_account_id: null,
+    account_name: null,
+    campaign_name: null,
     ...over,
   };
+}
+
+/** A member of the whole organisation (`tenant`), or an admin of account-1 only (`account`). */
+function memberships(kind: 'tenant' | 'account', role = 'tenant_owner') {
+  return [{
+    id: 'm1', user_id: 'u1', tenant_id: 'tenant-1', account_id: kind === 'tenant' ? null : 'account-1',
+    role, status: 'active',
+  }];
+}
+
+/** The list calls the page makes for its table: not the removal dialog's look-up by number. */
+function tableCalls() {
+  return mocks.listDncEntries.mock.calls.filter(([params]) => !params.phone || params.offset !== undefined);
 }
 
 function page(entries: DncEntry[], total = entries.length) {
@@ -67,7 +88,7 @@ function page(entries: DncEntry[], total = entries.length) {
 }
 
 function summary(over: Partial<DncAddSummary> = {}): DncAddSummary {
-  return { added: 1, already_present: 0, invalid: 0, results: [], ...over };
+  return { added: 1, already_present: 0, already_covered: 0, invalid: 0, results: [], ...over };
 }
 
 beforeEach(() => {
@@ -76,7 +97,13 @@ beforeEach(() => {
     tenantId: 'tenant-1',
     accountId: 'account-1',
     role: 'tenant_owner',
+    accounts: [{ id: 'account-1', name: 'North' }],
   });
+  mocks.useAuth.mockReturnValue({ memberships: memberships('tenant') });
+  mocks.listAgencyCampaigns.mockResolvedValue([
+    { id: 'camp-1', name: 'Q4 Renewals', status: 'running' },
+    { id: 'camp-2', name: 'Q3 Renewals', status: 'completed' },
+  ]);
   mocks.useTeam.mockReturnValue({
     members: [
       { membership: {}, user: { id: 'user-1', display_name: 'Priya Menon', email: 'p@x.com' } },
@@ -120,12 +147,14 @@ describe('DNC — scope, and what actually suppresses a call', () => {
   });
 
   it('shows a campaign-scoped entry as enforced for one campaign — not as unenforced', async () => {
-    mocks.listDncEntries.mockResolvedValue(page([entry({ campaign_id: 'camp-9' })]));
+    mocks.listDncEntries.mockResolvedValue(page([entry({
+      campaign_id: 'camp-9', scope: 'campaign', campaign_name: 'Q4 Renewals', account_name: 'North', scope_account_id: 'account-1',
+    })]));
 
     render(<DncPage />);
 
     const badge = await screen.findByTestId('dnc-scope-campaign');
-    expect(badge.textContent).toBe('One campaign');
+    expect(badge.textContent).toBe('Campaign: Q4 Renewals');
     const title = badge.getAttribute('title') ?? '';
     // UNDER-claim guard: it must not say the row does nothing. This is the exact
     // sentence that shipped, beside a suppression that is live.
@@ -142,12 +171,14 @@ describe('DNC — scope, and what actually suppresses a call', () => {
 
   it('shows an account-scoped entry as enforced for that account\'s dials and soft phone', async () => {
     // The row a soft-phone Mark DNC writes on a call logged to no campaign.
-    mocks.listDncEntries.mockResolvedValue(page([entry({ account_id: 'account-9' })]));
+    mocks.listDncEntries.mockResolvedValue(page([entry({
+      account_id: 'account-9', scope: 'account', account_name: 'South', scope_account_id: 'account-9',
+    })]));
 
     render(<DncPage />);
 
     const badge = await screen.findByTestId('dnc-scope-account');
-    expect(badge.textContent).toBe('One account');
+    expect(badge.textContent).toBe('South account');
     const title = badge.getAttribute('title') ?? '';
     // UNDER-claim guard: the dial-time check reads the account's rows (B8), so it must
     // not say a contact already imported can still be called.
@@ -158,31 +189,31 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     expect(title).toContain('Campaigns in other accounts are unaffected');
     // And it is a DIFFERENT answer from the campaign one, not a shared "narrow"
     // bucket — collapsing the two is how the old boolean got this wrong.
-    expect(badge.textContent).not.toBe('One campaign');
+    expect(badge.textContent).not.toMatch(/campaign/i);
   });
 
-  it('treats a row carrying both ids as campaign-scoped, the narrower reading', async () => {
+  it('shows the scope the server read off the row, and says so when the campaign no longer exists', async () => {
     mocks.listDncEntries.mockResolvedValue(
-      page([entry({ account_id: 'account-9', campaign_id: 'camp-9' })]),
+      page([entry({ account_id: 'account-9', campaign_id: 'camp-9', scope: 'campaign', campaign_name: null })]),
     );
 
     render(<DncPage />);
 
-    expect(await screen.findByTestId('dnc-scope-campaign')).toBeTruthy();
+    expect((await screen.findByTestId('dnc-scope-campaign')).textContent).toBe('A campaign that no longer exists');
     expect(screen.queryByTestId('dnc-scope-account')).toBeNull();
   });
 
   it('never tells an operator that a scoped entry stops nothing', async () => {
     // The page-level copy has to agree with the column, or the banner re-states
     // the defect the column just fixed.
-    mocks.listDncEntries.mockResolvedValue(page([entry({ campaign_id: 'camp-9' })]));
+    mocks.listDncEntries.mockResolvedValue(page([entry({ campaign_id: 'camp-9', scope: 'campaign' })]));
 
     render(<DncPage />);
     await screen.findByTestId('dnc-scope-campaign');
 
     // Positive first, so the negatives below cannot pass vacuously on a guide
     // that simply failed to render.
-    expect(document.body.textContent).toMatch(/scoped to one campaign or account IS enforced/);
+    expect(document.body.textContent).toMatch(/Choose where each add applies: every campaign, this account’s campaigns, or one campaign/);
     expect(document.body.textContent).not.toMatch(/are NOT enforced/);
     expect(document.body.textContent).not.toMatch(/never dialed by an agency campaign/);
   });
@@ -196,6 +227,31 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     // suppressed and are not — the one case an operator most needs to see.
     expect(params.account_id).toBeUndefined();
     expect(params.campaign_id).toBeUndefined();
+    expect(params.scope).toBeUndefined();
+  });
+
+  it('filters by scope and by campaign, from the first page', async () => {
+    render(<DncPage />);
+    const filter = await screen.findByLabelText('Show entries for');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Campaign: Q4 Renewals' })).toBeTruthy());
+
+    fireEvent.change(filter, { target: { value: 'tenant' } });
+    await waitFor(() => expect(tableCalls().at(-1)![0]).toMatchObject({ scope: 'tenant', offset: 0 }));
+    fireEvent.change(filter, { target: { value: 'account' } });
+    await waitFor(() => expect(tableCalls().at(-1)![0]).toMatchObject({ scope: 'account', account_id: 'account-1' }));
+    fireEvent.change(filter, { target: { value: 'c:camp-1' } });
+    await waitFor(() => expect(tableCalls().at(-1)![0]).toMatchObject({ campaign_id: 'camp-1' }));
+    expect(screen.getByRole('option', { name: 'North account' })).toBeTruthy();
+  });
+
+  it('does not offer the every-campaign filter to an account admin, who cannot list those entries', async () => {
+    mocks.useAuth.mockReturnValue({ memberships: memberships('account', 'account_admin') });
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin', accounts: [] });
+
+    render(<DncPage />);
+    await screen.findByLabelText('Show entries for');
+    expect(screen.queryByRole('option', { name: 'Every campaign' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'This account' })).toBeTruthy();
   });
 });
 
@@ -252,7 +308,7 @@ describe('DNC — agency-only, and the copy has to say so', () => {
   it('says nothing about the soft phone where it is off (agency_softphone_enabled)', async () => {
     mocks.flags.delete('agency_softphone_enabled');
     try {
-      mocks.listDncEntries.mockResolvedValue(page([entry({ account_id: 'account-9' })]));
+      mocks.listDncEntries.mockResolvedValue(page([entry({ account_id: 'account-9', scope: 'account' })]));
       render(<DncPage />);
       const badge = await screen.findByTestId('dnc-scope-account');
       // Positive first, so the negatives cannot pass on a page that failed to render.
@@ -325,38 +381,115 @@ describe('DNC — attribution', () => {
   });
 });
 
-describe('DNC — bulk add', () => {
-  it('sends every number and no account scope', async () => {
-    render(<DncPage />);
+describe('DNC — bulk add, at a scope the operator chose (DS1)', () => {
+  async function typeNumbers(value = '+911111111111\n+912222222222, +913333333333') {
+    fireEvent.change(await screen.findByLabelText(/add numbers/i), { target: { value } });
+  }
 
-    fireEvent.change(await screen.findByLabelText(/add numbers/i), {
-      target: { value: '+911111111111\n+912222222222, +913333333333' },
-    });
+  it('preselects no scope: Add waits for a choice, and says so', async () => {
+    render(<DncPage />);
+    await typeNumbers();
+
+    const add = screen.getByRole('button', { name: /add to do not call/i }) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    expect(screen.getByTestId('dnc-add-scope-hint').textContent).toBe('Choose where to block them before adding.');
+    for (const radio of screen.getAllByRole('radio')) expect((radio as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(add);
+    expect(mocks.addDncEntries).not.toHaveBeenCalled();
+  });
+
+  it('sends every campaign as a stated scope, and says what it blocks', async () => {
+    render(<DncPage />);
+    await typeNumbers();
+    fireEvent.click(screen.getByRole('radio', { name: 'Every campaign' }));
+    expect(screen.getByTestId('dnc-add-scope-hint').textContent).toMatch(/No agency campaign in any account/);
     fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
 
     await waitFor(() => expect(mocks.addDncEntries).toHaveBeenCalled());
     const [input] = mocks.addDncEntries.mock.calls[0]!;
-    expect(input.phone_numbers).toEqual(['+911111111111', '+912222222222', '+913333333333']);
-    // An account-scoped row would show on this list and suppress nothing.
+    expect(input).toMatchObject({ phone_numbers: ['+911111111111', '+912222222222', '+913333333333'], scope: 'tenant' });
     expect(input.account_id).toBeUndefined();
+    expect(input.campaign_id).toBeUndefined();
+  });
+
+  it('sends this account, named', async () => {
+    render(<DncPage />);
+    await typeNumbers();
+    fireEvent.click(screen.getByRole('radio', { name: 'North account' }));
+    expect(screen.getByTestId('dnc-add-scope-hint').textContent).toMatch(/No campaign of the North account will dial these numbers.*other accounts can still/);
+    fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
+
+    await waitFor(() => expect(mocks.addDncEntries).toHaveBeenCalled());
+    expect(mocks.addDncEntries.mock.calls[0]![0]).toMatchObject({ scope: 'account', account_id: 'account-1' });
+  });
+
+  it('sends one campaign only once a campaign is picked, and lists finished campaigns as such', async () => {
+    render(<DncPage />);
+    await typeNumbers();
+    fireEvent.click(screen.getByRole('radio', { name: 'One campaign' }));
+    const picker = screen.getByLabelText('Campaign');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Q3 Renewals (completed)' })).toBeTruthy());
+    expect((screen.getByRole('button', { name: /add to do not call/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(picker, { target: { value: 'camp-1' } });
+    expect(screen.getByTestId('dnc-add-scope-hint').textContent).toBe('Only Q4 Renewals stops dialling these numbers. Every other campaign can still call them.');
+    fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
+
+    await waitFor(() => expect(mocks.addDncEntries).toHaveBeenCalled());
+    const [input] = mocks.addDncEntries.mock.calls[0]!;
+    expect(input).toMatchObject({ scope: 'campaign', campaign_id: 'camp-1' });
+    expect(input.account_id).toBeUndefined();
+  });
+
+  it('does not offer every campaign to an admin of one account (DS3)', async () => {
+    mocks.useAuth.mockReturnValue({ memberships: memberships('account', 'account_admin') });
+    mocks.useTenant.mockReturnValue({
+      tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin', accounts: [{ id: 'account-1', name: 'North' }],
+    });
+
+    render(<DncPage />);
+    await typeNumbers();
+    expect(screen.queryByRole('radio', { name: 'Every campaign' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'North account' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'One campaign' })).toBeTruthy();
   });
 
   it('reports already-present as a success, not a failure', async () => {
     mocks.addDncEntries.mockResolvedValue(summary({ added: 412, already_present: 88, invalid: 3 }));
 
     render(<DncPage />);
-
-    fireEvent.change(await screen.findByLabelText(/add numbers/i), {
-      target: { value: '+911111111111' },
-    });
+    await typeNumbers('+911111111111');
+    fireEvent.click(screen.getByRole('radio', { name: 'Every campaign' }));
     fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
 
     // Re-uploading a regulator list is the expected case; 88 duplicates is the
-    // answer, not 88 errors. Wait for the summary itself: the page guide also says
-    // "already listed", so waiting on that text alone can resolve before the add
-    // has answered.
-    const duplicates = await screen.findByText('88');
-    expect(duplicates.parentElement?.textContent).toMatch(/88 already listed/i);
+    // answer, not 88 errors.
+    expect((await screen.findByTestId('dnc-add-summary')).textContent)
+      .toBe('412 added, 88 already listed, 3 not usable.');
+  });
+
+  it('says which numbers were already blocked more widely (DS4)', async () => {
+    mocks.addDncEntries.mockResolvedValue(summary({
+      added: 1, already_present: 0, already_covered: 3, invalid: 0,
+      results: [
+        { input: 'a', outcome: 'already_covered', scope: 'tenant' },
+        { input: 'b', outcome: 'already_covered', scope: 'tenant' },
+        { input: 'c', outcome: 'already_covered', scope: 'account' },
+        { input: 'd', outcome: 'added', scope: 'campaign' },
+      ],
+    }));
+
+    render(<DncPage />);
+    await typeNumbers('+911111111111');
+    fireEvent.click(screen.getByRole('radio', { name: 'One campaign' }));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Q4 Renewals' })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Campaign'), { target: { value: 'camp-1' } });
+    fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
+
+    expect((await screen.findByTestId('dnc-add-summary')).textContent).toBe(
+      '1 added, 0 already listed, 2 already blocked in every campaign, '
+      + '1 already blocked in every campaign of the North account, 0 not usable.',
+    );
   });
 });
 
@@ -366,6 +499,7 @@ describe('DNC — removal is permission-gated and consequence-aware', () => {
       tenantId: 'tenant-1',
       accountId: 'account-1',
       role: 'viewer',
+      accounts: [],
     });
 
     render(<DncPage />);
@@ -375,18 +509,19 @@ describe('DNC — removal is permission-gated and consequence-aware', () => {
     expect(screen.queryByRole('button', { name: /remove \+919820041772/i })).toBeNull();
   });
 
-  it('confirms before removing, and says who will be able to dial it', async () => {
+  it('confirms before removing, and says who will be able to dial it again (DS5)', async () => {
     render(<DncPage />);
 
     fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
 
-    // The question carries the scope as well as the body does. The title is what
-    // frames the decision, so "Make this number callable again?" promised a
-    // change this page cannot make, before the body had a chance to qualify it.
-    expect(await screen.findByText(/let agency campaigns dial this number again\?/i)).toBeTruthy();
-    expect(document.body.textContent).toMatch(/agency campaigns will be able to dial it again/);
+    // The question carries the scope as well as the body does.
+    expect(await screen.findByText('Let every campaign dial this number again?')).toBeTruthy();
+    await waitFor(() => expect(document.body.textContent).toMatch(/agency campaigns in every account will be able to dial it again/));
+    expect(document.body.textContent).toMatch(/No other entry blocks it\./);
     expect(document.body.textContent).not.toMatch(/make this number callable again/i);
     expect(mocks.removeDncEntry).not.toHaveBeenCalled();
+    // It looked the number up to say what else blocks it.
+    expect(mocks.listDncEntries).toHaveBeenCalledWith({ phone: '+919820041772', limit: 50 }, 'tenant-1', 'account-1');
 
     fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
 
@@ -395,25 +530,66 @@ describe('DNC — removal is permission-gated and consequence-aware', () => {
     );
   });
 
+  it('removing an every-campaign entry says which narrower entries still block the number', async () => {
+    const campaignEntry = entry({
+      id: 'dnc-2', campaign_id: 'camp-1', scope: 'campaign', campaign_name: 'Q4 Renewals', account_name: 'North',
+    });
+    mocks.listDncEntries.mockImplementation(async (params: { phone?: string }) => (
+      params.phone ? page([entry(), campaignEntry]) : page([entry()])
+    ));
+
+    render(<DncPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
+
+    await waitFor(() => expect(document.body.textContent).toMatch(/It stays blocked by another entry: Campaign: Q4 Renewals\./));
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalled());
+    expect(mocks.showToast.mock.calls[0]![0]).toBe(
+      '+919820041772 removed — agency campaigns in every account can dial it again, except where another entry still blocks it.',
+    );
+  });
+
+  it('removing a campaign entry names the campaign that may dial again', async () => {
+    mocks.listDncEntries.mockResolvedValue(page([entry({
+      campaign_id: 'camp-1', scope: 'campaign', campaign_name: 'Q4 Renewals', account_name: 'North',
+    })]));
+
+    render(<DncPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
+
+    expect(await screen.findByText('Let Q4 Renewals dial this number again?')).toBeTruthy();
+    await waitFor(() => expect(document.body.textContent).toMatch(/\(Campaign: Q4 Renewals\), and Q4 Renewals will be able to dial it again/));
+  });
+
+  it('an account admin is told only about their account\'s entries, and Remove waits for the look-up', async () => {
+    mocks.useAuth.mockReturnValue({ memberships: memberships('account', 'account_admin') });
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin', accounts: [] });
+    let answer: (v: unknown) => void = () => {};
+    mocks.listDncEntries.mockImplementation((params: { phone?: string }) => (
+      params.phone ? new Promise((resolve) => { answer = resolve; }) : Promise.resolve(page([entry({ scope: 'account', account_id: 'account-1' })]))
+    ));
+
+    render(<DncPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
+    expect(await screen.findByText('Checking what else blocks this number…')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /^remove$/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    answer(page([]));
+    await waitFor(() => expect(document.body.textContent).toMatch(/No other entry for your account blocks it\./));
+    expect((screen.getByRole('button', { name: /^remove$/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('keeps the scope in the toast, which is what stays on screen afterwards', async () => {
-    /**
-     * The over-claim survived the first pass on the one sentence that outlives
-     * the act. The dialog was narrowed to "agency campaigns will be able to dial
-     * it again"; the toast that fires on confirm still said the number "can be
-     * called again", full stop. That is the sentence the operator actually reads
-     * — after the row is gone and the dialog has closed — about the one
-     * interaction on this page that changes who gets called.
-     */
     render(<DncPage />);
 
     fireEvent.click(await screen.findByRole('button', { name: /remove \+919820041772/i }));
+    await waitFor(() => expect(document.body.textContent).toMatch(/No other entry blocks it/));
     fireEvent.click(await screen.findByRole('button', { name: /^remove$/i }));
 
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalled());
     const [message, variant] = mocks.showToast.mock.calls[0]!;
     expect(variant).toBe('success');
-    expect(message).toContain('+919820041772');
-    expect(message).toMatch(/agency campaigns can dial it again/);
+    expect(message).toBe('+919820041772 removed — agency campaigns in every account can dial it again.');
     // The unqualified sentence, which reads as platform-wide on a list that
     // binds one product.
     expect(message).not.toMatch(/^\+\d+ can be called again\.?$/);
@@ -437,13 +613,14 @@ describe('DNC — pagination after a mutation', () => {
     await waitFor(() => expect(mocks.listDncEntries).toHaveBeenCalledTimes(2));
 
     fireEvent.click(screen.getByRole('button', { name: /remove \+919820041772/i }));
+    await waitFor(() => expect(document.body.textContent).toMatch(/No other entry blocks it/));
     fireEvent.click(await screen.findByRole('button', { name: /^remove$/i }));
 
     // Reloading the same offset would land past the end, and the pager only
     // renders when there are rows — stranding the operator on an empty state
     // with no way back to the entries that still exist.
     await waitFor(() => {
-      const offsets = mocks.listDncEntries.mock.calls.map(([params]) => params.offset);
+      const offsets = tableCalls().map(([params]) => params.offset);
       expect(offsets[offsets.length - 1]).toBeLessThan(50);
     });
   });
@@ -465,6 +642,7 @@ describe('DNC — pagination after a mutation', () => {
     fireEvent.change(screen.getByLabelText(/add numbers/i), {
       target: { value: '+911111111111' },
     });
+    fireEvent.click(screen.getByRole('radio', { name: 'Every campaign' }));
     fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
 
     await waitFor(() => expect(mocks.addDncEntries).toHaveBeenCalled());

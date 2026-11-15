@@ -6,8 +6,8 @@ import { insertAccount, insertTenant } from '../setup/factories.js';
 /**
  * ─── CAMPAIGN-SCOPED DNC MARKS · THE SCOPE BOUNDARY, AGAINST REAL POSTGRES ────
  *
- * An agent's mid-call "mark DNC" can now be confined to one campaign:
- * `POST /internal/agency/dnc` accepts a `campaign_id` and writes
+ * An agent's mid-call "mark DNC" can be confined to one campaign, and the Do Not Call
+ * page can add for one campaign or one account (DS2): both write
  * `dnc_entries(campaign_id = <id>)` instead of a tenant-wide row. Two claims hold
  * that feature up, and **neither can be proven without a real database**:
  *
@@ -16,10 +16,10 @@ import { insertAccount, insertTenant } from '../setup/factories.js';
  *      NULL never equals NULL in a unique index, which is exactly why the index
  *      COALESCEs to a sentinel; whether that arithmetic separates the two rows or
  *      collides them is a property of the index, not of any TypeScript.
- *   2. The tenant-wide listing must NOT return campaign-scoped numbers. A tenant-wide
- *      set has no way to express scope — so a campaign-scoped number leaking into it would be
- *      enforced at dial time across **every other campaign in the tenant**. The
- *      mark asked for one campaign and would silently suppress all of them.
+ *   2. A campaign-scoped row must never read as a tenant-wide one. The rows that
+ *      block a number in every campaign are exactly those with both scope columns
+ *      NULL (`tenantWidePhones` below); a campaign row counted among them would be
+ *      enforced at dial time across **every other campaign in the tenant**.
  *
  * ── WHY THESE ARE INTEGRATION TESTS AND NOT UNIT TESTS ──────────────────────
  *
@@ -34,21 +34,9 @@ import { insertAccount, insertTenant } from '../setup/factories.js';
  * unique index, so a unit test cannot show that this one permits what we need it
  * to permit and still forbids what it exists to forbid.
  *
- * ── `listTenantWidePhones` IS DELIBERATELY UNCHANGED, AND THAT IS THE POINT ───
- *
- * This feature adds no code to that method. Its `account_id IS NULL AND
- * campaign_id IS NULL` filter was previously a near-tautology — before campaign
- * marks existed, essentially every row already satisfied it, so the predicate was
- * documentation. It is now the load-bearing boundary between "suppressed for one
- * campaign" and "suppressed for the whole tenant", and it acquired that job
- * without a line of it changing.
- *
- * That is the dangerous shape: a future reader sees an unconditional-looking
- * filter on a method whose only caller wants "this tenant's DNC numbers", and
- * widening it to `SELECT DISTINCT phone_e164 WHERE tenant_id = $1` looks like a
- * simplification. It is a compliance incident — every campaign-scoped mark in the
- * fleet becomes tenant-wide on the next reconcile sweep, with no error anywhere.
- * The cases below are what makes that edit fail loudly instead of shipping.
+ * There is no separate tenant-wide set to feed (decision B8): the dial-time check
+ * reads this table, so the predicate that separates the scopes is the check itself
+ * (`agency/dnc-registry.test.ts`, `api/dnc-page-scope.test.ts`).
  */
 
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));

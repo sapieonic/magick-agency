@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   auditLog: vi.fn(),
   findAccountByIdInTenant: vi.fn(),
+  findCampaignById: vi.fn(),
 }));
 
 vi.mock('../../../src/dnc/dnc.service.js', async (importOriginal) => ({
@@ -35,6 +36,9 @@ vi.mock('../../../src/dnc/dnc.service.js', async (importOriginal) => ({
 }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: { findByIdInTenant: mocks.findAccountByIdInTenant },
+}));
+vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
+  agencyCampaignRepository: { findById: mocks.findCampaignById },
 }));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
@@ -57,6 +61,10 @@ const ACCOUNT_B = '44444444-4444-4444-8444-444444444444';
 /** The literal `uq_dnc_scope` COALESCEs a NULL scope column to (`050_dnc.sql`). */
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 const USER = 'user-supervisor-1';
+/** A campaign of ACCOUNT, and one of the sibling account ACCOUNT_B. */
+const CAMPAIGN = '33333333-3333-4333-8333-333333333333';
+const CAMPAIGN_B = '55555555-5555-4555-8555-555555555555';
+const OTHER_TENANT = '66666666-6666-4666-8666-666666666666';
 
 /**
  * `accountId` defaults to `undefined` (tenant-wide membership, matching every
@@ -102,6 +110,11 @@ beforeEach(() => {
   // Default: any named account_id genuinely belongs to this tenant. Tests
   // for the new cross-tenant-account guard override this per-case.
   mocks.findAccountByIdInTenant.mockResolvedValue({ id: ACCOUNT, tenant_id: TENANT });
+  mocks.findCampaignById.mockImplementation(async (id: string) => (
+    id === CAMPAIGN ? { id, tenant_id: TENANT, account_id: ACCOUNT }
+    : id === CAMPAIGN_B ? { id, tenant_id: TENANT, account_id: ACCOUNT_B }
+    : null
+  ));
 });
 
 describe('the route table', () => {
@@ -257,23 +270,125 @@ describe('POST /dnc — attribution and scope', () => {
     await app.close();
   });
 
-  it('honours an explicit account/campaign scope when one is asked for', async () => {
+  it('writes a campaign add the way an agent\'s mark is stored: the campaign, no account, covered by its account (DS2, DS4)', async () => {
     const { app } = await buildApp();
 
-    await app.inject({
-      method: 'POST',
-      url: '/dnc/',
-      payload: {
-        phone_numbers: ['+15551230001'],
-        account_id: ACCOUNT,
-        campaign_id: '33333333-3333-4333-8333-333333333333',
-      },
+    // With and without the campaign's own account beside it: one stored shape.
+    for (const extra of [{}, { account_id: ACCOUNT }]) {
+      mocks.add.mockClear();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/dnc/',
+        payload: { phone_numbers: ['+15551230001'], scope: 'campaign', campaign_id: CAMPAIGN, ...extra },
+      });
+      expect(res.statusCode).toBe(200);
+      const arg = mocks.add.mock.calls[0]![0] as Record<string, unknown>;
+      expect(arg['campaignId']).toBe(CAMPAIGN);
+      expect('accountId' in arg).toBe(false);
+      expect(arg['coverAccountId']).toBe(ACCOUNT);
+    }
+    await app.close();
+  });
+
+  it('an account add is covered by nothing narrower than the account itself; a tenant-wide add is not checked at all (DS4)', async () => {
+    const { app } = await buildApp();
+
+    await app.inject({ method: 'POST', url: '/dnc/', payload: { phone_numbers: ['+15551230001'], scope: 'account', account_id: ACCOUNT } });
+    expect(mocks.add.mock.calls[0]![0]).toMatchObject({ accountId: ACCOUNT, coverAccountId: ACCOUNT });
+
+    await app.inject({ method: 'POST', url: '/dnc/', payload: { phone_numbers: ['+15551230001'], scope: 'tenant' } });
+    expect('coverAccountId' in (mocks.add.mock.calls[1]![0] as Record<string, unknown>)).toBe(false);
+    await app.close();
+  });
+
+  describe('campaign scope: whose campaigns, and saying nothing about anyone else\'s (DS2)', () => {
+    it('404s a campaign of another tenant, a missing one and a sibling account\'s for an account-scoped caller, all alike', async () => {
+      mocks.findCampaignById.mockImplementation(async (id: string) => (
+        id === CAMPAIGN ? { id, tenant_id: OTHER_TENANT, account_id: ACCOUNT }
+        : id === CAMPAIGN_B ? { id, tenant_id: TENANT, account_id: ACCOUNT_B }
+        : null
+      ));
+      const { app } = await buildApp('account_admin', ACCOUNT);
+
+      const bodies: unknown[] = [];
+      for (const campaignId of [CAMPAIGN, CAMPAIGN_B, '77777777-7777-4777-8777-777777777777']) {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/dnc/',
+          payload: { phone_numbers: ['+15551230001'], scope: 'campaign', campaign_id: campaignId },
+        });
+        expect(res.statusCode, campaignId).toBe(404);
+        bodies.push(res.json());
+      }
+      // One answer for all three: the response never says such a campaign exists.
+      expect(new Set(bodies.map((b) => JSON.stringify(b))).size).toBe(1);
+      expect(bodies[0]).toEqual({ error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' });
+      expect(mocks.add).not.toHaveBeenCalled();
+      expect(mocks.auditLog).not.toHaveBeenCalled();
+      await app.close();
     });
 
-    const arg = mocks.add.mock.calls[0]![0] as Record<string, unknown>;
-    expect(arg['accountId']).toBe(ACCOUNT);
-    expect(arg['campaignId']).toBe('33333333-3333-4333-8333-333333333333');
-    await app.close();
+    it('lets an account-scoped caller add to a campaign of their own account', async () => {
+      const { app } = await buildApp('account_admin', ACCOUNT);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/dnc/',
+        payload: { phone_numbers: ['+15551230001'], scope: 'campaign', campaign_id: CAMPAIGN },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(mocks.add.mock.calls[0]![0]).toMatchObject({ campaignId: CAMPAIGN, coverAccountId: ACCOUNT });
+      await app.close();
+    });
+
+    it('lets a member of the whole organisation add to any account\'s campaign', async () => {
+      const { app } = await buildApp('account_admin');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/dnc/',
+        payload: { phone_numbers: ['+15551230001'], scope: 'campaign', campaign_id: CAMPAIGN_B },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(mocks.add.mock.calls[0]![0]).toMatchObject({ campaignId: CAMPAIGN_B, coverAccountId: ACCOUNT_B });
+      await app.close();
+    });
+
+    it('404s an account_id that is not the campaign\'s own, rather than storing either', async () => {
+      const { app } = await buildApp('account_admin');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/dnc/',
+        payload: { phone_numbers: ['+15551230001'], campaign_id: CAMPAIGN, account_id: ACCOUNT_B },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(mocks.add).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('refuses a stated scope the ids do not agree with, before reading anything', async () => {
+      const { app } = await buildApp('account_admin');
+
+      for (const payload of [
+        { scope: 'campaign' },
+        { scope: 'campaign', account_id: ACCOUNT },
+        { scope: 'tenant', campaign_id: CAMPAIGN },
+        { scope: 'tenant', account_id: ACCOUNT },
+        { scope: 'account' },
+        { scope: 'account', account_id: ACCOUNT, campaign_id: CAMPAIGN },
+        { scope: 'everywhere' },
+      ]) {
+        const res = await app.inject({ method: 'POST', url: '/dnc/', payload: { phone_numbers: ['+15551230001'], ...payload } });
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      }
+      expect(mocks.add).not.toHaveBeenCalled();
+      expect(mocks.findCampaignById).not.toHaveBeenCalled();
+      await app.close();
+    });
   });
 
   it('400s the NIL UUID in EITHER scope field — both are COALESCEd to it', async () => {
@@ -347,6 +462,23 @@ describe('POST /dnc — attribution and scope', () => {
       expect(res.statusCode).toBe(403);
       expect(mocks.add).not.toHaveBeenCalled();
       await app.close();
+    });
+
+    it('refuses an account-scoped caller asking for every campaign in so many words (DS3), whatever their role', async () => {
+      for (const role of ['account_admin', 'tenant_admin'] as const) {
+        const { app } = await buildApp(role, ACCOUNT);
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/dnc/',
+          payload: { phone_numbers: ['+15551230001'], scope: 'tenant' },
+        });
+
+        expect(res.statusCode, role).toBe(403);
+        expect(res.json().message).toMatch(/whole organisation/);
+        await app.close();
+      }
+      expect(mocks.add).not.toHaveBeenCalled();
     });
 
     it('refuses an account-scoped caller naming an explicit tenant-wide scope', async () => {
@@ -572,15 +704,40 @@ describe('GET /dnc — filters', () => {
 });
 
 describe('GET /dnc — account-scope enforcement (sibling-account IDOR)', () => {
-  it("FORCES the filter to the caller's own account when none was supplied", async () => {
+  it("FORCES the list to what belongs to the caller's own account when nothing was supplied (DS6)", async () => {
     // A plain unfiltered `GET /dnc` from an account-scoped viewer must not
-    // return every account's (or the tenant-wide) compliance rows.
+    // return every account's (or the tenant-wide) compliance rows. Ownership, not the
+    // `account_id` column: the marks on the account's own campaigns are stored without one.
     const { app } = await buildApp('viewer', ACCOUNT);
 
     const res = await app.inject({ method: 'GET', url: '/dnc/' });
 
     expect(res.statusCode).toBe(200);
-    expect((mocks.list.mock.calls[0]![0] as Record<string, unknown>)['accountId']).toBe(ACCOUNT);
+    const arg = mocks.list.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg['ownerAccountId']).toBe(ACCOUNT);
+    expect('accountId' in arg).toBe(false);
+    await app.close();
+  });
+
+  it('403s an account-scoped caller asking for the every-campaign entries by scope', async () => {
+    const { app } = await buildApp('viewer', ACCOUNT);
+
+    const res = await app.inject({ method: 'GET', url: '/dnc/?scope=tenant' });
+
+    expect(res.statusCode).toBe(403);
+    expect(mocks.list).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('keeps ownership forced under every other filter an account-scoped caller sends', async () => {
+    const { app } = await buildApp('viewer', ACCOUNT);
+
+    for (const url of [`/dnc/?scope=campaign`, `/dnc/?campaign_id=${CAMPAIGN_B}`, `/dnc/?scope=account&account_id=${ACCOUNT}`]) {
+      mocks.list.mockClear();
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode, url).toBe(200);
+      expect((mocks.list.mock.calls[0]![0] as Record<string, unknown>)['ownerAccountId'], url).toBe(ACCOUNT);
+    }
     await app.close();
   });
 
@@ -619,6 +776,11 @@ describe('GET /dnc — account-scope enforcement (sibling-account IDOR)', () => 
 
     await app.inject({ method: 'GET', url: '/dnc/' });
     expect('accountId' in (mocks.list.mock.calls[0]![0] as Record<string, unknown>)).toBe(false);
+    expect('ownerAccountId' in (mocks.list.mock.calls[0]![0] as Record<string, unknown>)).toBe(false);
+
+    mocks.list.mockClear();
+    await app.inject({ method: 'GET', url: '/dnc/?scope=tenant' });
+    expect((mocks.list.mock.calls[0]![0] as Record<string, unknown>)['scope']).toBe('tenant');
 
     mocks.list.mockClear();
     await app.inject({ method: 'GET', url: `/dnc/?account_id=${ACCOUNT_B}` });
@@ -692,6 +854,7 @@ describe('platform audit trail', () => {
     mocks.add.mockResolvedValue({
       added: 1,
       already_present: 0,
+      already_covered: 0,
       invalid: 0,
       results: [{ input: '+15551230001', outcome: 'added', phone_e164: '+15551230001', entry_id: 'e1' }],
     });
@@ -718,6 +881,7 @@ describe('platform audit trail', () => {
         requested: 1,
         added: 1,
         already_present: 0,
+        already_covered: 0,
         invalid: 0,
       },
     });
@@ -726,28 +890,35 @@ describe('platform audit trail', () => {
     await app.close();
   });
 
-  it('POST /dnc labels a dual-scope entry as the NARROW scope it actually is', async () => {
-    // `findSuppressed` ANDs the two columns, so account+campaign matches strictly
-    // less than account-wide. This assertion used to read `'account'` — the audit
-    // row claimed a suppression reached the whole account when it reached one
-    // campaign inside it, which is the opposite direction from the one a
-    // compliance review can absorb.
-    mocks.add.mockResolvedValue({ added: 1, already_present: 0, invalid: 0, results: [] });
+  it('POST /dnc audits the STORED scope: a campaign add naming its account too is a campaign add, on the campaign\'s account', async () => {
+    // The add stores the campaign alone (DS2), so the audit records that reach, never the
+    // request's two ids. The account on the row is the campaign's, whatever header was sent.
+    mocks.add.mockResolvedValue({ added: 1, already_present: 0, already_covered: 0, invalid: 0, results: [] });
+    mocks.findCampaignById.mockResolvedValue({ id: CAMPAIGN, tenant_id: TENANT, account_id: ACCOUNT_B });
     const { app } = await buildApp();
 
     await app.inject({
       method: 'POST',
       url: '/dnc/',
-      payload: {
-        phone_numbers: ['+15551230001'],
-        account_id: ACCOUNT,
-        campaign_id: '33333333-3333-4333-8333-333333333333',
-      },
+      payload: { phone_numbers: ['+15551230001'], account_id: ACCOUNT_B, campaign_id: CAMPAIGN },
     });
 
-    expect((mocks.auditLog.mock.calls[0]![0] as { details: { scope: string } }).details.scope).toBe(
-      'account_campaign',
-    );
+    const row = mocks.auditLog.mock.calls[0]![0] as { account_id: string; campaign_id: string; details: Record<string, unknown> };
+    expect(row.details['scope']).toBe('campaign');
+    expect(row.account_id).toBe(ACCOUNT_B);
+    expect(row.campaign_id).toBe(CAMPAIGN);
+    expect(row.details['campaign_id']).toBe(CAMPAIGN);
+    await app.close();
+  });
+
+  it('POST /dnc counts the covered numbers in the audit row (DS4)', async () => {
+    mocks.add.mockResolvedValue({ added: 2, already_present: 1, already_covered: 3, invalid: 0, results: [] });
+    const { app } = await buildApp();
+
+    await app.inject({ method: 'POST', url: '/dnc/', payload: { phone_numbers: ['+15551230001'], scope: 'campaign', campaign_id: CAMPAIGN } });
+
+    expect((mocks.auditLog.mock.calls[0]![0] as { details: Record<string, unknown> }).details)
+      .toMatchObject({ added: 2, already_present: 1, already_covered: 3, invalid: 0 });
     await app.close();
   });
 

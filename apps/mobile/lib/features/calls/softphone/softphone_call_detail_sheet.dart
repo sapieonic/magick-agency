@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/api/api_error.dart';
+import '../../../core/dnc/dnc_scope_words.dart';
 import '../../../core/softphone/call_labels.dart';
 import '../../../core/softphone/call_state.dart';
 import '../../../core/softphone/softphone_view.dart';
@@ -121,13 +122,11 @@ String? softphoneFieldValue(CallField? field, Object? value) {
   return contextDisplayString(value);
 }
 
-String _dncReach(DncEntry entry, ManualCall call) => switch (entry.scope) {
-      DncEntryScope.tenant => 'Every campaign and account in this organisation',
-      DncEntryScope.account => 'This account',
-      _ => entry.campaignId != null && call.tag?.campaignId == entry.campaignId
-          ? 'The campaign ${call.tag!.campaignName}'
-          : 'One of this account’s campaigns',
-    };
+String _dncReach(DncEntry entry, ManualCall call) => dncScopeWords(
+      entry.scope,
+      campaignName: entry.campaignId != null && call.tag?.campaignId == entry.campaignId ? call.tag!.campaignName : null,
+      unnamedCampaign: 'One of this account’s campaigns',
+    );
 
 /// Everything the sheet shows below its header, in order (tested directly).
 /// [bootstrap] supplies the names (outcome labels, field labels, the contact
