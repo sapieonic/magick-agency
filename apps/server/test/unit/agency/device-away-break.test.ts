@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { withShownState } from '../../helpers/shown-state-double.js';
 
 // ---------------------------------------------------------------------------
 // The device-away break (`reason: 'device_away'` on POST /sessions/:id/break), which the
@@ -108,7 +109,7 @@ function world(state: AgencyAgentState | null, opts: { unannounced?: boolean; br
     },
     breaks: w.breaks,
     stations: { send: vi.fn((_id: string, frame: unknown) => { w.sent.push(frame); return true; }) },
-    dialer: { hasUnannouncedAttempt: vi.fn(() => w.unannounced) },
+    dialer: withShownState({ hasUnannouncedAttempt: vi.fn(() => w.unannounced) }),
     // No push offer here: a `reserved` is a pacing reservation (Mode B's ring has its own cases).
     awayRing: { holdsPushOffer: vi.fn(() => false), takeQueuedAwayPause: vi.fn(() => null) },
   } as unknown as AgencyRuntime;
@@ -151,12 +152,44 @@ describe('runDeviceAway', () => {
     expect(w.sent).toEqual([{ event: 'agent_state', state, since: expect.any(String), pending_state: 'break', pending_break_reason: 'device_away' }]);
   });
 
-  it('queued under an unannounced dial: the frame is suppressed, as for any break', async () => {
+  // A hidden dial (late binding) holds the agent `reserved`, and they were never shown it: the
+  // frame stays suppressed (it would announce a change that did not happen), and every answer
+  // says the state as the agent is shown it (`dialer.shownStateFor`): `available`. The queue is
+  // still decided from the real `reserved` (`breakMustWait`). The `reserved → queued` case
+  // above is the same request under early binding, answered `reserved`.
+  // FALSIFIED: with `state` (in `asItStands`) or `live?.state ?? 'offline'` (the last-pass
+  // answer) restored, these red on `reserved`.
+  it('queued under an unannounced dial: the frame is suppressed, and the answer says `available`', async () => {
     const w = world('reserved', { unannounced: true });
     const res = await runDeviceAway(w.runtime, session());
-    expect(res.ok && res.body.pending_state).toBe('break');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'available', pending_state: 'break', break_reason: 'device_away' }) });
+    expect(w.breaks.peek('sess-1')?.code).toBe('device_away');
     expect(w.sent).toEqual([]);
   });
+
+  it('already queued under an unannounced dial: unchanged, answered `available`', async () => {
+    const w = world('reserved', { unannounced: true });
+    w.breaks.queue('sess-1', { code: 'device_away', label: 'Away (app in background)' });
+    const res = await runDeviceAway(w.runtime, session());
+    expect(res).toEqual({
+      ok: true,
+      body: expect.objectContaining({ state: 'available', pending_state: 'break', break_reason: 'device_away', [BREAK_UNCHANGED_KEY]: true }),
+    });
+  });
+
+  it.each([[true, 'available'], [false, 'reserved']] as const)(
+    'queued on the last pass (hidden dial: %s): answered as the agent is shown it, %s',
+    async (unannounced, shown) => {
+      const w = world('available', { unannounced });
+      // Two passes lose their compare-and-swap; a reservation lands before the third read,
+      // which queues the pause and leaves no pass to re-read it.
+      w.transition.mockResolvedValue(false);
+      w.beforeRead.push(() => undefined, () => undefined, () => { w.lease = { state: 'reserved', since: Date.now() }; });
+      const res = await runDeviceAway(w.runtime, session());
+      expect(w.transition).toHaveBeenCalledTimes(2);
+      expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: shown, pending_state: 'break', break_reason: 'device_away' }) });
+    },
+  );
 
   it('already queued: idempotent, nothing re-sent, marked unchanged', async () => {
     const w = world('on_call');

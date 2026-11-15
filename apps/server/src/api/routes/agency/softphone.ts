@@ -233,7 +233,8 @@ async function buildBootstrap(
       // Tenant-scoped, like the campaign join's conflict: the live session may be in
       // another account of this tenant, and its name is the agent's own context.
       campaign_name: campaign && campaign.tenant_id === live.tenant_id ? campaign.name : null,
-      state: liveState,
+      // As the agent is shown it (`shownStateFor`): `available`, not `reserved`, behind a hidden dial.
+      state: runtime.dialer.shownStateFor(live.id, liveState),
       break_reason: live.break_reason,
       on_softphone: onSoftphoneBreak({ state: liveState }, live),
       ...(pending ? { pending_state: 'break' as const, pending_break_reason: pending.code } : {}),
@@ -369,7 +370,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
         session_id: blocker.id,
         campaign_id: blocker.campaign_id,
         campaign_name: campaign && campaign.tenant_id === blocker.tenant_id ? campaign.name : 'another campaign',
-        state: liveState?.state ?? blocker.state,
+        // As the agent is shown it (`shownStateFor`), as on the campaign join's conflict.
+        state: runtime.dialer.shownStateFor(blocker.id, liveState?.state ?? blocker.state),
         account_id: blocker.account_id,
         account_name: accountName,
       });
@@ -659,9 +661,9 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaign_id: returned.campaignId,
       from_state: returned.fromState,
       queued: false,
-      // `returnFromSoftphone` answers the session's unchanged state when it withdrew a
-      // switch still queued behind a call; only an ended break lands on `available`.
-      withdrawn: returned.response.state !== 'available',
+      // A switch still queued behind a call was withdrawn rather than the break ended. Its
+      // own flag: the answer's `state` is the shown one, `available` behind a hidden dial too.
+      withdrawn: returned.withdrawn === true,
       unchanged: false,
     };
     log.debug({ sessionId: request.params.id, withdrawn: audit.withdrawn }, 'Soft-phone return');

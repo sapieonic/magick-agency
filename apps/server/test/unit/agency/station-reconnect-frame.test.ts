@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { withShownState } from '../../helpers/shown-state-double.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 
@@ -161,7 +162,7 @@ async function harness(): Promise<Harness> {
     },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
-    dialer: {
+    dialer: withShownState({
       reattachStation: vi.fn(() => activeAttempt.value),
       takeMissedRelease: vi.fn(() => null),
       dialActivityFor: vi.fn(() => dialActivity.value),
@@ -174,7 +175,7 @@ async function harness(): Promise<Harness> {
       // error: a green-looking local run and a red CI job.
       noteStationClosed: vi.fn(),
       hangupAttempt: vi.fn(),
-    },
+    }),
     breaks,
     tokens: { mint: vi.fn(), verifyAndConsume: vi.fn().mockResolvedValue(true) },
     wakeStationSweep: vi.fn(),

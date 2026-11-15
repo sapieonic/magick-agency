@@ -278,7 +278,7 @@ export async function runDeviceAway(
       case 'unchanged':
         break;
     }
-    return asItStands(session, reason.code, live, queued, queuedHere, since);
+    return asItStands(runtime, session, reason.code, live, queued, queuedHere, since);
   }
   // A `queue` on the last pass is still a queued break: answer it rather than 409.
   if (queuedHere && runtime.breaks.peek(session.id)?.code === reason.code) {
@@ -287,7 +287,8 @@ export async function runDeviceAway(
       ok: true,
       body: {
         session_id: session.id, campaign_id: session.campaign_id, kind: session.kind,
-        state: live?.state ?? 'offline', since: new Date().toISOString(),
+        // As the agent is shown it (`shownStateFor`): queued behind a hidden dial, `available`.
+        state: runtime.dialer.shownStateFor(session.id, live?.state ?? 'offline'), since: new Date().toISOString(),
         pending_state: 'break', break_reason: reason.code,
       },
     };
@@ -297,9 +298,12 @@ export async function runDeviceAway(
 
 /**
  * The answer of a pass that moved nothing (or whose write was refused): the current state, as the
- * session holds it, marked {@link BREAK_UNCHANGED_KEY} unless this request queued the pause.
+ * agent is shown it (`shownStateFor`: `available`, not `reserved`, while only a hidden dial holds
+ * them), marked {@link BREAK_UNCHANGED_KEY} unless this request queued the pause. The pending
+ * pause and the break reason are decided from the state the session holds.
  */
 function asItStands(
+  runtime: Pick<AgencyRuntime, 'dialer'>,
   session: AgencyAgentSessionRecord,
   code: string,
   live: { state: AgencyAgentState; since?: number | null; ring?: boolean; breakReason?: string | null } | null,
@@ -319,7 +323,7 @@ function asItStands(
     session_id: session.id,
     campaign_id: session.campaign_id,
     kind: session.kind,
-    state,
+    state: runtime.dialer.shownStateFor(session.id, state),
     // The instant the lease last moved, when it says; this answer moved nothing.
     since: live?.since ? new Date(live.since).toISOString() : now,
     ...(queued && breakMustWait(state)

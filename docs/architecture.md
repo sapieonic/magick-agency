@@ -433,15 +433,22 @@ every account the caller belongs to (CH2) where every internal handler is single
   `outcome-classifier.ts`: rang out, busy, declined, failed or unreachable at the far end; never an
   end of ours such as the station gone, a bridge or media fault, a shutdown or a cancel, nor the
   customer ringing in), and starts again from 0 at the next campaign call the agent is shown (`reserved`; an
-  inbound or soft-phone call does not reset it). `ready` carries the same state at a reconnect,
-  and says `available`, not `reserved`, while only a hidden dial holds the agent, as they were
-  last told. Early binding and wrap-up redials never send it, so the clients need not know the flag.
+  inbound or soft-phone call does not reset it). `ready` carries the same state at a reconnect.
+  Early binding and wrap-up redials never send it, so the clients need not know the flag.
   Both clients say it in the contract's words (`AGENCY_DIAL_ACTIVITY_COPY`) and hold "Dialling a
   customer…" over the gap between dials for the contract's `AGENCY_DIAL_ACTIVITY_TIMING.GAP_HOLD_MS`;
   the console imports both, the app is held to them through `fixtures/agent/` (`labels.json`,
   `literals.json`). The hold bridges a gap to the next dial only: the agent's `queue` stating nothing
   due (sent after the release's `agent_state`, from the next pacing tick) ends it, and a ringing dial
   still outranks the queue.
+  While only a hidden dial holds the agent `reserved`, everything that tells the agent their state
+  says `available`, as they were last told: one rule, `AgencyDialer.shownStateFor`, used by `ready`,
+  the join's bootstrap and `session_on_other_campaign`, the break, cancel, app-pause and soft-phone
+  switch answers, the soft phone's bootstrap and `session_on_campaign`, and the disposition's
+  advisory `agent_state`. No `agent_state` frame is sent for it (it would announce a change that
+  did not happen). Server-side decisions (pacing, the lease, `breakMustWait`, the reaper) read the
+  real state from Redis; the supervisor floor reads the session row, where an outbound reservation
+  is never mirrored, so it shows such an agent `available` too.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);

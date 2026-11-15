@@ -633,13 +633,13 @@ export async function handleStationSocket(
   // been shown rings; nothing ever told them so, and their screen says they are waiting. Saying
   // `reserved` here, with no `active_attempt`, made a socket that reconnected mid-ring show
   // "Ringing — get ready" (console) or "A call is coming through" (app) for a call that may never
-  // be answered: the popup late binding exists to remove, through the reconnect. So the frame
-  // says what the agent was last told, `available`. The authority is unchanged: pacing, the
-  // lease and the break route still read `reserved` from Redis, and the answer's `reserved`
-  // frame moves the screen on exactly as it does without a reconnect.
-  const shownState = resumedState === 'reserved' && !activeAttempt && runtime.dialer.hasUnannouncedAttempt(sessionId)
-    ? 'available'
-    : resumedState;
+  // be answered. So the frame says the shown state (`dialer.shownStateFor`, the one rule every
+  // agent-facing answer uses), and the answer's `reserved` frame moves the screen on exactly as
+  // it does without a reconnect. Not asked beside a resumed attempt: that call is on screen, so
+  // its `reserved` is the truth (`reattachStation` resumes only an attempt the agent was shown,
+  // so the rule would leave it as it is anyway). Pacing, the lease and the break route still
+  // read `reserved` from Redis.
+  const shownState = activeAttempt ? resumedState : runtime.dialer.shownStateFor(sessionId, resumedState);
   const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,

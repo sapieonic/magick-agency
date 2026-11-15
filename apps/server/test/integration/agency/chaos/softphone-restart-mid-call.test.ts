@@ -60,7 +60,7 @@ function bootProcess() {
     manual: { activeIds: () => manual.activeManualCallIds(), onClosed: (rows) => manual.onCallsClosedBySweep(rows) },
   });
   const service = new SoftphoneService({
-    agents, stations, breaks: new BreakRegistry(), dialer: { hasUnannouncedAttempt: () => false },
+    agents, stations, breaks: new BreakRegistry(), dialer: { hasUnannouncedAttempt: () => false, shownStateFor: (_id, state) => state },
     dnc: new DncRegistry(), manual, dedications: new DedicatedCallerIdCache(),
   });
   return { agents, reaper, service, manual };

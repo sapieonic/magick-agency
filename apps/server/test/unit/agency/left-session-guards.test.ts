@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { withShownState } from '../../helpers/shown-state-double.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 
@@ -188,7 +189,8 @@ async function harness(): Promise<Harness> {
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     // A supervisor's force-available closes an owed inbound outcome (`closeOwedForSupervisor`).
     inboundCalls: { closeOwedForSupervisor: vi.fn().mockResolvedValue({ kind: 'none' }) },
-    dialer: {
+    // `shownStateFor` is the real rule over `hasUnannouncedAttempt` (`withShownState`).
+    dialer: withShownState({
       reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
       dialActivityFor: vi.fn(() => null),
@@ -204,7 +206,7 @@ async function harness(): Promise<Harness> {
       hasRedialInFlight: vi.fn(() => false),
       hangupAttempt: vi.fn(),
       releaseAgent: vi.fn().mockResolvedValue({ state: 'available', result: 'ok' }),
-    },
+    }),
     breaks: { queue: vi.fn(), peek: vi.fn(() => null), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: {
       mint: vi.fn().mockResolvedValue({ token: 'tok', expiresAt: new Date('2026-08-16T12:00:00Z') }),
@@ -546,14 +548,18 @@ describe('a station socket outliving its session', () => {
 // exact frame `FF_AGENCY_LATE_BINDING` exists to remove, re-entered through a
 // control the agent pressed themselves.
 //
-// Suppressed rather than softened — `state` is authoritative by contract, so a
-// state we know to be false is worse than no frame at all. Nothing is lost: the
-// HTTP response still carries the pending break (the only fields the console reads),
-// `ready.pending_state` covers a mid-ring reconnect, and `releaseAgent` sends
-// the authoritative frame when the dial resolves.
+// The frame is suppressed rather than softened: it announces a transition, and
+// one saying `available` would announce a change that did not happen. The HTTP
+// answers say the shown state instead (`dialer.shownStateFor`): `available`, as
+// the agent was last told. Nothing is lost: the response carries the pending
+// break (the only fields the console reads), `ready.pending_state` covers a
+// mid-ring reconnect, and `releaseAgent` sends the authoritative frame when the
+// dial resolves.
 //
 // FALSIFICATION: drop the `hasUnannouncedAttempt` condition around the send and
-// the first test here reds on a leaked `state: 'reserved'`.
+// the first test here reds on a leaked `state: 'reserved'`; answer `live!.state`
+// (or, on the cancel, `live?.state ?? session.state`) instead of the shown state
+// and the body assertions red on `reserved`.
 describe('/available while an unannounced dial is ringing', () => {
   // `agents.set` is an unconditional Redis write. Under late binding the console
   // shows an idle station for the whole ring, so Available is a control the agent
@@ -621,6 +627,20 @@ describe('a break queued behind an UNANNOUNCED dial', () => {
     const body = res.json();
     expect(body.pending_state).toBe('break');
     expect(body.break_reason).toBe('lunch');
+    // And says the state the agent was shown, never the hidden dial's `reserved`.
+    expect(body.state).toBe('available');
+  });
+
+  it('answers the queued break with `reserved` for a reservation the agent was shown (early binding)', async () => {
+    h.runtime.dialer.hasUnannouncedAttempt.mockReturnValue(false);
+
+    const res = await post('/break', { reason: 'lunch' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'lunch' });
+    expect(h.sent.filter((f) => f.event === 'agent_state')).toEqual([
+      expect.objectContaining({ state: 'reserved', pending_state: 'break' }),
+    ]);
   });
 
   it('still frames the break when the agent HAS seen the call (early binding, or already bridged)', async () => {
@@ -648,7 +668,18 @@ describe('a break queued behind an UNANNOUNCED dial', () => {
     expect(res.statusCode).toBe(200);
     expect(h.sent.filter((f) => f.event === 'agent_state')).toHaveLength(0);
     // The response body still confirms the cancel — it is what clears the pill for
-    // the window that clicked.
+    // the window that clicked — in the state the agent was shown.
+    expect(res.json().state).toBe('available');
+    expect(res.json()).not.toHaveProperty('pending_state');
+  });
+
+  it('answers break/cancel with `reserved` for a reservation the agent was shown (early binding)', async () => {
+    h.runtime.dialer.hasUnannouncedAttempt.mockReturnValue(false);
+    h.runtime.breaks.cancel.mockReturnValue(true);
+
+    const res = await post('/break/cancel');
+
+    expect(res.statusCode).toBe(200);
     expect(res.json().state).toBe('reserved');
   });
 

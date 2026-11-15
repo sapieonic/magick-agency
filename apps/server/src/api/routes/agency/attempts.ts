@@ -332,8 +332,11 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       callback_requested_at: fields.callbackAt ? fields.callbackAt.toISOString() : null,
       // ADVISORY, and it races the socket by design — releasing the wrap-up
       // returns the agent to the pool and the tick runs every 250ms, so a new
-      // `reserved` frame can reach the console before this response does.
-      agent_state: live?.state ?? 'offline',
+      // `reserved` frame can reach the console before this response does. As the agent is
+      // shown it (`shownStateFor`): a hidden dial placed in that window says `available`.
+      agent_state: attempt.reserved_agent_id
+        ? runtime.dialer.shownStateFor(attempt.reserved_agent_id, live?.state ?? 'offline')
+        : 'offline',
     };
     return reply.send(response);
   });

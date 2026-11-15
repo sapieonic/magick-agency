@@ -149,6 +149,7 @@ final class DispositionResponse {
   final DateTime? callbackRequestedAt;
 
   /// ADVISORY snapshot; races the station by design. Never assign state from it.
+  /// As the agent is shown it: `available` while only a hidden dial holds them.
   final AgentState agentState;
   final String agentStateRaw;
 

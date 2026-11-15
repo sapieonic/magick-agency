@@ -150,7 +150,11 @@ export interface AgencySessionConflict {
   code: 'session_on_other_campaign';
   campaign_id: string;
   campaign_name: string;
-  /** Their state on that other campaign, so the copy can say whether they are mid-call. */
+  /**
+   * Their state on that other campaign, so the copy can say whether they are mid-call: as
+   * they are shown it (`available` while only a dial they have not been shown holds them,
+   * `AgencyStationReadyFrame.state`).
+   */
   state: AgencyAgentState;
   /**
    * The live session to leave, the account it is in (often a sibling of this one;

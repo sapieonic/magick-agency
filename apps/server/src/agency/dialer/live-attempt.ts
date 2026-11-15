@@ -1,11 +1,13 @@
 /**
- * The record the dialer keeps for an attempt it is driving, and the two pure
- * questions asked of it: what the agent's panel shows, and whether the agent has
- * ever been shown the call. Split out of `agency-dialer.ts`, which re-exports
- * nothing from here: these are the dialer's own internals.
+ * The record the dialer keeps for an attempt it is driving, and the pure
+ * questions asked of it: what the agent's panel shows, whether the agent has
+ * ever been shown the call, and so which state the agent is shown. Split out of
+ * `agency-dialer.ts`, which re-exports nothing from here: these are the dialer's
+ * own internals.
  */
 import type {
   AgencyAbandonReason,
+  AgencyAgentState,
   AgencyAttemptState,
   AgencyPriorAttempt,
   AgencyReservedAttempt,
@@ -195,6 +197,21 @@ export interface LiveAttempt {
  */
 export function isUnannounced(live: LiveAttempt): boolean {
   return live.lateBinding && !live.panelDelivered;
+}
+
+/**
+ * The state an agent is SHOWN, from the state Redis holds and whether their live attempt
+ * is one they have not been shown ({@link isUnannounced}): `available` for a `reserved`
+ * that only a hidden dial holds (late binding), as they were last told; `state` otherwise.
+ *
+ * Pure, so the rule has one spelling: `AgencyDialer.shownStateFor` asks it with its own
+ * live attempt, and the route tests' dialer doubles ask it with theirs. Every agent-facing
+ * body that reports the session's state goes through that method; nothing server-side
+ * decides from what it returns (pacing, the lease, `breakMustWait` and the reaper read
+ * Redis).
+ */
+export function shownAgentState(state: AgencyAgentState, unannounced: boolean): AgencyAgentState {
+  return state === 'reserved' && unannounced ? 'available' : state;
 }
 
 /**

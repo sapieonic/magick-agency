@@ -237,7 +237,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
           `Leave that station before joining another campaign — an agent can hold only one live station at a time.`,
         campaign_id: liveSession.campaign_id,
         campaign_name: otherName,
-        state: live?.state ?? liveSession.state,
+        // As the agent is shown it (`shownStateFor`): a hidden dial on that station says
+        // `available`, as its own screen does, not the `reserved` of a call they never saw.
+        state: runtime.dialer.shownStateFor(liveSession.id, live?.state ?? liveSession.state),
         session_id: liveSession.id,
         account_id: liveSession.account_id,
         account_name: accountName,
@@ -315,8 +317,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       agent_user_id: session.agent_user_id,
       // The rehydrated state, not the row's — a bootstrap that advertised
       // `available` while Redis held `on_call` would have the console render a
-      // ready agent over a live conversation.
-      state,
+      // ready agent over a live conversation. As the agent is shown it
+      // (`shownStateFor`): a hidden dial's `reserved` is `available`, as `ready` says.
+      state: runtime.dialer.shownStateFor(session.id, state),
       ...(breakReason ? { break_reason: breakReason } : {}),
       campaign_status: campaign.status,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,
@@ -728,29 +731,25 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // ── …except while the deferring call is one the agent has never seen ────
       //
       // Under late binding an unbound dial holds the agent at `reserved` for the
-      // whole ring, and `breakMustWait` defers on `reserved`. Echoing that state
-      // would put `state: 'reserved'` on the wire for a call the agent was never
-      // told about — which `StateRail` renders as the warning-toned banner
-      // "Ringing — get ready", instructing them to expect a call that two times
-      // in three never arrives. That is precisely the frame
-      // `FF_AGENCY_LATE_BINDING` exists to remove, re-entered through a control
-      // the agent pressed themselves.
+      // whole ring, and `breakMustWait` defers on `reserved` (the real state, read
+      // from Redis above, decides). The agent was never told about that call, so
+      // one rule covers what they are told (`dialer.shownStateFor`):
       //
-      // So the frame is SUPPRESSED rather than softened. Reporting `available`
-      // instead was considered and rejected: `state` is authoritative by
-      // contract ("the console must not infer state",
-      // {@link AgencyStationAgentStateFrame}), so a state we know to be false is
-      // worse than no frame. (`ready` is the one frame that cannot stay quiet: it
-      // must carry a state, so a reconnect mid-ring says `available`, what the
-      // agent was last shown — `shownState` in `station-socket.ts`, documented on
-      // `AgencyStationReadyFrame.state`.) Nothing is lost by staying quiet — the pending
-      // break still reaches the agent by both of its other paths: this HTTP
-      // response carries `pending_state`/`break_reason` (the only fields the
-      // console's `requestBreak` reads), and a socket that reconnects mid-ring
-      // learns it from `ready.pending_state`. When the dial resolves,
-      // `releaseAgent` sends the authoritative `agent_state` that applies the
-      // queued break — the one frame deliberately left unsuppressed, for exactly
-      // this case.
+      //  - every agent-facing ANSWER that carries the session's state says the
+      //    shown state, `available` while only a hidden dial holds them — this
+      //    response, `ready` on a reconnect, the bootstrap, the cancel — never
+      //    the hidden dial's `reserved`, which `StateRail` renders as "Ringing —
+      //    get ready" for a call that may never arrive: the popup
+      //    `FF_AGENCY_LATE_BINDING` exists to remove.
+      //  - a standalone `agent_state` frame stays SUPPRESSED. It announces a
+      //    transition, and the agent's state did not change: a frame saying
+      //    `reserved` would show the call, and one saying `available` would
+      //    announce a change that did not happen. Nothing is lost: this response
+      //    carries `pending_state`/`break_reason` (the only fields the console's
+      //    `requestBreak` reads), a socket that reconnects mid-ring learns it from
+      //    `ready.pending_state`, and when the dial resolves `releaseAgent` sends
+      //    the `agent_state` that applies the queued break — the one frame
+      //    deliberately left unsuppressed, for exactly this case.
       if (!runtime.dialer.hasUnannouncedAttempt(session.id)) {
         runtime.stations.send(session.id, {
           event: 'agent_state',
@@ -761,7 +760,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         });
       }
       const queued: AgencySessionStateResponse = {
-        session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live!.state, since,
+        session_id: session.id, campaign_id: session.campaign_id, kind: session.kind,
+        state: runtime.dialer.shownStateFor(session.id, live!.state), since,
         pending_state: 'break', break_reason: check.reason.code,
       };
       return reply.send({
@@ -863,11 +863,11 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
 
     if (cancelled) {
       // Suppressed for an unannounced dial, symmetrically with the queue route
-      // above — see the long note there. This frame exists to confirm the cancel
+      // above — see the rule there. This frame exists to confirm the cancel
       // landed, and confirming it with `state: 'reserved'` hands the agent the
-      // "Ringing — get ready" banner for a call they were never shown: the queue
-      // route declines to leak it and this one would hand it straight back,
-      // through a control the agent pressed themselves.
+      // "Ringing — get ready" banner for a call they were never shown, while one
+      // saying `available` would announce a change that did not happen. The
+      // response below says the shown state instead.
       //
       // ⚠️ This frame does more work than the queue route's, so the suppression
       // costs something and the cost is stated rather than glossed. The console
@@ -897,8 +897,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       }
     }
     // Nothing queued and not on break ⇒ idempotent success (double-click safety).
+    // The shown state (`shownStateFor`, the rule at the queue route above).
     const body: AgencySessionStateResponse = {
-      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live?.state ?? session.state, since,
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind,
+      state: runtime.dialer.shownStateFor(session.id, live?.state ?? session.state), since,
     };
     return reply.send({
       ...body,

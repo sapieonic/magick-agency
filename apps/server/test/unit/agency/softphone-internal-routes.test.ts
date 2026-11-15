@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { withShownState } from '../../helpers/shown-state-double.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /**
@@ -82,6 +83,7 @@ function makeRuntime() {
     replicaId: 'r1',
     agents: { get: vi.fn().mockResolvedValue(null) },
     breaks: { peek: vi.fn(() => null) },
+    dialer: withShownState({ hasUnannouncedAttempt: vi.fn((_sessionId: string) => false) }),
     tokens: { mint: vi.fn(async () => ({ token: 'tkn', expiresAt: new Date('2026-10-30T10:02:00Z') })) },
     rehydrateAgent: vi.fn().mockResolvedValue('break'),
     manualDialer: { wireFor: vi.fn(async (row: { id: string }) => ({ id: row.id, contact: null })) },
@@ -445,6 +447,24 @@ describe('POST /softphone/sessions', () => {
     expect(runtime.tokens.mint).not.toHaveBeenCalled();
   });
 
+  // A hidden dial (late binding) on that campaign station: the agent was never shown it, so the
+  // refusal says the state as they are shown it (`dialer.shownStateFor`), `available`, as on the
+  // campaign join's conflict. FALSIFIED: with `liveState?.state ?? blocker.state` restored the
+  // first expectation reds on `reserved`.
+  it('409 session_on_campaign says `available` while only a hidden dial holds that station, `reserved` otherwise', async () => {
+    const blocker = { id: SESSION, tenant_id: TENANT, account_id: SIBLING, campaign_id: CAMPAIGN, state: 'available' };
+    repos.session.joinSoftphone.mockResolvedValue({ ok: false, reason: 'on_campaign', session: blocker });
+    repos.campaign.findById.mockResolvedValue({ id: CAMPAIGN, tenant_id: TENANT, name: 'Renewals' });
+    repos.accounts.findByIdInTenant.mockResolvedValue({ id: SIBLING, tenant_id: TENANT, name: 'North Region' });
+    runtime.agents.get.mockResolvedValue({ state: 'reserved' });
+    runtime.dialer.hasUnannouncedAttempt.mockImplementation((id: string) => id === SESSION);
+    const hidden = await post('/softphone/sessions', { agent_user_id: AGENT });
+    expect(hidden.statusCode).toBe(409);
+    expect(hidden.json()).toMatchObject({ code: 'session_on_campaign', session_id: SESSION, state: 'available' });
+    runtime.dialer.hasUnannouncedAttempt.mockReturnValue(false);
+    expect((await post('/softphone/sessions', { agent_user_id: AGENT })).json().state).toBe('reserved');
+  });
+
   it('409 session_on_softphone for a soft-phone session in another account: named, never rehydrated', async () => {
     const blocker = { id: SESSION, tenant_id: TENANT, account_id: SIBLING, kind: 'softphone', campaign_id: null, state: 'break' };
     repos.session.joinSoftphone.mockResolvedValue({ ok: false, reason: 'softphone_elsewhere', session: blocker });
@@ -590,6 +610,33 @@ describe('GET /softphone/bootstrap', () => {
   });
 });
 
+// The live campaign session as the soft phone's bootstrap names it, during a hidden dial: the
+// state the agent is shown (`dialer.shownStateFor`), `available`, and `reserved` for a call they
+// were shown. FALSIFIED: with `state: liveState` restored the first expectation reds.
+describe('GET /softphone/bootstrap — a hidden dial on the live campaign session', () => {
+  beforeEach(() => {
+    repos.settings.get.mockResolvedValue({
+      disposition_catalog: [], call_fields: [], analysis_profile_id: null, record_calls: true, default_caller_id: null, updated_at: null,
+    });
+    repos.session.findLiveForAgent.mockResolvedValue({
+      id: SESSION, tenant_id: TENANT, account_id: ACCOUNT, kind: 'campaign', campaign_id: CAMPAIGN, state: 'available', break_reason: null, left_at: null,
+    });
+    repos.campaign.findById.mockResolvedValue({ id: CAMPAIGN, tenant_id: TENANT, name: 'Staffed' });
+    runtime.agents.get.mockResolvedValue({ state: 'reserved' });
+  });
+
+  it('names the session `available` while only a hidden dial holds it', async () => {
+    runtime.dialer.hasUnannouncedAttempt.mockImplementation((id: string) => id === SESSION);
+    const boot = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json();
+    expect(boot.session).toMatchObject({ session_id: SESSION, state: 'available', on_softphone: false });
+  });
+
+  it('names it `reserved` for a reservation the agent was shown (early binding)', async () => {
+    const boot = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json();
+    expect(boot.session).toMatchObject({ session_id: SESSION, state: 'reserved', on_softphone: false });
+  });
+});
+
 describe('the switch routes', () => {
   beforeEach(() => {
     repos.session.findById.mockResolvedValue({
@@ -615,15 +662,22 @@ describe('the switch routes', () => {
     expect(runtime.softphone.switchToSoftphone).toHaveBeenCalledWith(SESSION, { tenantId: TENANT, accountId: ACCOUNT, userId: AGENT, supervise: false });
   });
 
-  it('return: withdrawn when the session did not land on available; manual_call_live mapped', async () => {
+  it('return: withdrawn when the runtime withdrew a queued switch; manual_call_live mapped', async () => {
     runtime.softphone.returnFromSoftphone.mockResolvedValue({
-      ok: true, fromState: 'on_call', campaignId: CAMPAIGN, queued: false, response: { state: 'on_call' },
+      ok: true, fromState: 'on_call', campaignId: CAMPAIGN, queued: false, withdrawn: true, response: { state: 'on_call' },
     });
     expect((await post(`/sessions/${SESSION}/softphone/return`, { agent_user_id: AGENT })).json().audit.withdrawn).toBe(true);
     runtime.softphone.returnFromSoftphone.mockResolvedValue({
       ok: true, fromState: 'break', campaignId: CAMPAIGN, queued: false, response: { state: 'available' },
     });
     expect((await post(`/sessions/${SESSION}/softphone/return`, { agent_user_id: AGENT })).json().audit.withdrawn).toBe(false);
+    // Behind a hidden dial the withdrawn switch's answer says `available` (the shown state), and
+    // the audit still says withdrawn: it is the runtime's flag, never read off `state`.
+    // FALSIFIED: with `withdrawn: returned.response.state !== 'available'` restored this reds.
+    runtime.softphone.returnFromSoftphone.mockResolvedValue({
+      ok: true, fromState: 'reserved', campaignId: CAMPAIGN, queued: false, withdrawn: true, response: { state: 'available' },
+    });
+    expect((await post(`/sessions/${SESSION}/softphone/return`, { agent_user_id: AGENT })).json().audit.withdrawn).toBe(true);
     runtime.softphone.returnFromSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'manual_call_live', call: { id: CALL } } });
     const live = await post(`/sessions/${SESSION}/softphone/return`, { agent_user_id: AGENT });
     expect(live.statusCode).toBe(409);

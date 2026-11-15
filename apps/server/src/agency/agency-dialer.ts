@@ -18,7 +18,7 @@ import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 // The pure row → wire projection, imported from its leaf rather than the barrel: the
 // dialer's unit tests replace the barrel wholesale, and the panel's shape is not a mock's to make.
 import { projectPriorAttempt } from '../db/repositories/agency/projections.js';
-import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
+import { buildPanel, isUnannounced, shownAgentState, type LiveAttempt } from './dialer/live-attempt.js';
 import { holdOutcomeUnknownContact, parkRedialContact, settleContact } from './dialer/contact-settlement.js';
 import { wrapupRedialRemaining } from './wrapup-redial-rules.js';
 import {
@@ -2339,10 +2339,13 @@ export class AgencyDialer {
    * Is this agent's live attempt one they have not been shown — a dial in flight
    * under late binding, still ringing, with no panel on their console?
    *
-   * Exists for one caller, `POST /sessions/:id/leave`, and only to decide the
-   * WORDING of a refusal. The refusal itself is {@link hasLiveAttempt}'s and does
-   * not change: see the route for why leaving is still refused even though the
-   * agent can see no call, and for the alternative that was not taken.
+   * Asked by the routes that must not reveal such a dial: the WORDING of
+   * `POST /sessions/:id/leave`'s refusal (the refusal itself is
+   * {@link hasLiveAttempt}'s and does not change: see the route for why leaving is
+   * still refused even though the agent can see no call), the `/available` refusal,
+   * and the standalone `agent_state` frames the break, cancel and soft-phone switch
+   * routes stay silent on. A body that reports the session's state asks
+   * {@link shownStateFor} instead.
    *
    * `false` for "no live attempt at all" as well as for "a call they are on", so
    * a caller must ask {@link hasLiveAttempt} first. Folding the two into one
@@ -2352,6 +2355,28 @@ export class AgencyDialer {
   hasUnannouncedAttempt(sessionId: string): boolean {
     const live = this.liveFor(sessionId);
     return live !== undefined && isUnannounced(live);
+  }
+
+  /**
+   * The state this agent is shown, given `state`, the one Redis holds for the session:
+   * `available` when it is `reserved` and only a dial they have not been shown holds it
+   * ({@link hasUnannouncedAttempt}, late binding), as their screen was last told; `state`
+   * otherwise (early binding, a call they were shown, an inbound offer, any other state).
+   *
+   * The one rule for every agent-facing answer that carries the session's state: the
+   * `ready` frame, the join bootstrap and its `session_on_other_campaign` conflict, the
+   * break, cancel, app-pause and soft-phone switch answers, the soft phone's bootstrap
+   * and `session_on_campaign` refusal, and the disposition's advisory `agent_state`.
+   * Without it a client that read any of those mid-ring was handed the `reserved` the
+   * `ready` contract says is never shown, and painted "Ringing — get ready" for a call that
+   * may never be answered. A standalone `agent_state` frame is NOT sent with this state:
+   * it would announce a change that did not happen, so those stay suppressed.
+   *
+   * For responses only. Pacing, the lease, `breakMustWait`, the reaper and every other
+   * server-side decision read the real state from Redis, never this.
+   */
+  shownStateFor(sessionId: string, state: AgencyAgentState): AgencyAgentState {
+    return shownAgentState(state, this.hasUnannouncedAttempt(sessionId));
   }
 
   /**

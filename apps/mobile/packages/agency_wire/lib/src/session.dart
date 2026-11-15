@@ -667,6 +667,8 @@ final class SessionStateResponse {
   final String kindRaw;
 
   /// Reconciliation only: the station's `agent_state` frames are the authority.
+  /// As the agent is shown it, as `ready` says it: `available`, not `reserved`,
+  /// while only a dial they have not been shown holds them (late binding).
   final AgentState state;
   final String stateRaw;
   final DateTime since;

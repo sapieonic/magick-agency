@@ -221,6 +221,10 @@ final class ReadyFrame extends StationFrame {
   }
 
   final String sessionId;
+
+  /// The state as the agent is shown it: `available`, not `reserved`, while
+  /// only a dial they have not been shown holds them (late binding); every
+  /// HTTP answer that reports the session's state says it the same way.
   final AgentState state;
   final String stateRaw;
 
@@ -439,7 +443,10 @@ final class WrapupFrame extends StationFrame {
   String toString() => 'WrapupFrame(${wrapup.attemptId}, ends: ${wrapup.endsAt}, held: ${wrapup.heldReasonRaw})';
 }
 
-/// The authoritative agent-state transition. The app must not infer state.
+/// The authoritative agent-state transition, as the agent is shown it. The app
+/// must not infer state. Never sent for a dial the agent has not been shown
+/// (late binding): they stay `available` on screen until the answer's
+/// `reserved` frame, or the release when it ends.
 ///
 /// Contract: `AgencyStationAgentStateFrame`.
 final class AgentStateFrame extends StationFrame {

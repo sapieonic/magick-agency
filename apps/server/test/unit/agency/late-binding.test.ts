@@ -812,6 +812,36 @@ describe('late binding: the carrier answers', () => {
     expect(h.dialer.hasUnannouncedAttempt('s1')).toBe(false);
     expect(h.dialer.hasLiveAttempt('s1')).toBe(true);
   });
+
+  // The one rule every agent-facing answer reports the session's state by (`ready`, the join
+  // bootstrap and conflict, the break, cancel, app-pause and soft-phone switch answers, the
+  // soft phone's bootstrap and refusal, the disposition's snapshot): a `reserved` that only a
+  // hidden dial holds is shown `available`; anything else is shown as it is. FALSIFIED: with
+  // `shownStateFor` returning `state` unchanged the first expectation reds; with it answering
+  // `available` for every `reserved`, the bound and early-binding ones red.
+  it('shows the agent `available` for the hidden dial\'s `reserved` only until it binds', async () => {
+    const h = await harness({ lateBinding: true });
+    await h.dialer.executeDial(makeCmd());
+
+    expect(h.dialer.shownStateFor('s1', 'reserved')).toBe('available');
+    // Only `reserved` is the hidden dial's; another session is not this one's dial.
+    expect(h.dialer.shownStateFor('s1', 'wrapup')).toBe('wrapup');
+    expect(h.dialer.shownStateFor('s2', 'reserved')).toBe('reserved');
+
+    h.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
+    await settle();
+
+    expect(h.dialer.shownStateFor('s1', 'reserved')).toBe('reserved');
+    expect(h.dialer.shownStateFor('s1', 'on_call')).toBe('on_call');
+  });
+
+  it('shows an early-binding reservation as `reserved`: that agent was shown the call', async () => {
+    const h = await harness({ lateBinding: false });
+    await h.dialer.executeDial(makeCmd());
+
+    expect(h.dialer.hasLiveAttempt('s1')).toBe(true);
+    expect(h.dialer.shownStateFor('s1', 'reserved')).toBe('reserved');
+  });
 });
 
 // ─── Reconnect during the ring ──────────────────────────────────────────────

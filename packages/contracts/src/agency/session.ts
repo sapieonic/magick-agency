@@ -211,7 +211,9 @@ export interface AgencySessionBootstrap {
   agent_user_id: string;
 
   /**
-   * The agent's state as the dialer runtime sees it right now.
+   * The agent's state as the dialer runtime sees it right now, as the agent is shown it
+   * ({@link AgencyStationReadyFrame.state}: `available` while only a dial they have not been
+   * shown holds them `reserved`, late binding).
    *
    * After a restart of the dialer runtime or the public API layer this is `break`, never `available` — the
    * engine must not dial into a pool that has not demonstrably re-attached, so the
@@ -412,6 +414,10 @@ export interface AgencySessionCampaignConflict extends AgencyActionErrorResponse
    * mirror (Redis is the authority on agent liveness). It is what makes
    * both `message` and the console's own copy honest about whether leaving is
    * safe right now: `on_call` means finish the call, `break` means one click.
+   * Said as the agent is shown it ({@link AgencyStationReadyFrame.state}): `available` while
+   * only a dial they have not been shown holds that station `reserved` (late binding), as its
+   * own screen says; its `leave` is refused until that dial binds or ends, with a message that
+   * says a call is being placed.
    */
   state: AgencyAgentState;
   /**

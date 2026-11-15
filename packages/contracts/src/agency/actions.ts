@@ -164,7 +164,9 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    */
   callback_requested_at?: string | null;
   /**
-   * The agent's state after release.
+   * The agent's state after release, as the agent is shown it
+   * ({@link AgencyStationReadyFrame.state}: `available` while only a dial placed for them
+   * since, which they have not been shown, holds them `reserved`).
    *
    * **ADVISORY — a point-in-time snapshot, and NOT the authority.** The station
    * socket's `agent_state` frame is (see {@link AgencyStationAgentStateFrame}: "the
@@ -321,6 +323,12 @@ export interface AgencySessionStateResponse {
   session_id: string;
   /** SP. Which kind of session this is. */
   kind: AgencySessionKind;
+  /**
+   * The session's state as its agent is shown it ({@link AgencyStationReadyFrame.state}):
+   * `available`, not `reserved`, while only a dial they have not been shown holds them (late
+   * binding). Whether a break is deferred (`pending_state`) is still decided from the server's
+   * own record, so a break asked for during such a dial is queued behind it.
+   */
   state: AgencyAgentState;
   /** ISO-8601. */
   since: string;

@@ -149,13 +149,20 @@ export interface SessionSwitchSuccess {
    * already queued — an idempotent repeat that changed nothing, and is not audited again.
    */
   unchanged: boolean;
+  /**
+   * `returnFromSoftphone` only: a switch still queued behind a call was withdrawn (the
+   * session stays where it is) rather than the soft phone's break ended. Its own flag, not
+   * read off `response.state`, which is the state as the agent is shown it and so says
+   * `available` behind a hidden dial too.
+   */
+  withdrawn?: boolean;
 }
 
 export interface SoftphoneServiceDeps {
   agents: AgentStateMachine;
   stations: StationRegistry;
   breaks: BreakRegistry;
-  dialer: Pick<AgencyDialer, 'hasUnannouncedAttempt'>;
+  dialer: Pick<AgencyDialer, 'hasUnannouncedAttempt' | 'shownStateFor'>;
   dnc: Pick<DncRegistry, 'checkEntry'>;
   manual: ManualDialer;
   /** The tag's dedicated caller IDs (DN4), cached: `pacing/dedicated-caller-ids.ts`. */
@@ -702,8 +709,10 @@ export class SoftphoneService {
    * `soft_phone`, QUEUED exactly like a break while the agent is reserved, on a call
    * or in wrap-up (`breakMustWait`), and applied by `releaseAgent` at its end. The
    * `agent_state` frame announces it (suppressed for an unannounced dial, as the
-   * break route does). Already on the soft phone, or the switch already queued: an
-   * idempotent success marked `unchanged` (not audited a second time).
+   * break route does), and the answer says the state as the agent is shown it
+   * (`shownStateFor`: `available` behind a hidden dial). Already on the soft phone, or
+   * the switch already queued: an idempotent success marked `unchanged` (not audited a
+   * second time).
    *
    * The immediate switch is a CAS from the state just read (`transition`), never an
    * unconditional set: a pacing tick that reserved the agent between the read and the
@@ -746,7 +755,10 @@ export class SoftphoneService {
         }
         return {
           ok: true, fromState: fromState(), campaignId: session.campaign_id, queued: true, unchanged: alreadyQueued,
-          response: { ...base, state: busy, since, pending_state: 'break', break_reason: SOFTPHONE_BREAK_REASON },
+          response: {
+            ...base, state: this.deps.dialer.shownStateFor(session.id, busy), since,
+            pending_state: 'break', break_reason: SOFTPHONE_BREAK_REASON,
+          },
         };
       }
       // No lease at all: there is no state to race (a reservation CASes from a live
@@ -770,7 +782,7 @@ export class SoftphoneService {
   /**
    * Return the actor's campaign session from the soft phone: end the `soft_phone`
    * break (`available`). A switch still QUEUED is simply withdrawn (the session
-   * stays in its current state). Refusals: `session_not_found`; `wrong_session_kind`
+   * stays in its current state, answered as the agent is shown it, `withdrawn`). Refusals: `session_not_found`; `wrong_session_kind`
    * (a soft-phone session); `manual_call_live` while a call is live or awaiting its
    * outcome; `not_on_softphone`; `station_unavailable` (no station socket here —
    * going available needs one, as `POST /sessions/:id/available` does); `dial_failed`
@@ -792,7 +804,10 @@ export class SoftphoneService {
       if (!this.deps.dialer.hasUnannouncedAttempt(session.id)) {
         this.deps.stations.send(session.id, { event: 'agent_state', state, since });
       }
-      return { ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false, response: { ...base, state, since } };
+      return {
+        ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false, withdrawn: true,
+        response: { ...base, state: this.deps.dialer.shownStateFor(session.id, state), since },
+      };
     }
 
     const pending = await this.pendingRefusal(session.id);

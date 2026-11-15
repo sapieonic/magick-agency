@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { withShownState } from '../../helpers/shown-state-double.js';
 import Fastify from 'fastify';
 
 
@@ -118,7 +119,10 @@ function makeRuntime() {
     stations: { send: vi.fn(() => true), detach: vi.fn(), attach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
-    dialer: { hasLiveAttempt: vi.fn(() => false), noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null), takeMissedRelease: vi.fn(() => null), dialActivityFor: vi.fn(() => null) },
+    dialer: withShownState({
+      hasLiveAttempt: vi.fn(() => false), noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null), takeMissedRelease: vi.fn(() => null), dialActivityFor: vi.fn(() => null),
+      hasUnannouncedAttempt: vi.fn((_sessionId: string) => false),
+    }),
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: { mint: vi.fn(), verifyAndConsume: vi.fn() },
     rehydrateAgent: vi.fn().mockResolvedValue('break'),
@@ -250,6 +254,21 @@ describe('POST /attempts/:id/disposition — the happy path and the contract sha
     });
     await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'sale' });
     expect(seen).toEqual(['release', 'read']);
+  });
+
+  // The release puts the agent back in the pool and the tick can reserve them before this
+  // read: under late binding for a dial they are never shown unless it is answered. The
+  // snapshot says the state as the agent is shown it (`dialer.shownStateFor`), `available`, not
+  // the hidden dial's `reserved`; `reserved` for one they were shown. FALSIFIED: with
+  // `live?.state ?? 'offline'` restored the first expectation reds.
+  it('reports agent_state as the agent is shown it: `available` behind a hidden dial, `reserved` otherwise', async () => {
+    const app = await buildApp();
+    runtime.agents.get.mockResolvedValue({ state: 'reserved', attemptId: 'att-2', since: 1 });
+    runtime.dialer.hasUnannouncedAttempt.mockImplementation((id: string) => id === 'sess-1');
+    expect((await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'sale' })).json().agent_state).toBe('available');
+
+    runtime.dialer.hasUnannouncedAttempt.mockReturnValue(false);
+    expect((await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'sale' })).json().agent_state).toBe('reserved');
   });
 });
 

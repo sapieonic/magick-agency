@@ -307,7 +307,9 @@ soon as they answer.", and "No answer from the last N numbers" once hidden dials
 unanswered (the count resets at the next campaign call the agent is shown, `reserved`; an
 inbound or soft-phone call does not reset it). A dial refused before or by the carrier is never
 announced, and a reconnect mid-ring gets `ready` with `state: available` and the dial activity
-(the server said `reserved` before, which showed "A call is coming through"). The controller holds
+(the server said `reserved` before, which showed "A call is coming through"); every HTTP answer
+that reports the session's state (the join, the break and `device_away` answers, the cancel, the
+disposition's snapshot) says `available` then too (`AgencyDialer.shownStateFor`). The controller holds
 "Dialling…" for 4 s after a dial ends (`dialGapHold`) so the screen does not flick to "Waiting for
 a call" between one dial and the next; the hold drops at once on `reserved`, when the agent leaves
 available, when the campaign stops dialling, when the socket drops, and when the agent's `queue`

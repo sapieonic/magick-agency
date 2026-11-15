@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { withShownState } from '../../helpers/shown-state-double.js';
 import Fastify from 'fastify';
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,8 @@ const agentsGet = vi.fn();
 const rehydrate = vi.fn();
 const agentsTransition = vi.fn();
 const agentsClear = vi.fn(async () => undefined);
+/** Whether a session's live attempt is a hidden dial (late binding): `shownStateFor` reads it. */
+const hasUnannounced = vi.fn((_sessionId: string) => false);
 
 function makeRuntime() {
   return {
@@ -141,10 +144,10 @@ function makeRuntime() {
     },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
-    dialer: {
-      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: vi.fn(() => false), hasRedialInFlight: vi.fn(() => false),
+    dialer: withShownState({
+      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: hasUnannounced, hasRedialInFlight: vi.fn(() => false),
       noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null),
-    },
+    }),
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false), peek: vi.fn(() => null) },
     tokens: { mint, verifyAndConsume: vi.fn() },
     rehydrateAgent: rehydrate,
@@ -178,6 +181,7 @@ beforeEach(async () => {
   agentsGet.mockResolvedValue(null);
   rehydrate.mockResolvedValue('break');
   agentsTransition.mockResolvedValue(true);
+  hasUnannounced.mockReturnValue(false);
   // Staffed by default: the conflict cases below are about the live-session index, not
   // staffing (`not_staffed` has its own describe at the end).
   repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
@@ -768,6 +772,66 @@ describe('POST /sessions — the happy path stays intact', () => {
 // A rehydrate of the agent's own live session on the campaign is allowed (see
 // `mayStartOrResume` in `sessions.ts`).
 // ---------------------------------------------------------------------------
+// ── A hidden dial is not a state the agent can see (late binding) ───────────
+//
+// While a dial the agent has not been shown rings, Redis holds them `reserved`, and their screen
+// says they are waiting. Both answers of the join carry that session's state, and both say it as
+// the agent is shown it (`dialer.shownStateFor`), as the `ready` frame does: `available`. Saying
+// `reserved` painted "Ringing — get ready" (the bootstrap) or "mid-call" (the conflict's copy) for
+// a call the agent was never shown. Under early binding, or for a call they were shown, `reserved`
+// is the truth and stays.
+//
+// FALSIFIED: with `state` (bootstrap) or `live?.state ?? liveSession.state` (conflict) restored,
+// the first case of each pair reds on `reserved`.
+describe('POST /sessions — a hidden dial reads as the state the agent was shown', () => {
+  it('the conflict says `available` for the other station while only a hidden dial holds it', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign', session: liveSession({ state: 'available' }),
+    });
+    agentsGet.mockResolvedValue({ state: 'reserved', attemptId: 'att-1', since: 1 });
+    hasUnannounced.mockImplementation((id) => id === 'sess-old');
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'session_on_other_campaign', session_id: 'sess-old', state: 'available' });
+  });
+
+  it('the conflict says `reserved` for a reservation the agent was shown (early binding)', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign', session: liveSession({ state: 'available' }),
+    });
+    agentsGet.mockResolvedValue({ state: 'reserved', attemptId: 'att-1', since: 1 });
+
+    expect((await join()).json().state).toBe('reserved');
+  });
+
+  it('the bootstrap says `available` while only a hidden dial holds the rejoining agent', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new', state: 'available' }),
+    });
+    rehydrate.mockResolvedValue('reserved');
+    hasUnannounced.mockImplementation((id) => id === 'sess-new');
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().state).toBe('available');
+  });
+
+  it('the bootstrap says `reserved` for a reservation the agent was shown (early binding)', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new', state: 'available' }),
+    });
+    rehydrate.mockResolvedValue('reserved');
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().state).toBe('reserved');
+  });
+});
+
 describe('POST /sessions — the staffing check', () => {
   const NOT_STAFFED = {
     error: 'Forbidden',

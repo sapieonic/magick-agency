@@ -509,6 +509,10 @@ export interface AgencySoftphoneSessionSummary {
   /** NULL for a `softphone` session. */
   campaign_id: string | null;
   campaign_name: string | null;
+  /**
+   * As the agent is shown it ({@link AgencyStationReadyFrame.state}): `available`, not
+   * `reserved`, while only a dial they have not been shown holds a campaign session.
+   */
   state: AgencyAgentState;
   break_reason: string | null;
   /** `state = break` with `break_reason = soft_phone`: the session can dial. */
@@ -808,6 +812,10 @@ export interface AgencySoftphoneSessionOnCampaignRefusal extends AgencySoftphone
   session_id: string;
   campaign_id: string;
   campaign_name: string;
+  /**
+   * That session's state as the agent is shown it ({@link AgencyStationReadyFrame.state}):
+   * `available`, not `reserved`, while only a dial they have not been shown holds it.
+   */
   state: AgencyAgentState;
   account_id: string;
   account_name: string | null;

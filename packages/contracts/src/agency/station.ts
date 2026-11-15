@@ -251,10 +251,15 @@ export interface AgencyStationReadyFrame {
   event: 'ready';
   session_id: string;
   /**
-   * The agent's state as their screen should show it. One difference from the server's own
-   * record: an agent held `reserved` only by a dial they have not been shown (late binding,
-   * {@link AgencyDialActivity}) is said to be `available`, as they were last told; the
-   * `reserved` frame of an answer moves them on as usual.
+   * The agent's state as their screen should show it: the SHOWN state, which every answer
+   * that reports the session's state to its agent says the same way (the join's bootstrap and
+   * `session_on_other_campaign` conflict, {@link AgencySessionStateResponse} from the break,
+   * cancel, app-pause and soft-phone switch routes, the disposition's advisory `agent_state`,
+   * the soft phone's bootstrap and `session_on_campaign` refusal). One difference from the
+   * server's own record: an agent held `reserved` only by a dial they have not been shown
+   * (late binding, {@link AgencyDialActivity}) is said to be `available`, as they were last
+   * told; the `reserved` frame of an answer moves them on as usual. Beside `active_attempt`
+   * it is always the server's own state: that call is on screen.
    */
   state: AgencyAgentState;
   /**
@@ -540,7 +545,16 @@ export type AgencyReleaseReason =
    */
   | 'inbound_call';
 
-/** Authoritative agent-state transition. The console must not infer state. */
+/**
+ * Authoritative agent-state transition, as the agent is shown it: the console must not infer
+ * state. Never sent for a dial the agent has not been shown (late binding,
+ * {@link AgencyDialActivity}): while one holds them `reserved` server-side they are shown
+ * `available` (the state `ready` and every HTTP answer report then, see
+ * {@link AgencyStationReadyFrame.state}), and no frame announces a change that did not happen,
+ * not even one carrying a queued break's `pending_state` (the answer to the request and
+ * `ready` carry that). The answer's `reserved` frame, or the `agent_state` of the release when
+ * the dial ends, is the next thing the agent hears.
+ */
 export interface AgencyStationAgentStateFrame {
   event: 'agent_state';
   state: AgencyAgentState;
