@@ -745,3 +745,15 @@ are IQ67, the take-over ending `away_ring` is OS3).
 | — | Inbound retention for a UK pilot | Voicemails and the inbound spine age out on `AGENCY_RETENTION_DAYS`, unset by default (rows kept). Decide the window under UK GDPR, and how one voicemail is deleted on request | Manas |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |
+
+## Rulings of 2026-11-15: navigation group labels and items (NV)
+
+Reshma (ops lead): in the Settings hub the group headings (You, This account · <name>, People and
+access) and in the campaign bar Monitor, Data and Set up sat too close in look to the clickable
+entries beside them. Console navigation styling only: no label, id, route, gate or analytics
+event changed.
+
+| # | Question | Ruling | Status |
+|---|---|---|---|
+| NV1 | How does a navigation group label differ from the items under it? | One look, one component: `components/common/NavSectionLabel` (and its `.module.css`) renders the Settings hub's group headings, the campaign bar's group labels and the search's result-group labels. It is 11px, bold, uppercase, tracked, in `--text-muted`, with a hairline from the words to the end of its group; no hover, focus or active state, `cursor: default`, not selectable; a heading (Settings), a span (campaign bar) or a presentation div (the search's listbox), never a link, button or tab stop. Its group names itself by it: the Settings lists and the campaign bar's `role="group"`s with `aria-labelledby` (the search's groups already did). Items never take the label's colour: tabs (the shared `common/TabBar.module.css`, which the campaign bar now composes, so section tabs change with it) moved from `--text-muted` to `--text-secondary`; Settings entries stay `--text-secondary`, gain a trailing chevron and an inset focus ring. Hosts set only spacing, so the label's text lines up with its items' text (`__tests__/components/navSectionLabel.test.ts` reads the CSS; `SettingsHub`, `CampaignTabs` and `GlobalSearch` tests the semantics) | default, pending Manas |
+| NV2 | Where does the campaign bar's group label sit? | Above its tabs, not in the row beside them (in the row it read as one more tab), with its hairline spanning the group; the vertical divider between groups went, the hairlines and a gap carry the grouping. The labels now stay on a phone, riding over their groups as the bar scrolls sideways, since above the tabs they cost no width. Amends IN14's "a divider between them" and "on a phone ... the labels hide" | default, pending Manas |
