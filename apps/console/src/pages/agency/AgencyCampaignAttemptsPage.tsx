@@ -48,7 +48,8 @@ import {
   type AgencyAttempt,
   type AgencyAttemptFilters,
 } from '../../types/agency-spine';
-import type { AgencyAssignedAgent, AgencyCampaign } from '../../types/agency-campaign';
+import type { AgencyAssignedAgent, AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
+import { showsSoftphone } from '../../utils/agencyCampaignPerformance';
 import spine from '../../components/agency/SpineListLayout.module.css';
 import { attemptDateRange } from '../../utils/agencyAttemptFilters';
 import {
@@ -113,16 +114,17 @@ export function AgencyCampaignAttemptsPage() {
       active="attempts"
       subnav={<CallLogViews campaignId={id} active="attempts" role={role} />}
     >
-      {(campaign) => <AttemptsSection id={id} campaign={campaign} />}
+      {(campaign, section) => <AttemptsSection id={id} campaign={campaign} stats={section.stats} />}
     </CampaignWorkspace>
   );
 }
 
 /**
  * The call log itself, given the workspace's campaign (see `CampaignWorkspace`) for names
- * only: the export's file, the dispositions, the recording note.
+ * only: the export's file, the dispositions, the recording note; and the workspace's stats,
+ * for whether the campaign holds soft-phone calls.
  */
-function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaign | null }) {
+function AttemptsSection({ id, campaign, stats }: { id: string; campaign: AgencyCampaign | null; stats: AgencyCampaignStats | null }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
@@ -180,11 +182,13 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
   const canExport = hasPermission(role, 'agency.supervise');
   /**
    * The export is the campaign's call log (SR6): its dials and the soft-phone calls logged to it,
-   * each row's `source` column saying which. Said beside the button while the soft phone is on;
-   * a row from a soft phone switched off since still says what it is.
+   * each row's `source` column saying which. Said beside the button while the soft phone is on,
+   * or whenever the campaign holds soft-phone calls (`/stats`, the SR5 rule the Analytics cards
+   * use): the file carries them whatever the flag says now.
    */
   const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
-  const exportTitle = softphoneOn
+  const exportHoldsSoftphone = softphoneOn || showsSoftphone(stats, false);
+  const exportTitle = exportHoldsSoftphone
     ? 'Download everything matching the filters above, not just the rows on screen, with the soft-phone calls logged to this campaign (its source column says which)'
     : 'Download everything matching the filters above, not just the rows on screen';
 
@@ -436,7 +440,7 @@ function AttemptsSection({ id, campaign }: { id: string; campaign: AgencyCampaig
           'Attempts with no agent are real rows — the call was abandoned, failed, or never answered.',
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
-          ...(softphoneOn
+          ...(exportHoldsSoftphone
             ? ['The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its source column.']
             : []),
         ]}

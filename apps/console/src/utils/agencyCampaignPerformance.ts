@@ -227,18 +227,22 @@ export function ratesWithheld(stats: AgencyCampaignStats | null): boolean {
  * words. `known: false`, because nothing is being reported — it dims exactly as
  * a failed read does, and for the same reason: this is not a bad number, it is
  * the absence of one.
+ *
+ * `noun` is what the rate's denominator counts, plural: the dialler's `dials`, or the soft
+ * phone's and All calls' `soft-phone calls` / `calls`, which are not all dials.
  */
-function volumeWithheldReadout(dials: number): PerformanceReadout {
+function volumeWithheldReadout(placed: number, noun = 'dials'): PerformanceReadout {
+  const one = noun.replace(/s$/, '');
   return {
-    value: 'Not enough dials',
+    value: noun === 'dials' ? 'Not enough dials' : 'Not enough calls',
     detail:
-      `Rates are withheld below ${RATE_MIN_ATTEMPTS} dials placed. Over a handful of calls a `
+      `Rates are withheld below ${RATE_MIN_ATTEMPTS} ${noun} placed. Over a handful of calls a `
       + 'percentage moves several points with every answer, and it is the kind of figure that '
       + 'gets quoted.',
     caveat: null,
     denominator: {
-      lead: formatCount(dials),
-      rest: dials === 1 ? 'dial placed so far' : 'dials placed so far',
+      lead: formatCount(placed),
+      rest: `${placed === 1 ? one : noun} placed so far`,
     },
     scale: null,
     known: false,
@@ -372,7 +376,7 @@ function placedRateReadout(input: {
   if (placed === 0) {
     return { value: 'No data', detail: `No ${noun} have been placed on this campaign yet.`, caveat: null, denominator: null, scale: null, known: false };
   }
-  if (placed < RATE_MIN_ATTEMPTS) return volumeWithheldReadout(placed);
+  if (placed < RATE_MIN_ATTEMPTS) return volumeWithheldReadout(placed, noun);
   const rate = (humans / placed) * 100;
   return {
     value: pct(rate),

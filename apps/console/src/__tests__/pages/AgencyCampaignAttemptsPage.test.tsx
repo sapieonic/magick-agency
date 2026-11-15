@@ -394,6 +394,56 @@ describe('permissions', () => {
   });
 });
 
+/*
+  The export is the campaign's call log (SR6): it carries the soft-phone calls logged to the
+  campaign whatever the flag says now, so the page says so while the soft phone is on OR the
+  campaign holds any (`/stats` `softphone.placed`, the SR5 rule), and not otherwise.
+*/
+describe('the export’s soft-phone rows are mentioned when the file can hold them', () => {
+  const TIP = 'The export also holds the soft-phone calls logged to this campaign, marked soft_phone in its source column.';
+  const PLAIN_TITLE = 'Download everything matching the filters above, not just the rows on screen';
+  async function exportButton(): Promise<HTMLElement> {
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    return screen.getByText('Export CSV').closest('button')!;
+  }
+
+  it('with the soft phone switched off, once the campaign’s stats show soft-phone calls', async () => {
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 3, connected: 2, human_connects: 1 } }));
+    renderPage();
+    const button = await exportButton();
+    await waitFor(() => expect(screen.getByText(TIP)).toBeTruthy());
+    expect(button.getAttribute('title')).toContain('with the soft-phone calls logged to this campaign');
+  });
+
+  it('with the soft phone on, whatever the stats say', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 0, connected: 0, human_connects: 0 } }));
+    renderPage();
+    const button = await exportButton();
+    expect(screen.getByText(TIP)).toBeTruthy();
+    expect(button.getAttribute('title')).toContain('with the soft-phone calls logged to this campaign');
+  });
+
+  it('not with the soft phone off and none logged', async () => {
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ softphone: { placed: 0, connected: 0, human_connects: 0 } }));
+    renderPage();
+    const button = await exportButton();
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByText(TIP)).toBeNull();
+    expect(button.getAttribute('title')).toBe(PLAIN_TITLE);
+  });
+
+  it('not from a server that does not serve the count, with the soft phone off', async () => {
+    renderPage();
+    const button = await exportButton();
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByText(TIP)).toBeNull();
+    expect(button.getAttribute('title')).toBe(PLAIN_TITLE);
+  });
+});
+
 describe('the recording link stays inside the agency workspace', () => {
   /**
    * ─── THE BUG THIS PAGE REPORTED ──────────────────────────────────────────

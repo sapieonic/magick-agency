@@ -319,7 +319,20 @@ describe('the soft phone beside the dialler (SR1, SR5)', () => {
 
   it('withholds the soft phone\'s rate below the floor', () => {
     render(<CampaignPerformance stats={stats({ ...dialled, softphone: { placed: 4, connected: 3, human_connects: 2 } })} softphoneEnabled />);
-    expect(within(screen.getByTestId('softphone-rate-readout')).getByText('Not enough dials')).toBeTruthy();
+    // In calls, not dials: a soft-phone call is not a dial of the dialler's.
+    const soft = screen.getByTestId('softphone-rate-readout');
+    expect(within(soft).getByText('Not enough calls')).toBeTruthy();
+    expect(soft.textContent).toContain('4 soft-phone calls placed so far');
+    expect(soft.textContent).not.toContain('dial');
+  });
+
+  it('withholds the All calls rate below the floor on its own denominator, in calls', () => {
+    render(<CampaignPerformance stats={stats({ first_dials_placed: 10, attempts_total: 10, human_connects: 2, attempts_connected: 3, connect_rate_pct: 20, softphone: { placed: 1, connected: 1, human_connects: 1 } })} softphoneEnabled />);
+    const all = screen.getByTestId('all-calls-rate-readout');
+    expect(within(all).getByText('Not enough calls')).toBeTruthy();
+    expect(all.textContent).toContain('11 calls placed so far');
+    // The dialler's own rate keeps its words.
+    expect(within(screen.getByTestId('connect-rate-readout')).getByText('Not enough dials')).toBeTruthy();
   });
 
   it('shows nothing of the soft phone while it is off and the campaign holds none', () => {
