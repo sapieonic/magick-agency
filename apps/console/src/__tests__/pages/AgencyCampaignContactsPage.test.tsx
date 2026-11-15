@@ -349,6 +349,22 @@ describe('add contacts — check, review, then import (IM1, IM2, IM3)', () => {
     expect(screen.getByTestId('review-next-steps')).toBeTruthy();
   });
 
+  it('Change the column mapping sets the check aside: no Import until the file is checked again', async () => {
+    // The server imports a check with the CHECK's mapping, so an Import left live after the
+    // mapping changed would save one mapping on the campaign and import with another.
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob());
+    renderPage();
+    await pickFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Change the column mapping' }));
+
+    expect(screen.queryByRole('button', { name: 'Import 6 contacts' })).toBeNull();
+    expect(screen.queryByTestId('review-next-steps')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
+    expect(mocks.importCheckedFile).not.toHaveBeenCalled();
+  });
+
   it('Upload a corrected file starts again from the file picker', async () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
     mocks.getIngestJob.mockResolvedValue(finishedJob());

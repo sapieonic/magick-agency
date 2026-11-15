@@ -146,6 +146,12 @@ export function useRosterIngest(
   const [error, setError] = useState<string | null>(null);
   /** The finished check an import was started from, kept to compare with the import's result (IM2). */
   const [checkJob, setCheckJob] = useState<AgencyIngestJob | null>(null);
+  /**
+   * The mapping the current check ran with. The server imports a check with the check's own
+   * mapping (IM2), so a check only stands for the mapping on screen while the two are the same
+   * object: any edit makes a new `mapping`, and the review (with its Import) no longer applies.
+   */
+  const [checkedMapping, setCheckedMapping] = useState<MappingState | null>(null);
   const [importing, setImporting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -262,6 +268,7 @@ export function useRosterIngest(
       if (!mapping || !upload) return;
       setError(null);
       setCheckJob(null);
+      setCheckedMapping(dryRun ? mapping : null);
       try {
         const id = dryRun
           ? optionsRef.current.peekCampaignId?.()
@@ -315,6 +322,11 @@ export function useRosterIngest(
   const importChecked = useCallback(async () => {
     const check = job;
     if (!check || !check.dry_run || check.status !== 'completed' || !mapping || importing) return;
+    if (mapping !== checkedMapping) {
+      // The import would run with the CHECK's mapping while the campaign saved this one.
+      setError('The column mapping changed after the check. Check the file again before importing.');
+      return;
+    }
     setError(null);
     setImporting(true);
     try {
@@ -340,7 +352,7 @@ export function useRosterIngest(
     } finally {
       setImporting(false);
     }
-  }, [job, mapping, importing, tenantId, accountId]);
+  }, [job, mapping, checkedMapping, importing, tenantId, accountId]);
 
   const onCancelIngest = useCallback(async () => {
     if (!job) return;
@@ -385,9 +397,24 @@ export function useRosterIngest(
     setJobId(null);
     setJob(null);
     setCheckJob(null);
+    setCheckedMapping(null);
     setError(null);
     setDownloadError(null);
   }, []);
+
+  /**
+   * Re-enter a step. Going back to the mapping after a check sets that check aside: its review
+   * and its Import belong to the mapping it ran with, so the file is checked again before an
+   * import (a finished real import is left as it is).
+   */
+  const enterPhase = useCallback((next: UploadPhase) => {
+    if (next === 'mapping' && job?.dry_run) {
+      setJob(null);
+      setJobId(null);
+      setCheckedMapping(null);
+    }
+    setPhase(next);
+  }, [job]);
 
   // Derived here rather than in each page. Two pages re-deriving "is it still
   // running" off `jobId` and `isTerminal` is two chances to get the
@@ -395,13 +422,13 @@ export function useRosterIngest(
   const running = jobId !== null && (!job || !isTerminal(job.status));
   const finished = job !== null && isTerminal(job.status);
   /** A finished, successful check: the review, whose next step is Import (IM2). */
-  const reviewing = finished && job.dry_run && job.status === 'completed';
+  const reviewing = finished && job.dry_run && job.status === 'completed' && mapping === checkedMapping;
 
   return {
     limits,
     phase,
     /** Exposed for "back to mapping" — re-entering a step, not a state machine hop. */
-    setPhase,
+    setPhase: enterPhase,
     running,
     finished,
     reviewing,
