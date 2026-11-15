@@ -247,7 +247,10 @@ export type ProxiedRecordingCall = RecordingCallRef & {
  *    (`redirectHost` and `redirectedFrom` logged);
  *  - 502 `upstream_unauthorized` / `upstream_not_found` / `upstream_status`: the carrier
  *    answered non-2xx (`upstreamStatus` logged);
- *  - 504 `timeout`: no response headers within {@link RECORDING_PROXY_HEADERS_TIMEOUT_MS};
+ *  - 504 `timeout`: no response headers within {@link RECORDING_PROXY_HEADERS_TIMEOUT_MS} of the
+ *    first request to the carrier. Resolving the access before it is not timed here: it is our
+ *    database and keyring, not the carrier, so a stall there is not "the recording host did not
+ *    answer" (the pool's timeouts bound it, db-hygiene.md §5) and a failure is `access_error`;
  *  - 502 `network`: the fetch failed (DNS, refused, reset, TLS).
  * The 404s (`access_refused`, a call with no recording) read as "not recorded".
  */
@@ -294,7 +297,8 @@ export async function proxyCallRecording(
   if (typeof range === 'string' && range.length > 0) headers['Range'] = range;
 
   const host = recordingHostname(callRecord.recording_url);
-  // Times the response headers only: cleared once they arrive, so the body streams untimed.
+  // Times the carrier's response headers only (not the access resolved above, which is ours):
+  // cleared once they arrive, so the body streams untimed.
   const headersTimeout = new AbortController();
   const timer = setTimeout(() => headersTimeout.abort(), opts.headersTimeoutMs ?? RECORDING_PROXY_HEADERS_TIMEOUT_MS);
   try {

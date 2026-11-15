@@ -729,8 +729,8 @@ account's `allow_recording`). Plivo is told (`<Record>` only then). **VoiceLink 
 Since RC1 such a recording is never kept: the bridge discards it on arrival (live, terminal or
 late), logs `Carrier delivered a recording for a call that did not ask for one — discarded, not
 stored` at warn with `callId`, `provider` and `where` (never the URL), and counts it once per
-call in `recording_discarded_unrequested_total{provider}`. The repository refuses to store one
-too. A steady count for `voicelink` means VoiceLink keeps recording calls set not to record. That
+call in `recording_discarded_unrequested_total{provider}` (the dashboard's "Recordings" row). The
+repository refuses to store one too. A steady count for `voicelink` means VoiceLink keeps recording calls set not to record. That
 needs no action: we never honour such a recording, whatever VoiceLink does with it (RC2).
 
 **Rows from before RC1.** A call row stored before this release may still hold a link it did not
@@ -739,7 +739,15 @@ customer history's recording state, Insights, report workbooks, analysis), and
 `0043_recording_honours_request.sql` had Insights recount the buckets it touched. The retention
 purge then clears the link and its duration on every run, whatever its windows (RC5,
 `unrequested_recordings_cleared` on the report and in the Slack summary): the first run after
-the release clears the old ones and later runs report 0. To see what is left before it runs:
+the release clears the old ones and later runs report 0. It walks
+`idx_agency_calls_recording_unrequested` (0046; on a large `agency_calls`, build it first,
+`db-hygiene.md` §2) in batches of 5000, skipping a row another transaction holds (the next run
+takes it). If the step fails (a statement timeout, say), the report carries
+`unrequested_recordings_error`, the Slack summary says "one step failed", the log has `Clearing
+recording links on calls that did not ask for one failed`, and the transcript and voicemail steps
+still run; the next run carries on. Each cleared campaign call marks its Insights bucket once
+(0012's trigger), which the rollup job recomputes to the same count. To see what is left before
+it runs:
 
 ```sql
 SELECT tenant_id, account_id, provider, date_trunc('month', created_at) AS month, count(*)
@@ -767,14 +775,16 @@ The server's answers that land there (RC3):
 | 502 | `upstream_unauthorized` | The carrier answered 401 or 403 (`upstreamStatus` logged): for Plivo, the tenant's credential is wrong for the recording, or a redirect that came back to the media host without the credential |
 | 502 | `upstream_not_found` | 404 or 410: the recording is not (yet, or any longer) at the carrier |
 | 502 | `upstream_status` | Any other non-2xx (5xx, 429), `upstreamStatus` logged |
-| 504 | `timeout` | No response headers within 20 s; before RC3 the request hung until the browser gave up |
+| 504 | `timeout` | No response headers within 20 s of the first request to the carrier; before RC3 the request hung until the browser gave up. Resolving the access before it is ours (database and keyring), not timed here: a failure there is `access_error`, a stall is bounded by the pool's timeouts (`db-hygiene.md` §5) |
 | 502 | `network` | DNS, refused, reset or TLS failure: our egress cannot reach the host (VoiceLink's host has been unreachable from some clouds) |
 | 502 | `access_error` | Resolving the call's access threw (database or credential store) |
 
 `access_refused` (a 404) is counted too, though the console shows it as not recorded. Also
 "unreachable" to the console, with no proxy log: a 401 (the viewer's session expired), a 429 (the
 rate limiter), any 5xx before the proxy runs. The analysis worker counts its own fetches as
-`surface="analysis"` with the same reasons.
+`surface="analysis"` with the same reasons, `access_refused` and `access_error` included (its
+fetch times out on `DIALER_TRANSCRIBE_TIMEOUT_MS` rather than the proxy's 20 s). The
+"Recordings" row of the Grafana dashboard charts this counter by reason and provider.
 
 To find the cause: `sum by (provider, reason) (increase(recording_fetch_failures_total[1d]))`,
 then the warn and error logs of component `recording-proxy` for the reason (`callId`, `provider`,
@@ -786,9 +796,10 @@ tenant's credential (verify it in the super-admin console); `redirect_refused` o
 **Following a Plivo redirect (RC4, default, pending Manas).** Whether `media.plivo.com` answers a
 recording with a redirect has not been seen live (Plivo step 5 is open, `docs/status.md`). If the
 logs show `reason: redirect_refused` for Plivo with a stable `redirectHost`, an operator may list
-that host in `PLIVO_RECORDING_REDIRECT_HOSTS` (comma list of exact, bare lowercase hostnames;
-refused at boot otherwise: no scheme, port, path, wildcard, IP address or `localhost`) and
-restart. A listed host is accepted for a redirect hop only, never as the first URL, and the hop
+that host in `PLIVO_RECORDING_REDIRECT_HOSTS` (comma list of exact hostnames, lowercased on
+load, so case does not matter; refused at boot with a scheme, port, path, wildcard, IP address or
+`localhost`) and restart. A listed host is accepted as a redirect hop only, never as the first
+URL, and as any hop: from `media.plivo.com` or from an earlier listed hop (at most 3 hops). A hop
 never carries the credential (only `Range`). Empty, the default, follows no redirect, as before.
 Never list a host the logs did not name.
 

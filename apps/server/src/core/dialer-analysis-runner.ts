@@ -163,6 +163,10 @@ export class DialerAnalysisRunner {
         }, 'Recording access refused; not fetching');
         throw new TranscriptionError('TRANSCRIPTION_FAILED', err.message, !err.permanent);
       }
+      // Not a refusal: the credential store or the database failed. Counted as the playback
+      // proxy counts it (RC3); the run's own handling then retries or fails the job.
+      trackRecordingFetchFailure(call.provider, 'analysis', 'access_error');
+      log.warn({ err, provider: call.provider, reason: 'access_error' }, 'Error resolving recording access; not fetching');
       throw err;
     }
     return fetchRecordingBytes(recordingUrl, {
