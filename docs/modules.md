@@ -511,19 +511,20 @@ Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inboun
 
 ### `apps/server/src/agency/listen/`
 
-Live call listening's server side (docs/listening.md §4 "As built (phase 3)", LS16). `listen-registry.ts`: `ListenRegistry` (`runtime.listen`, one per process): the per-call, per-process and per-supervisor caps over open sessions and reservations, supersede, `endSessions`, `revokeUser` and the periodic `recheck` (every `AGENCY_LISTEN_RECHECK_MS`, armed by `AgencyRuntime.start` / `startShard`), `shutdown` (`server_shutdown`). `listen-access.ts`: the re-check's question, from the database (the membership the tenant context would pick at `agency.calls.listen`, both flags, LS4). `listen-token.ts`: `ListenTokenStore` (`runtime.listenTokens`), the socket's single-use grant token (`<token>|<grant JSON>`, a Lua GET-compare-DEL, fail closed both ways) and `parseListenGrantPayload`. `listen-socket.ts`: `handleListenSocket` (the upgrade's fail-closed order: token, caps, row, tap) and the session, which is both the registry's handle and the bridge's `ListenSink` (control frames, the idle bound, the one end: frame, close code, row, audit, metrics); `parseListenClientFrame`. `listen-revocation.ts`: `revokeListens` / `onListenRevocation` (the hook the platform's member routes call, docs/seams.md §4) and `remoteSupersedeTargets` (a worker's supersede of listens other processes hold). The routes are `api/routes/proxy-agency-live-calls.routes.ts`, `proxy-agency-listen.routes.ts` and `agency/live-calls.ts`; the live list's SQL `db/repositories/agency/live-call.repository.ts`.
+Live call listening's server side (docs/listening.md §4 "As built (phase 3)", LS16). `listen-registry.ts`: `ListenRegistry` (`runtime.listen`, one per process): the per-call, per-process and per-supervisor caps over open sessions and reservations, supersede, `endSessions`, `revokeUser` (fails closed, bumps the supervisor's revocation generation) and the periodic `recheck` (every `AGENCY_LISTEN_RECHECK_MS`, armed by `AgencyRuntime.start` / `startShard`; fails open up to the 4 × staleness cap), the upgrade's `verify`, `shutdown` (`server_shutdown`). `listen-access.ts`: the re-check's question, from the database (the membership the tenant context would pick at `agency.calls.listen`, both flags from one strict snapshot, `readListenFlags`, LS4; a failed read unchecked). `listen-rows.ts`: `ListenRowKeeper` (`runtime.listenRows`): the session rows' opens and closes, a failed close retried on the re-check tick, this process's lost rows swept (LS16 o). `listen-token.ts`: `ListenTokenStore` (`runtime.listenTokens`), the socket's single-use grant token (`<token>|<grant JSON>`, a Lua GET-compare-DEL, fail closed both ways) and `parseListenGrantPayload`. `listen-socket.ts`: `handleListenSocket` (the upgrade's fail-closed order: token, caps at the revocation generation, the database's answer, row, tap, admission) and the session, which is both the registry's handle and the bridge's `ListenSink` (control frames, the idle bound, the one end: frame, close code, row, audit, metrics); `parseListenClientFrame`. `listen-revocation.ts`: `revokeListens` / `onListenRevocation` (the hook the platform's member routes call, docs/seams.md §4) and `remoteSupersedeTargets` (a worker's supersede of the older listens other processes hold). The routes are `api/routes/proxy-agency-live-calls.routes.ts`, `proxy-agency-listen.routes.ts` and `agency/live-calls.ts`; the live list's SQL `db/repositories/agency/live-call.repository.ts`.
 
-Files: `listen-access.ts`, `listen-registry.ts`, `listen-revocation.ts`, `listen-socket.ts`, `listen-token.ts`
+Files: `listen-access.ts`, `listen-registry.ts`, `listen-revocation.ts`, `listen-rows.ts`, `listen-socket.ts`, `listen-token.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/listen/listen-registry.test.ts` (the caps and reservations, a supervisor's own listen not counted, supersede, `endSessions`, `revokeUser` scoped and re-checked, an outage ending nothing, the periodic re-check on fake timers, shutdown; `listenAccessCheck`'s floor, flag and LS4, one read per supervisor and account) | 19 |
+| `apps/server/test/unit/agency/listen/listen-registry.test.ts` (the caps and reservations, a supervisor's own listen not counted, supersede, `endSessions`, `revokeUser` scoped, re-checked and failing closed, the periodic pass failing open up to the staleness cap (and a hung pass), the periodic re-check on fake timers, the rows' upkeep on the tick, a stopping process `listen_unavailable`, the revocation generation between grant, reservation and admission, shutdown; `listenAccessCheck`'s floor, flag and LS4, a failed read unchecked, one read per supervisor and account) | 27 |
 | `apps/server/test/unit/agency/listen/listen-socket.test.ts` (the frame parser; the upgrade's order and each refusal's close; `ready` and the started audit; pong; every end's frame, close code, row and audit; the tap's own ends; the client's close; the idle bound; ends once; a throwing row close or audit; supersede) | 22 |
 | `apps/server/test/unit/agency/listen/listen-token.test.ts` | 6 |
-| `apps/server/test/unit/agency/listen/listen-revocation.test.ts` | 3 |
-| `apps/server/test/integration/agency/live-listen-e2e.test.ts` (end to end on VoiceLink: both legs mid-call, the call's end, a drop, stop, the cap, supersede, a role change and a removal through the real routes, LS4, the own call, another account and tenant, roles, the flag, the number, both call details, a soft-phone call, a wrap-up redial, HTTP closing, the boot sweep, a replayed or foreign token) | 13 |
+| `apps/server/test/unit/agency/listen/listen-revocation.test.ts` (the hook; the cross-worker supersede, older rows only) | 5 |
+| `apps/server/test/unit/agency/listen/listen-rows.test.ts` (a failed close retried with its reason, the sweep's keep set and age floor, the queue bound) | 5 |
+| `apps/server/test/integration/agency/live-listen-e2e.test.ts` (end to end on VoiceLink: both legs mid-call, the call's end, a drop, stop, the cap, supersede, a role change and a removal through the real routes with the periodic re-check held off, a demotion between a grant and its upgrade, LS4, the own call, another account and tenant, roles, the flag, the number, both call details, a soft-phone call, a wrap-up redial, HTTP closing, the boot sweep, a replayed or foreign token) | 14 |
 | `apps/server/test/integration/telephony/live-listen-plivo-e2e.test.ts` (Plivo outbound; an inbound caller parked, then connected) | 2 |
-| `apps/server/test/integration/cluster/live-listen.test.ts` (`MEDIA_WORKERS=2`: the grant and the socket on the owning worker, supersede across workers, revocation over IPC) | 2 |
+| `apps/server/test/integration/cluster/live-listen.test.ts` (`MEDIA_WORKERS=2`: the grant and the socket on the owning worker, supersede across workers, revocation over IPC with the periodic re-check held off, a demotion between a grant and its upgrade) | 3 |
 
 ### `apps/server/src/ai/`
 
@@ -612,7 +613,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
-| `apps/server/test/unit/api/listen-route.test.ts` (the listener socket's route: once, its `wsOwner` and handoff label `listen`, the refusals before the token, the station rate-limit bucket, the token redacted) | 5 |
+| `apps/server/test/unit/api/listen-route.test.ts` (the listener socket's route: once, its `wsOwner` and handoff label `listen`, the refusals before the token, the station rate-limit bucket, the token redacted in spans and in the handoff's own log line) | 5 |
 | `apps/server/test/unit/api/core-dispatch.test.ts` | 14 |
 | `apps/server/test/unit/api/core-route-owners.test.ts` | 6 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
@@ -691,7 +692,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 46 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
-| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 62 |
+| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` (with the role change and removal re-checking listens, LS10) | 64 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 78 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 23 |
@@ -709,8 +710,8 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 24 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 | `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 49 |
-| `apps/server/test/unit/api/routes/proxy-agency-live-calls.routes.test.ts` (live calls, docs/listening.md: RBAC before the flag, the flag, the edge checks, masking and names, `listenable`, the number, the grant's refusals, forwarding and answer mapping, through the app-wide error mask: a 503 refusal keeps its code) | 11 |
-| `apps/server/test/unit/api/routes/agency-live-calls-internal.test.ts` (the internal `POST /listen-grants`: the bridge, the caps, the token, a 400) | 4 |
+| `apps/server/test/unit/api/routes/proxy-agency-live-calls.routes.test.ts` (live calls, docs/listening.md: RBAC before the flag, the flag, a flag store that cannot be read (the grant 503 `listen_unavailable`), the edge checks, masking and names, `listenable`, the number, the grant's refusals, forwarding and answer mapping, through the app-wide error mask: a 503 refusal keeps its code) | 12 |
+| `apps/server/test/unit/api/routes/agency-live-calls-internal.test.ts` (the internal `POST /listen-grants`: the bridge, the caps, the token and its revocation generation, a 400; the list's AHT cache, its minute and its bound) | 5 |
 | `apps/server/test/integration/api/away-ring-routes.test.ts` (Mode B: the push-device routes, the test ring and its limit, the `away_ring` refusals and switch, the close keeping it, force-available refused, the opt-out (`PATCH ring_enabled=false`, the Me toggle), the switch leaving nothing queued, the return, the take-over, a leave from another device telling the parked phone `left`, a named break the row missed never switched, the opt-out's and the removal's end audited as the agent) | 13 |
 | `apps/server/test/integration/api/inbound-ring-routes.test.ts` (Mode B: the token-only routes and their uniform 404, accept with the agent's session and device, the per-IP limit; IQ83: `device_away` during a ring not yet answered declines it, during an answered one queues behind the call, a pause queued behind a ring that ends unbound applies at its end, and a real station socket attaching without `caps=inbound` mid-ring gets `device_away` before `ready`) | 9 |
 
@@ -804,7 +805,7 @@ Files: `audit-buffer.ts`, `audit-logger.ts`, `audit-partition-maintenance.ts`, `
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/audit/audit-loggers.test.ts` | ~4 |
-| `apps/server/test/integration/audit/audit-partition-maintenance.test.ts` (with the listen sessions' delete at the audit cutoff, LS12) | ~5 |
+| `apps/server/test/integration/audit/audit-partition-maintenance.test.ts` (with the listen sessions' delete on the cutoff month's boundary, with their month's audit partition, LS12) | ~5 |
 | `apps/server/test/unit/audit/audit-partition-maintenance.test.ts` (with `purgeAuditHorizonRows`: batches, the dry run, a failure recorded on its own) | 11 |
 | `apps/server/test/unit/audit/audit-retention.test.ts` | 8 |
 | `apps/server/test/unit/audit/super-admin-audit-failure-logged.test.ts` | 4 |
@@ -1016,14 +1017,15 @@ The agency repository is a folder, `repositories/agency/`, behind the `agency.re
 
 Mode B: `repositories/agency/push-device.repository.ts` (`AgencyPushDeviceRepository`: register and opt in, each answering the opt-in it replaced, revoke, the failure record, the device that holds a session's station, and with it the live session's side of the ring rule in one statement (`findForLiveSession`, the ring as it starts), `toWirePushDevice` without the tokens); `agent-session.repository.ts` keeps `away_ring_since` and `ring_misses` in `setState` and adds `restoreAwayRing` (answering the absence's start and its missed rings, so a ring's end reads neither again), `endAwayRing` (also matching a row still on `break/away_ring` whose key the reconcile cleared), `clearAwayRingSince`, `findAwayRingCandidates` (every live absence with its station's device and missed rings, or one account's for the inbound search, on 0037's partial index; who of them may be rung is `AwayRingService`'s rule), `noteRingMiss`, `ringAnswered` (a bound ring: misses reset and `away_ring_since` cleared) and `findLiveAwayRingForDevice` (the take-over's claim ends `away_ring` in its own statement); `inbound-call.repository.ts` writes the ring columns (`offer` with `channel`, `markRingAnswered`, `setRingResult`, which answers the row it wrote).
 
-Live call listening: `repositories/agency/live-call.repository.ts` (`AgencyLiveCallRepository`: the account's live calls on the three spines, scoped in each and on the leg, and each campaign's AHT through `ahtSecondsSql`, the campaign stats' own fragment in `sql-fragments.ts`); `repositories/agency/listen-session.repository.ts` (`AgencyListenSessionRepository`, `agency_listen_sessions`, 0047: open a session's row, close an open one once with its reason and counters, the account's and the calls' open sessions, a call's sessions for "Listened to by", one supervisor's open sessions, and the reaps that close a dead process's open rows `server_restarted` by replica).
+Live call listening: `repositories/agency/live-call.repository.ts` (`AgencyLiveCallRepository`: the account's live calls on the three spines (the dialler's on `idx_agency_attempts_account_live`), scoped in each and on the leg, and each campaign's AHT through `ahtSecondsSql`, the campaign stats' own fragment in `sql-fragments.ts`); `repositories/agency/listen-session.repository.ts` (`AgencyListenSessionRepository`, `agency_listen_sessions`, 0047: open a session's row, close an open one once with its reason and counters, the account's and the calls' open sessions, a call's sessions for "Listened to by", one supervisor's open sessions, the boot and worker reap that closes a dead process's open rows `server_restarted` by replica, and a live process's sweep of its own rows it no longer holds).
 
 Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-caller-id.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-retry.repository.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/assignment-reads.repository.ts`, `repositories/agency/assignment-sql.ts`, `repositories/agency/assignment.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact-unclaim-sql.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/customer-history.repository.ts`, `repositories/agency/drilldown-sql.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/inbound-answer.repository.ts`, `repositories/agency/inbound-call.repository.ts`, `repositories/agency/inbound-clip.repository.ts`, `repositories/agency/inbound-route.repository.ts`, `repositories/agency/insights-pacing.repository.ts`, `repositories/agency/insights-range-reads.ts`, `repositories/agency/insights-reads.repository.ts`, `repositories/agency/insights-rollup-reads.ts`, `repositories/agency/insights-rollup-sql.ts`, `repositories/agency/insights-rollup.repository.ts`, `repositories/agency/insights-sql.ts`, `repositories/agency/manual-call.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/report-run.repository.ts`, `repositories/agency/report-subscription.repository.ts`, `repositories/agency/softphone-campaign-sql.ts`, `repositories/agency/roster-presence.repository.ts` (what a roster import finds already in its campaign, IM3: numbers by the digits index, exact copies by `row_fingerprint`, key-column parts paged on `(created_at, id)`, each bounded by the job's own start), `repositories/agency/softphone-settings.repository.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`, `sql-utils.ts` (SQL spellings shared across areas: `endsWithDigitsSql`), `repositories/agency/push-device.repository.ts`, `repositories/agency/listen-session.repository.ts`, `repositories/agency/live-call.repository.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/agency/insights-pacing-repository.test.ts` | 11 |
-| `apps/server/test/integration/agency/listen-session-repository.test.ts` (every method on real Postgres: the tenant and account scopes, the open-only reads, a close that wins once and its race, no end before the start, the two reaps) | 10 |
+| `apps/server/test/integration/agency/listen-session-repository.test.ts` (every method on real Postgres: the tenant and account scopes, the open-only reads, a close that wins once and its race, no end before the start, the boot reap and a live process's sweep) | 10 |
+| `apps/server/test/integration/agency/live-call-plan.test.ts` (the live list's dialler spine on `idx_agency_attempts_account_live`, keyed by the account, on a seeded table) | 2 |
 | `apps/server/test/integration/repositories/agency-ingest-job-account-scope.test.ts` | ~9 |
 | `apps/server/test/integration/repositories/membership-invite-claim-confinement.test.ts` | ~7 |
 | `apps/server/test/integration/repositories/notification-delivery.repository.test.ts` | ~42 |
@@ -1057,7 +1059,7 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 
 ### `apps/server/src/feature-flags/`
 
-Feature-flag service, registry and initialisation.
+Feature-flag service, registry and initialisation. Every reader degrades to the registry default on an outage except `strictSnapshot`, which rejects (`FlagReadError`): live listening's access check and grant read their flags through it (docs/listening.md LS16 d).
 
 Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 
@@ -1065,7 +1067,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 |---|---|
 | `apps/server/test/integration/feature-flags/feature-flag.service.test.ts` | 5 |
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
-| `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
+| `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` (with `strictSnapshot`: an outage rejects) | 34 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
 | `apps/server/test/unit/feature-flags/registry.test.ts` | 20 |
 

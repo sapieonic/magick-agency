@@ -532,6 +532,7 @@ the standing line of LS2.
 
 | Load check | 100 calls with nobody listening, then 6 and 20 listeners (one stalled), on one build: `apps/server/test/integration/load/listen-media-load.test.ts` | **Run** (2026-11-16): below |
 | Voice review | The tap's review fixes: listeners ended as the call starts to settle (LS15 f), the μ-law customer by table and the transcoded legs primed (LS17 a), 10 s of drops ending a listener (LS17 b), failed frames counted in 20 ms frames (LS17 c), the loop-delay alert (LS17 d) | **Built** (2026-11-16): unit-tested; the load check's stalled listener now expects `send_backlog` (its integration file is updated, not yet re-run) |
+| Server review | The agency and API side's review fixes: the upgrade's own access check and the revocation generation (LS16 n), the immediate path failing closed and the periodic pass's staleness cap (LS16 c, d), the flags read strictly, the super-admin's revocation, failed row closes retried and lost rows swept (LS16 o), supersede of older rows only (LS16 p), a stopping process `listen_unavailable` (LS16 q), retention on the partitions' month boundary (LS16 s), the AHT cache bounded and the dialler spine's index (LS16 u), the handoff's redacted URL (LS16 v) | **Built** (2026-11-16): `9f32bc5`, `09053e6`; counts in [`status.md`](status.md) "Test counts" |
 
 ### Load check
 
@@ -666,28 +667,42 @@ before every listener send"), which goes red for it.
   `test/unit/telephony/carrier-modules.test.ts` (Plivo's `wireFormat: 'mulaw8'`).
 - The server side (phase 3): `test/unit/agency/listen/listen-registry.test.ts` (the three caps,
   reservations, a supervisor's own listen not counted, supersede, `endSessions`, `revokeUser` scoped
-  and re-checked, an outage ending nothing, the periodic re-check on fake timers, shutdown; the
-  access question: the floor, a tenant-wide admin, the flag, LS4, one read per supervisor and
+  and re-checked and failing closed, the periodic pass failing open up to the staleness cap (and a
+  hung pass), the periodic re-check on fake timers, the rows' upkeep on the tick, a stopping process
+  `listen_unavailable`, the revocation generation between grant and reservation and between
+  reservation and admission, shutdown; the access question: the floor, a tenant-wide admin, the
+  flag, LS4, a failed read unchecked while a known no still revokes, one read per supervisor and
   account), `listen-socket.test.ts` (the strict frame parser; the upgrade's order: token, session,
-  caps, row before tap, the tap refused; `ready` and the started audit; ping/pong; every end's frame,
+  caps, the database's answer (4403, or 1011 when it cannot say), a token from before a revocation,
+  a revocation between reservation and admission, a stopping process, row before tap, the tap refused; `ready` and the started audit; ping/pong; every end's frame,
   close code, row and audit; the tap's own ends; the client's close; the idle bound on fake timers;
   ends once; a throwing row close or audit; supersede through the registry), `listen-token.test.ts`
   (single use, the listen id, a stored value that is not a grant, fail closed both ways, the
-  in-process store), `listen-revocation.test.ts`, `test/unit/api/routes/proxy-agency-live-calls.routes.test.ts`
-  (RBAC before the flag, the flag, the edge checks, masking and names, `listenable`, the number,
-  the grant's refusals, its forwarding and its answer mapping),
-  `agency-live-calls-internal.test.ts` (the grant handler: the bridge, the caps, the token),
+  in-process store), `listen-revocation.test.ts` (the hook; the cross-process supersede: past the
+  cap, older rows only, two listens admitted at once ending one), `listen-rows.test.ts` (a failed
+  close retried with its reason, the sweep's keep set and age floor, the queue bound),
+  `test/unit/feature-flags/flag-snapshot.test.ts` (`strictSnapshot`: an outage rejects),
+  `test/unit/api/routes/super-admin-memberships.test.ts` (the super-admin role change and removal
+  re-check listens), `test/unit/api/routes/proxy-agency-live-calls.routes.test.ts`
+  (RBAC before the flag, the flag, a flag store that cannot be read, the edge checks, masking and
+  names, `listenable`, the number, the grant's refusals, its forwarding and its answer mapping),
+  `agency-live-calls-internal.test.ts` (the grant handler: the bridge, the caps, the token and its
+  revocation generation; the AHT cache's minute and bound),
   `test/unit/api/listen-route.test.ts` (the route, its `wsOwner` and handoff label, the refusals,
-  the station bucket, the token's redaction), the guards (`agency-route-table`, `agency-agent-reach`,
+  the station bucket, the token's redaction in spans and in the handoff's own log line),
+  `test/integration/agency/live-call-plan.test.ts` (the dialler spine on
+  `idx_agency_attempts_account_live`), the guards (`agency-route-table`, `agency-agent-reach`,
   `core-route-owners`, `core-dispatch`, `websocket-max-payload`, `ipc-protocol`,
   `media-child-invalidations`); end to end `test/integration/agency/live-listen-e2e.test.ts`
   (VoiceLink: joining mid-call with both legs, the call's end, a drop, stop, the per-call cap,
-  supersede, a role change and a removal through the real routes, LS4 both ways, the own call,
+  supersede, a role change and a removal through the real routes with the periodic re-check held
+  off (so the immediate path), a demotion between a grant and its upgrade, LS4 both ways, the own call,
   another account and tenant, agents, operators, the flag, the number, the call details, a
   soft-phone call, a wrap-up redial, HTTP closing, the boot sweep, a replayed or foreign token),
   `test/integration/telephony/live-listen-plivo-e2e.test.ts` (Plivo outbound; inbound parked then
   connected), `test/integration/cluster/live-listen.test.ts` (`MEDIA_WORKERS=2`: the grant and the
-  socket on the owning worker, supersede across workers, revocation over IPC).
+  socket on the owning worker, supersede across workers, revocation over IPC with the periodic
+  re-check held off, a demotion between a grant and its upgrade).
 - The console (phases 4 and 5), under `apps/console/src/__tests__/`:
   `utils/listen/listenFrames.test.ts` (the parser, every close code, the `ended` reasons that end a
   session), `utils/listen/listenSessionReducer.test.ts` (every transition, stale attempts, the

@@ -2040,7 +2040,46 @@ the top of `endCall`; `resetAgentLeg` emptied, keeping the encoder, the framer's
 timed close not counted dropped; a failed message counted as one frame; an undeclared metric in the
 new alert (`pnpm test:grafana` red).
 
+### Live call listening, the server review fixes 2026-11-16 (LS16 c–d, n–v, [`listening.md`](listening.md) §4, §6)
+
+A review of the agency and API side found nine faults (S1, S3–S10; S2, the masked 503s, was already
+fixed in `7b1c92a`), fixed in `9f32bc5`. The upgrade never re-checked access, so a supervisor
+demoted (or a tenant turning the flag off) after a grant could attach within its 60 s and listen
+until the next pass: it now asks the database before the row (4403, or 1011 when it cannot say), and
+a per-supervisor revocation generation, bumped by every `revokeUser`, goes from the grant's token
+into the reservation, so a revocation between grant and admission refuses it. The immediate path
+fails closed; the periodic pass fails open but ends a session not verified for 4 × the re-check
+interval (LS16 c, d). The flags fell back to registry defaults on a flag-store outage (every listen
+ended; LS4 opened): they are read through `FeatureFlagService.strictSnapshot`, an outage being
+"cannot check" (the grant 503 `listen_unavailable`). The super-admin role change and removal now
+revoke. A failed row close was dropped (a phantom listener): it is retried on the re-check tick,
+and a live process sweeps its own rows it no longer holds. The handoff logged an unspent token's URL
+raw. Two listens admitted at once in two workers could end each other (only older rows now). A
+stopping process answered the server's limit (now `listen_unavailable`). The "at once" revocation
+suites could pass on the periodic pass (it is held off to 5 min there). Nits: retention on the
+partitions' month boundary, the AHT cache bounded, the dialler spine on
+`idx_agency_attempts_account_live` (plan test), `maxPerUser` per tenant documented. The load check's
+expectations now allow its stalled listener to end during the window (`e0bf526`).
+
+Mutation-checked (each red, then restored with `git checkout`), 25: no access check at the upgrade;
+admission ignoring the generation; the reservation ignoring the grant's; the immediate path failing
+open; no staleness cap; a good check not refreshing it; `strictSnapshot` degrading like `snapshot`;
+an unreadable flag read as passed; a failed close not queued; the sweep forgetting closes in flight;
+the tick's held ids without reservations; a supersede of newer rows; stopping as the server's limit;
+the handoff's raw URL; the super-admin role change's and removal's revocation; the grant's flag
+outage as 403; the AHT cache unpruned; the grant's generation not recorded; the old campaign-join
+spine and the `reserved_agent_id` predicate (the plan test); the sweep's keep list and its age floor
+(real Postgres); retention at the exact cutoff; the immediate path off in one process (end to end)
+and in a media worker (the cluster suite).
+
 ## Test counts
+
+**Live call listening, the server review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on the
+tree of `e0bf526`. From `apps/server`: `pnpm lint` clean; unit 10337 passed + 1 expected fail (521
+files); `INTEGRATION_LANE=rest pnpm test:integration` 2999 passed + 9 expected fail + 2 skipped (272
+files passed, 2 skipped; run on `09053e6`, before the load suite's fix, which is outside that lane);
+`INTEGRATION_LANE=wall-clock pnpm test:integration` 29 passed (7 files, the listen load check among
+them). From the root: `pnpm test:tooling` 20 passed.
 
 **Live call listening, the voice review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on a
 clean checkout of `618108f` (this worktree also held another agent's work in progress). From
