@@ -1214,8 +1214,12 @@ is therefore not the expected cost. The dwell is still worth
 reading as the relay's own health (is the relay itself slow?), not as the tap's.
 How a listen ended is `agency_listen_sessions_ended_total{reason}`: `call_ended` and
 `listener_stopped` are the ordinary ends; `listener_disconnected` is a socket that closed or a
-listener that sent nothing for 30 s (a closed laptop, a frozen tab); `send_backlog`, `tap_error`,
-`permission_revoked` and `superseded` are below or in [`listening.md`](listening.md) §3. A listener
+listener that sent nothing, not even a pong to the server's ping, for 30 s (a closed laptop, a lost
+network; a hidden tab still answers pings); `send_backlog`, `tap_error`, `permission_revoked` and
+`superseded` are below or in [`listening.md`](listening.md) §3. `access_unverified` (LS21) is the
+access re-check failing to read the database or the flag store for 60 s: a burst of it across
+every listen is a database or flag-store outage, not supervisors losing access; the console offers
+Try again, and the grant refuses (503 `listen_unavailable`) until the reads come back. A listener
 that reads too slowly shows first as `websocket_send_backpressure_total{socket="listener",
 action="media_dropped"}`: past 48 KiB unsent its frames are dropped for it alone (it hears gaps,
 counted in its row's `frames_dropped`); the calls lose nothing. One that has had every frame

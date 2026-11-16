@@ -4,7 +4,7 @@ Supervisors see the calls in progress in their account and listen in silently fr
 Listen only: no whisper, no barge. The audio is forked from our own WebRTC bridge, in the process
 that owns the call; the carrier is not involved, and a slow, failing or dropped listener never
 affects the agent's or the customer's audio. Designed 2026-11-16 from the code, reviewed and locked
-by Manas the same day; decisions LS1–LS17 below. Built in phases (§10): phase 1, the foundation,
+by Manas the same day; decisions LS1–LS22 below. Built in phases (§10): phase 1, the foundation,
 phase 2, the tap in the bridge and its seam member, phase 3, the server side (the routes, the
 listener socket, the registry, revocation), the console (phase 4), the agent's standing line
 (phase 5) and the inbound notice's monitoring words (phase 6) are built, and the load check has
@@ -13,7 +13,8 @@ run (§10 "Load check").
 Where things are: the socket's contract `packages/contracts/src/agency/listen.ts`, the console wire
 `packages/contracts/src/api/agency/live-calls.ts`, refusals `packages/contracts/src/errors.ts` §7,
 permission `agency.calls.listen` (`rbac.ts`), flags `agency_live_listen_enabled` and
-`agency_live_listen_unrecorded` (`flags.ts`), migration `0047_listen_sessions.sql`, repository
+`agency_live_listen_unrecorded` (`flags.ts`), migrations `0047_listen_sessions.sql` and
+`0048_listen_sessions_unverified.sql`, repository
 `apps/server/src/db/repositories/agency/listen-session.repository.ts`, config `agency.listen`
 (`apps/server/src/config/blocks/agency.ts`), metrics in `packages/observability/src/metrics/agency.ts`
 and `voice.ts`, alert group `listen` (`grafana/terraform/alert-rules.tf`), the tap
@@ -30,13 +31,13 @@ live list's SQL `db/repositories/agency/live-call.repository.ts`, IPC `listen.re
 
 Status words as in [`decisions.md`](decisions.md). LS1–LS13 are the locked design (Manas,
 2026-11-16); LS14 collects the calls phase 1 made where the design was silent, LS15 phase 2's,
-LS16 phase 3's, LS17 the voice review's.
+LS16 phase 3's, LS17 the voice review's; LS21 is Manas's decision on an outage of the access check, LS22 the persona review's server calls.
 
 | ID | Decision | Status |
 |---|---|---|
 | LS1 | **Consent.** The flag `agency_live_listen_enabled` (scopes global, tenant, account; default **off**; client-exposed) is the consent gate: a tenant turns it on once callers are told calls may be monitored. Inbound: the standard recording notice becomes "This call may be recorded or monitored for quality and training purposes.", its WAV regenerated (phase 6). Outbound: the agent's script says it; no product change. Every live-call route answers `403 feature_disabled` while it is off, and the periodic re-check ends listens open when it goes off (`permission_revoked`). | **Decided** (Manas, 2026-11-16) |
 | LS2 | **What the agent sees.** No live indicator in this build. While the flag is on, the agent station shows a standing line "Calls may be listened to by a supervisor for quality and training." on the console station (the header's info popover and the join screen) and on the mobile app's station info sheet (copy only, no wire change; the app reads the client-exposed flag). The live "Supervisor listening" pill is not built. | **Decided** (Manas, 2026-11-16) |
-| LS3 | **Who.** A new permission `agency.calls.listen`, floor `account_admin` (tenant admins and owners pass by the hierarchy; an account admin in the accounts of their membership). The live list needs `agency.supervise`; a supervisor who may watch but not listen sees the list without the Listen action. Agents, viewers, operators and super-admins cannot listen. Listening to a call you are the agent on is refused `listen_own_call`. Mobile supervisors are out of scope. | **Decided** (Manas, 2026-11-16) |
+| LS3 | **Who.** A new permission `agency.calls.listen`, floor `account_admin` (tenant admins and owners pass by the hierarchy; an account admin in the accounts of their membership). The live list needs `agency.supervise`; a supervisor who may watch but not listen sees the list without the Listen action (both floors are `account_admin` today, so that supervisor cannot occur yet: raising this floor is a code change to `rbac.ts`, and the console's "You can see live calls but not listen to them." is for then). Agents, viewers, operators and super-admins cannot listen. Listening to a call you are the agent on is refused `listen_own_call`. Mobile supervisors are out of scope. | **Decided** (Manas, 2026-11-16) |
 | LS4 | **Calls that are not recorded.** The flag `agency_live_listen_unrecorded` (scopes global, tenant, account; default **on**; not client-exposed). On: an unrecorded call (`agency_calls.recording_requested` false, RC1) is listenable like any other, and its row shows "Recording off". Off for the call's tenant or account: the row shows "Recording off", Listen is disabled with "Listening is turned off for unrecorded calls", and the grant answers `409 listen_recording_off`. | **Decided** (Manas, 2026-11-16) |
 | LS5 | **Scale and placement.** At most 2 listeners per call (`AGENCY_LISTEN_MAX_PER_CALL`, 1–5), 1 listen per supervisor (a second ends the first `superseded`), 20 per process (`AGENCY_LISTEN_MAX_PER_PROCESS`). Expected peak: 100 calls at once, 5–6 supervisors. The tap runs in the process that owns the call (a media worker when `MEDIA_WORKERS >= 1`): no listen worker, no audio over IPC. | **Decided** (Manas, 2026-11-16) |
 | LS6 | **The supervisor is told, and every listen is recorded.** The listening bar always shows "This session is logged. Do not record or share what you hear." (not dismissible). A first-use confirmation per browser: "Listening is logged" / "Each time you listen, your name, the call and the start and end times are recorded and can be seen by your account’s admins." / Cancel, Start listening (the persona review's wording: the campaign History does not show an inbound or campaign-less listen, so "in the activity history" was not true of every call). Each listen is one `agency_listen_sessions` row and two audit rows, `agency_call.listen_started` and `agency_call.listen_ended` (resource type `agency_call`, ids only, `campaign_id` set so they show on the campaign's History). | **Decided** (Manas, 2026-11-16) |
@@ -49,8 +50,167 @@ LS16 phase 3's, LS17 the voice review's.
 | LS13 | **Who listened, on the call.** The call detail pages get a "Listened to by" section (who, start–end, duration) read from `agency_listen_sessions` by call id, visible to `agency.supervise` holders like the rest of the call page. | **Decided** (Manas, 2026-11-16) |
 | LS14 | **Phase 1's own calls.** (a) Refusal statuses: `listen_call_not_live` 404 (uniform: an ended call and another account's look alike), `listen_recording_off`, `listen_limit_call`, `listen_own_call` 409, `listen_limit_server`, `listen_unavailable` 503. (b) The socket's close codes and the code each end reason closes with (§3). (c) The session table carries a CHECK that a listener is never the call's agent, a backstop under `listen_own_call`, and has no foreign keys (it outlives its call, campaign and users). (d) Its Down refuses while any row exists. (e) Retention ages a row by its start, open or not: an open row past 85 days can only be one a dead process left, which the boot reap closes long before. (f) The live row carries `inbound_route_name` for "Inbound: <route>", which the field list in the design did not name. (g) `AGENCY_LISTEN_MAX_PER_USER` is a setting (default 1, at most 5). (h) `webrtc_relay_dwell_seconds` samples one frame in 50 per call and direction. | **default, pending Manas** |
 | LS15 | **Phase 2's own calls.** (a) The fault budget counts each leg's failed frames in a row apart: a dead customer leg is not kept attached by the agent's good frames. (b) A sink whose `send` throws, or answers `closed`, is ended `listener_disconnected` (4408, the console reconnects); `tap_error` is the budget only. (c) A sink's `frames_dropped` counts the frames it did not get: dropped at its soft limit, and the frames the tap failed while it was attached. (d) A call is listenable once the bridge has been announced (`bridged`: both legs live, the carrier's media negotiated), and stays so through the agent's re-attach window; a parked inbound caller, answered but with no agent bound, is `not_bridged`. (e) The tail of the customer leg needs the carrier's media negotiated and drops a payload too big to relay, as the relay does; an agent message the relay would refuse (not whole 20 ms frames) is not the tap's either. (f) A call's listeners end `call_ended` as soon as the call starts to settle: when a hangup of ours starts VoiceLink's wait for the carrier's confirmation (`ending`, up to 45 s, through which the agent's socket stays bound and keeps sending its microphone) and at the top of the terminal teardown (`endCall`, before its awaits), so nothing either party says after the hangup reaches a listener; a new `openListenTap` is refused `ending` until the session is gone (`not_found`). Revised by the voice review: it first kept the listener attached through `ending`, and the agent's leg still fed it. (g) As on the station, media alone stops at the soft limit, so the hard cap (`send_backlog`) is reached only by other bytes queued on the listener's socket (its control frames); a listener whose every frame has been dropped at the soft limit for 10 s is ended `send_backlog` too (LS17 b), so one that stopped reading but keeps pinging is not kept for ever. | **default, pending Manas** |
-| LS16 | **Phase 3's own calls.** (a) The grant's internal handler is `POST /api/v1/agency/listen-grants` (owner `body_session`, the agent's session in `session_id`), not `/sessions/:id/listen-grants`: every `/sessions/:id` route is the session's own agent's (Q8, `requireOwnedSession`, held by `left-session-guards.test.ts`), and a grant is a supervisor's on someone else's session. Its `ws_url` is minted at the public path (there is no internal socket path to rewrite). (b) At the upgrade the caps are reserved BEFORE the row is written, so a refused attach (4429) leaves no row; a call the bridge no longer holds once the row is written closes that row `call_ended` (4404 `listen_call_not_live`), with no audit pair (it never started). (c) `revokeUser` re-checks the supervisor's sessions against the database (the periodic re-check's question) rather than ending them outright: a role change that still clears `agency.calls.listen` (a promotion, another membership) ends nothing. This immediate path fails CLOSED: a session it cannot check (a read that throws) ends `permission_revoked` too; the supervisor can ask again, and the grant and the upgrade check again. (d) The periodic pass fails OPEN, with a staleness cap: a session whose check cannot be made keeps going, but one not verified for 4 × `AGENCY_LISTEN_RECHECK_MS` (2 min at the defaults; `STALE_AFTER_RECHECKS`) ends `permission_revoked`, whether its checks fail or a pass hangs. A flag store that cannot be read is such a failure, not a flag value: both flags are read through `FeatureFlagService.strictSnapshot` (a read failure rejects; the registry defaults would end every listen through `agency_live_listen_enabled`, default off, and open LS4 through `agency_live_listen_unrecorded`, default on), and the grant answers it `503 listen_unavailable`. Coordinator decision of the server review, 2026-11-16. (e) One listen per supervisor across processes: a listen admitted in one media worker ends the supervisor's older listens in the others (`listen.revoke` `superseded`, naming the listen ids, worker → primary → the other workers); the primary holds no listen while workers run. (f) The list's `listenable` is computed from the open rows (every process); the grant's handler and the upgrade check the owning process's registry; a supervisor's own open listen on a call never counts against them (a reconnect supersedes it). (g) In one process, as HTTP closes the WebSocket plugin closes every socket first (no code: the console reconnects, as for 1001), then the listens end `server_shutdown` with their rows closed, so no `ended` frame goes out; a media worker ends its listens before its app closes (`ended { server_shutdown }`, 1001). (h) The listener socket reads at most 256 bytes a message (`LISTEN_MAX_CLIENT_MESSAGE_BYTES`); a longer message, a binary one or one that does not parse is ignored and does not count as liveness. (i) The live row's `aht_seconds` is the campaign stats' `aht_seconds` (one SQL fragment, `ahtSecondsSql`), read at most once a minute per campaign per process. (j) A withheld inbound number masks as `****`. (k) `listen_sessions` is on the campaign attempt read and the soft-phone call read (the two pages with "Listened to by"), absent when it could not be read; the inbound call read is unchanged. (l) `agency_listen_grants_total` counts the HTTP grant's outcomes; refusals at the upgrade are in the logs and the rows, not that counter. (m) `AgencyLiveCall` gained `correlation_id` (the spine row, for "Open call") and `aht_seconds` (additive, asked for by the console phase). (n) The upgrade asks the database too, after the reservation and before the row (`ListenRegistry.verify`, the re-check's question): 4403 `permission_revoked` if the supervisor may no longer listen, 1011 `listen_unavailable` if it cannot say; and a per-supervisor revocation generation, bumped by every `revokeUser` in that process (a promotion too), is recorded in the grant's token and again in the reservation: a token minted before a revocation is refused at the reservation (4403), and a revocation between the reservation and the admission refuses the admission (the row just written closes `permission_revoked`, 4403, no audit pair). A flag turned off bumps nothing: the upgrade reads the flag, and a session already open ends on the next pass (LS10's lag for flags). (o) A row close that fails is retried with its own reason and counters on every re-check tick until it lands (at most 1,000 wait), and each tick sweeps this process's open rows that nothing here holds (no session, no reservation, no close in flight or queued) and that started over 60 s ago, closing them `server_restarted` (the contract's reason for a session that outlived its process's knowledge of it; it has no other): `listen/listen-rows.ts`, `closeOrphans(replicaId, { keep, minAgeMs })`. (p) A listen admitted in one worker supersedes only the supervisor's rows OLDER than its own (`started_at`, then id): two listens admitted at once in two workers end the older one, never both. (q) A stopping process refuses a grant and an upgrade `listen_unavailable` (503, 1011: try again, a fresh grant reaches the process that owns the call), not `listen_limit_server`, which is the server's cap and feeds its alert. (r) `maxPerUser` counts a supervisor's listens per tenant: a user id is global, a listen belongs to its tenant, so a supervisor with memberships in two tenants may hold one in each. (s) Retention (LS12) follows the audit partitions rather than the exact cutoff: a session row goes when it started before the first instant of the cutoff's UTC month, the boundary below which the maintenance has dropped every audit partition, so it goes the same day as its month's audit rows. (t) The super-admin role change and member removal (`api/routes/super-admin/tenants.ts`) call `revokeListens` too, after their cache delete. (u) The live list's AHT cache holds at most 1,000 campaigns per process, dropping entries past their minute as it reads; the dialler spine reads the account's live attempts on `idx_agency_attempts_account_live` (pinned by `test/integration/agency/live-call-plan.test.ts`). (v) The handoff's refusal log lines carry the upgrade's URL redacted (`redactSpanUrl`): a station or listener token is unspent there. | **default, pending Manas** |
+| LS16 | **Phase 3's own calls**, 22 of them, (a)–(v), listed one by one under the table ("LS16 in full"); the letters are stable, other docs and code comments cite them. In short: where the grant's handler sits and the upgrade's order (a, b, n, q); revocation, failing closed on the immediate path and open with a staleness cap on the periodic one (c, d, amended by LS21), the flags read strictly (d), the super-admin's routes (t); one listen per supervisor across processes (e, p, r); the list's `listenable` (f); shutdown (g); the client message bound (h); the live row's extra fields and the call reads (i, j, k, m, u); the counters (l); the rows' upkeep (o) and retention (s); the handoff's redacted URL (v). | **default, pending Manas** |
 | LS17 | **The voice review's calls.** (a) A μ-law customer (Plivo, `wireFormat: 'mulaw8'`) reaches the tap's listeners through a 256-entry μ-law → A-law table (`MULAW_TO_ALAW`: each code decoded and encoded as A-law, the G.711 per-sample conversion bit for bit), not through the tap's own carrier codec and A-law encoder as §2 first said: both are 8 kHz, so the codec path's two resampling filters only cost CPU and a frame of lag (its first output is 144 bytes) and soften the top of the band; the table's A-law is at least as close to what the caller sent on tones from 300 Hz to 3.4 kHz. A carrier with no G.711 law keeps the codec path. A transcoded leg's first output is led by A-law silence to a whole frame (8 bytes, 1 ms, for 20 ms of `pcm16`), so it runs carry-free. (b) A listener whose every frame has been dropped at the soft limit for `LISTENER_SOFT_LIMIT_MAX_MS` (10 s), with none sent between, is ended `send_backlog` (4408), counted `websocket_send_backpressure_total{socket="listener",action="closed"}`, its last frame counted dropped too; measured on `bufferedAmount` as `ws` sees it, a constant rather than a setting. (c) A failed message counts its 20 ms frames (a failed 1 s agent message is 50) in the sink's `frames_dropped` and the leg's fault budget; `agency_listen_tap_errors_total` counts failed steps. (d) The alert on the tap's cost is `agy-listen-loop-delay` (event-loop delay p99 above 40 ms for 10 min while listens are open), replacing `agy-listen-relay-dwell-regressed`: the dwell excludes the tap by construction, and the load check saw the tap's cost on the loop only. | **default, pending Manas** |
+| LS21 | **When access cannot be checked** (persona review, decision 4). The periodic re-check ends a session not verified for 2 × `AGENCY_LISTEN_RECHECK_MS` (60 s at the defaults; `STALE_AFTER_RECHECKS` was 4) with its own end reason, `access_unverified`, and close code 4503 (`AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED`), not `permission_revoked`: nothing said the supervisor may no longer listen, so the console says listening stopped because their access could not be checked and offers Try again (the grant checks afresh), never "You no longer have access to listen to calls.". A contract addition (`AGENCY_LISTEN_END_REASONS`, `AGENCY_LISTEN_CLOSE`, `AGENCY_LISTEN_END_CLOSE`; not mirrored in Dart), the metric's `reason` label, and migration `0048_listen_sessions_unverified.sql` extending the end reason's CHECK (0047 unchanged). | **Decided** (Manas, 2026-11-16) |
+| LS22 | **The persona review's server calls**, (a)–(m), listed one by one under the table ("LS22 in full"): `access_unverified` on the immediate path too (a); its close code (b); `live_at` and "Listened to by" (c); protocol pings as liveness (d); the client message rate (e); a refusal sends no `ended` frame (f); the token store's outage (g); every close then terminated (h); withheld numbers (i); the fault budget through the seam (j); the rows' upkeep and the tick (k); seats added by an invite (l); the load check's timing bounds (m). | **default, pending Manas** |
+
+### LS16 in full
+
+Phase 3's own calls, each where the locked design was silent. The letters are stable (cited by code
+comments and the other docs).
+
+- **(a)** The grant's internal handler is `POST /api/v1/agency/listen-grants` (owner `body_session`,
+  the agent's session in `session_id`), not `/sessions/:id/listen-grants`: every `/sessions/:id`
+  route is the session's own agent's (Q8, `requireOwnedSession`, held by
+  `left-session-guards.test.ts`), and a grant is a supervisor's on someone else's session. Its
+  `ws_url` is minted at the public path (there is no internal socket path to rewrite).
+- **(b)** At the upgrade the caps are reserved BEFORE the row is written, so a refused attach (4429)
+  leaves no row; a call the bridge no longer holds once the row is written closes that row
+  `call_ended` (4404 `listen_call_not_live`), with no audit pair (it never started).
+- **(c)** `revokeUser` re-checks the supervisor's sessions against the database (the periodic
+  re-check's question) rather than ending them outright: a role change that still clears
+  `agency.calls.listen` (a promotion, another membership) ends nothing. This immediate path fails
+  CLOSED: a session it cannot check (a read that throws) ends `permission_revoked` too; the
+  supervisor can ask again, and the grant and the upgrade check again.
+- **(d)** The periodic pass fails OPEN, with a staleness cap: a session whose check cannot be made
+  keeps going, but one not verified for 4 × `AGENCY_LISTEN_RECHECK_MS` (2 min at the defaults;
+  `STALE_AFTER_RECHECKS`) ends `permission_revoked`, whether its checks fail or a pass hangs. A flag
+  store that cannot be read is such a failure, not a flag value: both flags are read through
+  `FeatureFlagService.strictSnapshot` (a read failure rejects; the registry defaults would end every
+  listen through `agency_live_listen_enabled`, default off, and open LS4 through
+  `agency_live_listen_unrecorded`, default on), and the grant answers it `503 listen_unavailable`.
+  Coordinator decision of the server review, 2026-11-16. Amended by LS21 (decision 4 of the persona
+  review): the cap is 2 × the re-check (60 s at the defaults) and the session ends
+  `access_unverified`, not `permission_revoked`; the immediate path's unreadable checks end
+  `access_unverified` too (LS22 a).
+- **(e)** One listen per supervisor across processes: a listen admitted in one media worker ends the
+  supervisor's older listens in the others (`listen.revoke` `superseded`, naming the listen ids,
+  worker → primary → the other workers); the primary holds no listen while workers run.
+- **(f)** The list's `listenable` is computed from the open rows (every process); the grant's
+  handler and the upgrade check the owning process's registry; a supervisor's own open listen on a
+  call never counts against them (a reconnect supersedes it).
+- **(g)** In one process, as HTTP closes the WebSocket plugin closes every socket first (no code:
+  the console reconnects, as for 1001), then the listens end `server_shutdown` with their rows
+  closed, so no `ended` frame goes out; a media worker ends its listens before its app closes
+  (`ended { server_shutdown }`, 1001).
+- **(h)** The listener socket reads at most 256 bytes a message (`LISTEN_MAX_CLIENT_MESSAGE_BYTES`);
+  a longer message, a binary one or one that does not parse is ignored and does not count as
+  liveness.
+- **(i)** The live row's `aht_seconds` is the campaign stats' `aht_seconds` (one SQL fragment,
+  `ahtSecondsSql`), read at most once a minute per campaign per process.
+- **(j)** A withheld inbound number masks as `****`. Superseded in the console by LS22 (i): the row
+  also says `customer_phone_withheld`, so the console shows "Withheld" and offers no Show.
+- **(k)** `listen_sessions` is on the campaign attempt read and the soft-phone call read (the two
+  pages with "Listened to by"), absent when it could not be read; the inbound call read is
+  unchanged. Since LS22 (c), only the sessions that went live (`live_at` set).
+- **(l)** `agency_listen_grants_total` counts the HTTP grant's outcomes; refusals at the upgrade are
+  in the logs and the rows, not that counter.
+- **(m)** `AgencyLiveCall` gained `correlation_id` (the spine row, for "Open call") and
+  `aht_seconds` (additive, asked for by the console phase).
+- **(n)** The upgrade asks the database too, after the reservation and before the row
+  (`ListenRegistry.verify`, the re-check's question): 4403 `permission_revoked` if the supervisor
+  may no longer listen, 1011 `listen_unavailable` if it cannot say; and a per-supervisor revocation
+  generation, bumped by every `revokeUser` in that process (a promotion too), is recorded in the
+  grant's token and again in the reservation: a token minted before a revocation is refused at the
+  reservation (4403), and a revocation between the reservation and the admission refuses the
+  admission (the row just written closes `permission_revoked`, 4403, no audit pair). A flag turned
+  off bumps nothing: the upgrade reads the flag, and a session already open ends on the next pass
+  (LS10's lag for flags).
+- **(o)** A row close that fails is retried with its own reason and counters on every re-check tick
+  until it lands (at most 1,000 wait), and each tick sweeps this process's open rows that nothing
+  here holds (no session, no reservation, no close in flight or queued) and that started over 60 s
+  ago, closing them `server_restarted` (the contract's reason for a session that outlived its
+  process's knowledge of it; it has no other): `listen/listen-rows.ts`, `closeOrphans(replicaId, {
+  keep, minAgeMs })`.
+- **(p)** A listen admitted in one worker supersedes only the supervisor's rows OLDER than its own
+  (`started_at`, then id): two listens admitted at once in two workers end the older one, never
+  both.
+- **(q)** A stopping process refuses a grant and an upgrade `listen_unavailable` (503, 1011: try
+  again, a fresh grant reaches the process that owns the call), not `listen_limit_server`, which is
+  the server's cap and feeds its alert.
+- **(r)** `maxPerUser` counts a supervisor's listens per tenant: a user id is global, a listen
+  belongs to its tenant, so a supervisor with memberships in two tenants may hold one in each.
+- **(s)** Retention (LS12) follows the audit partitions rather than the exact cutoff: a session row
+  goes when it started before the first instant of the cutoff's UTC month, the boundary below which
+  the maintenance has dropped every audit partition, so it goes the same day as its month's audit
+  rows.
+- **(t)** The super-admin role change and member removal (`api/routes/super-admin/tenants.ts`) call
+  `revokeListens` too, after their cache delete.
+- **(u)** The live list's AHT cache holds at most 1,000 campaigns per process, dropping entries past
+  their minute as it reads; the dialler spine reads the account's live attempts on
+  `idx_agency_attempts_account_live` (pinned by `test/integration/agency/live-call-plan.test.ts`).
+- **(v)** The handoff's refusal log lines carry the upgrade's URL redacted (`redactSpanUrl`): a
+  station or listener token is unspent there.
+
+### LS22 in full
+
+The persona review's server calls (2026-11-16), beside the decided LS21; each a default, pending
+Manas.
+
+- **(a)** The immediate path (`revokeUser`, a role change or a removal) still fails closed (LS16 c),
+  but a session it could not check ends `access_unverified`, like the periodic pass's: no read said
+  the supervisor may not listen. What a read says no to still ends `permission_revoked`.
+- **(b)** `access_unverified` closes 4503 (`ACCESS_UNVERIFIED`, the private code that mirrors HTTP
+  503, as the others mirror theirs). The console stops and offers Try again; a console built before
+  it reads 4503 as an ordinary drop and reconnects, which is safe (the grant refuses while the check
+  cannot be made).
+- **(c)** `agency_listen_sessions.live_at` (0048): when the session went live (admitted, `ready`
+  sent). Stamped as it goes live, not awaited (audio is never held for it), and written by the close
+  as the start when that stamp did not land; NULL for a row the upgrade wrote and then refused (the
+  call gone before the tap, a revocation before the admission, the client gone), which carried no
+  audio. "Listened to by" (`listForCall`) reads only live rows. Rows from before 0048 are backfilled
+  with their start (they were all shown). The live list's listeners still read every open row: an
+  upgrade between its row and its admission lasts milliseconds, and counting it keeps the list's
+  per-call cap with the registry's reservations.
+- **(d)** Liveness: the server pings the listener socket at the protocol level every 10 s
+  (`AGENCY_LISTEN_PING_INTERVAL_MS`) and counts the pong as a client frame, so a hidden tab whose
+  timers are throttled to once a minute is not ended `listener_disconnected` while its browser still
+  answers pings. The JSON `ping` stays answered; the 30 s idle bound is unchanged.
+- **(e)** A listener socket's client messages are rate-limited: a bucket of 20, refilled at 5 a
+  second (`LISTEN_CLIENT_MESSAGE_BURST`, `LISTEN_CLIENT_MESSAGES_PER_SECOND`), every message counted,
+  binary or text, before `ready` or after. Past it the socket closes 1008 `listen_message_rate` and
+  a live session ends `listener_disconnected`. An honest console sends a ping every 10 s.
+- **(f)** Only a session that went live sends `ended { reason }`; an end during the upgrade is a
+  refusal, closed with the refusal's own code. So: a tap that ended under the attach (the sink closed
+  at once, the handle detached) is the call gone, 4404 `listen_call_not_live` (the row `call_ended`);
+  opening the tap throwing is the server's failure, 1011 `listen_unavailable` (the row `tap_error`),
+  not the call's end; a process that started stopping while the row was written refuses 1011
+  `listen_unavailable`, as it does at the reservation (LS16 q), where it used to send
+  `ended { server_shutdown }` and 1001; a revocation between reservation and admission closes 4403
+  with no `ended` frame.
+- **(g)** A token store that cannot be asked at the upgrade (Redis down) is 1011
+  `listen_unavailable`, not 4401 (`listen_token_invalid`, which re-mints at once): the grant already
+  answers the same outage 503. A `token` query given twice is no token (4401) before anything reads
+  it.
+- **(h)** Every server close of a listener socket is close-then-terminate (`closeThenTerminate` in
+  `utils/ws-backpressure.ts`, the station's backlog close generalised): a reader that stopped never
+  completes the close handshake, and `ws` would hold its buffers for its own 30 s.
+- **(i)** A withheld number (an inbound caller with no readable number: no digit at all) is said so:
+  the live row gains `customer_phone_withheld` (optional in the type so the console's older fixtures
+  still type; the server always sends it) beside the unchanged `customer_phone_masked` (`****`), and
+  the number reveal answers `404 live_call_number_withheld` (`AgencyLiveCallNumberErrorCode`, a union
+  of its own, so the listen codes and the console's copy for them are unchanged) rather than an empty
+  number.
+- **(j)** The tap's fault budget comes through the seam (`openListenTap`'s `options`,
+  `ListenTapOpenOptions`, `docs/seams.md` §3.1): the voice area reads no agency config; with none,
+  `LISTEN_TAP_DEFAULT_FAULT_BUDGET` (50). The tap's own error counter stays the agency area's metric
+  (`agency_listen_tap_errors_total`), emitted from voice on purpose, beside the series it is read
+  with.
+- **(k)** The rows' upkeep reads the registry's held ids right before its sweep, after its retries
+  (a getter, not a snapshot taken when the tick began): a retry against a slow database can outlast
+  the sweep's 60 s age floor. A tick that finds the last one still running starts no pass and no
+  upkeep of its own and only applies the staleness cap, so hung ticks never stack.
+- **(l)** Adding a seat re-checks the invitee's listens: `POST /users/invite` and the invite's
+  claim call `revokeListens` too, since an account-scoped seat is the membership the tenant context
+  picks in that account and can shadow a tenant-wide admin's (the access check shares the tenant
+  context's `selectMembership`, now `rbac/select-membership.ts`).
+- **(m)** The load check's timing bounds (§10 "Load check") are asserted with 4 or more CPUs, or
+  when asked (`LISTEN_LOAD_BOUNDS=on`, a `LOAD_SCALE` soak), and printed otherwise; everything else
+  in it (zero frames lost, every listener's rate, ends and rows, the stalled listener, the metrics,
+  the leak check) is asserted on every run. The wall-clock lane runs on every server PR, and on a
+  busy 2-core runner two windows 20 s apart differ by more than the listeners. CI does not set
+  `LISTEN_LOAD_BOUNDS` (on a `full-ci` run the bounds apply only if the runner has 4 CPUs).
 
 ## 2. Architecture
 
@@ -106,10 +266,14 @@ the microphone.
   the close; `pong { ts?, server_ts }`.
 - **Text, client → server**: `ping { ts? }` every 10 s (`AGENCY_LISTEN_PING_INTERVAL_MS`); `stop`.
   No frame for 30 s (`AGENCY_LISTEN_IDLE_TIMEOUT_MS`) ends the session `listener_disconnected`.
+- **Protocol pings** (LS22 d): the server pings the socket every 10 s and counts the pong (which a
+  browser sends by itself, throttled tab or not) as a client frame. At most 20 client messages at
+  once, refilled at 5 a second; past that 1008 `listen_message_rate` (LS22 e).
 
 **End reasons** (`AGENCY_LISTEN_END_REASONS`, the column's CHECK): `call_ended`, `listener_stopped`,
 `listener_disconnected`, `permission_revoked`, `superseded`, `send_backlog`, `tap_error`,
-`server_shutdown`, `server_restarted` (closed by the reap; never sent on a socket).
+`server_shutdown`, `server_restarted` (closed by the reap; never sent on a socket),
+`access_unverified` (the access check could not be made for too long, LS21; appended by 0048).
 
 **Close codes** (`AGENCY_LISTEN_CLOSE`) and what the console does:
 
@@ -123,11 +287,14 @@ the microphone.
 | 4408 | `HEARTBEAT_TIMEOUT` | `listener_disconnected` (30 s silence), `send_backlog` | reconnect |
 | 4409 | `SUPERSEDED` | `superseded` | stop ("You started listening in another tab or window, so it stopped here.": the console stops its own first listen before a second, so a supersede it hears of came from elsewhere) |
 | 4429 | `LIMIT` | at the upgrade: `listen_limit_call`, `listen_limit_server` | stop, with the reason |
-| 1008 | `INVALID_UPGRADE` | a malformed upgrade | stop |
-| 1011 | `INTERNAL_ERROR` | `tap_error`; at the upgrade, `listen_unavailable` (no row, no audio) | reconnect, bounded |
+| 1008 | `INVALID_UPGRADE` | a malformed upgrade; past the client message rate (`listen_message_rate`, LS22 e) | stop |
+| 1011 | `INTERNAL_ERROR` | `tap_error`; at the upgrade, `listen_unavailable` (no row, no audio; the token store, the tap or the process failing, LS22 f, g) | reconnect, bounded |
+| 4503 | `ACCESS_UNVERIFIED` | `access_unverified` (LS21) | stop, "your access could not be checked", Try again (an older console: reconnect) |
 
 `AGENCY_LISTEN_END_CLOSE` maps every reason sent on a socket to its code. A refusal at the upgrade
-carries its error code as the close `reason`; after `ready`, the end reason. Any other code is an
+carries its error code as the close `reason` and sends no `ended` frame (LS22 f); after `ready`,
+the end reason, after `ended`. Every server close is followed by a terminate 5 s later if the peer
+has not completed it (LS22 h). Any other code is an
 ordinary drop: the console re-mints and reconnects for up to 15 s
 (`AGENCY_LISTEN_RECONNECT_WINDOW_MS`), each attach its own audited session, then shows "Connection
 lost" with "Try again".
@@ -165,13 +332,14 @@ the super-admin's `api/routes/super-admin/tenants.ts`, where the membership cach
 against the database now that fails closed (LS16 c) and bumps their revocation generation (LS16 n),
 and with media workers IPC `listen.revoke` to every worker (`cluster/ipc-protocol.ts`,
 `docs/scaling.md` §4.3). The backstop re-checks every open session every 30 s against the database
-and the flags, failing open up to the staleness cap (LS16 d).
+and the flags, failing open up to the staleness cap (LS16 d), 2 × the re-check, ending a session it
+could not verify `access_unverified` (LS21).
 
 **The live list.** `GET /proxy/agency/live-calls?campaign_id=` (`agency.supervise`, the flag) →
 `callCore` → `GET /api/v1/agency/live-calls` (owner `none`, SQL only): a union over the three live
-spines on their live indexes (`idx_agency_attempts_live`, `idx_agency_manual_calls_live`,
-`idx_agency_inbound_calls_account_live`) joined to `agency_calls`, the session and the contact, plus
-the open `agency_listen_sessions` rows (`idx_agency_listen_sessions_open`). The public layer adds
+spines on their live indexes (`idx_agency_attempts_account_live`, `idx_agency_manual_calls_live`,
+`idx_agency_inbound_calls_account_live`, each pinned by `live-call-plan.test.ts`) joined to
+`agency_calls`, the session and the contact, plus the open `agency_listen_sessions` rows (`idx_agency_listen_sessions_open`). The public layer adds
 names, masks numbers (LS9) and computes each row's `listenable` and `not_listenable_reason` for the
 caller. The console polls it every 5 s while the page is visible.
 
@@ -188,7 +356,10 @@ campaign, the inbound route and the contact, tenant and account scoped in each s
 the leg; the open sessions of those calls (`listOpenForCalls`); each campaign's AHT. The public layer
 adds the agent's and the listeners' names (`agentNamesOrNone`), masks the number (`maskPhone`) and
 computes `listenable` / `not_listenable_reason` for the caller (`notListenableReason`: their own
-call, LS4, the per-call cap not counting their own listen). The grant reads the same internal list
+call, LS4, the per-call cap not counting their own listen), and says a withheld number so
+(`customer_phone_withheld`; the number reveal of one `404 live_call_number_withheld`, LS22 i). The
+campaign AHT read costs each campaign's whole history (by `campaign_id` on an index, the same
+aggregate as the campaign stats), so it is cached a minute per campaign per process (LS16 i, u). The grant reads the same internal list
 for the one call, refuses `listen_own_call` and `listen_recording_off` itself, then `callCore`s
 `POST /listen-grants`, which the media-worker injector forwards to the session's worker; that handler
 checks its bridge holds the call (`getActiveCallIds`), asks the registry (`check`) and mints the
@@ -198,34 +369,43 @@ listen_unavailable`.
 
 **The socket** (`api/routes/proxy-agency-listen.routes.ts`, `wsOwner: { by: 'session', param:
 'sessionId', route: 'listen' }`; in the `station` rate-limit bucket; the `token` query redacted in
-logs and spans like every `token=`): a non-UUID id 1008, no token 4401, no runtime 1011, then
-`handleListenSocket` (`agency/listen/listen-socket.ts`): the `error` handler first; the token spent
-(`consume`, a Lua GET-compare-DEL; a grant naming another session is refused 4401 too, and is spent);
+logs and spans like every `token=`): a non-UUID id 1008, no token (or one given twice) 4401, no
+runtime 1011, then `handleListenSocket` (`agency/listen/listen-socket.ts`): the `error` handler
+first, then the per-socket message rate (LS22 e); the token spent (`consume`, a Lua
+GET-compare-DEL; a grant naming another session is refused 4401 too, and is spent; a store that
+cannot be asked 1011 `listen_unavailable`, LS22 g);
 the slot reserved (4429; 1011 `listen_unavailable` while stopping; 4403 `permission_revoked` for a
 token from before a revocation); the database asked (4403, or 1011 when it cannot say, LS16 n); the
-row written and awaited (1011 `listen_unavailable`); the tap opened (4404, the row closed
-`call_ended`); admitted (a revocation since the reservation closes the row `permission_revoked`,
-4403; else the supervisor's older listen ends `superseded`),
-`ready`, `agency_call.listen_started`, the gauge. `ping` → `pong { ts?, server_ts }`, `stop` →
-`listener_stopped`; 30 s without a control frame → `listener_disconnected` (4408); the client's
-close → `listener_disconnected`, nothing sent. Every end runs once: the tap detached (or the tap's
-own `close`, with its stats), `ended { reason }` and the reason's close code, the row closed with
-`frames_sent` / `frames_dropped`, `agency_call.listen_ended` (duration, reason, frames dropped),
+row written and awaited (1011 `listen_unavailable`; a process that began stopping meanwhile 1011
+too); the tap opened (refused, or ended under the attach: 4404, the row closed `call_ended`;
+opening it threw: 1011, the row `tap_error`; LS22 f); admitted (a revocation since the reservation
+closes the row `permission_revoked`, 4403; else the supervisor's older listen ends `superseded`),
+`ready`, the row stamped live (`live_at`, not awaited, LS22 c), `agency_call.listen_started`, the
+gauge, and a protocol ping every 10 s (LS22 d). `ping` → `pong { ts?, server_ts }`, `stop` →
+`listener_stopped`; 30 s without a control frame or a pong → `listener_disconnected` (4408); the
+client's close → `listener_disconnected`, nothing sent. A refusal sends no `ended` frame. Every end
+runs once: the tap detached (or the tap's own `close`, with its stats), for a live session
+`ended { reason }` and the reason's close code (then a terminate 5 s later if the close is not
+completed, LS22 h), the row closed with `frames_sent` / `frames_dropped` (and `live_at` if its
+stamp never landed), `agency_call.listen_ended` (duration, reason, frames dropped),
 `agency_listen_sessions_ended_total{reason}` and `agency_listen_session_seconds`.
 
 **The registry** (`agency/listen/listen-registry.ts`, `runtime.listen`, one per process): the caps
-count open sessions and reservations; `revokeUser` (fails closed), the periodic `recheck` (every
-`AGENCY_LISTEN_RECHECK_MS`, armed with the runtime or the worker's shard; fails open up to the
-staleness cap) and the upgrade's `verify` ask `listen-access.ts` (the membership the tenant context
+count open sessions and reservations; `revokeUser` (fails closed: what it could not check ends
+`access_unverified`, LS22 a), the periodic `recheck` (every `AGENCY_LISTEN_RECHECK_MS`, armed with the
+runtime or the worker's shard; fails open up to the staleness cap, 2 × the re-check, then
+`access_unverified`, LS21) and the upgrade's `verify` ask `listen-access.ts` (the membership the tenant context
 would pick, read from `memberships` in the database, at `agency.calls.listen`;
 `agency_live_listen_enabled`; for an unrecorded call `agency_live_listen_unrecorded`; both flags from
 one strict snapshot, `readListenFlags`), each supervisor and account read once a pass, a failed read
 leaving its sessions unchecked; each tick then hands the rows' upkeep (`listen-rows.ts`,
-`runtime.listenRows`) the ids it holds (LS16 o); `shutdown` ends every session `server_shutdown`
+`runtime.listenRows`) a getter of the ids it holds, read right before the sweep (LS16 o, LS22 k);
+a tick that finds the last still running applies only the staleness cap; `shutdown` ends every session `server_shutdown`
 and admits nothing more (`listen_unavailable`).
 
 **Across processes** (`agency/listen/listen-revocation.ts`): the role-change and member-removal routes
-(and the super-admin's) call `revokeListens(tenantId, userId)`, whose handlers are the runtime's `revokeUser` (registered by
+(and the super-admin's), and the two that add a seat (`POST /users/invite`, the invite's claim; LS22
+l), call `revokeListens(tenantId, userId)`, whose handlers are the runtime's `revokeUser` (registered by
 `startAgency`) and, with media workers, the primary's broadcast of `listen.revoke { reason:
 'permission_revoked', listenIds: null }` (registered by `startMediaWorkers`). A worker that admits a
 listen reads the supervisor's open rows and sends `listen.revoke { reason: 'superseded', listenIds }`
@@ -235,13 +415,16 @@ for those another replica holds past the cap, older than its own (LS16 p); the p
 **Sweeps and shutdown.** At boot (`AgencyRuntime.start`, before any listener can attach and before
 any media worker exists) every open row of another replica closes `server_restarted`; when the
 primary reaps a dead media worker, every open row of a replica not alive now does
-(`closeOrphansExcept`). While a process runs, its re-check tick retries a failed row close and
+(`closeOrphansExcept`, pinned with a worker killed mid-listen by `cluster/live-listen.test.ts`).
+While a process runs, its re-check tick retries a failed row close and
 closes its own rows it no longer holds (`closeOrphans`, LS16 o). Shutdown: the listener route's `preClose` (one process, LS16 g), the media
 worker's shutdown before its app closes, and `AgencyRuntime.stop` / `stopShard` as a backstop.
 
 **The call detail.** `GET /proxy/agency/campaigns/:id/attempts/:attemptId` and
 `GET /proxy/agency/softphone/calls/:id` (with `agency.supervise`) add `listen_sessions`
-(`AgencyCallListenSession[]`, `callListenSessions` in `api/routes/helpers/listen.ts`).
+(`AgencyCallListenSession[]`, `callListenSessions` in `api/routes/helpers/listen.ts`): the sessions
+that went live only (LS22 c). An agent reading their own soft-phone call (no `agency.supervise`)
+gets no `listen_sessions`.
 
 ## 5. Error handling
 
@@ -319,15 +502,18 @@ it already kept.
 
 ## 6. Data
 
-**`agency_listen_sessions`** (`0047_listen_sessions.sql`; `packages/db/BASELINE.md`): `id` (the
+**`agency_listen_sessions`** (`0047_listen_sessions.sql`, `0048_listen_sessions_unverified.sql`;
+`packages/db/BASELINE.md`): `id` (the
 listen id), `tenant_id`, `account_id`, `call_id` (no FK), `origin` (`AGENCY_CALL_ORIGINS`, the
 same list as `ck_agency_calls_origin`), `campaign_id` (set for a dialler call), `correlation_id`
 (the spine row), `agent_session_id`, `agent_user_id`, `listener_user_id`, `started_at`, `ended_at`
-and `end_reason` (both or neither), `frames_sent`, `frames_dropped`, `replica_id`. No foreign keys.
+and `end_reason` (both or neither; `access_unverified` since 0048), `frames_sent`, `frames_dropped`,
+`replica_id`, and `live_at` (0048, LS22 c: when it went live; NULL for a row the upgrade refused).
+No foreign keys.
 Indexes: the open sessions per account (partial), by call, by supervisor newest first. The Down
 refuses while any row exists. The repository (`AgencyListenSessionRepository`, via the agency
-barrel): `open`, `close` (an open row only: the first close wins), `listOpenInAccount`,
-`listOpenForCalls`, `listForCall`, `listOpenForListener`, `closeOrphans(replicaId, { keep, minAgeMs })`
+barrel): `open`, `markLive`, `close` (an open row only: the first close wins; `live` fills
+`live_at` when its stamp was lost), `listOpenForCalls`, `listForCall` (live rows only), `listOpenForListener`, `closeOrphans(replicaId, { keep, minAgeMs })`
 (a live process's lost rows, LS16 o), `closeOrphansExcept(liveReplicaIds)`.
 
 **Audit** (`audit/platform/catalog.ts`): `agency_call.listen_started` and `agency_call.listen_ended`,
@@ -374,7 +560,7 @@ grant series by `listen-socket.ts`, the grant route and the sweeps).
 |---|---|---|---|
 | `agency_listen_sessions_active` | gauge, per process | | sessions open now |
 | `agency_listen_grants_total` | counter | `result` (`granted` or the refusal code) | grants and why they were refused |
-| `agency_listen_sessions_ended_total` | counter | `reason` (the end reasons) | how sessions end |
+| `agency_listen_sessions_ended_total` | counter | `reason` (the end reasons, `access_unverified` included) | how sessions end |
 | `agency_listen_session_seconds` | histogram | | how long a listen lasts (reaped sessions excluded) |
 | `agency_listen_tap_errors_total` | counter | `stage` (`decode`, `encode`, `frame`, `send`) | frames the tap dropped |
 | `websocket_send_backpressure_total` | counter | `socket="listener"`, `action` | listener frames dropped, sockets closed |
@@ -565,13 +751,14 @@ LS2.
 | 6 | The inbound notice's words and its regenerated WAV (LS1) | **Built** (2026-11-16): `AGENCY_INBOUND_STANDARD_WORDS.recording_notice` is "This call may be recorded or monitored for quality and training purposes." and `apps/server/assets/inbound/recording-notice.wav` is regenerated from it with `scripts/generate-inbound-clips.ts --only recording_notice` and the pinned voice (8 kHz mono PCM16, 5.0 s); the other six recordings are unchanged. The carrier never speaks the notice (its `<Speak>` covers closed, busy and call-back only), so the WAV is the only other copy of the words |
 
 | Load check | 100 calls with nobody listening, then 6 and 20 listeners (one stalled), on one build: `apps/server/test/integration/load/listen-media-load.test.ts` | **Run** (2026-11-16): below |
-| Voice review | The tap's review fixes: listeners ended as the call starts to settle (LS15 f), the μ-law customer by table and the transcoded legs primed (LS17 a), 10 s of drops ending a listener (LS17 b), failed frames counted in 20 ms frames (LS17 c), the loop-delay alert (LS17 d) | **Built** (2026-11-16): unit-tested; the load check's stalled listener now expects `send_backlog` (its integration file is updated, not yet re-run) |
+| Voice review | The tap's review fixes: listeners ended as the call starts to settle (LS15 f), the μ-law customer by table and the transcoded legs primed (LS17 a), 10 s of drops ending a listener (LS17 b), failed frames counted in 20 ms frames (LS17 c), the loop-delay alert (LS17 d) | **Built** (2026-11-16): unit-tested; the load check's stalled listener expects `send_backlog`, re-run green since (`a13635b`: the wall-clock lane, 29 passed) |
 | Server review | The agency and API side's review fixes: the upgrade's own access check and the revocation generation (LS16 n), the immediate path failing closed and the periodic pass's staleness cap (LS16 c, d), the flags read strictly, the super-admin's revocation, failed row closes retried and lost rows swept (LS16 o), supersede of older rows only (LS16 p), a stopping process `listen_unavailable` (LS16 q), retention on the partitions' month boundary (LS16 s), the AHT cache bounded and the dialler spine's index (LS16 u), the handoff's redacted URL (LS16 v) | **Built** (2026-11-16): `9f32bc5`, `09053e6`; counts in [`status.md`](status.md) "Test counts" |
+| Persona review (server) | The principal reviews' server, database and contract items: `access_unverified` and the 60 s staleness cap (LS21), `live_at` and "Listened to by" live only, protocol pings, the message rate, refusals without `ended`, the token store's outage, close-then-terminate, withheld numbers, the fault budget through the seam, the upkeep's held ids and the tick, seats added by an invite (LS22), the dead code and the shared `selectMembership`, plan tests for the other spines, the AHT read and the session reads, a worker killed mid-listen, the agent's own hangup, the load check's timing bounds gated on CPUs (LS22 m) | **Built** (2026-11-16): `b3114f9`; counts in [`status.md`](status.md) "Test counts" |
 
 ### Load check
 
 **What runs.** `listen-media-load.test.ts` (wall-clock lane: the audio is paced in real time and
-the stalled listener's end is the real 30 s idle bound) dials 100 calls (`LOAD_SCALE`, seeded by
+the stalled listener's end is the real 10 s back-pressure bound, LS17 b) dials 100 calls (`LOAD_SCALE`, seeded by
 `LOAD_SEED`) through the real bridge and `VoicelinkAdapter` to the mock VoiceLink carrier, which
 streams paced A-law, 50 frames a second; each agent's leg is a real WebSocket on loopback lent to
 the bridge as the station's socket is (half `alaw8`, half `pcm16`), talking 50 frames a second
@@ -606,8 +793,12 @@ every reading listener gets both legs at 50 messages a second each (±10 %), end
 `frames_dropped` 0 and `frames_sent` equal to what it received; the stalled one has frames dropped
 at its soft limit (its row's `frames_dropped` equals the run's
 `websocket_send_backpressure_total{socket="listener",action="media_dropped"}`), is ended
-`listener_disconnected` by the idle bound while its call stays up and the call's other listener
-keeps hearing it; the grant, end and active-session metrics move exactly; nothing leaks.
+`send_backlog` after 10 s of drops (LS17 b) while its call stays up and the call's other listener
+keeps hearing it; the grant, end and active-session metrics move exactly; nothing leaks. The timing
+bounds above are asserted with 4 or more CPUs, or when asked (`LISTEN_LOAD_BOUNDS=on`, a
+`LOAD_SCALE` soak); with fewer the readings are printed instead (LS22 m): the wall-clock lane runs
+on every server PR, and on a busy 2-core runner two windows 20 s apart differ by more than the
+listeners. The rest is asserted on every run.
 
 **Measured** (a 4-core container, 100 calls, seed 24301; two runs of the file alone with the
 listeners out of process, each floor's quiet window → its listening window; the third figure is the
@@ -641,7 +832,7 @@ cannot.
   idle bound, as LS15 (g) then expected. Since the voice review (LS17 b) it is ended `send_backlog`
   10 s after its first dropped frame instead, before the idle bound; the clock runs on
   `bufferedAmount` as `ws` sees it, so on loopback it starts only once the kernel's 4 MB is full
-  (the suite's expectations follow; not yet re-run since). Without the soft limit (mutation below)
+  (the suite's expectations follow, re-run green since). Without the soft limit (mutation below)
   the same listener reaches the hard cap within the window and is closed `send_backlog`.
 - *The grant's 503 refusals were masked.* Through the whole app the error mask replaced the bodies
   of `503 listen_limit_server` and `503 listen_unavailable` with the generic support message, so the
@@ -667,10 +858,13 @@ before every listener send"), which goes red for it.
   map fixture).
 - DB: `packages/db/test/integration/db/listen-sessions-migration.test.ts` (shape, every CHECK both
   ways, each stored list against the contract's and `ck_agency_calls_origin`, the indexes and their
-  plans on analysed data, the Down's refusal, down then up), `baseline.test.ts`,
-  `baseline-down-up.test.ts`.
+  plans on analysed data, `listOpenForCalls`' and `listForCall`'s among them, the Down's refusal,
+  down then up), `listen-sessions-unverified-migration.test.ts` (0048: the end reason's CHECK with
+  `access_unverified` against the contract, `live_at` and its CHECK, the backfill, the Down's
+  refusal, down then up), `baseline.test.ts`, `baseline-down-up.test.ts`.
 - Server: `test/integration/agency/listen-session-repository.test.ts` (every method on real
-  Postgres, scopes, the close's once-only rule and race, the reaps),
+  Postgres, scopes, the close's once-only rule and race, `markLive` and "Listened to by" live rows
+  only, the reaps),
   `test/unit/audit/audit-partition-maintenance.test.ts` and
   `test/integration/audit/audit-partition-maintenance.test.ts` (the retention sweep),
   `test/unit/config/config.test.ts` (`agency.listen`), `test/unit/feature-flags/registry.test.ts`,
@@ -704,39 +898,54 @@ before every listener send"), which goes red for it.
   and re-checked and failing closed, the periodic pass failing open up to the staleness cap (and a
   hung pass), the periodic re-check on fake timers, the rows' upkeep on the tick, a stopping process
   `listen_unavailable`, the revocation generation between grant and reservation and between
-  reservation and admission, shutdown; the access question: the floor, a tenant-wide admin, the
+  reservation and admission, shutdown; `access_unverified` from the 2 × cap and from the immediate
+  path's unreadable checks, a tick in flight not stacked on, the upkeep's held ids read when asked; the access question: the floor, a tenant-wide admin, the
   flag, LS4, a failed read unchecked while a known no still revokes, one read per supervisor and
   account), `listen-socket.test.ts` (the strict frame parser; the upgrade's order: token, session,
   caps, the database's answer (4403, or 1011 when it cannot say), a token from before a revocation,
   a revocation between reservation and admission, a stopping process, row before tap, the tap refused; `ready` and the started audit; ping/pong; every end's frame,
   close code, row and audit; the tap's own ends; the client's close; the idle bound on fake timers;
-  ends once; a throwing row close or audit; supersede through the registry), `listen-token.test.ts`
-  (single use, the listen id, a stored value that is not a grant, fail closed both ways, the
-  in-process store), `listen-revocation.test.ts` (the hook; the cross-process supersede: past the
+  ends once; a throwing row close or audit; supersede through the registry; LS22: the row stamped
+  live and a refused row not, protocol pongs as liveness, the message rate, close-then-terminate, a
+  tap ended under the attach or throwing, the token store's outage, the fault budget through the
+  seam, `access_unverified`'s 4503), `listen-token.test.ts` (single use, the listen id, a stored
+  value that is not a grant, fail closed both ways and a store outage rejecting, the in-process
+  store), `listen-revocation.test.ts` (the hook; the cross-process supersede: past the
   cap, older rows only, two listens admitted at once ending one), `listen-rows.test.ts` (a failed
-  close retried with its reason, the sweep's keep set and age floor, the queue bound),
+  close retried with its reason, the sweep's keep set and age floor, the held ids read after a slow
+  retry, `markLive`, the queue bound),
   `test/unit/feature-flags/flag-snapshot.test.ts` (`strictSnapshot`: an outage rejects),
   `test/unit/api/routes/super-admin-memberships.test.ts` (the super-admin role change and removal
   re-check listens), `test/unit/api/routes/proxy-agency-live-calls.routes.test.ts`
   (RBAC before the flag, the flag, a flag store that cannot be read, the edge checks, masking and
-  names, `listenable`, the number, the grant's refusals, its forwarding and its answer mapping),
+  names, a withheld number said so and its reveal `404 live_call_number_withheld`, `listenable`,
+  the number, the grant's refusals, its forwarding and its answer mapping),
+  `invites.routes.test.ts` and `user.routes.test.ts` (a seat added by an invite or its claim
+  re-checks the invitee's listens), `test/unit/audit/platform/audit-logger-flush.test.ts` (the
+  audit flush the e2e reads its rows with, the logger left running),
   `agency-live-calls-internal.test.ts` (the grant handler: the bridge, the caps, the token and its
   revocation generation; the AHT cache's minute and bound),
   `test/unit/api/listen-route.test.ts` (the route, its `wsOwner` and handoff label, the refusals,
-  the station bucket, the token's redaction in spans and in the handoff's own log line),
+  the station bucket, a token given twice, the token's redaction in spans and in the handoff's own
+  log line),
   `test/integration/agency/live-call-plan.test.ts` (the dialler spine on
-  `idx_agency_attempts_account_live`), the guards (`agency-route-table`, `agency-agent-reach`,
+  `idx_agency_attempts_account_live`, the soft-phone and inbound spines on their account live
+  indexes, the campaign AHT read by `campaign_id` on an index), the guards (`agency-route-table`, `agency-agent-reach`,
   `core-route-owners`, `core-dispatch`, `websocket-max-payload`, `ipc-protocol`,
   `media-child-invalidations`); end to end `test/integration/agency/live-listen-e2e.test.ts`
   (VoiceLink: joining mid-call with both legs, the call's end, a drop, stop, the per-call cap,
   supersede, a role change and a removal through the real routes with the periodic re-check held
   off (so the immediate path), a demotion between a grant and its upgrade, LS4 both ways, the own call,
   another account and tenant, agents, operators, the flag, the number, the call details, a
-  soft-phone call, a wrap-up redial, HTTP closing, the boot sweep, a replayed or foreign token),
+  soft-phone call (and the agent's own read of it, without `listen_sessions`), a wrap-up redial, HTTP
+  closing, the boot sweep, a replayed or foreign token, the agent's own hangup with nothing of the
+  agent heard after `ended`, a grant whose call ended before its upgrade (4404, not "Listened to
+  by"), a super-admin's session refused),
   `test/integration/telephony/live-listen-plivo-e2e.test.ts` (Plivo outbound; inbound parked then
   connected), `test/integration/cluster/live-listen.test.ts` (`MEDIA_WORKERS=2`: the grant and the
   socket on the owning worker, supersede across workers, revocation over IPC with the periodic
-  re-check held off, a demotion between a grant and its upgrade).
+  re-check held off, a demotion between a grant and its upgrade, a worker killed mid-listen: its
+  row closed `server_restarted` by the reap, the other worker's listen open and hearing).
 - The console (phases 4 and 5), under `apps/console/src/__tests__/`:
   `utils/listen/listenFrames.test.ts` (the parser, every close code, the `ended` reasons that end a
   session), `utils/listen/listenSessionReducer.test.ts` (every transition, stale attempts, the

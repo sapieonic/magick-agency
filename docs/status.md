@@ -2022,7 +2022,8 @@ grant and upgrade, the listeners in a child process (`listen-load-clients.ts`). 
 either leg in every run; against the same floor's quiet window, 20 listeners cost at most about
 +0.07 of loop utilisation and nothing measurable in loop delay p99 or frame latency (the bounds and
 the numbers are in `listening.md`); every reading listener gets 50 messages a second per leg; the
-stalled one is dropped at its soft limit, then ended by the 30 s idle bound with its call untouched.
+stalled one is dropped at its soft limit, then ended by the 30 s idle bound with its call untouched
+(since the voice review, `send_backlog` after 10 s of drops, LS17 b; re-run green on `a13635b`).
 The proof is the loop and the latency, not the relay dwell, which excludes the tap by construction.
 Found and fixed: the grant's 503 refusals were masked by the app-wide error mask (`7b1c92a`), so
 the console could not say why a Listen was refused. Found: on loopback a stalled listener is ended
@@ -2101,7 +2102,55 @@ spine and the `reserved_agent_id` predicate (the plan test); the sweep's keep li
 (real Postgres); retention at the exact cutoff; the immediate path off in one process (end to end)
 and in a media worker (the cluster suite).
 
+### Live call listening, the server persona-review fixes 2026-11-16 (LS21, LS22, [`listening.md`](listening.md) "LS22 in full")
+
+The principal reviews' server, database and contract items (SWE-M1, M3, L1–L8, the nits and doc
+drift; QA-M1–M5, L1–L9; PM-minor9 and 10), in `b3114f9`. Manas's decision 4 (LS21): an access
+re-check that cannot be made ends a listen after 2 × the re-check (60 s, was 2 min) as
+`access_unverified`, close 4503, not `permission_revoked` (migration 0048 extends the CHECK; the
+contract, the metric label). The rest are LS22: `live_at` (0048) so "Listened to by" shows only
+sessions that went live; protocol pings with the pong as liveness (a hidden tab's throttled timers
+no longer end it every minute); a per-socket message rate (1008); refusals with no `ended` frame (a
+tap that ended under the attach 4404, one that threw 1011); a token store outage 1011, not 4401;
+every listener close then terminated after 5 s (as the station's backlog close); the upkeep reading
+its held ids at the sweep (a slow retry could sweep a session admitted meanwhile) and a hung tick not
+stacked on; the tap's fault budget through the seam (`openListenTap`'s options; the voice area reads
+no agency config); withheld numbers said so (`customer_phone_withheld`, `404
+live_call_number_withheld`); an invite or its claim re-checking listens; `selectMembership` moved
+to `rbac/` and shared; `listOpenInAccount` and `ListenRegistry.all` removed; the live SQL ordered by
+name; the audit logger's `flush` for the e2e's reads. New coverage: the soft-phone and inbound
+spines' plans and the AHT read's (the inbound spine needs many tenants' rows to choose its account
+index: with two accounts the planner scanned every tenant's open inbound calls), a media worker
+killed mid-listen, the agent's own hangup, a grant whose call ended before its upgrade, the agent's
+own soft-phone read, a super-admin's session. The load check asserts its timing bounds only with 4
+or more CPUs or when asked. Not done here: wiring `full-ci` to `LISTEN_LOAD_BOUNDS=on` (a CI
+change), and the console's use of the new end reason, close code and withheld flag (the console
+pass after this one).
+
+Mutation-checked (each red, then restored with `git checkout`), 27: the staleness cap back to 4; its
+reason `permission_revoked`; the immediate path's unchecked as `permission_revoked`; the tick guard
+off; the held ids snapshotted at the tick; a tap ended under the attach admitted; the pong not
+counted; the message rate off; a plain close; a throwing tap as the call's end; a token store outage
+as 4401; the token store answering null; no live stamp; every close marked live; the bridge reading
+the budget from config; the socket not passing it; the claim's and the invite's revocation; the
+withheld rule; the token query's type guard; the logger's flush stopping it; the membership pick
+reversed; "Listened to by" without `live_at`; 0048's CHECK without the reason; its Down's refusal;
+the worker reap closing every open row; the worker reap closing none.
+
 ## Test counts
+
+**Live call listening, the server persona-review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`,
+on the tree of `b3114f9`. From `apps/server`: `pnpm lint` clean; unit 10355 passed + 1 expected fail
+(522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3005 passed + 9 expected fail + 2 skipped
+(272 files passed, 2 skipped); `INTEGRATION_LANE=wall-clock pnpm test:integration` 30 passed (7
+files; the listen load check's timing bounds asserted, the machine has 4 CPUs). A first rest-lane
+run was stopped and is not counted: a `vitest list` of the db package's integration files, run
+beside it to count tests, ran that package's global setup, which drops and re-migrates the shared
+test database under a running suite (dozens of unrelated reds followed). `packages/db` `pnpm test`
+457 (28 files), `pnpm test:integration` 826 (90 files); `packages/contracts` `pnpm test` 546 (15
+files) and lint clean; `packages/observability` 23 (5 files); `contracts-literals.mjs --check` up to
+date (71 vocabularies, 3 label maps); `agency_wire` 688 (`dart test`). From the root: `pnpm
+test:grafana` 33, `pnpm test:tooling` 20. `apps/console` lint clean against the contract changes.
 
 **Live call listening, the server review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on the
 tree of `e0bf526`. From `apps/server`: `pnpm lint` clean; unit 10337 passed + 1 expected fail (521
