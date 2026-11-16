@@ -45,6 +45,7 @@ import {
   startLoadRig, stopLoadRig, waitAllTerminal, waitFor, type CallRow, type LoadRig,
 } from './voicelink-load-harness.js';
 import { CARRIER_MEDIA_LIMITS } from '../../../src/utils/ws-backpressure.js';
+import { PSTN_EARLY_FRAME_CAP } from '../../../src/core/webrtc-bridge-manager.js';
 
 const CALLS = scaled(50);
 const FRAMES = 25;
@@ -339,7 +340,16 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
         case 'rate16k': steps = [{ do: 'connect' }, { do: 'start', sampleRate: 16000 }, { do: 'waitForServerClose' }, trailing]; break;
         case 'no_format': steps = [{ do: 'connect' }, { do: 'start', omitFormat: true }, { do: 'waitForServerClose' }, trailing]; break;
         case 'media_before_bad_start':
-          steps = [{ do: 'connect' }, { do: 'media', pattern, frameMs: 0 }, { do: 'start', encoding: 'audio/L16' }, { do: 'waitForServerClose' }, trailing];
+          // Fewer frames before the start than the bridge holds while it checks the carrier's token
+          // (`PSTN_EARLY_FRAME_CAP`). With more, a start that lands inside a slow check is past the
+          // cap and dropped by design (its unit test pins it), and the call ends
+          // `provider_start_timeout` instead: this case sent 25 frames and failed so whenever Redis
+          // answered the check late (a full parallel run; reproduced by pausing Redis clients 25 ms
+          // in every 75).
+          steps = [
+            { do: 'connect' }, { do: 'media', pattern: pattern.slice(0, PSTN_EARLY_FRAME_CAP - 1), frameMs: 0 },
+            { do: 'start', encoding: 'audio/L16' }, { do: 'waitForServerClose' }, trailing,
+          ];
           break;
         case 'never_starts': steps = [{ do: 'connect' }, { do: 'media', pattern, frameMs: 5 }, { do: 'waitForServerClose', timeoutMs: 20_000 }, trailing]; break;
         case 'garbage':
