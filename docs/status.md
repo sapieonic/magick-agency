@@ -2171,7 +2171,7 @@ checked"); `LISTEN_HISTORY_SQL` reads only sessions that went live (`live_at IS 
 "Listened to by"), so a row refused at the upgrade neither shows in the history nor bridges two
 visits (the history test seeds `live_at`); the history's withheld flag uses the live list's rule
 (`isWithheldNumber`, no digit at all; a null number is still a purged call row). Two lines of the
-LS21 docs named the migration as "migration 0048", which the self-containment guard
+LS21 docs named the migration by the word and its number, which the self-containment guard
 (`no-external-references.test.ts`) reads as another repository's migration number: they name the
 file instead. Mutation-checked (each red, then restored with `git checkout`), 3: the label removed
 (`listen-history.test.ts` in contracts, and the lint); `live_at IS NOT NULL` dropped (the history
@@ -2179,7 +2179,43 @@ integration test); withheld back to `''` only (`proxy-agency-listen-history.rout
 console does not yet word `access_unverified` (its `terminalEndReason` falls to the close code):
 the console pass after this one.
 
+### Live call listening, the persona review's console 2026-11-16 (LS6, LS19–LS22, [`listening.md`](listening.md) §12 "The console")
+
+The console side of the product owner's persona-review decisions. **The account's Listening
+history** (`/agency/listening-history`, a Campaigns tab beside Live calls, `agency.supervise` and
+the consent flag): supervisor, agent, call type, the masked customer or "Withheld", start, time
+listened, how it ended in the contract's words, "Open call" where the call has a page; filters for
+supervisor, agent and date range, keyset paging, Export CSV with the applied filters and its
+truncation said; `403 feature_disabled` final, `503 listen_unavailable` read again after 5 s;
+`ph-no-capture`. The two history routes moved from the route-table guard's server-only list into
+`console-paths.json` with `api/listenHistory.ts`. **Settings → Live call listening**: "Live call
+listening: On / Off", whether unrecorded calls are included, "Ask your account manager to change
+this.", from the client flag map. **Readable History rows**: "Listened to Priya S.’s call for 2m
+10s · ended: stopped by the supervisor", the call linked by the row's origin. **Merging**
+(`mergeListenVisits`, the server's 30 s rule) on the History and in "Listened to by".
+**`access_unverified`** (4503 or the `ended` frame): "Listening stopped because your access could
+not be checked. Try again." with Try again, no reconnect loop. **Withheld numbers**: "Withheld", no
+Show, the reveal's 404 handled. **The confirmation** now says the listen is "recorded in the
+account’s Listening history." **The live list** keeps its rows and polls on through a 503. No
+server source or contract change (the contract's `customer_phone_withheld` stays optional). The
+self-containment guard's one hit at `78d58a7` (this file naming a migration by the word and its
+number) is reworded. Mutation-checked (each red, then restored with `git checkout`), 26: 4503's
+close outcome; Try again from an `unverified` end; a withheld row's flag, the reveal's 404, the
+bar's target; the live list's 503 read as final; the merge's gap at its edge and its overlap;
+"Listened to by" unmerged; the History unmerged and its summary dropped; the history page's 503
+retry, its `feature_disabled`, its truncation toast, its `ph-no-capture`, its cursor, its export
+with the draft filters; the util's purged-call link, its exclusive `to`, its "Withheld"; the
+client's truncation header and its filters; the Settings line's loading state and its unrecorded
+line; the nav entry's flag; the route inventory without the CSV path. Counts under "Test counts".
+
 ## Test counts
+
+**Live call listening, the persona review's console, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on
+the tree of this entry's commits. From the root: `pnpm lint` clean; `pnpm test:tooling` 20;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `apps/console` `pnpm
+test` 7426 (393 files), `pnpm --filter @magick-agency/console build` clean; `apps/server` unit
+10375 passed + 1 expected fail (523 files; `agency-route-table.test.ts` 9). `packages/contracts`
+not touched (not rerun); integration not run (no server source, SQL or contract change).
 
 **Live call listening, the two persona-review branches merged, 2026-11-16.** Branch
 `ccr-364c489c-zeoxwy`, on the tree of the merge's integration-fix commit (its code and tests as run). From the

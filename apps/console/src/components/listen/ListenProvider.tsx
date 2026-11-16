@@ -57,7 +57,10 @@ export interface ListenContextValue {
   /** Listen to `call` (after the first-use confirmation, the first time in this browser). */
   listen: (call: AgencyLiveCall, clockOffsetMs: number) => void;
   stop: () => void;
-  /** "Try again" after "Connection lost": a gesture, so it also runs the audio again. */
+  /**
+   * "Try again" after "Connection lost", or after a listen whose access could not be checked
+   * (LS21): a gesture, so it also runs the audio again.
+   */
   retry: () => void;
   /** "Turn sound on": a gesture lifts the autoplay policy. */
   resumeSound: () => void;
