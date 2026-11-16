@@ -1807,7 +1807,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/analytics/autocaptureOptOut.test.ts` | 4 |
+| `apps/console/src/__tests__/analytics/autocaptureOptOut.test.ts` (posthog-js still honours `ph-no-capture`; the surfaces that rely on it still carry it, live listening's table and bar among them) | 10 |
 | `apps/console/src/__tests__/analytics/events.test.ts` | 10 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 23 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 11 |
@@ -1889,6 +1889,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/ComposerSection.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/ConnectionHealthPill.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/ConsoleLayout.mobileDrawer.test.tsx` | 10 |
+| `apps/console/src/__tests__/components/ConsoleLayout.listen.test.tsx` (the shell's listen as wired: the bar under `<main>`, the listen across pages, ended with the socket and the audio context closed by an account switch and by leaving the shell) | 3 |
 | `apps/console/src/__tests__/components/ConsoleShell.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/ConsoleSidebar.test.tsx` | 24 |
 | `apps/console/src/__tests__/components/ContributionTable.test.tsx` | 18 |
@@ -1947,20 +1948,20 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 
 ### `apps/console/src/components/listen/` (live call listening)
 
-Live calls and the listening bar (`docs/listening.md` §9, "As built"). `LiveCallsTable` is the table on both Live calls pages (`pages/agency/live/LiveCallsPage.tsx` at `/agency/live`, `pages/agency/AgencyCampaignLiveCallsPage.tsx` at `/agency/campaigns/:id/calls/live`, the Calls tab's Live view beside `components/agency/CallsViews.tsx`'s "Summary | Live"): every column, sort, filters, row states, the number's Show/Hide, amber past twice each row's own AHT (`aht_seconds`), each row's "Open call" to the call's own page (`liveCallPagePath`, from `correlation_id`; none for an inbound call), read by `hooks/listen/useLiveCalls.ts` every 5 s while visible. `ListenProvider` (mounted by `ConsoleLayout`, keyed by the account) owns the shell's one listen, the first-use confirmation and the refused grant's toast; `ListenBar` is docked under the shell's content; `ListenedToBy` is "Listened to by" on the dialler and soft-phone call pages. The session is `utils/listen/listenSessionReducer.ts` (every state, pure) driven by `utils/listen/listenSessionController.ts` (grant, socket, ping, stop, reconnect within 15 s) through `hooks/listen/useListenSession.ts`; the wire is `utils/listen/listenFrames.ts`; the audio `utils/listen/listenPlayback.ts` (`ListenPlaybackEngine`) through `hooks/listen/useListenPlayback.ts` (mutes, the remembered volume); the table's rules `utils/listen/liveCallsTable.ts`, the words `utils/listen/listenCopy.ts`, the flag `utils/listen/liveListenFlag.ts`; the client `api/liveCalls.ts`; the agent's standing line `components/agency/StationListenNotice.tsx` (the station header's info popover) and on `AgentHomePage`.
+Live calls and the listening bar (`docs/listening.md` §9, "As built"). `LiveCallsTable` is the table on both Live calls pages (`pages/agency/live/LiveCallsPage.tsx` at `/agency/live`, `pages/agency/AgencyCampaignLiveCallsPage.tsx` at `/agency/campaigns/:id/calls/live`, the Calls tab's Live view beside `components/agency/CallsViews.tsx`'s "Summary | Live"): every column, sort, filters, row states, the number's Show/Hide, amber past twice each row's own AHT (`aht_seconds`), each row's "Open call" to the call's own page (`liveCallPagePath`, from `correlation_id`; none for an inbound call), read by `hooks/listen/useLiveCalls.ts` every 5 s while visible (overlapping reads land only in the order asked); the table and the bar are `ph-no-capture` (CH6). `ListenProvider` (mounted by `ConsoleLayout`, keyed by the account) owns the shell's one listen, the first-use confirmation, the refused grant's toast, the refusal of a browser that cannot play sound, and releasing the audio when a listen ends; `ListenBar` is docked under the shell's content and moves focus to itself on Listen and back to the row's Listen when it goes; `ListenedToBy` is "Listened to by" on the dialler and soft-phone call pages. The session is `utils/listen/listenSessionReducer.ts` (every state, pure) driven by `utils/listen/listenSessionController.ts` (grant, socket, ping, stop, reconnect within 15 s) through `hooks/listen/useListenSession.ts`; the wire is `utils/listen/listenFrames.ts`; the audio `utils/listen/listenPlayback.ts` (`ListenPlaybackEngine`) through `hooks/listen/useListenPlayback.ts` (mutes, the remembered volume); the table's rules `utils/listen/liveCallsTable.ts`, the words `utils/listen/listenCopy.ts`, the flag `utils/listen/liveListenFlag.ts`; the client `api/liveCalls.ts`; the agent's standing line `components/agency/StationListenNotice.tsx` (the station header's info popover) and on `AgentHomePage`.
 
 Files: `ListenBar.module.css`, `ListenBar.tsx`, `ListenProvider.tsx`, `ListenedToBy.module.css`, `ListenedToBy.tsx`, `LiveCallsTable.module.css`, `LiveCallsTable.tsx`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/utils/listen/listenFrames.test.ts` (the wire parser, every close code (1005, a shutdown's close with no `ended`, a drop), the `ended` reasons that end a session) | 38 |
-| `apps/console/src/__tests__/utils/listen/listenSessionReducer.test.ts` (every transition: start, grant, ready, each way it ends, stale attempts, the 15 s window, the three-failure bound, Try again, the bar's flags) | 48 |
-| `apps/console/src/__tests__/utils/listen/listenSessionController.test.ts` (grant → socket → ready, audio only while live, ping every 10 s, stop, supersede, destroy, reconnect with a fresh grant, a shutdown's close with no `ended` through masked and unanswered re-grants, the window, an unopenable socket) | 15 |
-| `apps/console/src/__tests__/utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues and decoders, meter before mute, volume, level, silence, blocked, reset, close; no microphone, at run time and in the source) | 16 |
-| `apps/console/src/__tests__/utils/listen/liveCallsTable.test.ts` (sort, filters, ended rows, amber, the listen target, "Open call" by origin and the inbound fallback, the words, a masked 503) | 20 |
+| `apps/console/src/__tests__/utils/listen/listenSessionReducer.test.ts` (every transition: start, grant, ready, each way it ends, stale attempts, the 15 s window, the first attach's own 15 s, the three-failure bound across `ready`s and its fresh count after 10 s live, Try again, the bar's flags) | 52 |
+| `apps/console/src/__tests__/utils/listen/listenSessionController.test.ts` (grant → socket → ready, audio only while live, ping every 10 s, stop, supersede, destroy, reconnect with a fresh grant, a shutdown's close with no `ended` through masked and unanswered re-grants, the window, a first grant or socket that never answers, an unopenable socket) | 17 |
+| `apps/console/src/__tests__/utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues and decoders, a burst never overlapping one leg, meter before mute, volume, level, silence, blocked: frames dropped on a frozen clock with no resume per frame, no burst on "Turn sound on", an interruption stopping the queue, release, a refused context, reset, close; no microphone, at run time and in the source) | 22 |
+| `apps/console/src/__tests__/utils/listen/liveCallsTable.test.ts` (sort, filters, ended rows, amber, the listen target, "Open call" by origin and the inbound fallback, the words (the per-call limit's count-neutral), a bare 503) | 20 |
 | `apps/console/src/__tests__/api/liveCalls.test.ts` | 13 |
-| `apps/console/src/__tests__/components/LiveCallsTable.test.tsx` | 22 |
-| `apps/console/src/__tests__/components/ListenBar.test.tsx` (the confirmation, every bar state, Esc, mutes, the volume with storage blocked, the toast, a second listen, the account switch, unmount, phone width, "Open call" by origin, a shutdown's close with no `ended`) | 24 |
+| `apps/console/src/__tests__/components/LiveCallsTable.test.tsx` (… the `ph-no-capture` boundary, an older read answering late) | 24 |
+| `apps/console/src/__tests__/components/ListenBar.test.tsx` (the confirmation, every bar state, Esc, mutes, the volume with storage blocked, the toast, a second listen, the account switch and unmount (socket and context closed), phone width, "Open call" by origin, a shutdown's close with no `ended`; the audio released on Stop, supersede and revoke and resumed by Listen and Try again; no Web Audio refused; focus; the ended reason in the live region; "The call ended before you joined."; the `ph-no-capture` boundary) | 38 |
 | `apps/console/src/__tests__/components/listenSurfaces.test.tsx` (the station popover, the join screen's line, "Listened to by", "Summary \| Live") | 11 |
 | `apps/console/src/__tests__/pages/LiveCallsPages.test.tsx` | 3 |
 
@@ -2865,7 +2866,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (the waiting screen's "Dialling a customer…", the count line, ringing over "Nothing due now", paused unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
-| `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: the header's info button and sheet behind the client flag) | 4 |
+| `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: the header's info button and sheet behind the client flag, `FeatureFlags.liveListenEnabled`) | 4 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
 | `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~15 |

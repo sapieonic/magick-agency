@@ -18,7 +18,9 @@
  * The call detail pages answer {@link AgencyCallListenSession} rows (who listened, when) beside
  * the rest of the call, to `agency.supervise` holders like the rest of those pages.
  *
- * Refusals are {@link AgencyListenErrorResponse} (`../../errors.ts` §7). Not built yet: the routes
+ * Refusals are {@link AgencyListenErrorResponse} (`../../errors.ts` §7), the grant's 503s
+ * (`listen_limit_server`, `listen_unavailable`) included: the route marks them reviewed, so the
+ * server's error mask keeps their code. Built: the routes, the socket and the console
  * (docs/listening.md, "Status").
  */
 

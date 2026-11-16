@@ -1955,7 +1955,42 @@ contract). Mutation-checked (each red, then restored with `git checkout`): the o
 contract (the contracts pin and the route editor's test), and a 16 kHz WAV with a metadata chunk in
 place of the notice (`inbound-standard-clips.test.ts`).
 
+### Live call listening, the console and mobile review fixes 2026-11-16 ([`listening.md`](listening.md) §9)
+
+A review of the console and mobile side found twelve faults (K1–K12), all fixed. The listening
+bar's audio no longer piles up against a stopped clock: while the browser will not run the
+context (autoplay, an interruption) frames are dropped and the queue stopped, only a gesture
+resumes it, and "Turn sound on" plays from now rather than in a heap; a burst past 600 ms stops
+the leg's queue before re-basing, so the call never talks over itself; a listen that ends
+silences at once and suspends the context; a browser that cannot play sound is refused before
+any grant. Server failures are counted across `ready`s (a tap failing after every `ready` ends
+in "Connection lost" instead of looping), and the first attach has its own 15 s. Overlapping
+live-list reads land in order. The table and the bar are `ph-no-capture` (CH6). Focus moves to
+the bar on Listen and back to the row's Listen; the ended reason is announced; "The call ended
+before you joined." on a first-attach 4404. "Agent is silent" replaces "Agent reconnecting…" (a
+muted console agent sends nothing). The per-call limit's words name no count. The grant's 503s
+are read by their code (the server route now marks them reviewed). `ConsoleLayout`'s listen
+wiring and teardown are pinned. On mobile the flag key is `agency_wire`'s
+`FeatureFlags.liveListenEnabled`, pinned against the contract's fixture.
+
+Mutation-checked (each red, then restored with `git checkout`), 22 in all: playback without the
+drop while not running, without the flush on `statechange`, without the flush before re-basing,
+`release` without suspending, an unguarded context factory; the failure count reset by `ready`,
+and never reset; no first-attach deadline in the reducer, and none in the controller's timer;
+the live list without its sequence; the table's and the bar's `ph-no-capture`; the provider not
+releasing, not refusing a browser without sound, Try again not resuming; focus not moved to the
+bar, not returned to the row, returned even when moved elsewhere; the ended reason outside the
+live region; "you listened for 00:00" back; `ListenProvider` not keyed by the account; the bar
+inside `<main>`.
+
 ## Test counts
+
+**Live call listening, console and mobile review fixes, 2026-11-16.** Branch
+`ccr-364c489c-zeoxwy`, run on `2da9910` (the console fixes; the mobile and docs commits beside it
+change no console file). From inside each directory: `apps/console` `pnpm lint` clean, `pnpm test`
+7311 (387 files); `apps/mobile` `flutter analyze` clean, `flutter test` 1968;
+`agency_wire` 688 (`dart test`); `pnpm test:tooling` 20. Not rerun (untouched): the server and
+the other packages (the server's own fix round runs in this worktree beside it).
 
 **Live call listening, phase 3, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
 `5bf78f5` (the server side and its fixes). From `apps/server`: `pnpm lint` clean; unit 10296 passed +
