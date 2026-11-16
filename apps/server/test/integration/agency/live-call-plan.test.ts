@@ -23,9 +23,13 @@ const { LIVE_CALLS_SQL } = await import('../../../src/db/repositories/agency/liv
  * the index's NAME: the per-campaign index is a plausible wrong answer that a weaker assertion
  * ("an index scan") would pass.
  *
+ * The assertion is on the scan's index CONDITION too: the partial index can also be scanned whole
+ * (every tenant's live attempts, no condition), which a name-only assertion would pass.
+ *
  * Mutation-checked: the spine's old shape (`FROM agency_campaigns cam JOIN agency_call_attempts a
- * ON a.campaign_id = cam.id WHERE cam.tenant_id = $1 AND cam.account_id = $2`) does not use the
- * index and fails the plan assertion.
+ * ON a.campaign_id = cam.id WHERE cam.tenant_id = $1 AND cam.account_id = $2`) scans the index
+ * whole, without the account, and fails; so does putting back `a.reserved_agent_id IS NOT NULL`,
+ * which offers the planner `idx_agency_attempts_agent`.
  */
 
 const CAMPAIGNS = 2_000;
@@ -34,14 +38,13 @@ const T = DEFAULTS.tenantId;
 const A = DEFAULTS.accountId;
 const TARGET_INDEX = 'idx_agency_attempts_account_live';
 
-/** Every index named anywhere in a JSON plan. */
-function indexesIn(plan: unknown, out = new Set<string>()): Set<string> {
-  if (Array.isArray(plan)) for (const p of plan) indexesIn(p, out);
+/** Every index scan in a JSON plan: its index and its index condition (empty when it has none). */
+function indexScans(plan: unknown, out: Array<{ index: string; cond: string }> = []): Array<{ index: string; cond: string }> {
+  if (Array.isArray(plan)) for (const p of plan) indexScans(p, out);
   else if (plan && typeof plan === 'object') {
-    for (const [k, v] of Object.entries(plan)) {
-      if (k === 'Index Name' && typeof v === 'string') out.add(v);
-      else indexesIn(v, out);
-    }
+    const node = plan as Record<string, unknown>;
+    if (typeof node['Index Name'] === 'string') out.push({ index: node['Index Name'], cond: String(node['Index Cond'] ?? '') });
+    for (const v of Object.values(node)) if (v && typeof v === 'object') indexScans(v, out);
   }
   return out;
 }
@@ -72,11 +75,14 @@ describe('the live list\'s plan', () => {
   }, 120_000);
   afterAll(closeTestPool);
 
-  it(`reads the account's live attempts on ${TARGET_INDEX}`, async () => {
+  it(`reads the account's live attempts on ${TARGET_INDEX}, by the account`, async () => {
     const { rows } = await getTestPool().query<{ 'QUERY PLAN': unknown }>(`EXPLAIN (FORMAT JSON) ${LIVE_CALLS_SQL}`, [T, A, null, null]);
-    const used = indexesIn(rows[0]!['QUERY PLAN']);
-    expect([...used]).toContain(TARGET_INDEX);
-    expect([...used]).not.toContain('idx_agency_attempts_agent');
+    const scans = indexScans(rows[0]!['QUERY PLAN']);
+    // Keyed by the account: a scan of the whole partial index (every tenant's live attempts) is not it.
+    const onAccount = scans.find((x) => x.index === TARGET_INDEX);
+    expect(onAccount, JSON.stringify(scans)).toBeDefined();
+    expect(onAccount!.cond).toMatch(/tenant_id = .*account_id = /);
+    expect(scans.map((x) => x.index)).not.toContain('idx_agency_attempts_agent');
   });
 
   it('one campaign\'s list reads that campaign\'s live attempts on a live index (its own, or the account\'s)', async () => {
@@ -84,7 +90,8 @@ describe('the live list\'s plan', () => {
     const { rows: [one] } = await pool.query<{ campaign_id: string }>(
       `SELECT campaign_id FROM agency_call_attempts WHERE account_id = $1 AND state = 'bridged' LIMIT 1`, [A]);
     const { rows } = await pool.query<{ 'QUERY PLAN': unknown }>(`EXPLAIN (FORMAT JSON) ${LIVE_CALLS_SQL}`, [T, A, one!.campaign_id, null]);
-    const used = [...indexesIn(rows[0]!['QUERY PLAN'])];
-    expect(used.some((i) => i === TARGET_INDEX || i === 'idx_agency_attempts_live'), used.join(', ')).toBe(true);
+    const scans = indexScans(rows[0]!['QUERY PLAN']);
+    expect(scans.some((x) => (x.index === TARGET_INDEX && /account_id = /.test(x.cond))
+      || (x.index === 'idx_agency_attempts_live' && /campaign_id = /.test(x.cond))), JSON.stringify(scans)).toBe(true);
   });
 });
