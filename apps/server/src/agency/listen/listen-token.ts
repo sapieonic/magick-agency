@@ -91,7 +91,8 @@ export class ListenTokenStore {
   constructor(
     private readonly redis: Redis | null,
     private readonly keyPrefix: string,
-    private readonly ttlMs: number,
+    /** `AGENCY_LISTEN_TOKEN_TTL_MS`: how long a grant's token lasts. */
+    private readonly tokenTtlMs: number,
   ) {}
 
   /** The Redis key of a listen's grant. */
@@ -102,10 +103,10 @@ export class ListenTokenStore {
   /** Store a grant; answer its token and when it lapses. Throws {@link ListenTokenUnavailableError}. */
   async mint(payload: ListenGrantPayload): Promise<{ token: string; expiresAt: Date }> {
     const token = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + this.ttlMs);
+    const expiresAt = new Date(Date.now() + this.tokenTtlMs);
     if (this.redis) {
       try {
-        await this.redis.set(this.key(payload.listenId), `${token}|${JSON.stringify(payload)}`, 'PX', this.ttlMs);
+        await this.redis.set(this.key(payload.listenId), `${token}|${JSON.stringify(payload)}`, 'PX', this.tokenTtlMs);
       } catch (err) {
         log.warn({ err, listenId: payload.listenId }, 'Redis unavailable for the listen token — answering 503');
         throw new ListenTokenUnavailableError(payload.listenId, { cause: err });
