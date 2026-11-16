@@ -2018,7 +2018,36 @@ mask on the grant's 503 (the route test red before the fix). The tap fed before 
 caught by the load suite (the dwell moves within noise) and is pinned by
 `webrtc-bridge-listen-tap.test.ts`, which goes red for it.
 
+### Live call listening, the voice review fixes 2026-11-16 (LS15 f–g, LS17, [`listening.md`](listening.md) §2, §5, §8)
+
+A review of the bridge tap found seven faults (V1–V7), all fixed in `618108f`. A listener heard the
+agent's microphone after a hangup of ours while VoiceLink's confirmation wait ran (up to 45 s), and
+both legs briefly inside `endCall`'s awaits: the tap now ends `call_ended` as the call enters
+`ending` and at the top of `endCall` (LS15 f). The relay-dwell alert could not see the tap (fed
+after the write): `agy-listen-loop-delay` (event-loop delay p99 above 40 ms for 10 min while listens
+are open) replaces it, with the metric's comment and the runbook (LS17 d). Plivo's μ-law customer
+reaches listeners through a 256-entry μ-law → A-law table (`wireFormat: 'mulaw8'`), bit for bit the
+per-sample conversion, and transcoded legs are primed to a whole first frame so they run carry-free
+(LS17 a: a deviation from the locked codec-pair path). A listener with every frame dropped at the
+soft limit for 10 s is ended `send_backlog` (LS17 b; the alert's comment now says 256 KiB ≈ 16 s). A
+failed message counts its 20 ms frames (LS17 c). The re-attach's reset and the Plivo leg's audio
+through the real module are pinned. The load check's stalled listener now expects `send_backlog`;
+`listen-media-load.test.ts` is updated and not yet re-run.
+
+Mutation-checked (each red, then restored with `git checkout`), 14: no tap end at `ending`; none at
+the top of `endCall`; `resetAgentLeg` emptied, keeping the encoder, the framer's tail, the priming;
+μ-law through the codec path; no priming; no 10 s bound; a sent frame not restarting the clock; the
+timed close not counted dropped; a failed message counted as one frame; an undeclared metric in the
+new alert (`pnpm test:grafana` red).
+
 ## Test counts
+
+**Live call listening, the voice review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on a
+clean checkout of `618108f` (this worktree also held another agent's work in progress). From
+`apps/server`: `pnpm lint` clean; unit 10309 passed + 1 expected fail (520 files); the bridge files
+alone: `webrtc-bridge-listen-tap.test.ts` 46, `webrtc-bridge-manager.seams.test.ts` 13,
+`webrtc-bridge-inbound-connect.test.ts` 29, `carrier-modules.test.ts` 30. `packages/observability`
+23 (5 files). From the root: `pnpm test:grafana` 33. Integration not run (another agent held it).
 
 **Live call listening, the load check, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree
 of `626404c` (the mask fix, the load suite, the media suite's flake fix). From `apps/server`: `pnpm

@@ -1214,28 +1214,32 @@ is therefore not the expected cost. The dwell is still worth
 reading as the relay's own health (is the relay itself slow?), not as the tap's.
 How a listen ended is `agency_listen_sessions_ended_total{reason}`: `call_ended` and
 `listener_stopped` are the ordinary ends; `listener_disconnected` is a socket that closed or a
-listener that sent nothing for 30 s (a closed laptop, a frozen tab: the idle bound, not the
-back-pressure, ends a listener that stopped reading, LS15 g); `send_backlog`, `tap_error`,
+listener that sent nothing for 30 s (a closed laptop, a frozen tab); `send_backlog`, `tap_error`,
 `permission_revoked` and `superseded` are below or in [`listening.md`](listening.md) §3. A listener
 that reads too slowly shows first as `websocket_send_backpressure_total{socket="listener",
 action="media_dropped"}`: past 48 KiB unsent its frames are dropped for it alone (it hears gaps,
-counted in its row's `frames_dropped`); the calls lose nothing.
+counted in its row's `frames_dropped`); the calls lose nothing. One that has had every frame
+dropped for 10 s (`LISTENER_SOFT_LIMIT_MAX_MS`) has stopped reading, pings or not, and is ended
+`send_backlog` (LS15 g).
 
-- **`agy-listen-relay-dwell-regressed`**. **Means:** the bridge's p99 per-frame dwell (arrival on
-  one leg to the write to the other, sampled one frame in 50) has been above 5 ms for 15 minutes:
-  agents and customers will start to hear it. The dwell excludes the tap by construction, so this
-  is the relay's own time (its codecs, its writes, a garbage collection inside a frame), not the
-  listeners'. **Check:** *Media Relay Dwell* beside the process's event-loop delay and utilisation,
-  calls per process and host CPU. **Do:** it is the process: spread the calls (`MEDIA_WORKERS`),
-  more CPU. Whether listeners add to the load is read on the loop, as above: if loop delay rose with
-  `agency_listen_sessions_active` and falls when they end, switch `agency_live_listen_enabled` off
-  for the tenants listening (their listens end at the next re-check, at most
-  `AGENCY_LISTEN_RECHECK_MS`) and file it with both graphs.
-- **`agy-listen-backlog-closes`**. **Means:** listener sockets were closed `send_backlog` (their
-  unsent bytes passed 256 KiB) 3+ times in 15 minutes. The calls were not affected. Media alone
-  stops at the 48 KiB soft limit (dropped, not queued), so a backlog close needs other bytes queued
-  behind a reader that is not draining: its control frames (`pong`), or a proxy holding the socket
-  open while the browser is gone. **Check:** *Tap Errors and Listener Back-pressure*:
+- **`agy-listen-loop-delay`**. **Means:** the event loop's delay p99
+  (`nodejs_eventloop_delay_p99_seconds`) has been above 40 ms, two media frames, for 10 minutes
+  while listens were open (`agency_listen_sessions_active` above 0): every bridged frame on the slow
+  process waits behind other work, and agents and customers start to hear it. The rule pairs the two
+  by deployment, not by process, so first tell whether the slow process is the one with the listens.
+  **Check:** *Event-Loop Delay* and *Event-Loop Utilization by Process* beside the listening row's
+  *Sessions Open*, calls per process and host CPU. **Do:** if the delay rose as listens opened and
+  falls as they end, on the process holding them, switch `agency_live_listen_enabled` off for the
+  tenants listening (their listens end at the next re-check, at most `AGENCY_LISTEN_RECHECK_MS`) and
+  file it with both graphs: the load check measured no such price. If not, it is the process itself:
+  spread the calls (`MEDIA_WORKERS`), more CPU, a long synchronous span in traces, the heap (as
+  `agy-event-loop-delay-p99`).
+- **`agy-listen-backlog-closes`**. **Means:** listener sockets were closed `send_backlog` 3+ times
+  in 15 minutes: every frame for one of them dropped at the 48 KiB soft limit for 10 s (it stopped
+  reading, its pings may still arrive), or its unsent bytes past the 256 KiB cap (control frames
+  queued behind a reader that is not draining). The calls were not affected. On a real network path
+  the kernel takes a few tens of KiB before the server buffers, so a stalled reader is closed about
+  13 s after it stops. **Check:** *Tap Errors and Listener Back-pressure*:
   `media_dropped` climbing before the closes is a slow reader; the closed listens' rows
   (`end_reason = 'send_backlog'`, their `frames_dropped`) name the supervisors. **Do:** one
   supervisor: their network or a starved browser tab (they reconnect on their own, 4408). Every
@@ -1248,10 +1252,11 @@ counted in its row's `frames_dropped`); the calls lose nothing.
   `agency_listen_sessions` rows for the replica. **Do:** far above them: sessions are not being
   closed; read `agency_listen_sessions_ended_total` by reason and file it. Equal: the cap is doing
   its job; raise it only with headroom on that process's loop (the load check measured the default
-  20 on 100 calls at about +0.07 of loop utilisation; a Plivo call's or a `pcm16` agent's listener
-  costs a transcode per frame on top), or spread the calls over media workers.
+  20 on 100 calls at about +0.07 of loop utilisation; a `pcm16` agent's listener costs an encode per
+  frame on top; a Plivo customer is a table lookup a byte, LS17), or spread the calls over media workers.
 - **`agy-listen-tap-errors`**. **Means:** the tap has failed frames for 10 minutes (decode, encode,
-  frame or send). Each failed frame is dropped for the listeners only; 50 in a row
+  frame or send; the counter counts failed steps, a row's `frames_dropped` and the budget count
+  20 ms frames). Each failed frame is dropped for the listeners only; 50 in a row
   (`AGENCY_LISTEN_FAULT_BUDGET`) detach the tap and end its listens `tap_error` (1011: the console
   reconnects, bounded). **Check:** *Tap Errors by Stage* and the logs `component=listen-tap` (one
   line per tap per 10 s, call and listen ids only), with

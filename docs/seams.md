@@ -204,8 +204,9 @@ agency's listener socket: `send(message)` takes one tagged 20 ms A-law message a
 `ListenSendResult` (`sent`, `dropped`, `backlog`, `closed`), and `close(reason, stats)` is called
 at most once when the bridge ends it, with a `ListenTapEndReason` (`call_ended`, `tap_error`,
 `send_backlog`, `listener_disconnected`) and the frames sent and dropped (`ListenTapStats`);
-neither may throw or wait, and the bridge guards both. A sink detached by its owner is never
-closed by the bridge. The caps (per call, per process, per supervisor) are the caller's.
+neither may throw or wait, and the bridge guards both. `call_ended` comes as the call starts to
+settle (a VoiceLink hangup's `ending`, the top of the terminal teardown), before the session is
+gone (LS15 f). A sink detached by its owner is never closed by the bridge. The caps (per call, per process, per supervisor) are the caller's.
 `sendToListenerSocket(ws, message)` (`core/bridge/listen-tap.ts`) is the socket-backed `send`,
 under `LISTENER_LIMITS` (`utils/ws-backpressure.ts`). The types are in `bridge-types.ts`, pinned by
 the contract test, which also holds `ListenTapEndReason` inside the contract's
