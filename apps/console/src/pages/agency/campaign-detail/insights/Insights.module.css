@@ -217,13 +217,6 @@
   font-weight: 600;
 }
 
-/* A label and the hint beside it, kept on one line in a nowrap table cell. */
-.hintLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .muted {
   color: var(--text-muted);
   font-size: 13px;

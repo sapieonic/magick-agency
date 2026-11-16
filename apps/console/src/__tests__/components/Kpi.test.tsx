@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { Kpi } from '../../components/common/Kpi';
 
 /** The one figure Insights and Home both show: label, value, optional line, two looks. */
@@ -12,11 +12,17 @@ describe('Kpi', () => {
     expect(kpi.querySelector('[data-withheld]')?.getAttribute('data-withheld')).toBe('false');
   });
 
-  it('puts a hint beside the label', () => {
-    render(<Kpi label="Connected" hint="Not counting wrap-up redials." value="72" testId="kpi" />);
+  it('keeps a hint off the label until its button is used', () => {
+    render(<Kpi label="Connected" hint="Not counting wrap-up redials." value="72" sub="Connect rate 16.2%" testId="kpi" />);
     const kpi = screen.getByTestId('kpi');
-    expect(kpi.textContent).toContain('Connected');
-    expect(kpi.textContent).toContain('Not counting wrap-up redials.');
+    expect(kpi.querySelector('[data-part="sub"]')?.textContent).toBe('Connect rate 16.2%');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    const hidden = document.querySelector('[role="tooltip"]');
+    expect(hidden?.getAttribute('aria-hidden')).toBe('true');
+    expect(hidden?.textContent).toBe('Not counting wrap-up redials.');
+    const explain = screen.getByRole('button', { name: 'Explain' });
+    fireEvent.pointerDown(explain);
+    fireEvent.click(explain);
     expect(screen.getByRole('tooltip').textContent).toBe('Not counting wrap-up redials.');
   });
 

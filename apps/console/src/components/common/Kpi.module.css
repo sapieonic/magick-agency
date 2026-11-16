@@ -9,12 +9,6 @@
   color: var(--text-muted);
 }
 
-.labelRow {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .value {
   color: var(--text-primary);
   font-family: var(--font-display);

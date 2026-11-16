@@ -1,5 +1,5 @@
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
-import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
+import { LabelWithHint } from '@magick-agency/web-ui/components/HelpTooltip';
 import type { AgencyAttemptOutcome } from '../../../../types/agency';
 import type {
   AgencyInsightsActivity,
@@ -82,6 +82,8 @@ const OUTCOME_ORDER: AgencyAttemptOutcome[] = [
 export interface OutcomeLine {
   outcome: AgencyAttemptOutcome | null;
   label: string;
+  /** Extra words beside the label. Only the connected row, which is not the tile's count. */
+  hint?: string;
   count: number;
 }
 
@@ -92,6 +94,7 @@ export function outcomeLines(activity: AgencyInsightsActivity): OutcomeLine[] {
     outcome,
     // "Connected" on its own is the tile above, which leaves wrap-up redials out.
     label: outcome === 'connected' ? CONNECTED_WITH_REDIALS_LABEL : ATTEMPT_OUTCOME_LABELS[outcome],
+    hint: outcome === 'connected' ? CONNECTED_WITH_REDIALS_HINT : undefined,
     count: by[outcome] ?? 0,
   }));
   lines.push({ outcome: null, label: 'Still live or not yet recorded', count: by.null_outcome ?? 0 });
@@ -115,15 +118,7 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
     {
       key: 'label',
       header: 'Outcome',
-      render: (l) =>
-        l.outcome === 'connected' ? (
-          <span className={styles.hintLabel}>
-            {l.label}
-            <HelpTooltip text={CONNECTED_WITH_REDIALS_HINT} size={13} />
-          </span>
-        ) : (
-          l.label
-        ),
+      render: (l) => (l.hint ? <LabelWithHint label={l.label} hint={l.hint} size={13} /> : l.label),
       csv: (l) => l.outcome ?? 'null_outcome',
     },
     {

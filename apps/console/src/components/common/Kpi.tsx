@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
+import { LabelWithHint } from '@magick-agency/web-ui/components/HelpTooltip';
 import styles from './Kpi.module.css';
 
 /**
@@ -28,17 +28,10 @@ export function Kpi({
   return (
     <div className={`${styles.kpi} ${styles[look]}`} data-testid={testId}>
       <span className={styles.label}>
-        {hint ? (
-          <span className={styles.labelRow}>
-            {label}
-            <HelpTooltip text={hint} size={12} />
-          </span>
-        ) : (
-          label
-        )}
+        {hint ? <LabelWithHint label={label} hint={hint} /> : label}
       </span>
       <span className={styles.value} data-withheld={String(Boolean(withheld))}>{value}</span>
-      {sub ? <span className={styles.sub}>{sub}</span> : null}
+      {sub ? <span className={styles.sub} data-part="sub">{sub}</span> : null}
     </div>
   );
 }
