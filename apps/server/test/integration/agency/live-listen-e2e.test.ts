@@ -585,6 +585,14 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect((await http(supervisor, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`)).json().code).toBe('listen_call_not_live');
   });
 
+  it('HTTP closing ends the open listens `server_shutdown`, their rows closed, before the close completes', async () => {
+    const call = await liveCall();
+    const l = await listen(supervisor, call.callId);
+    await rig!.app.close();
+    expect(await listenRow(l.listenId)).toMatchObject({ end_reason: 'server_shutdown' });
+    await waitFor('the listener closed', () => l.closed);
+  });
+
   it('the boot sweep closed the dead process\'s open row `server_restarted`', async () => {
     const row = await listenRow(ORPHAN_LISTEN);
     expect(row).toMatchObject({ end_reason: 'server_restarted' });

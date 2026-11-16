@@ -22,9 +22,11 @@ import '../../cluster/ws-handoff.plugin.js';
  * bridge relays the call, whose grant handler minted the token, and whose registry holds the
  * caps. No audio crosses IPC.
  *
- * As HTTP closes, every session this process holds ends `server_shutdown` (its `ended` frame and
- * 1001 sent while the socket is still open, its row closed), ahead of the WebSocket plugin closing
- * the sockets with no reason.
+ * As HTTP closes, every session this process holds ends `server_shutdown`, its row closed, before
+ * the close completes (this `preClose` hook). In one process the WebSocket plugin's own `preClose`
+ * has closed the sockets a moment before (no code: the console reconnects, as for 1001), so no
+ * `ended` frame goes out; a media worker ends its listens before its app closes
+ * (`cluster/media-child.ts`), so its listeners get `ended { server_shutdown }` and 1001.
  */
 
 const log = createChildLogger({ component: 'agency-listen-route' });
