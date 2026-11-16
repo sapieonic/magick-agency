@@ -21,7 +21,8 @@ type OpenInput = import('../../../src/db/repositories/agency.repository.js').Lis
  * Mutation-checked: dropping `AND ended_at IS NULL` from `close` lets the second close rewrite the
  * reason; dropping `tenant_id = $1` from `listOpenForCalls` returns another tenant's session;
  * dropping `account_id = $2` from `listForCall` returns another account's; dropping the `NOT` from
- * `closeOrphansExcept` closes the live replica's sessions instead of the dead one's.
+ * `closeOrphansExcept` closes the live replica's sessions instead of the dead one's; writing
+ * `ended_at = now()` without `GREATEST(…, started_at)` lets a close write an end before the start.
  */
 
 const T = DEFAULTS.tenantId;

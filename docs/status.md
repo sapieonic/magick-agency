@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-15.
+"is it done". As of 2026-11-16.
 
 ## Summary
 
@@ -1802,7 +1802,55 @@ picker reaches today + 31, and a test holds its two constants to the contract (P
 CA4 ownership is the station's only. Each fix mutation-checked (the test named in its commit goes
 red without it).
 
+### Live call listening, phase 1: the foundation 2026-11-16 (LS1–LS14, [`listening.md`](listening.md))
+
+Supervisors will see an account's calls in progress and listen in silently from the console (the
+locked design: `listening.md`, `decisions.md` "Rulings of 2026-11-16"). Phase 1 lays what the
+later phases build on, with no runtime behaviour yet:
+
+- **Contracts.** Permission `agency.calls.listen` (floor `account_admin`); flags
+  `agency_live_listen_enabled` (default off, client-exposed: the consent gate) and
+  `agency_live_listen_unrecorded` (default on); the listener socket's contract
+  (`agency/listen.ts`: call origins, leg tags, wire sizes, frames, end reasons, close codes and
+  each reason's code); the console wire (`api/agency/live-calls.ts`: the live row, the number
+  reveal, the grant, a call's listen sessions); the listen refusal codes (`errors.ts` §7).
+- **Data.** `0047_listen_sessions.sql`, `agency_listen_sessions` (CHECKs pinned to the contract's lists, a
+  backstop against listening to one's own call, a Down that refuses while rows exist), its
+  repository with real-Postgres tests, and its rows deleted at the audit log's horizon by the audit
+  maintenance (LS12).
+- **Audit.** `agency_call.listen_started` / `_ended`, resource type `agency_call`, on the Audit Log
+  and the campaign's History.
+- **Config, metrics, alerts.** `agency.listen` (the caps, the re-check, the token, the fault
+  budget); `agency_listen_*`, `webrtc_relay_dwell_seconds{direction}`, the `listener` socket and
+  `listen` handoff labels; the `agy-listen-*` alert group and the dashboard's *Live call listening*
+  row.
+
+Not built yet: the tap and the bridge seam (phase 2), the registry, socket, routes and revocation
+(phase 3), the console (phase 4), the agent's standing line (phase 5), the inbound notice's words
+(phase 6). Mutation-checked (each red, then restored): the permission's floor at `operator`; the
+listen codes' order against their snapshot; the unrecorded flag exposed to clients or defaulted
+off; a close code moved; an end reason dropped from the contract (its close map fails `tsc`) or
+from the metric labels (the server's type pin fails `tsc`); the live flag left unregistered; a
+listen action dropped from the campaign History or from the audit catalog; `agency.listen`'s
+per-call cap widened to 6; the retention sweep's listen delete skipped; the repository's
+once-only close, its tenant scope on the open calls' read, its account scope on a call's sessions,
+the `NOT` in the boot reap, and its never-before-the-start end; the end-reason, origin and
+own-call CHECKs; the Down's refusal.
+
 ## Test counts
+
+**Live call listening, phase 1, 2026-11-16.** Branch `ccr-364c489c-zeoxwy` on `e229e06`, run on
+`b7a59d8` (later commits change docs and one test comment only). Each package from inside its
+directory, one suite at a time, on a local Postgres 16 and Redis on the agency ports with no other
+run sharing them; the server's integration as two lanes run one after the other. `pnpm lint`
+clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and `pnpm test:tooling` 20 pass;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `packages/contracts`
+544 (15 files); `packages/db` unit 457 (28 files), integration 822 (89 files);
+`packages/observability` 23 (5 files). `apps/server`: unit 10186 passed + 1 expected fail (512
+files); rest lane 2978 passed, 9 expected fail, 2 skipped (268 files passed, 2 skipped); wall-clock
+lane 26 (6 files). `apps/console` 7055 (376 files). `agency_wire` 687 (`dart test`). Not rerun
+(untouched): `packages/domain`, `packages/web-ui`, `apps/super-admin`, `apps/report-renderer`,
+the app's `flutter test`.
 
 **Reshma's feedback: recording, promise to pay, Do Not Call scope, soft-phone results, import check, navigation labels, 2026-11-15 (after the fresh-context review and its fix round).** Branch
 `ccr-bfd860dd-nhdhej` on `1c4c2bd`, run on `7ee887b` (later commits change docs only). Each
@@ -2589,6 +2637,12 @@ calls; not yet run on a phone or a carrier). Remaining:
 image names it as its arbiter, a new migration drops it, and the same change deletes the upsert's
 23505 catch on that index (`upsertLiveSession` in
 `apps/server/src/db/repositories/agency/agent-session.repository.ts`).
+
+**Live call listening** ([`listening.md`](listening.md) §10): phase 1, the foundation, is built
+(contracts, `agency_listen_sessions`, audit actions, config, metrics, alerts); nothing a supervisor
+can use is yet. Not built: the tap and the bridge seam (phase 2); the listen registry, token store,
+socket, routes, revocation and reaps (phase 3); the console's Live calls and listening bar (phase
+4); the agent's standing line (phase 5); the inbound notice's words (phase 6).
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
