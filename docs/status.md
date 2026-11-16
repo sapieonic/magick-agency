@@ -1859,6 +1859,37 @@ listenable); `ending` not refused; the dwell sampled every frame; the customer f
 removed; `sendToListenerSocket`'s catch removed; the fault log not rate-limited; a widened
 `ListenTapRefusal` (the seam contract fails `tsc`).
 
+### Live call listening, phase 3: the server side 2026-11-16 (LS5, LS7, LS9, LS10, LS13, LS16, [`listening.md`](listening.md) §4 "As built")
+
+The routes, the listener socket and the runtime behind them. `GET /proxy/agency/live-calls`
+(`agency.supervise`, the consent flag, numbers masked, names, `listenable` computed for the caller),
+`GET …/:callId/number`, `POST …/:callId/listen` (`agency.calls.listen`; the call in scope, live and
+bridged, LS4, the own-call rule, then `callCore` to the owning process's grant handler, internal
+`POST /listen-grants`, owner `body_session`), and the socket `/proxy/agency/listen/:sessionId/:listenId`
+(`wsOwner` by the agent's session, labelled `listen`; the station rate-limit bucket): token, caps,
+row (awaited), tap, `ready`, the audit pair, every end once with its close code, row counters and
+metrics. `ListenRegistry` (the three caps, supersede, `revokeUser` and the 30 s re-check from the
+database, shutdown), `ListenTokenStore`, revocation from the role-change and removal routes, IPC
+`listen.revoke` (revocation primary → workers, supersede worker → primary → workers), the boot
+and worker-reap sweeps (`server_restarted`), shutdown (`server_shutdown`). The call details answer
+`listen_sessions`. Contracts (additive, for the console): `AgencyLiveCall.correlation_id` and
+`aht_seconds`. The calls the design left open are LS16.
+
+Mutation-checked (each red, then restored with `git checkout`): the per-call, per-process and
+reservation counts; supersede; a supervisor's own listen counted against the cap; `revokeUser`
+ending nothing, or every supervisor's; an outage treated as a revocation; the re-check timer; the
+shutdown; the access check's floor, flag and LS4; the token's single use, listen id, and both
+fail-closed paths; the socket's session check, row-before-tap (no row, no audio), cap at the
+upgrade, idle bound, close code per reason, end-once, strict frame keys, the error handler, the tap's
+counters on the row; the grant's own-call and LS4 refusals, the flag gate, the masking, the
+`agency.calls.listen` floor, the UUID check; the grant handler's bridge check; the station bucket,
+the `ws-limits` entry, the owner-table entry, the handoff label; `listen.revoke`'s shape check, the
+worker's handler and its shutdown order, the primary's revoke broadcast and supersede relay (the
+cluster suite); the revocation hook's catch and the remote supersede's own-replica filter; the role
+change's and the removal's revocation (end to end); the boot sweep; the account scope of the live
+list (both of its layers together: each alone stays green, by design); the call detail's
+`listen_sessions`; the listener route's `preClose`.
+
 ### Live call listening, phases 4 and 5: the console and the agent's line 2026-11-16 (LS2, LS6, LS9, LS13, [`listening.md`](listening.md) §9)
 
 Built against the contracts while the server's routes (phase 3) are not there yet, so nothing is
@@ -1904,6 +1935,22 @@ contract (the contracts pin and the route editor's test), and a 16 kHz WAV with 
 place of the notice (`inbound-standard-clips.test.ts`).
 
 ## Test counts
+
+**Live call listening, phase 3, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
+`5bf78f5` (the server side and its fixes). From `apps/server`: `pnpm lint` clean; unit 10296 passed +
+1 expected fail (520 files); `INTEGRATION_LANE=rest pnpm test:integration` 2995 passed + 9 expected
+fail + 2 skipped (271 files passed, 2 skipped); `INTEGRATION_LANE=wall-clock pnpm test:integration`
+26 passed (6 files). From the root: `pnpm test:grafana` 33 passed, `pnpm test:tooling` 20 passed.
+`packages/contracts` `pnpm test` 545 (15 files) and its lint clean; `contracts-literals.mjs --check`
+up to date (71 vocabularies, 3 label maps); `agency_wire` 687 (`dart test`). The first rest-lane run
+(on `9de8c3b`) had two reds: the chaos suite's lease-provenance scan named the listen token's TTL
+(fixed in `5bf78f5`, the token's window allow-listed by name beside the station token's), and
+`load/voicelink-media-ws-load.test.ts`'s bad-codec case settled `provider_start_timeout` once under
+the parallel run (green alone, 9 of 9, and green in the run above; the same case failed once in an
+earlier run on this branch, before phase 3: a timing flake under load, not filed as fixed). The
+console's `lint` fails only in its test helper `src/__tests__/helpers/liveCalls.ts`, which builds an
+`AgencyLiveCall` without the two fields phase 3 added (`correlation_id`, `aht_seconds`); the console
+is the console phase's to wire.
 
 **Live call listening, phase 6, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
 `554eebd` (the notice's words and WAV), with phase 3's server work in progress beside it in the same

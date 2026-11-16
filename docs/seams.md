@@ -411,6 +411,16 @@ handler. The same lookup keys the routes' rate limit (per IP and ringing call). 
 Bearer) and `test/unit/api/agency-agent-reach.test.ts` (`TOKEN_ONLY_ROUTES`: the only agency HTTP
 routes without a session).
 
+**Platform's member routes reach agency's listen revocation.** The role-change and member-removal
+routes (`api/routes/user.routes.ts`, platform) call `revokeListens(tenantId, userId)`
+(`agency/listen/listen-revocation.ts`) after the membership cache is cleared, so a supervisor who
+may no longer listen is cut off at once (docs/listening.md LS10). It is a hook, not a reference to
+the runtime: the agency bootstrap registers the registry's `revokeUser` (`startAgency`) and the
+primary of a multi-process server its `listen.revoke` broadcast to the media workers
+(`startMediaWorkers`); with none registered it does nothing, and it never throws. Pinned through the
+real routes by `test/integration/agency/live-listen-e2e.test.ts` and, across processes,
+`test/integration/cluster/live-listen.test.ts`.
+
 ## 5. Known gaps
 
 - **One real call on a VoiceLink sandbox** and **one real recording analysed** need vendor accounts

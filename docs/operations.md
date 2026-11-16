@@ -1190,8 +1190,16 @@ The `listen` group ([`listening.md`](listening.md)); its panels are the dashboar
 listening* row. All warn: none of them is a call lost, because a listener is forked from the
 bridge after the relay write and can only lose its own audio. Thresholds are for a pilot (5–6
 supervisors, about 100 calls at peak). Every series is per process with media workers on; the
-rules sum them. As of phase 1 the series are declared and nothing emits them yet (`listening.md`,
-"Status"), so the rules read no data (OK) until the tap and the registry ship.
+rules sum them. Every series is emitted since phase 3 (`listening.md`, "Status").
+
+**Who is listening now, and who listened.** The open rows of `agency_listen_sessions`
+(`ended_at IS NULL`) are the listens in progress, with their `replica_id`; a row left open by a
+process that died is closed `server_restarted` at the next boot or when the primary reaps the dead
+media worker, so an open row whose replica is gone means neither has happened yet. Each listen is
+also an `agency_call.listen_started` / `listen_ended` pair on the Audit Log and the campaign's
+History. To cut a supervisor off at once, change their role or remove them (both end their listens
+immediately, LS10); to stop all listening for a tenant, switch `agency_live_listen_enabled` off
+(open listens end at the next re-check, at most `AGENCY_LISTEN_RECHECK_MS`).
 
 - **`agy-listen-relay-dwell-regressed`**. **Means:** the bridge's p99 per-frame dwell (arrival on
   one leg to the write to the other, sampled one frame in 50) has been above 5 ms for 15 minutes:
