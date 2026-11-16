@@ -424,7 +424,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect(l3.frames[0]).toMatchObject({ event: 'ready' });
   });
 
-  it('a role change through the real route ends the listen `permission_revoked` (4403) at once; a re-grant is refused', async () => {
+  it('a role change and a member\'s removal through the real routes end the listen `permission_revoked` (4403) at once', async () => {
     const call = await liveCall();
     const target = await user('account_admin');
     const l = await listen(target, call.callId);
@@ -434,6 +434,15 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect(l.closed).toEqual({ code: 4403, reason: 'permission_revoked' });
     await closedRow(l.listenId, 'permission_revoked');
     expect((await http(target, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`)).statusCode).toBe(403);
+
+    // A member's removal through the real route: the same, at once.
+    const removed = await user('account_admin');
+    const l2 = await listen(removed, call.callId);
+    const del = await http(owner, 'DELETE', `/users/${removed.id}/membership`);
+    expect(del.statusCode, del.body).toBe(200);
+    await waitFor('removed member revoked', () => l2.closed, 10_000);
+    expect(l2.closed).toEqual({ code: 4403, reason: 'permission_revoked' });
+    await closedRow(l2.listenId, 'permission_revoked');
   });
 
   it('LS4: an unrecorded call is listenable by default; with the flag off the row says why and the grant is 409', async () => {
