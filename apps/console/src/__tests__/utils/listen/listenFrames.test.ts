@@ -118,6 +118,9 @@ describe('what a close means', () => {
     [AGENCY_LISTEN_CLOSE.LIMIT, 'whatever', { kind: 'refused', code: null }],
     [AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, '', { kind: 'refused', code: null }],
     [AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, 'tap_error', { kind: 'internal' }],
+    // A server closing without an `ended` frame (one process shutting down, LS16 g: the WebSocket
+    // plugin closes every socket with no code, which the browser reports as 1005) is a drop.
+    [1005, '', { kind: 'reconnect' }],
     [1006, '', { kind: 'reconnect' }],
     [4999, '', { kind: 'reconnect' }],
   ])('%i %s', (code, reason, outcome) => {

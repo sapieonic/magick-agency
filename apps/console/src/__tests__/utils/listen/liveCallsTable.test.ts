@@ -8,6 +8,8 @@ import {
   listenTargetFor,
   liveCallFilterOptions,
   liveCallHref,
+  liveCallPagePath,
+  liveCallRowPagePath,
   mergeLiveCalls,
   nextLiveCallSort,
   pruneEndedLiveCalls,
@@ -34,9 +36,9 @@ import { liveCall } from '../../helpers/liveCalls';
 
 const rows = (...calls: ReturnType<typeof liveCall>[]) => calls.map((call) => ({ call, endedAt: null }));
 
-const A = liveCall({ call_id: 'a', agent_user_id: 'u-1', agent_name: 'Vikram Das', connected_at: '2026-11-16T10:03:00Z', origin: 'campaign', campaign_id: 'c-1', campaign_name: 'Renewals' });
-const B = liveCall({ call_id: 'b', agent_user_id: 'u-2', agent_name: 'Arjun Nair', connected_at: '2026-11-16T10:01:00Z', origin: 'inbound', campaign_id: null, campaign_name: null, inbound_route_name: 'Support line' });
-const C = liveCall({ call_id: 'c', agent_user_id: 'u-3', agent_name: 'sneha iyer', connected_at: '2026-11-16T10:02:00Z', origin: 'manual', campaign_id: null, campaign_name: null });
+const A = liveCall({ call_id: 'a', agent_user_id: 'u-1', agent_name: 'Vikram Das', connected_at: '2026-11-16T10:03:00Z', origin: 'campaign', correlation_id: 'att-a', campaign_id: 'c-1', campaign_name: 'Renewals' });
+const B = liveCall({ call_id: 'b', agent_user_id: 'u-2', agent_name: 'Arjun Nair', connected_at: '2026-11-16T10:01:00Z', origin: 'inbound', correlation_id: 'in-b', campaign_id: null, campaign_name: null, inbound_route_name: 'Support line' });
+const C = liveCall({ call_id: 'c', agent_user_id: 'u-3', agent_name: 'sneha iyer', connected_at: '2026-11-16T10:02:00Z', origin: 'manual', correlation_id: 'man-c', campaign_id: null, campaign_name: null });
 
 describe('sorting', () => {
   it('defaults to the longest on call first', () => {
@@ -122,6 +124,7 @@ describe('what a listen starts with', () => {
     expect(listenTargetFor(A, -250)).toEqual({
       callId: 'a',
       origin: 'campaign',
+      correlationId: 'att-a',
       campaignId: 'c-1',
       campaignLabel: 'Renewals',
       agentName: 'Vikram Das',
@@ -131,9 +134,27 @@ describe('what a listen starts with', () => {
     });
   });
 
-  it('Open call: the campaign’s Live view, or the account’s Live calls', () => {
-    expect(liveCallHref({ campaignId: 'c-1' })).toBe('/agency/campaigns/c-1/calls/live');
-    expect(liveCallHref({ campaignId: null })).toBe('/agency/live');
+  it('Open call: the attempt for a dialler call, the soft-phone call page for a soft-phone call', () => {
+    expect(liveCallRowPagePath(A)).toBe('/agency/campaigns/c-1/attempts/att-a');
+    expect(liveCallRowPagePath(C)).toBe('/agency/softphone/calls/man-c');
+    // A soft-phone call tagged to a campaign is still the soft phone's page.
+    expect(liveCallRowPagePath({ ...C, campaign_id: 'c-9' })).toBe('/agency/softphone/calls/man-c');
+    expect(liveCallHref(listenTargetFor(A, 0))).toBe('/agency/campaigns/c-1/attempts/att-a');
+    expect(liveCallHref(listenTargetFor(C, 0))).toBe('/agency/softphone/calls/man-c');
+  });
+
+  it('Open call: an inbound call has no page in the console, so the bar opens its live view', () => {
+    expect(liveCallRowPagePath(B)).toBeNull();
+    expect(liveCallRowPagePath({ ...B, campaign_id: 'c-1' })).toBeNull();
+    expect(liveCallHref(listenTargetFor(B, 0))).toBe('/agency/live');
+    expect(liveCallHref(listenTargetFor({ ...B, campaign_id: 'c-1' }, 0))).toBe('/agency/campaigns/c-1/calls/live');
+  });
+
+  it('Open call: no page without the ids it is keyed on', () => {
+    expect(liveCallPagePath({ origin: 'campaign', campaignId: null, correlationId: 'att-a' })).toBeNull();
+    expect(liveCallPagePath({ origin: 'campaign', campaignId: 'c-1', correlationId: '' })).toBeNull();
+    expect(liveCallPagePath({ origin: 'manual', campaignId: null, correlationId: undefined })).toBeNull();
+    expect(liveCallHref({ origin: 'manual', campaignId: null, correlationId: '' })).toBe('/agency/live');
   });
 });
 
@@ -186,5 +207,9 @@ describe('the words', () => {
     expect(listenRefusalMessage({ status: 403, code: 'insufficient_permissions' })).toBe('You do not have access to listen to calls.');
     expect(listenRefusalMessage({ status: null, code: null })).toBe('Could not start listening. Check your connection and try again.');
     expect(listenRefusalMessage({ status: 500, code: null })).toBe('Could not start listening. Try again.');
+    // The server's error mask strips a 503's body: it reads as the listen being unavailable.
+    expect(listenRefusalMessage({ status: 503, code: null })).toBe('Listening is not available right now. Try again.');
+    expect(listenRefusalMessage({ status: 503, code: 'worker_unavailable' })).toBe('Listening is not available right now. Try again.');
+    expect(listenRefusalMessage({ status: 503, code: 'listen_limit_server' })).toBe('Listening is busy right now. Try again in a minute.');
   });
 });

@@ -4,7 +4,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { CallsViews } from '../../components/agency/CallsViews';
 import { LiveCallsTable } from '../../components/listen/LiveCallsTable';
-import { CampaignWorkspace, type CampaignWorkspaceSection } from './campaign-detail/CampaignWorkspace';
+import { CampaignWorkspace } from './campaign-detail/CampaignWorkspace';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
@@ -13,8 +13,8 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  * (header, health strip, bar with Calls marked) like every campaign screen. "Summary | Live" above
  * it switches to the analytic panel (`CallsViews`).
  *
- * The workspace's own stats read gives the campaign's average handle time, so a call past twice it
- * shows amber here (the live list carries none).
+ * A call past twice the campaign's average handle time shows amber, from the live row's own
+ * `aht_seconds`, as on the account page.
  */
 export default function AgencyCampaignLiveCallsPage() {
   const { id } = useParams<{ id: string }>();
@@ -28,8 +28,8 @@ export default function AgencyCampaignLiveCallsPage() {
       active="live"
       subnav={<CallsViews campaignId={id} active="live" role={role} liveCount={liveCount} />}
     >
-      {(campaign, section) => (
-        <LiveSection campaignId={id} campaign={campaign} section={section} onCount={setLiveCount} />
+      {(campaign) => (
+        <LiveSection campaignId={id} campaign={campaign} onCount={setLiveCount} />
       )}
     </CampaignWorkspace>
   );
@@ -38,12 +38,10 @@ export default function AgencyCampaignLiveCallsPage() {
 function LiveSection({
   campaignId,
   campaign,
-  section,
   onCount,
 }: {
   campaignId: string;
   campaign: AgencyCampaign | null;
-  section: CampaignWorkspaceSection;
   onCount: (count: number | null) => void;
 }) {
   // The Calls tab's second view: the bar tab it sits under names it.
@@ -51,7 +49,6 @@ function LiveSection({
   return (
     <LiveCallsTable
       campaignId={campaignId}
-      ahtSeconds={section.stats?.aht_seconds ?? null}
       headingLevel="h2"
       onCount={onCount}
     />

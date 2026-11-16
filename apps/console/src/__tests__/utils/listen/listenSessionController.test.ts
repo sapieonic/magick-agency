@@ -57,6 +57,7 @@ class FakeListenSocket implements ListenSocket {
 const TARGET: ListenTarget = {
   callId: 'call-1',
   origin: 'campaign',
+  correlationId: 'att-1',
   campaignId: 'camp-1',
   campaignLabel: 'Renewals',
   agentName: 'Priya Sharma',
@@ -255,6 +256,27 @@ describe('reconnecting', () => {
     last().open();
     last().text({ event: 'ready', listen_id: 'l-2', call_id: 'call-1', format: 'alaw8', frame_bytes: 160 });
     expect(c.getState()).toMatchObject({ phase: 'live', listenId: 'l-2' });
+  });
+
+  it('a server shutting down with no `ended` frame (1005, LS16 g) reconnects, through a grant the restart refuses', async () => {
+    const c = controller();
+    const first = await goLive(c);
+    first.binary(2);
+    // One process stopping: the WebSocket plugin closes the socket with no code and no frame.
+    first.serverClose(1005);
+    expect(c.getState()).toMatchObject({ phase: 'reconnecting', step: 'wait' });
+    // While it restarts the grant answers a masked 503, then nothing at all: both retried.
+    grants.push({ ok: false, status: 503, code: null }, { ok: false, status: null, code: null });
+    await vi.advanceTimersByTimeAsync(LISTEN_RECONNECT_DELAYS_MS[0]!);
+    expect(c.getState()).toMatchObject({ phase: 'reconnecting', step: 'wait' });
+    await vi.advanceTimersByTimeAsync(LISTEN_RECONNECT_DELAYS_MS[1]!);
+    expect(c.getState()).toMatchObject({ phase: 'reconnecting', step: 'wait' });
+    await vi.advanceTimersByTimeAsync(LISTEN_RECONNECT_DELAYS_MS[2]!);
+    expect(grantCalls).toHaveLength(4);
+    expect(FakeListenSocket.all).toHaveLength(2);
+    last().open();
+    last().text({ event: 'ready', listen_id: 'l-4', call_id: 'call-1', format: 'alaw8', frame_bytes: 160 });
+    expect(c.getState()).toMatchObject({ phase: 'live', listenId: 'l-4' });
   });
 
   it('an old socket’s late close does not move the new attach', async () => {

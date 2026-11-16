@@ -400,9 +400,15 @@ the standing line of LS2.
   `as_of`, a call that leaves the list kept 3 s as "Call ended", a 403 stops the poll and says
   so) and the pure rules in `utils/listen/liveCallsTable.ts`. Show/Hide calls
   `GET …/live-calls/:callId/number` per row and keeps the number in the table's state only, so
-  leaving the page or the row ending masks it again. **Amber past twice the AHT** shows on the
-  campaign view only, from the workspace's own stats read (`aht_seconds`): the live row carries no
-  handle time and the account page would need a stats read per campaign, so it shows none.
+  leaving the page or the row ending masks it again. **Amber past twice the AHT** reads each row's
+  own `aht_seconds` (its campaign's, LS16 i), on the account page and the campaign view alike; a
+  row without one (no campaign, or none of its calls ended yet) is never amber
+  (`isLiveCallOverrun`). Each row ends with **"Open call"**, a link to the call's own page from
+  its `correlation_id` (`liveCallPagePath`): a dialler call's attempt
+  (`/agency/campaigns/:id/attempts/:attemptId`), a soft-phone call's page
+  (`/agency/softphone/calls/:id`); shown to every reader of the table, listen permission or not,
+  and kept on a row fading as "Call ended". An inbound call has no call page in the console, so its
+  row has no link.
 - *The listen.* `components/listen/ListenProvider.tsx` (mounted by `ConsoleLayout` around the
   shell, keyed by the account, with `ListenBar` under `<main>`): one listen per shell, a second
   Listen stops the first, the first-use confirmation (`magick-agency.listen.confirmed` in browser
@@ -413,7 +419,9 @@ the standing line of LS2.
   recovery end it; a refused re-grant ends it, or is retried, by its code);
   `utils/listen/listenSessionController.ts` does what each state asks (mint, open in binary mode,
   ping every 10 s, `stop`, wait 0.25–3 s between attaches, dismiss "Call ended" after 6 s);
-  `utils/listen/listenFrames.ts` reads the wire and maps each close code;
+  `utils/listen/listenFrames.ts` reads the wire and maps each close code (any code it does not
+  name is a drop it reconnects from: 1006, and 1005, the code a browser reports when one process
+  shutting down closes the socket with no code and no `ended` frame, LS16 g);
   `hooks/listen/useListenSession.ts` binds them to React. The audio is
   `utils/listen/listenPlayback.ts` (`ListenPlaybackEngine`: one 16 kHz `AudioContext`, per leg an
   `AlawDownlinkDecoder`, a queue re-based onto 120 ms after an underrun or past 600 ms ahead, an
@@ -424,9 +432,9 @@ the standing line of LS2.
 - *The bar.* `components/listen/ListenBar.tsx`. At phone width (640 px) it is the live dot, the
   timer and Stop, and keeps the LS6 notice under them (the notice is never dismissible, so it is
   not dropped at any width). Esc anywhere inside the bar stops a listen (or dismisses an ended
-  one). **"Open call"** opens the call's live view (its campaign's Live, else `/agency/live`): the
-  live row carries the call's `agency_calls.id` but not the attempt or soft-phone call id the call
-  pages are keyed on, so the call page itself cannot be linked from it.
+  one). **"Open call"** opens the call's own page, as the table's link does (`liveCallHref` over
+  the listen target's `correlationId`); an inbound call, which has no call page in the console,
+  falls back to its live view (its campaign's Live, else `/agency/live`).
 - *Who listened.* `components/listen/ListenedToBy.tsx` on `AgencyAttemptCallPage` and
   `SoftphoneCallDetailPage`, from the detail's optional `listen_sessions` (the console's
   `AgencyAttemptCallDetail` and `WithListenSessions<AgencyManualCallDetail>`); a detail without
@@ -438,6 +446,13 @@ the standing line of LS2.
   button in the station header (`lib/features/station/parts/banners.dart`: the idle, incoming and
   link screens; the on-call band has none) opens the station info sheet with the line, behind the
   client flag (`stationListenNoticeProvider`, `liveListenFlagKey`); no wire type changes.
+- *Refusal words.* A refused grant's toast says its code's words (`listenRefusalMessage`); a 503
+  without a listen code reads as `listen_unavailable` ("Listening is not available right now. Try
+  again."). The server's error mask (`error-mask.middleware.ts`) replaces the body of every 5xx it
+  has not reviewed, and the grant route does not mark its own 503s reviewed, so
+  `listen_limit_server` and `listen_unavailable` reach the console today as a bare 503 with no
+  code: the busy and the unavailable cases read alike until the route preserves them. A re-grant
+  answered 503 is retried within the window either way.
 - *Analytics.* `analytics/redact.ts` takes the listener socket's `token` out of any URL on its way
   to PostHog (`redactListenToken`).
 
@@ -448,7 +463,7 @@ the standing line of LS2.
 | 1 | Foundation: the permission, both flags, the socket and console contracts, the refusal codes, `0047_listen_sessions.sql` and its repository, the retention sweep, the audit actions and resource type, `agency.listen` config, the metric declarations, the alert group and dashboard row, this document | **Built** (2026-11-16) |
 | 2 | The tap and the bridge seam: `listen-tap.ts`, `openListenTap` with `docs/seams.md` §3.1 and the seam contract tests, `LISTENER_LIMITS`, the fault budget, the sampled relay dwell, fault-injection tests | **Built** (2026-11-16) |
 | 3 | The server side: `ListenRegistry`, `ListenTokenStore`, the listener socket, the four routes and two internal handlers with their guards (route tables, agent reach, owners, `wsOwner`, `ws-limits`, the rate-limit bucket, `token` redaction), revocation over IPC, the re-check, the boot and worker reaps, the audit writes, the call detail's `listen_sessions` | **Built** (2026-11-16): §4 "As built (phase 3)", LS16 |
-| 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | **Built** (2026-11-16), against the contracts (§9 "As built"); `correlation_id` and `aht_seconds` on the live row are served since phase 3, not yet read by the console |
+| 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | **Built** (2026-11-16), against the contracts (§9 "As built"); since phase 3, reads the live row's `correlation_id` ("Open call" to the call's page) and `aht_seconds` (amber on both pages), and is checked against the server's routes, frames, close codes and refusals |
 | 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | **Built** (2026-11-16) |
 | 6 | The inbound notice's words and its regenerated WAV (LS1) | **Built** (2026-11-16): `AGENCY_INBOUND_STANDARD_WORDS.recording_notice` is "This call may be recorded or monitored for quality and training purposes." and `apps/server/assets/inbound/recording-notice.wav` is regenerated from it with `scripts/generate-inbound-clips.ts --only recording_notice` and the pinned voice (8 kHz mono PCM16, 5.0 s); the other six recordings are unchanged. The carrier never speaks the notice (its `<Speak>` covers closed, busy and call-back only), so the WAV is the only other copy of the words |
 
@@ -514,11 +529,13 @@ the standing line of LS2.
   `utils/listen/listenFrames.test.ts` (the parser, every close code, the `ended` reasons that end a
   session), `utils/listen/listenSessionReducer.test.ts` (every transition, stale attempts, the
   window, the bound, Try again, the bar's flags), `utils/listen/listenSessionController.test.ts`
-  (grant → socket → ready, audio only while live, ping, stop, supersede, destroy, reconnect, the
-  window, an unopenable socket), `utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues
+  (grant → socket → ready, audio only while live, ping, stop, supersede, destroy, reconnect, a
+  shutdown's close with no `ended` frame through masked and unanswered re-grants, the window, an
+  unopenable socket), `utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues
   and decoders, the graph, mute, volume, level, silence, blocked, reset, close, no microphone in
   use or in the source), `utils/listen/liveCallsTable.test.ts` (sort, filters, ended rows, amber,
-  the target, the words), `api/liveCalls.test.ts`, `components/LiveCallsTable.test.tsx`,
+  the target, "Open call" by origin and its inbound fallback, the words, a masked 503),
+  `api/liveCalls.test.ts`, `components/LiveCallsTable.test.tsx`,
   `components/ListenBar.test.tsx` (the confirmation, every bar state, Esc, mutes, the remembered
   volume with storage blocked, the toast, a second listen, the account switch, unmount, phone
   width), `components/listenSurfaces.test.tsx` (the station popover, the join screen's line,

@@ -6,8 +6,8 @@ import type { AgencyLiveCall } from '../../types/live-calls';
 
 /**
  * The live calls table (`docs/listening.md` §9): every column, the sort, the filters, the row
- * states, the number's Show/Hide, the empty, error and no-permission states, the poll, and the
- * campaign view's amber past twice the average handle time.
+ * states, the number's Show/Hide, the empty, error and no-permission states, the poll, the
+ * amber past twice the row's average handle time, and each row's "Open call".
  */
 
 const mocks = vi.hoisted(() => ({
@@ -48,6 +48,7 @@ const NOW = new Date('2026-11-16T10:10:00Z').getTime();
 
 const PRIYA = liveCall({
   call_id: 'c-priya',
+  correlation_id: 'att-priya',
   agent_user_id: 'u-priya',
   agent_name: 'Priya Sharma',
   client_kind: 'mobile',
@@ -56,9 +57,12 @@ const PRIYA = liveCall({
   connected_at: '2026-11-16T10:03:48Z', // 6:12 on call
   listeners: [{ user_id: 'u-ak', name: 'Anita Kapoor', started_at: '2026-11-16T10:05:00Z' }],
 });
+/** Priya's call on a campaign whose average handle time is 2:50: 6:12 is past twice it. */
+const PRIYA_LONG = liveCall({ ...PRIYA, aht_seconds: 170 });
 const ARJUN = liveCall({
   call_id: 'c-arjun',
   origin: 'inbound',
+  correlation_id: 'in-arjun',
   campaign_id: null,
   campaign_name: null,
   inbound_route_name: 'Support line',
@@ -71,6 +75,7 @@ const ARJUN = liveCall({
 const SNEHA = liveCall({
   call_id: 'c-sneha',
   origin: 'manual',
+  correlation_id: 'man-sneha',
   campaign_id: null,
   campaign_name: null,
   agent_user_id: 'u-sneha',
@@ -84,6 +89,8 @@ const SNEHA = liveCall({
 });
 const VIKRAM = liveCall({
   call_id: 'c-vikram',
+  correlation_id: 'att-vikram',
+  aht_seconds: 170,
   agent_user_id: 'u-vikram',
   agent_name: 'Vikram Das',
   customer_name: 'Meera Joshi',
@@ -146,7 +153,7 @@ describe('the table', () => {
     await renderTable();
     expect(order()).toEqual(['c-priya', 'c-arjun', 'c-sneha', 'c-vikram']);
     const headers = within(screen.getByTestId('live-calls-table')).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual(['Agent', 'Customer', 'Campaign', 'Type', 'Time on call', 'Recording', 'Listening', 'Action']);
+    expect(headers).toEqual(['Agent', 'Customer', 'Campaign', 'Type', 'Time on call', 'Recording', 'Listening', 'Action', 'Open call']);
 
     const priya = within(rowOf('c-priya'));
     expect(priya.getByText('Priya Sharma')).toBeTruthy();
@@ -272,6 +279,8 @@ describe('the poll', () => {
     expect(mocks.listLiveCalls).toHaveBeenCalledTimes(2);
     expect(rowOf('c-priya').getAttribute('data-ended')).toBe('true');
     expect(screen.getByTestId('live-call-ended-c-priya').textContent).toBe('Call ended');
+    // Its page stays one click away while it fades.
+    expect(screen.getByTestId('live-call-open-c-priya').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-priya');
     expect(screen.getByTestId('live-calls-count').textContent).toBe('3 in progress');
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_100);
@@ -333,7 +342,20 @@ describe('the states around the table', () => {
     const headers = within(screen.getByTestId('live-calls-table')).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).not.toContain('Action');
     expect(screen.queryByTestId('live-call-listen-c-priya')).toBeNull();
+    // Watching is enough to open the call's page.
+    expect(screen.getByTestId('live-call-open-c-priya').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-priya');
     expect(screen.getByTestId('live-calls-no-listen').textContent).toBe('You can see live calls but not listen to them.');
+  });
+});
+
+describe('Open call', () => {
+  it('opens the call’s own page: the attempt, the soft-phone call; an inbound call has none', async () => {
+    await renderTable();
+    expect(screen.getByTestId('live-call-open-c-priya').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-priya');
+    expect(screen.getByTestId('live-call-open-c-vikram').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-vikram');
+    expect(screen.getByTestId('live-call-open-c-sneha').getAttribute('href')).toBe('/agency/softphone/calls/man-sneha');
+    expect(screen.queryByTestId('live-call-open-c-arjun')).toBeNull();
+    expect(screen.getByTestId('live-call-open-c-priya').getAttribute('aria-label')).toBe('Open call: Priya Sharma with Rahul Mehta');
   });
 });
 
@@ -348,17 +370,24 @@ describe('the campaign view', () => {
     expect(screen.queryByTestId('live-calls-campaign-filter')).toBeNull();
   });
 
-  it('turns the time amber past twice the campaign’s average handle time', async () => {
-    mocks.listLiveCalls.mockResolvedValue(answer([PRIYA, VIKRAM]));
-    await renderTable({ campaignId: 'camp-1', ahtSeconds: 170 });
+  it('turns the time amber past twice the row’s average handle time', async () => {
+    mocks.listLiveCalls.mockResolvedValue(answer([PRIYA_LONG, VIKRAM]));
+    await renderTable({ campaignId: 'camp-1' });
     // 6:12 > 2 × 2:50; 1:58 is not.
     expect(screen.getByTestId('live-call-timer-c-priya').getAttribute('data-overrun')).toBe('true');
     expect(screen.getByTestId('live-call-timer-c-vikram').getAttribute('data-overrun')).toBeNull();
   });
 
-  it('shows no amber without an average handle time (the account page)', async () => {
+  it('the account page turns amber by each row’s own handle time, and never without one', async () => {
+    // Another campaign's call, 3:05 on it, past twice its 1:00.
+    const long = liveCall({ ...VIKRAM, call_id: 'c-long', campaign_id: 'camp-2', connected_at: ARJUN.connected_at, aht_seconds: 60 });
+    const unknown = liveCall({ ...PRIYA, call_id: 'c-unknown', aht_seconds: null }); // 6:12, no AHT
+    mocks.listLiveCalls.mockResolvedValue(answer([PRIYA_LONG, long, unknown, VIKRAM]));
     await renderTable();
-    expect(screen.getByTestId('live-call-timer-c-priya').getAttribute('data-overrun')).toBeNull();
+    expect(screen.getByTestId('live-call-timer-c-priya').getAttribute('data-overrun')).toBe('true');
+    expect(screen.getByTestId('live-call-timer-c-long').getAttribute('data-overrun')).toBe('true');
+    expect(screen.getByTestId('live-call-timer-c-unknown').getAttribute('data-overrun')).toBeNull();
+    expect(screen.getByTestId('live-call-timer-c-vikram').getAttribute('data-overrun')).toBeNull();
   });
 
   it('reports the count for the Live segment', async () => {

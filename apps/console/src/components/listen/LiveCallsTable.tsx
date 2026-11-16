@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Headphones, PhoneCall, Smartphone } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Headphones, PhoneCall, Smartphone } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -31,6 +32,7 @@ import {
   filterLiveCalls,
   isLiveCallOverrun,
   liveCallFilterOptions,
+  liveCallRowPagePath,
   nextLiveCallSort,
   sortLiveCalls,
   type LiveCallFilters,
@@ -46,12 +48,6 @@ import styles from './LiveCallsTable.module.css';
 export interface LiveCallsTableProps {
   /** One campaign's calls (its Calls tab, Live): no Campaign column or filter. */
   campaignId?: string;
-  /**
-   * The campaign's average handle time, for the amber past twice it. Only the campaign view knows
-   * it (the workspace's own stats read); the live list carries none, so the account page shows no
-   * amber.
-   */
-  ahtSeconds?: number | null;
   /** `h1` on the account page; `h2` under a campaign's header. */
   headingLevel?: 'h1' | 'h2';
   /** The calls in progress, as read: the campaign's "Live" segment shows it. */
@@ -66,7 +62,7 @@ type Reveal = { status: 'loading' } | { status: 'shown'; phone: string } | { sta
  * recording, who is listening, and the Listen action for a reader who holds
  * `agency.calls.listen`. Sorted longest on call first; Agent and Time on call sort.
  */
-export function LiveCallsTable({ campaignId, ahtSeconds = null, headingLevel = 'h1', onCount }: LiveCallsTableProps) {
+export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: LiveCallsTableProps) {
   const { tenantId, accountId } = useTenant();
   const { user } = useAuth();
   const supervise = usePermission('agency.supervise');
@@ -229,6 +225,7 @@ export function LiveCallsTable({ campaignId, ahtSeconds = null, headingLevel = '
                 <th scope="col">Recording</th>
                 <th scope="col">Listening</th>
                 {showAction ? <th scope="col"><span className="sr-only">Action</span></th> : null}
+                <th scope="col"><span className="sr-only">{LIVE_CALLS_COPY.openCall}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -238,7 +235,6 @@ export function LiveCallsTable({ campaignId, ahtSeconds = null, headingLevel = '
                   row={row}
                   now={now}
                   clockOffsetMs={clockOffsetMs}
-                  ahtSeconds={ahtSeconds}
                   showCampaign={showCampaign}
                   showAction={showAction}
                   listen={listen}
@@ -290,7 +286,6 @@ function LiveCallRow({
   row,
   now,
   clockOffsetMs,
-  ahtSeconds,
   showCampaign,
   showAction,
   listen,
@@ -301,7 +296,6 @@ function LiveCallRow({
   row: ShownLiveCall;
   now: number;
   clockOffsetMs: number;
-  ahtSeconds: number | null;
   showCampaign: boolean;
   showAction: boolean;
   listen: ListenContextValue | null;
@@ -314,7 +308,9 @@ function LiveCallRow({
   const session = listen?.state;
   const mine = Boolean(session && session.target?.callId === call.call_id && ['connecting', 'live', 'reconnecting'].includes(session.phase));
   const elapsed = elapsedSince(call.connected_at, clockOffsetMs, ended ? endedAt : now);
-  const overrun = !ended && isLiveCallOverrun(elapsed, ahtSeconds);
+  // Amber past twice the campaign's average handle time, which the row carries (null: not known).
+  const overrun = !ended && isLiveCallOverrun(elapsed, call.aht_seconds);
+  const pagePath = liveCallRowPagePath(call);
   const name = agentName(call);
   const customer = customerLabel(call);
   const shownNumber = reveal?.status === 'shown' ? formatPhone(reveal.phone) : call.customer_phone_masked;
@@ -398,6 +394,20 @@ function LiveCallRow({
           <Action call={call} ended={ended} mine={mine} listen={listen!} clockOffsetMs={clockOffsetMs} />
         </td>
       ) : null}
+      <td className={styles.openCell}>
+        {/* The call's own page (an inbound call has none in the console): open while live and after. */}
+        {pagePath ? (
+          <Link
+            to={pagePath}
+            className={styles.openCall}
+            aria-label={`${LIVE_CALLS_COPY.openCall}: ${name} with ${customer}`}
+            data-testid={`live-call-open-${call.call_id}`}
+          >
+            {LIVE_CALLS_COPY.openCall}
+            <ExternalLink size={12} aria-hidden="true" />
+          </Link>
+        ) : null}
+      </td>
     </tr>
   );
 }

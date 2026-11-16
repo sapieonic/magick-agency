@@ -223,11 +223,24 @@ describe('the bar', () => {
     expect(bar().textContent).toContain('Renewals · Nov · 03:42');
     expect(screen.getByTestId('listen-meter-agent').textContent).toContain('Agent');
     expect(screen.getByTestId('listen-meter-customer').textContent).toContain('Customer');
-    expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe('/agency/campaigns/camp-1/calls/live');
+    // Open call: the call's own page, its attempt (the row's `correlation_id`).
+    expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-1');
     expect(screen.getByTestId('listen-notice')).toBeTruthy();
     // The row is the supervisor's: tinted, with Stop.
     expect(screen.getByTestId('live-call-c-1').getAttribute('data-mine')).toBe('true');
     expect(screen.getByTestId('live-call-stop-c-1')).toBeTruthy();
+  });
+
+  it.each([
+    ['a soft-phone call opens its call page', { origin: 'manual', correlation_id: 'man-3', campaign_id: null, campaign_name: null }, '/agency/softphone/calls/man-3'],
+    ['an inbound call (no call page in the console) opens the account’s live calls', { origin: 'inbound', correlation_id: 'in-3', campaign_id: null, campaign_name: null, inbound_route_name: 'Support' }, '/agency/live'],
+  ] as const)('Open call: %s', async (_name, over, href) => {
+    const third = liveCall({ ...over, call_id: 'c-3', agent_user_id: 'u-3', agent_name: 'Sneha Iyer' });
+    mocks.listLiveCalls.mockResolvedValue({ calls: [CALL, third], as_of: new Date(NOW).toISOString() });
+    await renderApp();
+    const ws = await startListening('c-3');
+    act(() => ws.ready());
+    expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe(href);
   });
 
   it('Stop listening sends `stop` and closes the bar', async () => {
@@ -331,11 +344,14 @@ describe('the bar', () => {
     expect(screen.queryByTestId('listen-agent-gap')).toBeNull();
   });
 
-  it('a drop: "Reconnecting…", and back to Listening on a fresh grant', async () => {
+  it.each([
+    ['a drop (1006)', 1006],
+    ['the server shutting down with no `ended` frame (1005, one process, LS16 g)', 1005],
+  ])('%s: "Reconnecting…", and back to Listening on a fresh grant', async (_name, code) => {
     await renderApp();
     const ws = await startListening();
     act(() => ws.ready());
-    act(() => ws.serverClose(1006));
+    act(() => ws.serverClose(code));
     expect(screen.getByTestId('listen-status').textContent).toBe('Reconnecting…');
     expect(screen.getByTestId('listen-reconnecting').textContent).toContain('15 s');
     await act(async () => {
@@ -379,7 +395,7 @@ describe('the bar', () => {
     });
     act(() => ws.frame({ event: 'ended', reason: 'call_ended' }));
     expect(screen.getByTestId('listen-ended-line').textContent).toBe('Call ended · you listened for 02:10');
-    expect(screen.getByTestId('listen-open-call')).toBeTruthy();
+    expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-1');
     expect(screen.getByTestId('listen-notice')).toBeTruthy();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6_000);

@@ -141,6 +141,7 @@ export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): Li
   return {
     callId: call.call_id,
     origin: call.origin,
+    correlationId: call.correlation_id,
     campaignId: call.campaign_id,
     campaignLabel: campaignCellLabel(call),
     agentName: agentName(call),
@@ -151,12 +152,37 @@ export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): Li
 }
 
 /**
- * Where the bar's "Open call" goes: the call's live view (its campaign's Live, or the account's
- * Live calls). The live row carries the call's id (`agency_calls.id`) but not the attempt or
- * soft-phone call id the call pages are keyed on, so the call page itself is not reachable from it.
+ * The call's own page, keyed on the live row's `correlation_id` (the spine row, by `origin`): a
+ * dialler call opens its attempt (`/agency/campaigns/:id/attempts/:attemptId`), a soft-phone call
+ * its call page (`/agency/softphone/calls/:id`). Null for an inbound call, which has no call page in
+ * the console, and for a row missing the ids its page needs.
  */
-export function liveCallHref(target: Pick<ListenTarget, 'campaignId'>): string {
-  return target.campaignId ? `/agency/campaigns/${target.campaignId}/calls/live` : '/agency/live';
+export function liveCallPagePath(
+  call: { origin: AgencyCallOrigin; campaignId: string | null; correlationId: string | null | undefined },
+): string | null {
+  if (!call.correlationId) return null;
+  switch (call.origin) {
+    case 'campaign':
+      return call.campaignId ? `/agency/campaigns/${call.campaignId}/attempts/${call.correlationId}` : null;
+    case 'manual':
+      return `/agency/softphone/calls/${call.correlationId}`;
+    case 'inbound':
+      return null;
+  }
+}
+
+/** {@link liveCallPagePath} for a live row. */
+export function liveCallRowPagePath(call: Pick<AgencyLiveCall, 'origin' | 'campaign_id' | 'correlation_id'>): string | null {
+  return liveCallPagePath({ origin: call.origin, campaignId: call.campaign_id, correlationId: call.correlation_id });
+}
+
+/**
+ * Where the bar's "Open call" goes: the call's own page ({@link liveCallPagePath}); for a call with
+ * none (inbound), its live view: its campaign's Live, or the account's Live calls.
+ */
+export function liveCallHref(target: Pick<ListenTarget, 'origin' | 'campaignId' | 'correlationId'>): string {
+  return liveCallPagePath(target)
+    ?? (target.campaignId ? `/agency/campaigns/${target.campaignId}/calls/live` : '/agency/live');
 }
 
 /** The table's customer cell words (re-exported so the table reads one module). */

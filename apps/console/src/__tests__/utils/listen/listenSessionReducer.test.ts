@@ -20,6 +20,7 @@ import { AGENCY_LISTEN_CLOSE, AGENCY_LISTEN_RECONNECT_WINDOW_MS } from '../../..
 const TARGET: ListenTarget = {
   callId: 'call-1',
   origin: 'campaign',
+  correlationId: 'att-1',
   campaignId: 'camp-1',
   campaignLabel: 'Renewals',
   agentName: 'Priya Sharma',
@@ -225,6 +226,7 @@ describe('reconnecting (up to 15 s, a fresh grant each time)', () => {
 
   it.each([
     ['going away (1001)', 1001, 'server_shutdown'],
+    ['closed with no code and no `ended` (1005: one process shutting down, LS16 g)', 1005, ''],
     ['a refused token (4401)', 4401, ''],
     ['the socket stopped reading (4408)', 4408, 'send_backlog'],
     ['silence (4408)', 4408, 'listener_disconnected'],

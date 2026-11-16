@@ -27,6 +27,8 @@ import { listenCloseOutcome, terminalEndReason, type ListenCloseOutcome } from '
 export interface ListenTarget {
   callId: string;
   origin: AgencyCallOrigin;
+  /** The call's spine row (the live row's `correlation_id`): "Open call" opens its page. */
+  correlationId: string;
   campaignId: string | null;
   /** The Campaign column's words (`campaignCellLabel`). */
   campaignLabel: string;

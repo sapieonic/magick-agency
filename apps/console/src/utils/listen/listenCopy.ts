@@ -47,6 +47,7 @@ export const LIVE_CALLS_COPY = {
   softPhone: 'Soft phone',
   inbound: 'Inbound',
   overrun: 'On the call past twice the campaign’s average handle time',
+  openCall: 'Open call',
 } as const;
 
 /** "N in progress". */
@@ -173,12 +174,18 @@ export function shortName(name: string): string {
   return `${words[0]} ${Array.from(last)[0]!.toUpperCase()}.`;
 }
 
-/** The words for a refused grant or upgrade: its code's, else the status's. */
+/**
+ * The words for a refused grant or upgrade: its code's, else the status's. A 503 without a listen
+ * code reads as `listen_unavailable`: the server's error mask strips the body of every 5xx it has
+ * not reviewed, which today includes the grant's own `listen_limit_server` and
+ * `listen_unavailable`, and a worker restarting answers `worker_unavailable`.
+ */
 export function listenRefusalMessage(refusal: { status: number | null; code: string | null }): string {
   const code = refusal.code;
   if (code && code in LISTEN_REFUSAL_COPY) return LISTEN_REFUSAL_COPY[code as AgencyListenErrorCode];
   if (code === 'feature_disabled') return LISTEN_REFUSAL_FALLBACK.featureDisabled;
   if (refusal.status === 401 || refusal.status === 403) return LISTEN_REFUSAL_FALLBACK.forbidden;
+  if (refusal.status === 503) return LISTEN_REFUSAL_COPY.listen_unavailable;
   if (refusal.status === null) return LISTEN_REFUSAL_FALLBACK.network;
   return LISTEN_REFUSAL_FALLBACK.other;
 }

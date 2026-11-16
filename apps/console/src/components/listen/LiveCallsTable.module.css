@@ -270,6 +270,24 @@
   white-space: nowrap;
 }
 
+.openCell {
+  white-space: nowrap;
+}
+
+.openCall {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+
+.openCall:hover {
+  text-decoration: underline;
+}
+
 .actionButton {
   display: inline-flex;
   align-items: center;

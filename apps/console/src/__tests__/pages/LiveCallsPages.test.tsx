@@ -48,8 +48,9 @@ import AgencyCampaignLiveCallsPage from '../../pages/agency/AgencyCampaignLiveCa
 import { ListenProvider } from '../../components/listen/ListenProvider';
 
 const NOW = new Date('2026-11-16T10:10:00Z').getTime();
-const LONG = liveCall({ call_id: 'c-long', connected_at: '2026-11-16T10:00:00Z' }); // 10:00 on call
-const SHORT = liveCall({ call_id: 'c-short', connected_at: '2026-11-16T10:08:00Z' }); // 2:00
+// The campaign's average handle time is on each live row (3:20).
+const LONG = liveCall({ call_id: 'c-long', connected_at: '2026-11-16T10:00:00Z', aht_seconds: 200 }); // 10:00 on call
+const SHORT = liveCall({ call_id: 'c-short', connected_at: '2026-11-16T10:08:00Z', aht_seconds: 200 }); // 2:00
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -57,7 +58,8 @@ beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.listLiveCalls.mockResolvedValue({ calls: [LONG, SHORT], as_of: new Date(NOW).toISOString() });
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Home Loan Renewals', status: 'running' });
-  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ aht_seconds: 200 }));
+  // The workspace's own stats read says otherwise: the amber follows the row, not this.
+  mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats({ aht_seconds: 9_999 }));
   mocks.campaignLineage.mockResolvedValue(noLineage());
 });
 
@@ -79,6 +81,9 @@ describe('/agency/live', () => {
     expect(mocks.listLiveCalls).toHaveBeenCalledWith({}, 't-1', 'a-1');
     expect(screen.getByRole('heading', { level: 1, name: 'Live calls' })).toBeTruthy();
     expect(screen.getByTestId('live-calls-campaign-filter')).toBeTruthy();
+    // Amber past twice each row's own average handle time, on the account page too.
+    expect(screen.getByTestId('live-call-timer-c-long').getAttribute('data-overrun')).toBe('true');
+    expect(screen.getByTestId('live-call-timer-c-short').getAttribute('data-overrun')).toBeNull();
   });
 });
 
@@ -112,7 +117,7 @@ describe('/agency/campaigns/:id/calls/live', () => {
     expect(suppliedCrumbs()).toBe('Home Loan Renewals→/agency/campaigns/camp-1 / Calls');
   });
 
-  it('turns a call past twice the campaign’s average handle time amber', async () => {
+  it('turns a call past twice the campaign’s average handle time amber, from the live row', async () => {
     await renderCampaignLive();
     expect(screen.getByTestId('live-call-timer-c-long').getAttribute('data-overrun')).toBe('true');
     expect(screen.getByTestId('live-call-timer-c-short').getAttribute('data-overrun')).toBeNull();
