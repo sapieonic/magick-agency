@@ -46,7 +46,7 @@ describe('carrier-module registry', () => {
       expect(typeof m.mediaUrlInDialRequest).toBe('boolean');
       expect(typeof m.media.negotiatesOnStart).toBe('boolean');
       expect(m.media.formatLabel.length).toBeGreaterThan(0);
-      expect([null, 'alaw8']).toContain(m.media.wireFormat);
+      expect([null, 'alaw8', 'mulaw8']).toContain(m.media.wireFormat);
       expect(typeof m.cancelsRinging).toBe('boolean');
     }
   });
@@ -146,8 +146,8 @@ describe('plivo carrier module', () => {
     expect(pl.answeredHangup).toBe('rest');
     expect(pl.mediaUrlInDialRequest).toBe(false);
     expect(pl.media.negotiatesOnStart).toBe(true);
-    // No browser leg speaks μ-law: every leg transcodes.
-    expect(pl.media.wireFormat).toBeNull();
+    // Raw μ-law 8 kHz: no browser leg speaks it (every leg transcodes); the listen tap maps it by table.
+    expect(pl.media.wireFormat).toBe('mulaw8');
     expect(pl.media.formatLabel).toBe('μ-law 8kHz');
   });
 

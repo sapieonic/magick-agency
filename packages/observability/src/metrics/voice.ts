@@ -107,10 +107,12 @@ export function trackWebsocketSendBackpressure(socket: 'station' | 'carrier' | '
 // How long one relayed frame spent in the bridge, from its arrival on one leg to the write to the
 // other (the same span as each call's `maxRelayDwellMicros`, which logs only the worst). Sampled:
 // one frame in {@link RELAY_DWELL_SAMPLE_EVERY} per call and direction, so the relay pays a counter
-// increment per frame and a histogram record per second of a call. It is the guard that the
-// listener tap, fed after the relay write, adds nothing to the agent's or the customer's audio:
-// the `agy-listen-relay-dwell-regressed` rule reads its p99. `direction` is `b2p` (the agent's
-// browser to the carrier: the agent's voice) or `p2b` (the carrier to the browser: the customer's).
+// increment per frame and a histogram record per second of a call. It is the relay's own health
+// (its codecs and writes), on the dashboard. It does NOT see the listener tap: the tap is fed
+// after the relay write, so this span excludes it by construction (LS8) and its cost shows as
+// event-loop time before the next frame instead (`agy-listen-loop-delay`; docs/listening.md §10).
+// `direction` is `b2p` (the agent's browser to the carrier: the agent's voice) or `p2b` (the
+// carrier to the browser: the customer's).
 const webrtcRelayDwellSeconds = histogram<'direction'>(meter, 'webrtc_relay_dwell_seconds', {
   description: 'Seconds one relayed media frame spent in the bridge, from its arrival to the write to the other leg, sampled one frame in 50 per call and direction, by direction (b2p: the agent to the customer, p2b: the customer to the agent)',
   unit: 's',

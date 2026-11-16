@@ -27,8 +27,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * (token spent, caps reserved, the session row written, the tap opened). Each listener pings every
  * 10 s as the console does; the stalled one pauses its socket once `ready` arrives and never reads
  * or writes again, so the server's send buffer fills behind it (dropped at the soft limit, LS8) until
- * the 30 s idle bound ends it `listener_disconnected` (LS15 g). Its server end is corked as it
- * stalls ({@link corkServerEnd} says why: loopback's kernel buffers would hide the stall for minutes).
+ * 10 s of nothing but drops (`LISTENER_SOFT_LIMIT_MAX_MS`) end it `send_backlog` (LS15 g), before the
+ * 30 s idle bound would. Its server end is corked as it stalls ({@link corkServerEnd} says why:
+ * loopback's kernel buffers would hide the stall for minutes).
  *
  * Asserted in every run: the call path drops nothing (every frame each side sent reached the other,
  * in order, by its loudness pattern; the bridge's drop counters zero). Each floor is measured over a
@@ -44,8 +45,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * whose other listener carries on; the session metrics move. Then the leak check. Run (a) is the
  * floor that nobody ever listens to: its numbers are the reference the docs record.
  *
- * Wall-clock: the stream is paced in real time and the stalled listener's end is the real 30 s
- * idle bound (no override), so the file is in the wall-clock lane (`vitest.config.integration.ts`).
+ * Wall-clock: the stream is paced in real time and the stalled listener's end is the real 10 s
+ * back-pressure bound (no override), so the file is in the wall-clock lane (`vitest.config.integration.ts`).
  * The listeners' sockets live in a child process (`listen-load-clients.ts`): in production they are
  * browsers elsewhere, and their reading on this loop would be charged to the server. The carrier
  * mock and the agents' sockets stay in this process: they are the same in both windows.
@@ -112,8 +113,9 @@ const SETTLE_MS = 2_000;
 const ATTACH_ALLOWANCE_MS = 4_000;
 /**
  * How long each call streams. The baseline needs its window and the lead-in; a run with listeners
- * the quiet window, the listeners' window and the stalled listener's idle bound (30 s from its
- * `ready`, which comes just before the second window), with room to spare.
+ * the quiet window, the listeners' window and the stalled listener's end (its back-pressure bound,
+ * about 13 s from its `ready`, which comes just before the second window; the 30 s idle bound is
+ * kept as the allowance, so a regression to it still fits the stream), with room to spare.
  */
 const BASELINE_STREAM_MS = SETTLE_MS + WINDOW_MS + 5_000;
 const LISTEN_STREAM_MS = SETTLE_MS + WINDOW_MS + ATTACH_ALLOWANCE_MS + AGENCY_LISTEN_IDLE_TIMEOUT_MS + 10_000;
@@ -605,7 +607,7 @@ async function runFloor(name: string, listenerCount: number): Promise<RunResult>
     expect(refused.json()).toMatchObject({ code: 'listen_limit_server' });
   }
 
-  // The stalled listener: dropped at its soft limit, then ended by the idle bound; the call goes on.
+  // The stalled listener: dropped at its soft limit, then ended send_backlog after 10 s of drops; the call goes on.
   const stalled = listeners.find((l) => l.stalled);
   if (stalled) {
     await waitFor('the stalled listener ended', async () => {
@@ -671,7 +673,7 @@ async function runFloor(name: string, listenerCount: number): Promise<RunResult>
     expect(heard.odd, ctx).toBe(0);
     expect(heard.events[0], ctx).toBe('ready');
     if (l.stalled) {
-      expect({ reason: row.end_reason, dropped: row.frames_dropped > 0 }, ctx).toEqual({ reason: 'listener_disconnected', dropped: true });
+      expect({ reason: row.end_reason, dropped: row.frames_dropped > 0 }, ctx).toEqual({ reason: 'send_backlog', dropped: true });
       continue;
     }
     const rate = { customer: heard.windowCustomer / elapsedS, agent: heard.windowAgent / elapsedS };
@@ -691,11 +693,12 @@ async function runFloor(name: string, listenerCount: number): Promise<RunResult>
     expect(delta, `${name}: listen metrics`).toMatchObject({
       // Every frame the stalled listener missed was dropped at its soft limit, and counted there.
       mediaDropped: stalledRow.frames_dropped,
-      listenerClosed: 0,
+      // Closed once, for its back-pressure (10 s of drops), not for its idle bound.
+      listenerClosed: 1,
       granted: listenerCount,
       refusedServer: listenerCount >= config.agency.listen.maxPerProcess ? 1 : 0,
       endedCall: listenerCount - 1,
-      endedDisconnected: 1,
+      endedDisconnected: 0,
     });
     expect(await metricValue(reader, 'agency_listen_sessions_active'), 'listen sessions open after the floor').toBe(0);
   } else {

@@ -36,13 +36,14 @@ export interface CarrierMediaProtocol {
    */
   readonly negotiatesOnStart: boolean;
   /**
-   * The carrier's wire audio when it is a format a browser leg can also speak, else
-   * null. `alaw8` is raw G.711 A-law, 8 kHz mono, one byte per sample and no header —
-   * byte for byte what an `alaw8` station socket carries, so the bridge relays such a
-   * leg without a codec in either direction. Null: every browser leg transcodes
-   * through {@link createCodec}.
+   * The carrier's wire audio when it is raw G.711 at 8 kHz mono (one byte per sample, no
+   * header), else null. `alaw8` (A-law) is byte for byte what an `alaw8` station socket
+   * carries, so the bridge relays such a leg without a codec in either direction. `mulaw8`
+   * (μ-law) is no browser leg's format: every browser leg transcodes through
+   * {@link createCodec}, and a supervisor's listen tap maps it to A-law one byte at a time
+   * (`core/bridge/listen-tap.ts`, LS17). Null: every leg transcodes through {@link createCodec}.
    */
-  readonly wireFormat: 'alaw8' | null;
+  readonly wireFormat: 'alaw8' | 'mulaw8' | null;
   /** Read a parsed `start` frame. Called only when {@link negotiatesOnStart}. */
   parseStart(frame: unknown): CarrierStartResult;
   /** A fresh codec for one call (it carries resampler history across frames). */

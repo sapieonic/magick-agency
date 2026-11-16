@@ -107,13 +107,17 @@ vi.mock('../../../src/telephony/carrier-modules.js', async (importOriginal) => {
       },
     },
   };
-  return { ...actual, findCarrierModule: (p: string) => (p === 'mulaw' ? mulaw : actual.findCarrierModule(p)) };
+  // `generic`: the same, declaring no G.711 law (`wireFormat: null`), so the tap takes the customer
+  // through its own carrier codec and A-law encoder, as it would for any other carrier.
+  const generic = { ...mulaw, name: 'generic', media: { ...mulaw.media, wireFormat: null } };
+  const fakes: Record<string, unknown> = { mulaw, generic };
+  return { ...actual, findCarrierModule: (p: string) => fakes[p] ?? actual.findCarrierModule(p) };
 });
 vi.mock('../../../src/core/webhook-url-builder.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/core/webhook-url-builder.js')>();
   class WebhookUrlBuilder extends actual.WebhookUrlBuilder {
     override baseUrl(p: string): string {
-      return p === 'mulaw' ? 'https://server.test/api/v1/webhooks/mulaw' : super.baseUrl(p);
+      return p === 'mulaw' || p === 'generic' ? `https://server.test/api/v1/webhooks/${p}` : super.baseUrl(p);
     }
   }
   return { ...actual, WebhookUrlBuilder };
@@ -121,10 +125,11 @@ vi.mock('../../../src/core/webhook-url-builder.js', async (importOriginal) => {
 
 import { WebRtcBridgeManager, type ListenSendResult, type ListenSink, type ListenTapHandle } from '../../../src/core/webrtc-bridge-manager.js';
 import { AlawFramer, setBrowserLegMediaFormat, type BrowserLegMediaFormat } from '../../../src/core/bridge/browser-leg-media.js';
-import { ListenTap, sendToListenerSocket } from '../../../src/core/bridge/listen-tap.js';
+import { ListenTap, MULAW_TO_ALAW, sendToListenerSocket } from '../../../src/core/bridge/listen-tap.js';
 import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
-import { VoicelinkTranscoder } from '../../../src/utils/audio-fir.js';
-import { LISTENER_LIMITS } from '../../../src/utils/ws-backpressure.js';
+import { MulawTranscoder, VoicelinkTranscoder } from '../../../src/utils/audio-fir.js';
+import { alawDecodeTable, alawEncodeTable, decodeMulaw, encodeMulaw } from '../../../src/utils/audio.js';
+import { LISTENER_LIMITS, LISTENER_SOFT_LIMIT_MAX_MS } from '../../../src/utils/ws-backpressure.js';
 import { AGENCY_LISTEN_LEG, AGENCY_LISTEN_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 
 // ── Fakes ───────────────────────────────────────────────────────────────────
@@ -276,7 +281,7 @@ function mulawFrame(i: number): Buffer {
 }
 
 /** Dial on `provider` with `station` borrowed, attach the PSTN leg and open the relay. */
-async function bridged(provider: 'voicelink' | 'mulaw', station: ReturnType<typeof fakeStation>) {
+async function bridged(provider: 'voicelink' | 'mulaw' | 'generic', station: ReturnType<typeof fakeStation>) {
   const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
   await mgr.createBridgedCall({ ...PARAMS, provider, browserSocket: station as any });
   const pstn = fakePstn();
@@ -314,12 +319,34 @@ function expectedAlaw(frames: Buffer[], pipeline: (b: Buffer) => Buffer): Buffer
   return Buffer.concat(out);
 }
 
+/** A-law for a sample of 0: what a transcoded leg's first output is led by. */
+const ALAW_SILENCE = alawEncodeTable[32768]!;
+
+/**
+ * As {@link expectedAlaw}, for a transcoded leg: its first output is led by A-law silence up to a
+ * whole frame (the tap's priming, so its framer carries nothing after).
+ */
+function expectedPrimedAlaw(frames: Buffer[], pipeline: (b: Buffer) => Buffer): Buffer {
+  let primed = false;
+  return expectedAlaw(frames, (f) => {
+    const out = pipeline(f);
+    if (primed || out.length === 0) return out;
+    primed = true;
+    const lead = (160 - (out.length % 160)) % 160;
+    return Buffer.concat([Buffer.alloc(lead, ALAW_SILENCE), out]);
+  });
+}
+
+/** μ-law frames mapped to A-law one byte at a time, as the tap's table does. */
+const tableAlaw = (frames: Buffer[]) => Buffer.from(Buffer.concat(frames).map((b) => MULAW_TO_ALAW[b]!));
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
   codecs.made.length = 0;
   codecs.next = null;
   cfg.agency.listen.faultBudget = 50;
+  mockRepo.update.mockResolvedValue(null);
   mockRepo.create.mockImplementation(async (i: any) => ({
     id: CALL, tenant_id: i.tenant_id, account_id: i.account_id, caller_id: i.caller_id,
     destination_phone: i.destination_phone, provider: i.provider, status: 'initiating',
@@ -397,10 +424,33 @@ describe('both legs as tagged 20 ms A-law: passthrough', () => {
 });
 
 describe('transcoded legs run on the tap`s own codecs', () => {
-  it('a μ-law customer: the tap`s own carrier codec and A-law encoder; the session codec once per frame', async () => {
+  it('a μ-law customer (Plivo): mapped to A-law by table, one frame out per frame in; no codec of the tap`s; the session codec once per frame', async () => {
     const station = fakeStation('pcm16');
     const { mgr, pstn, session } = await bridged('mulaw', station);
     expect(codecs.made).toHaveLength(1);
+    const sessionCodec = codecs.made[0]!;
+    expect(session.codec).toBe(sessionCodec);
+    const sink = recordingSink();
+    attach(mgr, sink);
+    // Both 8 kHz: no resampling, so the tap makes no codec (LS17).
+    expect(codecs.made).toHaveLength(1);
+
+    const frames = Array.from({ length: 10 }, (_, i) => mulawFrame(i));
+    for (let i = 0; i < frames.length; i++) {
+      pstn.media(frames[i]!);
+      // FALSIFIED by the codec path (its first output is 144 bytes: nothing yet, then a carry).
+      expect(legCount(sink, 'customer')).toBe(i + 1);
+    }
+    expect(sessionCodec.carrierToPcm16k).toHaveBeenCalledTimes(frames.length);
+    expect(legAudio(sink, 'customer')).toEqual(tableAlaw(frames));
+    // The agent still got every frame, as PCM16 from the session's codec.
+    expect(station.sent.filter((m) => m.event === 'media')).toHaveLength(frames.length);
+    await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
+  });
+
+  it('a carrier with no G.711 law: the tap`s own carrier codec and A-law encoder, primed to run carry-free; the session codec once per frame', async () => {
+    const station = fakeStation('pcm16');
+    const { mgr, pstn, session } = await bridged('generic', station);
     const sessionCodec = codecs.made[0]!;
     expect(session.codec).toBe(sessionCodec);
     const sink = recordingSink();
@@ -410,7 +460,11 @@ describe('transcoded legs run on the tap`s own codecs', () => {
     const tapCodec = codecs.made[1]!;
 
     const frames = Array.from({ length: 10 }, (_, i) => mulawFrame(i));
-    for (const f of frames) pstn.media(f);
+    for (let i = 0; i < frames.length; i++) {
+      pstn.media(frames[i]!);
+      // FALSIFIED by an unprimed framer: the first frame's 144 bytes wait, and every later one carries.
+      expect(legCount(sink, 'customer')).toBe(i + 1);
+    }
 
     // FALSIFIED by feeding the tap from the session's codec: the session codec is called twice per
     // frame, and its FIR history is shared, so the bytes below differ from a fresh pipeline's.
@@ -418,11 +472,7 @@ describe('transcoded legs run on the tap`s own codecs', () => {
     expect(tapCodec.carrierToPcm16k).toHaveBeenCalledTimes(frames.length);
     const plivo = findCarrierModule('plivo')!.media.createCodec();
     const enc = new VoicelinkTranscoder();
-    const want = expectedAlaw(frames, (f) => enc.pcm16kToAlaw(plivo.carrierToPcm16k(f)));
-    expect(want.length).toBeGreaterThan(0);
-    expect(legAudio(sink, 'customer')).toEqual(want.subarray(0, legAudio(sink, 'customer').length));
-    expect(legAudio(sink, 'customer').length).toBe(want.length);
-    // The agent still got every frame, as PCM16 from the session's codec.
+    expect(legAudio(sink, 'customer')).toEqual(expectedPrimedAlaw(frames, (f) => enc.pcm16kToAlaw(plivo.carrierToPcm16k(f))));
     expect(station.sent.filter((m) => m.event === 'media')).toHaveLength(frames.length);
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
   });
@@ -435,13 +485,20 @@ describe('transcoded legs run on the tap`s own codecs', () => {
     attach(mgr, sink);
 
     const frames = Array.from({ length: 8 }, (_, i) => pcm16kTone(320, i * 320));
-    for (const f of frames) station.sendPcmUp(f);
+    for (let i = 0; i < frames.length; i++) {
+      station.sendPcmUp(frames[i]!);
+      // FALSIFIED by an unprimed framer: the first 20 ms gives 152 bytes, held back, and every
+      // later frame carries 152 (a frame late, two allocations).
+      expect(legCount(sink, 'agent')).toBe(i + 1);
+    }
 
     expect(sessionCodec.pcm16kToCarrier).toHaveBeenCalledTimes(frames.length);
-    expect(codecs.made[1]!.pcm16kToCarrier).not.toHaveBeenCalled();
+    expect(codecs.made).toHaveLength(1);
     const enc = new VoicelinkTranscoder();
-    expect(legAudio(sink, 'agent')).toEqual(expectedAlaw(frames, (f) => enc.pcm16kToAlaw(f)));
-    expect(legCount(sink, 'agent')).toBeGreaterThan(0);
+    const want = expectedPrimedAlaw(frames, (f) => enc.pcm16kToAlaw(f));
+    expect(legAudio(sink, 'agent')).toEqual(want);
+    // Led by 8 bytes (1 ms) of silence, then the encoder's output unchanged.
+    expect(want.subarray(0, 8)).toEqual(Buffer.alloc(8, ALAW_SILENCE));
     expect(pstn.audioFrames()).toBe(frames.length);
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
   });
@@ -457,7 +514,7 @@ describe('transcoded legs run on the tap`s own codecs', () => {
     station.sendPcmUp(agent);
     expect(legAudio(sink, 'customer')).toEqual(c);
     const enc = new VoicelinkTranscoder();
-    expect(legAudio(sink, 'agent')).toEqual(expectedAlaw([agent], (f) => enc.pcm16kToAlaw(f)));
+    expect(legAudio(sink, 'agent')).toEqual(expectedPrimedAlaw([agent], (f) => enc.pcm16kToAlaw(f)));
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
   });
 });
@@ -628,12 +685,117 @@ describe('back-pressure: the listener`s socket only', () => {
   });
 });
 
+describe('a listener held past the soft limit', () => {
+  it('LISTENER_SOFT_LIMIT_MAX_MS is 10 s', () => {
+    expect(LISTENER_SOFT_LIMIT_MAX_MS).toBe(10_000);
+  });
+
+  it('sendToListenerSocket: dropped continuously for 10 s answers backlog (counted dropped and closed); a frame sent in between starts the clock again', () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const ws = fakeListenerSocket();
+    const m = Buffer.alloc(161);
+    ws.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
+    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    now += LISTENER_SOFT_LIMIT_MAX_MS - 1;
+    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    // It read a little: one frame goes, and the 10 s start again from the next drop.
+    ws.bufferedAmount = 0;
+    expect(sendToListenerSocket(ws as never, m)).toBe('sent');
+    ws.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
+    now += 1;
+    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    now += LISTENER_SOFT_LIMIT_MAX_MS - 1;
+    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    now += 1;
+    // FALSIFIED by no time bound (a reader that pings but never drains is never ended: media
+    // stops at the soft limit, so the hard cap is out of its reach).
+    expect(sendToListenerSocket(ws as never, m)).toBe('backlog');
+    expect(metrics.backpressure.mock.calls.filter((c) => c[1] === 'closed')).toEqual([['listener', 'closed']]);
+    expect(metrics.backpressure.mock.calls.filter((c) => c[1] === 'media_dropped')).toHaveLength(5);
+    // Another socket keeps its own clock.
+    const other = fakeListenerSocket();
+    other.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
+    expect(sendToListenerSocket(other as never, m)).toBe('dropped');
+  });
+
+  it('through the tap: a listener that never drains is ended send_backlog 10 s after its first dropped frame; its row`s drops equal the counter`s; the call and the other listener carry on', async () => {
+    let now = 5_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const station = fakeStation('alaw8');
+    const { mgr, pstn } = await bridged('voicelink', station);
+    const stalled = fakeListenerSocket({ drains: false });
+    const sink = socketSink(stalled, 'stalled');
+    const handle = attach(mgr, sink);
+    const fine = recordingSink('fine');
+    attach(mgr, fine);
+
+    // 20 ms a frame per leg, as the call sends them.
+    let sent = 0;
+    for (; handle.attached && sent < 5000; sent++) {
+      pstn.media(bytes(160, sent));
+      station.sendBinaryUp(bytes(160, sent + 1));
+      now += 20;
+    }
+    expect(sink.closed).toEqual(['send_backlog']);
+    const dropped = metrics.backpressure.mock.calls.filter((c) => c[1] === 'media_dropped').length;
+    // ~48 KiB is ~300 messages (3 s of both legs); then 10 s of drops.
+    expect(sent * 20).toBeGreaterThan(LISTENER_SOFT_LIMIT_MAX_MS);
+    expect(sent * 20).toBeLessThan(LISTENER_SOFT_LIMIT_MAX_MS + 5_000);
+    expect(sink.closed).toHaveLength(1);
+    expect(handle.stats().framesDropped).toBe(dropped);
+    expect(metrics.backpressure.mock.calls.filter((c) => c[1] === 'closed')).toEqual([['listener', 'closed']]);
+    expect(fine.messages).toHaveLength(2 * sent);
+    expect(station.binary).toHaveLength(sent);
+    expect(pstn.audioFrames()).toBe(sent);
+    await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
+  });
+});
+
+describe('a failed message counts its 20 ms frames', () => {
+  const vlMedia = () => findCarrierModule('voicelink')!.media;
+
+  it('a failed 1 s agent message is 50 frames dropped, and reaches a budget of 50 alone; a failed 60 ms carrier frame is 3', () => {
+    const run = (budget: number) => {
+      const tap = new ListenTap({ callId: 'c', carrierMedia: vlMedia(), faultBudget: budget, onIdle: () => {} });
+      const sink = recordingSink();
+      const handle = tap.addSink(sink);
+      return { tap, sink, handle };
+    };
+    vi.spyOn(AlawFramer.prototype, 'push').mockImplementation(() => { throw new Error('frame'); });
+    const a = run(51);
+    a.tap.feedCustomer(bytes(480).toString('base64'));
+    // FALSIFIED by counting a failed message as one frame.
+    expect(a.handle.stats()).toEqual({ framesSent: 0, framesDropped: 3 });
+    a.tap.feedAgentAlaw(bytes(8000));
+    expect(a.handle.stats()).toEqual({ framesSent: 0, framesDropped: 53 });
+    expect(a.handle.attached).toBe(true);
+    a.tap.feedAgentAlaw(bytes(160));
+    expect(a.sink.closed).toEqual([{ reason: 'tap_error', stats: { framesSent: 0, framesDropped: 54 } }]);
+
+    const b = run(50);
+    b.tap.feedAgentAlaw(bytes(8000));
+    expect(b.sink.closed).toEqual([{ reason: 'tap_error', stats: { framesSent: 0, framesDropped: 50 } }]);
+  });
+
+  it('a failed pcm16 frame of 20 ms is one frame', () => {
+    const tap = new ListenTap({ callId: 'c', carrierMedia: vlMedia(), faultBudget: 50, onIdle: () => {} });
+    const sink = recordingSink();
+    const handle = tap.addSink(sink);
+    vi.spyOn(VoicelinkTranscoder.prototype, 'pcm16kToAlaw').mockImplementation(() => { throw new Error('encode'); });
+    tap.feedAgentPcm16(pcm16kTone(320).toString('base64'));
+    expect(handle.stats().framesDropped).toBe(1);
+    tap.feedAgentPcm16(pcm16kTone(960).toString('base64'));
+    expect(handle.stats().framesDropped).toBe(4);
+  });
+});
+
 // ── Fault injection ───────────────────────────────────────────────────────────
 
 describe('fault injection: nothing about a listener reaches the call', () => {
   it('a throwing codec: frames dropped and counted `decode`, both legs relayed, nothing thrown out of the socket handler', async () => {
     const station = fakeStation('pcm16');
-    const { mgr, pstn } = await bridged('mulaw', station);
+    const { mgr, pstn } = await bridged('generic', station);
     codecs.next = { carrierToPcm16k: () => { throw new Error('bad frame'); }, pcm16kToCarrier: (b) => b };
     const sink = recordingSink();
     const handle = attach(mgr, sink);
@@ -774,7 +936,7 @@ describe('the fault budget', () => {
   async function failingCustomer(budget: number, schedule: (n: number) => boolean) {
     cfg.agency.listen.faultBudget = budget;
     const station = fakeStation('pcm16');
-    const { mgr, pstn, session } = await bridged('mulaw', station);
+    const { mgr, pstn, session } = await bridged('generic', station);
     let n = 0;
     const plivo = findCarrierModule('plivo')!.media.createCodec();
     codecs.next = {
@@ -844,7 +1006,7 @@ describe('the fault budget', () => {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 describe('the tap`s lifecycle on the call', () => {
-  it('the call`s end ends every listener call_ended, once, with what each was given', async () => {
+  it('the call`s end ends every listener call_ended, once, with what each was given, as the hangup starts', async () => {
     const station = fakeStation('alaw8');
     const { mgr, pstn, session } = await bridged('voicelink', station);
     const s1 = recordingSink('l1');
@@ -855,20 +1017,95 @@ describe('the tap`s lifecycle on the call', () => {
     h2.detach();
     pstn.media(bytes(160, 2));
 
-    // A VoiceLink teardown we start waits for the carrier's confirmation: the listener stays on
-    // (no frames come: the carrier's socket is closed) until the session is destroyed.
+    // A VoiceLink teardown we start waits for the carrier's confirmation (`ending`); the listener
+    // is ended as it starts, not when the session is destroyed (LS15 f).
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
     expect(session.ending).toBe(true);
-    expect(s1.close).not.toHaveBeenCalled();
+    expect(s1.closed).toEqual([{ reason: 'call_ended', stats: { framesSent: 2, framesDropped: 0 } }]);
+    expect(session.listenTap).toBeNull();
     await carrierEnded(mgr);
     expect(mgr.getSession(CALL)).toBeUndefined();
-    expect(s1.closed).toEqual([{ reason: 'call_ended', stats: { framesSent: 2, framesDropped: 0 } }]);
     // Detached by its owner: never closed by the bridge.
     expect(s2.close).not.toHaveBeenCalled();
-    expect(session.listenTap).toBeNull();
     session.destroy();
     expect(s1.close).toHaveBeenCalledTimes(1);
   });
+
+  for (const format of ['alaw8', 'pcm16'] as const) {
+    it(`after a VoiceLink hangup of ours (an ${format} agent), nothing the agent or the carrier sends reaches a listener`, async () => {
+      const station = fakeStation(format);
+      const { mgr, pstn, session } = await bridged('voicelink', station);
+      const sink = recordingSink();
+      attach(mgr, sink);
+      const agentSays = () => (format === 'alaw8' ? station.sendBinaryUp(bytes(160, 5)) : station.sendPcmUp(pcm16kTone(320)));
+      for (let i = 0; i < 2; i++) {
+        agentSays();
+        pstn.media(bytes(160, 6));
+      }
+      const before = sink.messages.length;
+      expect(legCount(sink, 'agent')).toBeGreaterThan(0);
+      expect(legCount(sink, 'customer')).toBeGreaterThan(0);
+
+      // The agent hangs up; the carrier's confirmation is up to 45 s away. FALSIFIED by feeding the
+      // tap while `ending` (the supervisor would hear the agent's microphone after the hangup).
+      await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
+      expect(session.isTearingDown).toBe(true);
+      for (let i = 0; i < 5; i++) {
+        agentSays();
+        pstn.media(bytes(160, 7 + i));
+      }
+      expect(sink.messages).toHaveLength(before);
+      expect(sink.closed.map((c) => c.reason)).toEqual(['call_ended']);
+      expect(session.listenTap).toBeNull();
+      await carrierEnded(mgr);
+      expect(sink.close).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  for (const [what, end] of [
+    ['a hangup of ours (a carrier with a hangup API)', (mgr: WebRtcBridgeManager) => mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user')],
+    ['the carrier`s stop', (_mgr: WebRtcBridgeManager, pstn: ReturnType<typeof fakePstn>) => {
+      pstn.emit('message', JSON.stringify({ event: 'stop' }));
+      return Promise.resolve();
+    }],
+  ] as const) {
+    it(`in the terminal teardown's await window after ${what}, nothing reaches a listener`, async () => {
+      const station = fakeStation('pcm16');
+      const { mgr, pstn, session } = await bridged('mulaw', station);
+      const sink = recordingSink();
+      attach(mgr, sink);
+      for (let i = 0; i < 2; i++) {
+        pstn.media(mulawFrame(i));
+        station.sendPcmUp(pcm16kTone(320, i * 320));
+      }
+      const before = sink.messages.length;
+      expect(legCount(sink, 'agent')).toBeGreaterThan(0);
+      expect(legCount(sink, 'customer')).toBeGreaterThan(0);
+
+      // The terminal row's write is held: endCall has claimed the call and is awaiting it.
+      let release: (() => void) | undefined;
+      mockRepo.update.mockImplementation(() => new Promise((r) => { release = () => r(null); }));
+      const ending = end(mgr, pstn);
+      try {
+        await vi.waitFor(() => expect(release).toBeDefined());
+        expect(session.endHandled).toBe(true);
+        expect(mgr.getSession(CALL)).toBe(session);
+        // FALSIFIED by ending the tap only at destroy(): these would reach the listener.
+        for (let i = 2; i < 5; i++) {
+          station.sendPcmUp(pcm16kTone(320, i * 320));
+          pstn.media(mulawFrame(i));
+        }
+        expect(sink.messages).toHaveLength(before);
+        expect(sink.closed.map((c) => c.reason)).toEqual(['call_ended']);
+      } finally {
+        mockRepo.update.mockResolvedValue(null);
+        release?.();
+      }
+      await ending;
+      await vi.waitFor(() => expect(mgr.getSession(CALL)).toBeUndefined());
+      expect(sink.close).toHaveBeenCalledTimes(1);
+    });
+  }
 
   it('the agent`s re-attach keeps the tap: the customer heard throughout, the new socket`s format taken up', async () => {
     const stationA = fakeStation('alaw8');
@@ -890,8 +1127,38 @@ describe('the tap`s lifecycle on the call', () => {
     pstn.media(bytes(160, 3));
 
     const enc = new VoicelinkTranscoder();
-    expect(legAudio(sink, 'agent')).toEqual(Buffer.concat([bytes(160, 1), expectedAlaw([agent], (f) => enc.pcm16kToAlaw(f))]));
+    expect(legAudio(sink, 'agent')).toEqual(Buffer.concat([bytes(160, 1), expectedPrimedAlaw([agent], (f) => enc.pcm16kToAlaw(f))]));
     expect(legAudio(sink, 'customer')).toEqual(Buffer.concat([bytes(160, 2), bytes(160, 3)]));
+    await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
+  });
+});
+
+describe('the agent`s re-attach starts its leg afresh', () => {
+  it('pcm16 → pcm16 with a tail held back: after the re-attach the agent is heard as a fresh pipeline would give it', async () => {
+    const stationA = fakeStation('pcm16');
+    const { mgr, pstn, session } = await bridged('voicelink', stationA);
+    const sink = recordingSink();
+    attach(mgr, sink);
+    // 20 ms, then 6.25 ms: the second leaves a 50-byte tail in the framer and history in the encoder.
+    stationA.sendPcmUp(pcm16kTone(320));
+    stationA.sendPcmUp(pcm16kTone(100, 320));
+    const beforeA = legCount(sink, 'agent');
+    expect(beforeA).toBe(1);
+    stationA.close();
+
+    const stationB = fakeStation('pcm16');
+    expect(mgr.reattachBorrowedBrowserLeg(ATTEMPT, stationB as any)).toBe(true);
+    expect(session.listenTap).not.toBeNull();
+    const framesB = Array.from({ length: 6 }, (_, i) => pcm16kTone(320, 5000 + i * 320));
+    for (const f of framesB) stationB.sendPcmUp(f);
+    pstn.media(bytes(160, 3));
+
+    // FALSIFIED by a re-attach that keeps the tail, the encoder's history or the priming: the
+    // new socket's audio would start with the old one's tail and be filtered against its samples.
+    const enc = new VoicelinkTranscoder();
+    const after = Buffer.concat(sink.messages.filter((m) => m[0] === AGENCY_LISTEN_LEG.agent).slice(beforeA).map((m) => m.subarray(1)));
+    expect(after).toEqual(expectedPrimedAlaw(framesB, (f) => enc.pcm16kToAlaw(f)));
+    expect(legCount(sink, 'agent') - beforeA).toBe(framesB.length);
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
   });
 });
@@ -933,6 +1200,48 @@ describe('openListenTap`s refusals', () => {
     await carrierEnded(mgr);
     expect(mgr.getSession(CALL)).toBeUndefined();
     expect(mgr.openListenTap(CALL, recordingSink())).toEqual({ refused: 'not_found' });
+  });
+});
+
+describe('the μ-law customer`s table (LS17)', () => {
+  it('is the G.711 per-sample conversion, bit for bit: each μ-law code decoded and encoded as A-law', () => {
+    const linear = decodeMulaw(Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+    expect(MULAW_TO_ALAW).toHaveLength(256);
+    for (let i = 0; i < 256; i++) expect(MULAW_TO_ALAW[i]).toBe(alawEncodeTable[linear[i]! + 32768]);
+  });
+
+  it('is at least as faithful as the codec path it replaces: no resampling, so nothing filtered near 4 kHz', () => {
+    // Against the μ-law the caller sent (decoded): the table's A-law and the codec path's A-law
+    // (μ-law → PCM16 16 kHz → A-law 8 kHz, both FIR), aligned sample for sample.
+    const snr = (ref: Int16Array, alaw: Buffer) => {
+      let sig = 0;
+      let err = 0;
+      for (let k = 400; k < alaw.length - 400; k++) {
+        const x = ref[k]!;
+        sig += x * x;
+        err += (x - alawDecodeTable[alaw[k]!]!) ** 2;
+      }
+      return 10 * Math.log10(sig / err);
+    };
+    for (const hz of [300, 1000, 3000, 3400]) {
+      for (const amp of [500, 8000]) {
+        const n = 160 * 50;
+        const pcm = new Int16Array(n);
+        for (let k = 0; k < n; k++) pcm[k] = Math.round(amp * Math.sin((2 * Math.PI * hz * k) / 8000));
+        const mulaw = encodeMulaw(pcm);
+        const ref = decodeMulaw(mulaw);
+        const table = Buffer.from(mulaw.map((b) => MULAW_TO_ALAW[b]!));
+        const codec = new MulawTranscoder();
+        const enc = new VoicelinkTranscoder();
+        const parts: Buffer[] = [];
+        for (let k = 0; k < n; k += 160) parts.push(enc.pcm16kToAlaw(codec.mulawToPcm16k(mulaw.subarray(k, k + 160))));
+        const viaCodec = Buffer.concat(parts);
+        const ctx = `${hz} Hz at ${amp}`;
+        // A-law's own quantisation is the floor: ~34-38 dB on these tones.
+        expect(snr(ref, table), ctx).toBeGreaterThan(33);
+        expect(snr(ref, table), ctx).toBeGreaterThanOrEqual(snr(ref, viaCodec) - 0.05);
+      }
+    }
   });
 });
 

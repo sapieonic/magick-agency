@@ -6,13 +6,17 @@
 //
 // The tap never touches the call:
 //  - it owns its codecs (the session's keep FIR history and are called once per frame, by the
-//    relay only): a μ-law customer leg goes through its own carrier codec to PCM16 16 kHz and its
-//    own A-law encoder; a `pcm16` agent through its own A-law encoder; A-law in (a VoiceLink
-//    customer, an `alaw8` agent) is copied behind the tag byte, cut into 20 ms frames by its own
-//    `AlawFramer`;
+//    relay only). A-law in (a VoiceLink customer, an `alaw8` agent) is copied behind the tag
+//    byte; a μ-law customer (Plivo) is mapped to A-law one byte at a time by a 256-entry table
+//    (both 8 kHz, so nothing to resample: LS17); any other carrier goes through its own carrier
+//    codec to PCM16 16 kHz and its own A-law encoder; a `pcm16` agent through its own A-law
+//    encoder. Each leg is cut into 20 ms frames by its own `AlawFramer`. A transcoded leg's first
+//    output is short of a whole frame by the resampler's look-ahead (152 bytes for 20 ms of
+//    `pcm16`), so it is led by that much A-law silence: the framer then carries nothing on whole
+//    20 ms inputs (one frame out per frame in, no copy, no frame of lag);
 //  - nothing escapes it: every entry point is wrapped. A failed decode, encode or framing step
-//    drops that frame (counted, `agency_listen_tap_errors_total{stage}`); `faultBudget` failures
-//    of one leg in a row end every sink `tap_error` and detach the tap;
+//    drops that message's 20 ms frames (counted, `agency_listen_tap_errors_total{stage}`);
+//    `faultBudget` failed frames of one leg in a row end every sink `tap_error` and detach the tap;
 //  - one bad listener stays one: a sink whose send throws or whose socket is gone is ended
 //    `listener_disconnected`, one past its hard cap `send_backlog`; the others carry on;
 //  - logs are rate-limited (one line per tap per 10 s, one per sink as it is ended) and name the
@@ -24,8 +28,9 @@ import { trackWebsocketSendBackpressure } from '@magick-agency/observability/met
 import { AGENCY_LISTEN_LEG, AGENCY_LISTEN_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 import type { CarrierMediaCodec, CarrierMediaProtocol } from '../../telephony/carrier-module.js';
 import { VoicelinkTranscoder } from '../../utils/audio-fir.js';
-import { LISTENER_LIMITS, sendVerdict } from '../../utils/ws-backpressure.js';
-import { AlawFramer } from './browser-leg-media.js';
+import { alawEncodeTable, decodeMulaw } from '../../utils/audio.js';
+import { LISTENER_LIMITS, LISTENER_SOFT_LIMIT_MAX_MS, sendVerdict } from '../../utils/ws-backpressure.js';
+import { ALAW8_FRAME_BYTES, AlawFramer } from './browser-leg-media.js';
 import type {
   ListenSendResult, ListenSink, ListenTapEndReason, ListenTapHandle,
 } from './bridge-types.js';
@@ -35,7 +40,37 @@ const log = createChildLogger({ component: 'listen-tap' });
 /** At most one fault line per tap in this long. */
 export const LISTEN_TAP_LOG_INTERVAL_MS = 10_000;
 
+/**
+ * G.711 μ-law → A-law, one code to one (LS17): each μ-law code decoded to its linear sample and
+ * encoded as A-law by the bridge's own encoder, exactly what the codec path would do to that
+ * sample without its two resampling filters. Built once at load; read-only.
+ */
+export const MULAW_TO_ALAW: Uint8Array = (() => {
+  const linear = decodeMulaw(Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+  const table = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) table[i] = alawEncodeTable[linear[i]! + 32768]!;
+  return table;
+})();
+
+/** A-law for a sample of 0: what a transcoded leg's first output is led by. */
+const ALAW_SILENCE = alawEncodeTable[32768]!;
+
+/** 20 ms of `pcm16` (PCM16 16 kHz): 320 samples. */
+const PCM16_FRAME_BYTES = 640;
+
+/** The 20 ms frames in `bytes` of audio at `frameBytes` a frame, at least one (a failed message is never nothing). */
+function framesIn(bytes: number, frameBytes: number): number {
+  return Math.max(1, Math.ceil(bytes / frameBytes));
+}
+
+/** The decoded length of a base64 string, without decoding it. */
+function base64Bytes(b64: string): number {
+  const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((b64.length * 3) / 4) - pad);
+}
+
 type Leg = 'customer' | 'agent';
+type CustomerPath = 'passthrough' | 'mulaw' | 'codec';
 
 interface SinkEntry {
   readonly sink: ListenSink;
@@ -63,16 +98,22 @@ export class ListenTap {
   private entries: readonly SinkEntry[] = [];
   private ended = false;
 
-  /** The customer's wire audio is A-law: copied, never decoded. */
-  private readonly customerPassthrough: boolean;
-  /** Carrier wire audio → PCM16 16 kHz, this tap's own (null on passthrough). */
+  /**
+   * How the customer's wire audio becomes A-law: copied (`alaw8`), mapped by {@link MULAW_TO_ALAW}
+   * (`mulaw8`), or through this tap's own carrier codec and encoder (any other carrier).
+   */
+  private readonly customerPath: CustomerPath;
+  /** Carrier wire audio → PCM16 16 kHz, this tap's own (`codec` path only). */
   private readonly customerCodec: CarrierMediaCodec | null;
-  /** PCM16 16 kHz → A-law for the customer leg (null on passthrough). */
+  /** PCM16 16 kHz → A-law for the customer leg (`codec` path only). */
   private readonly customerEncoder: VoicelinkTranscoder | null;
   /** PCM16 16 kHz → A-law for a `pcm16` agent leg; made on its first frame. */
   private agentEncoder: VoicelinkTranscoder | null = null;
   private readonly customerFramer = new AlawFramer();
   private readonly agentFramer = new AlawFramer();
+  /** A transcoded leg's first output has been led to a whole frame (see {@link primed}). */
+  private customerPrimed = false;
+  private agentPrimed = false;
 
   /** Failed frames in a row, per leg; reset by the leg's next frame that succeeds. */
   private customerFailures = 0;
@@ -83,9 +124,10 @@ export class ListenTap {
     this.callId = opts.callId;
     this.faultBudget = Math.max(1, opts.faultBudget);
     this.onIdle = opts.onIdle;
-    this.customerPassthrough = opts.carrierMedia.wireFormat === 'alaw8';
-    this.customerCodec = this.customerPassthrough ? null : opts.carrierMedia.createCodec();
-    this.customerEncoder = this.customerPassthrough ? null : new VoicelinkTranscoder();
+    const wire = opts.carrierMedia.wireFormat;
+    this.customerPath = wire === 'alaw8' ? 'passthrough' : wire === 'mulaw8' ? 'mulaw' : 'codec';
+    this.customerCodec = this.customerPath === 'codec' ? opts.carrierMedia.createCodec() : null;
+    this.customerEncoder = this.customerPath === 'codec' ? new VoicelinkTranscoder() : null;
   }
 
   /** Sinks attached now. */
@@ -119,17 +161,24 @@ export class ListenTap {
     try {
       const wire = Buffer.from(payloadBase64, 'base64');
       let alaw: Buffer;
-      if (this.customerPassthrough) {
+      if (this.customerPath === 'passthrough') {
         alaw = wire;
+      } else if (this.customerPath === 'mulaw') {
+        // A fresh Buffer the sinks may hold; one table read a byte.
+        alaw = Buffer.allocUnsafe(wire.length);
+        for (let i = 0; i < wire.length; i++) alaw[i] = MULAW_TO_ALAW[wire[i]!]!;
       } else {
         const pcm = this.customerCodec!.carrierToPcm16k(wire);
         stage = 'encode';
         alaw = this.customerEncoder!.pcm16kToAlaw(pcm);
+        stage = 'frame';
+        alaw = this.primed('customer', alaw);
       }
       stage = 'frame';
       this.frameAndSend('customer', alaw);
     } catch (err) {
-      this.fault('customer', stage, err);
+      // The carrier's wire audio is 8 kHz, a byte a sample (G.711): 160 bytes a frame.
+      this.fault('customer', stage, err, framesIn(base64Bytes(payloadBase64), ALAW8_FRAME_BYTES));
     }
   }
 
@@ -141,11 +190,12 @@ export class ListenTap {
       const pcm = Buffer.from(payloadBase64, 'base64');
       stage = 'encode';
       this.agentEncoder ??= new VoicelinkTranscoder();
-      const alaw = this.agentEncoder.pcm16kToAlaw(pcm);
+      let alaw = this.agentEncoder.pcm16kToAlaw(pcm);
       stage = 'frame';
+      alaw = this.primed('agent', alaw);
       this.frameAndSend('agent', alaw);
     } catch (err) {
-      this.fault('agent', stage, err);
+      this.fault('agent', stage, err, framesIn(base64Bytes(payloadBase64), PCM16_FRAME_BYTES));
     }
   }
 
@@ -155,18 +205,19 @@ export class ListenTap {
     try {
       this.frameAndSend('agent', alaw);
     } catch (err) {
-      this.fault('agent', 'frame', err);
+      this.fault('agent', 'frame', err, framesIn(alaw.length, ALAW8_FRAME_BYTES));
     }
   }
 
   /**
    * The agent's socket was (re-)attached: it may speak another format, and its audio starts on a
-   * frame boundary. Drops the agent leg's held-back tail and encoder history; the tap stays.
+   * frame boundary. Drops the agent leg's held-back tail, encoder history and priming; the tap stays.
    */
   resetAgentLeg(): void {
     try {
       this.agentFramer.reset();
       this.agentEncoder = null;
+      this.agentPrimed = false;
       this.agentFailures = 0;
     } catch { /* nothing to undo */ }
   }
@@ -182,6 +233,27 @@ export class ListenTap {
   }
 
   // ─── Inside ──────────────────────────────────────────────────────────────
+
+  /**
+   * A transcoded leg's output, its first non-empty one led by A-law silence up to a whole frame.
+   * The resampler holds back its look-ahead, so its first output is short (152 of 160 bytes for
+   * 20 ms of `pcm16`, 144 for a carrier codec's 20 ms) and, unled, the framer would carry that
+   * shortfall's complement on every frame after: a frame of lag and a concat per frame. Led once
+   * (1-2 ms of silence), whole 20 ms inputs come out as whole frames.
+   */
+  private primed(leg: Leg, alaw: Buffer): Buffer {
+    if (alaw.length === 0) return alaw;
+    if (leg === 'customer' ? this.customerPrimed : this.agentPrimed) return alaw;
+    if (leg === 'customer') this.customerPrimed = true;
+    else this.agentPrimed = true;
+    const short = alaw.length % ALAW8_FRAME_BYTES;
+    if (short === 0) return alaw;
+    const lead = ALAW8_FRAME_BYTES - short;
+    const out = Buffer.allocUnsafe(lead + alaw.length);
+    out.fill(ALAW_SILENCE, 0, lead);
+    alaw.copy(out, lead);
+    return out;
+  }
 
   /**
    * Cut `alaw` into 20 ms frames, tag each and send it to every sink. Throws only from the
@@ -237,12 +309,15 @@ export class ListenTap {
     }
   }
 
-  /** A failed frame: dropped for every sink, counted, and the leg's run of failures checked. */
-  private fault(leg: Leg, stage: ListenTapErrorStage, err: unknown): void {
+  /**
+   * A failed message: its `frames` 20 ms frames dropped for every sink, the step counted once, and
+   * the leg's run of failed frames checked against the budget (a failed 1 s agent message is 50).
+   */
+  private fault(leg: Leg, stage: ListenTapErrorStage, err: unknown, frames: number): void {
     try {
       this.countError(stage);
-      for (const entry of this.entries) entry.framesDropped++;
-      const failures = leg === 'customer' ? ++this.customerFailures : ++this.agentFailures;
+      for (const entry of this.entries) entry.framesDropped += frames;
+      const failures = leg === 'customer' ? (this.customerFailures += frames) : (this.agentFailures += frames);
       const now = Date.now();
       if (now - this.lastFaultLogAt >= LISTEN_TAP_LOG_INTERVAL_MS) {
         this.lastFaultLogAt = now;
@@ -328,11 +403,20 @@ export class ListenTap {
 }
 
 /**
+ * When each listener socket's current run of dropped frames began (`Date.now()`); absent while its
+ * frames are being sent. Keyed weakly: a socket that goes takes its entry with it.
+ */
+const droppingSince = new WeakMap<object, number>();
+
+/**
  * Send one tap message on a listener's socket, under {@link LISTENER_LIMITS}: what a socket-backed
  * {@link ListenSink.send} does. Reads only this socket's `bufferedAmount`; counts what it drops
  * and the sockets it hands back for closing (`websocket_send_backpressure_total{socket="listener"}`).
- * Never throws: a `send` that throws is counted (`agency_listen_tap_errors_total{stage="send"}`)
- * and answers `closed`, which ends the sink `listener_disconnected`.
+ * `backlog` past the hard cap, or once every frame for {@link LISTENER_SOFT_LIMIT_MAX_MS} has been
+ * dropped (that last one counted dropped too, so a row's `frames_dropped` matches the counter).
+ * The clock is read only on a drop. Never throws: a `send` that throws is counted
+ * (`agency_listen_tap_errors_total{stage="send"}`) and answers `closed`, which ends the sink
+ * `listener_disconnected`.
  */
 export function sendToListenerSocket(
   ws: Pick<WebSocket, 'readyState' | 'bufferedAmount' | 'send'>,
@@ -344,12 +428,23 @@ export function sendToListenerSocket(
     case 'over_cap':
       trackWebsocketSendBackpressure('listener', 'closed');
       return 'backlog';
-    case 'drop':
+    case 'drop': {
       trackWebsocketSendBackpressure('listener', 'media_dropped');
+      const now = Date.now();
+      const since = droppingSince.get(ws);
+      if (since === undefined) {
+        droppingSince.set(ws, now);
+      } else if (now - since >= LISTENER_SOFT_LIMIT_MAX_MS) {
+        droppingSince.delete(ws);
+        trackWebsocketSendBackpressure('listener', 'closed');
+        return 'backlog';
+      }
       return 'dropped';
+    }
     case 'send':
       break;
   }
+  droppingSince.delete(ws);
   try {
     ws.send(message, { binary: true });
     return 'sent';

@@ -31,9 +31,10 @@
 // its hang-up, so a slow carrier loses stale audio, never the call.
 //
 // A supervisor's listener socket (docs/listening.md, LS8) has both, {@link LISTENER_LIMITS}: past
-// the soft limit a frame is dropped for that listener and counted; past the hard cap the listener
-// is ended `send_backlog` (4408). Only the listener's own `bufferedAmount` is read: nothing about
-// a listener reaches the call's two sockets (`core/bridge/listen-tap.ts`).
+// the soft limit a frame is dropped for that listener and counted; past the hard cap, or after
+// {@link LISTENER_SOFT_LIMIT_MAX_MS} of nothing but drops, the listener is ended `send_backlog`
+// (4408). Only the listener's own `bufferedAmount` is read: nothing about a listener reaches the
+// call's two sockets (`core/bridge/listen-tap.ts`).
 import type WebSocket from 'ws';
 import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 
@@ -88,18 +89,29 @@ export const CARRIER_MEDIA_LIMITS: BackpressureLimits = {
 
 /**
  * A supervisor's listener socket (`core/bridge/listen-tap.ts`): soft 48 KiB, about 3 s of audio;
- * hard cap 256 KiB. One message is a tag byte and a 20 ms A-law frame, 161 bytes plus a 2-byte
- * header, 50 a second per leg and two legs: ~16.3 KB/s. Media past the soft limit is dropped and
- * counted (`websocket_send_backpressure_total{socket="listener", action="media_dropped"}`); past
- * the hard cap the listener is ended `send_backlog` and closed 4408. As on the station, media alone
- * stops at the soft limit, so the cap is reached only by what else is queued on the socket (its
- * control frames); a listener that stops reading altogether usually stops pinging too, and is
- * ended by its idle timeout first.
+ * hard cap 256 KiB, about 16 s. One message is a tag byte and a 20 ms A-law frame, 161 bytes plus
+ * a 2-byte header, 50 a second per leg and two legs: ~16.3 KB/s. Media past the soft limit is
+ * dropped and counted (`websocket_send_backpressure_total{socket="listener", action="media_dropped"}`);
+ * past the hard cap the listener is ended `send_backlog` and closed 4408. As on the station, media
+ * alone stops at the soft limit, so the cap is reached only by what else is queued on the socket
+ * (its control frames): a listener that stops reading but keeps pinging would never reach it, so
+ * {@link LISTENER_SOFT_LIMIT_MAX_MS} ends one that has been past the soft limit that long.
  */
 export const LISTENER_LIMITS: BackpressureLimits = {
   mediaSoftLimitBytes: 48 * 1024,
   hardCapBytes: 256 * 1024,
 };
+
+/**
+ * A listener whose every frame has been dropped at the soft limit for this long (no frame sent in
+ * between) is ended `send_backlog`, as one past the hard cap is: 10 s, after the ~3 s the soft
+ * limit already holds. It is not reading (its pings, the other way, may still arrive), and what it
+ * would hear on resuming is gaps. Measured on `bufferedAmount` as `ws` sees it: what the kernel
+ * absorbs first (a few tens of KiB on a real path; about 4 MB on loopback, docs/listening.md §10
+ * "Load check") comes before the clock starts. A reader that drains even a little sends a frame
+ * and starts the clock again: it hears what it can, and the idle bound does not apply to it.
+ */
+export const LISTENER_SOFT_LIMIT_MAX_MS = 10_000;
 
 /** How long a station closed for its backlog may take to close before it is terminated. */
 export const BACKLOG_CLOSE_TERMINATE_MS = 5_000;

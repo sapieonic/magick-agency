@@ -440,35 +440,41 @@ locals {
     #
     # A supervisor listening in to a call in progress, forked from our own bridge in the process
     # that owns the call. The promise these rules watch: a slow, failing or dropped listener never
-    # affects the agent's or the customer's audio. The relay's own dwell (webrtc_relay_dwell_seconds,
-    # sampled one frame in 50) says whether it holds; the rest say when listeners are dropped, refused
-    # or losing frames. Thresholds are for a pilot (5-6 supervisors, 100 calls at peak): re-read them
-    # against its first weeks, as agy-error-log-volume. Every series is per process with media
-    # workers on, so each rule sums by service_name. All warn (Slack): none of them is a call lost.
+    # affects the agent's or the customer's audio. The tap runs after the relay's write, so what it
+    # costs a call is event-loop time before that call's NEXT frame: the loop's delay while listens
+    # are open says whether the promise holds (the load check, docs/listening.md §10, measured it
+    # there and saw nothing in the relay's dwell, which excludes the tap by construction); the rest
+    # say when listeners are dropped, refused or losing frames. Thresholds are for a pilot (5-6
+    # supervisors, 100 calls at peak): re-read them against its first weeks, as agy-error-log-volume.
+    # Every series is per process with media workers on, so each rule sums or maxes by
+    # service_name. All warn (Slack): none of them is a call lost.
     "listen" = [
       {
-        uid  = "agy-listen-relay-dwell-regressed"
-        name = "The media relay is slower than it should be"
-        # p99 of the sampled per-frame relay dwell (arrival on one leg to the write to the other)
-        # over 15m above 5 ms, a quarter of the 20 ms frame interval, with a floor of 300 samples
-        # (a call samples about one frame a second per direction, so 300 is a few minutes of one
-        # call). The listener tap is fed after the relay write and excluded from this span by
-        # design (LS8); a regression here with listeners open is the first thing to rule out.
-        expr          = "histogram_quantile(0.99, sum by (service_name, le) (rate(webrtc_relay_dwell_seconds_bucket{${local.agency}}[15m]))) and on (service_name) (sum by (service_name) (increase(webrtc_relay_dwell_seconds_count{${local.agency}}[15m])) >= 300)"
+        uid  = "agy-listen-loop-delay"
+        name = "The event loop is slow while supervisors are listening"
+        # nodejs_eventloop_delay_p99_seconds (runtime-node, 10 ms resolution: ~10-15 ms at a busy
+        # idle) above 40 ms, two 20 ms frame intervals, for 10m while agency_listen_sessions_active
+        # says listens are open: every bridged frame on the process waits that long behind other
+        # work. Far below agy-event-loop-delay-p99's 500 ms, because with listeners open the question
+        # is earlier: is listening part of it. Both series max/sum by service_name (a per-process
+        # pairing would keep `instance`, which no grouping may), so the delay may be another
+        # process's than the listens': the description says how to tell.
+        expr          = "max by (service_name) (nodejs_eventloop_delay_p99_seconds{${local.agency}}) and on (service_name) (sum by (service_name) (agency_listen_sessions_active{${local.agency}}) > 0)"
         op            = "gt"
-        threshold     = 0.005
-        for           = "15m"
+        threshold     = 0.04
+        for           = "10m"
         severity      = "warning"
         no_data_state = "OK"
-        summary       = "The media relay's p99 per-frame dwell is above 5 ms"
-        description   = "The 99th percentile of webrtc_relay_dwell_seconds (the time one relayed media frame spends in the bridge, sampled one frame in 50 per call and direction) has been above 5 ms for 15m on {{ $labels.service_name }}, with at least 300 samples in the window. Frames arrive every 20 ms, so a dwell this long is audible as jitter on agents' and customers' calls once it grows. Read the dashboard's Live call listening row: Media Relay Dwell by direction (b2p: the agent's voice, p2b: the customer's), beside Listen Sessions Open. If it rose with listeners open, the listener tap is costing the relay (it must not: it is fed after the write, LS8): set the agency_live_listen_enabled flag off for the affected tenants, which ends their listens at the next re-check, and file it with the dwell graph. If not, it is the process itself: event-loop delay and utilization (agy-event-loop-delay-p99), CPU on the host, the number of calls per process (MEDIA_WORKERS). Runbook: docs/operations.md, 'Alert runbooks', listening."
+        summary       = "Event-loop delay p99 has been above 40 ms for 10m while supervisors were listening"
+        description   = "nodejs_eventloop_delay_p99_seconds has been above 40 ms (two 20 ms media frames) for 10m on {{ $labels.service_name }} while agency_listen_sessions_active was above 0: every bridged frame on the slow process waits behind other work, so agents and customers start to hear late or broken audio. The listener tap runs after the relay's write and costs only loop time before each call's next frame (the load check put 20 listeners on 100 calls at about +0.07 of loop utilisation and no measurable delay, docs/listening.md §10), so a delay this high is not its expected price. Read the dashboard: nodejs_eventloop_delay_p99_seconds and nodejs_eventloop_utilization_ratio per process beside Listen Sessions Open. If the delay rose as listens opened and falls as they end, on the process that holds them (the media worker with MEDIA_WORKERS >= 1), set agency_live_listen_enabled off for the tenants listening (their listens end at the next re-check, at most AGENCY_LISTEN_RECHECK_MS) and file it with both graphs. If it did not, it is the process itself: calls per process (MEDIA_WORKERS), CPU on the host, a long synchronous span in traces, the heap (agy-event-loop-delay-p99's runbook). Runbook: docs/operations.md, 'Alert runbooks', listening."
       },
       {
         uid  = "agy-listen-backlog-closes"
         name = "Supervisors' listener sockets are being closed for not reading"
-        # A listener socket whose unsent backlog passed the hard cap (256 KiB, about 30 s of both
-        # legs) is closed 4408 send_backlog, which ends that supervisor's listen. One is a bad
-        # network; 3+ in 15m (threshold 2.5, N-0.5) is a pattern. Sparse counter: the new-series guard.
+        # A listener socket whose unsent backlog passed the hard cap (256 KiB, about 16 s of both
+        # legs), or whose every frame has been dropped at the soft limit (48 KiB) for 10 s, is
+        # closed 4408 send_backlog, which ends that supervisor's listen. One is a bad network; 3+
+        # in 15m (threshold 2.5, N-0.5) is a pattern. Sparse counter: the new-series guard.
         expr          = "sum by (service_name) (((websocket_send_backpressure_total{socket=\"listener\",action=\"closed\",${local.agency}} unless websocket_send_backpressure_total{socket=\"listener\",action=\"closed\",${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(websocket_send_backpressure_total{socket=\"listener\",action=\"closed\",${local.agency}}[15m]))"
         op            = "gt"
         threshold     = 2.5
@@ -476,7 +482,7 @@ locals {
         severity      = "warning"
         no_data_state = "OK"
         summary       = "Listener sockets are being closed because supervisors' browsers stopped reading"
-        description   = "websocket_send_backpressure_total{socket=\"listener\",action=\"closed\"} advanced by 3+ in 15m on {{ $labels.service_name }}: supervisors' listener sockets fell so far behind (their unsent audio passed the 256 KiB cap) that the server closed them (send_backlog), ending each listen. The calls themselves were not affected: back-pressure reads only the listener's socket. The console reconnects for 15 s, so a supervisor sees 'Reconnecting…' and, if it keeps failing, 'Connection lost'. Usually the supervisors' network (a VPN, a congested office link) or a browser tab starved of CPU; media_dropped on the same counter is the early warning. If every listener is affected at once, look at our egress and the proxy in front of /proxy/agency/listen. Runbook: docs/operations.md, 'Alert runbooks', listening."
+        description   = "websocket_send_backpressure_total{socket=\"listener\",action=\"closed\"} advanced by 3+ in 15m on {{ $labels.service_name }}: supervisors' listener sockets fell so far behind (their unsent audio passed the 256 KiB cap, or every frame for 10 s was dropped at the 48 KiB soft limit) that the server closed them (send_backlog), ending each listen. The calls themselves were not affected: back-pressure reads only the listener's socket. The console reconnects for 15 s, so a supervisor sees 'Reconnecting…' and, if it keeps failing, 'Connection lost'. Usually the supervisors' network (a VPN, a congested office link) or a browser tab starved of CPU; media_dropped on the same counter is the early warning. If every listener is affected at once, look at our egress and the proxy in front of /proxy/agency/listen. Runbook: docs/operations.md, 'Alert runbooks', listening."
       },
       {
         uid  = "agy-listen-grants-server-limit"
@@ -492,7 +498,7 @@ locals {
         severity      = "warning"
         no_data_state = "OK"
         summary       = "A supervisor was refused a listen: the server's listener limit is reached"
-        description   = "agency_listen_grants_total{result=\"listen_limit_server\"} advanced in the last 15m on {{ $labels.service_name }}: a supervisor pressed Listen and was refused because the process that owns the call already carries AGENCY_LISTEN_MAX_PER_PROCESS listeners (20 by default). Compare agency_listen_sessions_active on the dashboard's Live call listening row with the supervisors actually listening (the console's Live calls page shows each call's listeners). If the gauge is far above them, sessions are not being closed (read agency_listen_sessions_ended_total by reason, and the open rows of agency_listen_sessions for this replica): file it. If it matches, more supervisors listen at once than the limit allows: raise AGENCY_LISTEN_MAX_PER_PROCESS with care (each listener on a Plivo call costs a transcode per frame on the process relaying it; watch agy-listen-relay-dwell-regressed) or spread calls over media workers. Runbook: docs/operations.md, 'Alert runbooks', listening."
+        description   = "agency_listen_grants_total{result=\"listen_limit_server\"} advanced in the last 15m on {{ $labels.service_name }}: a supervisor pressed Listen and was refused because the process that owns the call already carries AGENCY_LISTEN_MAX_PER_PROCESS listeners (20 by default). Compare agency_listen_sessions_active on the dashboard's Live call listening row with the supervisors actually listening (the console's Live calls page shows each call's listeners). If the gauge is far above them, sessions are not being closed (read agency_listen_sessions_ended_total by reason, and the open rows of agency_listen_sessions for this replica): file it. If it matches, more supervisors listen at once than the limit allows: raise AGENCY_LISTEN_MAX_PER_PROCESS with care (each listener costs loop time on the process relaying its call, a pcm16 agent's leg an encode per frame; watch agy-listen-loop-delay) or spread calls over media workers. Runbook: docs/operations.md, 'Alert runbooks', listening."
       },
       {
         uid  = "agy-listen-tap-errors"

@@ -2978,6 +2978,10 @@ export class WebRtcBridgeManager {
     // VoiceLink, answered → deferred, carrier-confirmed teardown.
     if (session.ending) return; // already awaiting confirmation
     session.ending = true;
+    // A supervisor listening hears the call end now, not when the carrier confirms (up to
+    // CARRIER_END_CONFIRM_TIMEOUT_SECONDS): the agent's socket stays bound through the wait and
+    // keeps sending its microphone, which nobody on the call hears any more (LS15 f).
+    session.endListenTap('call_ended');
     session.pendingEnd = intent;
     session.clearMaxDurationTimer();
     log.info({ callId, intent: intent.outcome }, 'VoiceLink local hangup — closing WS, awaiting call.ended');
@@ -3246,6 +3250,9 @@ export class WebRtcBridgeManager {
     if (!session) return;
     if (session.endHandled) return;
     session.endHandled = true;
+    // Listeners end before the awaits below (the carrier's hangup, the terminal write): frames
+    // still arriving on either leg meanwhile are not theirs to hear (LS15 f).
+    session.endListenTap('call_ended');
     session.clearMaxDurationTimer();
     session.clearRingDeadlineTimer();
     // A dial still waiting to be sent is called off (`OutboundCallRequest.signal`).

@@ -2669,7 +2669,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Frames the listener tap failed and dropped per minute, by stage (decode, encode, frame, send; agy-listen-tap-errors), and listener sockets' back-pressure by action: media_dropped (a frame past the 48 KiB soft limit, dropped for that listener) and closed (past the 256 KiB hard cap, the listen ended send_backlog). None of these touches the call's own audio.",
+      "description": "Frames the listener tap failed and dropped per minute, by stage (decode, encode, frame, send; agy-listen-tap-errors), and listener sockets' back-pressure by action: media_dropped (a frame past the 48 KiB soft limit, dropped for that listener) and closed (past the 256 KiB hard cap, or 10 s of nothing but drops: the listen ended send_backlog). None of these touches the call's own audio.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2734,7 +2734,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Seconds one relayed media frame spends in the bridge, from its arrival on one leg to the write to the other, sampled one frame in 50 per call and direction: b2p is the agent's voice to the customer, p2b the customer's to the agent. Frames arrive every 20 ms; agy-listen-relay-dwell-regressed fires on a p99 above 5 ms. The listener tap runs after the relay write and is not in this span: a rise with listeners open means the tap is costing the relay.",
+      "description": "Seconds one relayed media frame spends in the bridge, from its arrival on one leg to the write to the other, sampled one frame in 50 per call and direction: b2p is the agent's voice to the customer, p2b the customer's to the agent. Frames arrive every 20 ms. The relay's own health: the listener tap runs after the relay write and is not in this span, so what listening costs shows on the event loop instead (Event-Loop Delay and Event-Loop Utilization by Process beside Sessions Open; agy-listen-loop-delay).",
       "fieldConfig": {
         "defaults": {
           "color": {

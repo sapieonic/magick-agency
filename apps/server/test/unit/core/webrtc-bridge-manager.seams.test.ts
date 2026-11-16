@@ -346,7 +346,7 @@ describe('openListenTap (docs/seams.md §3.1)', () => {
     return { listenId: 'listen-1', send: vi.fn(() => 'sent' as const), close: vi.fn() };
   }
 
-  it('refuses not_found, not_bridged and ending; attaches a bridged call and the end closes it call_ended', async () => {
+  it('refuses not_found, not_bridged and ending; attaches a bridged call and the hangup closes it call_ended as it starts', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'not_found' });
     await dial(mgr);
@@ -361,13 +361,14 @@ describe('openListenTap (docs/seams.md §3.1)', () => {
     if ('refused' in handle) throw new Error('refused');
     expect(handle.stats()).toEqual({ framesSent: 0, framesDropped: 0 });
 
+    // VoiceLink's hangup waits for the carrier's confirmation; the listener does not (LS15 f).
     await endByUser(mgr);
     expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'ending' });
-    expect(s.close).not.toHaveBeenCalled();
-    await carrierEnded(mgr);
     expect(s.close).toHaveBeenCalledTimes(1);
     expect(s.close).toHaveBeenCalledWith('call_ended', { framesSent: 0, framesDropped: 0 });
     expect(handle.attached).toBe(false);
+    await carrierEnded(mgr);
+    expect(s.close).toHaveBeenCalledTimes(1);
     expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'not_found' });
   });
 });

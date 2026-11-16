@@ -17,7 +17,7 @@ export const PLIVO_STREAM_SAMPLE_RATE = 8000;
 export const plivoMedia: CarrierMediaProtocol = {
   formatLabel: 'μ-law 8kHz',
   negotiatesOnStart: true,
-  wireFormat: null,
+  wireFormat: 'mulaw8',
 
   parseStart(frame: unknown): CarrierStartResult {
     const data = (frame ?? {}) as Record<string, any>;

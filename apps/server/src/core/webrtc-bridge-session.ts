@@ -6,7 +6,7 @@ import { findCarrierModule } from '../telephony/carrier-modules.js';
 import { VoicelinkTranscoder } from '../utils/audio-fir.js';
 import { AlawFramer, browserLegMediaFormatOf, type BrowserLegMediaFormat } from './bridge/browser-leg-media.js';
 import { ListenTap } from './bridge/listen-tap.js';
-import type { ListenSink, ListenTapHandle } from './bridge/bridge-types.js';
+import type { ListenSink, ListenTapEndReason, ListenTapHandle } from './bridge/bridge-types.js';
 
 /** A consumer of the caller's media frames (`WebRtcBridgeSession.installCarrierTap`). */
 export interface CarrierTap {
@@ -109,7 +109,8 @@ export class WebRtcBridgeSession {
    * The listen tap (`bridge/listen-tap.ts`, docs/listening.md LS8): while a supervisor listens, the
    * relay feeds it both legs, after its own write. Null otherwise, so a frame costs one read of this
    * field. Made by the first {@link openListenTap}, dropped when its last sink goes or it fails
-   * (`tap_error`); {@link destroy} ends it `call_ended`. A re-attach of the agent's socket keeps it.
+   * (`tap_error`); the call's teardown ends it `call_ended` ({@link endListenTap}). A re-attach of the
+   * agent's socket keeps it.
    */
   listenTap: ListenTap | null = null;
 
@@ -577,6 +578,18 @@ export class WebRtcBridgeSession {
   }
 
   /**
+   * End the listen tap, if there is one, with `reason` (every sink closed) and drop it. The call is
+   * settling (LS15 f): `WebRtcBridgeManager` calls this as a hangup of ours starts waiting for the
+   * carrier (`ending`) and at the top of the terminal teardown, so nothing either party says after
+   * the hangup reaches a listener; {@link destroy} calls it too. Never throws.
+   */
+  endListenTap(reason: ListenTapEndReason): void {
+    const tap = this.listenTap;
+    this.listenTap = null;
+    tap?.end(reason);
+  }
+
+  /**
    * Attach a listener's sink to this call's listen tap, making the tap on the first. The caller
    * (`WebRtcBridgeManager.openListenTap`) has checked the call is bridged and has a carrier.
    */
@@ -784,9 +797,8 @@ export class WebRtcBridgeSession {
     this.carrierPlayback?.stop();
     this.carrierPlayback = null;
     this.closeCarrierTap();
-    // Every listener hears the call end (`ListenTap.end` never throws).
-    this.listenTap?.end('call_ended');
-    this.listenTap = null;
+    // Every listener hears the call end, if the teardown has not ended them already.
+    this.endListenTap('call_ended');
     this.clearMaxDurationTimer();
     this.clearRingDeadlineTimer();
     this.clearEndConfirmationTimer();
