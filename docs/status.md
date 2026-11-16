@@ -1890,7 +1890,34 @@ leg audible; no cushion on an underrun; an unknown leg tag accepted; the listene
 redacted at the analytics boundary; the station's line shown with the flag off; and on the mobile
 app the info button shown with the flag off and a wrong flag key.
 
+### Live call listening, phase 6: the notice's monitoring words 2026-11-16 (LS1, [`listening.md`](listening.md) §10)
+
+An inbound caller told the call is recorded is now told it may be monitored too: the standard
+recording notice (`AGENCY_INBOUND_STANDARD_WORDS.recording_notice`) is "This call may be recorded
+or monitored for quality and training purposes.", and `apps/server/assets/inbound/recording-notice.wav`
+is regenerated from those words with `scripts/generate-inbound-clips.ts --only recording_notice` and
+the pinned voice (8 kHz mono PCM16, a plain 44-byte header, 5.0 s, peak −3 dB); the other six
+recordings are byte for byte as before. A route's own notice recording is the account's to re-record.
+The words are quoted in `assets/inbound/README.md`, `inbound.md` §3.4 and the route editor (from the
+contract). Mutation-checked (each red, then restored with `git checkout`): the old sentence in the
+contract (the contracts pin and the route editor's test), and a 16 kHz WAV with a metadata chunk in
+place of the notice (`inbound-standard-clips.test.ts`).
+
 ## Test counts
+
+**Live call listening, phase 6, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
+`554eebd` (the notice's words and WAV), with phase 3's server work in progress beside it in the same
+worktree (uncommitted, its own tests not yet there). From inside each directory: `packages/contracts`
+`pnpm test` 545 (15 files), `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label
+maps), `pnpm --filter @magick-agency/contracts lint` clean. `apps/server` unit 10222 passed + 1
+expected fail (513 files); `pnpm vitest run test/unit -t inbound` 228 passed (49 files). `apps/console`
+`pnpm test` 7265 (386 files). `agency_wire` 687 (`dart test`). The server's and the console's `lint`
+fail only in phase 3's uncommitted files (`src/agency/listen/`, and the console's live-call test
+helper against its in-progress `live-calls.ts` contract), none of which this phase touches. Not run
+here (phase 3 holds the integration runs in this worktree): the server's integration files that
+read the standard recordings, `inbound-clips-routes`, `inbound-call-router`,
+`inbound-connector-review-fixes`, `inbound-routes`, `inbound-connect-e2e`,
+`inbound-clash-voicemail-e2e` and `inbound-mobile-e2e` (all in the rest lane).
 
 **Live call listening, phases 4 and 5, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on
 `f81879b` (the console and mobile commits; no server file touched). From inside each directory:

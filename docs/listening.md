@@ -5,9 +5,9 @@ Listen only: no whisper, no barge. The audio is forked from our own WebRTC bridg
 that owns the call; the carrier is not involved, and a slow, failing or dropped listener never
 affects the agent's or the customer's audio. Designed 2026-11-16 from the code, reviewed and locked
 by Manas the same day; decisions LS1–LS15 below. Built in phases (§10): phase 1, the foundation,
-and phase 2, the tap in the bridge and its seam member, are built, and so are the console (phase 4)
-and the agent's standing line (phase 5); the console works once the socket and routes it calls
-exist (phase 3).
+and phase 2, the tap in the bridge and its seam member, are built, and so are the console (phase 4),
+the agent's standing line (phase 5) and the inbound notice's monitoring words (phase 6); the
+console works once the socket and routes it calls exist (phase 3).
 
 Where things are: the socket's contract `packages/contracts/src/agency/listen.ts`, the console wire
 `packages/contracts/src/api/agency/live-calls.ts`, refusals `packages/contracts/src/errors.ts` §7,
@@ -379,7 +379,7 @@ the standing line of LS2.
 | 3 | The server side: `ListenRegistry`, `ListenTokenStore`, the listener socket, the four routes and two internal handlers with their guards (route tables, agent reach, owners, `wsOwner`, `ws-limits`, the rate-limit bucket, `token` redaction), revocation over IPC, the re-check, the boot and worker reaps, the audit writes, the call detail's `listen_sessions` | Not built yet |
 | 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | **Built** (2026-11-16), against the contracts; live once phase 3's routes exist (§9 "As built") |
 | 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | **Built** (2026-11-16) |
-| 6 | The inbound notice's words and its regenerated WAV (LS1) | Not built yet |
+| 6 | The inbound notice's words and its regenerated WAV (LS1) | **Built** (2026-11-16): `AGENCY_INBOUND_STANDARD_WORDS.recording_notice` is "This call may be recorded or monitored for quality and training purposes." and `apps/server/assets/inbound/recording-notice.wav` is regenerated from it with `scripts/generate-inbound-clips.ts --only recording_notice` and the pinned voice (8 kHz mono PCM16, 5.0 s); the other six recordings are unchanged. The carrier never speaks the notice (its `<Speak>` covers closed, busy and call-back only), so the WAV is the only other copy of the words |
 
 ## 11. Tests
 
@@ -430,3 +430,7 @@ the standing line of LS2.
   "Listened to by", "Summary | Live"), `pages/LiveCallsPages.test.tsx`, and the navigation guards
   (`navRouteGates`, `consoleNav`, `consoleSearch`, `agencyCampaignTabs`), `analytics/redact.test.ts`.
   Mobile: `apps/mobile/test/features/station/station_listen_notice_test.dart`.
+- The notice's words (phase 6): `packages/contracts/test/inbound-route-warnings.test.ts` (the
+  sentence word for word, as its WAV says it), `apps/console/src/__tests__/pages/InboundRoutes.test.tsx`
+  (the route editor quotes it), `apps/server/test/unit/agency/inbound/inbound-standard-clips.test.ts`
+  (the regenerated WAV's format, length and headroom).
