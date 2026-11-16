@@ -1983,6 +1983,35 @@ bar, not returned to the row, returned even when moved elsewhere; the ended reas
 live region; "you listened for 00:00" back; `ListenProvider` not keyed by the account; the bar
 inside `<main>`.
 
+### Live call listening, the console and mobile persona-review fixes 2026-11-16 ([`listening.md`](listening.md) §9)
+
+The product review's console and mobile items (PM-M2, PM-M4, PM-minor1–8, the polish list). The
+agent: the standing line is on the standalone soft phone (`/dialer/phone`) and both mobile
+soft-phone surfaces too, behind an info button renamed "Monitoring and recording", and the first
+time an agent opens the station or a soft phone for an account while listening is on, a notice
+under the header says it until Got it (per agent and account; browser storage on the console, the
+app's key-value store on mobile). The supervisor: the first-use confirmation says the times "are
+recorded and can be seen by your account’s admins"; the table keeps a chosen agent or campaign on
+offer after its calls end and offers Clear filters, hides "0 in progress", says "Updated just now",
+"No name" for a dialled number, counts a full call's listeners ("2 supervisors are already
+listening") and "+N" past three avatars, and offers Stop beside Connecting and Reconnecting; the
+bar's ended line is "Priya S. with ****4321 · you listened for 02:10" under "Call ended",
+"Connection lost" says the call is not affected and offers Try again and Close, an inbound call
+has no Open call, a supersede names another tab or window, and the flag or the permission going
+away here ends the listen with "Listening has been turned off for this account." or "You no
+longer have access to listen to calls." (a re-grant refused `feature_disabled` says turned off)
+instead of the bar vanishing. QA-M1 needs nothing on the client: a browser answers the server's
+protocol pings itself, and the JSON `ping` stays. Left for later (they need contract changes from
+the server side): withheld numbers, `access_unverified`, the history page, the Settings line.
+
+Mutation-checked (each red, then restored with `git checkout`), 16 in all: the provider stopping
+instead of withdrawing; no `turned_off` for a `feature_disabled` re-grant; a withdrawal ignoring
+"Connection lost"; the chosen agent not kept; Got it not remembered; the soft phone header without
+the info button; the row's Stop doing nothing; the bar offering a fallback link for inbound; no
+"+N"; on mobile, Got it not stored, a stored dismissal ignored, the flag not gating the notice, the
+soft phone's info button and notice and the call layout's notice each removed, and the soft phone
+title not flexible at 200% text.
+
 ### Live call listening, the load check 2026-11-16 ([`listening.md`](listening.md) §10 "Load check")
 
 `apps/server/test/integration/load/listen-media-load.test.ts` (wall-clock lane, about 3 minutes):
@@ -2106,6 +2135,12 @@ change no console file). From inside each directory: `apps/console` `pnpm lint` 
 7311 (387 files); `apps/mobile` `flutter analyze` clean, `flutter test` 1968;
 `agency_wire` 688 (`dart test`); `pnpm test:tooling` 20. Not rerun (untouched): the server and
 the other packages (the server's own fix round runs in this worktree beside it).
+
+**Live call listening, console and mobile persona-review fixes, 2026-11-16.** Branch
+`ccr-364c489c-zeoxwy`, on `b6e2cb1` (console) and `3760eae` (mobile). From inside each directory:
+`apps/console` `pnpm lint` clean, `pnpm test` 7340 (387 files); `apps/mobile` `flutter analyze`
+clean, `flutter test` 1979; from the root `pnpm test:tooling` 20. Not rerun: `agency_wire` (no wire
+change), the server and the other packages (the server's own fix round runs in this worktree).
 
 **Live call listening, phase 3, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
 `5bf78f5` (the server side and its fixes). From `apps/server`: `pnpm lint` clean; unit 10296 passed +

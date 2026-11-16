@@ -39,7 +39,7 @@ LS16 phase 3's, LS17 the voice review's.
 | LS3 | **Who.** A new permission `agency.calls.listen`, floor `account_admin` (tenant admins and owners pass by the hierarchy; an account admin in the accounts of their membership). The live list needs `agency.supervise`; a supervisor who may watch but not listen sees the list without the Listen action. Agents, viewers, operators and super-admins cannot listen. Listening to a call you are the agent on is refused `listen_own_call`. Mobile supervisors are out of scope. | **Decided** (Manas, 2026-11-16) |
 | LS4 | **Calls that are not recorded.** The flag `agency_live_listen_unrecorded` (scopes global, tenant, account; default **on**; not client-exposed). On: an unrecorded call (`agency_calls.recording_requested` false, RC1) is listenable like any other, and its row shows "Recording off". Off for the call's tenant or account: the row shows "Recording off", Listen is disabled with "Listening is turned off for unrecorded calls", and the grant answers `409 listen_recording_off`. | **Decided** (Manas, 2026-11-16) |
 | LS5 | **Scale and placement.** At most 2 listeners per call (`AGENCY_LISTEN_MAX_PER_CALL`, 1–5), 1 listen per supervisor (a second ends the first `superseded`), 20 per process (`AGENCY_LISTEN_MAX_PER_PROCESS`). Expected peak: 100 calls at once, 5–6 supervisors. The tap runs in the process that owns the call (a media worker when `MEDIA_WORKERS >= 1`): no listen worker, no audio over IPC. | **Decided** (Manas, 2026-11-16) |
-| LS6 | **The supervisor is told, and every listen is recorded.** The listening bar always shows "This session is logged. Do not record or share what you hear." (not dismissible). A first-use confirmation per browser: "Listening is logged" / "Each time you listen, your name, the call and the start and end times are recorded in the activity history." / Cancel, Start listening. Each listen is one `agency_listen_sessions` row and two audit rows, `agency_call.listen_started` and `agency_call.listen_ended` (resource type `agency_call`, ids only, `campaign_id` set so they show on the campaign's History). | **Decided** (Manas, 2026-11-16) |
+| LS6 | **The supervisor is told, and every listen is recorded.** The listening bar always shows "This session is logged. Do not record or share what you hear." (not dismissible). A first-use confirmation per browser: "Listening is logged" / "Each time you listen, your name, the call and the start and end times are recorded and can be seen by your account’s admins." / Cancel, Start listening (the persona review's wording: the campaign History does not show an inbound or campaign-less listen, so "in the activity history" was not true of every call). Each listen is one `agency_listen_sessions` row and two audit rows, `agency_call.listen_started` and `agency_call.listen_ended` (resource type `agency_call`, ids only, `campaign_id` set so they show on the campaign's History). | **Decided** (Manas, 2026-11-16) |
 | LS7 | **Fail closed on the way in.** If the grant, the token or the session row's insert fails, the socket is refused with a reason the bar can show: no row, no audio. A failed audit write is logged and counted; the row is the record. | **Decided** (Manas, 2026-11-16) |
 | LS8 | **The tap never touches the call.** It is a nullable field on the bridge session (one field read per frame with nobody listening, as `CarrierTap`), fed after the relay write in a guarded tail that also runs when the leg gate returns early, so the relay's dwell excludes it. It owns its codec instances (session codecs keep FIR history and are never called twice for a frame). Every entry point (each leg, each sink) is wrapped: a failing decode, encode or framing step drops that frame and counts it; 50 failures in a row (`AGENCY_LISTEN_FAULT_BUDGET`, one second) detach the tap and close its listeners `tap_error`; the call carries on. One bad listener stays one: a throwing send or a closed socket removes only that sink. Back-pressure reads only the listener's own socket: soft 48 KiB drops and counts, hard 256 KiB closes it `send_backlog` (4408). Nothing awaits. | **Decided** (Manas, 2026-11-16) |
 | LS9 | **Numbers are masked.** The live list masks the customer's number (`****1234`, `maskPhone`). Each row's Show/Hide fetches the full number on demand (`GET /proxy/agency/live-calls/:callId/number`, `agency.supervise`, flag-gated, tenant and account scoped); it is never in the polled list and is masked again on leaving the page. Not audited: supervise holders already see full numbers elsewhere. | **Decided** (Manas, 2026-11-16) |
@@ -121,7 +121,7 @@ the microphone.
 | 4403 | `FORBIDDEN` | `permission_revoked` | stop ("You no longer have access to listen to calls.") |
 | 4404 | `CALL_GONE` | at the upgrade: the call is no longer live in this process (`listen_call_not_live`) | stop |
 | 4408 | `HEARTBEAT_TIMEOUT` | `listener_disconnected` (30 s silence), `send_backlog` | reconnect |
-| 4409 | `SUPERSEDED` | `superseded` | stop ("Listening moved to another call.") |
+| 4409 | `SUPERSEDED` | `superseded` | stop ("You started listening in another tab or window, so it stopped here.": the console stops its own first listen before a second, so a supersede it hears of came from elsewhere) |
 | 4429 | `LIMIT` | at the upgrade: `listen_limit_call`, `listen_limit_server` | stop, with the reason |
 | 1008 | `INVALID_UPGRADE` | a malformed upgrade | stop |
 | 1011 | `INTERNAL_ERROR` | `tap_error`; at the upgrade, `listen_unavailable` (no row, no audio) | reconnect, bounded |
@@ -395,8 +395,9 @@ British English throughout. **Live calls** at `/agency/live`, a nav entry in the
 beside "Soft-phone calls" (gated by `agency.supervise` and the flag); a campaign's
 `/agency/campaigns/:id/calls/live` with a "Summary | Live" control on its Calls tab. The table:
 "Live calls", "N in progress", "Updated N s ago"; filters for campaign (account page only), agent
-and type (All, Dialler, Soft phone, Inbound); columns Agent, Customer (name or "Unknown caller",
-the masked number with Show/Hide), Campaign, Type, Time on call (amber past twice the average
+and type (All, Dialler, Soft phone, Inbound), with Clear filters while any is in force; columns
+Agent, Customer (name, else "Unknown caller" for a caller who rang in and "No name" for a number we
+dialled; the masked number with Show/Hide), Campaign, Type, Time on call (amber past twice the average
 handle time), Recording ("Recording" / "Recording off"), Listening, Action. Without
 `agency.calls.listen`: no Action column and the footnote "You can see live calls but not listen to
 them." Empty: "No calls in progress" / "Calls appear here as soon as an agent is connected to a
@@ -406,9 +407,11 @@ The **listening bar** (`ListenBar`) is docked at the bottom of the console shell
 its pages: the live dot, "<Agent> with ****4321", the campaign and the timer; level meters and mutes
 for Agent and Customer; volume (remembered per browser), "Open call", "Stop listening" (Esc while
 focused); the notice of LS6, always. Its states are in the design (Connecting…, Live, sound
-blocked, "Agent is silent", "Reconnecting…" then "Connection lost", "Call ended · you listened
-for mm:ss" (or "The call ended before you joined."), revoked, moved). The call page gets "Listened to by" (LS13). The agent's station gets
-the standing line of LS2.
+blocked, "No sound from the agent", "Reconnecting…" then "Connection lost" (the call is not
+affected; Try again, Close), "Call ended" over "Priya S. with ****4321 · you listened for mm:ss"
+(or "The call ended before you joined."), revoked, turned off, superseded from another tab). The
+call page gets "Listened to by" (LS13). The agent's station and soft phone get the standing line of
+LS2.
 
 **As built (phases 4 and 5).** Everything above, in these places:
 
@@ -431,8 +434,17 @@ the standing line of LS2.
   `utils/listen/liveCallsTable.ts`. The whole table sits inside a `ph-no-capture` boundary (CH6:
   the rows carry customers' names and numbers, the shown number included, and the Show and Open
   call buttons are named after the customer). A row that cannot be listened to for the per-call
-  cap says "This call has reached its listening limit" (the cap is `AGENCY_LISTEN_MAX_PER_CALL`,
-  1–5, so the words name no count). Show/Hide calls
+  cap counts the row's own listeners ("2 supervisors are already listening"; the cap is
+  `AGENCY_LISTEN_MAX_PER_CALL`, 1–5, so the words never name it), and falls back to "This call has
+  reached its listening limit" with none to count; the refused grant's toast counts them the same
+  way from the row the listen started from. The Listening column stacks three initials and "+N"
+  for the rest (every name in the title and to a screen reader). The filters offer the agents and
+  campaigns in the rows plus the one chosen, kept after its calls end, so a filter in force never
+  reads as "All" (`liveCallFilterOptions`); Clear filters is offered beside the chips and under
+  "No calls in progress match these filters." while any is in force. No "0 in progress" pill beside
+  the empty state; "Updated just now" under a second. While the supervisor's own listen on a row
+  is connecting or reconnecting, the row says so beside a Stop. Every word is in
+  `utils/listen/listenCopy.ts` (the page's intro, `LIVE_CALLS_PAGE_COPY`, included). Show/Hide calls
   `GET …/live-calls/:callId/number` per row and keeps the number in the table's state only, so
   leaving the page or the row ending masks it again. **Amber past twice the AHT** reads each row's
   own `aht_seconds` (its campaign's, LS16 i), on the account page and the campaign view alike; a
@@ -446,7 +458,12 @@ the standing line of LS2.
 - *The listen.* `components/listen/ListenProvider.tsx` (mounted by `ConsoleLayout` around the
   shell, keyed by the account, with `ListenBar` under `<main>`): one listen per shell, a second
   Listen stops the first, the first-use confirmation (`magick-agency.listen.confirmed` in browser
-  storage), the toast for a refused first grant, the flag or the permission going away stopping it.
+  storage), the toast for a refused first grant, and the flag or the permission going away here
+  ending it: `withdraw` sends `stop` (no sound a moment longer) and the bar stays, saying
+  "Listening has been turned off for this account." (the flag, checked first) or "You no longer
+  have access to listen to calls.", until dismissed, rather than vanishing as if the supervisor had
+  stopped. The server records that end as `listener_stopped` (the client's `stop` carries no
+  reason).
   A browser with no Web Audio, or one that will not make a context, is refused at the click with
   "This browser cannot play the call’s sound, so you cannot listen here." before any grant, so no
   session row or audit is written for a listen nobody could hear. When the listen ends (stopped,
@@ -454,13 +471,14 @@ the standing line of LS2.
   is suspended, not left running for the shell's life; the Listen click and Try again, both
   gestures, resume it.
   `utils/listen/listenSessionReducer.ts` owns every state (idle, connecting, live, reconnecting,
-  lost, ended with `call_ended` / `revoked` / `superseded` / `refused`; the 15 s window opened by
+  lost, ended with `call_ended` / `revoked` / `turned_off` / `superseded` / `refused`; the 15 s window opened by
   the first drop and closed only by `ready` or Try again; the first attach has the same 15 s from
   the click, so a grant or a socket that never answers ends in "Connection lost", never
   "Connecting…" for ever; three server failures (1011) in a row end it, counted across `ready`s
   (a tap failing just after every `ready` would otherwise mint a grant, a row and two audit rows
   every few seconds) and counted afresh once the listen has stayed live 10 s
-  (`LISTEN_STABLE_MS`); a refused re-grant ends it, or is retried, by its code);
+  (`LISTEN_STABLE_MS`); a refused re-grant ends it, or is retried, by its code, a 403
+  `feature_disabled` as `turned_off`);
   `utils/listen/listenSessionController.ts` does what each state asks (mint, open in binary mode,
   ping every 10 s, `stop`, wait 0.25–3 s between attaches, dismiss "Call ended" after 6 s);
   `utils/listen/listenFrames.ts` reads the wire and maps each close code (any code it does not
@@ -475,16 +493,20 @@ the standing line of LS2.
   interruption) its clock is frozen, so frames are dropped and anything queued stopped (on the
   frame, and on the context's `statechange`) rather than piling up to play in a heap; only a
   gesture resumes it, never a frame. Under it `hooks/listen/useListenPlayback.ts` (the mutes;
-  the volume in `magick-agency.listen.volume`, every storage access in try/catch). "Agent is
-  silent" is the agent's leg sending nothing for over 2 s while live: a console agent who mutes
+  the volume in `magick-agency.listen.volume`, every storage access in try/catch). "No sound
+  from the agent" is the agent's leg sending nothing for over 2 s while live: a console agent who mutes
   sends no frames, so the bar does not claim a reconnect it cannot see; "sound blocked" is the
   context not running, lifted by the banner's button.
 - *The bar.* `components/listen/ListenBar.tsx`. At phone width (640 px) it is the live dot, the
   timer and Stop, and keeps the LS6 notice under them (the notice is never dismissible, so it is
   not dropped at any width). Esc anywhere inside the bar stops a listen (or dismisses an ended
-  one). **"Open call"** opens the call's own page, as the table's link does (`liveCallHref` over
-  the listen target's `correlationId`); an inbound call, which has no call page in the console,
-  falls back to its live view (its campaign's Live, else `/agency/live`). The bar sits inside a
+  one). **"Open call"** opens the call's own page, as the table's link does (`liveCallPagePath` over
+  the listen target's `correlationId`); an inbound call, which has no call page in the console, has
+  none (a link to a list of other calls was a dead end). An ended call's head says "Call ended"
+  and the line under it "Priya S. with ****4321 · you listened for 02:10" (at phone width, with no
+  head, "Call ended · you listened for 02:10"). "Connection lost" says "The call is not affected."
+  and offers Try again and Close, which puts the bar away (a red Stop listening, with nothing left
+  to stop, read as acting on the call). The bar sits inside a
   `ph-no-capture` boundary (the agent's name, the masked number, the campaign; CH6). Focus: the
   row's Listen gives way to "Connecting…", so focus moves to the bar (`tabIndex=-1`, where Esc
   stops), and to it again whenever what held it inside the bar goes; when the bar goes (Stop, Esc,
@@ -499,15 +521,24 @@ the standing line of LS2.
   `SoftphoneCallDetailPage`, from the detail's optional `listen_sessions` (the console's
   `AgencyAttemptCallDetail` and `WithListenSessions<AgencyManualCallDetail>`); a detail without
   the field, or with none, shows no section. The console has no inbound call page.
-- *The agent (LS2).* `components/agency/StationListenNotice.tsx`: an info button in the station
-  header (every station view: campaign, soft phone, inbound) opening the standing line; and the
-  line on the campaign screen an agent joins from (`AgentHomePage`, `/dialer`; an agent with one
-  campaign is taken straight to the station and reads it in the header). The mobile app: an info
+- *The agent (LS2).* `components/agency/StationListenNotice.tsx`: an info button named
+  "Monitoring and recording" in the station header (every station view: campaign, soft phone,
+  inbound) and in the standalone soft phone's (`/dialer/phone`, `SoftphoneHeader`), opening the
+  standing line; the line on the campaign screen an agent joins from (`AgentHomePage`, `/dialer`);
+  and, because an agent with one campaign is taken straight to the station and may never open the
+  button, `StationListenFirstNotice`: a strip under the station's or the soft phone's header the
+  first time this agent opens either in this browser for this account while listening is on, until
+  Got it (`magick-agency.listen.agent-notice-seen:<user>:<tenant>:<account>`, try/catch storage;
+  blocked storage shows it again next time). The mobile app: the same "Monitoring and recording"
   button in the station header (`lib/features/station/parts/banners.dart`: the idle, incoming and
-  link screens; the on-call band has none) opens the station info sheet with the line, behind the
-  client flag (`stationListenNoticeProvider` over `FeatureFlags.liveListenEnabled`, the key
-  `agency_wire` keeps beside the other client flags and pins against the contract's
-  `platform.json` fixture); no wire type changes.
+  link screens; the on-call band has none) and in the soft phone's header on both surfaces (the
+  Phone tab and the station's), opening the sheet with the line; and `ListenFirstNoticeCard` at
+  the top of the station's idle and call layouts and of the soft phone, the first time per agent
+  and account on the phone until Got it (`listenFirstNoticeProvider`, kept in the app's key-value
+  store under `listen.agent_notice_seen:<user:tenant:account>`). All behind the client flag
+  (`stationListenNoticeProvider` over `FeatureFlags.liveListenEnabled`, the key `agency_wire` keeps
+  beside the other client flags and pins against the contract's `platform.json` fixture); no wire
+  type changes.
 - *Refusal words.* A refused grant's toast says its code's words (`listenRefusalMessage`). The
   grant's own 503s (`listen_limit_server`, `listen_unavailable`) arrive with their code: the
   route's `sendListenRefusal` marks a 5xx refusal reviewed (`preserveReviewedUpstreamError`), so
@@ -518,6 +549,9 @@ the standing line of LS2.
   answered 503 is retried within the window either way.
 - *Analytics.* `analytics/redact.ts` takes the listener socket's `token` out of any URL on its way
   to PostHog (`redactListenToken`).
+- *Liveness (QA-M1).* The console still sends its JSON `ping` every 10 s; the server also pings the
+  socket at the protocol level and counts the pong, which a browser sends by itself however its
+  timers are throttled in a hidden tab. Nothing in the console answers it.
 
 ## 10. Status
 
@@ -707,7 +741,8 @@ before every listener send"), which goes red for it.
   `utils/listen/listenFrames.test.ts` (the parser, every close code, the `ended` reasons that end a
   session), `utils/listen/listenSessionReducer.test.ts` (every transition, stale attempts, the
   window, the bound, the bound across `ready`s and its fresh count after 10 s live, the first
-  attach's 15 s, Try again, the bar's flags), `utils/listen/listenSessionController.test.ts`
+  attach's 15 s, a listen withdrawn here (`revoked`, `turned_off`, from lost too), a re-grant
+  refused `feature_disabled`, Try again, the bar's flags), `utils/listen/listenSessionController.test.ts`
   (grant → socket → ready, audio only while live, ping, stop, supersede, destroy, reconnect, a
   shutdown's close with no `ended` frame through masked and unanswered re-grants, the window, a
   first grant or socket that never answers, an unopenable socket),
@@ -716,22 +751,31 @@ before every listener send"), which goes red for it.
   dropped on a frozen clock with no resume per frame, "Turn sound on" with no burst, an
   interruption stopping the queue, release, a context the browser refuses, reset, close, no
   microphone in use or in the source), `utils/listen/liveCallsTable.test.ts` (sort, filters,
-  ended rows, amber, the target, "Open call" by origin and its inbound fallback, the words, a
-  bare 503), `api/liveCalls.test.ts`, `components/LiveCallsTable.test.tsx` (… the `ph-no-capture`
-  boundary, an older read answering late), `components/ListenBar.test.tsx` (the confirmation,
+  the chosen option kept, Clear filters' rule, ended rows, amber, the target, "Open call" by
+  origin and none for inbound, the words (a full call counted from its row), the page's intro, a
+  bare 503), `api/liveCalls.test.ts`, `components/LiveCallsTable.test.tsx` (… Clear filters, a
+  chosen agent kept after their call ends, "+N", no pill at zero, the `ph-no-capture` boundary, an
+  older read answering late), `components/ListenBar.test.tsx` (the confirmation,
   every bar state, Esc, mutes, the remembered volume with storage blocked, the toast, a second
   listen, the account switch and unmount with the socket and the context closed, phone width;
+  Stop beside Connecting and Reconnecting; Connection lost's Close; the flag or the permission
+  going away here, and a re-grant refused `feature_disabled`; a full call's toast;
   the audio silenced and suspended on Stop, supersede and revoke and resumed by the next Listen
   and Try again; no Web Audio or a refused context refused with a toast; focus to the bar and
   back to the row's Listen, left alone when moved; the ended reason in the live region; "The call
   ended before you joined."; the bar's `ph-no-capture` boundary),
   `components/ConsoleLayout.listen.test.tsx` (the shell's real wiring: the bar under `<main>`,
   the listen across pages, ended by an account switch and by leaving the shell),
-  `components/listenSurfaces.test.tsx` (the station popover, the join screen's line, "Listened to
-  by", "Summary | Live"), `pages/LiveCallsPages.test.tsx`, and the navigation guards
+  `components/listenSurfaces.test.tsx` (the "Monitoring and recording" popover, the one-time
+  notice: Got it, per agent and account, storage blocked; the join screen's line, "Listened to
+  by", "Summary | Live"), `pages/SoftphonePage.test.tsx` and
+  `pages/AgentConsolePage.softphone.test.tsx` (the button and the notice on the standalone soft
+  phone, the station and its soft phone), `pages/LiveCallsPages.test.tsx`, and the navigation guards
   (`navRouteGates`, `consoleNav`, `consoleSearch`, `agencyCampaignTabs`), `analytics/redact.test.ts`,
   `analytics/autocaptureOptOut.test.ts` (the table and the bar among the surfaces that keep the
-  class). Mobile: `apps/mobile/test/features/station/station_listen_notice_test.dart` and
+  class). Mobile: `apps/mobile/test/features/station/station_listen_notice_test.dart` (the
+  button and sheet on the station and both soft-phone surfaces, the one-time notice until Got it
+  per agent and account, on a call too, 200% text on 360×640) and
   `apps/mobile/packages/agency_wire/test/platform_test.dart` (`FeatureFlags.liveListenEnabled`
   against the fixture).
 - The load check: `apps/server/test/integration/load/listen-media-load.test.ts` and its listeners'
