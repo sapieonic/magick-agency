@@ -203,7 +203,7 @@ describe('the first listen in this browser', () => {
       fireEvent.click(screen.getByTestId('live-call-listen-c-1'));
     });
     expect(screen.getByText('Listening is logged')).toBeTruthy();
-    expect(screen.getByText('Each time you listen, your name, the call and the start and end times are recorded and can be seen by your account’s admins.')).toBeTruthy();
+    expect(screen.getByText('Each time you listen, your name, the call and the start and end times are recorded in the account’s Listening history.')).toBeTruthy();
     // Cancel: nothing starts, nothing is remembered.
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(mocks.grantListen).not.toHaveBeenCalled();
@@ -533,6 +533,61 @@ describe('the bar', () => {
       await vi.advanceTimersByTimeAsync(7_000);
     });
     expect(screen.getByTestId('listen-bar')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('listen-dismiss'));
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it.each([
+    ['full width', false],
+    ['phone width', true],
+  ])('access that could not be checked (4503, LS21): says so and offers Try again, never "no longer have access" (%s)', async (_name, compact) => {
+    mocks.compact = compact;
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.frame({ event: 'ended', reason: 'access_unverified' }));
+    act(() => ws.serverClose(4503, 'access_unverified'));
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe(
+      'Listening stopped because your access could not be checked. Try again.',
+    );
+    expect(bar().textContent).not.toContain('You no longer have access');
+    expect(screen.getByTestId('listen-notice')).toBeTruthy();
+    // Not a reconnect loop, and not dismissed by itself.
+    const grants = mocks.grantListen.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(mocks.grantListen.mock.calls.length).toBe(grants);
+    expect(screen.getByTestId('listen-bar')).toBeTruthy();
+    // Silenced while stopped; Try again is a gesture that runs the sound again and asks afresh.
+    expect(FakeAudioContext.all[0]!.state).toBe('suspended');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('listen-retry'));
+    });
+    await flush();
+    expect(mocks.grantListen.mock.calls.length).toBe(grants + 1);
+    expect(FakeAudioContext.all[0]!.state).toBe('running');
+    act(() => FakeWs.all[FakeWs.all.length - 1]!.ready());
+    expect(bar().dataset.phase).toBe('live');
+  });
+
+  it('a withheld caller reads "Withheld" in the bar, never "****"', async () => {
+    mocks.listLiveCalls.mockResolvedValue({
+      calls: [{ ...CALL, origin: 'inbound', customer_phone_masked: '****', customer_phone_withheld: true }],
+      as_of: new Date(NOW).toISOString(),
+    });
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    expect(bar().textContent).toContain('Priya S. with Withheld');
+    expect(bar().textContent).not.toContain('****');
+  });
+
+  it('access that could not be checked: Dismiss puts the bar away', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(4503, 'access_unverified'));
     fireEvent.click(screen.getByTestId('listen-dismiss'));
     expect(screen.queryByTestId('listen-bar')).toBeNull();
   });

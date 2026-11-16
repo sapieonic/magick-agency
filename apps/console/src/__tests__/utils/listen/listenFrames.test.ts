@@ -118,6 +118,10 @@ describe('what a close means', () => {
     [AGENCY_LISTEN_CLOSE.LIMIT, 'whatever', { kind: 'refused', code: null }],
     [AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, '', { kind: 'refused', code: null }],
     [AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, 'tap_error', { kind: 'internal' }],
+    // The server could not check the supervisor's access for too long (LS21): stop, offer Try
+    // again; neither "no longer have access" nor a reconnect loop.
+    [AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED, 'access_unverified', { kind: 'unverified' }],
+    [4503, '', { kind: 'unverified' }],
     // A server closing without an `ended` frame (one process shutting down, LS16 g: the WebSocket
     // plugin closes every socket with no code, which the browser reports as 1005) is a drop.
     [1005, '', { kind: 'reconnect' }],
@@ -142,6 +146,7 @@ describe('what a close means', () => {
     expect(terminalEndReason('listener_stopped')).toEqual({ kind: 'stopped' });
     expect(terminalEndReason('permission_revoked')).toEqual({ kind: 'revoked' });
     expect(terminalEndReason('superseded')).toEqual({ kind: 'superseded' });
+    expect(terminalEndReason('access_unverified')).toEqual({ kind: 'unverified' });
     for (const reason of ['listener_disconnected', 'send_backlog', 'tap_error', 'server_shutdown', 'server_restarted'] as const) {
       expect(terminalEndReason(reason), reason).toBeNull();
     }

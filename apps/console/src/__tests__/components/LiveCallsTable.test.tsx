@@ -344,6 +344,30 @@ describe('the number', () => {
     }
   });
 
+  it('a caller who withheld their number reads "Withheld", with no Show (LS22 i)', async () => {
+    const withheld = liveCall({ ...ARJUN, customer_phone_masked: '****', customer_phone_withheld: true });
+    mocks.listLiveCalls.mockResolvedValue(answer([withheld, PRIYA]));
+    await renderTable();
+    expect(screen.getByTestId('live-call-number-c-arjun').textContent).toBe('Withheld');
+    expect(screen.queryByTestId('live-call-reveal-c-arjun')).toBeNull();
+    expect(rowOf('c-arjun').textContent).not.toContain('****');
+    // Everyone else's number is masked and can be shown as before.
+    expect(screen.getByTestId('live-call-reveal-c-priya')).toBeTruthy();
+  });
+
+  it('a reveal answered 404 live_call_number_withheld reads "Withheld", not a failure, and offers Show no more', async () => {
+    mocks.revealLiveCallNumber.mockRejectedValue(
+      Object.assign(new Error('withheld'), { statusCode: 404, details: { code: 'live_call_number_withheld' } }),
+    );
+    await renderTable();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-reveal-c-priya'));
+    });
+    expect(screen.getByTestId('live-call-number-c-priya').textContent).toBe('Withheld');
+    expect(within(rowOf('c-priya')).queryByRole('alert')).toBeNull();
+    expect(screen.queryByTestId('live-call-reveal-c-priya')).toBeNull();
+  });
+
   it('the full number is never in the polled list', async () => {
     await renderTable();
     for (const [query] of mocks.listLiveCalls.mock.calls) expect(JSON.stringify(query)).not.toMatch(/phone/);

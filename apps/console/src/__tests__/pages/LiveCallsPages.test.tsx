@@ -85,6 +85,38 @@ describe('/agency/live', () => {
     expect(screen.getByTestId('live-call-timer-c-long').getAttribute('data-overrun')).toBe('true');
     expect(screen.getByTestId('live-call-timer-c-short').getAttribute('data-overrun')).toBeNull();
   });
+
+  it('a flag store outage (503 listen_unavailable) keeps the rows and keeps polling, unlike a 403', async () => {
+    render(
+      <MemoryRouter>
+        <ListenProvider>
+          <LiveCallsPage />
+        </ListenProvider>
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    expect(screen.getByTestId('live-call-c-long')).toBeTruthy();
+    mocks.listLiveCalls.mockRejectedValue(
+      Object.assign(new Error('unavailable'), { statusCode: 503, details: { code: 'listen_unavailable' } }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(screen.getByTestId('live-calls-error').textContent).toBe('Could not load live calls. Retrying…');
+    expect(screen.getByTestId('live-call-c-long')).toBeTruthy();
+    expect(screen.getByTestId('live-call-c-short')).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mocks.listLiveCalls).toHaveBeenCalledTimes(4);
+    // The store is back: the next read lands and the error goes.
+    mocks.listLiveCalls.mockResolvedValue({ calls: [LONG], as_of: new Date(NOW + 15_000).toISOString() });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(mocks.listLiveCalls).toHaveBeenCalledTimes(5);
+    expect(screen.queryByTestId('live-calls-error')).toBeNull();
+  });
 });
 
 describe('/agency/campaigns/:id/calls/live', () => {

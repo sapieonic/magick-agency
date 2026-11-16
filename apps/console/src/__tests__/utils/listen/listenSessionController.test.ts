@@ -238,6 +238,35 @@ describe('how it ends', () => {
       expect(c.getState().phase).toBe('idle');
     }
   });
+
+  it('access that could not be checked (4503, LS21) stops without reconnecting, until Try again mints afresh', async () => {
+    const c = controller();
+    const socket = await goLive(c);
+    socket.text({ event: 'ended', reason: 'access_unverified' });
+    socket.serverClose(4503, 'access_unverified');
+    expect(c.getState()).toMatchObject({ phase: 'ended', end: { kind: 'unverified' } });
+    // No reconnect loop, and no 6 s dismissal: it waits for the supervisor.
+    await vi.advanceTimersByTimeAsync(AGENCY_LISTEN_RECONNECT_WINDOW_MS * 2);
+    expect(grantCalls).toEqual(['call-1']);
+    expect(FakeListenSocket.all).toHaveLength(1);
+    expect(c.getState().phase).toBe('ended');
+
+    c.retry();
+    await flush();
+    expect(grantCalls).toEqual(['call-1', 'call-1']);
+    last().open();
+    last().text({ event: 'ready', listen_id: 'l-2', call_id: 'call-1', format: 'alaw8', frame_bytes: 160 });
+    expect(c.getState()).toMatchObject({ phase: 'live', listenId: 'l-2', end: null });
+  });
+
+  it('a close 4503 alone (no `ended` frame) stops the same way', async () => {
+    const c = controller();
+    const socket = await goLive(c);
+    socket.serverClose(4503, 'access_unverified');
+    await vi.advanceTimersByTimeAsync(AGENCY_LISTEN_RECONNECT_WINDOW_MS);
+    expect(c.getState()).toMatchObject({ phase: 'ended', end: { kind: 'unverified' } });
+    expect(grantCalls).toHaveLength(1);
+  });
 });
 
 describe('reconnecting', () => {

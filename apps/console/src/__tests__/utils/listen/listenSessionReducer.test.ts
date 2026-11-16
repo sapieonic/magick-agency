@@ -205,6 +205,17 @@ describe('how a listen ends', () => {
     expect(reduce(live(), { type: 'closed', attempt: 1, code: 4409, reason: 'superseded', now: 2 }).end?.kind).toBe('superseded');
   });
 
+  it('access could not be checked (frame or 4503): stopped with its own reason, not revoked, not reconnecting', () => {
+    for (const s of [
+      reduce(live(), { type: 'server_ended', attempt: 1, reason: 'access_unverified', now: 2_000 }),
+      reduce(live(), { type: 'closed', attempt: 1, code: AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED, reason: 'access_unverified', now: 2_000 }),
+    ]) {
+      expect(s).toMatchObject({ phase: 'ended', step: null, retry: null, target: TARGET, end: { kind: 'unverified', listenedMs: 1_000 } });
+      expect(listenSocketWanted(s)).toBe(false);
+      expect(listenBarVisible(s)).toBe(true);
+    }
+  });
+
   it('a cap at the upgrade (4429): stopped, with its code', () => {
     const s = run([
       { type: 'start', target: TARGET, now: 0 },
@@ -425,6 +436,27 @@ describe('Try again', () => {
   it('only from lost', () => {
     const s = live();
     expect(reduce(s, { type: 'retry', now: 2 })).toBe(s);
+  });
+
+  it('from "access could not be checked": a fresh grant (the grant checks afresh), the end cleared', () => {
+    const unverified = reduce(live(), { type: 'closed', attempt: 1, code: AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED, reason: 'access_unverified', now: 2_000 });
+    const s = reduce(unverified, { type: 'retry', now: 30_000 });
+    expect(s).toMatchObject({
+      phase: 'reconnecting',
+      step: 'grant',
+      attempt: 2,
+      target: TARGET,
+      end: null,
+      retry: { deadline: 30_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS },
+      internalErrors: 0,
+    });
+  });
+
+  it('not from any other ended listen', () => {
+    for (const reason of ['call_ended', 'permission_revoked', 'superseded'] as const) {
+      const ended = reduce(live(), { type: 'server_ended', attempt: 1, reason, now: 2 });
+      expect(reduce(ended, { type: 'retry', now: 3 }), reason).toBe(ended);
+    }
   });
 });
 

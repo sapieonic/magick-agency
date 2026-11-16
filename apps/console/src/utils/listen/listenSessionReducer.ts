@@ -18,7 +18,8 @@ import { listenCloseOutcome, terminalEndReason, type ListenCloseOutcome } from '
  *    reconnecting, within {@link AGENCY_LISTEN_RECONNECT_WINDOW_MS} of the first drop;
  *  - `lost`: the window passed (or the server failed too often, or the first attach took over
  *    15 s): "Connection lost", Try again;
- *  - `ended`: the session is over for a reason to tell the supervisor (`end.kind`).
+ *  - `ended`: the session is over for a reason to tell the supervisor (`end.kind`); only an
+ *    `unverified` end offers Try again.
  *
  * Every attach (a grant, a socket, a `ready`) carries the `attempt` it belongs to; an event from
  * an older attempt is dropped, so a late grant or a dead socket's close can never move a newer one.
@@ -35,6 +36,7 @@ export interface ListenTarget {
   campaignLabel: string;
   /** The agent's display name. */
   agentName: string;
+  /** The masked number, or "Withheld" for a caller who withheld theirs (`maskedNumberLabel`). */
   customerMasked: string;
   /** ISO-8601, server clock: the call's time-on-call anchor. */
   connectedAt: string;
@@ -46,9 +48,11 @@ export type ListenPhase = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'los
 export type ListenStep = 'grant' | 'socket' | 'wait';
 /**
  * `revoked`: the supervisor may no longer listen; `turned_off`: listening was turned off for the
- * account (the flag); either from the server, or seen here first (`withdrawn`).
+ * account (the flag); either from the server, or seen here first (`withdrawn`). `unverified`: the
+ * server could not check the supervisor's access for too long (LS21, close 4503): the one ended
+ * listen Try again starts afresh, since nothing said they may not listen.
  */
-export type ListenEndKind = 'call_ended' | 'revoked' | 'turned_off' | 'superseded' | 'refused';
+export type ListenEndKind = 'call_ended' | 'revoked' | 'turned_off' | 'superseded' | 'unverified' | 'refused';
 
 /** A grant that did not answer 201: its status (null: no answer at all) and code. */
 export interface ListenGrantRefusal {
@@ -137,6 +141,14 @@ export const INITIAL_LISTEN_STATE: ListenSessionState = {
   clock: ClockOffsetEstimator.empty(),
 };
 
+/**
+ * Whether Try again applies: "Connection lost", or a listen ended because the server could not
+ * check the supervisor's access (`unverified`, LS21), where a fresh grant checks it afresh.
+ */
+export function retryable(state: ListenSessionState): boolean {
+  return state.phase === 'lost' || (state.phase === 'ended' && state.end?.kind === 'unverified');
+}
+
 /** Whether an attach is under way: the phases with a step. */
 function attaching(state: ListenSessionState): boolean {
   return state.phase === 'connecting' || state.phase === 'reconnecting';
@@ -199,6 +211,8 @@ function applyOutcome(state: ListenSessionState, outcome: ListenCloseOutcome, no
       return toEnded(state, 'turned_off', now);
     case 'superseded':
       return toEnded(state, 'superseded', now);
+    case 'unverified':
+      return toEnded(state, 'unverified', now);
     case 'refused':
       return toEnded(state, 'refused', now, outcome.code);
     case 'remint':
@@ -309,9 +323,10 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
       return toEnded(state, event.kind, event.now);
 
     case 'retry':
-      if (state.phase !== 'lost' || !state.target) return state;
+      if (!retryable(state) || !state.target) return state;
       return {
         ...state,
+        end: null,
         phase: state.startedAt === null ? 'connecting' : 'reconnecting',
         step: 'grant',
         attempt: state.attempt + 1,

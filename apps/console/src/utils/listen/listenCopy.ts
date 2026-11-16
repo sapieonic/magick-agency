@@ -36,7 +36,7 @@ export const LISTEN_SESSION_NOTICE = 'This session is logged. Do not record or s
 /** The first-use confirmation (LS6), once per browser. */
 export const LISTEN_CONFIRM = {
   title: 'Listening is logged',
-  message: 'Each time you listen, your name, the call and the start and end times are recorded and can be seen by your account’s admins.',
+  message: 'Each time you listen, your name, the call and the start and end times are recorded in the account’s Listening history.',
   cancel: 'Cancel',
   confirm: 'Start listening',
 } as const;
@@ -83,6 +83,8 @@ export const LIVE_CALLS_COPY = {
   show: 'Show',
   hide: 'Hide',
   numberFailed: 'Could not show the number. Try again.',
+  /** A caller who withheld their number (`customer_phone_withheld`): no number to show (LS22 i). */
+  withheld: 'Withheld',
   recording: 'Recording',
   recordingOff: 'Recording off',
   mobileApp: 'Mobile app',
@@ -209,6 +211,11 @@ export const LISTEN_BAR_COPY = {
   endedBeforeJoin: 'The call ended before you joined.',
   stopped: 'Listening stopped',
   revoked: 'You no longer have access to listen to calls.',
+  /**
+   * The server could not check the supervisor's access for too long (LS21, close 4503): not "no
+   * longer have access" (nothing said so), and Try again asks afresh.
+   */
+  unverified: 'Listening stopped because your access could not be checked. Try again.',
   /** The flag went off (this console saw it, or a re-grant was refused `feature_disabled`). */
   turnedOff: 'Listening has been turned off for this account.',
   /**
@@ -236,6 +243,14 @@ export const LISTEN_BAR_COPY = {
  */
 export function listenedForLabel(ms: number, who?: string): string {
   return `${who ?? LISTEN_BAR_COPY.callEnded} · you listened for ${formatClock(ms)}`;
+}
+
+/**
+ * The customer's number as the table and the bar show it: "Withheld" for a caller who withheld it
+ * (the masked field is then `****`, nothing to mask), else the masked number.
+ */
+export function maskedNumberLabel(call: Pick<AgencyLiveCall, 'customer_phone_masked' | 'customer_phone_withheld'>): string {
+  return call.customer_phone_withheld ? LIVE_CALLS_COPY.withheld : call.customer_phone_masked;
 }
 
 /** "Priya S. with ****4321": who the bar is listening to. */
@@ -334,3 +349,95 @@ export function listenRefusalMessage(refusal: { status: number | null; code: str
   if (refusal.status === null) return LISTEN_REFUSAL_FALLBACK.network;
   return LISTEN_REFUSAL_FALLBACK.other;
 }
+
+/**
+ * The account's Listening history (`docs/listening.md` §12, LS19): the page at
+ * `/agency/listening-history`, its filters, table, states and CSV. How a listen ended is the
+ * contract's `AGENCY_LISTEN_END_REASON_LABELS`, shared with the CSV.
+ */
+export const LISTEN_HISTORY_COPY = {
+  title: 'Listening history',
+  description:
+    'Every time a supervisor listened to a call in this account: who listened, to which agent’s call, when, for how long '
+    + 'and how it ended. A listen that dropped and reconnected within 30 seconds is one entry.',
+  tips: [
+    'Numbers are masked here and in the export.',
+    'Exporting the history is recorded in the account’s audit log.',
+  ],
+  caption: 'Listens in this account, newest first',
+  supervisorFilter: 'Supervisor',
+  allSupervisors: 'All supervisors',
+  agentFilter: 'Agent',
+  allAgents: 'All agents',
+  fromFilter: 'From date',
+  toFilter: 'To date',
+  reversedRange: 'The “From” date is after the “To” date, so nothing could match. Swap them to continue.',
+  apply: 'Apply',
+  clear: 'Clear',
+  exportCsv: 'Export CSV',
+  exporting: 'Exporting…',
+  exported: 'Export downloaded.',
+  exportFailed: 'Could not export the listening history.',
+  columnSupervisor: 'Supervisor',
+  columnAgent: 'Agent',
+  columnType: 'Call type',
+  columnCustomer: 'Customer',
+  columnStarted: 'Started',
+  columnListened: 'Time listened',
+  columnEnded: 'How it ended',
+  columnCall: 'Call',
+  /** A visit still open: no end, no time listened yet. */
+  listeningNow: 'Listening now',
+  openCall: 'Open call',
+  /** The call's row has been purged: no number and no page to open. */
+  callGone: 'Call no longer available',
+  loadMore: 'Load older listens',
+  loadingMore: 'Loading…',
+  loadMoreFailed: 'Could not load older listens.',
+  emptyTitle: 'No listens yet',
+  emptyBody: 'Each time a supervisor listens to a call in this account, it appears here.',
+  noMatchTitle: 'Nothing matches those filters',
+  noMatchBody: 'Widen the date range or clear the filters to see every listen.',
+  failed: 'Could not load the listening history.',
+  /** A 503 `listen_unavailable` (the flag could not be read): read again on its own. */
+  unavailable: 'Could not load the listening history. Retrying…',
+  forbidden: 'The listening history is for supervisors. Ask an account admin if you need to see it.',
+} as const;
+
+/** "Showing 12 listens", and " — there are more" while older pages remain. */
+export function listenHistoryCountLabel(count: number, more: boolean): string {
+  return `Showing ${count.toLocaleString('en-GB')} ${count === 1 ? 'listen' : 'listens'}${more ? ' — there are more' : ''}`;
+}
+
+/** "Open call: Anita Kapoor listening to Priya Sharma" (a history row's link). */
+export function listenHistoryOpenLabel(supervisor: string, agent: string): string {
+  return `${LISTEN_HISTORY_COPY.openCall}: ${supervisor} listening to ${agent}`;
+}
+
+/**
+ * A cut-short export (`X-Export-Truncated`): what is missing and what to do, by the server's
+ * reason (`row_limit` with its ceiling, `deadline`), as the other exports say it.
+ */
+export function listenHistoryTruncatedNotice(reason: string | null, rowLimit: number | null): string {
+  const remedy = 'Narrow the date range and export again to get the rest.';
+  if (reason === 'deadline') return `The export took too long and stopped early, so it does not hold every listen. ${remedy}`;
+  if (rowLimit !== null) return `Only the newest ${rowLimit.toLocaleString('en-GB')} listens were exported. ${remedy}`;
+  return `This export stopped at the server’s limit, so it does not hold every listen. ${remedy}`;
+}
+
+/** The account's Settings line (LS20 c): read-only, both client-exposed flags. */
+export const LISTEN_SETTINGS_COPY = {
+  title: 'Live call listening',
+  description:
+    'Whether supervisors in this account can listen to calls in progress. Nobody on the call hears them, and every listen is '
+    + 'recorded in the account’s Listening history.',
+  cardTitle: 'Listening to calls in progress',
+  on: 'Live call listening: On',
+  off: 'Live call listening: Off',
+  unrecordedIncluded: 'Calls that are not recorded can be listened to as well.',
+  unrecordedExcluded: 'Only calls that are recorded can be listened to.',
+  change: 'Ask your account manager to change this.',
+  loading: 'Checking…',
+  failed: 'Could not check whether live call listening is on. Try again.',
+  tryAgain: 'Try again',
+} as const;

@@ -477,3 +477,52 @@ describe('History row words', () => {
     expect(isActivityId('not an id')).toBe(false);
   });
 });
+
+describe('a supervisor listening to a call (LS19 e)', () => {
+  const ended = (detail: Record<string, unknown>) => row({
+    id: 'master:l-end',
+    source: 'master',
+    action: 'agency_call.listen_ended',
+    actor: { type: 'human', system: false, user_id: 'sup-1', api_key_id: null, display: 'Anita Kapoor' },
+    target: { type: 'agency_call', id: 'call-1' },
+    detail: { listen_id: 'l-1', call_id: 'call-1', origin: 'campaign', correlation_id: 'att-1', agent_user_id: 'u-1', ...detail },
+  });
+
+  it('reads an ended listen as whose call, for how long and how it ended, in words', () => {
+    expect(activityDetailSummary(ended({ agent_name: 'Priya Sharma', duration_seconds: 130, end_reason: 'listener_stopped' })))
+      .toBe('Listened to Priya S.’s call for 2m 10s · ended: stopped by the supervisor');
+    expect(activityDetailSummary(ended({ agent_name: 'Priya Sharma', duration_seconds: 45, end_reason: 'call_ended' })))
+      .toBe('Listened to Priya S.’s call for 45s · ended: the call ended');
+    expect(activityDetailSummary(ended({ agent_name: 'Priya Sharma', duration_seconds: 61, end_reason: 'access_unverified' })))
+      .toBe('Listened to Priya S.’s call for 1m 1s · ended: access could not be checked');
+  });
+
+  it('an agent the read could not name, a reason this build does not know, no duration: still a sentence', () => {
+    expect(activityDetailSummary(ended({ agent_name: null, duration_seconds: 60, end_reason: 'call_ended' })))
+      .toBe('Listened to an agent’s call for 1m · ended: the call ended');
+    expect(activityDetailSummary(ended({ agent_name: 'Priya Sharma', duration_seconds: 60, end_reason: 'something_new' })))
+      .toBe('Listened to Priya S.’s call for 1m');
+    expect(activityDetailSummary(ended({ agent_name: 'Priya' })))
+      .toBe('Listened to Priya’s call');
+  });
+
+  it('reads a started listen as whose call it was', () => {
+    const started = row({
+      action: 'agency_call.listen_started',
+      target: { type: 'agency_call', id: 'call-1' },
+      detail: { listen_id: 'l-1', call_id: 'call-1', origin: 'campaign', correlation_id: 'att-1', agent_user_id: 'u-1', agent_name: 'Priya Sharma' },
+    });
+    expect(activityDetailSummary(started)).toBe('Started listening to Priya S.’s call.');
+    expect(activityDetailSummary({ ...started, detail: { ...started.detail, agent_name: null } })).toBe('Started listening to an agent’s call.');
+  });
+
+  it('opens the listened-to call’s own page, from the row’s origin and spine row; an inbound call has none', () => {
+    const call = { type: 'agency_call', id: 'call-1' };
+    expect(activityTargetPath(call, 'c1', true, { origin: 'campaign', correlation_id: 'att-1' })).toBe('/agency/campaigns/c1/attempts/att-1');
+    expect(activityTargetPath(call, 'c1', true, { origin: 'manual', correlation_id: 'man-1' })).toBe('/agency/softphone/calls/man-1');
+    expect(activityTargetPath(call, 'c1', false, { origin: 'manual', correlation_id: 'man-1' })).toBeNull();
+    expect(activityTargetPath(call, 'c1', true, { origin: 'inbound', correlation_id: 'in-1' })).toBeNull();
+    expect(activityTargetPath(call, 'c1', true, { origin: 'campaign' })).toBeNull();
+    expect(activityTargetPath(call, 'c1', true)).toBeNull();
+  });
+});

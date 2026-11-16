@@ -1,5 +1,5 @@
 import { CALL_OVERRUN_AHT_MULTIPLE, agentDisplayName } from '../agencyAgentFloor';
-import { LIVE_CALLS_COPY, campaignCellLabel, customerLabel } from './listenCopy';
+import { LIVE_CALLS_COPY, campaignCellLabel, customerLabel, maskedNumberLabel } from './listenCopy';
 import type { AgencyCallOrigin, AgencyLiveCall } from '../../types/live-calls';
 import type { ListenTarget } from './listenSessionReducer';
 
@@ -165,7 +165,7 @@ export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): Li
     campaignId: call.campaign_id,
     campaignLabel: campaignCellLabel(call),
     agentName: agentName(call),
-    customerMasked: call.customer_phone_masked,
+    customerMasked: maskedNumberLabel(call),
     connectedAt: call.connected_at,
     clockOffsetMs,
   };

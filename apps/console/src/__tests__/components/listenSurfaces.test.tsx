@@ -186,6 +186,40 @@ describe('Listened to by (LS13)', () => {
     expect(items[2]!.textContent).toContain('Listening now');
   });
 
+  it('one supervisor’s reconnects within 30 s are one listen: its span, the time listened once, gaps left out', () => {
+    const sessions: AgencyCallListenSession[] = [
+      { listen_id: 'l-a', listener_user_id: 'u-1', listener_name: 'Anita Kapoor', started_at: '2026-11-16T14:02:00Z', ended_at: '2026-11-16T14:03:00Z', end_reason: 'listener_disconnected', duration_seconds: 60 },
+      // 10 s later, a reconnect.
+      { listen_id: 'l-b', listener_user_id: 'u-1', listener_name: 'Anita Kapoor', started_at: '2026-11-16T14:03:10Z', ended_at: '2026-11-16T14:04:20Z', end_reason: 'listener_stopped', duration_seconds: 70 },
+      // Another supervisor in the gap: their own listen.
+      { listen_id: 'l-c', listener_user_id: 'u-2', listener_name: 'Rohan Shah', started_at: '2026-11-16T14:03:05Z', ended_at: '2026-11-16T14:03:30Z', end_reason: 'call_ended', duration_seconds: 25 },
+      // Anita again, minutes later: a new listen.
+      { listen_id: 'l-d', listener_user_id: 'u-1', listener_name: 'Anita Kapoor', started_at: '2026-11-16T14:10:00Z', ended_at: '2026-11-16T14:11:00Z', end_reason: 'call_ended', duration_seconds: 60 },
+    ];
+    render(<ListenedToBy sessions={sessions} />);
+    const items = within(screen.getByTestId('listened-to-by')).getAllByRole('listitem');
+    expect(items.map((i) => i.getAttribute('data-testid'))).toEqual(['listened-l-a', 'listened-l-c', 'listened-l-d']);
+    expect(items[0]!.textContent).toBe(
+      `AKAnita Kapoor${listenSpanLabel({ started_at: '2026-11-16T14:02:00Z', ended_at: '2026-11-16T14:04:20Z' })}2m 10s`,
+    );
+    expect(items[2]!.textContent).toContain('1m');
+  });
+
+  it('a listen whose latest reconnect is still open is "Listening now"', () => {
+    render(
+      <ListenedToBy
+        sessions={[
+          { listen_id: 'l-a', listener_user_id: 'u-1', listener_name: 'Anita Kapoor', started_at: '2026-11-16T14:02:00Z', ended_at: '2026-11-16T14:03:00Z', end_reason: 'listener_disconnected', duration_seconds: 60 },
+          { listen_id: 'l-b', listener_user_id: 'u-1', listener_name: 'Anita Kapoor', started_at: '2026-11-16T14:03:05Z', ended_at: null, end_reason: null, duration_seconds: null },
+        ]}
+      />,
+    );
+    const items = within(screen.getByTestId('listened-to-by')).getAllByRole('listitem');
+    expect(items).toHaveLength(1);
+    expect(items[0]!.textContent).toContain('Listening now');
+    expect(items[0]!.textContent).toContain('since');
+  });
+
   it('renders nothing for a call nobody listened to, or a server without the field', () => {
     const { container, rerender } = render(<ListenedToBy sessions={[]} />);
     expect(container.textContent).toBe('');

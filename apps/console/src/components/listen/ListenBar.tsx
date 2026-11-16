@@ -184,6 +184,8 @@ function endedLine(state: ListenSessionState, compact: boolean): string {
       return LISTEN_BAR_COPY.turnedOff;
     case 'superseded':
       return LISTEN_BAR_COPY.superseded;
+    case 'unverified':
+      return LISTEN_BAR_COPY.unverified;
     case 'refused':
       return end.code ? LISTEN_REFUSAL_COPY[end.code] : LISTEN_REFUSAL_FALLBACK.other;
   }
@@ -201,14 +203,17 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
   ) : null;
 
   if (over) {
+    // "Listening stopped because your access could not be checked." says the head's words itself.
+    const unverified = state.end?.kind === 'unverified';
     return (
       <div className={styles.row}>
         <div className={styles.who} role="status">
-          <Status state={state} region={false} />
+          {unverified ? null : <Status state={state} region={false} />}
           <span className={styles.line} data-testid="listen-ended-line">{endedLine(state, false)}</span>
         </div>
         <div className={styles.controls}>
           {state.end?.kind === 'call_ended' ? openCall : null}
+          {unverified ? <RetryButton /> : null}
           <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
             {LISTEN_BAR_COPY.dismiss}
           </button>
@@ -262,9 +267,7 @@ function StopOrLost({ state, compact = false }: { state: ListenSessionState; com
   if (state.phase === 'lost') {
     return (
       <>
-        <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
-          {LISTEN_BAR_COPY.tryAgain}
-        </button>
+        <RetryButton />
         <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-close">
           {LISTEN_BAR_COPY.close}
         </button>
@@ -284,6 +287,16 @@ function StopOrLost({ state, compact = false }: { state: ListenSessionState; com
   );
 }
 
+/** Try again: after "Connection lost", and after a listen whose access could not be checked (LS21). */
+function RetryButton() {
+  const listen = useListen()!;
+  return (
+    <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
+      {LISTEN_BAR_COPY.tryAgain}
+    </button>
+  );
+}
+
 /** Phone width: the live dot, the timer and Stop. */
 function CompactRow({ state, target }: { state: ListenSessionState; target: ListenTarget }) {
   const listen = useListen()!;
@@ -291,6 +304,7 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
     return (
       <div className={styles.row}>
         <span className={styles.line} role="status" data-testid="listen-ended-line">{endedLine(state, true)}</span>
+        {state.end?.kind === 'unverified' ? <RetryButton /> : null}
         <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
           {LISTEN_BAR_COPY.dismiss}
         </button>

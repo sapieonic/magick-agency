@@ -12,6 +12,7 @@ import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { useLiveCalls } from '../../hooks/listen/useLiveCalls';
 import { revealLiveCallNumber } from '../../api/liveCalls';
 import { elapsedSince } from '../../utils/agencyClock';
+import { errorCode, errorStatus } from '../../utils/agencyErrors';
 import { initialsFor } from '../../utils/initials';
 import {
   LIVE_CALLS_COPY,
@@ -61,7 +62,11 @@ export interface LiveCallsTableProps {
   onCount?: (count: number | null) => void;
 }
 
-type Reveal = { status: 'loading' } | { status: 'shown'; phone: string } | { status: 'error' };
+/**
+ * One row's number reveal. `withheld`: the reveal answered `404 live_call_number_withheld` (the
+ * row did not say so first): "Withheld", and Show is offered no more.
+ */
+type Reveal = { status: 'loading' } | { status: 'shown'; phone: string } | { status: 'withheld' } | { status: 'error' };
 
 /**
  * The calls in progress (`docs/listening.md` §9): read every 5 s while visible, each with its
@@ -124,6 +129,7 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
   const toggleNumber = useCallback(
     (callId: string) => {
       const current = reveals[callId];
+      if (current?.status === 'withheld') return;
       if (current && current.status !== 'error') {
         setReveals(({ [callId]: _gone, ...rest }) => rest);
         return;
@@ -131,7 +137,10 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
       setReveals((prev) => ({ ...prev, [callId]: { status: 'loading' } }));
       revealLiveCallNumber(callId, tenantId ?? undefined, accountId ?? undefined).then(
         (res) => setReveals((prev) => (prev[callId] ? { ...prev, [callId]: { status: 'shown', phone: res.customer_phone } } : prev)),
-        () => setReveals((prev) => (prev[callId] ? { ...prev, [callId]: { status: 'error' } } : prev)),
+        (err: unknown) => {
+          const withheld = errorStatus(err) === 404 && errorCode(err) === 'live_call_number_withheld';
+          setReveals((prev) => (prev[callId] ? { ...prev, [callId]: withheld ? { status: 'withheld' } : { status: 'error' } } : prev));
+        },
       );
     },
     [reveals, tenantId, accountId],
@@ -354,7 +363,11 @@ function LiveCallRow({
   const pagePath = liveCallRowPagePath(call);
   const name = agentName(call);
   const customer = customerLabel(call);
-  const shownNumber = reveal?.status === 'shown' ? formatPhone(reveal.phone) : call.customer_phone_masked;
+  // A caller who withheld their number has none to show: "Withheld", and no Show (LS22 i).
+  const withheld = Boolean(call.customer_phone_withheld) || reveal?.status === 'withheld';
+  const shownNumber = withheld
+    ? LIVE_CALLS_COPY.withheld
+    : reveal?.status === 'shown' ? formatPhone(reveal.phone) : call.customer_phone_masked;
 
   return (
     <tr
@@ -384,7 +397,7 @@ function LiveCallRow({
             <span className={styles.mono} data-testid={`live-call-number-${call.call_id}`}>
               {shownNumber}
             </span>
-            {!ended ? (
+            {!ended && !withheld ? (
               <button
                 type="button"
                 className={styles.reveal}

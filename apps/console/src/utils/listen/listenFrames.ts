@@ -109,6 +109,9 @@ export function encodeListenClientFrame(frame: AgencyListenClientFrame): string 
  *  - `turned_off`: "Listening has been turned off for this account." (a re-grant refused
  *    `feature_disabled`; the socket's own 4403 cannot tell the flag from the permission);
  *  - `superseded`: listening started in another tab or window;
+ *  - `unverified`: the server could not check the supervisor's access for too long (LS21, 4503):
+ *    stopped, saying so, with Try again (a fresh grant checks afresh); neither "no longer have
+ *    access" nor a reconnect loop;
  *  - `refused`: a cap or a malformed upgrade refused the attach; `code` says which;
  *  - `remint`: the token was refused: mint a fresh grant now;
  *  - `reconnect`: any other drop: re-mint and reconnect within the window;
@@ -120,6 +123,7 @@ export type ListenCloseOutcome =
   | { kind: 'revoked' }
   | { kind: 'turned_off' }
   | { kind: 'superseded' }
+  | { kind: 'unverified' }
   | { kind: 'refused'; code: AgencyListenErrorCode | null }
   | { kind: 'remint' }
   | { kind: 'reconnect' }
@@ -137,6 +141,8 @@ export function listenCloseOutcome(code: number, reason: string): ListenCloseOut
       return { kind: 'call_ended' };
     case AGENCY_LISTEN_CLOSE.SUPERSEDED:
       return { kind: 'superseded' };
+    case AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED:
+      return { kind: 'unverified' };
     case AGENCY_LISTEN_CLOSE.LIMIT:
       return { kind: 'refused', code: errorCode };
     case AGENCY_LISTEN_CLOSE.INVALID_UPGRADE:
@@ -165,6 +171,8 @@ export function terminalEndReason(reason: AgencyListenEndReason): ListenCloseOut
       return { kind: 'revoked' };
     case 'superseded':
       return { kind: 'superseded' };
+    case 'access_unverified':
+      return { kind: 'unverified' };
     default:
       return null;
   }

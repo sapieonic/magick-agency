@@ -222,6 +222,41 @@ describe('the merged trail', () => {
   });
 });
 
+describe('a supervisor listening to a call (LS19 e)', () => {
+  const SUP = { type: 'human', system: false, user_id: 'sup-1', api_key_id: null, display: 'Anita Kapoor' } as const;
+  const listen = (action: 'started' | 'ended', id: string, at: string, extra: Record<string, unknown> = {}): ActivityRow => ({
+    id: `master:${action}-${id}`,
+    at,
+    source: 'master',
+    action: `agency_call.listen_${action}`,
+    actor: SUP,
+    target: { type: 'agency_call', id: 'call-1' },
+    detail: { listen_id: id, call_id: 'call-1', origin: 'campaign', correlation_id: 'att-7', agent_user_id: 'u-1', agent_name: 'Priya Sharma', ...extra },
+  });
+
+  it('reads as one sentence per listen, a reconnect merged in, with the call linked', async () => {
+    mocks.getCampaignActivity.mockResolvedValue(page({
+      rows: [
+        listen('ended', 'l-2', '2026-08-01T10:02:20.000Z', { duration_seconds: 70, end_reason: 'call_ended', frames_dropped: 0 }),
+        listen('started', 'l-2', '2026-08-01T10:01:10.000Z'),
+        listen('ended', 'l-1', '2026-08-01T10:01:00.000Z', { duration_seconds: 60, end_reason: 'listener_disconnected', frames_dropped: 0 }),
+        listen('started', 'l-1', '2026-08-01T10:00:00.000Z'),
+      ],
+      total: 4,
+    }));
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('activity-row-master:ended-l-2')).toBeTruthy());
+    expect(screen.queryByTestId('activity-row-master:ended-l-1')).toBeNull();
+    expect(screen.queryByTestId('activity-row-master:started-l-1')).toBeNull();
+    expect(screen.queryByTestId('activity-row-master:started-l-2')).toBeNull();
+    expect(row('master:ended-l-2').getByText('Listened to Priya S.’s call for 2m 10s · ended: the call ended')).toBeTruthy();
+    expect(row('master:ended-l-2').getByRole('link').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-7');
+    // Not the raw key and value list.
+    expect(row('master:ended-l-2').queryByText('Frames dropped')).toBeNull();
+  });
+});
+
 describe('stating what is missing', () => {
   /**
    * The whole reason the API carries `partial`. A view that silently omits the
