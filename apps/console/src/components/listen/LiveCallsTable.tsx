@@ -125,7 +125,14 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
   }
 
   return (
-    <section aria-labelledby="live-calls-title" data-testid="live-calls">
+    /*
+      `ph-no-capture`: every row carries a customer's name and number (the full number once
+      shown), and PostHog autocapture, rage and dead clicks record a clicked element's text and
+      attributes (the Show and Open call buttons are named after the customer). The whole table
+      rather than chosen cells, so a column added later is covered too. See `CustomerSearchBox`
+      for the mechanism and its pins (CH6: the number never reaches analytics).
+    */
+    <section aria-labelledby="live-calls-title" className="ph-no-capture" data-testid="live-calls">
       <header className={styles.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true">
@@ -479,6 +486,7 @@ function Action({
       className={`btn-secondary ${styles.actionButton}`}
       onClick={() => listen.listen(call, clockOffsetMs)}
       aria-label={`Listen to ${agentName(call)}’s call`}
+      data-listen-trigger={call.call_id}
       data-testid={`live-call-listen-${call.call_id}`}
     >
       <Headphones size={14} aria-hidden="true" />

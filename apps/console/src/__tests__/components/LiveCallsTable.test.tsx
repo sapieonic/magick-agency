@@ -214,7 +214,7 @@ describe('the table', () => {
   it('says why a call cannot be listened to, beside a disabled Listen', async () => {
     await renderTable();
     expect(screen.getByTestId('live-call-reason-c-sneha').textContent).toBe('Listening is turned off for unrecorded calls');
-    expect(screen.getByTestId('live-call-reason-c-vikram').textContent).toBe('Two supervisors are already listening');
+    expect(screen.getByTestId('live-call-reason-c-vikram').textContent).toBe('This call has reached its listening limit');
     const disabled = within(rowOf('c-sneha')).getByRole('button', { name: /Listen/ });
     expect((disabled as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId('live-call-listen-c-priya')).toBeTruthy();
@@ -263,6 +263,24 @@ describe('the number', () => {
     expect(within(rowOf('c-priya')).getByRole('alert').textContent).toBe('Could not show the number. Try again.');
   });
 
+  it('keeps the whole table, the shown number included, inside a ph-no-capture boundary (CH6)', async () => {
+    mocks.revealLiveCallNumber.mockResolvedValue({ call_id: 'c-priya', customer_phone: '+919845014321' });
+    await renderTable();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-reveal-c-priya'));
+    });
+    const table = screen.getByTestId('live-calls');
+    expect(table.classList.contains('ph-no-capture')).toBe(true);
+    for (const el of [
+      screen.getByTestId('live-call-number-c-priya'),
+      screen.getByTestId('live-call-reveal-c-priya'),
+      screen.getByTestId('live-call-open-c-priya'),
+      screen.getByText('Rahul Mehta'),
+    ]) {
+      expect(el.closest('.ph-no-capture')).toBe(table);
+    }
+  });
+
   it('the full number is never in the polled list', async () => {
     await renderTable();
     for (const [query] of mocks.listLiveCalls.mock.calls) expect(JSON.stringify(query)).not.toMatch(/phone/);
@@ -286,6 +304,32 @@ describe('the poll', () => {
       await vi.advanceTimersByTimeAsync(3_100);
     });
     expect(screen.queryByTestId('live-call-c-priya')).toBeNull();
+  });
+
+  it('an older read answering after a newer one is dropped: it cannot end a live call or mask a shown number', async () => {
+    mocks.revealLiveCallNumber.mockResolvedValue({ call_id: 'c-priya', customer_phone: '+919845014321' });
+    await renderTable();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-reveal-c-priya'));
+    });
+    expect(screen.getByTestId('live-call-number-c-priya').textContent).not.toBe('****4321');
+    // Coming back to the tab twice (focus, then visibility): two reads in flight, answering out of order.
+    let answerOlder!: (v: ReturnType<typeof answer>) => void;
+    mocks.listLiveCalls
+      .mockImplementationOnce(() => new Promise((resolve) => (answerOlder = resolve)))
+      .mockImplementationOnce(async () => answer([VIKRAM, ARJUN, PRIYA, SNEHA]));
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(mocks.listLiveCalls).toHaveBeenCalledTimes(3);
+    // The older read was taken before Priya's call was in the list.
+    await act(async () => {
+      answerOlder(answer([VIKRAM, ARJUN, SNEHA], new Date(NOW - 4_000).toISOString()));
+    });
+    expect(rowOf('c-priya').getAttribute('data-ended')).toBeNull();
+    expect(screen.getByTestId('live-call-number-c-priya').textContent).not.toBe('****4321');
+    expect(screen.getByTestId('live-calls-count').textContent).toBe('4 in progress');
   });
 
   it('keeps the rows and says it is retrying when a read fails', async () => {

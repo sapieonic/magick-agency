@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   INITIAL_LISTEN_STATE,
   LISTEN_MAX_INTERNAL_ERRORS,
+  LISTEN_STABLE_MS,
   listenBarVisible,
   listenSessionReducer as reduce,
   listenSocketWanted,
@@ -96,13 +97,29 @@ describe('starting', () => {
     expect(s).toMatchObject({ phase: 'connecting', refusal: null, soundBlocked: false, startedAt: null, attempt: 2 });
   });
 
+  it('the first attach has the same 15 s: a grant that never answers is "Connection lost"', () => {
+    const s = reduce(INITIAL_LISTEN_STATE, { type: 'start', target: TARGET, now: 1_000 });
+    expect(reduce(s, { type: 'tick', now: 1_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS - 1 })).toBe(s);
+    expect(reduce(s, { type: 'tick', now: 1_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS })).toMatchObject({ phase: 'lost', step: null, target: TARGET });
+  });
+
+  it('…and so does a socket that never says ready; ready ends the deadline', () => {
+    const opened = run([
+      { type: 'start', target: TARGET, now: 0 },
+      { type: 'granted', attempt: 1, listenId: 'l-1' },
+    ]);
+    expect(reduce(opened, { type: 'tick', now: AGENCY_LISTEN_RECONNECT_WINDOW_MS }).phase).toBe('lost');
+    expect(reduce(live(), { type: 'tick', now: AGENCY_LISTEN_RECONNECT_WINDOW_MS * 10 }).phase).toBe('live');
+  });
+
   it('a socket that fails before ready waits and tries again, still "connecting"', () => {
     const s = run([
       { type: 'start', target: TARGET, now: 0 },
       { type: 'granted', attempt: 1, listenId: 'l-1' },
       { type: 'closed', attempt: 1, code: 1006, reason: '', now: 100 },
     ]);
-    expect(s).toMatchObject({ phase: 'connecting', step: 'wait', retry: { deadline: 100 + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 } });
+    // Within the first attach's own 15 s, which run from the click.
+    expect(s).toMatchObject({ phase: 'connecting', step: 'wait', retry: { deadline: AGENCY_LISTEN_RECONNECT_WINDOW_MS }, internalErrors: 0 });
   });
 });
 
@@ -220,7 +237,7 @@ describe('how a listen ends', () => {
 describe('reconnecting (up to 15 s, a fresh grant each time)', () => {
   it('a drop after ready: reconnecting, waiting, the window from the drop', () => {
     const s = dropped();
-    expect(s).toMatchObject({ phase: 'reconnecting', step: 'wait', retry: { deadline: 5_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 } });
+    expect(s).toMatchObject({ phase: 'reconnecting', step: 'wait', retry: { deadline: 5_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS }, internalErrors: 0 });
     expect(listenSocketWanted(s)).toBe(false);
   });
 
@@ -282,12 +299,51 @@ describe('reconnecting (up to 15 s, a fresh grant each time)', () => {
     for (let i = 1; i < 3; i++) {
       s = reduce(s, { type: 'closed', attempt, code: 1011, reason: 'tap_error', now: 2_000 + i });
       expect(s.phase, `failure ${i}`).toBe('reconnecting');
-      expect(s.retry?.internalErrors).toBe(i);
+      expect(s.internalErrors).toBe(i);
       s = run([{ type: 'reattach', now: 2_100 + i }, { type: 'granted', attempt: attempt + 1, listenId: 'l' }], s);
       attempt += 1;
     }
     s = reduce(s, { type: 'closed', attempt, code: 1011, reason: 'listen_unavailable', now: 3_000 });
     expect(s.phase).toBe('lost');
+  });
+
+  it('server failures stay bounded when every attach reaches ready first: three in a row end it', () => {
+    let s = live();
+    let attempt = 1;
+    let now = 2_000;
+    for (let i = 1; i < LISTEN_MAX_INTERNAL_ERRORS; i++) {
+      s = reduce(s, { type: 'closed', attempt, code: 1011, reason: 'tap_error', now });
+      expect(s.phase, `failure ${i}`).toBe('reconnecting');
+      s = run([
+        { type: 'reattach', now: now + 250 },
+        { type: 'granted', attempt: attempt + 1, listenId: `l-${i}` },
+        { type: 'ready', attempt: attempt + 1, listenId: `l-${i}`, now: now + 300 },
+      ], s);
+      expect(s.phase, `ready ${i}`).toBe('live');
+      attempt += 1;
+      now += 1_000;
+    }
+    s = reduce(s, { type: 'closed', attempt, code: 1011, reason: 'tap_error', now });
+    expect(s.phase).toBe('lost');
+  });
+
+  it('a listen that stays live for a while has recovered: its server-failure count starts again', () => {
+    let s = live();
+    let attempt = 1;
+    let now = 1_000;
+    for (let i = 1; i <= LISTEN_MAX_INTERNAL_ERRORS * 2; i++) {
+      now += LISTEN_STABLE_MS;
+      s = reduce(s, { type: 'closed', attempt, code: 1011, reason: 'tap_error', now });
+      expect(s.phase, `failure ${i}`).toBe('reconnecting');
+      s = run([
+        { type: 'reattach', now: now + 250 },
+        { type: 'granted', attempt: attempt + 1, listenId: `l-${i}` },
+        { type: 'ready', attempt: attempt + 1, listenId: `l-${i}`, now: now + 300 },
+      ], s);
+      attempt += 1;
+      now += 300;
+    }
+    expect(s.phase).toBe('live');
   });
 
   it.each([
@@ -329,7 +385,8 @@ describe('Try again', () => {
       step: 'grant',
       attempt: 2,
       target: TARGET,
-      retry: { deadline: 30_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 },
+      retry: { deadline: 30_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS },
+      internalErrors: 0,
     });
   });
 

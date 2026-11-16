@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Lock, Volume2, VolumeX } from 'lucide-react';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
@@ -30,14 +30,34 @@ import styles from './ListenBar.module.css';
  * (Esc while the bar has focus), and, whatever state it is in, the notice that the session is
  * logged. At phone width it is the live dot, the timer and Stop, with the notice under them.
  *
+ * Focus: the Listen button gives way to "Connecting…", so focus moves to the bar (where Esc
+ * stops), and whenever what held it inside the bar goes; when the bar goes, it returns to the
+ * row's Listen if that row is on the page. Focus the supervisor moved elsewhere is left alone.
+ *
  * Renders nothing while idle. Reads the shell's listen (`useListen`).
  */
 export function ListenBar() {
   const listen = useListen();
   const compact = useMediaQuery('(max-width: 640px)');
-  if (!listen) return null;
-  const { state } = listen;
-  if (state.phase === 'idle' || !state.target) return null;
+  const barRef = useRef<HTMLElement>(null);
+  const state = listen?.state ?? null;
+  const visible = Boolean(state && state.phase !== 'idle' && state.target);
+  const phase = state?.phase ?? 'idle';
+  const callId = state?.target?.callId ?? null;
+  const lastCallId = useRef<string | null>(null);
+  if (visible) lastCallId.current = callId;
+
+  useLayoutEffect(() => {
+    if (visible && focusLost()) barRef.current?.focus();
+  }, [visible, phase]);
+
+  const wasVisible = useRef(false);
+  useLayoutEffect(() => {
+    if (wasVisible.current && !visible && focusLost()) listenTrigger(lastCallId.current)?.focus();
+    wasVisible.current = visible;
+  }, [visible]);
+
+  if (!listen || !state || !visible || !state.target) return null;
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
@@ -47,8 +67,15 @@ export function ListenBar() {
   };
 
   return (
+    /*
+      `ph-no-capture`: the bar names the agent and shows the customer's (masked) number and the
+      campaign, and PostHog autocapture records a clicked element's text and attributes. See
+      `CustomerSearchBox` for the mechanism and its pins (CH6: the call never reaches analytics).
+    */
     <section
-      className={styles.bar}
+      ref={barRef}
+      tabIndex={-1}
+      className={`${styles.bar} ph-no-capture`}
       aria-label={LISTEN_BAR_COPY.region}
       data-testid="listen-bar"
       data-phase={state.phase}
@@ -65,8 +92,26 @@ export function ListenBar() {
   );
 }
 
-/** The bar's head: what state the listen is in. */
-function Status({ state }: { state: ListenSessionState }) {
+/** Nothing has focus: what held it was removed from the page. */
+function focusLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body;
+}
+
+/** The row's Listen for `callId` (`LiveCallsTable`), where that row is on this page. */
+function listenTrigger(callId: string | null): HTMLElement | null {
+  if (!callId) return null;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-listen-trigger]')) {
+    if (el.dataset.listenTrigger === callId) return el;
+  }
+  return null;
+}
+
+/**
+ * The bar's head: what state the listen is in. Its own live region, except when the listen has
+ * ended: then the region is the head and the reason together (`region={false}` here).
+ */
+function Status({ state, region = true }: { state: ListenSessionState; region?: boolean }) {
   let body;
   switch (state.phase) {
     case 'connecting':
@@ -100,7 +145,7 @@ function Status({ state }: { state: ListenSessionState }) {
       body = state.end?.kind === 'call_ended' ? LISTEN_BAR_COPY.callEnded : LISTEN_BAR_COPY.stopped;
   }
   return (
-    <span className={styles.status} role="status" data-testid="listen-status">
+    <span className={styles.status} role={region ? 'status' : undefined} data-testid="listen-status">
       {body}
     </span>
   );
@@ -123,7 +168,7 @@ function endedLine(state: ListenSessionState): string {
   if (!end) return '';
   switch (end.kind) {
     case 'call_ended':
-      return listenedForLabel(end.listenedMs);
+      return state.startedAt === null ? LISTEN_BAR_COPY.endedBeforeJoin : listenedForLabel(end.listenedMs);
     case 'revoked':
       return LISTEN_BAR_COPY.revoked;
     case 'superseded':
@@ -145,8 +190,8 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
   if (over) {
     return (
       <div className={styles.row}>
-        <div className={styles.who}>
-          <Status state={state} />
+        <div className={styles.who} role="status">
+          <Status state={state} region={false} />
           <span className={styles.line} data-testid="listen-ended-line">{endedLine(state)}</span>
         </div>
         <div className={styles.controls}>
@@ -189,7 +234,7 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
         </label>
         {openCall}
         {state.phase === 'lost' ? (
-          <button type="button" className="btn-primary" onClick={() => listen.controller.retry()} data-testid="listen-retry">
+          <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
             {LISTEN_BAR_COPY.tryAgain}
           </button>
         ) : null}
@@ -212,7 +257,7 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
   if (state.phase === 'ended') {
     return (
       <div className={styles.row}>
-        <span className={styles.line} data-testid="listen-ended-line">{endedLine(state)}</span>
+        <span className={styles.line} role="status" data-testid="listen-ended-line">{endedLine(state)}</span>
         <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
           {LISTEN_BAR_COPY.dismiss}
         </button>
@@ -227,7 +272,7 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
         <CallTimer state={state} target={target} />
       </span>
       {state.phase === 'lost' ? (
-        <button type="button" className="btn-primary" onClick={() => listen.controller.retry()} data-testid="listen-retry">
+        <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
           {LISTEN_BAR_COPY.tryAgain}
         </button>
       ) : null}
@@ -268,7 +313,7 @@ function Meter({ leg, engine, live, silent }: { leg: AgencyListenLeg; engine: Li
     <div className={styles.meter} data-muted={muted ? 'true' : undefined} data-testid={`listen-meter-${leg}`}>
       <span className={styles.meterLabel}>
         {label}
-        {silent ? <span className={styles.meterNote} data-testid="listen-agent-gap">{LISTEN_BAR_COPY.agentReconnecting}</span> : null}
+        {silent ? <span className={styles.meterNote} data-testid="listen-agent-gap">{LISTEN_BAR_COPY.agentSilent}</span> : null}
       </span>
       <span className={styles.track} aria-hidden="true">
         <span ref={fillRef} className={styles.fill} />

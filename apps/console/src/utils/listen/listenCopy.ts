@@ -63,7 +63,7 @@ export function updatedAgoLabel(seconds: number): string {
 /** Why Listen is disabled on a row (the grant's own refusal, LS3, LS4, LS5). */
 export const NOT_LISTENABLE_COPY: Record<AgencyLiveCallNotListenableReason, string> = {
   listen_recording_off: 'Listening is turned off for unrecorded calls',
-  listen_limit_call: 'Two supervisors are already listening',
+  listen_limit_call: 'This call has reached its listening limit',
   listen_own_call: 'You are on this call',
 };
 
@@ -78,18 +78,23 @@ export function notListenableCopy(reason: AgencyLiveCallNotListenableReason | nu
 export const LISTEN_REFUSAL_COPY: Record<AgencyListenErrorCode, string> = {
   listen_call_not_live: 'That call has ended.',
   listen_recording_off: 'Listening is turned off for unrecorded calls.',
-  listen_limit_call: 'Two supervisors are already listening to that call.',
+  listen_limit_call: 'That call has reached its listening limit.',
   listen_limit_server: 'Listening is busy right now. Try again in a minute.',
   listen_own_call: 'You are on this call.',
   listen_unavailable: 'Listening is not available right now. Try again.',
 };
 
-/** Refusals that are not listen codes: the flag (`feature_disabled`), the permission, the network. */
+/**
+ * Refusals that are not listen codes: the flag (`feature_disabled`), the permission, the network,
+ * and a browser that cannot play the sound (no Web Audio, or no context to be had), which the
+ * console refuses itself before minting a grant.
+ */
 export const LISTEN_REFUSAL_FALLBACK = {
   featureDisabled: 'Listening is turned off for this account.',
   forbidden: 'You do not have access to listen to calls.',
   network: 'Could not start listening. Check your connection and try again.',
   other: 'Could not start listening. Try again.',
+  noAudio: 'This browser cannot play the call’s sound, so you cannot listen here.',
 } as const;
 
 /** The listening bar's words, by state. */
@@ -102,12 +107,15 @@ export const LISTEN_BAR_COPY = {
   lost: 'Connection lost',
   tryAgain: 'Try again',
   callEnded: 'Call ended',
+  /** The call was gone before the first `ready` (4404 on the first attach): nothing was heard. */
+  endedBeforeJoin: 'The call ended before you joined.',
   stopped: 'Listening stopped',
   revoked: 'You no longer have access to listen to calls.',
   superseded: 'Listening moved to another call.',
   soundBlocked: 'Your browser blocked the sound. Click to turn it on.',
   turnSoundOn: 'Turn sound on',
-  agentReconnecting: 'Agent reconnecting…',
+  /** The agent's leg has sent nothing for over 2 s: a muted console agent sends nothing, so not "reconnecting". */
+  agentSilent: 'Agent is silent',
   agent: 'Agent',
   customer: 'Customer',
   volume: 'Volume',
@@ -175,10 +183,11 @@ export function shortName(name: string): string {
 }
 
 /**
- * The words for a refused grant or upgrade: its code's, else the status's. A 503 without a listen
- * code reads as `listen_unavailable`: the server's error mask strips the body of every 5xx it has
- * not reviewed, which today includes the grant's own `listen_limit_server` and
- * `listen_unavailable`, and a worker restarting answers `worker_unavailable`.
+ * The words for a refused grant or upgrade: its code's, else the status's. The grant's own 503s
+ * (`listen_limit_server`, `listen_unavailable`) arrive with their code: the route marks them
+ * reviewed, so the server's error mask lets them through. A 503 without a listen code still reads
+ * as `listen_unavailable`: a worker restarting answers `worker_unavailable`, and a 503 from in
+ * front of the server has no body the console can read.
  */
 export function listenRefusalMessage(refusal: { status: number | null; code: string | null }): string {
   const code = refusal.code;

@@ -31,6 +31,10 @@ export interface LiveCallsRead {
  * The live list, read every 5 s while the page is visible (never stacked: `useVisibleInterval`),
  * again on returning to the tab, and kept honest about time: `as_of` sets the server clock the
  * timers count on. A call that leaves the list lingers 3 s as ended.
+ *
+ * Reads can overlap (the tab's return fires `focus` and `visibilitychange`, beside the poll), so
+ * each carries a sequence number and only the latest one asked may land: an older answer arriving
+ * late would mark a live call ended and drop its shown number.
  */
 export function useLiveCalls(params: {
   tenantId: string | null | undefined;
@@ -46,6 +50,7 @@ export function useLiveCalls(params: {
   const scope = `${tenantId ?? ''}|${accountId ?? ''}|${campaignId ?? ''}`;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  const seqRef = useRef(0);
   const stopped = failure === 'forbidden' || failure === 'feature_disabled';
 
   // Another account or campaign: start from nothing, never show the last one's calls.
@@ -58,10 +63,11 @@ export function useLiveCalls(params: {
   const reload = useCallback(async () => {
     if (!enabled || !tenantId || !accountId) return;
     const asked = scope;
+    const seq = ++seqRef.current;
     const sentAt = Date.now();
     try {
       const res = await listLiveCalls(campaignId ? { campaign_id: campaignId } : {}, tenantId, accountId);
-      if (scopeRef.current !== asked) return;
+      if (scopeRef.current !== asked || seqRef.current !== seq) return;
       const now = Date.now();
       const serverTs = Date.parse(res.as_of);
       if (Number.isFinite(serverTs)) setClockOffsetMs(offsetFromSample({ ts: sentAt, server_ts: serverTs, receivedAt: now }));
@@ -69,7 +75,7 @@ export function useLiveCalls(params: {
       setReceivedAt(now);
       setFailure(null);
     } catch (err) {
-      if (scopeRef.current !== asked) return;
+      if (scopeRef.current !== asked || seqRef.current !== seq) return;
       const status = errorStatus(err);
       if (status === 403 && errorCode(err) === 'feature_disabled') setFailure('feature_disabled');
       else if (status === 403) setFailure('forbidden');

@@ -8,7 +8,7 @@ import { useListenPlayback, type ListenPlayback } from '../../hooks/listen/useLi
 import { useListenSession } from '../../hooks/listen/useListenSession';
 import { browserStorage } from '../../utils/browserStorage';
 import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
-import { LISTEN_CONFIRM, listenRefusalMessage } from '../../utils/listen/listenCopy';
+import { LISTEN_CONFIRM, LISTEN_REFUSAL_FALLBACK, listenRefusalMessage } from '../../utils/listen/listenCopy';
 import { LISTEN_AGENT_SILENCE_MS } from '../../utils/listen/listenPlayback';
 import { listenTargetFor } from '../../utils/listen/liveCallsTable';
 import type { ListenSessionController } from '../../utils/listen/listenSessionController';
@@ -57,6 +57,8 @@ export interface ListenContextValue {
   /** Listen to `call` (after the first-use confirmation, the first time in this browser). */
   listen: (call: AgencyLiveCall, clockOffsetMs: number) => void;
   stop: () => void;
+  /** "Try again" after "Connection lost": a gesture, so it also runs the audio again. */
+  retry: () => void;
   /** "Turn sound on": a gesture lifts the autoplay policy. */
   resumeSound: () => void;
 }
@@ -121,6 +123,13 @@ export function ListenProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, [live, controller, engine]);
 
+  // A listen over (stopped, ended, lost): silence now, not the ~600 ms still queued, and the
+  // context suspended rather than running for the shell's life. The next gesture resumes it.
+  const audible = state.phase === 'connecting' || state.phase === 'live' || state.phase === 'reconnecting';
+  useEffect(() => {
+    if (!audible) engine.release();
+  }, [audible, engine]);
+
   // The flag going off or the permission going away ends a listen here at once.
   useEffect(() => {
     if (!canListen && controller.getState().phase !== 'idle') controller.stop();
@@ -133,11 +142,16 @@ export function ListenProvider({ children }: { children: ReactNode }) {
 
   const begin = useCallback(
     (call: AgencyLiveCall, offset: number) => {
-      // Inside the click: the gesture lets the browser run the context it creates.
-      engine.ensure();
+      // A browser that cannot play the sound gets no grant, no session row and no bar.
+      if (!engine.ensure()) {
+        showToast?.(LISTEN_REFUSAL_FALLBACK.noAudio, 'error');
+        return;
+      }
+      // Inside the click: the gesture lets the browser run the context.
+      void engine.resume();
       controller.start(listenTargetFor(call, offset));
     },
-    [engine, controller],
+    [engine, controller, showToast],
   );
 
   const listen = useCallback(
@@ -150,13 +164,17 @@ export function ListenProvider({ children }: { children: ReactNode }) {
   );
 
   const stop = useCallback(() => controller.stop(), [controller]);
+  const retry = useCallback(() => {
+    void engine.resume();
+    controller.retry();
+  }, [engine, controller]);
   const resumeSound = useCallback(() => {
     void engine.resume().then(() => controller.reportSound(engine.blocked));
   }, [engine, controller]);
 
   const value = useMemo<ListenContextValue>(
-    () => ({ canListen, state, controller, playback, listen, stop, resumeSound }),
-    [canListen, state, controller, playback, listen, stop, resumeSound],
+    () => ({ canListen, state, controller, playback, listen, stop, retry, resumeSound }),
+    [canListen, state, controller, playback, listen, stop, retry, resumeSound],
   );
 
   return (

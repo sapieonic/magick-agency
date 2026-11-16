@@ -30,10 +30,13 @@ class FakeContext {
   currentTime = 0;
   destination: FakeNode = node('destination');
   gains: FakeNode[] = [];
-  started: { at: number; samples: Float32Array; target: FakeNode }[] = [];
+  started: { at: number; samples: Float32Array; target: FakeNode; duration: number; stoppedAt: number | null }[] = [];
   stopped = 0;
+  resumes = 0;
+  suspends = 0;
   closed = false;
   level = 0;
+  onstatechange: (() => void) | null = null;
   constructor() {
     contexts.push(this);
   }
@@ -62,17 +65,27 @@ class FakeContext {
       ...node('source'),
       buffer: null as null | { getChannelData: () => Float32Array },
       onended: null as null | (() => void),
+      entry: null as null | FakeContext['started'][number],
       start(at: number) {
-        ctx.started.push({ at, samples: source.buffer!.getChannelData(), target: source.connections[0]! });
+        const samples = source.buffer!.getChannelData();
+        source.entry = { at, samples, target: source.connections[0]!, duration: samples.length / LISTEN_PLAYBACK_RATE, stoppedAt: null };
+        ctx.started.push(source.entry);
       },
       stop() {
         ctx.stopped += 1;
+        if (source.entry && source.entry.stoppedAt === null) source.entry.stoppedAt = ctx.currentTime;
       },
     };
     return source;
   }
   async resume() {
+    this.resumes += 1;
     this.state = 'running';
+  }
+  async suspend() {
+    this.suspends += 1;
+    this.state = 'suspended';
+    this.onstatechange?.();
   }
   async close() {
     this.closed = true;
@@ -151,6 +164,25 @@ describe('scheduling', () => {
     tone(burst).forEach((f) => e.push('agent', f));
     const starts = ctx().started.map((s) => s.at);
     expect(Math.max(...starts) - 5).toBeLessThanOrEqual(LISTEN_MAX_AHEAD_MS / 1000 + LISTEN_CUSHION_MS / 1000 + 0.02);
+  });
+
+  it('a burst past the ceiling re-bases without talking over what one leg already queued', () => {
+    const e = engine();
+    e.ensure();
+    const ctx = contexts[0]!;
+    // A TCP burst after a stall: far more than the ceiling arrives at one instant.
+    tone(Math.ceil(LISTEN_MAX_AHEAD_MS / 20) * 2).forEach((f) => e.push('agent', f));
+    ctx.currentTime = 0.05;
+    tone(10).forEach((f) => e.push('agent', f));
+    expect(Math.max(...ctx.started.map((s) => s.at)) - ctx.currentTime).toBeLessThanOrEqual(LISTEN_MAX_AHEAD_MS / 1000 + 0.02);
+    // What each source really plays: from its start to its end, or to when it was stopped.
+    const heard = ctx.started
+      .map((s) => ({ from: s.at, to: Math.min(s.at + s.duration, s.stoppedAt === null ? Infinity : Math.max(s.at, s.stoppedAt)) }))
+      .filter((s) => s.to > s.from)
+      .sort((a, b) => a.from - b.from);
+    for (let i = 1; i < heard.length; i++) {
+      expect(heard[i]!.from, `source ${i} starts before the one before it ends`).toBeGreaterThanOrEqual(heard[i - 1]!.to - 1e-9);
+    }
   });
 
   it('runs one context at the playback rate for both legs', () => {
@@ -244,6 +276,85 @@ describe('silence, blocking, reset and close', () => {
     };
     await e.resume();
     expect(e.blocked).toBe(false);
+  });
+
+  it('while the browser will not run the context, frames are dropped, not queued on a frozen clock, and resume is never asked per frame', () => {
+    const e = engine();
+    e.ensure();
+    const ctx = contexts[0]!;
+    ctx.state = 'suspended';
+    ctx.resume = async () => {
+      ctx.resumes += 1;
+    };
+    tone(100).forEach((f) => {
+      e.push('agent', f);
+      e.push('customer', f);
+    });
+    expect(ctx.started).toHaveLength(0);
+    expect(ctx.resumes).toBe(0);
+    expect(e.blocked).toBe(true);
+    // The leg is still arriving: blocked sound is not a silent agent.
+    expect(e.silentFor('agent')).toBe(0);
+  });
+
+  it('"Turn sound on" plays from now: no burst of what arrived while blocked', async () => {
+    const e = engine();
+    e.ensure();
+    const ctx = contexts[0]!;
+    ctx.state = 'suspended';
+    ctx.resume = async () => {
+      ctx.resumes += 1;
+    };
+    tone(50).forEach((f) => e.push('agent', f));
+    ctx.currentTime = 3;
+    ctx.resume = async () => {
+      ctx.resumes += 1;
+      ctx.state = 'running';
+    };
+    await e.resume();
+    e.push('agent', tone(1)[0]!);
+    const playing = ctx.started.filter((s) => s.stoppedAt === null);
+    expect(playing).toHaveLength(1);
+    expect(playing[0]!.at).toBeCloseTo(3 + LISTEN_CUSHION_MS / 1000, 9);
+  });
+
+  it('an interruption (the context leaving running) stops what was queued', () => {
+    const e = engine();
+    tone(5).forEach((f) => e.push('customer', f));
+    const ctx = contexts[0]!;
+    ctx.state = 'interrupted' as AudioContextState;
+    ctx.onstatechange?.();
+    expect(ctx.stopped).toBe(5);
+    // And if the browser says nothing, the next frame finds out.
+    ctx.state = 'running';
+    tone(5).forEach((f) => e.push('customer', f));
+    ctx.state = 'suspended';
+    e.push('customer', tone(1)[0]!);
+    expect(ctx.stopped).toBe(10);
+  });
+
+  it('release drops the queue and suspends the context; the next gesture resumes it', async () => {
+    const e = engine();
+    tone(3).forEach((f) => e.push('agent', f));
+    const ctx = contexts[0]!;
+    e.release();
+    expect(ctx.stopped).toBe(3);
+    expect(ctx.suspends).toBe(1);
+    expect(ctx.closed).toBe(false);
+    await e.resume();
+    expect(ctx.state).toBe('running');
+    e.push('agent', tone(1)[0]!);
+    expect(ctx.started[3]!.at).toBeCloseTo(LISTEN_CUSHION_MS / 1000, 9);
+    expect(contexts).toHaveLength(1);
+  });
+
+  it('a context the browser refuses to create is no audio, not a crash', () => {
+    const e = new ListenPlaybackEngine(() => {
+      throw new DOMException('too many contexts', 'NotSupportedError');
+    });
+    expect(e.ensure()).toBeNull();
+    expect(() => e.push('agent', tone(1)[0]!)).not.toThrow();
+    expect(e.level('agent')).toBe(0);
   });
 
   it('blocked, without a crash, where there is no Web Audio at all', () => {

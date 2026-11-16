@@ -3,6 +3,7 @@ import type { ListenGrantResult } from '../../api/liveCalls';
 import { encodeListenClientFrame, parseListenMessage } from './listenFrames';
 import {
   INITIAL_LISTEN_STATE,
+  listenDeadline,
   listenSessionReducer,
   listenSocketWanted,
   type ListenSessionEvent,
@@ -168,14 +169,16 @@ export class ListenSessionController {
         this.dispatch({ type: 'reattach', now: this.now() });
       }, delay);
     }
-    if (next.retry && next.retry !== prev.retry && next.retry.deadline !== prev.retry?.deadline) {
+    // The first attach's 15 s too, so a grant or a socket that never answers ends in `lost`.
+    const deadline = listenDeadline(next);
+    if (deadline !== null && deadline !== listenDeadline(prev)) {
       this.clearDeadline();
       this.deadlineTimer = setTimeout(() => {
         this.deadlineTimer = null;
         this.dispatch({ type: 'tick', now: this.now() });
-      }, Math.max(0, next.retry.deadline - this.now()));
+      }, Math.max(0, deadline - this.now()));
     }
-    if (next.retry === null) this.clearDeadline();
+    if (deadline === null) this.clearDeadline();
     if (next.step !== 'wait') this.clearWait();
 
     // "Call ended · you listened for mm:ss" goes by itself.

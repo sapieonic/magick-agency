@@ -16,7 +16,8 @@ import { listenCloseOutcome, terminalEndReason, type ListenCloseOutcome } from '
  *  - `live`: `ready` arrived; audio plays;
  *  - `reconnecting`: the socket dropped after `ready` and the console is re-minting and
  *    reconnecting, within {@link AGENCY_LISTEN_RECONNECT_WINDOW_MS} of the first drop;
- *  - `lost`: the window passed (or the server failed too often): "Connection lost", Try again;
+ *  - `lost`: the window passed (or the server failed too often, or the first attach took over
+ *    15 s): "Connection lost", Try again;
  *  - `ended`: the session is over for a reason to tell the supervisor (`end.kind`).
  *
  * Every attach (a grant, a socket, a `ready`) carries the `attempt` it belongs to; an event from
@@ -62,8 +63,20 @@ export interface ListenSessionState {
   listenId: string | null;
   /** Client ms of this listen's first `ready`: "you listened for". */
   startedAt: number | null;
-  /** While recovering from a drop: when the window closes, and how many server failures so far. */
-  retry: { deadline: number; internalErrors: number } | null;
+  /** While recovering from a drop: when the window closes. */
+  retry: { deadline: number } | null;
+  /**
+   * The first attach's own deadline (client ms), from the Listen click until its first `ready`:
+   * a grant or a socket that never answers ends in `lost`, not "Connecting…" for ever.
+   */
+  connectDeadline: number | null;
+  /**
+   * Server failures (close 1011) since the listen last stayed live for {@link LISTEN_STABLE_MS}.
+   * A `ready` does not clear it: a tap that fails just after every `ready` must still stop.
+   */
+  internalErrors: number;
+  /** Client ms of the latest `ready`. */
+  liveSince: number | null;
   /** Why the session ended, in `ended`. */
   end: { kind: ListenEndKind; listenedMs: number; code: AgencyListenErrorCode | null } | null;
   /** A start refused before any audio, for the toast; `refusalSeq` moves once per refusal. */
@@ -71,7 +84,7 @@ export interface ListenSessionState {
   refusalSeq: number;
   /** The browser will not run the audio (autoplay policy): "Your browser blocked the sound." */
   soundBlocked: boolean;
-  /** The agent's leg has been silent for over two seconds while live: "Agent reconnecting…". */
+  /** The agent's leg has been silent for over two seconds while live: "Agent is silent". */
   agentSilent: boolean;
   /** Pong samples: the bar's timer on the server clock. */
   clock: ClockOffsetEstimator;
@@ -93,8 +106,11 @@ export type ListenSessionEvent =
   | { type: 'sound'; blocked: boolean }
   | { type: 'agent_silent'; silent: boolean };
 
-/** Server failures (close 1011) in one recovery before the console stops retrying. */
+/** Server failures (close 1011) in a row before the console stops retrying. */
 export const LISTEN_MAX_INTERNAL_ERRORS = 3;
+
+/** Live this long since its last `ready`, a listen has recovered: its server-failure count starts again. */
+export const LISTEN_STABLE_MS = 10_000;
 
 export const INITIAL_LISTEN_STATE: ListenSessionState = {
   phase: 'idle',
@@ -104,6 +120,9 @@ export const INITIAL_LISTEN_STATE: ListenSessionState = {
   listenId: null,
   startedAt: null,
   retry: null,
+  connectDeadline: null,
+  internalErrors: 0,
+  liveSince: null,
   end: null,
   refusal: null,
   refusalSeq: 0,
@@ -124,6 +143,7 @@ function toEnded(state: ListenSessionState, kind: ListenEndKind, now: number, co
     phase: 'ended',
     step: null,
     retry: null,
+    connectDeadline: null,
     end: { kind, listenedMs: state.startedAt === null ? 0 : Math.max(0, now - state.startedAt), code },
     agentSilent: false,
   };
@@ -134,22 +154,29 @@ function toIdle(state: ListenSessionState): ListenSessionState {
 }
 
 function toLost(state: ListenSessionState): ListenSessionState {
-  return { ...state, phase: 'lost', step: null, retry: null, agentSilent: false };
+  return { ...state, phase: 'lost', step: null, retry: null, connectDeadline: null, agentSilent: false };
 }
 
 /**
  * Recover from a drop: wait, then attach again, until the window closes. The window opens at the
  * first drop and is not renewed by later ones; only a `ready` (or Try again) ends the recovery.
+ * Before any audio the window is the first attach's own, from the click.
+ *
+ * Server failures are counted across `ready`s: one failing right after every `ready` would
+ * otherwise mint a grant, a session row and two audit rows every few seconds for ever. The count
+ * starts again only once the listen has stayed live for {@link LISTEN_STABLE_MS}.
  */
 function recover(state: ListenSessionState, now: number, internal: boolean): ListenSessionState {
-  const retry = state.retry ?? { deadline: now + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 };
-  const internalErrors = retry.internalErrors + (internal ? 1 : 0);
+  const retry = state.retry ?? { deadline: state.connectDeadline ?? now + AGENCY_LISTEN_RECONNECT_WINDOW_MS };
+  const settled = state.phase === 'live' && state.liveSince !== null && now - state.liveSince >= LISTEN_STABLE_MS;
+  const internalErrors = (settled ? 0 : state.internalErrors) + (internal ? 1 : 0);
   if (internalErrors >= LISTEN_MAX_INTERNAL_ERRORS || now >= retry.deadline) return toLost(state);
   return {
     ...state,
     phase: state.startedAt === null ? 'connecting' : 'reconnecting',
     step: 'wait',
-    retry: { deadline: retry.deadline, internalErrors },
+    retry,
+    internalErrors,
     agentSilent: false,
   };
 }
@@ -206,6 +233,7 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
         step: 'grant',
         target: event.target,
         attempt: state.attempt + 1,
+        connectDeadline: event.now + AGENCY_LISTEN_RECONNECT_WINDOW_MS,
         refusal: null,
         refusalSeq: state.refusalSeq,
       };
@@ -231,7 +259,9 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
         step: null,
         listenId: event.listenId,
         startedAt: state.startedAt ?? event.now,
+        liveSince: event.now,
         retry: null,
+        connectDeadline: null,
       };
 
     case 'server_ended': {
@@ -249,11 +279,11 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
 
     case 'reattach':
       if (!attaching(state) || state.step !== 'wait') return state;
-      if (state.retry && event.now >= state.retry.deadline) return toLost(state);
+      if (pastDeadline(state, event.now)) return toLost(state);
       return { ...state, attempt: state.attempt + 1, step: 'grant', listenId: null };
 
     case 'tick':
-      if (attaching(state) && state.retry && event.now >= state.retry.deadline) return toLost(state);
+      if (attaching(state) && pastDeadline(state, event.now)) return toLost(state);
       return state;
 
     case 'pong':
@@ -271,7 +301,8 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
         step: 'grant',
         attempt: state.attempt + 1,
         listenId: null,
-        retry: { deadline: event.now + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 },
+        retry: { deadline: event.now + AGENCY_LISTEN_RECONNECT_WINDOW_MS },
+        internalErrors: 0,
       };
 
     case 'dismiss':
@@ -285,6 +316,20 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
       return state.agentSilent === silent ? state : { ...state, agentSilent: silent };
     }
   }
+}
+
+/**
+ * When the attach under way gives up (client ms): the recovery window, else the first attach's
+ * own deadline; null when nothing is pending. The controller's timer fires a `tick` at it.
+ */
+export function listenDeadline(state: ListenSessionState): number | null {
+  if (!attaching(state)) return null;
+  return state.retry?.deadline ?? state.connectDeadline;
+}
+
+function pastDeadline(state: ListenSessionState, now: number): boolean {
+  const deadline = listenDeadline(state);
+  return deadline !== null && now >= deadline;
 }
 
 /** Whether the bar is up: anything but idle. */

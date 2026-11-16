@@ -10,6 +10,11 @@ import type { AgencyListenLeg } from '../../types/live-calls';
  * Receive only. Nothing here asks for the microphone, and nothing may: listening is silent, and a
  * permission prompt would be a lie about what the page does (`listenPlayback.test.ts` holds it).
  *
+ * The browser's clock only moves while the context runs. While it does not (the autoplay policy,
+ * an interruption such as another app taking the audio on iOS), frames are dropped and anything
+ * queued is stopped, so nothing piles up against a frozen clock to play all at once later; and
+ * only a gesture asks the browser to run it again (`resume`: the Listen click, "Turn sound on").
+ *
  * A class with no React in it, so the scheduling is a unit test against a fake context;
  * `useListenPlayback` owns one per listening bar.
  */
@@ -21,12 +26,13 @@ export const LISTEN_PLAYBACK_RATE = 16_000;
 export const LISTEN_CUSHION_MS = 120;
 
 /**
- * The queue's ceiling: a leg scheduled further ahead than this (a burst after a stall) is
- * re-based instead, so a supervisor never hears the call seconds late.
+ * The queue's ceiling: a leg scheduled further ahead than this (a burst after a stall) drops what
+ * it had queued and re-bases, so a supervisor never hears the call seconds late, nor two moments
+ * of it at once.
  */
 export const LISTEN_MAX_AHEAD_MS = 600;
 
-/** The agent's leg silent this long while live: "Agent reconnecting…". */
+/** The agent's leg silent this long while live: "Agent is silent". */
 export const LISTEN_AGENT_SILENCE_MS = 2_000;
 
 export const LISTEN_LEGS: readonly AgencyListenLeg[] = ['agent', 'customer'];
@@ -34,7 +40,7 @@ export const LISTEN_LEGS: readonly AgencyListenLeg[] = ['agent', 'customer'];
 /** The parts of the Web Audio API the engine uses (a fake in tests). */
 export type ListenAudioContextFactory = () => AudioContext | null;
 
-/** The real factory: a 16 kHz context, or null where the browser has no Web Audio. */
+/** The real factory: a 16 kHz context, or null where the browser has no Web Audio. May throw. */
 export function defaultAudioContextFactory(): AudioContext | null {
   const Ctor =
     typeof globalThis === 'undefined'
@@ -73,13 +79,20 @@ export class ListenPlaybackEngine {
   ) {}
 
   /**
-   * Build the graph, or reuse it, and ask the browser to run it. Called from the Listen click
-   * (a gesture, so the autoplay policy lets it run) and on every frame.
+   * Build the graph, or reuse it. Null where the browser has no Web Audio, or will not make a
+   * context now (the Listen click then refuses to start). Never asks the browser to run it:
+   * that is {@link resume}, from a gesture.
    */
   ensure(): AudioContext | null {
     if (this.unavailable) return null;
     if (!this.ctx || this.ctx.state === 'closed') {
-      const ctx = this.createContext();
+      let ctx: AudioContext | null;
+      try {
+        ctx = this.createContext();
+      } catch {
+        // Refused this time (too many contexts, an unsupported rate): no audio, and no crash.
+        return null;
+      }
       if (!ctx) {
         this.unavailable = true;
         return null;
@@ -90,8 +103,11 @@ export class ListenPlaybackEngine {
       this.ctx = ctx;
       this.master = master;
       this.legs = {};
+      // The clock stopped (an interruption, or `release`): what is queued would play in a heap later.
+      ctx.onstatechange = () => {
+        if (this.ctx === ctx && ctx.state !== 'running') this.flushQueues();
+      };
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {});
     return this.ctx;
   }
 
@@ -101,7 +117,7 @@ export class ListenPlaybackEngine {
     return this.ctx !== null && this.ctx.state !== 'running' && this.ctx.state !== 'closed';
   }
 
-  /** Resume after a gesture ("Turn sound on"). */
+  /** Ask the browser to run the audio: from a gesture only (the Listen click, "Turn sound on"). */
   async resume(): Promise<void> {
     const ctx = this.ensure();
     if (!ctx) return;
@@ -139,18 +155,25 @@ export class ListenPlaybackEngine {
     const graph = this.leg(leg);
     if (!graph || !this.ctx) return;
     graph.lastFrameAt = this.now();
-    const samples = graph.decoder.decode(frame);
     const ctx = this.ctx;
+    // Not running: its clock is frozen, so a queued frame would wait and then play in a heap.
+    // Drop it (and anything queued); the leg re-bases once a gesture runs the context again.
+    if (ctx.state !== 'running') {
+      this.flushLeg(graph, true);
+      return;
+    }
+    const t = ctx.currentTime;
+    // Too far ahead (a burst after a stall): drop what is queued rather than play the call late,
+    // and never schedule over it, so two moments of the call are never heard at once.
+    if (graph.nextTime - t > LISTEN_MAX_AHEAD_MS / 1000) this.flushLeg(graph, false);
+    const samples = graph.decoder.decode(frame);
     const buffer = ctx.createBuffer(1, samples.length, LISTEN_PLAYBACK_RATE);
     buffer.getChannelData(0).set(samples);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(graph.analyser);
-    const t = ctx.currentTime;
-    const cushion = LISTEN_CUSHION_MS / 1000;
-    // Underrun (nothing queued, or the queue already played out): re-base onto the cushion.
-    // Too far ahead (a burst after a stall): re-base too, rather than play the call late.
-    const start = graph.nextTime <= t || graph.nextTime - t > LISTEN_MAX_AHEAD_MS / 1000 ? t + cushion : graph.nextTime;
+    // Underrun (nothing queued, the queue played out, or just dropped): re-base onto the cushion.
+    const start = graph.nextTime <= t ? t + LISTEN_CUSHION_MS / 1000 : graph.nextTime;
     source.start(start);
     graph.nextTime = start + buffer.duration;
     graph.sources.add(source);
@@ -195,26 +218,44 @@ export class ListenPlaybackEngine {
     return at === null ? null : Math.max(0, this.now() - at);
   }
 
+  /** Stop what `graph` has queued; its next frame re-bases onto the cushion. */
+  private flushLeg(graph: LegGraph, resetDecoder: boolean): void {
+    for (const source of graph.sources) {
+      try {
+        source.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    graph.sources.clear();
+    graph.nextTime = 0;
+    // Frames were dropped: the next one does not follow the last decoded, so no filter history.
+    if (resetDecoder) graph.decoder.reset();
+  }
+
+  private flushQueues(): void {
+    for (const graph of Object.values(this.legs)) if (graph) this.flushLeg(graph, true);
+  }
+
   /**
    * Drop every queued buffer and the decoders' history: a new attach starts clean, its first
    * frame re-based onto the cushion and not smeared with the last attach's tail.
    */
   reset(): void {
     this.attachedAt = this.now();
-    for (const graph of Object.values(this.legs)) {
-      if (!graph) continue;
-      for (const source of graph.sources) {
-        try {
-          source.stop();
-        } catch {
-          /* already stopped */
-        }
-      }
-      graph.sources.clear();
-      graph.decoder.reset();
-      graph.nextTime = 0;
-      graph.lastFrameAt = null;
-    }
+    this.flushQueues();
+    for (const graph of Object.values(this.legs)) if (graph) graph.lastFrameAt = null;
+  }
+
+  /**
+   * The listen is over (stopped, ended, lost): silence at once, nothing left queued, and the
+   * context suspended rather than running for the shell's life. The next Listen click resumes it.
+   */
+  release(): void {
+    this.reset();
+    this.attachedAt = null;
+    const ctx = this.ctx;
+    if (ctx && ctx.state === 'running') void ctx.suspend().catch(() => {});
   }
 
   /** Stop and release the context. The engine can be ensured again afterwards. */

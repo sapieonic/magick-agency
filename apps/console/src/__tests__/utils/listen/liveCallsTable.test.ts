@@ -190,7 +190,8 @@ describe('the words', () => {
     expect(shortName('Priya Rani Sharma')).toBe('Priya S.');
     expect(shortName('Priya')).toBe('Priya');
     expect(notListenableCopy('listen_recording_off')).toBe('Listening is turned off for unrecorded calls');
-    expect(notListenableCopy('listen_limit_call')).toBe('Two supervisors are already listening');
+    // Count-neutral: the per-call cap is configurable (AGENCY_LISTEN_MAX_PER_CALL, 1–5).
+    expect(notListenableCopy('listen_limit_call')).toBe('This call has reached its listening limit');
     expect(notListenableCopy('listen_own_call')).toBe('You are on this call');
     expect(notListenableCopy(null)).toBe('You cannot listen to this call');
   });
@@ -201,13 +202,14 @@ describe('the words', () => {
   });
 
   it('a refused grant says its code, else what the status means', () => {
-    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' })).toBe('Two supervisors are already listening to that call.');
+    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' })).toBe('That call has reached its listening limit.');
     expect(listenRefusalMessage({ status: 404, code: 'listen_call_not_live' })).toBe('That call has ended.');
     expect(listenRefusalMessage({ status: 403, code: 'feature_disabled' })).toBe('Listening is turned off for this account.');
     expect(listenRefusalMessage({ status: 403, code: 'insufficient_permissions' })).toBe('You do not have access to listen to calls.');
     expect(listenRefusalMessage({ status: null, code: null })).toBe('Could not start listening. Check your connection and try again.');
     expect(listenRefusalMessage({ status: 500, code: null })).toBe('Could not start listening. Try again.');
-    // The server's error mask strips a 503's body: it reads as the listen being unavailable.
+    // The grant's own 503s keep their code; a bare 503 (from in front of the server) still reads as unavailable.
+    expect(listenRefusalMessage({ status: 503, code: 'listen_unavailable' })).toBe('Listening is not available right now. Try again.');
     expect(listenRefusalMessage({ status: 503, code: null })).toBe('Listening is not available right now. Try again.');
     expect(listenRefusalMessage({ status: 503, code: 'worker_unavailable' })).toBe('Listening is not available right now. Try again.');
     expect(listenRefusalMessage({ status: 503, code: 'listen_limit_server' })).toBe('Listening is busy right now. Try again in a minute.');

@@ -311,6 +311,30 @@ describe('reconnecting', () => {
     expect(c.getState().phase).toBe('reconnecting');
   });
 
+  it('a first grant that never answers ends in "Connection lost" after 15 s, not "Connecting…" for ever', async () => {
+    const c = new ListenSessionController({
+      grant: () => new Promise<ListenGrantResult>(() => {}),
+      openSocket: (url) => new FakeListenSocket(url),
+      onAudio: () => {},
+    });
+    c.start(TARGET);
+    await vi.advanceTimersByTimeAsync(AGENCY_LISTEN_RECONNECT_WINDOW_MS - 1);
+    expect(c.getState().phase).toBe('connecting');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(c.getState().phase).toBe('lost');
+  });
+
+  it('a first socket that never says ready is let go after 15 s', async () => {
+    const c = controller();
+    c.start(TARGET);
+    await flush();
+    const socket = last();
+    socket.open();
+    await vi.advanceTimersByTimeAsync(AGENCY_LISTEN_RECONNECT_WINDOW_MS);
+    expect(c.getState().phase).toBe('lost');
+    expect(socket.closedWith).toBe(1000);
+  });
+
   it('a socket that will not open is a drop, not a crash', async () => {
     let throwOnce = true;
     const c = new ListenSessionController({
