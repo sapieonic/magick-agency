@@ -1201,31 +1201,66 @@ History. To cut a supervisor off at once, change their role or remove them (both
 immediately, LS10); to stop all listening for a tenant, switch `agency_live_listen_enabled` off
 (open listens end at the next re-check, at most `AGENCY_LISTEN_RECHECK_MS`).
 
+**Reading the listen metrics.** What listening costs the calls shows on the process, not in the
+relay's dwell: the tap is fed after the relay's write and `webrtc_relay_dwell_seconds` (like each
+call's `maxRelayDwellMicros`) is recorded before it, so the dwell cannot rise because of a listener
+(LS8). A listener's cost is event-loop time, which delays the NEXT frame of every call on that
+process: read `nodejs_eventloop_delay_p99_seconds` and `nodejs_eventloop_utilization_ratio` for the
+process (the media worker with `MEDIA_WORKERS >= 1`) against `agency_listen_sessions_active`. The
+load check (`listening.md` §10 "Load check": 100 calls in one process) puts the price of 20
+listeners at most about +0.07 of loop utilisation (6 listeners: +0.04), with no measurable change in
+loop delay p99 or the calls' frame latency; a clear rise in loop delay that tracks the open listens
+is therefore not the expected cost. The dwell is still worth
+reading as the relay's own health (is the relay itself slow?), not as the tap's.
+How a listen ended is `agency_listen_sessions_ended_total{reason}`: `call_ended` and
+`listener_stopped` are the ordinary ends; `listener_disconnected` is a socket that closed or a
+listener that sent nothing for 30 s (a closed laptop, a frozen tab: the idle bound, not the
+back-pressure, ends a listener that stopped reading, LS15 g); `send_backlog`, `tap_error`,
+`permission_revoked` and `superseded` are below or in [`listening.md`](listening.md) §3. A listener
+that reads too slowly shows first as `websocket_send_backpressure_total{socket="listener",
+action="media_dropped"}`: past 48 KiB unsent its frames are dropped for it alone (it hears gaps,
+counted in its row's `frames_dropped`); the calls lose nothing.
+
 - **`agy-listen-relay-dwell-regressed`**. **Means:** the bridge's p99 per-frame dwell (arrival on
   one leg to the write to the other, sampled one frame in 50) has been above 5 ms for 15 minutes:
-  agents and customers will start to hear it. **Check:** *Media Relay Dwell* beside *Sessions Open*:
-  did it rise with listeners open? **Do:** if it did, the tap is costing the relay, which it must
-  not (LS8): switch `agency_live_listen_enabled` off for the tenants listening (their listens end at
-  the next re-check, at most `AGENCY_LISTEN_RECHECK_MS`) and file it with the graph. If not, it is
-  the process: event-loop delay and utilization, host CPU, calls per process (`MEDIA_WORKERS`).
+  agents and customers will start to hear it. The dwell excludes the tap by construction, so this
+  is the relay's own time (its codecs, its writes, a garbage collection inside a frame), not the
+  listeners'. **Check:** *Media Relay Dwell* beside the process's event-loop delay and utilisation,
+  calls per process and host CPU. **Do:** it is the process: spread the calls (`MEDIA_WORKERS`),
+  more CPU. Whether listeners add to the load is read on the loop, as above: if loop delay rose with
+  `agency_listen_sessions_active` and falls when they end, switch `agency_live_listen_enabled` off
+  for the tenants listening (their listens end at the next re-check, at most
+  `AGENCY_LISTEN_RECHECK_MS`) and file it with both graphs.
 - **`agy-listen-backlog-closes`**. **Means:** listener sockets were closed `send_backlog` (their
-  unsent audio passed 256 KiB) 3+ times in 15 minutes. The calls were not affected. **Check:**
-  *Tap Errors and Listener Back-pressure*: `media_dropped` climbing first is a slow reader.
-  **Do:** usually the supervisors' network or a starved browser tab; if every listener is hit at
-  once, our egress or the proxy in front of `/proxy/agency/listen`.
+  unsent bytes passed 256 KiB) 3+ times in 15 minutes. The calls were not affected. Media alone
+  stops at the 48 KiB soft limit (dropped, not queued), so a backlog close needs other bytes queued
+  behind a reader that is not draining: its control frames (`pong`), or a proxy holding the socket
+  open while the browser is gone. **Check:** *Tap Errors and Listener Back-pressure*:
+  `media_dropped` climbing before the closes is a slow reader; the closed listens' rows
+  (`end_reason = 'send_backlog'`, their `frames_dropped`) name the supervisors. **Do:** one
+  supervisor: their network or a starved browser tab (they reconnect on their own, 4408). Every
+  listener at once: our egress, or the proxy in front of `/proxy/agency/listen` buffering or
+  stalling WebSocket frames.
 - **`agy-listen-grants-server-limit`**. **Means:** a Listen was refused because the process owning
-  the call already carries `AGENCY_LISTEN_MAX_PER_PROCESS` listeners. **Check:**
-  `agency_listen_sessions_active` against the listeners the Live calls page shows. **Do:** far above
-  them: sessions are not being closed; read `agency_listen_sessions_ended_total` by reason and the
-  open `agency_listen_sessions` rows for the replica, and file it. Equal: raise the limit with care
-  (a Plivo call's listener costs a transcode per frame), or spread the calls over media workers.
+  the call already carries `AGENCY_LISTEN_MAX_PER_PROCESS` listeners; the supervisor's toast says
+  "Too many listens are open right now" (`503 listen_limit_server`). **Check:**
+  `agency_listen_sessions_active` against the listeners the Live calls page shows, and the open
+  `agency_listen_sessions` rows for the replica. **Do:** far above them: sessions are not being
+  closed; read `agency_listen_sessions_ended_total` by reason and file it. Equal: the cap is doing
+  its job; raise it only with headroom on that process's loop (the load check measured the default
+  20 on 100 calls at about +0.07 of loop utilisation; a Plivo call's or a `pcm16` agent's listener
+  costs a transcode per frame on top), or spread the calls over media workers.
 - **`agy-listen-tap-errors`**. **Means:** the tap has failed frames for 10 minutes (decode, encode,
   frame or send). Each failed frame is dropped for the listeners only; 50 in a row
-  (`AGENCY_LISTEN_FAULT_BUDGET`) detach the tap and end its listens `tap_error`. **Check:** *Tap
-  Errors by Stage* and the logs `component=agency-listen-tap` (one line per listen per 10 s, call
-  and listen ids only). **Do:** decode or encode on one carrier is a codec fault; `send` is a
-  listener socket throwing. If supervisors cannot listen at all, switch the flag off for the tenant
-  while it is fixed; calls are unaffected either way.
+  (`AGENCY_LISTEN_FAULT_BUDGET`) detach the tap and end its listens `tap_error` (1011: the console
+  reconnects, bounded). **Check:** *Tap Errors by Stage* and the logs `component=listen-tap` (one
+  line per tap per 10 s, call and listen ids only), with
+  `agency_listen_sessions_ended_total{reason="tap_error"}`. **Do:** `decode` or `encode` on one
+  carrier is a codec fault (a carrier sending a payload its codec refuses: compare the call's
+  carrier and the relay's own logs for that call); `frame` is a bug in the tap; `send` is a
+  listener socket throwing on write (a socket gone under it: it ends that listener only). If
+  supervisors cannot listen at all, switch the flag off for the tenant while it is fixed; calls are
+  unaffected either way.
 
 ### `agy-reports-pending-too-long`
 

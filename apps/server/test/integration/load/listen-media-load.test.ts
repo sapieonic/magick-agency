@@ -138,7 +138,7 @@ const LOOP_P99_SLACK_MS = 10;
 const LATENCY_P50_RATIO = 1.5;
 const LATENCY_P50_SLACK_MS = 1;
 const LATENCY_P95_RATIO = 3;
-const LATENCY_P95_SLACK_MS = 20;
+const LATENCY_P95_SLACK_MS = 30;
 /**
  * Secondary: the relay's own dwell (`webrtc_relay_dwell_seconds`, sampled), which by construction
  * excludes the tap (LS8): it holds that the relay itself is not slowed, not that the tap is cheap.

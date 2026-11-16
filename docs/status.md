@@ -1983,7 +1983,54 @@ bar, not returned to the row, returned even when moved elsewhere; the ended reas
 live region; "you listened for 00:00" back; `ListenProvider` not keyed by the account; the bar
 inside `<main>`.
 
+### Live call listening, the load check 2026-11-16 ([`listening.md`](listening.md) §10 "Load check")
+
+`apps/server/test/integration/load/listen-media-load.test.ts` (wall-clock lane, about 3 minutes):
+100 bridged calls at 50 frames a second each way (mock VoiceLink carrier, real agent sockets, half
+`alaw8`, half `pcm16`) with nobody listening, then 6 listeners (the expected peak) and 20 (the
+process cap, a 21st refused `503 listen_limit_server`), one stalled each time, through the real
+grant and upgrade, the listeners in a child process (`listen-load-clients.ts`). Zero frames lost on
+either leg in every run; against the same floor's quiet window, 20 listeners cost at most about
++0.07 of loop utilisation and nothing measurable in loop delay p99 or frame latency (the bounds and
+the numbers are in `listening.md`); every reading listener gets 50 messages a second per leg; the
+stalled one is dropped at its soft limit, then ended by the 30 s idle bound with its call untouched.
+The proof is the loop and the latency, not the relay dwell, which excludes the tap by construction.
+Found and fixed: the grant's 503 refusals were masked by the app-wide error mask (`7b1c92a`), so
+the console could not say why a Listen was refused. Found: on loopback a stalled listener is ended
+by the idle bound before the soft limit is reached (the kernel absorbs about 4 MB); the suite corks
+the stalled listener's server end to model a real path.
+
+The media load suite's start-negotiation flake (`load/voicelink-media-ws-load.test.ts`, the
+`media_before_bad_start` case ending `provider_start_timeout`, seen in phase 3's counts below and
+before it): not the listen tap (with nobody listening the tap is one null read, and nothing it does
+runs before a leg is attached). The case sent 25 media frames then its bad `start`; when Redis
+answered the provider-token check late, all of them landed inside the check, past the 16 frames the
+bridge holds meanwhile (`PSTN_EARLY_FRAME_CAP`, pinned by its unit test), so the `start` was dropped
+by design and the call timed out instead of failing `unsupported_media_format`. Reproduced 3 of 3
+by pausing Redis clients 25 ms in every 75; the case now sends one frame fewer than the cap
+(`626404c`) and passes 3 of 3 under the same pauses. A real carrier sends `start` first, so the cap
+is not changed.
+
+Mutation-checked (each red, then restored with `git checkout`): a 1 ms busy wait in the tap (every
+primary bound red; the dwell unchanged); the listener's soft limit removed (the stalled listener
+closed `send_backlog`); a listened call's relay dropping one frame in 500 (zero-loss red); the error
+mask on the grant's 503 (the route test red before the fix). The tap fed before the relay is not
+caught by the load suite (the dwell moves within noise) and is pinned by
+`webrtc-bridge-listen-tap.test.ts`, which goes red for it.
+
 ## Test counts
+
+**Live call listening, the load check, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree
+of `626404c` (the mask fix, the load suite, the media suite's flake fix). From `apps/server`: `pnpm
+lint` clean; unit 10296 passed + 1 expected fail (520 files); `INTEGRATION_LANE=rest pnpm
+test:integration` 2995 passed + 9 expected fail + 2 skipped (271 files passed, 2 skipped);
+`INTEGRATION_LANE=wall-clock pnpm test:integration` 29 passed (7 files, the load check now among
+them). `listen-media-load.test.ts` as committed (listeners out of process, paired windows): 4 of 4 green
+(three alone, one in the lane), the last after its p95 slack went from 20 to 30 ms (the last commit;
+the earlier designs, compared across runs or with the listeners in process, failed their timing
+bounds 3 times in 10 while another worktree's Flutter tests loaded the machine, `listening.md` §10);
+`voicelink-media-ws-load.test.ts` alone 9 of 9, three times. From the root: `pnpm test:tooling` 20
+passed.
 
 **Live call listening, console and mobile review fixes, 2026-11-16.** Branch
 `ccr-364c489c-zeoxwy`, run on `2da9910` (the console fixes; the mobile and docs commits beside it

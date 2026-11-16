@@ -7,8 +7,8 @@ affects the agent's or the customer's audio. Designed 2026-11-16 from the code, 
 by Manas the same day; decisions LS1–LS16 below. Built in phases (§10): phase 1, the foundation,
 phase 2, the tap in the bridge and its seam member, phase 3, the server side (the routes, the
 listener socket, the registry, revocation), the console (phase 4), the agent's standing line
-(phase 5) and the inbound notice's monitoring words (phase 6) are built; the load check (§10) is
-not run yet.
+(phase 5) and the inbound notice's monitoring words (phase 6) are built, and the load check has
+run (§10 "Load check").
 
 Where things are: the socket's contract `packages/contracts/src/agency/listen.ts`, the console wire
 `packages/contracts/src/api/agency/live-calls.ts`, refusals `packages/contracts/src/errors.ts` §7,
@@ -503,6 +503,95 @@ the standing line of LS2.
 | 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | **Built** (2026-11-16) |
 | 6 | The inbound notice's words and its regenerated WAV (LS1) | **Built** (2026-11-16): `AGENCY_INBOUND_STANDARD_WORDS.recording_notice` is "This call may be recorded or monitored for quality and training purposes." and `apps/server/assets/inbound/recording-notice.wav` is regenerated from it with `scripts/generate-inbound-clips.ts --only recording_notice` and the pinned voice (8 kHz mono PCM16, 5.0 s); the other six recordings are unchanged. The carrier never speaks the notice (its `<Speak>` covers closed, busy and call-back only), so the WAV is the only other copy of the words |
 
+| Load check | 100 calls with nobody listening, then 6 and 20 listeners (one stalled), on one build: `apps/server/test/integration/load/listen-media-load.test.ts` | **Run** (2026-11-16): below |
+
+### Load check
+
+**What runs.** `listen-media-load.test.ts` (wall-clock lane: the audio is paced in real time and
+the stalled listener's end is the real 30 s idle bound) dials 100 calls (`LOAD_SCALE`, seeded by
+`LOAD_SEED`) through the real bridge and `VoicelinkAdapter` to the mock VoiceLink carrier, which
+streams paced A-law, 50 frames a second; each agent's leg is a real WebSocket on loopback lent to
+the bridge as the station's socket is (half `alaw8`, half `pcm16`), talking 50 frames a second
+back. The station route itself is left out: the bridge borrows its socket, so the route is not on
+the media path. Three floors on one build: (a) nobody listening; (b) 6 listeners, the expected peak;
+(c) 20, the process cap, with a 21st grant refused `503 listen_limit_server`. Listeners take the
+whole real path (the public grant with the session, tenant context, RBAC and the flag, the live
+list's SQL over a `bridged` attempt this file writes for each listened call, `callCore` to the
+grant handler, the token, the upgrade, the row, the tap), two to a call, each a supervisor of
+their own, and live in a child process (`listen-load-clients.ts`), as browsers would be elsewhere:
+their own reading is not charged to the server's loop. One listener of each run stalls: it pauses
+its socket at `ready` and never reads or pings again.
+
+**How it is measured.** Each floor gets a 15 s window with nobody listening; (b) and (c) then attach
+their listeners and measure a second 15 s window on the same calls, compared with the first. The
+pairing is deliberate: across runs minutes apart, a busy neighbour on the machine (another worktree's
+Flutter tests, here) moved the numbers more than 20 listeners do, and a CI runner's other lane files
+would do the same. Primary, because the tap runs after the relay's write and can only cost the NEXT
+frame, on the loop: the loop's utilisation and delay p99 (`createLoopSampler`) and each direction's
+end-to-end frame latency (carrier send → agent receive, agent send → carrier receive, timed on both
+sockets in the test). Secondary: `webrtc_relay_dwell_seconds`, the sampled relay dwell, which
+excludes the tap by construction (LS8) and so says the relay itself is not slowed, never that the
+tap is cheap.
+
+**Bounds** (listening window against the quiet one): utilisation at most +0.2; loop delay p99 at
+most max(2×, +10 ms); frame latency p50 at most max(1.5×, +1 ms) and p95 at most max(3×, +30 ms),
+each direction; dwell mean at most max(2×, +50 µs) and its p99 bucket at most two buckets up. Past
+p95 the latency is garbage-collection pauses, which move by tens of ms between windows with or
+without listeners: reported, not bounded. Every run, every listener count: zero frames lost on
+either leg of every call (count and loudness pattern both ways, the bridge's drop counters zero);
+every reading listener gets both legs at 50 messages a second each (±10 %), ends `call_ended` with
+`frames_dropped` 0 and `frames_sent` equal to what it received; the stalled one has frames dropped
+at its soft limit (its row's `frames_dropped` equals the run's
+`websocket_send_backpressure_total{socket="listener",action="media_dropped"}`), is ended
+`listener_disconnected` by the idle bound while its call stays up and the call's other listener
+keeps hearing it; the grant, end and active-session metrics move exactly; nothing leaks.
+
+**Measured** (a 4-core container, 100 calls, seed 24301; two runs of the file alone with the
+listeners out of process, each floor's quiet window → its listening window; the third figure is the
+file in its lane, `INTEGRATION_LANE=wall-clock`, beside the lane's six other files):
+
+| Floor | Utilisation | Loop delay p99 | Latency p50 | Latency p95 | Dwell mean b2p / p2b |
+|---|---|---|---|---|---|
+| (a) nobody listening | 0.65, 0.67; 0.74 | 4.2, 4.4; 4.7 ms | 0.84, 0.88; 1.13 ms | 4.2, 4.0; 5.8 ms | 16–18 / 19–22 µs |
+| (b) 6 listeners | 0.65 → 0.69, 0.71 → 0.73; 0.75 → 0.83 | 4.3 → 4.9, 4.8 → 5.3; 5.4 → 9.1 ms | 0.82 → 0.91, 1.20 → 1.27; 1.13 → 1.58 ms | 7.3 → 9.5, 7.4 → 10.7; 17.6 → 38.7 ms | 14–19 / 19–24 µs, within noise |
+| (c) 20 listeners | 0.71 → 0.70, 0.68 → 0.75; 0.77 → 0.84 | 5.0 → 4.4, 4.4 → 4.9; 5.5 → 6.6 ms | 0.99 → 0.98, 0.88 → 1.08; 1.18 → 1.49 ms | 15.0 → 10.6, 10.4 → 7.3; 8.5 → 14.7 ms | 15–20 / 18–24 µs, within noise |
+
+Every reading listener received 49.9–50.2 messages a second per leg; the dwell's p99 sat in the
+≤ 100 µs bucket throughout. So the server's price of the per-process cap on 100 calls is at most
+about +0.07 of loop utilisation (+0.04 for the peak's 6), and nothing measurable in the loop's delay
+or the calls' latency beyond the noise between two windows. In the lane, beside other files, the
+noise is larger (the peak's window there moved more than the cap's): the closest reading to a bound
+in every run so far is that one's p95, 38.7 ms against 52.8. The p95 slack was 20 ms for the first
+runs and is 30 ms, for a CI runner's busier neighbours. Earlier runs with the listeners' sockets in the SAME process
+(their reading charged to the loop) showed the ceiling of that price: at 20 listeners +0.05–0.11 of
+utilisation and the calls' p95 latency 3–4× (4 → 18 ms), which is the 2,000 messages a second the
+listeners themselves read; at 6 listeners +0.01–0.05. The relay dwell never moved, as LS8 says it
+cannot.
+
+**Findings.**
+- *A stalled listener on loopback is ended by the idle bound before it is dropped.* A paused reader
+  on loopback absorbs about 4 MB in the kernel (the send buffer autotunes to `tcp_wmem`'s maximum
+  with 64 KiB segments) before `ws` buffers a byte: four minutes of one listener's audio, against the
+  30 s idle bound. Across a real path the kernel takes tens of KiB, so the soft limit is reached in
+  seconds; the suite reproduces that by corking the stalled listener's server end
+  (`net.Socket.cork`), after which it is dropped (soft limit) within the window and then ended by the
+  idle bound, as LS15 (g) expects. Without the soft limit (mutation below) the same listener reaches
+  the hard cap within the window and is closed `send_backlog`.
+- *The grant's 503 refusals were masked.* Through the whole app the error mask replaced the bodies
+  of `503 listen_limit_server` and `503 listen_unavailable` with the generic support message, so the
+  console could not say why a Listen was refused (it read them as `listen_unavailable`). Fixed in
+  `7b1c92a`: `sendListenRefusal` marks them reviewed (`preserveReviewedUpstreamError`), as the soft
+  phone's reviewed 503s are; the route test runs behind the mask now.
+
+**Mutation checks** (each red, then restored with `git checkout`): a 1 ms busy wait in the tap per
+leg message (6 listeners: utilisation 0.68 → 0.94, loop delay p99 4.4 → 19.7 ms, latency p50 0.94 →
+3.9 ms, all four primary bounds red; the dwell unchanged); the listener's soft limit removed (the
+stalled listener closed `send_backlog` inside the window); a listened call's relay dropping one
+frame in 500 (the zero-loss check red). Feeding the customer leg's tap BEFORE the relay is NOT caught
+here (20 listeners: p2b dwell mean 21 → 26 µs, inside the bound: ten of a hundred calls carry the
+tap's passthrough copy); it is pinned by `webrtc-bridge-listen-tap.test.ts` ("recordRelayFrame runs
+before every listener send"), which goes red for it.
+
 ## 11. Tests
 
 - Contracts: `packages/contracts/test/rbac.test.ts` (the floor, nobody below `account_admin`),
@@ -592,6 +681,8 @@ the standing line of LS2.
   class). Mobile: `apps/mobile/test/features/station/station_listen_notice_test.dart` and
   `apps/mobile/packages/agency_wire/test/platform_test.dart` (`FeatureFlags.liveListenEnabled`
   against the fixture).
+- The load check: `apps/server/test/integration/load/listen-media-load.test.ts` and its listeners'
+  child process `listen-load-clients.ts` (§10 "Load check").
 - The notice's words (phase 6): `packages/contracts/test/inbound-route-warnings.test.ts` (the
   sentence word for word, as its WAV says it), `apps/console/src/__tests__/pages/InboundRoutes.test.tsx`
   (the route editor quotes it), `apps/server/test/unit/agency/inbound/inbound-standard-clips.test.ts`
