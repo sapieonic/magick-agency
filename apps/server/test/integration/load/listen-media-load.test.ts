@@ -587,6 +587,15 @@ async function runFloor(name: string, listenerCount: number): Promise<RunResult>
   }
   await waitFor('every listener ready', () => listeners.every((l) => clients.ready.has(l.listenId) || clients.closed.has(l.listenId)), 15_000);
   for (const l of listeners) expect(clients.closed.get(l.listenId), `listener ${l.listenId}`).toBeUndefined();
+  // At the process cap, one more grant is refused (and counted) while the floor carries on. Asked
+  // now, while all of them are open: the stalled one is ended after 10 s of drops (LS17 b), which
+  // frees its slot.
+  if (listenerCount >= config.agency.listen.maxPerProcess) {
+    const late = await user('account_admin');
+    const refused = await http(late, 'POST', `/proxy/agency/live-calls/${spare.callId}/listen`);
+    expect(refused.statusCode, refused.body).toBe(503);
+    expect(refused.json()).toMatchObject({ code: 'listen_limit_server' });
+  }
   if (listenerCount > 0) await sleep(SETTLE_MS);
 
   // ── The listeners' window: the same floor, listened to ──
@@ -595,17 +604,19 @@ async function runFloor(name: string, listenerCount: number): Promise<RunResult>
     clients.count(true);
     listening = await measure();
     clients.count(false);
-    expect(await metricValue(reader, 'agency_listen_sessions_active'), 'listen sessions open in the window').toBe(listenerCount);
+    // Every reading listener is still open. The stalled one may already have ended `send_backlog`
+    // (10 s of drops at its soft limit, LS17 b; when depends on how much the loopback socket took
+    // before `bufferedAmount` grew): the gauge drops before its row closes, so a closed row means
+    // the gauge has counted it out.
+    const stalledId = listeners.find((l) => l.stalled)!.listenId;
+    const stalledClosedBefore = !!(await listenRows()).get(stalledId)?.ended_at;
+    const active = await metricValue(reader, 'agency_listen_sessions_active');
+    expect(active, 'listen sessions open in the window').toBeGreaterThanOrEqual(listenerCount - 1);
+    expect(active, 'listen sessions open in the window').toBeLessThanOrEqual(stalledClosedBefore ? listenerCount - 1 : listenerCount);
+    const inWindow = await listenRows();
+    for (const l of listeners) if (!l.stalled) expect(inWindow.get(l.listenId)?.ended_at ?? null, `listener ${l.listenId} open in the window`).toBeNull();
   }
   const elapsedS = listening ? (listening.t1 - listening.t0) / 1000 : 0;
-
-  // At the process cap, one more grant is refused (and counted) while the floor carries on.
-  if (listenerCount >= config.agency.listen.maxPerProcess) {
-    const late = await user('account_admin');
-    const refused = await http(late, 'POST', `/proxy/agency/live-calls/${spare.callId}/listen`);
-    expect(refused.statusCode, refused.body).toBe(503);
-    expect(refused.json()).toMatchObject({ code: 'listen_limit_server' });
-  }
 
   // The stalled listener: dropped at its soft limit, then ended send_backlog after 10 s of drops; the call goes on.
   const stalled = listeners.find((l) => l.stalled);
