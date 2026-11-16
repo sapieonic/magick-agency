@@ -106,12 +106,17 @@ export async function fetchActivityPage(query: ActivityQuery): Promise<ActivityP
   // actor is a user id (the public layer's originator on create and retry, IN8) is
   // resolved in the same query.
   const displayNames = await resolveDisplayNames(
-    [...master.logs, ...core.rows.map((row) => ({ user_id: coreActorUserId(row.actor) }))],
+    [
+      ...master.logs,
+      ...core.rows.map((row) => ({ user_id: coreActorUserId(row.actor) })),
+      // The agent a listen row is about (its `detail.agent_user_id`), named in the same read.
+      ...master.logs.map((row) => ({ user_id: listenRowAgentId(row.action, row.details) })),
+    ],
     query.tenantId,
   );
 
   const merged = mergeActivityPage({
-    masterRows: master.logs.map((row) => normalizeMasterRow(row, displayNames)),
+    masterRows: master.logs.map((row) => withListenAgentName(normalizeMasterRow(row, displayNames), displayNames)),
     coreRows: core.rows.map((row) => normalizeCoreRow(row, displayNames)),
     limit: query.limit,
     cursor: query.cursor,
@@ -206,6 +211,27 @@ async function readCore(query: ActivityQuery, fetchSize: number): Promise<CoreRe
     total: result.total,
     retention,
   };
+}
+
+/**
+ * The actions whose rows are about another user's call: a supervisor listening to an agent's call
+ * (docs/listening.md §12, LS19). The actor is the supervisor; the row also names the agent, as
+ * `detail.agent_name` beside the recorded `detail.agent_user_id`, so the trail can say whose call
+ * it was. Added here, at the read, never written to the audit row: a name changes, the id does not.
+ */
+const LISTEN_ACTIONS: ReadonlySet<string> = new Set(['agency_call.listen_started', 'agency_call.listen_ended']);
+
+function listenRowAgentId(action: string, details: Record<string, unknown> | null | undefined): string | null {
+  if (!LISTEN_ACTIONS.has(action)) return null;
+  const id = details?.['agent_user_id'];
+  return typeof id === 'string' ? id : null;
+}
+
+/** A listen row with its agent named (null when the id does not resolve); any other row as it is. */
+function withListenAgentName(row: ActivityRow, displayNames: ReadonlyMap<string, string | null>): ActivityRow {
+  const agentId = listenRowAgentId(row.action, row.detail);
+  if (!agentId) return row;
+  return { ...row, detail: { ...row.detail, agent_name: displayNames.get(agentId) ?? null } };
 }
 
 /**
