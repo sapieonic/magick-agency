@@ -272,8 +272,9 @@ export const AGENCY_FLAGS = Object.freeze({
   // line, LS2). Gates every live-call route (`403 feature_disabled` when off), the console's Live
   // calls page and the campaign's Live view, and the station's standing line. Switched off, the
   // periodic re-check ends every open listen in the account (`permission_revoked`). Off by default:
-  // a tenant gets it by an override row, scoped and attributed. Client-exposed: the console shows
-  // the page and the agent's line from it.
+  // a tenant or account gets it by an override row a super-admin writes, scoped and attributed,
+  // with a reason and never in a bulk rollout or globally (its handling policy, LS20). Client-exposed:
+  // the console shows the page, the agent's line and the account's Settings line from it.
   agency_live_listen_enabled: {
     key: 'agency_live_listen_enabled',
     type: 'boolean',
@@ -293,13 +294,16 @@ export const AGENCY_FLAGS = Object.freeze({
   // Listen is then disabled ("Listening is turned off for unrecorded calls") and its grant refused
   // `409 listen_recording_off`; the re-check ends a listen already open on one. Not a capability
   // being granted (`agency_live_listen_enabled` is that), a narrowing of it, hence on by default.
-  // Not client-exposed: the server computes each row's `listenable`, and the console renders it.
+  // Client-exposed (LS20): the account's Settings shows, read-only, whether listening is on and
+  // whether unrecorded calls are included. The server still computes each live row's `listenable`
+  // and refuses the grant itself; the console never decides from this value.
   agency_live_listen_unrecorded: {
     key: 'agency_live_listen_unrecorded',
     type: 'boolean',
     default: true,
     envVar: 'FF_AGENCY_LIVE_LISTEN_UNRECORDED', // FF_AGENCY_LIVE_LISTEN_UNRECORDED=false: only recorded calls, everywhere
     scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the account's Settings line: "Calls that are not recorded: included / not included"
     owner: 'voice',
     description: 'Agency live call listening: whether calls that are not being recorded may be listened to (off: recorded calls only)',
   },
@@ -333,7 +337,7 @@ export type ClientExposedAgencyFlagKey = {
 /**
  * The client-exposed flag map the console reads (the agency successor of
  * `GET /proxy/feature-flags` → the console `FeatureFlagMap`), narrowed to agency's
- * exposed keys. `agency_late_binding` is deliberately absent — see its comment — and so are
- * `agency_inbound_ring_enabled` and `agency_live_listen_unrecorded`.
+ * exposed keys. `agency_late_binding` is deliberately absent — see its comment — and so is
+ * `agency_inbound_ring_enabled`.
  */
 export type AgencyClientFlagMap = Record<ClientExposedAgencyFlagKey, boolean>;

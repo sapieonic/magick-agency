@@ -158,14 +158,14 @@ describe('feature-flag registry', () => {
       expect(f.envVar).toBe('FF_AGENCY_LIVE_LISTEN');
     });
 
-    it('agency_live_listen_unrecorded (LS4) is boolean, default ON, tri-scoped, not client-exposed', () => {
+    it('agency_live_listen_unrecorded (LS4) is boolean, default ON, tri-scoped, client-exposed (LS20)', () => {
       const f = getFlag('agency_live_listen_unrecorded')!;
       expect(f.type).toBe('boolean');
       // On: unrecorded calls may be listened to; off narrows listening to recorded calls.
       expect(f.default).toBe(true);
       expect(f.scopes).toEqual(['global', 'tenant', 'account']);
-      // The server computes each live row's `listenable`; the console reads that.
-      expect(f.clientExposed).toBeUndefined();
+      // The account's Settings line reads it (LS20); the server still computes each row's `listenable`.
+      expect(f.clientExposed).toBe(true);
       expect(f.envVar).toBe('FF_AGENCY_LIVE_LISTEN_UNRECORDED');
     });
   });
@@ -248,9 +248,9 @@ describe('feature-flag registry', () => {
       expect(keys).toContain('agency_reports_enabled');
       expect(keys).toContain('agency_inbound_enabled');
       expect(keys).toContain('agency_live_listen_enabled');
+      expect(keys).toContain('agency_live_listen_unrecorded');
       expect(keys).not.toContain('agency_late_binding');
       expect(keys).not.toContain('agency_inbound_ring_enabled');
-      expect(keys).not.toContain('agency_live_listen_unrecorded');
     });
   });
 });
