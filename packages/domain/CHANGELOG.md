@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.11.1...domain-v0.12.0) (2026-11-16)
+
+
+### Features
+
+* **server,console,mobile,contracts,db,report-renderer:** honour recording off, promise to pay, Do Not Call scope, soft-phone results and a checked import ([#90](https://github.com/sapieonic/magick-agency/issues/90)) ([69c4ffc](https://github.com/sapieonic/magick-agency/commit/69c4ffc0816044abad051eba6f44199c2965a325))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.23.0
+
 ## [0.11.1](https://github.com/sapieonic/magick-agency/compare/domain-v0.11.0...domain-v0.11.1) (2026-11-15)
 
 
