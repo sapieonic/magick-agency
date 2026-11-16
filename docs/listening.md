@@ -179,7 +179,9 @@ caller. The console polls it every 5 s while the page is visible.
 
 **The routes** (`api/routes/proxy-agency-live-calls.routes.ts`, under `/proxy/agency`): the session,
 the tenant context, the permission (`agency.supervise` for the list and the number,
-`agency.calls.listen` for the grant), then the flag (`403 feature_disabled`), an account
+`agency.calls.listen` for the grant), then the flag (`403 feature_disabled`; a flag store that
+cannot be read is `503 listen_unavailable` on every route, which the console retries, never the
+403 it treats as final), an account
 (`X-Account-Id`, else 400), a malformed call id the uniform `404 listen_call_not_live` (a malformed
 `campaign_id` a 400). The list and the number read the internal `GET /api/v1/agency/live-calls`
 (owner `none`; `?campaign_id=`, `?call_id=`): `AgencyLiveCallRepository.listLive`, the three spines

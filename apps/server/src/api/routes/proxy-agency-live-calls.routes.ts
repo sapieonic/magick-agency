@@ -120,15 +120,16 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
 
   /**
    * The account and the consent flag, or a reply. Runs after the permission. The flags are read
-   * strictly (a flag store that cannot be read is not "off"): for the grant an outage is
-   * `503 listen_unavailable` (LS16 c: no answer, no listen; nothing about the account's consent is
-   * claimed); for the list and the number, which grant nothing, it is the flag's default (off:
-   * `403 feature_disabled`), as before.
+   * strictly (a flag store that cannot be read is not "off"): an outage is
+   * `503 listen_unavailable` on every route (LS16 d: no answer, no listen; nothing about the
+   * account's consent is claimed). The console reads `403 feature_disabled` as terminal (the page
+   * stops polling) and a 503 as transient (it keeps the rows and retries), so an outage must never
+   * answer the 403. Only the grant's outage is counted in `agency_listen_grants_total`.
    */
   async function gate(
     request: FastifyRequest,
     reply: FastifyReply,
-    onOutage: 'feature_disabled' | 'listen_unavailable',
+    route: 'read' | 'grant',
   ): Promise<{ tenantId: string; accountId: string; flags: ListenFlags } | null> {
     if (!request.accountId) {
       await reply.code(400).send({ error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` });
@@ -141,12 +142,8 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
       flags = await deps.listenFlags(tenantId, accountId);
     } catch (err) {
       log.warn({ err, tenantId }, 'live calls: the listening flags could not be read');
-      if (onOutage === 'listen_unavailable') {
-        deps.trackGrant('listen_unavailable');
-        sendListenRefusal(reply, 'listen_unavailable');
-      } else {
-        await reply.code(403).send(LIVE_LISTEN_DISABLED_BODY);
-      }
+      if (route === 'grant') deps.trackGrant('listen_unavailable');
+      sendListenRefusal(reply, 'listen_unavailable');
       return null;
     }
     if (!flags.enabled) {
@@ -174,7 +171,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     '/live-calls',
     { preHandler: [requirePermission('agency.supervise')] },
     async (request, reply) => {
-      const scope = await gate(request, reply, 'feature_disabled');
+      const scope = await gate(request, reply, 'read');
       if (!scope) return reply;
       const campaignId = request.query.campaign_id;
       if (campaignId !== undefined && campaignId !== '' && !isUuid(campaignId)) {
@@ -222,7 +219,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     '/live-calls/:callId/number',
     { preHandler: [requirePermission('agency.supervise')] },
     async (request, reply) => {
-      const scope = await gate(request, reply, 'feature_disabled');
+      const scope = await gate(request, reply, 'read');
       if (!scope) return reply;
       if (!isUuid(request.params.callId)) return sendListenRefusal(reply, 'listen_call_not_live');
       const callId = request.params.callId.toLowerCase();
@@ -240,7 +237,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     '/live-calls/:callId/listen',
     { preHandler: [requirePermission('agency.calls.listen')] },
     async (request, reply) => {
-      const gated = await gate(request, reply, 'listen_unavailable');
+      const gated = await gate(request, reply, 'grant');
       if (!gated) return reply;
       const { flags, ...scope } = gated;
       const refuse = (code: Exclude<ListenGrantResult, 'granted'>): FastifyReply => {
