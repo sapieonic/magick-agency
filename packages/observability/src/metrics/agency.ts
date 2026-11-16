@@ -1100,7 +1100,7 @@ export type ListenGrantResult =
 /** Why a listen session ended (`agency_listen_sessions_ended_total`): the contract's `AgencyListenEndReason`. */
 export type ListenEndMetricReason =
   | 'call_ended' | 'listener_stopped' | 'listener_disconnected' | 'permission_revoked' | 'superseded'
-  | 'send_backlog' | 'tap_error' | 'server_shutdown' | 'server_restarted';
+  | 'send_backlog' | 'tap_error' | 'server_shutdown' | 'server_restarted' | 'access_unverified';
 
 /**
  * Where the listener tap failed a frame or a send (`agency_listen_tap_errors_total`): `decode`
@@ -1119,7 +1119,7 @@ export const agencyListenGrantsTotal = counter<'result'>(meter, 'agency_listen_g
 });
 
 export const agencyListenSessionsEndedTotal = counter<'reason'>(meter, 'agency_listen_sessions_ended_total', {
-  description: 'Listen sessions ended, by why: call_ended, listener_stopped, listener_disconnected, permission_revoked, superseded, send_backlog, tap_error, server_shutdown or server_restarted (closed by the reap after a process died)',
+  description: 'Listen sessions ended, by why: call_ended, listener_stopped, listener_disconnected, permission_revoked, superseded, send_backlog, tap_error, server_shutdown, server_restarted (closed by the reap after a process died) or access_unverified (the access re-check could not be made for too long)',
 });
 
 export const agencyListenSessionSeconds = histogram(meter, 'agency_listen_session_seconds', {

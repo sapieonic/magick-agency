@@ -15,7 +15,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * path), and one between a grant and its upgrade (refused at the upgrade, no row); LS4 both ways; the own-call rule; another account and
  * another tenant (404, absent from the list); agents and operators (403); the flag off (403); the
  * number reveal; the call detail's `listen_sessions`; a soft-phone call; a wrap-up redial (a new
- * call listened to by its own id); the boot sweep of a dead process's rows. The Plivo and inbound
+ * call listened to by its own id); the boot sweep of a dead process's rows; an agent's own hangup
+ * (nothing of the agent's after `ended`); a grant whose call ended before its upgrade (no
+ * "Listened to by"); an agent reading their own soft-phone call (no `listen_sessions`); a
+ * super-admin's session (no reach). The Plivo and inbound
  * variants are `test/integration/telephony/live-listen-plivo-e2e.test.ts`.
  */
 
@@ -35,6 +38,7 @@ const env = vi.hoisted(() => {
     // The periodic re-check (LS10's backstop) out of the way: a revocation that ends a listen here
     // within seconds went through the immediate path (`revokeListens`), not a pass.
     AGENCY_LISTEN_RECHECK_MS: '300000',
+    SUPER_ADMIN_JWT_SECRET: 'listen-e2e-super-admin-secret',
     LOG_LEVEL: 'error',
   };
   Object.assign(process.env, e);
@@ -44,6 +48,7 @@ const fb = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: fb.verifyIdToken }));
 
 import { randomUUID } from 'node:crypto';
+import jwt from 'jsonwebtoken';
 import WebSocket from 'ws';
 import { getPool } from '@magick-agency/db';
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
@@ -245,7 +250,8 @@ async function closedRow(listenId: string, reason: string) {
 }
 
 async function auditActions(callId: string): Promise<string[]> {
-  await platformAuditLogger.shutdown();
+  // Flushed, not shut down: the logger keeps running for the rest of the file (QA-L8).
+  await platformAuditLogger.flush();
   const { rows } = await pool().query<{ action: string }>(
     `SELECT action FROM platform_audit_log WHERE resource_type = 'agency_call' AND resource_id = $1 ORDER BY created_at, action DESC`, [callId]);
   return rows.map((r) => r.action);
@@ -451,7 +457,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     await closedRow(l2.listenId, 'permission_revoked');
   });
 
-  it('LS16 b: a grant whose supervisor is demoted before the upgrade is refused 4403 at the upgrade, with no row', async () => {
+  it('LS16 n: a grant whose supervisor is demoted before the upgrade is refused 4403 at the upgrade, with no row', async () => {
     const call = await liveCall();
     const target = await user('account_admin');
     const res = await http(target, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`);
@@ -467,7 +473,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect(closed).toEqual({ code: 4403, reason: 'permission_revoked' });
     expect(frames.some((f) => f.includes('"ready"'))).toBe(false);
     expect(await listenRow(grant.listen_id)).toBeUndefined();
-    expect(getAgencyRuntime()!.listen.all().some((x) => x.listenId === grant.listen_id)).toBe(false);
+    expect(getAgencyRuntime()!.listen.held().has(grant.listen_id)).toBe(false);
   });
 
   it('LS4: an unrecorded call is listenable by default; with the flag off the row says why and the grant is 409', async () => {
@@ -573,6 +579,10 @@ describe('live call listening, end to end on VoiceLink', () => {
     const detail = await http(supervisor, 'GET', `/proxy/agency/softphone/calls/${placed.call.id}`);
     expect(detail.statusCode, detail.body).toBe(200);
     expect(detail.json().listen_sessions).toEqual([expect.objectContaining({ listen_id: l.listenId, end_reason: 'call_ended' })]);
+    // QA-L2: the agent reads their own call, without agency.supervise: no `listen_sessions`.
+    const own = await http(agent, 'GET', `/proxy/agency/softphone/calls/${placed.call.id}`);
+    expect(own.statusCode, own.body).toBe(200);
+    expect(own.json()).not.toHaveProperty('listen_sessions');
   });
 
   it('a wrap-up redial is a new call: listened to by its own id, the first call\'s listen ended `call_ended`', async () => {
@@ -608,6 +618,70 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect(second.frames[0]).toMatchObject({ event: 'ready', call_id: next.webrtc_call_id });
     // The ended call is not live any more: its grant is refused.
     expect((await http(supervisor, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`)).json().code).toBe('listen_call_not_live');
+  });
+
+  it('QA-L1, LS15 f: the agent hangs up: the listener is ended `call_ended` and hears nothing of the agent after `ended`', async () => {
+    const call = await liveCall();
+    call.ctl.talk = true;
+    talk(call.station);
+    const l = await listen(supervisor, call.callId);
+    // Count the agent's frames that arrive after the `ended` frame, in the socket's own order.
+    let endedSeen = false;
+    let agentAfterEnded = 0;
+    l.ws.on('message', (raw: Buffer, isBinary) => {
+      if (!isBinary) { if (raw.toString().includes('"ended"')) endedSeen = true; return; }
+      if (endedSeen && raw[0] === 2) agentAfterEnded++;
+    });
+    await waitFor('agent leg heard', () => l.legs.agent > 10, 15_000, () => JSON.stringify(l.legs));
+    const hung = await http(call.agent, 'POST', `/proxy/agency/attempts/${call.attemptId}/hangup`, {});
+    expect(hung.statusCode, hung.body).toBeLessThan(300);
+    await waitFor('listener closed', () => l.closed, 20_000);
+    expect(l.closed).toEqual({ code: 1000, reason: 'call_ended' });
+    expect(l.frames.at(-1)).toEqual({ event: 'ended', reason: 'call_ended' });
+    // The agent keeps talking into the socket while the carrier confirms (`ending`): none of it is heard.
+    const heard = l.legs.agent;
+    await new Promise((r) => setTimeout(r, 500));
+    expect(agentAfterEnded).toBe(0);
+    expect(l.legs.agent).toBe(heard);
+    await closedRow(l.listenId, 'call_ended');
+  });
+
+  it('QA-M2: a grant whose call ended before its upgrade is refused 4404; its row is not "Listened to by"', async () => {
+    const call = await liveCall();
+    const res = await http(supervisor, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`);
+    expect(res.statusCode, res.body).toBe(201);
+    const grant = res.json() as { listen_id: string; ws_url: string };
+    call.ctl.hangUp = true;
+    await waitFor('the call gone from the bridge', () => !rig!.bridge.getSession(call.callId), 20_000);
+    const ws = new WebSocket(`${rig!.origin.replace('http', 'ws')}${grant.ws_url}`);
+    ws.on('error', () => { /* the close follows */ });
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })));
+    expect(closed).toEqual({ code: 4404, reason: 'listen_call_not_live' });
+    // The row was written (no row, no audio) and closed, never live.
+    expect(await listenRow(grant.listen_id)).toMatchObject({ end_reason: 'call_ended', live_at: null });
+    const detail = await http(supervisor, 'GET', `/proxy/agency/campaigns/${call.campaignId}/attempts/${call.attemptId}`);
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json().listen_sessions).toEqual([]);
+  });
+
+  it('QA-L2: a super-admin\'s session reaches no live-call route', async () => {
+    const call = await liveCall();
+    // A super-admin session token as its login signs one (`super-admin/login.ts`), for a real admin.
+    const adminId = randomUUID();
+    await pool().query(
+      `INSERT INTO super_admins (id, email, password_hash, name, status) VALUES ($1, $2, 'x', 'Root', 'active')`,
+      [adminId, 'root@listen.test']);
+    const token = jwt.sign({ sub: adminId, email: 'root@listen.test', type: 'super_admin' }, env['SUPER_ADMIN_JWT_SECRET']!, { expiresIn: '1h' });
+    // Its token is no Firebase session: every live-call route refuses it, nothing read, no grant.
+    for (const [method, url] of [
+      ['GET', '/proxy/agency/live-calls'], ['GET', `/proxy/agency/live-calls/${call.callId}/number`],
+      ['POST', `/proxy/agency/live-calls/${call.callId}/listen`],
+    ] as const) {
+      const r = await rig!.app.inject({ method, url, headers: { authorization: `Bearer ${token}`, 'x-tenant-id': TENANT, 'x-account-id': ACCOUNT } });
+      expect(r.statusCode, `${method} ${url}: ${r.body}`).toBe(401);
+    }
+    const { rows } = await pool().query('SELECT count(*)::int AS n FROM agency_listen_sessions WHERE call_id = $1', [call.callId]);
+    expect(rows[0].n).toBe(0);
   });
 
   it('HTTP closing ends the open listens `server_shutdown`, their rows closed, before the close completes', async () => {

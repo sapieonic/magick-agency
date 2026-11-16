@@ -1,9 +1,10 @@
 /**
- * `AgencyListenSessionRepository`: `agency_listen_sessions` (`0047_listen_sessions.sql`; live call
+ * `AgencyListenSessionRepository`: `agency_listen_sessions` (`0047_listen_sessions.sql`,
+ * `0048_listen_sessions_unverified.sql`; live call
  * listening, docs/listening.md), one row per listen session: a supervisor listening in silently to
  * a call in progress. The listen registry (`agency/listen/`) opens and closes rows in the process
  * that owns the call; the live list reads the open ones for its listeners and caps, and the call
- * detail pages read a call's rows for "Listened to by".
+ * detail pages read a call's rows that went live for "Listened to by".
  *
  * ── The row is the record ───────────────────────────────────────────────────
  * {@link AgencyListenSessionRepository.open} is awaited before any audio flows: a session whose
@@ -46,6 +47,11 @@ export interface ListenSessionRecord {
   /** Both or neither (`ck_agency_listen_sessions_ended`). */
   ended_at: Date | null;
   end_reason: AgencyListenEndReason | null;
+  /**
+   * When the session went live (admitted, `ready` sent; `0048_listen_sessions_unverified.sql`);
+   * null while it is being admitted, and for good when the upgrade refused it after the row.
+   */
+  live_at: Date | null;
   /** 20 ms frames sent to the listener, both legs; written at the close. */
   frames_sent: number;
   /** Frames dropped under the listener's back-pressure; written at the close. */
@@ -75,6 +81,8 @@ export interface ListenSessionCloseInput {
   reason: AgencyListenEndReason;
   framesSent: number;
   framesDropped: number;
+  /** The session went live (`ready` sent): `live_at` is written if its stamp never landed. Absent: false. */
+  live?: boolean;
 }
 
 /** The columns `open` writes, spelled once beside its values (the rest take their defaults). */
@@ -100,8 +108,24 @@ export class AgencyListenSessionRepository {
   }
 
   /**
-   * End an open session: its end, why, and its counters. Null when the row is already closed (or
-   * does not exist), so the first close wins and a second changes nothing.
+   * The session went live (admitted, `ready` sent): stamp `live_at` once. False when it was
+   * stamped already or there is no such row. Not awaited by the socket (audio flows at once); a
+   * stamp that fails is written by the session's close instead ({@link close}'s `live`).
+   */
+  async markLive(id: string): Promise<boolean> {
+    const { rowCount } = await getPool().query(
+      `UPDATE agency_listen_sessions SET live_at = GREATEST(now(), started_at)
+        WHERE id = $1 AND live_at IS NULL`,
+      [id],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * End an open session: its end, why, and its counters; for a session that went live (`live`),
+   * `live_at` too when its stamp never landed (its start: admission follows the row by
+   * milliseconds). Null when the row is already closed (or does not exist), so the first close
+   * wins and a second changes nothing.
    */
   async close(id: string, input: ListenSessionCloseInput): Promise<ListenSessionRecord | null> {
     const { rows } = await getPool().query<ListenSessionRecord>(
@@ -109,23 +133,13 @@ export class AgencyListenSessionRepository {
           SET ended_at = GREATEST(now(), started_at),
               end_reason = $2::varchar,
               frames_sent = $3::integer,
-              frames_dropped = $4::integer
+              frames_dropped = $4::integer,
+              live_at = CASE WHEN $5::boolean THEN COALESCE(live_at, started_at) ELSE live_at END
         WHERE id = $1 AND ended_at IS NULL
         RETURNING *`,
-      [id, input.reason, Math.max(0, Math.trunc(input.framesSent)), Math.max(0, Math.trunc(input.framesDropped))],
+      [id, input.reason, Math.max(0, Math.trunc(input.framesSent)), Math.max(0, Math.trunc(input.framesDropped)), input.live === true],
     );
     return rows[0] ?? null;
-  }
-
-  /** The account's open sessions, earliest first: the live list's listeners and the per-call cap. */
-  async listOpenInAccount(tenantId: string, accountId: string): Promise<ListenSessionRecord[]> {
-    const { rows } = await getPool().query<ListenSessionRecord>(
-      `SELECT * FROM agency_listen_sessions
-        WHERE tenant_id = $1 AND account_id = $2 AND ended_at IS NULL
-        ORDER BY started_at, id`,
-      [tenantId, accountId],
-    );
-    return rows;
   }
 
   /** The open sessions on these calls of the tenant, earliest first. No calls, no query. */
@@ -140,11 +154,16 @@ export class AgencyListenSessionRepository {
     return rows;
   }
 
-  /** Every session on one call of the account, open or closed, earliest first: "Listened to by". */
+  /**
+   * Every session on one call of the account that went live (`live_at` set), open or closed,
+   * earliest first: "Listened to by". A row the upgrade wrote and then refused (the call gone
+   * before the tap opened, a revocation before the admission, the client gone) never carried
+   * audio, so nobody listened (LS22).
+   */
   async listForCall(tenantId: string, accountId: string, callId: string): Promise<ListenSessionRecord[]> {
     const { rows } = await getPool().query<ListenSessionRecord>(
       `SELECT * FROM agency_listen_sessions
-        WHERE call_id = $3 AND tenant_id = $1 AND account_id = $2
+        WHERE call_id = $3 AND tenant_id = $1 AND account_id = $2 AND live_at IS NOT NULL
         ORDER BY started_at, id`,
       [tenantId, accountId, callId],
     );

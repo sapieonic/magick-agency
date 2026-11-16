@@ -1556,6 +1556,23 @@ stored list against the contract's and `ck_agency_calls_origin`, the indexes and
 them on analysed data, the Down's refusal, down then up), `baseline.test.ts` and the down → up
 inventory suite.
 
+### 0048 — `migrations/0048_listen_sessions_unverified.sql`
+
+Live call listening's review fixes (`docs/listening.md`, LS21, LS22). **`agency_listen_sessions`**:
+`ck_agency_listen_sessions_end_reason` re-created with `access_unverified` appended (the periodic
+re-check could not verify a session for 2 × `AGENCY_LISTEN_RECHECK_MS`, or a revocation's immediate
+re-check could not read it: not "no longer allowed", LS21); **`live_at`** `TIMESTAMPTZ` (new,
+nullable, no default): when the session went live (admitted, `ready` sent), NULL for a row the
+upgrade wrote and then refused, which "Listened to by" leaves out (LS22); CHECK
+`ck_agency_listen_sessions_live` (never before the start). Rows written before it are backfilled
+with their start. The Up starts with `SET LOCAL lock_timeout = '10s'` (ACCESS EXCLUSIVE on a table
+the live server writes; small, so the CHECKs validate in place). **Down** refuses while any row
+ended `access_unverified` (0047's CHECK cannot hold it), else drops `live_at` and its CHECK and
+restores 0047's CHECK. **Tests**: `test/integration/db/listen-sessions-unverified-migration.test.ts`
+(the CHECK equal to the contract's list both ways, `live_at` and its CHECK, the backfill of rows
+from before it, the Down's refusal, down then up), `listen-sessions-migration.test.ts` (the column
+set) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

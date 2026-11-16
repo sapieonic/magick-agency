@@ -13,7 +13,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  *  - a role change through the real route reaches the worker as `listen.revoke` and ends the
  *    listen `permission_revoked` (4403), with the periodic re-check held off (5 min), so it is the
  *    immediate path; and a grant whose supervisor is demoted before its upgrade is refused 4403 by
- *    the owning worker, with no row.
+ *    the owning worker, with no row;
+ *  - a media worker killed mid-listen (QA-M4): the primary's reap closes that worker's listen rows
+ *    `server_restarted` (`closeOrphansExcept` with the live replicas), and leaves the other
+ *    worker's open, its listener still hearing.
  */
 
 import WebSocket from 'ws';
@@ -279,4 +282,23 @@ describe('listening with media workers', () => {
     expect(closed).toEqual({ code: 4403, reason: 'permission_revoked' });
     expect(await row(res.body.listen_id)).toBeUndefined();
   }, 60_000);
+
+  // Last: it kills slot 0's worker, and its call with it.
+  it('QA-M4: a media worker killed mid-listen: its row closes `server_restarted` by the primary\'s reap; the other worker\'s listen stays open and keeps hearing', async () => {
+    const onDoomed = await listen(await supervisor(), calls.get(0)!.callId);
+    const onSurvivor = await listen(await supervisor(), calls.get(1)!.callId);
+    expect((await row(onDoomed.listenId))?.replica_id).toMatch(/:mw0:/);
+    expect((await row(onSurvivor.listenId))?.replica_id).toMatch(/:mw1:/);
+    const deadPid = (await server.detail()).processes!.find((p) => p?.role === 'media' && p.slot === 0)!.pid;
+    process.kill(deadPid, 'SIGKILL');
+    const heardAtKill = onSurvivor.legs.customer;
+
+    await until('the dead worker\'s listen row closed by the reap', 30_000, async () => (await row(onDoomed.listenId))?.end_reason === 'server_restarted');
+    // The survivor's: its process is alive, so the reap leaves it open, and it keeps hearing.
+    await until('the survivor kept hearing its call', 15_000, () => onSurvivor.legs.customer - heardAtKill > 50);
+    expect(await row(onSurvivor.listenId)).toMatchObject({ end_reason: null, ended_at: null });
+    expect(onSurvivor.closed).toBeNull();
+    onSurvivor.ws.close();
+    await until('the survivor\'s row closed', 10_000, async () => (await row(onSurvivor.listenId))?.end_reason === 'listener_disconnected');
+  }, 90_000);
 });

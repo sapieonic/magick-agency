@@ -287,7 +287,7 @@ describe('package surface', () => {
     expect([...AGENCY_CALL_ORIGINS]).toEqual(['campaign', 'manual', 'inbound']);
     expect([...AGENCY_LISTEN_END_REASONS]).toEqual([
       'call_ended', 'listener_stopped', 'listener_disconnected', 'permission_revoked', 'superseded',
-      'send_backlog', 'tap_error', 'server_shutdown', 'server_restarted',
+      'send_backlog', 'tap_error', 'server_shutdown', 'server_restarted', 'access_unverified',
     ]);
     expect(new Set(AGENCY_LISTEN_END_REASONS).size).toBe(AGENCY_LISTEN_END_REASONS.length);
     // One tag byte, then one 20 ms frame of the station's A-law.
@@ -310,6 +310,7 @@ describe('package surface', () => {
       LIMIT: 4429,
       INVALID_UPGRADE: 1008,
       INTERNAL_ERROR: 1011,
+      ACCESS_UNVERIFIED: 4503,
     });
     expect(new Set(Object.values(AGENCY_LISTEN_CLOSE)).size).toBe(Object.keys(AGENCY_LISTEN_CLOSE).length);
     // Every reason sent on a socket has its close code; `server_restarted` is written to rows only.
@@ -322,6 +323,7 @@ describe('package surface', () => {
       send_backlog: 4408,
       tap_error: 1011,
       server_shutdown: 1001,
+      access_unverified: 4503,
     });
     expect(Object.keys(AGENCY_LISTEN_END_CLOSE).sort())
       .toEqual(AGENCY_LISTEN_END_REASONS.filter((r) => r !== 'server_restarted').sort());

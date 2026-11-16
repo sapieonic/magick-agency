@@ -33,7 +33,8 @@ const { cfg } = vi.hoisted(() => ({
   cfg: {
     redis: { keyPrefix: '' },
     telephony: { voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' } },
-    agency: { listen: { faultBudget: 50 } },
+    // No `agency` block: the bridge reads no agency config; the tap's budget comes through the
+    // seam (`openListenTap`'s options, SWE-L2). A read of `config.agency` would throw here.
   },
 }));
 vi.mock('../../../src/config/index.js', () => ({ config: cfg }));
@@ -125,7 +126,7 @@ vi.mock('../../../src/core/webhook-url-builder.js', async (importOriginal) => {
 
 import { WebRtcBridgeManager, type ListenSendResult, type ListenSink, type ListenTapHandle } from '../../../src/core/webrtc-bridge-manager.js';
 import { AlawFramer, setBrowserLegMediaFormat, type BrowserLegMediaFormat } from '../../../src/core/bridge/browser-leg-media.js';
-import { ListenTap, MULAW_TO_ALAW, sendToListenerSocket } from '../../../src/core/bridge/listen-tap.js';
+import { LISTEN_TAP_DEFAULT_FAULT_BUDGET, ListenTap, MULAW_TO_ALAW, sendToListenerSocket } from '../../../src/core/bridge/listen-tap.js';
 import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
 import { MulawTranscoder, VoicelinkTranscoder } from '../../../src/utils/audio-fir.js';
 import { alawDecodeTable, alawEncodeTable, decodeMulaw, encodeMulaw } from '../../../src/utils/audio.js';
@@ -305,8 +306,11 @@ async function carrierEnded(mgr: WebRtcBridgeManager): Promise<void> {
   });
 }
 
+/** The fault budget `attach` passes through the seam, as the agency's listener socket does. */
+let tapBudget = 50;
+
 function attach(mgr: WebRtcBridgeManager, sink: ListenSink): ListenTapHandle {
-  const handle = mgr.openListenTap(CALL, sink);
+  const handle = mgr.openListenTap(CALL, sink, { faultBudget: tapBudget });
   if ('refused' in handle) throw new Error(`refused: ${handle.refused}`);
   return handle;
 }
@@ -345,7 +349,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   codecs.made.length = 0;
   codecs.next = null;
-  cfg.agency.listen.faultBudget = 50;
+  tapBudget = 50;
   mockRepo.update.mockResolvedValue(null);
   mockRepo.create.mockImplementation(async (i: any) => ({
     id: CALL, tenant_id: i.tenant_id, account_id: i.account_id, caller_id: i.caller_id,
@@ -934,7 +938,7 @@ describe('fault injection: nothing about a listener reaches the call', () => {
 
 describe('the fault budget', () => {
   async function failingCustomer(budget: number, schedule: (n: number) => boolean) {
-    cfg.agency.listen.faultBudget = budget;
+    tapBudget = budget;
     const station = fakeStation('pcm16');
     const { mgr, pstn, session } = await bridged('generic', station);
     let n = 0;
@@ -978,6 +982,21 @@ describe('the fault budget', () => {
     const again = recordingSink('l3');
     expect('refused' in mgr.openListenTap(CALL, again)).toBe(false);
     expect(session.listenTap).not.toBeNull();
+    await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
+  });
+
+  it('SWE-L2: the budget is the caller\'s, through the seam; with none the tap takes LISTEN_TAP_DEFAULT_FAULT_BUDGET', async () => {
+    expect(LISTEN_TAP_DEFAULT_FAULT_BUDGET).toBe(50);
+    const station = fakeStation('pcm16');
+    const { mgr, pstn } = await bridged('generic', station);
+    codecs.next = { carrierToPcm16k: () => { throw new Error('bad frame'); }, pcm16kToCarrier: (b) => b };
+    const sink = recordingSink('l1');
+    const handle = mgr.openListenTap(CALL, sink);
+    if ('refused' in handle) throw new Error('refused');
+    for (let i = 0; i < 49; i++) pstn.media(mulawFrame(i));
+    expect(handle.attached).toBe(true);
+    pstn.media(mulawFrame(49));
+    expect(sink.closed.map((c) => c.reason)).toEqual(['tap_error']);
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
   });
 

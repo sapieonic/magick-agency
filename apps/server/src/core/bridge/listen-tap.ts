@@ -23,6 +23,9 @@
 //    call and the listen ids only: no audio, no numbers.
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
+// Deliberately the agency area's metric, emitted from voice (SWE-L2): `agency_listen_tap_errors_total`
+// sits with the other `agency_listen_*` series it is read beside, and the tap is the only place that
+// knows a frame failed. Nothing else in voice reads the agency area.
 import { trackListenTapError, type ListenTapErrorStage } from '@magick-agency/observability/metrics/agency';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import { AGENCY_LISTEN_LEG, AGENCY_LISTEN_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
@@ -80,11 +83,14 @@ interface SinkEntry {
   framesDropped: number;
 }
 
+/** The fault budget when the caller names none (`ListenTapOpenOptions`): the setting's default. */
+export const LISTEN_TAP_DEFAULT_FAULT_BUDGET = 50;
+
 export interface ListenTapOptions {
   callId: string;
   /** The call's carrier media: its wire format (A-law is passed through) and a codec factory. */
   carrierMedia: Pick<CarrierMediaProtocol, 'wireFormat' | 'createCodec'>;
-  /** Failed frames of one leg in a row that detach the tap (`agency.listen.faultBudget`). */
+  /** Failed frames of one leg in a row that detach the tap (`agency.listen.faultBudget`, passed through the seam). */
   faultBudget: number;
   /** The tap has no sinks left (each ended or detached): the session drops its reference. Called once. */
   onIdle: (tap: ListenTap) => void;

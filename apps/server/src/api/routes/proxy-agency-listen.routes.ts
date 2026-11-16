@@ -14,7 +14,8 @@ import '../../cluster/ws-handoff.plugin.js';
  * authority, spent by `handleListenSocket` (`agency/listen/listen-socket.ts`), which does the rest.
  *
  * This route's own refusals, before the token is touched: an id that is not a UUID (1008
- * `INVALID_UPGRADE`; a corrected retry keeps its token), a missing token (4401), no runtime (an app
+ * `INVALID_UPGRADE`; a corrected retry keeps its token), a missing token or one given more than
+ * once (4401), no runtime (an app
  * built without a context, 1011). `disableNagle`: 20 ms frames, as on the station.
  *
  * With media workers the primary hands the upgrade to the worker that owns the agent's session
@@ -41,7 +42,7 @@ export async function proxyAgencyListenRoutes(app: FastifyInstance, opts: ProxyA
     await opts.getRuntime()?.listen.shutdown();
   });
 
-  app.get<{ Params: { sessionId: string; listenId: string }; Querystring: { token?: string } }>(
+  app.get<{ Params: { sessionId: string; listenId: string }; Querystring: { token?: string | string[] } }>(
     '/:sessionId/:listenId',
     { websocket: true, config: { wsOwner: { by: 'session', param: 'sessionId', route: 'listen' } } },
     (socket, request) => {
@@ -52,8 +53,9 @@ export async function proxyAgencyListenRoutes(app: FastifyInstance, opts: ProxyA
         try { socket.close(AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, 'invalid_upgrade'); } catch { /* ignore */ }
         return;
       }
+      // A string, once: `?token=a&token=b` parses to a list, which is no token (SWE-NITS).
       const token = request.query?.token;
-      if (!token) {
+      if (typeof token !== 'string' || token === '') {
         try { socket.close(AGENCY_LISTEN_CLOSE.TOKEN_REJECTED, LISTEN_TOKEN_INVALID_REASON); } catch { /* ignore */ }
         return;
       }

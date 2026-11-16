@@ -116,8 +116,9 @@ package root.
   from `../../agency/listen.ts` (`AGENCY_CALL_ORIGINS` / `AgencyCallOrigin`,
   `AGENCY_LISTEN_END_REASONS`, `AGENCY_LISTEN_CLOSE`, `AGENCY_LISTEN_END_CLOSE`, `AGENCY_LISTEN_LEG`,
   the frame and timing constants, the ready / ended / pong and ping / stop frames), and
-  `AgencyListenErrorCode` with `AGENCY_LISTEN_ERROR_CODES` from `../../errors`. Console-only there:
-  §4.
+  `AgencyListenErrorCode` with `AGENCY_LISTEN_ERROR_CODES` and the number reveal's
+  `AgencyLiveCallNumberErrorCode` with `AGENCY_LIVE_CALL_NUMBER_ERROR_CODES` from `../../errors`.
+  Console-only there: §4.
 - `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the
   manual call and its vocabularies, call fields, settings, bootstrap, session response, list query,
   disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —
@@ -189,11 +190,12 @@ the roster row with its name and `AgencyRosterBenchmark`), never their dialer tw
 
 Live calls (`live-calls.ts`, docs/listening.md) are console-side too: the live list
 (`AgencyLiveCall`, `AgencyLiveCallsResponse`, `AgencyLiveCallsQuery`, the listeners), the number
-reveal (`AgencyLiveCallNumberResponse`), the grant (`AgencyListenGrant`), the refusal body
-(`AgencyListenErrorResponse`) and a call's listen sessions (`AgencyCallListenSession`) are what the
-public API layer serves after enrichment (names from `users`, the masked number, `listenable`
-computed for the caller; the row's `correlation_id`, the spine row the call pages are keyed on, and
-the campaign's `aht_seconds`, added with the server side), so none has a dialer twin; `AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS` is a
+reveal (`AgencyLiveCallNumberResponse`, its refusal `AgencyLiveCallNumberErrorResponse`), the
+grant (`AgencyListenGrant`), the refusal body (`AgencyListenErrorResponse`) and a call's listen
+sessions (`AgencyCallListenSession`) are what the public API layer serves after enrichment (names
+from `users`, the masked number and `customer_phone_withheld`, `listenable` computed for the
+caller; the row's `correlation_id`, the spine row the call pages are keyed on, and the campaign's
+`aht_seconds`, added with the server side), so none has a dialer twin; `AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS` is a
 subset of the dialer contract's `AgencyListenErrorCode`, so a row and the grant say the same thing.
 
 ## 5. Request fields the server sets itself

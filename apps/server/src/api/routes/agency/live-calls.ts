@@ -163,7 +163,7 @@ export async function registerLiveCallRoutes(sub: FastifyInstance, runtime: Agen
         listenId, sessionId, tenantId, accountId, callId: body.call_id, origin: body.origin, campaignId: body.campaign_id,
         correlationId: body.correlation_id, agentUserId: body.agent_user_id, listenerUserId: body.listener_user_id,
         recording: body.recording,
-        // A revocation of this supervisor here before the upgrade refuses it (LS16 b).
+        // A revocation of this supervisor here before the upgrade refuses it (LS16 n).
         revocationGen: runtime.listen.generation(tenantId, body.listener_user_id),
       });
     } catch (err) {

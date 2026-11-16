@@ -20,8 +20,10 @@ import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { config } from '../../config/index.js';
 import {
+  LIVE_CALL_NUMBER_WITHHELD_BODY,
   LIVE_LISTEN_DISABLED_BODY,
   isUuid,
+  isWithheldNumber,
   listenRefusalCode,
   sendListenRefusal,
 } from './helpers/listen.js';
@@ -42,7 +44,8 @@ const log = createChildLogger({ component: 'proxy-agency-live-calls' });
  *    customer's number masked (`maskPhone`, LS9) and each row's `listenable` /
  *    `not_listenable_reason` computed for the caller (their permission, the call's own agent,
  *    LS4's flag for an unrecorded call, the per-call cap).
- *  - `GET /live-calls/:callId/number`: one live call's full number, on demand (not audited, LS9).
+ *  - `GET /live-calls/:callId/number`: one live call's full number, on demand (not audited, LS9); a
+ *    number the caller withheld `404 live_call_number_withheld` (the row says `customer_phone_withheld`).
  *  - `POST /live-calls/:callId/listen`: the call loaded in scope, live and bridged; LS4; the own-call
  *    rule (LS3); then `callCore` to the grant handler of the process that owns the agent's session,
  *    which checks its bridge and caps and mints the socket token. Every outcome is counted in
@@ -121,7 +124,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
   /**
    * The account and the consent flag, or a reply. Runs after the permission. The flags are read
    * strictly (a flag store that cannot be read is not "off"): for the grant an outage is
-   * `503 listen_unavailable` (LS16 c: no answer, no listen; nothing about the account's consent is
+   * `503 listen_unavailable` (LS16 d: no answer, no listen; nothing about the account's consent is
    * claimed); for the list and the number, which grant nothing, it is the flag's default (off:
    * `403 feature_disabled`), as before.
    */
@@ -204,6 +207,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
           client_kind: c.client_kind,
           customer_name: c.customer_name,
           customer_phone_masked: maskPhone(c.customer_phone) ?? '****',
+          customer_phone_withheld: isWithheldNumber(c.customer_phone),
           connected_at: c.connected_at,
           aht_seconds: c.aht_seconds,
           recording: c.recording,
@@ -230,6 +234,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
       if ('status' in live) return reply.code(live.status).send(live.body);
       const call = live.calls[0];
       if (!call) return sendListenRefusal(reply, 'listen_call_not_live');
+      if (isWithheldNumber(call.customer_phone)) return reply.code(404).send(LIVE_CALL_NUMBER_WITHHELD_BODY);
       const body: AgencyLiveCallNumberResponse = { call_id: call.call_id, customer_phone: call.customer_phone };
       return reply.send(body);
     },

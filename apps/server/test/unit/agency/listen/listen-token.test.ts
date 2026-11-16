@@ -68,13 +68,15 @@ describe('ListenTokenStore', () => {
     expect(await tokens.consume(L, 'tok')).toBeNull();
   });
 
-  it('fails closed both ways when Redis errors: no grant handed out, no upgrade accepted', async () => {
+  it('fails closed both ways when Redis errors: no grant handed out, no upgrade accepted, and the upgrade told it is the store (QA-L3)', async () => {
     const redis = fakeRedis();
     redis.set.mockRejectedValueOnce(new Error('READONLY'));
     const tokens = new ListenTokenStore(redis as never, '', 60_000);
     await expect(tokens.mint(GRANT)).rejects.toBeInstanceOf(ListenTokenUnavailableError);
+    // Not null (a token that does not verify: re-mint, 4401) but the store's error: the socket
+    // refuses it `listen_unavailable` (1011), as the grant does.
     redis.eval.mockRejectedValueOnce(new Error('ECONNRESET'));
-    expect(await tokens.consume(L, 'anything')).toBeNull();
+    await expect(tokens.consume(L, 'anything')).rejects.toBeInstanceOf(ListenTokenUnavailableError);
   });
 
   it('without Redis the in-process store is single-use and expires', async () => {

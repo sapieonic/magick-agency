@@ -7,9 +7,10 @@
 import type { FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyListenErrorCode } from '@magick-agency/contracts/errors';
-import type { AgencyCallListenSession } from '@magick-agency/contracts/api/agency/live-calls';
+import type { AgencyCallListenSession, AgencyLiveCallNumberErrorResponse } from '@magick-agency/contracts/api/agency/live-calls';
 import { agencyListenSessionRepository } from '../../../db/repositories/agency.repository.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
+import { UUID_RE } from '../../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'agency-listen-routes' });
 
@@ -59,6 +60,19 @@ export function listenRefusalCode(body: unknown): AgencyListenErrorCode | null {
   return typeof code === 'string' && code in LISTEN_ERROR_STATUS ? code as AgencyListenErrorCode : null;
 }
 
+/**
+ * A number the caller withheld: an inbound caller with no readable number is stored as `''`
+ * (`plivoNumberToE164` gave none). No digit at all, so neither a masked nor a full number exists.
+ */
+export function isWithheldNumber(phone: string | null): boolean {
+  return phone === null || !/\d/.test(phone);
+}
+
+/** The number reveal's refusal for a withheld number (`AgencyLiveCallNumberErrorResponse`, 404). */
+export const LIVE_CALL_NUMBER_WITHHELD_BODY = {
+  error: 'Not Found', code: 'live_call_number_withheld', message: 'The caller withheld their number.',
+} as const satisfies AgencyLiveCallNumberErrorResponse;
+
 /** The flag gate's refusal: the dialer gate's body shape (`dialer-gate.ts`), for live calls. */
 export const LIVE_LISTEN_DISABLED_BODY = {
   error: 'Feature Not Enabled', code: 'feature_disabled', message: 'Live call listening is not enabled for this account.',
@@ -94,9 +108,7 @@ export async function callListenSessions(
   }
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Is `v` a UUID (either case)? Ids are checked at the edge: a non-UUID reaching a `uuid` cast is `22P02`. */
+/** Is `v` a UUID (either case, `utils/uuid.ts`)? Ids are checked at the edge: a non-UUID reaching a `uuid` cast is `22P02`. */
 export function isUuid(v: unknown): v is string {
   return typeof v === 'string' && UUID_RE.test(v);
 }

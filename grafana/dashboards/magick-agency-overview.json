@@ -2545,7 +2545,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Listen sessions ended per minute, by why: call_ended and listener_stopped are the ordinary ends; listener_disconnected (a dropped socket or no ping for 30 s), send_backlog (agy-listen-backlog-closes), tap_error (agy-listen-tap-errors), permission_revoked, superseded (the supervisor started another listen), server_shutdown and server_restarted (closed by the reap after a process died).",
+      "description": "Listen sessions ended per minute, by why: call_ended and listener_stopped are the ordinary ends; listener_disconnected (a dropped socket or no ping for 30 s), send_backlog (agy-listen-backlog-closes), tap_error (agy-listen-tap-errors), permission_revoked, superseded (the supervisor started another listen), server_shutdown, server_restarted (closed by the reap after a process died) and access_unverified (the access re-check could not reach the database or the flag store for 60 s).",
       "fieldConfig": {
         "defaults": {
           "color": {

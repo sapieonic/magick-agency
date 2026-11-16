@@ -92,7 +92,7 @@ class WebRtcBridgeManager {
   stopInboundHold(correlationId: string): void;
   recordInboundAudio(correlationId: string, opts: InboundRecordOptions): Promise<InboundAudioRecording>;
   // Live call listening (docs/listening.md, LS8):
-  openListenTap(callId: string, sink: ListenSink): OpenListenTapResult;
+  openListenTap(callId: string, sink: ListenSink, options?: ListenTapOpenOptions): OpenListenTapResult;
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
@@ -206,7 +206,12 @@ at most once when the bridge ends it, with a `ListenTapEndReason` (`call_ended`,
 `send_backlog`, `listener_disconnected`) and the frames sent and dropped (`ListenTapStats`);
 neither may throw or wait, and the bridge guards both. `call_ended` comes as the call starts to
 settle (a VoiceLink hangup's `ending`, the top of the terminal teardown), before the session is
-gone (LS15 f). A sink detached by its owner is never closed by the bridge. The caps (per call, per process, per supervisor) are the caller's.
+gone (LS15 f). A sink detached by its owner is never closed by the bridge. The caps (per call, per process, per supervisor) are the caller's,
+and so is the tap's fault budget: `options` (`ListenTapOpenOptions { faultBudget }`, read when the
+call's tap is made by its first sink) carries the agency's `AGENCY_LISTEN_FAULT_BUDGET`, so the
+voice area reads no agency config; absent, `LISTEN_TAP_DEFAULT_FAULT_BUDGET` (50, the setting's
+default; LS22). On a tap that ended under the attach the handle comes back detached
+(`attached: false`) with the sink already closed, which the caller treats as the call gone.
 `sendToListenerSocket(ws, message)` (`core/bridge/listen-tap.ts`) is the socket-backed `send`,
 under `LISTENER_LIMITS` (`utils/ws-backpressure.ts`). The types are in `bridge-types.ts`, pinned by
 the contract test, which also holds `ListenTapEndReason` inside the contract's

@@ -45,6 +45,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * whose other listener carries on; the session metrics move. Then the leak check. Run (a) is the
  * floor that nobody ever listens to: its numbers are the reference the docs record.
  *
+ * The timing bounds (`expectWithinQuiet`) are asserted with 4 or more CPUs, or when asked
+ * (`LISTEN_LOAD_BOUNDS=on`, a `LOAD_SCALE` soak); on a smaller machine the readings are printed
+ * instead (QA-M3: the wall-clock lane runs on every server PR, and two windows 20 s apart on a busy
+ * 2-core runner differ by more than the listeners). Everything else is asserted on every run.
+ *
  * Wall-clock: the stream is paced in real time and the stalled listener's end is the real 10 s
  * back-pressure bound (no override), so the file is in the wall-clock lane (`vitest.config.integration.ts`).
  * The listeners' sockets live in a child process (`listen-load-clients.ts`): in production they are
@@ -72,6 +77,7 @@ const fb = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: fb.verifyIdToken }));
 
 import { fork, type ChildProcess } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { performance } from 'node:perf_hooks';
@@ -738,10 +744,36 @@ function summariseRates(rates: RunResult['legRates']): { min: number; max: numbe
   return { min: Math.min(...all), max: Math.max(...all) };
 }
 
-/** The listeners' window against the same floor's quiet one, within the bounds above. */
+/**
+ * Whether the timing bounds are asserted on this run (QA-M3). They compare two 15 s windows of
+ * one floor, which a busy neighbour moves (another lane's files on a small runner): so they need
+ * at least {@link TIMING_BOUNDS_MIN_CPUS} CPUs, unless asked for (`LISTEN_LOAD_BOUNDS=on`, or a
+ * deliberate soak with `LOAD_SCALE`), or turned off (`LISTEN_LOAD_BOUNDS=off`). Without them the
+ * readings are printed, not asserted; zero frames lost, every listener's rate, its end and its row,
+ * the stalled listener's drop and end, the metrics and the leak check are asserted on every run.
+ */
+const TIMING_BOUNDS_MIN_CPUS = 4;
+
+function timingBoundsApply(env: NodeJS.ProcessEnv = process.env, cpus = availableParallelism()): { apply: boolean; why: string } {
+  const forced = env['LISTEN_LOAD_BOUNDS'];
+  if (forced === 'on') return { apply: true, why: 'LISTEN_LOAD_BOUNDS=on' };
+  if (forced === 'off') return { apply: false, why: 'LISTEN_LOAD_BOUNDS=off' };
+  if (env['LOAD_SCALE'] !== undefined && env['LOAD_SCALE'] !== '') return { apply: true, why: `LOAD_SCALE=${env['LOAD_SCALE']}` };
+  return cpus >= TIMING_BOUNDS_MIN_CPUS
+    ? { apply: true, why: `${cpus} CPUs` }
+    : { apply: false, why: `${cpus} CPUs, fewer than ${TIMING_BOUNDS_MIN_CPUS}` };
+}
+
+/** The listeners' window against the same floor's quiet one, within the bounds above (when they apply). */
 function expectWithinQuiet(run: RunResult): void {
   const b = run.quiet;
   const l = run.listening!;
+  const gate = timingBoundsApply();
+  if (!gate.apply) {
+    console.info(`${run.name}: timing bounds not asserted (${gate.why}); readings, quiet → listening:`,
+      JSON.stringify({ quiet: { loop: b.loop, latency: b.latency, dwell: b.dwell }, listening: { loop: l.loop, latency: l.latency, dwell: l.dwell } }));
+    return;
+  }
   const within = (was: number, ratio: number, slack: number) => Math.max(was * ratio, was + slack);
   const ctx = (what: string, was: number) => `${run.name}: ${what} with listeners, against ${was} without`;
   expect(l.loop.elu, ctx('event-loop utilisation', b.loop.elu)).toBeLessThanOrEqual(b.loop.elu + ELU_SLACK);
@@ -829,6 +861,16 @@ afterAll(async () => {
 });
 
 // ─── The suite ──────────────────────────────────────────────────────────────
+
+describe('the timing bounds\' gate (QA-M3)', () => {
+  it('applies with 4 or more CPUs, or when asked; never on a smaller machine unasked', () => {
+    expect(timingBoundsApply({}, 4).apply).toBe(true);
+    expect(timingBoundsApply({}, 2).apply).toBe(false);
+    expect(timingBoundsApply({ LISTEN_LOAD_BOUNDS: 'on' }, 2).apply).toBe(true);
+    expect(timingBoundsApply({ LOAD_SCALE: '2' }, 2).apply).toBe(true);
+    expect(timingBoundsApply({ LISTEN_LOAD_BOUNDS: 'off' }, 16).apply).toBe(false);
+  });
+});
 
 describe(`live call listening under load (calls ${CALLS}, seed ${LOAD_SEED})`, () => {
   it('(a) baseline: the floor with nobody listening relays every frame both ways', async () => {

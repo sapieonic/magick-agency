@@ -170,6 +170,8 @@ export class AgencyRuntime {
   readonly listenTokens: ListenTokenStore;
   /** The listen session rows: their opens and closes, a failed close retried, lost rows swept (`listen/listen-rows.ts`). */
   readonly listenRows: ListenRowKeeper;
+  /** `AGENCY_LISTEN_FAULT_BUDGET`, handed to the bridge's tap through the seam (SWE-L2). */
+  private readonly listenFaultBudget: number;
   /** The bridge, for the listener socket's tap (the seam member `openListenTap`). */
   private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'getActiveCallIds'>;
   /**
@@ -280,7 +282,10 @@ export class AgencyRuntime {
       if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
     this.awayRing = new AwayRingService({ agents: this.agents, stations: this.stations, inbound: () => this.inbound, breaks: this.breaks });
-    // The loaded config's, over the block's defaults (a test may load a config without the block).
+    // The loaded config's, over the block's defaults. Deliberate, not drift: many unit tests mock
+    // `config` without the `agency` block, so the typed config is read with optional chaining and
+    // the schema's own defaults fill it. Only this runtime reads `agency.listen`; the bridge gets
+    // its fault budget from here through the seam (`openListenTap`'s options, SWE-L2).
     const listen = { ...agencyConfigSchema.parse({}).agency.listen, ...config?.agency?.listen, ...options.listen };
     // The repository is read per call, not here: a runtime built over a mocked agency barrel that
     // has no listen repository must still construct.
@@ -288,6 +293,7 @@ export class AgencyRuntime {
       open: (input) => agencyListenSessionRepository.open(input),
       close: (id, input) => agencyListenSessionRepository.close(id, input),
       closeOrphans: (replicaId, opts) => agencyListenSessionRepository.closeOrphans(replicaId, opts),
+      markLive: (id) => agencyListenSessionRepository.markLive(id),
     }, this.replicaId);
     this.listen = new ListenRegistry({
       limits: { maxPerCall: listen.maxPerCall, maxPerProcess: listen.maxPerProcess, maxPerUser: listen.maxPerUser, recheckMs: listen.recheckMs },
@@ -295,6 +301,7 @@ export class AgencyRuntime {
       maintainRows: (held) => this.listenRows.maintain(held),
     });
     this.listenTokens = new ListenTokenStore(redis, keyPrefix, listen.tokenTtlMs);
+    this.listenFaultBudget = listen.faultBudget;
     this.listenBridge = bridge;
     // A queued `away_ring` applied by the one release path (a break asked for while hidden during a
     // call or wrap-up, IQ72), with or without a station socket.
@@ -913,6 +920,7 @@ export class AgencyRuntime {
       tokens: this.listenTokens,
       registry: this.listen,
       bridge: this.listenBridge,
+      faultBudget: this.listenFaultBudget,
       rows: this.listenRows,
       audit: (entry) => platformAuditLogger.log(entry),
       replicaId: this.replicaId,

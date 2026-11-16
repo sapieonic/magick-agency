@@ -89,6 +89,14 @@ export class AuditBuffer {
    */
   async forceFlush(): Promise<void> {
     this.stop();
+    await this.drain();
+  }
+
+  /**
+   * {@link forceFlush}'s drain without stopping the periodic flush: resolves once nothing is
+   * buffered and nothing is on the wire, the timer left as it was (`AuditLogger.flush`).
+   */
+  async drain(): Promise<void> {
     for (;;) {
       if (this.inFlight) {
         await this.inFlight;

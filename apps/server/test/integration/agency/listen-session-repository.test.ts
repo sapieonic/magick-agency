@@ -12,15 +12,18 @@ const { agencyListenSessionRepository: repo } = await import('../../../src/db/re
 type OpenInput = import('../../../src/db/repositories/agency.repository.js').ListenSessionOpenInput;
 
 /**
- * The listen session repository on real Postgres (docs/listening.md, `0047_listen_sessions.sql`): open writes
+ * The listen session repository on real Postgres (docs/listening.md, `0047_listen_sessions.sql`,
+ * `0048_listen_sessions_unverified.sql`): open writes
  * every field it is given; close ends an open row exactly once (a second close, or a close racing
  * another, changes nothing and answers null) and never writes an end before the start; each read's
- * tenant and account scope; the open-only reads skip closed rows; the reaps close a dead process's
+ * tenant and account scope; the open-only reads skip closed rows; "Listened to by" reads only the rows
+ * that went live (`markLive`, or a live session's close); the reaps close a dead process's
  * open rows, and the sweep a live process's lost ones, `server_restarted` and nothing else.
  *
  * Mutation-checked: dropping `AND ended_at IS NULL` from `close` lets the second close rewrite the
  * reason; dropping `tenant_id = $1` from `listOpenForCalls` returns another tenant's session;
- * dropping `account_id = $2` from `listForCall` returns another account's; dropping the `NOT` from
+ * dropping `account_id = $2` from `listForCall` returns another account's, and dropping its
+ * `live_at IS NOT NULL` a row refused at the upgrade; dropping the `NOT` from
  * `closeOrphansExcept` closes the live replica's sessions instead of the dead one's; dropping
  * `id <> ALL($2)` from `closeOrphans` closes a held session's row, and dropping its age floor a
  * young one's; writing
@@ -62,7 +65,7 @@ describe('agency listen session repository', () => {
       id: i.id, tenant_id: T, account_id: A, call_id: i.callId, origin: 'inbound', campaign_id: null,
       correlation_id: i.correlationId, agent_session_id: i.agentSessionId, agent_user_id: i.agentUserId,
       listener_user_id: i.listenerUserId, replica_id: 'replica-a',
-      ended_at: null, end_reason: null, frames_sent: 0, frames_dropped: 0,
+      ended_at: null, end_reason: null, frames_sent: 0, frames_dropped: 0, live_at: null,
     });
     expect(row.started_at.getTime()).toBeGreaterThanOrEqual(before - 5_000);
     // A listen id has one row: a second open with it is refused, which the caller turns into a refusal.
@@ -105,19 +108,6 @@ describe('agency listen session repository', () => {
     expect(closed).toMatchObject({ frames_sent: 0, frames_dropped: 2 });
   });
 
-  it('listOpenInAccount: the account\'s open sessions only, earliest first', async () => {
-    const first = await repo.open(input());
-    const second = await repo.open(input());
-    await pool().query(`UPDATE agency_listen_sessions SET started_at = now() - interval '1 minute' WHERE id = $1`, [first.id]);
-    const ended = await repo.open(input());
-    await repo.close(ended.id, { reason: 'call_ended', framesSent: 0, framesDropped: 0 });
-    await repo.open(input({ accountId: OTHER_ACCOUNT }));
-    await repo.open(input({ tenantId: OTHER_TENANT }));
-
-    expect(ids(await repo.listOpenInAccount(T, A))).toEqual([first.id, second.id]);
-    expect(await repo.listOpenInAccount(T, randomUUID())).toEqual([]);
-  });
-
   it('listOpenForCalls: the tenant\'s open sessions on those calls; no calls, no rows', async () => {
     const call = randomUUID();
     const two = randomUUID();
@@ -134,19 +124,54 @@ describe('agency listen session repository', () => {
     expect(await repo.listOpenForCalls(T, [])).toEqual([]);
   });
 
-  it('listForCall: every session on the call in the account, open or closed, earliest first', async () => {
+  it('listForCall: every session on the call in the account that went live, open or closed, earliest first', async () => {
     const call = randomUUID();
     const first = await repo.open(input({ callId: call }));
     await pool().query(`UPDATE agency_listen_sessions SET started_at = now() - interval '5 minutes' WHERE id = $1`, [first.id]);
-    await repo.close(first.id, { reason: 'listener_stopped', framesSent: 50, framesDropped: 0 });
+    await repo.markLive(first.id);
+    await repo.close(first.id, { reason: 'listener_stopped', framesSent: 50, framesDropped: 0, live: true });
     const second = await repo.open(input({ callId: call }));
-    await repo.open(input({ callId: call, accountId: OTHER_ACCOUNT }));
-    await repo.open(input({ callId: call, tenantId: OTHER_TENANT }));
+    await repo.markLive(second.id);
+    // Written, then refused at the upgrade (QA-M2): never live, so nobody listened.
+    const refusedAtUpgrade = await repo.open(input({ callId: call }));
+    await repo.close(refusedAtUpgrade.id, { reason: 'call_ended', framesSent: 0, framesDropped: 0 });
+    // Between its row and its admission now: not live yet.
+    await repo.open(input({ callId: call }));
+    for (const other of [input({ callId: call, accountId: OTHER_ACCOUNT }), input({ callId: call, tenantId: OTHER_TENANT })]) {
+      await repo.markLive((await repo.open(other)).id);
+    }
 
     const rows = await repo.listForCall(T, A, call);
     expect(ids(rows)).toEqual([first.id, second.id]);
     expect(rows.map((r) => r.end_reason)).toEqual(['listener_stopped', null]);
     expect(await repo.listForCall(T, A, randomUUID())).toEqual([]);
+  });
+
+  it('markLive stamps live_at once, never before the start; a close of a live session fills it when the stamp was lost', async () => {
+    const row = await repo.open(input());
+    expect(row.live_at).toBeNull();
+    expect(await repo.markLive(row.id)).toBe(true);
+    const { rows: [stamped] } = await pool().query<{ live_at: Date; started_at: Date }>(
+      'SELECT live_at, started_at FROM agency_listen_sessions WHERE id = $1', [row.id]);
+    expect(stamped!.live_at.getTime()).toBeGreaterThanOrEqual(stamped!.started_at.getTime());
+    // Once: a second stamp changes nothing.
+    expect(await repo.markLive(row.id)).toBe(false);
+    expect(await repo.markLive(randomUUID())).toBe(false);
+
+    // The stamp never landed (a failed write): the close of a session that went live writes it,
+    // as its start; the close of one that never did leaves it NULL.
+    const lost = await repo.open(input());
+    expect(await repo.close(lost.id, { reason: 'listener_stopped', framesSent: 1, framesDropped: 0, live: true }))
+      .toMatchObject({ live_at: lost.started_at });
+    const never = await repo.open(input());
+    expect(await repo.close(never.id, { reason: 'permission_revoked', framesSent: 0, framesDropped: 0 }))
+      .toMatchObject({ live_at: null });
+    // A close never moves a stamp already there.
+    const kept = await repo.open(input());
+    await pool().query(`UPDATE agency_listen_sessions SET started_at = now() - interval '1 minute' WHERE id = $1`, [kept.id]);
+    await repo.markLive(kept.id);
+    const before = (await pool().query<{ live_at: Date }>('SELECT live_at FROM agency_listen_sessions WHERE id = $1', [kept.id])).rows[0]!.live_at;
+    expect((await repo.close(kept.id, { reason: 'call_ended', framesSent: 0, framesDropped: 0, live: true }))!.live_at).toEqual(before);
   });
 
   it('listOpenForListener: one supervisor\'s open sessions in the tenant, newest first', async () => {
@@ -195,10 +220,11 @@ describe('agency listen session repository', () => {
     const oldWorker = await repo.open(input({ replicaId: 'worker-before-restart', tenantId: OTHER_TENANT }));
     const live = await repo.open(input({ replicaId: 'primary-now' }));
 
+    const open = async () => ids((await pool().query<{ id: string }>('SELECT id FROM agency_listen_sessions WHERE ended_at IS NULL')).rows);
     expect(ids(await repo.closeOrphansExcept(['primary-now'])).sort()).toEqual([old.id, oldWorker.id].sort());
-    expect(ids(await repo.listOpenInAccount(T, A))).toEqual([live.id]);
+    expect(await open()).toEqual([live.id]);
     // A fresh primary with nothing running yet: every open row is an orphan.
     expect(ids(await repo.closeOrphansExcept([]))).toEqual([live.id]);
-    expect(await repo.listOpenInAccount(T, A)).toEqual([]);
+    expect(await open()).toEqual([]);
   });
 });

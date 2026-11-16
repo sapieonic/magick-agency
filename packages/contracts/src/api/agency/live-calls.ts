@@ -11,7 +11,7 @@
  *  - `GET  /live-calls`                  `agency.supervise`, {@link AgencyLiveCallsQuery} → {@link AgencyLiveCallsResponse}
  *    (the console polls it every 5 s while the page is visible; numbers masked)
  *  - `GET  /live-calls/:callId/number`   `agency.supervise` → {@link AgencyLiveCallNumberResponse}
- *    (the full number, on demand; not audited, LS9)
+ *    (the full number, on demand; not audited, LS9; a withheld number `404 live_call_number_withheld`)
  *  - `POST /live-calls/:callId/listen`   `agency.calls.listen`, no body → 201 {@link AgencyListenGrant}
  *  - `GET  /listen/:sessionId/:listenId?token=…` the listener socket (`../../agency/listen.ts`)
  *
@@ -26,7 +26,7 @@
 
 import type { AgencyClientKind } from '../../agency/station';
 import type { AgencyCallOrigin, AgencyListenEndReason } from '../../agency/listen';
-import type { AgencyListenErrorCode } from '../../errors';
+import type { AgencyListenErrorCode, AgencyLiveCallNumberErrorCode } from '../../errors';
 
 export {
   AGENCY_CALL_ORIGINS,
@@ -55,8 +55,8 @@ export type {
   AgencyListenServerFrame,
   AgencyListenStopFrame,
 } from '../../agency/listen';
-export { AGENCY_LISTEN_ERROR_CODES } from '../../errors';
-export type { AgencyListenErrorCode } from '../../errors';
+export { AGENCY_LISTEN_ERROR_CODES, AGENCY_LIVE_CALL_NUMBER_ERROR_CODES } from '../../errors';
+export type { AgencyListenErrorCode, AgencyLiveCallNumberErrorCode } from '../../errors';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The live list
@@ -120,8 +120,18 @@ export interface AgencyLiveCall {
   client_kind: AgencyClientKind;
   /** The roster contact's name, or null ("Unknown caller"). */
   customer_name: string | null;
-  /** The customer's number with all but its last four digits hidden: `****1234`. Never the full number. */
+  /**
+   * The customer's number with all but its last four digits hidden: `****1234`. Never the full
+   * number. `****` when there is no number to mask: check {@link customer_phone_withheld}.
+   */
   customer_phone_masked: string;
+  /**
+   * The caller withheld their number (an inbound caller with no readable number): show "Withheld"
+   * and offer no Show (the number reveal answers `404 live_call_number_withheld`). The server always
+   * sends it; optional only so the console's fixtures written before it still type (absent reads
+   * as false). Added after the first build, additive.
+   */
+  customer_phone_withheld?: boolean;
   /** ISO-8601. When the agent was connected to the customer: the time-on-call clock counts from it. */
   connected_at: string;
   /**
@@ -150,7 +160,8 @@ export interface AgencyLiveCallsResponse {
 
 /**
  * `GET /live-calls/:callId/number`: the customer's full number, for the row's Show control. Read
- * on demand and never kept in the polled list; the console masks it again on leaving the page.
+ * on demand and never kept in the polled list; the console masks it again on leaving the page. A
+ * withheld number answers {@link AgencyLiveCallNumberErrorResponse} (`404 live_call_number_withheld`).
  */
 export interface AgencyLiveCallNumberResponse {
   call_id: string;
@@ -176,6 +187,13 @@ export interface AgencyListenGrant {
 export interface AgencyListenErrorResponse {
   error: string;
   code: AgencyListenErrorCode;
+  message: string;
+}
+
+/** The number reveal's own refusal: the caller withheld their number (404). */
+export interface AgencyLiveCallNumberErrorResponse {
+  error: string;
+  code: AgencyLiveCallNumberErrorCode;
   message: string;
 }
 

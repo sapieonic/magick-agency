@@ -1,6 +1,7 @@
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import type { MembershipRecord } from '@magick-agency/db/models/membership.model';
 import { hasPermission } from '@magick-agency/contracts/rbac';
+import { selectMembership } from '../../rbac/select-membership.js';
 import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
 import type { ListenAccessCheck, ListenAccessSubject, ListenAccessVerdict } from './listen-registry.js';
 
@@ -53,11 +54,13 @@ export const defaultListenAccessDeps: ListenAccessDeps = {
   flags: readListenFlags,
 };
 
-/** May this membership list listen in this account? (The tenant context's pick, then the floor.) */
+/**
+ * May this membership list listen in this account? The tenant context's own pick
+ * (`selectMembership`, shared with `tenant-context.middleware.ts`: the account's membership, else
+ * the tenant-wide one), then the floor.
+ */
 export function membershipMayListen(memberships: MembershipRecord[], accountId: string): boolean {
-  // `selectMembership`'s rule with an account named (`tenant-context.middleware.ts`): the
-  // account's own membership, else the tenant-wide one.
-  const m = memberships.find((x) => x.account_id === accountId) ?? memberships.find((x) => x.account_id === null);
+  const m = selectMembership(memberships, accountId);
   return !!m && m.status === 'active' && hasPermission(m.role, 'agency.calls.listen');
 }
 

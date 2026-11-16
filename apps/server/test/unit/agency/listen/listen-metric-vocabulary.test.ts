@@ -26,7 +26,7 @@ describe('listen metric labels', () => {
   it('cover every end reason and every refusal the contract lists', () => {
     const endReasons: Record<ListenEndMetricReason, true> = {
       call_ended: true, listener_stopped: true, listener_disconnected: true, permission_revoked: true, superseded: true,
-      send_backlog: true, tap_error: true, server_shutdown: true, server_restarted: true,
+      send_backlog: true, tap_error: true, server_shutdown: true, server_restarted: true, access_unverified: true,
     };
     expect(Object.keys(endReasons).sort()).toEqual([...AGENCY_LISTEN_END_REASONS].sort());
     const refusals: Record<Exclude<ListenGrantResult, 'granted'>, true> = {

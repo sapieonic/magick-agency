@@ -4,6 +4,7 @@ import {
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
   AGENCY_INBOUND_ERROR_CODES,
   AGENCY_LISTEN_ERROR_CODES,
+  AGENCY_LIVE_CALL_NUMBER_ERROR_CODES,
   AGENCY_REPORT_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
   AGENCY_SOFTPHONE_ERROR_CODES,
@@ -11,6 +12,7 @@ import {
   type AgencyCampaignLifecycleErrorCode,
   type AgencyInboundErrorCode,
   type AgencyListenErrorCode,
+  type AgencyLiveCallNumberErrorCode,
   type AgencyReportErrorCode,
   type AgencyRosterRefusalCode,
   type AgencySoftphoneErrorCode,
@@ -367,7 +369,11 @@ const _notListenableIsACode: AgencyApi.AgencyLiveCallNotListenableReason extends
 // amber timer): present, and of these types.
 const _rowCorrelation: Equals<AgencyApi.AgencyLiveCall['correlation_id'], string> = true;
 const _rowAht: Equals<AgencyApi.AgencyLiveCall['aht_seconds'], number | null> = true;
-void [_listenExact, _consoleListenAgrees, _notListenableIsACode, _rowCorrelation, _rowAht];
+// A withheld number is said so, not shown as `****` (PM-minor9): additive, a boolean.
+const _rowWithheld: Equals<AgencyApi.AgencyLiveCall['customer_phone_withheld'], boolean | undefined> = true;
+const _numberExact: Equals<(typeof AGENCY_LIVE_CALL_NUMBER_ERROR_CODES)[number], AgencyLiveCallNumberErrorCode> = true;
+const _consoleNumberAgrees: Equals<AgencyApi.AgencyLiveCallNumberErrorCode, AgencyLiveCallNumberErrorCode> = true;
+void [_listenExact, _consoleListenAgrees, _notListenableIsACode, _rowCorrelation, _rowAht, _rowWithheld, _numberExact, _consoleNumberAgrees];
 
 describe('listen codes', () => {
   it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
@@ -402,5 +408,15 @@ describe('listen codes', () => {
       ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES,
     ]);
     for (const code of AGENCY_LISTEN_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+
+  it('the number reveal\'s own refusal is one code, apart from the listen codes (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_LIVE_CALL_NUMBER_ERROR_CODES]).toEqual(['live_call_number_withheld']);
+    expect(AgencyApi.AGENCY_LIVE_CALL_NUMBER_ERROR_CODES).toBe(AGENCY_LIVE_CALL_NUMBER_ERROR_CODES);
+    const others = new Set<string>([
+      ...AGENCY_LISTEN_ERROR_CODES, ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES,
+      ...AGENCY_INBOUND_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_LIVE_CALL_NUMBER_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

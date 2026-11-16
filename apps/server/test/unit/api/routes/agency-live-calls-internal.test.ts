@@ -67,7 +67,7 @@ describe('POST /listen-grants', () => {
       campaignId: BODY.campaign_id, correlationId: BODY.correlation_id, agentUserId: BODY.agent_user_id,
       listenerUserId: BODY.listener_user_id, recording: true, revocationGen: 4,
     });
-    // The supervisor's revocation generation here, so a revocation before the upgrade refuses it (LS16 b).
+    // The supervisor's revocation generation here, so a revocation before the upgrade refuses it (LS16 n).
     expect(rt.listen.generation).toHaveBeenCalledWith(TENANT, BODY.listener_user_id);
     expect(rt.listen.check).toHaveBeenCalledWith(BODY.call_id, TENANT, BODY.listener_user_id);
     await app.close();

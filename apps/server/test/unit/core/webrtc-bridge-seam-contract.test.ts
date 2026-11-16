@@ -34,6 +34,7 @@ import {
   type ListenTapRefusal,
   type ListenTapStats,
   type OpenListenTapResult,
+  type ListenTapOpenOptions,
 } from '../../../src/core/webrtc-bridge-manager.js';
 import {
   browserLegMediaFormatOf,
@@ -65,7 +66,7 @@ interface BridgeSeam {
   stopInboundHold(correlationId: string): void;
   recordInboundAudio(correlationId: string, opts: CoreInboundRecordOptions): Promise<CoreInboundAudioRecording>;
   /** A supervisor listening in (docs/listening.md, LS8): a sink attached to a bridged call's listen tap. */
-  openListenTap(callId: string, sink: CoreListenSink): CoreOpenListenTapResult;
+  openListenTap(callId: string, sink: CoreListenSink, options?: CoreListenTapOpenOptions): CoreOpenListenTapResult;
 }
 
 /** The bridge's exported types (`sipConnectionId` is excluded: docs/seams.md allows it, SIP is out). */
@@ -162,6 +163,8 @@ interface CoreListenTapHandle {
 }
 type CoreListenTapRefusal = 'not_found' | 'not_bridged' | 'ending';
 type CoreOpenListenTapResult = CoreListenTapHandle | { refused: CoreListenTapRefusal };
+/** The caller's fault budget for the tap (SWE-L2: the voice area reads no agency config). */
+interface CoreListenTapOpenOptions { faultBudget: number }
 type CoreRejectReason =
   | 'global_concurrency_limit'
   | 'account_concurrency_limit'
@@ -219,6 +222,7 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<ListenTapHandle>().toEqualTypeOf<CoreListenTapHandle>();
     expectTypeOf<ListenTapRefusal>().toEqualTypeOf<CoreListenTapRefusal>();
     expectTypeOf<OpenListenTapResult>().toEqualTypeOf<CoreOpenListenTapResult>();
+    expectTypeOf<ListenTapOpenOptions>().toEqualTypeOf<CoreListenTapOpenOptions>();
     expect(true).toBe(true);
   });
 

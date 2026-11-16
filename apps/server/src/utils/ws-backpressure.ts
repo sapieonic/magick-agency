@@ -151,9 +151,21 @@ export function sendVerdict(
  * path is already closing it), so a caller counts each close once. Never throws.
  */
 export function closeForSendBacklog(ws: WebSocket): boolean {
+  return closeThenTerminate(ws, AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, STATION_SEND_BACKLOG_REASON);
+}
+
+/**
+ * Close `ws` with `code` and `reason`, then `terminate` it if it has not closed within
+ * {@link BACKLOG_CLOSE_TERMINATE_MS}: a peer that has stopped reading never completes the close
+ * handshake, and `ws` would hold its unsent buffers until its own 30 s close timeout. The
+ * station's backlog close ({@link closeForSendBacklog}) and every close of a listener socket
+ * (`agency/listen/listen-socket.ts`). Returns false when the socket was not open (another path is
+ * already closing it). Never throws.
+ */
+export function closeThenTerminate(ws: Pick<WebSocket, 'readyState' | 'close' | 'terminate'>, code: number, reason: string): boolean {
   if (ws.readyState !== OPEN) return false;
   try {
-    ws.close(AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, STATION_SEND_BACKLOG_REASON);
+    ws.close(code, reason);
   } catch {
     // Fall through to the terminate.
   }

@@ -142,7 +142,8 @@ export interface AgencyListenPongFrame {
  *  - `listener_disconnected`: the socket closed without a `stop`, or sent nothing for
  *    {@link AGENCY_LISTEN_IDLE_TIMEOUT_MS};
  *  - `permission_revoked`: the supervisor's role changed or their membership was removed, or the
- *    periodic re-check found them below `agency.calls.listen`, or one of the flags off;
+ *    periodic re-check found them below `agency.calls.listen`, or one of the flags off (a check
+ *    that could not be made is `access_unverified`, below);
  *  - `superseded`: the same supervisor started another listen (one at a time per supervisor);
  *  - `send_backlog`: the supervisor's socket stopped reading (its unsent backlog passed the hard
  *    cap);
@@ -150,7 +151,12 @@ export interface AgencyListenPongFrame {
  *  - `server_shutdown`: the process that owned the call is stopping;
  *  - `server_restarted`: the session was still open when its process died; closed at the next
  *    boot (or when the primary reaped the dead media worker), or by a live process's sweep of its
- *    own rows that no session holds (LS16 (o)); never sent on a socket.
+ *    own rows that no session holds (LS16 (o)); never sent on a socket;
+ *  - `access_unverified`: the supervisor's access could not be checked (the database or the flag
+ *    store did not answer) for too long: the periodic re-check found the session unverified for
+ *    2 × `AGENCY_LISTEN_RECHECK_MS`, or a revocation's immediate re-check could not read it
+ *    (LS21). Not a verdict that they may no longer listen: the console offers Try again, and the
+ *    grant checks afresh. Appended last, so the list's order before it is unchanged.
  */
 export const AGENCY_LISTEN_END_REASONS = [
   'call_ended',
@@ -162,12 +168,14 @@ export const AGENCY_LISTEN_END_REASONS = [
   'tap_error',
   'server_shutdown',
   'server_restarted',
+  'access_unverified',
 ] as const;
 export type AgencyListenEndReason = (typeof AGENCY_LISTEN_END_REASONS)[number];
 
 /**
  * Close codes on the listener socket: the private-use codes, as the station's mirror HTTP
- * (401, 403, 404, 408, 409, 429), and the RFC 6455 ones it also sends. The one declaration: the
+ * (401, 403, 404, 408, 409, 429; and 503 for `access_unverified`), and the RFC 6455 ones it also
+ * sends. The one declaration: the
  * server closes with these names and the console switches on them. The distinction that matters
  * to the console is **reconnect** (re-mint a grant, within {@link AGENCY_LISTEN_RECONNECT_WINDOW_MS})
  * versus **stop** (say why and offer nothing to retry). Any code not listed here is an ordinary
@@ -201,6 +209,13 @@ export const AGENCY_LISTEN_CLOSE = {
    * the session (`listen_unavailable`: no row, no audio). Reconnect, but bound the retries.
    */
   INTERNAL_ERROR: 1011,
+  /**
+   * The supervisor's access could not be checked for too long (`access_unverified`, LS21): the
+   * database or the flag store is not answering. Stop, say so, and offer Try again (a fresh grant
+   * checks again); not "no longer have access". A console that predates it reads it as an ordinary
+   * drop and reconnects, which is safe: the grant refuses while the check cannot be made.
+   */
+  ACCESS_UNVERIFIED: 4503,
 } as const;
 
 /** One of {@link AGENCY_LISTEN_CLOSE}'s codes. */
@@ -221,4 +236,5 @@ export const AGENCY_LISTEN_END_CLOSE = {
   send_backlog: AGENCY_LISTEN_CLOSE.HEARTBEAT_TIMEOUT,
   tap_error: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR,
   server_shutdown: AGENCY_LISTEN_CLOSE.GOING_AWAY,
+  access_unverified: AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED,
 } as const satisfies Record<Exclude<AgencyListenEndReason, 'server_restarted'>, AgencyListenCloseCode>;

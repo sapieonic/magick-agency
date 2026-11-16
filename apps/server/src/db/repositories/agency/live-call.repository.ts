@@ -89,7 +89,14 @@ export const LIVE_CALLS_SQL = `
     LEFT JOIN agency_inbound_routes r ON r.id = l.route_id AND r.tenant_id = $1::uuid
     LEFT JOIN agency_contacts ct ON ct.id = l.contact_id AND ct.tenant_id = $1::uuid
    WHERE ($4::uuid IS NULL OR l.call_id = $4::uuid)
-   ORDER BY 12 ASC, l.call_id`;
+   ORDER BY connected_at ASC, l.call_id`;
+
+/** The campaign AHT read (`campaignAhtSeconds`): $1 tenant, $2 campaign ids, $3 the voicemail code. Exported for its plan test. */
+export const CAMPAIGN_AHT_SQL = `
+  SELECT a.campaign_id, ${ahtSecondsSql('$3')}::text AS aht_seconds
+    FROM agency_call_attempts a
+   WHERE a.campaign_id = ANY($2::uuid[]) AND a.tenant_id = $1::uuid
+   GROUP BY a.campaign_id`;
 
 export class AgencyLiveCallRepository {
   /** The account's live calls (or one campaign's, or one call), longest on call first. */
@@ -103,14 +110,16 @@ export class AgencyLiveCallRepository {
   /**
    * Each campaign's average handle time in seconds (the campaign stats' `aht_seconds`,
    * `ahtSecondsSql`); a campaign with no ended, bridged attempt is absent. Tenant scoped.
+   *
+   * Its cost is each campaign's WHOLE history (every attempt it has made, by `campaign_id` on an
+   * index: `live-call-plan.test.ts`), the same aggregate the campaign stats read computes. So the
+   * internal handler caches it a minute per campaign per process (`LIVE_CALL_AHT_CACHE_MS`): the
+   * live list is polled every 5 s by every supervisor, the AHT read at most once a minute (SWE-L7).
    */
   async campaignAhtSeconds(tenantId: string, campaignIds: readonly string[]): Promise<Map<string, number>> {
     if (campaignIds.length === 0) return new Map();
     const { rows } = await getPool().query<{ campaign_id: string; aht_seconds: string | null }>(
-      `SELECT a.campaign_id, ${ahtSecondsSql('$3')}::text AS aht_seconds
-         FROM agency_call_attempts a
-        WHERE a.campaign_id = ANY($2::uuid[]) AND a.tenant_id = $1::uuid
-        GROUP BY a.campaign_id`,
+      CAMPAIGN_AHT_SQL,
       [tenantId, campaignIds, VOICEMAIL_DISPOSITION_CODE],
     );
     const out = new Map<string, number>();

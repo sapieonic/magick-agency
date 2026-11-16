@@ -433,6 +433,10 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     const { membership, user } = invited;
 
     await redisCache.del(membershipCacheKey(user.id, request.tenantId!));
+    // A new account-scoped seat for someone already in the tenant (a tenant-wide admin invited as
+    // an account's viewer) is the membership the tenant context now picks in that account: their
+    // listens there are re-checked now, not at the next periodic pass (QA-L4, LS10).
+    await revokeListens(request.tenantId!, user.id);
 
     /**
      * The invite email — attempted AFTER the membership is written, and unable to

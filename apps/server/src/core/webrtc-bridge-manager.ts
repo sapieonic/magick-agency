@@ -46,6 +46,7 @@ import {
   type InboundRecordOptions,
   type ListenSink,
   type OpenListenTapResult,
+  type ListenTapOpenOptions,
   type WebRtcBridgedCallParams,
   type WebRtcCallCorrelation,
   type WebRtcInboundAcceptance,
@@ -58,6 +59,7 @@ import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { UnrequestedRecordings } from './bridge/unrequested-recording.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
+import { LISTEN_TAP_DEFAULT_FAULT_BUDGET } from './bridge/listen-tap.js';
 import {
   RELAY_DWELL_SAMPLE_EVERY, trackCarrierDialRefusal, trackRelayDwell, trackWebsocketSendBackpressure,
 } from '@magick-agency/observability/metrics/voice';
@@ -119,6 +121,7 @@ export {
   type ListenSink,
   type ListenTapEndReason,
   type ListenTapHandle,
+  type ListenTapOpenOptions,
   type ListenTapRefusal,
   type ListenTapStats,
   type OpenListenTapResult,
@@ -1942,14 +1945,17 @@ export class WebRtcBridgeManager {
    * `not_bridged` (never bridged: still ringing, or an inbound caller parked on hold with no
    * agent bound; or a carrier the bridge relays no audio for). Once bridged, an agent's dropped
    * socket inside its re-attach window is still listenable: the customer is still on the line.
-   * The caps (per call, per process, per supervisor) are the caller's.
+   * The caps (per call, per process, per supervisor) are the caller's, and so is the tap's fault
+   * budget (`options`, read when the call's tap is made by its first sink).
    */
-  openListenTap(callId: string, sink: ListenSink): OpenListenTapResult {
+  openListenTap(callId: string, sink: ListenSink, options?: ListenTapOpenOptions): OpenListenTapResult {
     const session = this.sessions.get(callId);
     if (!session) return { refused: 'not_found' };
     if (session.isTearingDown) return { refused: 'ending' };
     if (!session.bridged || !session.carrier) return { refused: 'not_bridged' };
-    const handle = session.openListenTap(sink, config.agency.listen.faultBudget);
+    // The budget is the caller's setting (the agency's `AGENCY_LISTEN_FAULT_BUDGET`), passed in:
+    // the voice area reads no agency config (SWE-L2).
+    const handle = session.openListenTap(sink, options?.faultBudget ?? LISTEN_TAP_DEFAULT_FAULT_BUDGET);
     log.info({ callId, listenId: sink.listenId, listeners: session.listenTap?.sinkCount ?? 0 }, 'Listen tap attached');
     return handle;
   }

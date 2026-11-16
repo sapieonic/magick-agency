@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
 import { AGENCY_CALL_ORIGINS, type AgencyCallOrigin } from '@magick-agency/contracts/agency';
+import { UUID_RE } from '../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'agency-listen-token' });
 
@@ -29,14 +30,16 @@ export interface ListenGrantPayload {
   recording: boolean;
   /**
    * The supervisor's revocation generation in the minting process when the grant was minted
-   * (`ListenRegistry.generation`): a revocation there before the upgrade refuses it (LS16 b).
+   * (`ListenRegistry.generation`): a revocation there before the upgrade refuses it (LS16 n).
    */
   revocationGen: number;
 }
 
 /**
- * The token could not be stored, so it could never verify. The grant answers
- * `503 listen_unavailable` rather than hand out a URL whose upgrade is certain to be refused.
+ * The token store could not be reached: at the grant the token could not be stored, so it could
+ * never verify (the grant answers `503 listen_unavailable` rather than hand out a URL whose upgrade
+ * is certain to be refused); at the upgrade it could not be checked (the socket refuses 1011
+ * `listen_unavailable`).
  */
 export class ListenTokenUnavailableError extends Error {
   constructor(readonly listenId: string, options?: { cause?: unknown }) {
@@ -58,8 +61,8 @@ redis.call('DEL', KEYS[1])
 return string.sub(stored, string.len(prefix) + 1)
 `;
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
+/** A canonical (lower-case) UUID: every id a grant stores was lower-cased by the grant's handler. */
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v) && v === v.toLowerCase();
 
 /** A stored grant read back: every field checked, so a value that is not one is no grant. */
 export function parseListenGrantPayload(raw: unknown): ListenGrantPayload | null {
@@ -126,7 +129,8 @@ export class ListenTokenStore {
 
   /**
    * Verify and spend: the grant for a token that matches, else null (missing, expired, wrong,
-   * already used, unverifiable). The caller closes the socket on null, never degrades to accepting.
+   * already used, a stored value that is not a grant). Rejects {@link ListenTokenUnavailableError}
+   * when Redis cannot be asked. The caller closes the socket on either, never degrades to accepting.
    */
   async consume(listenId: string, token: string | undefined): Promise<ListenGrantPayload | null> {
     if (!token || token.includes('|')) return null;
@@ -135,8 +139,10 @@ export class ListenTokenStore {
       try {
         raw = await this.redis.eval(CONSUME, 1, this.key(listenId), token);
       } catch (err) {
+        // Not a token that failed to verify (4401, re-mint) but a store that could not be asked:
+        // the socket refuses it `listen_unavailable` (1011), as the grant answers 503 (QA-L3).
         log.error({ err, listenId }, 'Listen token verification failed — refusing the upgrade');
-        return null;
+        throw new ListenTokenUnavailableError(listenId, { cause: err });
       }
       if (typeof raw !== 'string') return null;
       let parsed: unknown;

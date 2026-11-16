@@ -8,7 +8,9 @@ const log = createChildLogger({ component: 'agency-listen-revocation' });
  * How a supervisor's listens are ended from outside the process that holds them (LS10, LS5):
  *
  *  - **Revocation.** The routes that change a role or remove a member (`api/routes/user.routes.ts`,
- *    where the membership cache is cleared) call {@link revokeListens}. In one process the handler
+ *    where the membership cache is cleared, and the super-admin's), and those that add a seat which
+ *    may shadow a wider one (`POST /users/invite`, the invite claim in `invites.routes.ts`), call
+ *    {@link revokeListens}. In one process the handler
  *    is the runtime's registry (`revokeUser`: a re-check of that supervisor against the database);
  *    with media workers the primary also sends `listen.revoke` to every worker, which does the same.
  *    Registered by the bootstraps ({@link onListenRevocation}); with none registered (a process

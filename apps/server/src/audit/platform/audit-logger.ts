@@ -37,6 +37,15 @@ class AuditLogger {
     this.buffer.push(event);
   }
 
+  /**
+   * Write everything buffered now and resolve once it is written, leaving the periodic flush
+   * running: a reader that must see its rows (a test reading the table back) without stopping the
+   * logger, as {@link shutdown} would.
+   */
+  async flush(): Promise<void> {
+    await this.buffer.drain();
+  }
+
   async shutdown(): Promise<void> {
     log.info('Shutting down audit logger, flushing buffer...');
     await this.buffer.forceFlush();

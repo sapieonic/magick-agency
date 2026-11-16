@@ -132,6 +132,8 @@ describe('0047 — agency_listen_sessions', () => {
       frames_sent: 'integer not null default 0',
       frames_dropped: 'integer not null default 0',
       replica_id: 'character varying(100) not null',
+      // Added by 0048 (listen-sessions-unverified-migration.test.ts).
+      live_at: 'timestamp with time zone',
     });
     const row = await session();
     expect(row).toMatchObject({ ended_at: null, end_reason: null, frames_sent: 0, frames_dropped: 0 });
@@ -184,14 +186,23 @@ describe('0047 — agency_listen_sessions', () => {
     expect(await indexDef('idx_agency_listen_sessions_listener')).toBe(
       'CREATE INDEX idx_agency_listen_sessions_listener ON public.agency_listen_sessions USING btree (tenant_id, listener_user_id, started_at DESC)');
 
-    const [open, call, listener] = await plans([
+    const [open, call, listener, openForCalls, liveForCall] = await plans([
       ['SELECT * FROM agency_listen_sessions WHERE tenant_id = $1 AND account_id = $2 AND ended_at IS NULL', [TENANT, ACCOUNT]],
       ['SELECT * FROM agency_listen_sessions WHERE call_id = $1', [randomUUID()]],
       ['SELECT * FROM agency_listen_sessions WHERE tenant_id = $1 AND listener_user_id = $2 ORDER BY started_at DESC LIMIT 20', [TENANT, randomUUID()]],
+      // The live list's listeners (`listOpenForCalls`, QA-L6) and "Listened to by" (`listForCall`), as the repository spells them.
+      ['SELECT * FROM agency_listen_sessions WHERE call_id = ANY($2::uuid[]) AND tenant_id = $1 AND ended_at IS NULL ORDER BY started_at, id',
+        [TENANT, [randomUUID(), randomUUID(), randomUUID()]]],
+      ['SELECT * FROM agency_listen_sessions WHERE call_id = $3 AND tenant_id = $1 AND account_id = $2 AND live_at IS NOT NULL ORDER BY started_at, id',
+        [TENANT, ACCOUNT, randomUUID()]],
     ]);
     expect(open).toContain('idx_agency_listen_sessions_open');
     expect(call).toContain('idx_agency_listen_sessions_call');
     expect(listener).toContain('idx_agency_listen_sessions_listener');
+    // A partial index on the open rows would also serve the first: either is a bounded read.
+    expect(openForCalls).toMatch(/idx_agency_listen_sessions_(call|open)/);
+    expect(openForCalls).not.toMatch(/Seq Scan/);
+    expect(liveForCall).toContain('idx_agency_listen_sessions_call');
   });
 });
 

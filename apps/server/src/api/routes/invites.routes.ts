@@ -16,6 +16,7 @@ import { tenantRepository } from '@magick-agency/db/repositories/tenant.reposito
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { redisCache } from '../../cache/redis-cache.js';
 import { membershipCacheKey } from '../middleware/membership-cache-key.js';
+import { revokeListens } from '../../agency/listen/listen-revocation.js';
 import { hashInviteToken, isInviteExpired } from '../../notifications/invite-token.js';
 import { inviteProductName } from '../../notifications/templates/invite-email.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
@@ -845,6 +846,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      */
     await invalidateUserCache(user.id, beforeBind?.firebase_uid ?? null);
     await redisCache.del(membershipCacheKey(user.id, invite.tenant_id));
+    // The claim activates a seat that may shadow a wider one (an account-scoped seat over a
+    // tenant-wide admin, in that account): the claimant's listens are re-checked now (QA-L4, LS10).
+    await revokeListens(invite.tenant_id, user.id);
 
     // The same comparison the address rule above made, so the gate and the
     // audit flag cannot disagree about one claim.

@@ -732,3 +732,25 @@ const _allListenCodesListed: AllListed<
   typeof AGENCY_LISTEN_ERROR_CODES
 > = true;
 void _allListenCodesListed;
+
+/**
+ * Why the number reveal (`GET /live-calls/:callId/number`) has no number to show, apart from the
+ * listen codes (a call not live there is still `listen_call_not_live`):
+ *  - `live_call_number_withheld`: 404. The caller withheld their number (an inbound caller with no
+ *    readable number). The live row says so first (`customer_phone_withheld`), so the console
+ *    offers no Show for it; this answers a reveal asked for anyway.
+ * Its own union rather than a listen code, so the listen codes (the grant's refusals, a live row's
+ * reasons, the console's copy for each) are unchanged by it.
+ */
+export type AgencyLiveCallNumberErrorCode = 'live_call_number_withheld';
+
+/** Runtime list of {@link AgencyLiveCallNumberErrorCode}. */
+export const AGENCY_LIVE_CALL_NUMBER_ERROR_CODES = [
+  'live_call_number_withheld',
+] as const satisfies readonly AgencyLiveCallNumberErrorCode[];
+
+const _allLiveCallNumberCodesListed: AllListed<
+  AgencyLiveCallNumberErrorCode,
+  typeof AGENCY_LIVE_CALL_NUMBER_ERROR_CODES
+> = true;
+void _allLiveCallNumberCodesListed;

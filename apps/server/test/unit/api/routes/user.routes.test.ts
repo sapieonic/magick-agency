@@ -52,7 +52,9 @@ const mocks = vi.hoisted(() => ({
   redisCache: {
     del: vi.fn().mockResolvedValue(undefined),
   },
+  revokeListens: vi.fn(async () => {}),
 }));
+vi.mock('../../../../src/agency/listen/listen-revocation.js', () => ({ revokeListens: mocks.revokeListens }));
 
 vi.mock('../../../../src/auth/session.middleware.js', () => ({
   sessionMiddleware: async () => {},
@@ -237,6 +239,8 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
     });
 
     expect(res.statusCode).toBe(201);
+    // QA-L4: an account-scoped seat may shadow the invitee's tenant-wide one in that account.
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, expect.any(String));
     expect(mocks.accountRepository.findByIdInTenant).toHaveBeenCalledWith(ACCOUNT_OWN_TENANT, TENANT);
     expect(mocks.membershipRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({ account_id: ACCOUNT_OWN_TENANT, tenant_id: TENANT }),

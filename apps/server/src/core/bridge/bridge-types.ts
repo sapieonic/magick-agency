@@ -411,3 +411,13 @@ export type ListenTapRefusal = 'not_found' | 'not_bridged' | 'ending';
 
 /** What `WebRtcBridgeManager.openListenTap` answers. */
 export type OpenListenTapResult = ListenTapHandle | { refused: ListenTapRefusal };
+
+/**
+ * What the caller of `WebRtcBridgeManager.openListenTap` decides for the tap: its fault budget
+ * (`AGENCY_LISTEN_FAULT_BUDGET`, the agency's setting, passed in so the voice area reads no
+ * agency config). Read when the call's tap is made (its first sink); absent,
+ * `LISTEN_TAP_DEFAULT_FAULT_BUDGET` (`bridge/listen-tap.ts`).
+ */
+export interface ListenTapOpenOptions {
+  faultBudget: number;
+}

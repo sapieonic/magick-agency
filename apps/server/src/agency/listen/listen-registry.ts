@@ -20,17 +20,17 @@ const log = createChildLogger({ component: 'agency-listen-registry' });
  * per-call cap: a console reconnecting to the call it was on is not refused by its own stale
  * session.
  *
- * ── Revocation (LS10, LS16 c, d) ─────────────────────────────────────────────
+ * ── Revocation (LS10, LS16 c, d, LS21, LS22) ─────────────────────────────────
  * {@link revokeUser} re-checks one supervisor's sessions now; {@link recheck} re-checks every
  * session every `recheckMs`. Both read the DATABASE through {@link ListenAccessCheck} (the
  * membership floor and the two flags), never the membership cache, and end what fails
- * `permission_revoked`. A check that cannot be made is treated two ways:
+ * `permission_revoked`. A check that cannot be made is not a "no", and ends a session
+ * `access_unverified` (the console says access could not be checked and offers Try again):
  *  - the immediate path ({@link revokeUser}, a role change or a removal) fails CLOSED: what it
- *    could not check ends `permission_revoked` (the supervisor can ask again; the grant and the
- *    upgrade check again);
+ *    could not check ends at once (the supervisor can ask again; the grant and the upgrade check
+ *    again);
  *  - the periodic pass fails OPEN, under a staleness cap: a session keeps going while its checks
- *    fail, until it has gone {@link STALE_AFTER_RECHECKS} × `recheckMs` without a successful one,
- *    when it ends `permission_revoked`.
+ *    fail, until it has gone {@link STALE_AFTER_RECHECKS} × `recheckMs` without a successful one.
  * The upgrade asks too, before the row ({@link verify}: no answer, no listen), and a per-supervisor
  * revocation generation, bumped by every {@link revokeUser}, covers what is between a grant and its
  * session: the grant records it in the token and the reservation records it again, and a
@@ -38,9 +38,11 @@ const log = createChildLogger({ component: 'agency-listen-registry' });
  * {@link admit}, however the database answered in between.
  *
  * ── The rows ─────────────────────────────────────────────────────────────────
- * Each re-check tick also hands the ids this registry holds (sessions and reservations) to
- * `maintainRows` (`listen-rows.ts`): a session row whose close failed is closed again, and a row of
- * this process held by nothing here is closed as lost.
+ * Each re-check tick also hands `maintainRows` (`listen-rows.ts`) a getter of the ids this registry
+ * holds (sessions and reservations), read when the sweep runs rather than when the tick began: a
+ * session row whose close failed is closed again, and a row of this process held by nothing here
+ * is closed as lost. One tick at a time: a tick that finds the last one still running (a hung
+ * read) applies only the staleness cap.
  */
 
 /** What the access check asks about: one supervisor listening (or about to) in one account. */
@@ -74,8 +76,11 @@ export interface ListenAccessVerdict {
 /** Who may keep listening (`listen-access.ts` in production). May also reject: all unchecked. */
 export type ListenAccessCheck = (subjects: readonly ListenAccessSubject[]) => Promise<ListenAccessVerdict>;
 
-/** The periodic pass ends a session not verified for this many `recheckMs` (LS16 d). */
-export const STALE_AFTER_RECHECKS = 4;
+/**
+ * The periodic pass ends a session not verified for this many `recheckMs`, `access_unverified`
+ * (LS16 d, LS21: 2, so 60 s at the default 30 s re-check).
+ */
+export const STALE_AFTER_RECHECKS = 2;
 
 /** How many supervisors' revocation generations a registry remembers (the oldest are forgotten). */
 const MAX_GENERATIONS = 10_000;
@@ -120,9 +125,10 @@ export interface ListenRegistryDeps {
   access: ListenAccessCheck;
   /**
    * Each re-check tick, after the pass: the session rows' upkeep (`ListenRowKeeper.maintain`), with
-   * the listen ids this registry holds (open sessions and reservations). Absent: nothing.
+   * a getter of the listen ids this registry holds (open sessions and reservations), so the sweep
+   * reads them when it runs, after any retries. Absent: nothing.
    */
-  maintainRows?: (held: ReadonlySet<string>) => Promise<unknown>;
+  maintainRows?: (held: () => ReadonlySet<string>) => Promise<unknown>;
   now?: () => number;
 }
 
@@ -136,6 +142,8 @@ export class ListenRegistry {
   private generationCounter = 0;
   private timer: NodeJS.Timeout | null = null;
   private rechecking: Promise<void> | null = null;
+  /** A timer tick (the pass and the rows' upkeep) is running. */
+  private ticking = false;
   private stopping = false;
 
   constructor(private readonly deps: ListenRegistryDeps) {}
@@ -147,11 +155,6 @@ export class ListenRegistry {
   /** Sessions open now. */
   get size(): number {
     return this.sessions.size;
-  }
-
-  /** The open sessions (a copy). */
-  all(): ListenSessionHandle[] {
-    return [...this.sessions.values()];
   }
 
   get(listenId: string): ListenSessionHandle | undefined {
@@ -254,7 +257,7 @@ export class ListenRegistry {
   }
 
   /**
-   * The upgrade's access check (LS16 b): may this supervisor listen in this account now, asked of
+   * The upgrade's access check (LS16 n): may this supervisor listen in this account now, asked of
    * the database? `unchecked` when it could not be answered (the upgrade refuses: no answer, no
    * listen). Never throws.
    */
@@ -314,7 +317,8 @@ export class ListenRegistry {
    * LS10's immediate path: re-check one supervisor's sessions in the tenant now, against the
    * database, and end those that fail `permission_revoked`. A role change that leaves them able
    * to listen (a promotion, another membership that still clears the floor) ends nothing. Fails
-   * CLOSED (LS16 c): a session the check could not decide ends too. Bumps the supervisor's
+   * CLOSED (LS16 c): a session the check could not decide ends too, `access_unverified` (LS22: no
+   * read said they may not listen). Bumps the supervisor's
    * revocation generation first, so a grant or a reservation of theirs from before this call is
    * refused, whatever the database answers. Answers how many it ended.
    */
@@ -323,14 +327,20 @@ export class ListenRegistry {
     const theirs = [...this.sessions.values()].filter((s) => s.tenantId === tenantId && s.listenerUserId === userId);
     if (theirs.length === 0) return 0;
     const verdict = await this.ask(theirs, 'revoke');
-    return this.endRevoked(theirs, new Set([...verdict.revoked, ...verdict.unchecked]), 'revoke');
+    const unverified = new Set([...verdict.unchecked].filter((id) => !verdict.revoked.has(id)));
+    const [revoked, unchecked] = await Promise.all([
+      this.endRevoked(theirs, verdict.revoked, 'revoke'),
+      this.endUnverified(theirs, unverified, 'revoke'),
+    ]);
+    return revoked + unchecked;
   }
 
   /**
-   * The backstop: re-check every session now. One pass at a time; a tick that finds a pass still
-   * running applies the staleness cap to what it has and leaves the pass to finish. Fails OPEN
+   * The backstop: re-check every session now. One pass at a time; a call that finds a pass still
+   * running applies the staleness cap to what it has and waits for the pass. Fails OPEN
    * (LS16 d): a session its check could not decide keeps going, until it has gone
-   * {@link STALE_AFTER_RECHECKS} × `recheckMs` without a successful check. Answers how many it ended.
+   * {@link STALE_AFTER_RECHECKS} × `recheckMs` without a successful check (`access_unverified`,
+   * LS21). Answers how many it ended.
    */
   async recheck(): Promise<number> {
     if (this.rechecking) {
@@ -380,35 +390,66 @@ export class ListenRegistry {
   }
 
   /** End `permission_revoked` those of `sessions` named in `ids` that are still open here. */
-  private async endRevoked(sessions: readonly ListenSessionHandle[], ids: ReadonlySet<string>, why: 'revoke' | 'recheck' | 'stale'): Promise<number> {
+  private async endRevoked(sessions: readonly ListenSessionHandle[], ids: ReadonlySet<string>, why: 'revoke' | 'recheck'): Promise<number> {
+    return this.endFor(sessions, ids, 'permission_revoked', why);
+  }
+
+  /** End `access_unverified` those of `sessions` named in `ids` that are still open here (LS21, LS22). */
+  private async endUnverified(sessions: readonly ListenSessionHandle[], ids: ReadonlySet<string>, why: 'revoke' | 'stale'): Promise<number> {
+    return this.endFor(sessions, ids, 'access_unverified', why);
+  }
+
+  private async endFor(
+    sessions: readonly ListenSessionHandle[],
+    ids: ReadonlySet<string>,
+    reason: 'permission_revoked' | 'access_unverified',
+    why: 'revoke' | 'recheck' | 'stale',
+  ): Promise<number> {
     const hits = sessions.filter((s) => ids.has(s.listenId) && this.sessions.get(s.listenId) === s);
-    for (const s of hits) log.info({ listenId: s.listenId, callId: s.callId, why }, 'Listen permission revoked');
-    await Promise.all(hits.map((s) => s.end('permission_revoked').catch(() => {})));
+    for (const s of hits) {
+      log.info({ listenId: s.listenId, callId: s.callId, why, reason }, reason === 'permission_revoked'
+        ? 'Listen permission revoked'
+        : 'Listen access could not be verified — ending the listen');
+    }
+    await Promise.all(hits.map((s) => s.end(reason).catch(() => {})));
     return hits.length;
   }
 
-  /** End the sessions not verified for {@link STALE_AFTER_RECHECKS} × `recheckMs` (LS16 d). */
+  /** End `access_unverified` the sessions not verified for {@link STALE_AFTER_RECHECKS} × `recheckMs` (LS16 d, LS21). */
   private async endStale(): Promise<number> {
     const cap = STALE_AFTER_RECHECKS * this.deps.limits.recheckMs;
     const at = this.now();
     const stale = [...this.sessions.values()].filter((s) => at - (this.verifiedAt.get(s.listenId) ?? s.startedAt) >= cap);
     if (stale.length === 0) return 0;
     log.warn({ sessions: stale.length, capMs: cap }, 'Listen access unverified past the staleness cap — ending the sessions');
-    return this.endRevoked(stale, new Set(stale.map((s) => s.listenId)), 'stale');
+    return this.endUnverified(stale, new Set(stale.map((s) => s.listenId)), 'stale');
   }
 
-  /** One timer tick: the re-check, then the rows' upkeep. Never rejects. */
+  /**
+   * One timer tick: the re-check, then the rows' upkeep. Never rejects. A tick that finds the last
+   * one still running (a read that hangs) starts no pass and no upkeep of its own, so hung ticks
+   * never stack; it applies the staleness cap, which a hung pass must not hold off.
+   */
   private async tick(): Promise<void> {
-    try {
-      await this.recheck();
-    } catch (err) {
-      log.warn({ err }, 'Listen re-check failed');
+    if (this.ticking) {
+      try { await this.endStale(); } catch (err) { log.warn({ err }, 'Listen staleness cap failed'); }
+      return;
     }
-    if (this.stopping || !this.deps.maintainRows) return;
+    this.ticking = true;
     try {
-      await this.deps.maintainRows(this.held());
-    } catch (err) {
-      log.warn({ err }, 'Listen session rows upkeep failed');
+      try {
+        await this.recheck();
+      } catch (err) {
+        log.warn({ err }, 'Listen re-check failed');
+      }
+      if (this.stopping || !this.deps.maintainRows) return;
+      try {
+        await this.deps.maintainRows(() => this.held());
+      } catch (err) {
+        log.warn({ err }, 'Listen session rows upkeep failed');
+      }
+    } finally {
+      this.ticking = false;
     }
   }
 

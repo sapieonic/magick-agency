@@ -62,6 +62,8 @@ describe('the listener socket route', () => {
     try {
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/not-a-uuid/${L}?token=t`))).toEqual({ code: 1008, reason: 'invalid_upgrade' });
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/${S}/${L}`))).toEqual({ code: 4401, reason: 'listen_token_invalid' });
+      // SWE-NITS: a token given twice is a list, not a token: refused 4401 before anything reads it.
+      expect(await closeOf(await app.injectWS(`/proxy/agency/listen/${S}/${L}?token=a&token=b`))).toEqual({ code: 4401, reason: 'listen_token_invalid' });
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/${S}/${L}?token=t`))).toEqual({ code: 1011, reason: 'listen_unavailable' });
     } finally {
       await app.close();

@@ -87,6 +87,7 @@ const ALL_MIGRATIONS = [
   '0045_promise_contacts_index',
   '0046_unrequested_recordings_index',
   '0047_listen_sessions',
+  '0048_listen_sessions_unverified',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

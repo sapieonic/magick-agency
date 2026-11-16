@@ -307,9 +307,12 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // call, as `agency.supervise` is, and the same seat. Tenant admins and owners pass by the
   // hierarchy; an account admin only in the accounts they belong to (the membership scopes it, as
   // every account route). Its own permission rather than riding on `agency.supervise`, which
-  // also gates the live LIST: a tenant can later raise who may listen without a code change, and
-  // the console shows a supervisor who may watch but not listen the list without the Listen
-  // action. Agents, viewers and operators cannot listen, and neither can a super-admin (no
+  // also gates the live LIST: who may listen can later be raised by changing this one floor (a
+  // code change to this line, no route changes; floors are not per-tenant settings), and the
+  // console then shows a supervisor who may watch but not listen the list without the Listen
+  // action. Both floors are `account_admin` today, so that supervisor cannot occur yet and the
+  // console's footnote for them is unreachable (PM-minor10). Agents, viewers and operators cannot
+  // listen, and neither can a super-admin (no
   // membership). The routes also refuse a listen to a call the caller is the agent on
   // (`listen_own_call`), and every one requires the `agency_live_listen_enabled` flag (the
   // consent gate, LS1). Each listen is a session row and two audit rows (LS6).

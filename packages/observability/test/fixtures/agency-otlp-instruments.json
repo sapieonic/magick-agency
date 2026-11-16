@@ -417,7 +417,7 @@
   {
     "name": "agency_listen_sessions_ended_total",
     "kind": "Counter",
-    "description": "Listen sessions ended, by why: call_ended, listener_stopped, listener_disconnected, permission_revoked, superseded, send_backlog, tap_error, server_shutdown or server_restarted (closed by the reap after a process died)",
+    "description": "Listen sessions ended, by why: call_ended, listener_stopped, listener_disconnected, permission_revoked, superseded, send_backlog, tap_error, server_shutdown, server_restarted (closed by the reap after a process died) or access_unverified (the access re-check could not be made for too long)",
     "attributes": [
       "reason"
     ]

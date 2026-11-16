@@ -71,6 +71,7 @@ const mocks = vi.hoisted(() => ({
   issueInvite: vi.fn(),
   auditLog: vi.fn(),
   claimsCounted: vi.fn(),
+  revokeListens: vi.fn(async () => {}),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
@@ -135,6 +136,7 @@ vi.mock('../../../../src/auth/session-payload.js', () => ({
   buildSessionPayload: mocks.buildSessionPayload,
 }));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({ issueInvite: mocks.issueInvite }));
+vi.mock('../../../../src/agency/listen/listen-revocation.js', () => ({ revokeListens: mocks.revokeListens }));
 vi.mock('../../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: () => mocks.log }));
 /**
@@ -405,6 +407,14 @@ describe('POST /invites/:token/claim', () => {
       user: BOUND_USER, tenants: [], memberships: [], governance: {}, is_new: false,
     });
     expect(mocks.buildSessionPayload).toHaveBeenCalledWith(BOUND_USER, STUB_USER);
+    await app.close();
+  });
+
+  it('QA-L4: re-checks the claimant\'s listens in the tenant: the seat it activates may shadow a wider one', async () => {
+    const app = await buildApp();
+    mocks.revokeListens.mockClear();
+    expect((await claim(app)).statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, BOUND_USER.id);
     await app.close();
   });
 
