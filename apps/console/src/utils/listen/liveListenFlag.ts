@@ -8,3 +8,10 @@ import type { ClientExposedAgencyFlagKey } from '@magick-agency/contracts/flags'
  * pure navigation tables (`consoleNav.ts`, `agencyCampaignTabs.ts`) can read it.
  */
 export const LIVE_LISTEN_FLAG = 'agency_live_listen_enabled' satisfies ClientExposedAgencyFlagKey;
+
+/**
+ * Whether calls that are not recorded may be listened to (LS4; default on, a narrowing of
+ * `agency_live_listen_enabled`). Client-exposed since LS20 for the account's Settings line only:
+ * the server still computes each row's `listenable` and refuses the grant itself.
+ */
+export const LIVE_LISTEN_UNRECORDED_FLAG = 'agency_live_listen_unrecorded' satisfies ClientExposedAgencyFlagKey;

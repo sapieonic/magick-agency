@@ -438,6 +438,6 @@ export const LISTEN_SETTINGS_COPY = {
   unrecordedExcluded: 'Only calls that are recorded can be listened to.',
   change: 'Ask your account manager to change this.',
   loading: 'Checking…',
-  failed: 'Could not check whether live call listening is on. Try again.',
-  tryAgain: 'Try again',
+  failed: 'Could not check whether live call listening is on.',
+  forbidden: 'Live call listening is for supervisors.',
 } as const;

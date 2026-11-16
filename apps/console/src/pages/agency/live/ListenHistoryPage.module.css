@@ -1,0 +1,63 @@
+/* The account's Listening history (`docs/listening.md` §12). Tokens only, both themes. */
+
+.page {
+  max-width: 1240px;
+}
+
+.select:where(select) {
+  min-width: 0;
+}
+
+.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.person {
+  white-space: nowrap;
+}
+
+/* Name over number, so the column stays narrow at phone width. */
+.customer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.openLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.loadMoreError {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

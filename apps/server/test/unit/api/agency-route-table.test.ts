@@ -100,10 +100,6 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /super-admin/telephony-credentials/:_/sync-numbers', 'carrier account number sync (BYOC, B18; audited)'],
   // Read by the console's campaign builder once its carrier choice lands (B18).
   ['GET /proxy/agency/carriers', 'carrier accounts a campaign may dial on (BYOC, B18)'],
-  // The account's listening history (docs/listening.md §12, LS19): read by the console's Listening
-  // history page once it lands, which moves both into the console inventory with its source file.
-  ['GET /proxy/agency/listen-history', 'listening history, one page of visits (agency.supervise, the listen flag)'],
-  ['GET /proxy/agency/listen-history.csv', 'listening history CSV export, numbers masked, audited (agency.supervise, the listen flag)'],
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
   // `GET /feature-flags`, and the console calls it there; the old path is `not_served` in the fixture.
   ['GET /feature-flags', 'client flag map at its agency path (the console calls it here)'],

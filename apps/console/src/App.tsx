@@ -87,9 +87,11 @@ const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampa
 const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCampaignManualCallsPage'));
 const AgencyCampaignLiveCallsPage = lazy(() => import('./pages/agency/AgencyCampaignLiveCallsPage'));
 const LiveCallsPage = lazy(() => import('./pages/agency/live/LiveCallsPage'));
+const ListenHistoryPage = lazy(() => import('./pages/agency/live/ListenHistoryPage'));
 const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
+const ListeningSettingsPage = lazy(() => import('./pages/settings/ListeningSettingsPage'));
 const CustomerHistoryPage = lazy(() => import('./pages/agency/CustomerHistoryPage'));
 const AgentCustomerHistoryPage = lazy(() =>
   import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
@@ -714,6 +716,12 @@ export default function App() {
                     path="live"
                     element={<RequireFlag flag="agency_live_listen_enabled"><LiveCallsPage /></RequireFlag>}
                   />
+                  {/* The account's Listening history (`docs/listening.md` §12, LS19): `agency.supervise`
+                      (the page checks; the server refuses below it) behind the listening flag. */}
+                  <Route
+                    path="listening-history"
+                    element={<RequireFlag flag="agency_live_listen_enabled"><ListenHistoryPage /></RequireFlag>}
+                  />
                   <Route
                     path="campaigns/:id/calls/live"
                     element={<RequireFlag flag="agency_live_listen_enabled"><AgencyCampaignLiveCallsPage /></RequireFlag>}
@@ -755,6 +763,9 @@ export default function App() {
                   <Route path="inbound/new" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRouteEditorPage /></RequireGate>} />
                   <Route path="inbound/:routeId" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRouteEditorPage /></RequireGate>} />
                   <Route path="call-summaries" element={<RequireGate gate={settingsEntry('call-summaries').gate}><AnalysisProfilesPage /></RequireGate>} />
+                  {/* Live call listening (`docs/listening.md` §12, LS20 c): a read-only line from the
+                      client flags, on or off; supervisors (`agency.supervise`, which the page checks). */}
+                  <Route path="listening" element={<RequireGate gate={settingsEntry('listening').gate}><ListeningSettingsPage /></RequireGate>} />
                   <Route path="team" element={<TeamPage />} />
                   {/* The tenant's accounts. Linked for `account.create` only; the route itself
                       is ungated (the list is `account.read`, which the server enforces), and

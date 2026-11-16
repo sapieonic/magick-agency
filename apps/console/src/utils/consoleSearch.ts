@@ -113,6 +113,7 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
   'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
   'campaigns:live': ['live', 'live calls', 'in progress', 'listen', 'listen in', 'monitor', 'calls'],
+  'campaigns:listen-history': ['listening history', 'listened', 'who listened', 'listens', 'monitoring log', 'audit', 'supervisor'],
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],
   'inbound:summary': ['inbound summary', 'queue', 'incoming'],
   'reports:analytics': ['analytics', 'stats', 'performance', 'agents'],
@@ -261,6 +262,10 @@ export const SETTINGS_SEARCH: Record<string, SettingsSearchTerms> = {
   'call-summaries': {
     keywords: ['call summaries', 'summary', 'summaries', 'analysis', 'ai', 'what we capture'],
     settings: [],
+  },
+  listening: {
+    keywords: ['listening', 'listen', 'listen in', 'live call listening', 'monitoring', 'monitor'],
+    settings: [{ label: 'Calls that are not recorded', keywords: ['unrecorded', 'unrecorded calls', 'not recorded'] }],
   },
   team: {
     keywords: ['team', 'member', 'members', 'invite', 'invitation', 'role', 'roles', 'people', 'user', 'users', 'access'],

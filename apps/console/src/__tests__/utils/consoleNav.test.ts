@@ -117,17 +117,18 @@ describe('the work sections', () => {
 describe('the tab bar of a grouped page', () => {
   it('shows Campaigns and Soft-phone calls to a supervisor with the soft phone on', () => {
     const bar = tabBarFor('/agency/campaigns', input('account_admin'));
-    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls', 'Live calls']);
+    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls', 'Live calls', 'Listening history']);
     expect(bar?.activeId).toBe('campaigns');
     expect(tabBarFor('/agency/softphone', input('account_admin'))?.activeId).toBe('softphone');
     expect(tabBarFor('/agency/live', input('account_admin'))?.activeId).toBe('live');
+    expect(tabBarFor('/agency/listening-history', input('account_admin'))?.activeId).toBe('listen-history');
   });
 
   it('offers Live calls beside Soft-phone calls only to a supervisor with the listening flag on', () => {
     const labels = (i: GateInput) => tabBarFor('/agency/campaigns', i)?.tabs.map((t) => t.label) ?? [];
     expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'Soft-phone calls']);
     expect(labels(input('viewer'))).toEqual([]);
-    expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'Live calls']);
+    expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'Live calls', 'Listening history']);
   });
 
   it('is not shown when only one tab is left', () => {
@@ -169,6 +170,7 @@ describe('the active sidebar entry', () => {
     ['/agency/softphone', 'campaigns'],
     ['/agency/softphone/calls/x', 'campaigns'],
     ['/agency/live', 'campaigns'],
+    ['/agency/listening-history', 'campaigns'],
     ['/agency/inbound/missed', 'inbound'],
     ['/agency/inbound/summary', 'inbound'],
     ['/agency/analytics', 'reports'],
@@ -204,6 +206,11 @@ describe('the breadcrumb', () => {
       { label: 'Campaigns', to: '/agency/campaigns' },
       { label: 'Live calls' },
     ]);
+    expect(breadcrumbFor('/agency/listening-history')).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Listening history' },
+    ]);
+    expect(breadcrumbFor('/settings/listening')).toEqual([{ label: 'Settings' }, { label: 'Live call listening' }]);
   });
 
   it('puts the crumbs a page supplies after its section, in place of the generic one', () => {
@@ -405,7 +412,7 @@ describe('the Settings hub', () => {
     const groups = visibleSettingsGroups(input('account_admin'));
     expect(groups.map((g) => [g.scope, g.entries.map((e) => e.label)])).toEqual([
       ['you', ['Profile and appearance', 'Email notifications']],
-      ['account', ['Soft phone', 'Inbound routing', 'Call summaries']],
+      ['account', ['Soft phone', 'Inbound routing', 'Call summaries', 'Live call listening']],
       ['tenant', ['Team']],
     ]);
   });

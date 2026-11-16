@@ -53,6 +53,7 @@ describe('the pages', () => {
       'New campaign',
       'Soft-phone calls',
       'Live calls',
+      'Listening history',
       'Missed calls',
       'Inbound summary',
       'Analytics',
@@ -64,7 +65,7 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(11);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(12);
   });
 
   it('offers nothing under /agency without the dialer flag or the agency capability', () => {
@@ -95,6 +96,17 @@ describe('the pages', () => {
     const live = pageResults(searchTokens('live calls'), ALL_ON('account_admin')).find((r) => r.title === 'Live calls');
     expect(live?.target).toEqual({ type: 'path', to: '/agency/live' });
     expect(live?.detail).toBe('Campaigns');
+  });
+
+  it('offers the Listening history to a supervisor with the listening flag on, found by "listened" and "monitoring"', () => {
+    const off = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_live_listen_enabled' });
+    expect(titles(pageResults([], off))).not.toContain('Listening history');
+    expect(titles(pageResults([], ALL_ON('viewer')))).not.toContain('Listening history');
+    for (const q of ['listening history', 'who listened', 'listened', 'monitoring log']) {
+      expect(titles(pageResults(searchTokens(q), ALL_ON('account_admin'))), q).toContain('Listening history');
+    }
+    const history = pageResults(searchTokens('listening history'), ALL_ON('account_admin')).find((r) => r.title === 'Listening history');
+    expect(history?.target).toEqual({ type: 'path', to: '/agency/listening-history' });
   });
 
   it('offers New campaign only with agency.campaigns.write', () => {
@@ -144,6 +156,10 @@ describe('the settings', () => {
     ['dark mode', 'profile', 'Theme'],
     ['profile', 'profile', 'Profile and appearance'],
     ['call summaries', 'call-summaries', 'Call summaries'],
+    ['listening', 'listening', 'Live call listening'],
+    ['listen in', 'listening', 'Live call listening'],
+    ['monitoring', 'listening', 'Live call listening'],
+    ['unrecorded calls', 'listening', 'Calls that are not recorded'],
     ['new account', 'accounts', 'Accounts'],
   ];
 

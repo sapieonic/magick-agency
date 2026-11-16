@@ -198,7 +198,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'campaigns',
     label: 'Campaigns',
-    paths: ['/agency/campaigns', '/agency/softphone', '/agency/live'],
+    paths: ['/agency/campaigns', '/agency/softphone', '/agency/live', '/agency/listening-history'],
     tabs: [
       {
         id: 'campaigns',
@@ -223,6 +223,14 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         id: 'live',
         label: 'Live calls',
         to: '/agency/live',
+        gate: agencyGate({ permission: 'agency.supervise', flags: [LIVE_LISTEN_FLAG] }),
+      },
+      /* `docs/listening.md` §12 (LS19): the account's listens, gated as the history's routes are
+         (`agency.supervise` and the listening flag). */
+      {
+        id: 'listen-history',
+        label: 'Listening history',
+        to: '/agency/listening-history',
         gate: agencyGate({ permission: 'agency.supervise', flags: [LIVE_LISTEN_FLAG] }),
       },
     ],
@@ -546,6 +554,15 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
     path: '/settings/call-summaries',
     scope: 'account',
     gate: settingsGate({ permission: 'agency.analysis_profiles.read', flags: [CALL_ANALYSIS_FLAG], capabilities: ['agency.analytics'] }),
+  },
+  /* `docs/listening.md` §12 (LS20 c): read-only, both client flags; offered whether listening is on
+     or off (it says which), to those who would listen. */
+  {
+    id: 'listening',
+    label: 'Live call listening',
+    path: '/settings/listening',
+    scope: 'account',
+    gate: settingsGate({ permission: 'agency.supervise', capabilities: ['agency'] }),
   },
   { id: 'team', label: 'Team', path: '/settings/team', scope: 'tenant', gate: settingsGate({ permission: 'user.invite' }) },
   /* The roles that can create accounts (decision AA1); everyone else uses the switcher. */
