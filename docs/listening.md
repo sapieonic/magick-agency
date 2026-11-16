@@ -5,8 +5,9 @@ Listen only: no whisper, no barge. The audio is forked from our own WebRTC bridg
 that owns the call; the carrier is not involved, and a slow, failing or dropped listener never
 affects the agent's or the customer's audio. Designed 2026-11-16 from the code, reviewed and locked
 by Manas the same day; decisions LS1–LS15 below. Built in phases (§10): phase 1, the foundation,
-and phase 2, the tap in the bridge and its seam member, are built; nothing a supervisor can use is
-yet (the socket and routes are phase 3).
+and phase 2, the tap in the bridge and its seam member, are built, and so are the console (phase 4)
+and the agent's standing line (phase 5); the console works once the socket and routes it calls
+exist (phase 3).
 
 Where things are: the socket's contract `packages/contracts/src/agency/listen.ts`, the console wire
 `packages/contracts/src/api/agency/live-calls.ts`, refusals `packages/contracts/src/errors.ts` §7,
@@ -311,6 +312,64 @@ blocked, "Agent reconnecting…", "Reconnecting…" then "Connection lost", "Cal
 for mm:ss", revoked, moved). The call page gets "Listened to by" (LS13). The agent's station gets
 the standing line of LS2.
 
+**As built (phases 4 and 5).** Everything above, in these places:
+
+- *Navigation.* `consoleNav.ts` (the Campaigns section's `live` tab, `/agency/live` among its
+  paths), `agencyCampaignTabs.ts` (`CAMPAIGN_TABS` `live`, `group: null`, `flag:
+  agency_live_listen_enabled`, `barTabFor('live')` → Calls; `CALLS_VIEWS` and `visibleCallsViews`
+  for "Summary | Live", drawn by `components/agency/CallsViews.tsx` on both views),
+  `consoleSearch.ts` (`PAGE_KEYWORDS` and `CAMPAIGN_TAB_KEYWORDS`: live, in progress, listen,
+  monitor), `utils/agency/home.ts`, the routes in `App.tsx` behind `RequireFlag`, and
+  `navRouteGates.test.ts`'s rules for both URLs. The flag's one name is
+  `utils/listen/liveListenFlag.ts`.
+- *Pages.* `pages/agency/live/LiveCallsPage.tsx` (h1) and
+  `pages/agency/AgencyCampaignLiveCallsPage.tsx` (the campaign workspace, Calls marked, h2).
+- *The table.* `components/listen/LiveCallsTable.tsx` over `hooks/listen/useLiveCalls.ts` (the
+  read every 5 s while visible with `useVisibleInterval`, again on return, the server clock from
+  `as_of`, a call that leaves the list kept 3 s as "Call ended", a 403 stops the poll and says
+  so) and the pure rules in `utils/listen/liveCallsTable.ts`. Show/Hide calls
+  `GET …/live-calls/:callId/number` per row and keeps the number in the table's state only, so
+  leaving the page or the row ending masks it again. **Amber past twice the AHT** shows on the
+  campaign view only, from the workspace's own stats read (`aht_seconds`): the live row carries no
+  handle time and the account page would need a stats read per campaign, so it shows none.
+- *The listen.* `components/listen/ListenProvider.tsx` (mounted by `ConsoleLayout` around the
+  shell, keyed by the account, with `ListenBar` under `<main>`): one listen per shell, a second
+  Listen stops the first, the first-use confirmation (`magick-agency.listen.confirmed` in browser
+  storage), the toast for a refused first grant, the flag or the permission going away stopping it.
+  `utils/listen/listenSessionReducer.ts` owns every state (idle, connecting, live, reconnecting,
+  lost, ended with `call_ended` / `revoked` / `superseded` / `refused`; the 15 s window opened by
+  the first drop and closed only by `ready` or Try again; three server failures (1011) in one
+  recovery end it; a refused re-grant ends it, or is retried, by its code);
+  `utils/listen/listenSessionController.ts` does what each state asks (mint, open in binary mode,
+  ping every 10 s, `stop`, wait 0.25–3 s between attaches, dismiss "Call ended" after 6 s);
+  `utils/listen/listenFrames.ts` reads the wire and maps each close code;
+  `hooks/listen/useListenSession.ts` binds them to React. The audio is
+  `utils/listen/listenPlayback.ts` (`ListenPlaybackEngine`: one 16 kHz `AudioContext`, per leg an
+  `AlawDownlinkDecoder`, a queue re-based onto 120 ms after an underrun or past 600 ms ahead, an
+  analyser then a gain (the meter reads before the mute), one master gain) under
+  `hooks/listen/useListenPlayback.ts` (the mutes; the volume in `magick-agency.listen.volume`,
+  every storage access in try/catch). "Agent reconnecting…" is the agent's leg silent over 2 s
+  while live; "sound blocked" is the context not running, lifted by the banner's button.
+- *The bar.* `components/listen/ListenBar.tsx`. At phone width (640 px) it is the live dot, the
+  timer and Stop, and keeps the LS6 notice under them (the notice is never dismissible, so it is
+  not dropped at any width). Esc anywhere inside the bar stops a listen (or dismisses an ended
+  one). **"Open call"** opens the call's live view (its campaign's Live, else `/agency/live`): the
+  live row carries the call's `agency_calls.id` but not the attempt or soft-phone call id the call
+  pages are keyed on, so the call page itself cannot be linked from it.
+- *Who listened.* `components/listen/ListenedToBy.tsx` on `AgencyAttemptCallPage` and
+  `SoftphoneCallDetailPage`, from the detail's optional `listen_sessions` (the console's
+  `AgencyAttemptCallDetail` and `WithListenSessions<AgencyManualCallDetail>`); a detail without
+  the field, or with none, shows no section. The console has no inbound call page.
+- *The agent (LS2).* `components/agency/StationListenNotice.tsx`: an info button in the station
+  header (every station view: campaign, soft phone, inbound) opening the standing line; and the
+  line on the campaign screen an agent joins from (`AgentHomePage`, `/dialer`; an agent with one
+  campaign is taken straight to the station and reads it in the header). The mobile app: an info
+  button in the station header (`lib/features/station/parts/banners.dart`: the idle, incoming and
+  link screens; the on-call band has none) opens the station info sheet with the line, behind the
+  client flag (`stationListenNoticeProvider`, `liveListenFlagKey`); no wire type changes.
+- *Analytics.* `analytics/redact.ts` takes the listener socket's `token` out of any URL on its way
+  to PostHog (`redactListenToken`).
+
 ## 10. Status
 
 | Phase | What | Status |
@@ -318,8 +377,8 @@ the standing line of LS2.
 | 1 | Foundation: the permission, both flags, the socket and console contracts, the refusal codes, `0047_listen_sessions.sql` and its repository, the retention sweep, the audit actions and resource type, `agency.listen` config, the metric declarations, the alert group and dashboard row, this document | **Built** (2026-11-16) |
 | 2 | The tap and the bridge seam: `listen-tap.ts`, `openListenTap` with `docs/seams.md` §3.1 and the seam contract tests, `LISTENER_LIMITS`, the fault budget, the sampled relay dwell, fault-injection tests | **Built** (2026-11-16) |
 | 3 | The server side: `ListenRegistry`, `ListenTokenStore`, the listener socket, the four routes and two internal handlers with their guards (route tables, agent reach, owners, `wsOwner`, `ws-limits`, the rate-limit bucket, `token` redaction), revocation over IPC, the re-check, the boot and worker reaps, the audit writes, the call detail's `listen_sessions` | Not built yet |
-| 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | Not built yet |
-| 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | Not built yet |
+| 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | **Built** (2026-11-16), against the contracts; live once phase 3's routes exist (§9 "As built") |
+| 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | **Built** (2026-11-16) |
 | 6 | The inbound notice's words and its regenerated WAV (LS1) | Not built yet |
 
 ## 11. Tests
@@ -356,3 +415,18 @@ the standing line of LS2.
   `webrtc-bridge-manager.seams.test.ts` (the refusals and the handle through a VoiceLink call's
   life), `webrtc-bridge-inbound-connect.test.ts` (a parked caller `not_bridged`; after the bind,
   both legs through the tap on the real Plivo codec).
+- The console (phases 4 and 5), under `apps/console/src/__tests__/`:
+  `utils/listen/listenFrames.test.ts` (the parser, every close code, the `ended` reasons that end a
+  session), `utils/listen/listenSessionReducer.test.ts` (every transition, stale attempts, the
+  window, the bound, Try again, the bar's flags), `utils/listen/listenSessionController.test.ts`
+  (grant → socket → ready, audio only while live, ping, stop, supersede, destroy, reconnect, the
+  window, an unopenable socket), `utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues
+  and decoders, the graph, mute, volume, level, silence, blocked, reset, close, no microphone in
+  use or in the source), `utils/listen/liveCallsTable.test.ts` (sort, filters, ended rows, amber,
+  the target, the words), `api/liveCalls.test.ts`, `components/LiveCallsTable.test.tsx`,
+  `components/ListenBar.test.tsx` (the confirmation, every bar state, Esc, mutes, the remembered
+  volume with storage blocked, the toast, a second listen, the account switch, unmount, phone
+  width), `components/listenSurfaces.test.tsx` (the station popover, the join screen's line,
+  "Listened to by", "Summary | Live"), `pages/LiveCallsPages.test.tsx`, and the navigation guards
+  (`navRouteGates`, `consoleNav`, `consoleSearch`, `agencyCampaignTabs`), `analytics/redact.test.ts`.
+  Mobile: `apps/mobile/test/features/station/station_listen_notice_test.dart`.

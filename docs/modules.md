@@ -1790,7 +1790,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 | `apps/console/src/__tests__/analytics/events.test.ts` | 10 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 23 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 11 |
-| `apps/console/src/__tests__/analytics/redact.test.ts` | 22 |
+| `apps/console/src/__tests__/analytics/redact.test.ts` (with the listener socket's token) | 25 |
 
 ### `apps/console/src/api/`
 
@@ -1923,6 +1923,25 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 | `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | ~59 |
 
 `SoftphoneView.test.tsx` drives the view through `useSoftphone` with a fake station socket (`__tests__/helpers/fakeSocket.ts`, `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
+
+### `apps/console/src/components/listen/` (live call listening)
+
+Live calls and the listening bar (`docs/listening.md` §9, "As built"). `LiveCallsTable` is the table on both Live calls pages (`pages/agency/live/LiveCallsPage.tsx` at `/agency/live`, `pages/agency/AgencyCampaignLiveCallsPage.tsx` at `/agency/campaigns/:id/calls/live`, the Calls tab's Live view beside `components/agency/CallsViews.tsx`'s "Summary | Live"): every column, sort, filters, row states, the number's Show/Hide, amber past twice the AHT on the campaign view, read by `hooks/listen/useLiveCalls.ts` every 5 s while visible. `ListenProvider` (mounted by `ConsoleLayout`, keyed by the account) owns the shell's one listen, the first-use confirmation and the refused grant's toast; `ListenBar` is docked under the shell's content; `ListenedToBy` is "Listened to by" on the dialler and soft-phone call pages. The session is `utils/listen/listenSessionReducer.ts` (every state, pure) driven by `utils/listen/listenSessionController.ts` (grant, socket, ping, stop, reconnect within 15 s) through `hooks/listen/useListenSession.ts`; the wire is `utils/listen/listenFrames.ts`; the audio `utils/listen/listenPlayback.ts` (`ListenPlaybackEngine`) through `hooks/listen/useListenPlayback.ts` (mutes, the remembered volume); the table's rules `utils/listen/liveCallsTable.ts`, the words `utils/listen/listenCopy.ts`, the flag `utils/listen/liveListenFlag.ts`; the client `api/liveCalls.ts`; the agent's standing line `components/agency/StationListenNotice.tsx` (the station header's info popover) and on `AgentHomePage`.
+
+Files: `ListenBar.module.css`, `ListenBar.tsx`, `ListenProvider.tsx`, `ListenedToBy.module.css`, `ListenedToBy.tsx`, `LiveCallsTable.module.css`, `LiveCallsTable.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/console/src/__tests__/utils/listen/listenFrames.test.ts` (the wire parser, every close code, the `ended` reasons that end a session) | 37 |
+| `apps/console/src/__tests__/utils/listen/listenSessionReducer.test.ts` (every transition: start, grant, ready, each way it ends, stale attempts, the 15 s window, the three-failure bound, Try again, the bar's flags) | 47 |
+| `apps/console/src/__tests__/utils/listen/listenSessionController.test.ts` (grant → socket → ready, audio only while live, ping every 10 s, stop, supersede, destroy, reconnect with a fresh grant, the window, an unopenable socket) | 14 |
+| `apps/console/src/__tests__/utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues and decoders, meter before mute, volume, level, silence, blocked, reset, close; no microphone, at run time and in the source) | 16 |
+| `apps/console/src/__tests__/utils/listen/liveCallsTable.test.ts` (sort, filters, ended rows, amber, the listen target, the words) | 18 |
+| `apps/console/src/__tests__/api/liveCalls.test.ts` | 13 |
+| `apps/console/src/__tests__/components/LiveCallsTable.test.tsx` | 21 |
+| `apps/console/src/__tests__/components/ListenBar.test.tsx` (the confirmation, every bar state, Esc, mutes, the volume with storage blocked, the toast, a second listen, the account switch, unmount, phone width) | 21 |
+| `apps/console/src/__tests__/components/listenSurfaces.test.tsx` (the station popover, the join screen's line, "Listened to by", "Summary \| Live") | 11 |
+| `apps/console/src/__tests__/pages/LiveCallsPages.test.tsx` | 3 |
 
 ### `apps/console/src/components/agency/customers/`
 
@@ -2210,7 +2229,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agencyCampaignPerformance.test.ts` | 65 |
 | `apps/console/src/__tests__/utils/agencyCampaignRecording.test.ts` | 35 |
-| `apps/console/src/__tests__/utils/agencyCampaignTabs.test.ts` | 31 |
+| `apps/console/src/__tests__/utils/agencyCampaignTabs.test.ts` | 34 |
 | `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | ~22 |
 | `apps/console/src/__tests__/utils/agencyCatalogSync.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyClock.test.ts` | 20 |
@@ -2257,7 +2276,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/consoleNav.test.ts` | 54 |
+| `apps/console/src/__tests__/utils/consoleNav.test.ts` | 80 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx` | 81 |
 | `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 22 |
@@ -2296,7 +2315,7 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/softphoneRingback.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyHome.test.ts` | 51 |
 | `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 4 |
-| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 55 |
+| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 76 |
 
 `softphoneCallState.test.ts` also covers the station reducer's `manual_call` action (`utils/agencyStationReducer.ts`); `softphoneFields.test.ts` covers `callFields`, `fieldSettings`, `settingsForm`, the override note, `refusalCopy` and `callStats`.
 
@@ -2825,6 +2844,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (the waiting screen's "Dialling a customer…", the count line, ringing over "Nothing due now", paused unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
+| `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: the header's info button and sheet behind the client flag) | 4 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
 | `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~15 |

@@ -1859,7 +1859,47 @@ listenable); `ending` not refused; the dwell sampled every frame; the customer f
 removed; `sendToListenerSocket`'s catch removed; the fault log not rate-limited; a widened
 `ListenTapRefusal` (the seam contract fails `tsc`).
 
+### Live call listening, phases 4 and 5: the console and the agent's line 2026-11-16 (LS2, LS6, LS9, LS13, [`listening.md`](listening.md) §9)
+
+Built against the contracts while the server's routes (phase 3) are not there yet, so nothing is
+live until they are. **Live calls** at `/agency/live` (Campaigns, beside Soft-phone calls) and a
+campaign's Calls tab "Summary | Live" (`…/calls/live`), behind `agency.supervise` and
+`agency_live_listen_enabled`, Listen behind `agency.calls.listen`; the navigation, search, campaign
+tab and route-gate tables with their guards. `LiveCallsTable` (every column, sort, filters, row
+states, the number's Show/Hide on demand, the 5 s poll, the server clock), the shell's one listen
+(`ListenProvider` in `ConsoleLayout`, ended by leaving the shell or the account; the first-use
+confirmation; the refused grant's toast), `ListenBar` (every state, the LS6 notice always, Esc,
+mutes, remembered volume, phone width), the session as a pure reducer with its controller (grant,
+socket, ping every 10 s, a fresh grant per reconnect for 15 s) and the playback (one context, per
+leg a decoder, a 120 ms queue, a meter and a mute; no microphone). "Listened to by" on the dialler
+and soft-phone call pages. The agent's standing line (LS2) behind an info button in the station
+header and on the campaign screen they join from, and in the mobile app's station info sheet
+behind the client flag (copy only). Two gaps, stated in `listening.md` §9: amber past twice the AHT
+shows on the campaign view only (the live row has no handle time), and "Open call" opens the call's
+live view, not the call page (the live row has no attempt or soft-phone call id).
+
+Mutation-checked (each red, then restored with `git checkout`): the Live calls tab or the campaign
+Live screen without the flag (`navRouteGates`); a close from an older attempt applied; the
+reconnect window renewed by every drop; a refused first grant opening the bar instead of a toast;
+the three-failure bound raised or its check removed (raising it first stayed green: the test
+counted with the constant, now fixed); no ping; Stop without the `stop` frame; audio played before
+`ready`; no stop on unmount (leaving the shell, switching account); Esc not stopping; the LS6
+notice dropped once ended; the first-use confirmation skipped; Hide not masking again; the Action
+column without `agency.calls.listen`; a microphone API named in a listening module; mute leaving the
+leg audible; no cushion on an underrun; an unknown leg tag accepted; the listener token not
+redacted at the analytics boundary; the station's line shown with the flag off; and on the mobile
+app the info button shown with the flag off and a wrong flag key.
+
 ## Test counts
+
+**Live call listening, phases 4 and 5, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on
+`f81879b` (the console and mobile commits; no server file touched). From inside each directory:
+`apps/console` `pnpm lint` clean, `pnpm test` 7265 (386 files); the run before this phase, on
+`d3335a8` with none of its changes, had 7054 passed and 1 failed of 7055 (`AgencyCampaignSettingsPage.test.tsx` "highlights the
+section scrolled into view", which passed alone, 77 of 77: a timing flake under the full run's load,
+not this phase's). `apps/mobile` `flutter analyze` clean, `flutter test` 1968. Not rerun
+(untouched): `agency_wire` (no wire change), `packages/web-ui`, the server and the other packages.
+`pnpm test:tooling` 20 (the CI scope rules over the new tests' reads).
 
 **Live call listening, phase 2, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on `9a40de3` (this
 phase's later commit changes docs only; the console's commits beside it touch no server file), from
