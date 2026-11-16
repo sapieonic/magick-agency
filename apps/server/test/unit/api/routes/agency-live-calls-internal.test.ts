@@ -40,7 +40,7 @@ function runtime(over: Partial<{ holds: boolean; check: string | null; mint: () 
   };
 }
 
-const grant = (app: Awaited<ReturnType<typeof build>>, body: unknown = BODY) => app.inject({
+const grant = (app: Awaited<ReturnType<typeof build>>, body: Record<string, unknown> = BODY) => app.inject({
   method: 'POST', url: '/api/v1/agency/listen-grants', payload: body,
   headers: { 'x-mgkvc-tenant': TENANT, 'x-mgkvc-account': ACCOUNT },
 });
