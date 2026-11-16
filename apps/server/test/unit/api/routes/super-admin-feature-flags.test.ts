@@ -378,7 +378,7 @@ describe('super-admin feature-flags routes', () => {
 
     it('the catalog and the detail read carry its policy; other flags carry none', async () => {
       const catalog = (await app.inject({ method: 'GET', url: '/super-admin/feature-flags', headers: authHeaders() })).json();
-      const byKey = new Map(catalog.flags.map((f: { key: string }) => [f.key, f]));
+      const byKey = new Map<string, unknown>(catalog.flags.map((f: { key: string }) => [f.key, f]));
       expect((byKey.get(FLAG) as { policy?: unknown }).policy).toEqual(POLICY);
       for (const [key, entry] of byKey) if (key !== FLAG) expect(entry, key).not.toHaveProperty('policy');
       const detail = (await app.inject({ method: 'GET', url: `/super-admin/feature-flags/${FLAG}`, headers: authHeaders() })).json();

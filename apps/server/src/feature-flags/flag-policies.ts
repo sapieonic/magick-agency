@@ -57,7 +57,7 @@ function bulkRefusal(flagKey: string, message: string): FlagPolicyRefusal {
  */
 export function checkOverridePolicy(
   flagKey: string,
-  write: { scope_type: 'global' | 'tenant' | 'account'; value: unknown; reason?: string | null },
+  write: { scope_type: 'global' | 'tenant' | 'account'; value?: unknown; reason?: string | null },
 ): FlagPolicyRefusal | null {
   const policy = flagPolicy(flagKey);
   if (!policy || write.value !== true) return null;
