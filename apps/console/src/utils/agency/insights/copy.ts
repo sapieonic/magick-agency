@@ -204,6 +204,46 @@ export function rangeFreshness(read: { as_of: string | null; pending_buckets: nu
     : asOf;
 }
 
+// ── Connected: two counts, one word ─────────────────────────────────────────
+
+/**
+ * The Calls panel shows "Connected" twice, and they are not the same count.
+ *
+ *  - The tile is `calls.connected`: outcome `connected` and not a wrap-up redial.
+ *  - The By outcome row is every placed dial with outcome `connected`, wrap-up
+ *    redials included, so it is larger by `calls.redials.connected`.
+ *  - The rate under the tile is not that tile divided by anything. It is people
+ *    reached (`human_connects`: a conversation closed with an outcome other than
+ *    voicemail or "no outcome") over first dials (placed dials that were not a
+ *    wrap-up redial).
+ */
+
+/** The By outcome row. The tile's "Connected" leaves wrap-up redials out. */
+export const CONNECTED_WITH_REDIALS_LABEL = 'Connected (including wrap-up redials)';
+
+/** Beside that row: how it differs from the tile. */
+export const CONNECTED_WITH_REDIALS_HINT =
+  'Every placed dial that connected, including wrap-up redials. The Connected tile leaves those redials out.';
+
+/** Beside the Connected tile: the figure, and why the rate under it is a different count. */
+export const CONNECTED_TILE_HINT =
+  'Calls that connected, not counting wrap-up redials. The rate is people reached — a conversation closed with an outcome other than voicemail or “no outcome” — over first dials, not this number over dials.';
+
+/** The connect rate's own fraction, so a percentage is not read as the Connected figure over dials. */
+export function peopleReachedOfFirstDials(humanConnects: number, firstDials: number): string {
+  return `${formatCount(humanConnects)} people reached of ${formatCount(firstDials)} first dials`;
+}
+
+/**
+ * Under the Connected tile. `rate` is already the page's rate text (`30%`,
+ * "Not enough calls yet", "—"). `dialler` names it as the dialler's when
+ * soft-phone figures sit beside it.
+ */
+export function connectRateLine(rate: string, humanConnects: number, firstDials: number, dialler: boolean): string {
+  const name = dialler ? 'Dialler connect rate' : 'Connect rate';
+  return `${name} ${rate} · ${peopleReachedOfFirstDials(humanConnects, firstDials)}`;
+}
+
 // ── Callbacks ───────────────────────────────────────────────────────────────
 
 /**

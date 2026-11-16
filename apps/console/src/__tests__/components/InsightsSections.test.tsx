@@ -189,7 +189,10 @@ describe('calls and outcomes', () => {
     show(<CallsSection ctx={ctx} activity={activity()} />);
     // Human connects over first dials (/stats connect_rate_pct): 360 / (1,240 dials - 41 redials).
     // The range holds soft-phone calls, so the dialler's rate is named as the dialler's (SR1).
-    expect(screen.getByTestId('kpi-connected').textContent).toContain('Dialler connect rate 30%');
+    // The 400 Connected figure is not the rate's numerator, so the line names both counts.
+    const connected = screen.getByTestId('kpi-connected');
+    expect(connected.textContent).toContain('Dialler connect rate 30% · 360 people reached of 1,199 first dials');
+    expect(within(connected).getByRole('tooltip').textContent).toContain('not this number over dials');
     expect(screen.getByTestId('kpi-redials').textContent).toContain('29 connected · 3 hit the limit · 1 refused at the limit');
     expect(screen.getByTestId('kpi-aht').textContent).toContain('3m 41s');
     expect(screen.getByTestId('kpi-softphone').textContent).toContain('7');
@@ -205,7 +208,7 @@ describe('calls and outcomes', () => {
     it('shows the soft phone\'s placed, connected and rate, and All calls, never moving the dialler\'s rate', () => {
       show(<CallsSection ctx={ctx} activity={withSoft({ placed: 40, connected: 30, human_connects: 20 })} />);
       // The dialler's: 360 human connects over 1,240 dials − 41 redials, whatever the soft phone did.
-      expect(screen.getByTestId('kpi-connected').textContent).toContain('Dialler connect rate 30%');
+      expect(screen.getByTestId('kpi-connected').textContent).toContain('Dialler connect rate 30% · 360 people reached of 1,199 first dials');
       const soft = screen.getByTestId('kpi-softphone').textContent;
       expect(soft).toContain('40');
       expect(soft).toContain('30 connected');
@@ -227,7 +230,7 @@ describe('calls and outcomes', () => {
       show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} />);
       expect(screen.queryByTestId('kpi-softphone')).toBeNull();
       expect(screen.queryByTestId('kpi-all-calls')).toBeNull();
-      expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30%');
+      expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30% · 360 people reached of 1,199 first dials');
       expect(screen.getByTestId('kpi-connected').textContent).not.toContain('Dialler');
     });
 
@@ -247,16 +250,23 @@ describe('calls and outcomes', () => {
       const { softphone: _gone, ...older } = a.calls;
       show(<CallsSection ctx={{ ...ctx, softphoneEnabled: true }} activity={{ ...a, calls: older as typeof a.calls }} />);
       expect(screen.queryByTestId('kpi-softphone')).toBeNull();
-      expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30%');
+      expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30% · 360 people reached of 1,199 first dials');
     });
   });
 
   it('lists every outcome, summing to the dials, each linked to its attempts in range', () => {
     const a = activity();
     expect(outcomeLines(a).reduce((s, l) => s + l.count, 0)).toBe(a.calls.dials);
+    expect(outcomeLines(a).find((l) => l.outcome === 'connected')?.label).toBe('Connected (including wrap-up redials)');
     show(<CallsSection ctx={ctx} activity={a} />);
     const table = screen.getByTestId('outcomes-table');
     expect(hrefOf(table, /dials: No answer/)).toBe(`/agency/campaigns/camp-1/attempts?outcome=no_answer&${RANGE_QS}`);
+    // The Connected row counts every connected dial, redials included. The tile leaves them out (`redial=0`).
+    const connectedRow = within(table).getByRole('rowheader', { name: /Connected \(including wrap-up redials\)/ });
+    expect(connectedRow.textContent).toContain('including wrap-up redials');
+    expect(within(connectedRow).getByRole('tooltip').textContent).toContain('The Connected tile leaves those redials out.');
+    expect(hrefOf(table, /dials: Connected \(including wrap-up redials\)/)).toBe(`/agency/campaigns/camp-1/attempts?outcome=connected&${RANGE_QS}`);
+    expect(hrefOf(screen.getByTestId('kpi-connected'), /connected calls/)).toContain('redial=0');
     expect(within(table).getByText('Stopped by us before answer')).toBeTruthy();
     expect(within(table).getByText('Still live or not yet recorded')).toBeTruthy();
   });
@@ -276,11 +286,13 @@ describe('calls and outcomes', () => {
     a.calls = { ...a.calls, dials: 20, connected: 5, human_connects: 5, redials: { ...a.calls.redials, placed: 0 } };
     show(<CallsSection ctx={ctx} activity={a} />);
     expect(screen.getByTestId('kpi-connected').textContent).toContain('Not enough calls yet');
+    expect(screen.getByTestId('kpi-connected').textContent).toContain('5 people reached of 20 first dials');
     cleanup();
     // 30 dials, 10 of them redials: 20 first dials, still below the floor.
     a.calls = { ...a.calls, dials: 30, connected: 5, human_connects: 5, redials: { ...a.calls.redials, placed: 10 } };
     show(<CallsSection ctx={ctx} activity={a} />);
     expect(screen.getByTestId('kpi-connected').textContent).toContain('Not enough calls yet');
+    expect(screen.getByTestId('kpi-connected').textContent).toContain('5 people reached of 20 first dials');
   });
 });
 
@@ -607,6 +619,8 @@ describe('the Overview\'s connect rate beside the soft phone (SR1, SR5)', () => 
     const kpi = screen.getByTestId('overview-kpi-connect').textContent;
     expect(kpi).toContain('Dialler connect rate · Today');
     expect(kpi).toContain('30%');
+    // The rate's own fraction, not the 400 Connected calls: 360 of 1,240 − 41 first dials.
+    expect(kpi).toContain('360 people reached of 1,199 first dials');
     expect(kpi).toContain('soft phone 50%');
     expect(kpi).toContain('all calls 30.7%');
   });

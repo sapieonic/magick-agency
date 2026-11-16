@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react';
+import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
 import styles from './Kpi.module.css';
 
 /**
  * One figure: label, value, and an optional line beneath. `filled` is the Insights panels' look;
- * `outlined` is Home's Today so far.
+ * `outlined` is Home's Today so far. `hint` sits beside the label (hover and click).
  */
 export function Kpi({
   label,
+  hint,
   value,
   sub,
   withheld,
@@ -14,6 +16,8 @@ export function Kpi({
   look = 'filled',
 }: {
   label: string;
+  /** Extra words for the label, on hover and click. */
+  hint?: string;
   value: ReactNode;
   sub?: ReactNode;
   /** The value is a "Not enough calls yet" or a dash, styled down. */
@@ -23,7 +27,16 @@ export function Kpi({
 }) {
   return (
     <div className={`${styles.kpi} ${styles[look]}`} data-testid={testId}>
-      <span className={styles.label}>{label}</span>
+      <span className={styles.label}>
+        {hint ? (
+          <span className={styles.labelRow}>
+            {label}
+            <HelpTooltip text={hint} size={12} />
+          </span>
+        ) : (
+          label
+        )}
+      </span>
       <span className={styles.value} data-withheld={String(Boolean(withheld))}>{value}</span>
       {sub ? <span className={styles.sub}>{sub}</span> : null}
     </div>

@@ -27,6 +27,8 @@
   box-shadow: var(--shadow-md);
   padding: 8px 12px;
   font-size: 12px;
+  font-weight: 400;
+  letter-spacing: normal;
   line-height: 1.5;
   color: var(--text-secondary);
   text-transform: none;

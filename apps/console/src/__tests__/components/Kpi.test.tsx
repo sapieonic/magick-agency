@@ -12,6 +12,14 @@ describe('Kpi', () => {
     expect(kpi.querySelector('[data-withheld]')?.getAttribute('data-withheld')).toBe('false');
   });
 
+  it('puts a hint beside the label', () => {
+    render(<Kpi label="Connected" hint="Not counting wrap-up redials." value="72" testId="kpi" />);
+    const kpi = screen.getByTestId('kpi');
+    expect(kpi.textContent).toContain('Connected');
+    expect(kpi.textContent).toContain('Not counting wrap-up redials.');
+    expect(screen.getByRole('tooltip').textContent).toBe('Not counting wrap-up redials.');
+  });
+
   it('marks a withheld value, and leaves out an empty line', () => {
     render(<Kpi label="Success rate" value="Not enough calls yet" withheld sub={null} look="outlined" testId="kpi" />);
     const kpi = screen.getByTestId('kpi');
