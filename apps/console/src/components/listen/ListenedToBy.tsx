@@ -2,6 +2,7 @@ import { Headphones } from 'lucide-react';
 import { durationWords } from '../../utils/format/duration';
 import { formatClockTime, formatDayMonth } from '../../utils/format/date';
 import { initialsFor } from '../../utils/initials';
+import { LISTENED_TO_BY_COPY, listeningSinceLabel } from '../../utils/listen/listenCopy';
 import type { AgencyCallListenSession } from '../../types/live-calls';
 import detail from '../../pages/calls/CallDetailPage.module.css';
 import styles from './ListenedToBy.module.css';
@@ -11,7 +12,7 @@ export function listenSpanLabel(session: Pick<AgencyCallListenSession, 'started_
   const start = new Date(session.started_at);
   if (Number.isNaN(start.getTime())) return '—';
   const from = formatClockTime(start);
-  if (!session.ended_at) return `since ${from}`;
+  if (!session.ended_at) return listeningSinceLabel(from);
   const end = new Date(session.ended_at);
   if (Number.isNaN(end.getTime())) return from;
   const sameDay = start.toDateString() === end.toDateString();
@@ -20,7 +21,7 @@ export function listenSpanLabel(session: Pick<AgencyCallListenSession, 'started_
 
 /** "3m 10s", or "Listening now" while the session is open. */
 export function listenDurationLabel(session: Pick<AgencyCallListenSession, 'duration_seconds' | 'ended_at'>): string {
-  if (session.ended_at === null || session.duration_seconds === null) return 'Listening now';
+  if (session.ended_at === null || session.duration_seconds === null) return LISTENED_TO_BY_COPY.listeningNow;
   return durationWords(session.duration_seconds);
 }
 
@@ -37,11 +38,11 @@ export function ListenedToBy({ sessions }: { sessions: readonly AgencyCallListen
     <section className={detail.card} aria-labelledby="listened-to-by-title" data-testid="listened-to-by">
       <h3 id="listened-to-by-title" className={detail.cardTitle}>
         <Headphones size={16} className={detail.cardTitleIcon} aria-hidden="true" />
-        Listened to by
+        {LISTENED_TO_BY_COPY.title}
       </h3>
       <ul className={styles.list}>
         {ordered.map((s) => {
-          const name = s.listener_name?.trim() || 'A supervisor';
+          const name = s.listener_name?.trim() || LISTENED_TO_BY_COPY.aSupervisor;
           return (
             <li key={s.listen_id} className={styles.item} data-testid={`listened-${s.listen_id}`}>
               <span className={styles.avatar} aria-hidden="true">

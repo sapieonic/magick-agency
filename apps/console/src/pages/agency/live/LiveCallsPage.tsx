@@ -1,10 +1,7 @@
 import { PageDescription } from '../../../components/common/PageDescription';
 import { LiveCallsTable } from '../../../components/listen/LiveCallsTable';
+import { LIVE_CALLS_PAGE_COPY } from '../../../utils/listen/listenCopy';
 import styles from '../AgencyCampaignAttemptsPage.module.css';
-
-export const LIVE_CALLS_DESCRIPTION =
-  'The calls in progress in this account: who is on each one, with whom, for how long, whether it is being recorded and who '
-  + 'is listening. Supervisors who may listen can listen in silently; the agent and the customer hear nothing.';
 
 /**
  * `/agency/live` — "Live calls" (`docs/listening.md` §9): the account's calls in progress, read
@@ -21,12 +18,8 @@ export default function LiveCallsPage() {
     <div className={styles.page}>
       <PageDescription
         pageKey="agency-live-calls"
-        description={LIVE_CALLS_DESCRIPTION}
-        tips={[
-          'Numbers are masked. Show reveals one row’s full number while you are on this page.',
-          'Every listen is logged with your name, the call and when you started and stopped.',
-          'The listening bar stays at the bottom of the console while you move between pages.',
-        ]}
+        description={LIVE_CALLS_PAGE_COPY.description}
+        tips={[...LIVE_CALLS_PAGE_COPY.tips]}
       />
       <LiveCallsTable headingLevel="h1" />
     </div>

@@ -44,7 +44,11 @@ export interface ListenTarget {
 
 export type ListenPhase = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'lost' | 'ended';
 export type ListenStep = 'grant' | 'socket' | 'wait';
-export type ListenEndKind = 'call_ended' | 'revoked' | 'superseded' | 'refused';
+/**
+ * `revoked`: the supervisor may no longer listen; `turned_off`: listening was turned off for the
+ * account (the flag); either from the server, or seen here first (`withdrawn`).
+ */
+export type ListenEndKind = 'call_ended' | 'revoked' | 'turned_off' | 'superseded' | 'refused';
 
 /** A grant that did not answer 201: its status (null: no answer at all) and code. */
 export interface ListenGrantRefusal {
@@ -101,6 +105,8 @@ export type ListenSessionEvent =
   | { type: 'tick'; now: number }
   | { type: 'pong'; attempt: number; sample: ClockSample }
   | { type: 'stop' }
+  /** This console saw the permission (`revoked`) or the flag (`turned_off`) go: ended, saying why. */
+  | { type: 'withdrawn'; kind: 'revoked' | 'turned_off'; now: number }
   | { type: 'retry'; now: number }
   | { type: 'dismiss' }
   | { type: 'sound'; blocked: boolean }
@@ -189,6 +195,8 @@ function applyOutcome(state: ListenSessionState, outcome: ListenCloseOutcome, no
       return toIdle(state);
     case 'revoked':
       return toEnded(state, 'revoked', now);
+    case 'turned_off':
+      return toEnded(state, 'turned_off', now);
     case 'superseded':
       return toEnded(state, 'superseded', now);
     case 'refused':
@@ -203,13 +211,14 @@ function applyOutcome(state: ListenSessionState, outcome: ListenCloseOutcome, no
 
 /**
  * What a refused re-grant means while recovering: the call is gone (`listen_call_not_live`, a
- * 404), the supervisor may no longer listen (403: the permission, or the flag's
- * `feature_disabled`), a refusal that will not change (409 `listen_recording_off`,
+ * 404), listening was turned off for the account (403 `feature_disabled`), the supervisor may no
+ * longer listen (any other 401 or 403), a refusal that will not change (409 `listen_recording_off`,
  * `listen_limit_call`, `listen_own_call`), or one worth retrying within the window (no answer,
  * 5xx, `listen_limit_server`, `listen_unavailable`).
  */
 export function regrantOutcome(refusal: ListenGrantRefusal): ListenCloseOutcome {
   if (refusal.code === 'listen_call_not_live' || refusal.status === 404) return { kind: 'call_ended' };
+  if (refusal.status === 403 && refusal.code === 'feature_disabled') return { kind: 'turned_off' };
   if (refusal.status === 401 || refusal.status === 403) return { kind: 'revoked' };
   if (
     refusal.code === 'listen_recording_off'
@@ -292,6 +301,12 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
 
     case 'stop':
       return state.phase === 'idle' ? state : toIdle(state);
+
+    case 'withdrawn':
+      // Anything open, a lost listen included (Try again could not work now); an ended one keeps
+      // the reason it already gives.
+      if (state.phase === 'idle' || state.phase === 'ended') return state;
+      return toEnded(state, event.kind, event.now);
 
     case 'retry':
       if (state.phase !== 'lost' || !state.target) return state;

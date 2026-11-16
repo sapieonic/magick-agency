@@ -3,6 +3,7 @@ import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { StationIdentity, type StationIdentityUser } from '../agency/StationIdentity';
 import { ConnectionHealthPill } from '../agency/ConnectionHealthPill';
 import { AgentNav } from '../agency/AgentNav';
+import { StationListenFirstNotice, StationListenNotice } from '../agency/StationListenNotice';
 import type { StationConnection } from '../../hooks/agencyStation/types';
 import type { SoftphoneState } from '../../hooks/useSoftphone';
 import station from '../agency/AgentStation.module.css';
@@ -28,7 +29,7 @@ export function recordingDisclosed(sp: SoftphoneState): boolean {
 /**
  * The soft phone's header on `/dialer/phone`: who, the agent's screens (locked
  * while a call is unsettled), what is being disclosed (recording, muted, where
- * the call is logged), the connection, and the way out.
+ * the call is logged), that a supervisor may listen (LS2), the connection, and the way out.
  */
 export function SoftphoneHeader({
   user,
@@ -36,6 +37,7 @@ export function SoftphoneHeader({
   connection,
   missedPings,
   actions,
+  listenScope,
 }: {
   user: StationIdentityUser | null | undefined;
   sp: SoftphoneState;
@@ -43,25 +45,32 @@ export function SoftphoneHeader({
   missedPings: number;
   /** The host's own controls (Close soft phone). */
   actions?: ReactNode;
+  /** Whose one-time listening notice this is (`agentListenScope`), as on the station (LS2). */
+  listenScope?: string | null;
 }) {
   return (
-    <header className={station.header}>
-      <div className={station.identity}>
-        <StationIdentity user={user} subline="Soft phone" />
-        <AgentNav
-          current="phone"
-          variant="header"
-          lockedReason={sp.call ? SOFTPHONE_LEAVE_BLOCKED_COPY : null}
-          leaveHint={SOFTPHONE_STAYS_OPEN_COPY}
-        />
-      </div>
-      <div className={station.headerRight}>
-        <SoftphoneDisclosures sp={sp} />
-        {actions}
-        <ConnectionHealthPill connection={connection} missedPings={missedPings} />
-        <AppVersion version={__APP_VERSION__} variant="inline" />
-      </div>
-    </header>
+    <>
+      <header className={station.header}>
+        <div className={station.identity}>
+          <StationIdentity user={user} subline="Soft phone" />
+          <AgentNav
+            current="phone"
+            variant="header"
+            lockedReason={sp.call ? SOFTPHONE_LEAVE_BLOCKED_COPY : null}
+            leaveHint={SOFTPHONE_STAYS_OPEN_COPY}
+          />
+        </div>
+        <div className={station.headerRight}>
+          <SoftphoneDisclosures sp={sp} />
+          {/* That a supervisor may listen (LS2), behind the same info button as the station's. */}
+          <StationListenNotice />
+          {actions}
+          <ConnectionHealthPill connection={connection} missedPings={missedPings} />
+          <AppVersion version={__APP_VERSION__} variant="inline" />
+        </div>
+      </header>
+      <StationListenFirstNotice scope={listenScope} />
+    </>
   );
 }
 

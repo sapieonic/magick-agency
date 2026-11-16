@@ -20,7 +20,12 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/agency', () => ({ getMyAssignments: mocks.getMyAssignments }));
 
-import { StationListenNotice } from '../../components/agency/StationListenNotice';
+import {
+  LISTEN_AGENT_NOTICE_SEEN_KEY,
+  StationListenFirstNotice,
+  StationListenNotice,
+  agentListenScope,
+} from '../../components/agency/StationListenNotice';
 import { AgentHomePage } from '../../pages/agency/AgentHomePage';
 import { ListenedToBy, listenDurationLabel, listenSpanLabel } from '../../components/listen/ListenedToBy';
 import { CallsViews } from '../../components/agency/CallsViews';
@@ -37,7 +42,11 @@ beforeEach(() => {
   ]);
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+});
 
 describe('the station header’s info popover (LS2)', () => {
   it('is not there while listening is off', () => {
@@ -48,7 +57,9 @@ describe('the station header’s info popover (LS2)', () => {
   it('opens the standing line, and Escape closes it back onto the button', () => {
     mocks.flags.add('agency_live_listen_enabled');
     render(<StationListenNotice />);
-    const button = screen.getByRole('button', { name: 'About this station' });
+    // Named for what it is about, so an agent looking for it finds it.
+    const button = screen.getByRole('button', { name: 'Monitoring and recording' });
+    expect(button.getAttribute('title')).toBe('Monitoring and recording');
     expect(button.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(button);
     expect(button.getAttribute('aria-expanded')).toBe('true');
@@ -70,6 +81,66 @@ describe('the station header’s info popover (LS2)', () => {
     fireEvent.click(screen.getByTestId('station-info'));
     fireEvent.mouseDown(screen.getByTestId('outside'));
     expect(screen.queryByTestId('station-info-popover')).toBeNull();
+  });
+});
+
+describe('the one-time notice under the station’s or the soft phone’s header (LS2)', () => {
+  const SCOPE = agentListenScope('u-1', 't-1', 'a-1')!;
+  const DETAIL = 'You can read this again at any time under Monitoring and recording, the i button at the top of the screen.';
+
+  it('scopes to the agent and the account, and needs all three', () => {
+    expect(SCOPE).toBe('u-1:t-1:a-1');
+    expect(agentListenScope(null, 't-1', 'a-1')).toBeNull();
+    expect(agentListenScope('u-1', undefined, 'a-1')).toBeNull();
+    expect(agentListenScope('u-1', 't-1', '')).toBeNull();
+  });
+
+  it('shows the standing line until the agent says Got it, then never again for them in this browser and account', () => {
+    mocks.flags.add('agency_live_listen_enabled');
+    const { unmount } = render(<StationListenFirstNotice scope={SCOPE} />);
+    const notice = screen.getByTestId('listen-first-notice');
+    expect(notice.textContent).toContain(LINE);
+    expect(notice.textContent).toContain(DETAIL);
+    expect(notice.getAttribute('aria-label')).toBe('About supervisors listening');
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+    expect(window.localStorage.getItem(`${LISTEN_AGENT_NOTICE_SEEN_KEY}:${SCOPE}`)).toBe('1');
+    unmount();
+    render(<StationListenFirstNotice scope={SCOPE} />);
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+  });
+
+  it('another agent on this browser, or this agent in another account, is told too', () => {
+    mocks.flags.add('agency_live_listen_enabled');
+    window.localStorage.setItem(`${LISTEN_AGENT_NOTICE_SEEN_KEY}:${SCOPE}`, '1');
+    render(
+      <>
+        <StationListenFirstNotice scope="u-2:t-1:a-1" />
+        <StationListenFirstNotice scope="u-1:t-1:a-2" />
+      </>,
+    );
+    expect(screen.getAllByTestId('listen-first-notice')).toHaveLength(2);
+  });
+
+  it('nothing while listening is off, or with nobody to remember it for', () => {
+    const { rerender } = render(<StationListenFirstNotice scope={SCOPE} />);
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+    mocks.flags.add('agency_live_listen_enabled');
+    rerender(<StationListenFirstNotice scope={null} />);
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+  });
+
+  it('with browser storage blocked it is still shown, and Got it still puts it away', () => {
+    mocks.flags.add('agency_live_listen_enabled');
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    render(<StationListenFirstNotice scope={SCOPE} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
   });
 });
 

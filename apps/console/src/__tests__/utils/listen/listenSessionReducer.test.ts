@@ -200,7 +200,7 @@ describe('how a listen ends', () => {
     expect(reduce(live(), { type: 'closed', attempt: 1, code: 4403, reason: 'permission_revoked', now: 2 }).end?.kind).toBe('revoked');
   });
 
-  it('superseded (frame or 4409): "Listening moved to another call."', () => {
+  it('superseded (frame or 4409): "You started listening in another tab or window"', () => {
     expect(reduce(live(), { type: 'server_ended', attempt: 1, reason: 'superseded', now: 2 }).end?.kind).toBe('superseded');
     expect(reduce(live(), { type: 'closed', attempt: 1, code: 4409, reason: 'superseded', now: 2 }).end?.kind).toBe('superseded');
   });
@@ -224,6 +224,27 @@ describe('how a listen ends', () => {
   it('a close after the session ended changes nothing', () => {
     const ended = reduce(live(), { type: 'server_ended', attempt: 1, reason: 'call_ended', now: 2 });
     expect(reduce(ended, { type: 'closed', attempt: 1, code: 1000, reason: 'call_ended', now: 3 })).toBe(ended);
+  });
+
+  it.each([
+    ['the permission went', 'revoked'],
+    ['the flag went off', 'turned_off'],
+  ] as const)('withdrawn here (%s): ended with the reason, keeping the target, from any open phase', (_name, kind) => {
+    for (const from of [live(), dropped(), run([{ type: 'start', target: TARGET, now: 0 }])]) {
+      const s = reduce(from, { type: 'withdrawn', kind, now: 61_000 });
+      expect(s).toMatchObject({ phase: 'ended', target: TARGET, end: { kind } });
+      expect(listenSocketWanted(s)).toBe(false);
+    }
+    expect(reduce(live(), { type: 'withdrawn', kind, now: 61_000 }).end?.listenedMs).toBe(60_000);
+  });
+
+  it('withdrawn: lost ends too (Try again could not work); idle and ended stay as they are', () => {
+    const lost = reduce(dropped(), { type: 'tick', now: 5_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS });
+    expect(lost.phase).toBe('lost');
+    expect(reduce(lost, { type: 'withdrawn', kind: 'turned_off', now: 30_000 })).toMatchObject({ phase: 'ended', end: { kind: 'turned_off' } });
+    expect(reduce(INITIAL_LISTEN_STATE, { type: 'withdrawn', kind: 'revoked', now: 1 })).toBe(INITIAL_LISTEN_STATE);
+    const ended = reduce(live(), { type: 'server_ended', attempt: 1, reason: 'call_ended', now: 2 });
+    expect(reduce(ended, { type: 'withdrawn', kind: 'revoked', now: 3 })).toBe(ended);
   });
 
   it('dismiss: from ended or lost to idle, from nothing else', () => {
@@ -349,7 +370,7 @@ describe('reconnecting (up to 15 s, a fresh grant each time)', () => {
   it.each([
     ['the call ended (404 listen_call_not_live)', { status: 404, code: 'listen_call_not_live' }, 'ended', 'call_ended'],
     ['the permission went (403)', { status: 403, code: null }, 'ended', 'revoked'],
-    ['the flag went off (403 feature_disabled)', { status: 403, code: 'feature_disabled' }, 'ended', 'revoked'],
+    ['the flag went off (403 feature_disabled)', { status: 403, code: 'feature_disabled' }, 'ended', 'turned_off'],
     ['the call filled up (409 listen_limit_call)', { status: 409, code: 'listen_limit_call' }, 'ended', 'refused'],
     ['the process is full (503 listen_limit_server)', { status: 503, code: 'listen_limit_server' }, 'reconnecting', null],
     ['no answer at all', { status: null, code: null }, 'reconnecting', null],
@@ -433,6 +454,8 @@ describe('the bar’s flags', () => {
 describe('regrantOutcome', () => {
   it('treats a 401 as revoked and other 4xx as a refusal that will not change', () => {
     expect(regrantOutcome({ status: 401, code: null })).toEqual({ kind: 'revoked' });
+    expect(regrantOutcome({ status: 403, code: null })).toEqual({ kind: 'revoked' });
+    expect(regrantOutcome({ status: 403, code: 'feature_disabled' })).toEqual({ kind: 'turned_off' });
     expect(regrantOutcome({ status: 400, code: 'bad' })).toEqual({ kind: 'refused', code: null });
     expect(regrantOutcome({ status: 429, code: null })).toEqual({ kind: 'reconnect' });
     expect(regrantOutcome({ status: 500, code: null })).toEqual({ kind: 'reconnect' });

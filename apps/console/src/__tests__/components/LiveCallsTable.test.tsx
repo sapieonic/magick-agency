@@ -146,7 +146,11 @@ describe('the table', () => {
     expect(mocks.listLiveCalls).toHaveBeenCalledWith({}, 't-1', 'a-1');
     expect(screen.getByRole('heading', { level: 1, name: 'Live calls' })).toBeTruthy();
     expect(screen.getByTestId('live-calls-count').textContent).toBe('4 in progress');
-    expect(screen.getByTestId('live-calls-updated').textContent).toBe('Updated 0 s ago');
+    expect(screen.getByTestId('live-calls-updated').textContent).toBe('Updated just now');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(screen.getByTestId('live-calls-updated').textContent).toBe('Updated 2 s ago');
   });
 
   it('lists the longest on call first, every column filled', async () => {
@@ -167,6 +171,7 @@ describe('the table', () => {
     expect(screen.getByTestId('live-call-listeners-c-priya').getAttribute('title')).toBe('Anita Kapoor');
 
     const arjun = within(rowOf('c-arjun'));
+    // A caller who rang in with no name is unknown; a number we dialled with no name has none.
     expect(arjun.getByText('Unknown caller')).toBeTruthy();
     expect(arjun.getByText('Inbound: Support line')).toBeTruthy();
     expect(within(rowOf('c-sneha')).getByText('Soft phone', { selector: 'td' })).toBeTruthy();
@@ -211,13 +216,71 @@ describe('the table', () => {
     expect(screen.getByText('No calls in progress match these filters.')).toBeTruthy();
   });
 
+  it('Clear filters, offered only while a filter is in force, shows every call again', async () => {
+    await renderTable();
+    expect(screen.queryByTestId('live-calls-clear-filters')).toBeNull();
+    fireEvent.click(screen.getByTestId('live-calls-type-manual'));
+    fireEvent.change(screen.getByTestId('live-calls-campaign-filter'), { target: { value: 'camp-1' } });
+    expect(screen.getByText('No calls in progress match these filters.')).toBeTruthy();
+    fireEvent.click(screen.getAllByTestId('live-calls-clear-filters')[0]!);
+    expect(order()).toEqual(['c-priya', 'c-arjun', 'c-sneha', 'c-vikram']);
+    expect(screen.getByTestId('live-calls-type-all').getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByTestId('live-calls-campaign-filter') as HTMLSelectElement).value).toBe('');
+    expect(screen.queryByTestId('live-calls-clear-filters')).toBeNull();
+  });
+
+  it('keeps a chosen agent on offer after their call ends, so the filter in force is still shown', async () => {
+    await renderTable();
+    fireEvent.change(screen.getByTestId('live-calls-agent-filter'), { target: { value: 'u-vikram' } });
+    mocks.listLiveCalls.mockResolvedValue(answer([ARJUN, PRIYA, SNEHA]));
+    // Vikram's call leaves the list at the next read, and its faded row goes 3 s later.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_100);
+    });
+    const select = screen.getByTestId('live-calls-agent-filter') as HTMLSelectElement;
+    expect(select.value).toBe('u-vikram');
+    expect(within(select).getByRole('option', { name: 'Vikram Das' })).toBeTruthy();
+    expect(screen.getByText('No calls in progress match these filters.')).toBeTruthy();
+    expect(screen.getAllByTestId('live-calls-clear-filters').length).toBeGreaterThan(0);
+  });
+
   it('says why a call cannot be listened to, beside a disabled Listen', async () => {
     await renderTable();
     expect(screen.getByTestId('live-call-reason-c-sneha').textContent).toBe('Listening is turned off for unrecorded calls');
-    expect(screen.getByTestId('live-call-reason-c-vikram').textContent).toBe('This call has reached its listening limit');
+    // Counted from the row's listeners, not the cap (which is configurable).
+    expect(screen.getByTestId('live-call-reason-c-vikram').textContent).toBe('2 supervisors are already listening');
     const disabled = within(rowOf('c-sneha')).getByRole('button', { name: /Listen/ });
     expect((disabled as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId('live-call-listen-c-priya')).toBeTruthy();
+  });
+
+  it('a dialled number with no name says "No name", not "Unknown caller"', async () => {
+    mocks.listLiveCalls.mockResolvedValue(answer([liveCall({ call_id: 'c-noname', customer_name: null })]));
+    await renderTable();
+    expect(within(rowOf('c-noname')).getByText('No name')).toBeTruthy();
+    expect(within(rowOf('c-noname')).queryByText('Unknown caller')).toBeNull();
+  });
+
+  it('stacks up to three listeners and counts the rest ("+N"), naming them all', async () => {
+    const names = ['Anita Kapoor', 'Rohan Shah', 'Meera Pillai', 'Kabir Rao', 'Isha Gupta'];
+    const busy = liveCall({
+      call_id: 'c-busy',
+      listeners: names.map((name, i) => ({ user_id: `u-l${i}`, name, started_at: '2026-11-16T10:08:30Z' })),
+    });
+    mocks.listLiveCalls.mockResolvedValue(answer([busy]));
+    await renderTable();
+    const stack = screen.getByTestId('live-call-listeners-c-busy');
+    expect(stack.getAttribute('title')).toBe(names.join(', '));
+    expect(stack.querySelectorAll('[data-avatar]')).toHaveLength(3);
+    expect(screen.getByTestId('live-call-listeners-more-c-busy').textContent).toBe('+2');
+  });
+
+  it('three listeners or fewer: no "+N"', async () => {
+    await renderTable();
+    expect(screen.queryByTestId('live-call-listeners-more-c-vikram')).toBeNull();
   });
 
   it('says "You are on this call" on the supervisor’s own call', async () => {
@@ -370,7 +433,8 @@ describe('the states around the table', () => {
     await renderTable();
     expect(screen.getByText('No calls in progress')).toBeTruthy();
     expect(screen.getByText('Calls appear here as soon as an agent is connected to a customer.')).toBeTruthy();
-    expect(screen.getByTestId('live-calls-count').textContent).toBe('0 in progress');
+    // Nothing in progress: no "0 in progress" pill beside the empty state's own words.
+    expect(screen.queryByTestId('live-calls-count')).toBeNull();
   });
 
   it('a reader below agency.supervise reads nothing', async () => {

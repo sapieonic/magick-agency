@@ -47,3 +47,27 @@
   line-height: 1.5;
   color: var(--text-secondary);
 }
+
+/* The one-time notice under the header: full-bleed like the station's other strips (`.micFailure`),
+   in the accent's quiet tint, as standing context rather than a fault. */
+.firstNotice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  flex-wrap: wrap;
+}
+
+.firstNoticeIcon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.firstNoticeText {
+  margin: 0;
+  flex: 1 1 280px;
+  line-height: 1.45;
+}

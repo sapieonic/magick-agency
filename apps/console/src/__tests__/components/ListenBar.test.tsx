@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   compact: false,
   audioState: 'running' as AudioContextState,
   audioThrows: false,
+  flagOn: true,
+  role: 'account_admin' as string,
 }));
 
 vi.mock('../../api/liveCalls', () => ({
@@ -25,11 +27,11 @@ vi.mock('../../api/liveCalls', () => ({
   grantListen: mocks.grantListen,
 }));
 vi.mock('../../contexts/TenantContext', () => ({
-  useTenant: () => ({ tenantId: 't-1', accountId: 'a-1', role: 'account_admin' }),
+  useTenant: () => ({ tenantId: 't-1', accountId: 'a-1', role: mocks.role }),
 }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me' } }) }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ isEnabled: (f: string) => f === 'agency_live_listen_enabled', status: 'ready' }),
+  useFeatureFlags: () => ({ isEnabled: (f: string) => mocks.flagOn && f === 'agency_live_listen_enabled', status: 'ready' }),
 }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
@@ -175,6 +177,8 @@ beforeEach(() => {
   mocks.compact = false;
   mocks.audioState = 'running';
   mocks.audioThrows = false;
+  mocks.flagOn = true;
+  mocks.role = 'account_admin';
   mocks.showToast.mockReset();
   mocks.listLiveCalls.mockReset().mockResolvedValue({ calls: [CALL, OTHER], as_of: new Date(NOW).toISOString() });
   mocks.grantListen.mockReset().mockImplementation(async () => ({
@@ -199,7 +203,7 @@ describe('the first listen in this browser', () => {
       fireEvent.click(screen.getByTestId('live-call-listen-c-1'));
     });
     expect(screen.getByText('Listening is logged')).toBeTruthy();
-    expect(screen.getByText('Each time you listen, your name, the call and the start and end times are recorded in the activity history.')).toBeTruthy();
+    expect(screen.getByText('Each time you listen, your name, the call and the start and end times are recorded and can be seen by your account’s admins.')).toBeTruthy();
     // Cancel: nothing starts, nothing is remembered.
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(mocks.grantListen).not.toHaveBeenCalled();
@@ -256,14 +260,16 @@ describe('the bar', () => {
 
   it.each([
     ['a soft-phone call opens its call page', { origin: 'manual', correlation_id: 'man-3', campaign_id: null, campaign_name: null }, '/agency/softphone/calls/man-3'],
-    ['an inbound call (no call page in the console) opens the account’s live calls', { origin: 'inbound', correlation_id: 'in-3', campaign_id: null, campaign_name: null, inbound_route_name: 'Support' }, '/agency/live'],
+    ['an inbound call has no call page in the console, so none is offered', { origin: 'inbound', correlation_id: 'in-3', campaign_id: null, campaign_name: null, inbound_route_name: 'Support' }, null],
   ] as const)('Open call: %s', async (_name, over, href) => {
     const third = liveCall({ ...over, call_id: 'c-3', agent_user_id: 'u-3', agent_name: 'Sneha Iyer' });
     mocks.listLiveCalls.mockResolvedValue({ calls: [CALL, third], as_of: new Date(NOW).toISOString() });
     await renderApp();
     const ws = await startListening('c-3');
     act(() => ws.ready());
-    expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe(href);
+    expect(screen.queryByTestId('listen-open-call')?.getAttribute('href') ?? null).toBe(href);
+    act(() => ws.frame({ event: 'ended', reason: 'call_ended' }));
+    expect(screen.queryByTestId('listen-open-call')?.getAttribute('href') ?? null).toBe(href);
   });
 
   it('Stop listening sends `stop` and closes the bar', async () => {
@@ -284,6 +290,25 @@ describe('the bar', () => {
     expect(screen.getByTestId('listen-bar')).toBeTruthy();
     fireEvent.keyDown(screen.getByTestId('listen-volume'), { key: 'Escape' });
     expect(ws.sent).toEqual([{ event: 'stop' }]);
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('the row offers Stop while connecting too, not only once live', async () => {
+    await renderApp();
+    const ws = await startListening();
+    expect(screen.getByTestId('live-call-connecting-c-1').textContent).toContain('Connecting…');
+    fireEvent.click(screen.getByTestId('live-call-stop-c-1'));
+    expect(ws.closed).toBe(1000);
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('…and while reconnecting', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(1006));
+    expect(screen.getByTestId('live-call-connecting-c-1').textContent).toContain('Reconnecting…');
+    fireEvent.click(screen.getByTestId('live-call-stop-c-1'));
     expect(screen.queryByTestId('listen-bar')).toBeNull();
   });
 
@@ -341,7 +366,7 @@ describe('the bar', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600);
     });
-    expect(screen.getByTestId('listen-sound-blocked').textContent).toContain('Your browser blocked the sound. Click to turn it on.');
+    expect(screen.getByTestId('listen-sound-blocked').textContent).toContain('Your browser has blocked the sound.');
     mocks.audioState = 'running';
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Turn sound on' }));
@@ -349,7 +374,7 @@ describe('the bar', () => {
     expect(screen.queryByTestId('listen-sound-blocked')).toBeNull();
   });
 
-  it('says "Agent is silent" when the agent’s leg is silent over 2 s (a muted agent sends nothing)', async () => {
+  it('says "No sound from the agent" when the agent’s leg is silent over 2 s (a muted agent sends nothing)', async () => {
     await renderApp();
     const ws = await startListening();
     act(() => ws.ready());
@@ -357,7 +382,7 @@ describe('the bar', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_600);
     });
-    expect(screen.getByTestId('listen-agent-gap').textContent).toBe('Agent is silent');
+    expect(screen.getByTestId('listen-agent-gap').textContent).toBe('No sound from the agent');
     const frame = new Uint8Array(161);
     frame[0] = 2;
     act(() => ws.onmessage?.({ data: frame.buffer }));
@@ -401,7 +426,11 @@ describe('the bar', () => {
       await vi.advanceTimersByTimeAsync(16_000);
     });
     expect(screen.getByTestId('listen-status').textContent).toBe('Connection lost');
+    expect(screen.getByTestId('listen-lost').textContent).toBe('The call is not affected.');
     expect(screen.getByTestId('listen-notice')).toBeTruthy();
+    // Nothing is left to stop: Close (not a red Stop listening) puts the bar away.
+    expect(screen.queryByTestId('listen-stop')).toBeNull();
+    expect(screen.getByTestId('listen-close').textContent).toBe('Close');
     // Lost: nothing plays on, and the context is not left running.
     expect(FakeAudioContext.all[0]!.state).toBe('suspended');
     const calls = mocks.grantListen.mock.calls.length;
@@ -413,7 +442,30 @@ describe('the bar', () => {
     expect(FakeAudioContext.all[0]!.state).toBe('running');
   });
 
-  it('the call ends: "Call ended · you listened for mm:ss", Open call, gone after 6 s', async () => {
+  it.each([
+    ['full width', false],
+    ['phone width', true],
+  ])('Connection lost: Close puts the bar away (%s)', async (_name, compact) => {
+    mocks.compact = compact;
+    mocks.grantListen.mockImplementation(async () => ({ ok: false, status: 503, code: 'listen_unavailable' }));
+    await renderApp();
+    mocks.grantListen.mockImplementationOnce(async () => ({
+      ok: true,
+      grant: { listen_id: 'l-1', ws_url: '/proxy/agency/listen/s-1/l-1?token=tok', expires_at: 'x' },
+    }));
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(1006));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(16_000);
+    });
+    expect(screen.getByTestId('listen-lost').textContent).toBe('The call is not affected.');
+    expect(screen.getByTestId('listen-retry').textContent).toBe('Try again');
+    fireEvent.click(screen.getByTestId('listen-close'));
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('the call ends: "Call ended" over who and how long, Open call, gone after 6 s', async () => {
     await renderApp();
     const ws = await startListening();
     act(() => ws.ready());
@@ -421,7 +473,9 @@ describe('the bar', () => {
       await vi.advanceTimersByTimeAsync(130_000);
     });
     act(() => ws.frame({ event: 'ended', reason: 'call_ended' }));
-    expect(screen.getByTestId('listen-ended-line').textContent).toBe('Call ended · you listened for 02:10');
+    expect(screen.getByTestId('listen-status').textContent).toBe('Call ended');
+    // The head says "Call ended" once; the line under it says who and for how long.
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe('Priya S. with ****4321 · you listened for 02:10');
     expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-1');
     expect(screen.getByTestId('listen-notice')).toBeTruthy();
     await act(async () => {
@@ -430,9 +484,21 @@ describe('the bar', () => {
     expect(screen.queryByTestId('listen-bar')).toBeNull();
   });
 
+  it('at phone width the ended line says the call ended itself (there is no head)', async () => {
+    mocks.compact = true;
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(130_000);
+    });
+    act(() => ws.frame({ event: 'ended', reason: 'call_ended' }));
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe('Call ended · you listened for 02:10');
+  });
+
   it.each([
     [4403, 'permission_revoked', 'You no longer have access to listen to calls.'],
-    [4409, 'superseded', 'Listening moved to another call.'],
+    [4409, 'superseded', 'You started listening in another tab or window, so it stopped here.'],
   ])('close %i: "%s" says so until dismissed', async (code, reason, words) => {
     await renderApp();
     const ws = await startListening();
@@ -444,13 +510,68 @@ describe('the bar', () => {
     expect(screen.queryByTestId('listen-bar')).toBeNull();
   });
 
+  it.each([
+    ['the flag goes off', () => {
+      mocks.flagOn = false;
+    }, 'Listening has been turned off for this account.'],
+    ['the permission goes', () => {
+      mocks.role = 'agent';
+    }, 'You no longer have access to listen to calls.'],
+  ])('%s here while listening: the listen stops and the bar says why, until dismissed', async (_name, take, words) => {
+    const view = await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    take();
+    view.rerender(<App />);
+    await flush();
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+    expect(ws.closed).toBe(1000);
+    expect(screen.getByTestId('listen-status').textContent).toBe('Listening stopped');
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe(words);
+    // Not a "Call ended" bar: it does not go by itself.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_000);
+    });
+    expect(screen.getByTestId('listen-bar')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('listen-dismiss'));
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('a re-grant refused because the flag went off says listening was turned off, not that access went', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    mocks.grantListen.mockResolvedValue({ ok: false, status: 403, code: 'feature_disabled' });
+    act(() => ws.serverClose(1006));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe('Listening has been turned off for this account.');
+  });
+
   it('a refused grant is a toast with the reason, and no bar', async () => {
     mocks.grantListen.mockResolvedValue({ ok: false, status: 409, code: 'listen_limit_call' });
     await renderApp();
     await startListening();
+    // CALL has no listeners in the row, so there is no count to give.
     expect(mocks.showToast).toHaveBeenCalledWith('That call has reached its listening limit.', 'error');
     expect(screen.queryByTestId('listen-bar')).toBeNull();
     expect(FakeWs.all).toEqual([]);
+  });
+
+  it('a call full of listeners: the toast counts them from the row the listen started from', async () => {
+    const full = liveCall({
+      ...CALL,
+      listeners: [
+        { user_id: 'u-a', name: 'Anita Kapoor', started_at: '2026-11-16T10:07:00Z' },
+        { user_id: 'u-b', name: 'Rohan Shah', started_at: '2026-11-16T10:08:00Z' },
+      ],
+    });
+    mocks.listLiveCalls.mockResolvedValue({ calls: [full, OTHER], as_of: new Date(NOW).toISOString() });
+    mocks.grantListen.mockResolvedValue({ ok: false, status: 409, code: 'listen_limit_call' });
+    await renderApp();
+    await startListening();
+    expect(mocks.showToast).toHaveBeenCalledWith('2 supervisors are already listening to that call.', 'error');
   });
 
   it('listening to another call stops the first', async () => {

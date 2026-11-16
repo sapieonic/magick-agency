@@ -1,5 +1,5 @@
 import { CALL_OVERRUN_AHT_MULTIPLE, agentDisplayName } from '../agencyAgentFloor';
-import { campaignCellLabel, customerLabel } from './listenCopy';
+import { LIVE_CALLS_COPY, campaignCellLabel, customerLabel } from './listenCopy';
 import type { AgencyCallOrigin, AgencyLiveCall } from '../../types/live-calls';
 import type { ListenTarget } from './listenSessionReducer';
 
@@ -27,6 +27,11 @@ export interface LiveCallFilters {
 }
 
 export const NO_LIVE_CALL_FILTERS: LiveCallFilters = { type: 'all', agent: '', campaign: '' };
+
+/** Whether any filter is in force: "Clear filters" is offered. */
+export function hasLiveCallFilters(filters: LiveCallFilters): boolean {
+  return filters.type !== 'all' || filters.agent !== '' || filters.campaign !== '';
+}
 
 export function filterLiveCalls<T extends { call: AgencyLiveCall }>(rows: readonly T[], filters: LiveCallFilters): T[] {
   return rows.filter(({ call }) =>
@@ -118,17 +123,32 @@ export function isLiveCallOverrun(elapsedMs: number | null, ahtSeconds: number |
   return elapsedMs > ahtSeconds * CALL_OVERRUN_AHT_MULTIPLE * 1000;
 }
 
-/** The agents and campaigns in the rows, for the filters, by name. */
-export function liveCallFilterOptions(calls: readonly AgencyLiveCall[]): {
-  agents: { id: string; name: string }[];
-  campaigns: { id: string; name: string }[];
+/** One choice in the agent or campaign filter. */
+export interface LiveCallFilterOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * The agents and campaigns in the rows, for the filters, by name; plus the agent and campaign
+ * chosen (`keep`), when their calls have all ended: a filter in force stays shown in its control,
+ * rather than read as "All" while it still hides every row.
+ */
+export function liveCallFilterOptions(
+  calls: readonly AgencyLiveCall[],
+  keep: { agent?: LiveCallFilterOption | null; campaign?: LiveCallFilterOption | null } = {},
+): {
+  agents: LiveCallFilterOption[];
+  campaigns: LiveCallFilterOption[];
 } {
   const agents = new Map<string, string>();
   const campaigns = new Map<string, string>();
   for (const call of calls) {
     agents.set(call.agent_user_id, agentName(call));
-    if (call.campaign_id) campaigns.set(call.campaign_id, call.campaign_name ?? 'Unnamed campaign');
+    if (call.campaign_id) campaigns.set(call.campaign_id, call.campaign_name ?? LIVE_CALLS_COPY.unnamedCampaign);
   }
+  if (keep.agent && !agents.has(keep.agent.id)) agents.set(keep.agent.id, keep.agent.name);
+  if (keep.campaign && !campaigns.has(keep.campaign.id)) campaigns.set(keep.campaign.id, keep.campaign.name);
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'en-GB', { sensitivity: 'base' });
   return {
     agents: [...agents].map(([id, name]) => ({ id, name })).sort(byName),
@@ -155,7 +175,8 @@ export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): Li
  * The call's own page, keyed on the live row's `correlation_id` (the spine row, by `origin`): a
  * dialler call opens its attempt (`/agency/campaigns/:id/attempts/:attemptId`), a soft-phone call
  * its call page (`/agency/softphone/calls/:id`). Null for an inbound call, which has no call page in
- * the console, and for a row missing the ids its page needs.
+ * the console, and for a row missing the ids its page needs: neither the row nor the listening
+ * bar offers "Open call" then (a link to a list of other calls would be a dead end).
  */
 export function liveCallPagePath(
   call: { origin: AgencyCallOrigin; campaignId: string | null; correlationId: string | null | undefined },
@@ -174,15 +195,6 @@ export function liveCallPagePath(
 /** {@link liveCallPagePath} for a live row. */
 export function liveCallRowPagePath(call: Pick<AgencyLiveCall, 'origin' | 'campaign_id' | 'correlation_id'>): string | null {
   return liveCallPagePath({ origin: call.origin, campaignId: call.campaign_id, correlationId: call.correlation_id });
-}
-
-/**
- * Where the bar's "Open call" goes: the call's own page ({@link liveCallPagePath}); for a call with
- * none (inbound), its live view: its campaign's Live, or the account's Live calls.
- */
-export function liveCallHref(target: Pick<ListenTarget, 'origin' | 'campaignId' | 'correlationId'>): string {
-  return liveCallPagePath(target)
-    ?? (target.campaignId ? `/agency/campaigns/${target.campaignId}/calls/live` : '/agency/live');
 }
 
 /** The table's customer cell words (re-exported so the table reads one module). */

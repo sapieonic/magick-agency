@@ -29,6 +29,7 @@ import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
 import { SoftphoneJoinScreen } from '../../components/agency/SoftphoneJoinScreen';
 import { StationFatal } from '../../components/agency/StationFatal';
 import { StationHeader } from '../../components/agency/StationHeader';
+import { agentListenScope } from '../../components/agency/StationListenNotice';
 import { ContactPanel } from '../../components/agency/ContactPanel';
 import { ContactDetail } from '../../components/agency/ContactDetail';
 import { IdleGuide } from '../../components/agency/IdleGuide';
@@ -103,6 +104,8 @@ export default function AgentConsolePage() {
   const campaignId = params.get('campaign') ?? '';
   const { tenantId, accountId, role } = useTenant();
   const { user, memberships } = useAuth();
+  // Whose one-time "a supervisor may listen" notice the station header shows (LS2).
+  const listenScope = agentListenScope(user?.id, tenantId, accountId);
 
   const join = useStationJoin({ campaignId, tenantId, accountId, role });
   const { bootstrap } = join;
@@ -400,6 +403,7 @@ export default function AgentConsolePage() {
           onExit={exit.exitStation}
           connection={connection}
           missedPings={missedPings}
+          listenScope={listenScope}
         />
         {micBanner}
         <InboundCallView
@@ -445,6 +449,7 @@ export default function AgentConsolePage() {
           onExit={exit.exitStation}
           connection={connection}
           missedPings={missedPings}
+          listenScope={listenScope}
           extra={
             <>
               <SoftphoneDisclosures sp={softphone.sp} showMuted={false} />
@@ -517,6 +522,7 @@ export default function AgentConsolePage() {
         onExit={exit.exitStation}
         connection={connection}
         missedPings={missedPings}
+        listenScope={listenScope}
         extra={myContactsOffered ? (
           <span className={styles.myContactsSlot}>
             <button

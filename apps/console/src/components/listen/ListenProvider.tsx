@@ -98,12 +98,14 @@ export function ListenProvider({ children }: { children: ReactNode }) {
     onAttach: () => engine.reset(),
   });
 
-  // A refused first grant is a toast with the reason, and no bar.
+  // A refused first grant is a toast with the reason, and no bar. A call full of listeners counts
+  // them from the row the listen was started from.
+  const startedListeners = useRef<number | undefined>(undefined);
   const shownRefusal = useRef(state.refusalSeq);
   useEffect(() => {
     if (state.refusalSeq === shownRefusal.current) return;
     shownRefusal.current = state.refusalSeq;
-    if (state.refusal) showToast?.(listenRefusalMessage(state.refusal), 'error');
+    if (state.refusal) showToast?.(listenRefusalMessage(state.refusal, startedListeners.current), 'error');
   }, [state.refusalSeq, state.refusal, showToast]);
 
   // While live: is the browser running the audio, and is the agent's leg arriving?
@@ -130,10 +132,11 @@ export function ListenProvider({ children }: { children: ReactNode }) {
     if (!audible) engine.release();
   }, [audible, engine]);
 
-  // The flag going off or the permission going away ends a listen here at once.
+  // The flag going off or the permission going away ends a listen here at once, and the bar says
+  // which: the flag first, as it is what a supervisor cannot change.
   useEffect(() => {
-    if (!canListen && controller.getState().phase !== 'idle') controller.stop();
-  }, [canListen, controller]);
+    if (!canListen) controller.withdraw(flagOn ? 'revoked' : 'turned_off');
+  }, [canListen, flagOn, controller]);
 
   // Leaving the shell or the account: the listen ends with the provider.
   useEffect(() => () => engine.close(), [engine]);
@@ -149,6 +152,7 @@ export function ListenProvider({ children }: { children: ReactNode }) {
       }
       // Inside the click: the gesture lets the browser run the context.
       void engine.resume();
+      startedListeners.current = call.listeners.length;
       controller.start(listenTargetFor(call, offset));
     },
     [engine, controller, showToast],

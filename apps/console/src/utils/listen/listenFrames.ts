@@ -106,7 +106,9 @@ export function encodeListenClientFrame(frame: AgencyListenClientFrame): string 
  *  - `call_ended`: the call ended, or the upgrade found it gone: "Call ended";
  *  - `stopped`: the supervisor stopped (our own `stop`);
  *  - `revoked`: "You no longer have access to listen to calls.";
- *  - `superseded`: "Listening moved to another call.";
+ *  - `turned_off`: "Listening has been turned off for this account." (a re-grant refused
+ *    `feature_disabled`; the socket's own 4403 cannot tell the flag from the permission);
+ *  - `superseded`: listening started in another tab or window;
  *  - `refused`: a cap or a malformed upgrade refused the attach; `code` says which;
  *  - `remint`: the token was refused: mint a fresh grant now;
  *  - `reconnect`: any other drop: re-mint and reconnect within the window;
@@ -116,6 +118,7 @@ export type ListenCloseOutcome =
   | { kind: 'call_ended' }
   | { kind: 'stopped' }
   | { kind: 'revoked' }
+  | { kind: 'turned_off' }
   | { kind: 'superseded' }
   | { kind: 'refused'; code: AgencyListenErrorCode | null }
   | { kind: 'remint' }

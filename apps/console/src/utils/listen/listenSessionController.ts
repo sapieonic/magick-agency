@@ -99,15 +99,30 @@ export class ListenSessionController {
 
   /** The supervisor stopped: `stop` on the socket, then close it. */
   stop(): void {
+    this.sendStop();
+    this.dispatch({ type: 'stop' });
+  }
+
+  /**
+   * This console saw the permission (`revoked`) or the flag (`turned_off`) go: stop the listen as
+   * `stop` does (no sound a moment longer than the console knows it may play), but keep the bar
+   * up saying why, rather than vanish as if the supervisor had stopped.
+   */
+  withdraw(kind: 'revoked' | 'turned_off'): void {
+    if (this.state.phase === 'idle' || this.state.phase === 'ended') return;
+    this.sendStop();
+    this.dispatch({ type: 'withdrawn', kind, now: this.now() });
+  }
+
+  private sendStop(): void {
     const socket = this.socket;
     if (socket && socket.readyState === OPEN) {
       try {
         socket.send(encodeListenClientFrame({ event: 'stop' }));
       } catch {
-        /* the close below is what matters */
+        /* the close that follows is what matters */
       }
     }
-    this.dispatch({ type: 'stop' });
   }
 
   retry(): void {

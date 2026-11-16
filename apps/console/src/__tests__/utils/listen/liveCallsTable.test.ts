@@ -6,8 +6,8 @@ import {
   filterLiveCalls,
   isLiveCallOverrun,
   listenTargetFor,
+  hasLiveCallFilters,
   liveCallFilterOptions,
-  liveCallHref,
   liveCallPagePath,
   liveCallRowPagePath,
   mergeLiveCalls,
@@ -18,6 +18,7 @@ import {
 import {
   LISTEN_AGENT_NOTICE,
   LISTEN_SESSION_NOTICE,
+  LIVE_CALLS_PAGE_COPY,
   campaignCellLabel,
   customerLabel,
   formatClock,
@@ -85,6 +86,21 @@ describe('filters', () => {
       campaigns: [{ id: 'c-1', name: 'Renewals' }],
     });
   });
+
+  it('keeps a chosen agent and campaign on offer after their calls end, so the filter in force is still shown', () => {
+    const kept = liveCallFilterOptions([B], { agent: { id: 'u-1', name: 'Vikram Das' }, campaign: { id: 'c-1', name: 'Renewals' } });
+    expect(kept.agents).toEqual([{ id: 'u-2', name: 'Arjun Nair' }, { id: 'u-1', name: 'Vikram Das' }]);
+    expect(kept.campaigns).toEqual([{ id: 'c-1', name: 'Renewals' }]);
+    // Still in the rows: offered once, by the rows' own name.
+    expect(liveCallFilterOptions([A], { agent: { id: 'u-1', name: 'Old name' } }).agents).toEqual([{ id: 'u-1', name: 'Vikram Das' }]);
+  });
+
+  it('knows when any filter is in force (Clear filters)', () => {
+    expect(hasLiveCallFilters(NO_LIVE_CALL_FILTERS)).toBe(false);
+    expect(hasLiveCallFilters({ ...NO_LIVE_CALL_FILTERS, type: 'inbound' })).toBe(true);
+    expect(hasLiveCallFilters({ ...NO_LIVE_CALL_FILTERS, agent: 'u-1' })).toBe(true);
+    expect(hasLiveCallFilters({ ...NO_LIVE_CALL_FILTERS, campaign: 'c-1' })).toBe(true);
+  });
 });
 
 describe('rows that end', () => {
@@ -139,22 +155,20 @@ describe('what a listen starts with', () => {
     expect(liveCallRowPagePath(C)).toBe('/agency/softphone/calls/man-c');
     // A soft-phone call tagged to a campaign is still the soft phone's page.
     expect(liveCallRowPagePath({ ...C, campaign_id: 'c-9' })).toBe('/agency/softphone/calls/man-c');
-    expect(liveCallHref(listenTargetFor(A, 0))).toBe('/agency/campaigns/c-1/attempts/att-a');
-    expect(liveCallHref(listenTargetFor(C, 0))).toBe('/agency/softphone/calls/man-c');
+    expect(liveCallPagePath(listenTargetFor(A, 0))).toBe('/agency/campaigns/c-1/attempts/att-a');
+    expect(liveCallPagePath(listenTargetFor(C, 0))).toBe('/agency/softphone/calls/man-c');
   });
 
-  it('Open call: an inbound call has no page in the console, so the bar opens its live view', () => {
+  it('Open call: an inbound call has no page in the console, so neither the row nor the bar offers one', () => {
     expect(liveCallRowPagePath(B)).toBeNull();
     expect(liveCallRowPagePath({ ...B, campaign_id: 'c-1' })).toBeNull();
-    expect(liveCallHref(listenTargetFor(B, 0))).toBe('/agency/live');
-    expect(liveCallHref(listenTargetFor({ ...B, campaign_id: 'c-1' }, 0))).toBe('/agency/campaigns/c-1/calls/live');
+    expect(liveCallPagePath(listenTargetFor(B, 0))).toBeNull();
   });
 
   it('Open call: no page without the ids it is keyed on', () => {
     expect(liveCallPagePath({ origin: 'campaign', campaignId: null, correlationId: 'att-a' })).toBeNull();
     expect(liveCallPagePath({ origin: 'campaign', campaignId: 'c-1', correlationId: '' })).toBeNull();
     expect(liveCallPagePath({ origin: 'manual', campaignId: null, correlationId: undefined })).toBeNull();
-    expect(liveCallHref({ origin: 'manual', campaignId: null, correlationId: '' })).toBe('/agency/live');
   });
 });
 
@@ -167,10 +181,12 @@ describe('the words', () => {
     expect(campaignCellLabel({ ...C, campaign_name: 'Tagged' })).toBe('Tagged');
   });
 
-  it('customer: the name, or "Unknown caller"', () => {
-    expect(customerLabel({ customer_name: 'Rahul Mehta' })).toBe('Rahul Mehta');
-    expect(customerLabel({ customer_name: null })).toBe('Unknown caller');
-    expect(customerLabel({ customer_name: '  ' })).toBe('Unknown caller');
+  it('customer: the name; else "Unknown caller" for a caller who rang in, "No name" for a number we dialled', () => {
+    expect(customerLabel({ customer_name: 'Rahul Mehta', origin: 'campaign' })).toBe('Rahul Mehta');
+    expect(customerLabel({ customer_name: null, origin: 'inbound' })).toBe('Unknown caller');
+    expect(customerLabel({ customer_name: '  ', origin: 'inbound' })).toBe('Unknown caller');
+    expect(customerLabel({ customer_name: null, origin: 'campaign' })).toBe('No name');
+    expect(customerLabel({ customer_name: ' ', origin: 'manual' })).toBe('No name');
   });
 
   it('clocks as mm:ss, then h:mm:ss, never negative', () => {
@@ -183,14 +199,21 @@ describe('the words', () => {
 
   it('the header, the bar and the reasons', () => {
     expect(inProgressLabel(5)).toBe('5 in progress');
+    expect(updatedAgoLabel(0)).toBe('Updated just now');
+    expect(updatedAgoLabel(0.9)).toBe('Updated just now');
+    expect(updatedAgoLabel(-1)).toBe('Updated just now');
     expect(updatedAgoLabel(2.7)).toBe('Updated 2 s ago');
-    expect(updatedAgoLabel(-1)).toBe('Updated 0 s ago');
     expect(listenedForLabel(130_000)).toBe('Call ended · you listened for 02:10');
+    expect(listenedForLabel(130_000, 'Priya S. with ****4321')).toBe('Priya S. with ****4321 · you listened for 02:10');
     expect(shortName('Priya Sharma')).toBe('Priya S.');
     expect(shortName('Priya Rani Sharma')).toBe('Priya S.');
     expect(shortName('Priya')).toBe('Priya');
     expect(notListenableCopy('listen_recording_off')).toBe('Listening is turned off for unrecorded calls');
-    // Count-neutral: the per-call cap is configurable (AGENCY_LISTEN_MAX_PER_CALL, 1–5).
+    // The per-call cap is configurable (AGENCY_LISTEN_MAX_PER_CALL, 1–5): the words count the row's
+    // listeners, never the cap, and say nothing about a count they do not have.
+    expect(notListenableCopy('listen_limit_call', 2)).toBe('2 supervisors are already listening');
+    expect(notListenableCopy('listen_limit_call', 1)).toBe('1 supervisor is already listening');
+    expect(notListenableCopy('listen_limit_call', 0)).toBe('This call has reached its listening limit');
     expect(notListenableCopy('listen_limit_call')).toBe('This call has reached its listening limit');
     expect(notListenableCopy('listen_own_call')).toBe('You are on this call');
     expect(notListenableCopy(null)).toBe('You cannot listen to this call');
@@ -199,6 +222,10 @@ describe('the words', () => {
   it('the notices are the locked words (LS2, LS6)', () => {
     expect(LISTEN_AGENT_NOTICE).toBe('Calls may be listened to by a supervisor for quality and training.');
     expect(LISTEN_SESSION_NOTICE).toBe('This session is logged. Do not record or share what you hear.');
+  });
+
+  it('the Live calls page says who may listen, that it is silent and that it is logged', () => {
+    expect(LIVE_CALLS_PAGE_COPY.description).toMatch(/ Supervisors with permission can listen in\. Nobody on the call hears you, and every listen is logged\.$/);
   });
 
   it('a refused grant says its code, else what the status means', () => {
@@ -212,6 +239,12 @@ describe('the words', () => {
     expect(listenRefusalMessage({ status: 503, code: 'listen_unavailable' })).toBe('Listening is not available right now. Try again.');
     expect(listenRefusalMessage({ status: 503, code: null })).toBe('Listening is not available right now. Try again.');
     expect(listenRefusalMessage({ status: 503, code: 'worker_unavailable' })).toBe('Listening is not available right now. Try again.');
-    expect(listenRefusalMessage({ status: 503, code: 'listen_limit_server' })).toBe('Listening is busy right now. Try again in a minute.');
+    expect(listenRefusalMessage({ status: 503, code: 'listen_limit_server' })).toBe('Too many calls are being listened to right now. Try again in a minute.');
+  });
+
+  it('a call full of listeners counts them from the row it was started from', () => {
+    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, 2)).toBe('2 supervisors are already listening to that call.');
+    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, 1)).toBe('1 supervisor is already listening to that call.');
+    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, 0)).toBe('That call has reached its listening limit.');
   });
 });

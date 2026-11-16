@@ -12,11 +12,12 @@ import {
   LISTEN_REFUSAL_FALLBACK,
   LISTEN_SESSION_NOTICE,
   formatClock,
+  listenWhoLabel,
   listenedForLabel,
   muteLabel,
   shortName,
 } from '../../utils/listen/listenCopy';
-import { liveCallHref } from '../../utils/listen/liveCallsTable';
+import { liveCallPagePath } from '../../utils/listen/liveCallsTable';
 import type { ListenSessionState, ListenTarget } from '../../utils/listen/listenSessionReducer';
 import type { ListenPlaybackEngine } from '../../utils/listen/listenPlayback';
 import type { AgencyListenLeg } from '../../types/live-calls';
@@ -163,14 +164,24 @@ function CallTimer({ state, target }: { state: ListenSessionState; target: Liste
   );
 }
 
-function endedLine(state: ListenSessionState): string {
+/**
+ * The line under an ended bar's head. A call that ended says who and for how long ("Priya S. with
+ * ****4321 · you listened for 02:10") under the "Call ended" head; at phone width, where there is
+ * no head, it says "Call ended · you listened for 02:10" itself.
+ */
+function endedLine(state: ListenSessionState, compact: boolean): string {
   const end = state.end;
   if (!end) return '';
   switch (end.kind) {
-    case 'call_ended':
-      return state.startedAt === null ? LISTEN_BAR_COPY.endedBeforeJoin : listenedForLabel(end.listenedMs);
+    case 'call_ended': {
+      if (state.startedAt === null) return LISTEN_BAR_COPY.endedBeforeJoin;
+      const who = compact || !state.target ? undefined : listenWhoLabel(state.target.agentName, state.target.customerMasked);
+      return listenedForLabel(end.listenedMs, who);
+    }
     case 'revoked':
       return LISTEN_BAR_COPY.revoked;
+    case 'turned_off':
+      return LISTEN_BAR_COPY.turnedOff;
     case 'superseded':
       return LISTEN_BAR_COPY.superseded;
     case 'refused':
@@ -181,18 +192,20 @@ function endedLine(state: ListenSessionState): string {
 function FullRow({ state, target }: { state: ListenSessionState; target: ListenTarget }) {
   const listen = useListen()!;
   const over = state.phase === 'ended';
-  const openCall = (
-    <Link className={styles.link} to={liveCallHref(target)} data-testid="listen-open-call">
+  // The call's own page; an inbound call has none in the console, so nothing is offered.
+  const pagePath = liveCallPagePath(target);
+  const openCall = pagePath ? (
+    <Link className={styles.link} to={pagePath} data-testid="listen-open-call">
       {LISTEN_BAR_COPY.openCall}
     </Link>
-  );
+  ) : null;
 
   if (over) {
     return (
       <div className={styles.row}>
         <div className={styles.who} role="status">
           <Status state={state} region={false} />
-          <span className={styles.line} data-testid="listen-ended-line">{endedLine(state)}</span>
+          <span className={styles.line} data-testid="listen-ended-line">{endedLine(state, false)}</span>
         </div>
         <div className={styles.controls}>
           {state.end?.kind === 'call_ended' ? openCall : null}
@@ -215,7 +228,7 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
           {target.campaignLabel} · <CallTimer state={state} target={target} />
         </span>
       </div>
-      <div className={styles.meters} aria-label="Levels" role="group">
+      <div className={styles.meters} aria-label={LISTEN_BAR_COPY.levels} role="group">
         <Meter leg="agent" engine={listen.playback.engine} live={state.phase === 'live'} silent={state.agentSilent} />
         <Meter leg="customer" engine={listen.playback.engine} live={state.phase === 'live'} silent={false} />
       </div>
@@ -233,21 +246,41 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
           />
         </label>
         {openCall}
-        {state.phase === 'lost' ? (
-          <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
-            {LISTEN_BAR_COPY.tryAgain}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn-danger"
-          onClick={() => (state.phase === 'lost' ? listen.controller.dismiss() : listen.stop())}
-          data-testid="listen-stop"
-        >
-          {LISTEN_BAR_COPY.stop}
-        </button>
+        <StopOrLost state={state} />
       </div>
     </div>
+  );
+}
+
+/**
+ * "Stop listening" while there is a listen to stop; after "Connection lost" there is none, so Try
+ * again and Close (which only puts the bar away) instead of a red Stop that would read as acting
+ * on the call.
+ */
+function StopOrLost({ state, compact = false }: { state: ListenSessionState; compact?: boolean }) {
+  const listen = useListen()!;
+  if (state.phase === 'lost') {
+    return (
+      <>
+        <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
+          {LISTEN_BAR_COPY.tryAgain}
+        </button>
+        <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-close">
+          {LISTEN_BAR_COPY.close}
+        </button>
+      </>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="btn-danger"
+      aria-label={compact ? LISTEN_BAR_COPY.stop : undefined}
+      onClick={listen.stop}
+      data-testid="listen-stop"
+    >
+      {compact ? LISTEN_BAR_COPY.stopShort : LISTEN_BAR_COPY.stop}
+    </button>
   );
 }
 
@@ -257,7 +290,7 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
   if (state.phase === 'ended') {
     return (
       <div className={styles.row}>
-        <span className={styles.line} role="status" data-testid="listen-ended-line">{endedLine(state)}</span>
+        <span className={styles.line} role="status" data-testid="listen-ended-line">{endedLine(state, true)}</span>
         <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
           {LISTEN_BAR_COPY.dismiss}
         </button>
@@ -271,20 +304,7 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
         <span className="sr-only">{state.phase === 'live' ? LISTEN_BAR_COPY.listening : state.phase === 'lost' ? LISTEN_BAR_COPY.lost : LISTEN_BAR_COPY.connecting}</span>
         <CallTimer state={state} target={target} />
       </span>
-      {state.phase === 'lost' ? (
-        <button type="button" className="btn-primary" onClick={listen.retry} data-testid="listen-retry">
-          {LISTEN_BAR_COPY.tryAgain}
-        </button>
-      ) : null}
-      <button
-        type="button"
-        className="btn-danger"
-        aria-label={LISTEN_BAR_COPY.stop}
-        onClick={() => (state.phase === 'lost' ? listen.controller.dismiss() : listen.stop())}
-        data-testid="listen-stop"
-      >
-        {LISTEN_BAR_COPY.stopShort}
-      </button>
+      <StopOrLost state={state} compact />
     </div>
   );
 }
@@ -347,6 +367,11 @@ function Banners({ state }: { state: ListenSessionState }) {
       {state.phase === 'reconnecting' ? (
         <div className={styles.banner} data-tone="warning" data-testid="listen-reconnecting">
           {LISTEN_BAR_COPY.reconnectingDetail}
+        </div>
+      ) : null}
+      {state.phase === 'lost' ? (
+        <div className={styles.banner} data-tone="warning" data-testid="listen-lost">
+          {LISTEN_BAR_COPY.lostDetail}
         </div>
       ) : null}
     </>

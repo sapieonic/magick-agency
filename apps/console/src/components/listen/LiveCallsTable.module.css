@@ -327,3 +327,28 @@
     transition: none;
   }
 }
+
+/* "+N" past the stack's avatars: the same disc, quieter. */
+.stackMore {
+  width: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+/* "Clear filters": a text button beside the chips and under "No calls … match these filters." */
+.clearFilters {
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.clearFilters:hover {
+  color: var(--accent-hover);
+}

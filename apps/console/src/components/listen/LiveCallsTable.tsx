@@ -21,7 +21,12 @@ import {
   customerLabel,
   formatClock,
   inProgressLabel,
+  listenToLabel,
+  moreListenersLabel,
   notListenableCopy,
+  openCallLabel,
+  revealLabel,
+  stopListeningToLabel,
   updatedAgoLabel,
 } from '../../utils/listen/listenCopy';
 import {
@@ -30,11 +35,13 @@ import {
   NO_LIVE_CALL_FILTERS,
   agentName,
   filterLiveCalls,
+  hasLiveCallFilters,
   isLiveCallOverrun,
   liveCallFilterOptions,
   liveCallRowPagePath,
   nextLiveCallSort,
   sortLiveCalls,
+  type LiveCallFilterOption,
   type LiveCallFilters,
   type LiveCallSort,
   type LiveCallSortKey,
@@ -73,6 +80,9 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
   useRepaintTick(rows !== null && rows.length > 0);
 
   const [filters, setFilters] = useState<LiveCallFilters>(NO_LIVE_CALL_FILTERS);
+  // The agent and campaign chosen, by name: kept on offer after their calls end, so the filter in
+  // force still reads as itself in its control.
+  const [chosen, setChosen] = useState<{ agent: LiveCallFilterOption | null; campaign: LiveCallFilterOption | null }>({ agent: null, campaign: null });
   const [sort, setSort] = useState<LiveCallSort>(DEFAULT_LIVE_CALL_SORT);
   const [reveals, setReveals] = useState<Record<string, Reveal>>({});
   const showCampaign = !campaignId;
@@ -95,7 +105,20 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
     });
   }, [liveIds]);
 
-  const options = useMemo(() => liveCallFilterOptions((rows ?? []).map((r) => r.call)), [rows]);
+  const options = useMemo(() => liveCallFilterOptions((rows ?? []).map((r) => r.call), chosen), [rows, chosen]);
+  const filtered = hasLiveCallFilters(filters);
+  const clearFilters = useCallback(() => {
+    setFilters(NO_LIVE_CALL_FILTERS);
+    setChosen({ agent: null, campaign: null });
+  }, []);
+  const chooseAgent = (id: string) => {
+    setFilters((f) => ({ ...f, agent: id }));
+    setChosen((c) => ({ ...c, agent: options.agents.find((a) => a.id === id) ?? null }));
+  };
+  const chooseCampaign = (id: string) => {
+    setFilters((f) => ({ ...f, campaign: id }));
+    setChosen((c) => ({ ...c, campaign: options.campaigns.find((o) => o.id === id) ?? null }));
+  };
   const shown = useMemo(() => sortLiveCalls(filterLiveCalls(rows ?? [], filters), sort), [rows, filters, sort]);
 
   const toggleNumber = useCallback(
@@ -142,7 +165,8 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
             {LIVE_CALLS_COPY.title}
           </Heading>
         </div>
-        {liveCount !== null ? (
+        {/* Nothing in progress: the empty state says so; "0 in progress" beside it is noise. */}
+        {liveCount !== null && liveCount > 0 ? (
           <span className={styles.countPill} data-testid="live-calls-count">
             <LiveDot live={liveCount > 0} size={7} />
             {inProgressLabel(liveCount)}
@@ -155,16 +179,16 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
         ) : null}
       </header>
 
-      <div className={styles.filters} role="group" aria-label="Filter live calls">
+      <div className={styles.filters} role="group" aria-label={LIVE_CALLS_COPY.filters}>
         {showCampaign ? (
           <label className={styles.filter}>
-            <span className="sr-only">Campaign</span>
+            <span className="sr-only">{LIVE_CALLS_COPY.campaignFilter}</span>
             <select
               value={filters.campaign}
-              onChange={(e) => setFilters((f) => ({ ...f, campaign: e.target.value }))}
+              onChange={(e) => chooseCampaign(e.target.value)}
               data-testid="live-calls-campaign-filter"
             >
-              <option value="">All campaigns</option>
+              <option value="">{LIVE_CALLS_COPY.allCampaigns}</option>
               {options.campaigns.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -174,13 +198,13 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
           </label>
         ) : null}
         <label className={styles.filter}>
-          <span className="sr-only">Agent</span>
+          <span className="sr-only">{LIVE_CALLS_COPY.agentFilter}</span>
           <select
             value={filters.agent}
-            onChange={(e) => setFilters((f) => ({ ...f, agent: e.target.value }))}
+            onChange={(e) => chooseAgent(e.target.value)}
             data-testid="live-calls-agent-filter"
           >
-            <option value="">All agents</option>
+            <option value="">{LIVE_CALLS_COPY.allAgents}</option>
             {options.agents.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -188,7 +212,7 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
             ))}
           </select>
         </label>
-        <div className={styles.chips} role="group" aria-label="Type">
+        <div className={styles.chips} role="group" aria-label={LIVE_CALLS_COPY.typeFilter}>
           {LIVE_CALL_TYPE_FILTERS.map((t) => (
             <button
               key={t.id}
@@ -202,6 +226,11 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
             </button>
           ))}
         </div>
+        {filtered ? (
+          <button type="button" className={styles.clearFilters} onClick={clearFilters} data-testid="live-calls-clear-filters">
+            {LIVE_CALLS_COPY.clearFilters}
+          </button>
+        ) : null}
       </div>
 
       {failure === 'transient' ? (
@@ -215,23 +244,28 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
       ) : rows.length === 0 ? (
         <EmptyState icon={<PhoneCall size={22} />} title={LIVE_CALLS_COPY.emptyTitle} description={LIVE_CALLS_COPY.emptyBody} />
       ) : shown.length === 0 ? (
-        <p className={styles.noMatch}>No calls in progress match these filters.</p>
+        <p className={styles.noMatch}>
+          {LIVE_CALLS_COPY.noMatch}{' '}
+          <button type="button" className={styles.clearFilters} onClick={clearFilters} data-testid="live-calls-clear-filters">
+            {LIVE_CALLS_COPY.clearFilters}
+          </button>
+        </p>
       ) : (
         <div className={spine.tableWrap}>
           <table className={`${spine.table} ${styles.table}`} data-testid="live-calls-table">
             <caption className="sr-only">
-              {campaignId ? 'Calls in progress on this campaign, longest on call first' : 'Calls in progress in this account, longest on call first'}
+              {campaignId ? LIVE_CALLS_COPY.captionCampaign : LIVE_CALLS_COPY.captionAccount}
             </caption>
             <thead>
               <tr>
-                <SortHeader label="Agent" sortKey="agent" sort={sort} onSort={setSort} />
-                <th scope="col">Customer</th>
-                {showCampaign ? <th scope="col">Campaign</th> : null}
-                <th scope="col">Type</th>
-                <SortHeader label="Time on call" sortKey="time" sort={sort} onSort={setSort} />
-                <th scope="col">Recording</th>
-                <th scope="col">Listening</th>
-                {showAction ? <th scope="col"><span className="sr-only">Action</span></th> : null}
+                <SortHeader label={LIVE_CALLS_COPY.columnAgent} sortKey="agent" sort={sort} onSort={setSort} />
+                <th scope="col">{LIVE_CALLS_COPY.columnCustomer}</th>
+                {showCampaign ? <th scope="col">{LIVE_CALLS_COPY.columnCampaign}</th> : null}
+                <th scope="col">{LIVE_CALLS_COPY.columnType}</th>
+                <SortHeader label={LIVE_CALLS_COPY.columnTime} sortKey="time" sort={sort} onSort={setSort} />
+                <th scope="col">{LIVE_CALLS_COPY.columnRecording}</th>
+                <th scope="col">{LIVE_CALLS_COPY.columnListening}</th>
+                {showAction ? <th scope="col"><span className="sr-only">{LIVE_CALLS_COPY.columnAction}</span></th> : null}
                 <th scope="col"><span className="sr-only">{LIVE_CALLS_COPY.openCall}</span></th>
               </tr>
             </thead>
@@ -356,7 +390,7 @@ function LiveCallRow({
                 className={styles.reveal}
                 onClick={() => onToggleNumber(call.call_id)}
                 disabled={reveal?.status === 'loading'}
-                aria-label={`${reveal?.status === 'shown' ? LIVE_CALLS_COPY.hide : LIVE_CALLS_COPY.show} number for ${customer}`}
+                aria-label={revealLabel(reveal?.status === 'shown', customer)}
                 data-testid={`live-call-reveal-${call.call_id}`}
               >
                 {reveal?.status === 'shown' ? LIVE_CALLS_COPY.hide : LIVE_CALLS_COPY.show}
@@ -407,7 +441,7 @@ function LiveCallRow({
           <Link
             to={pagePath}
             className={styles.openCall}
-            aria-label={`${LIVE_CALLS_COPY.openCall}: ${name} with ${customer}`}
+            aria-label={openCallLabel(name, customer)}
             data-testid={`live-call-open-${call.call_id}`}
           >
             {LIVE_CALLS_COPY.openCall}
@@ -419,16 +453,25 @@ function LiveCallRow({
   );
 }
 
+/** Avatars shown in the Listening stack; the rest are "+N" (every name is in the title and to a screen reader). */
+const LISTENER_AVATARS = 3;
+
 function Listeners({ call, myUserId }: { call: AgencyLiveCall; myUserId: string | null }) {
   if (call.listeners.length === 0) return <span className={styles.muted}>—</span>;
-  const names = call.listeners.map((l) => (l.user_id === myUserId ? 'You' : l.name?.trim() || 'A supervisor'));
+  const names = call.listeners.map((l) => (l.user_id === myUserId ? LIVE_CALLS_COPY.you : l.name?.trim() || LIVE_CALLS_COPY.aSupervisor));
+  const more = call.listeners.length - LISTENER_AVATARS;
   return (
     <span className={styles.stack} title={names.join(', ')} data-testid={`live-call-listeners-${call.call_id}`}>
-      {call.listeners.map((l, i) => (
-        <span key={l.user_id} className={styles.stackAvatar} aria-hidden="true" data-you={l.user_id === myUserId ? 'true' : undefined}>
-          {l.user_id === myUserId ? 'You' : initialsFor(l.name)}
+      {call.listeners.slice(0, LISTENER_AVATARS).map((l) => (
+        <span key={l.user_id} className={styles.stackAvatar} aria-hidden="true" data-avatar="" data-you={l.user_id === myUserId ? 'true' : undefined}>
+          {l.user_id === myUserId ? LIVE_CALLS_COPY.you : initialsFor(l.name)}
         </span>
-      )).slice(0, 3)}
+      ))}
+      {more > 0 ? (
+        <span className={`${styles.stackAvatar} ${styles.stackMore}`} aria-hidden="true" data-testid={`live-call-listeners-more-${call.call_id}`}>
+          {moreListenersLabel(more)}
+        </span>
+      ) : null}
       <span className="sr-only">{names.join(', ')}</span>
     </span>
   );
@@ -460,10 +503,22 @@ function Action({
     );
   }
   if (mine) {
+    // Connecting or reconnecting: still the supervisor's to stop, from the row as from the bar.
     return (
-      <span className={styles.connecting} data-testid={`live-call-connecting-${call.call_id}`}>
-        <LoadingSpinner size="sm" decorative />
-        {LIVE_CALLS_COPY.connecting}
+      <span className={styles.refused}>
+        <span className={styles.connecting} data-testid={`live-call-connecting-${call.call_id}`}>
+          <LoadingSpinner size="sm" decorative />
+          {listen.state.phase === 'reconnecting' ? LIVE_CALLS_COPY.reconnecting : LIVE_CALLS_COPY.connecting}
+        </span>
+        <button
+          type="button"
+          className={`btn-secondary ${styles.actionButton}`}
+          onClick={listen.stop}
+          aria-label={stopListeningToLabel(agentName(call))}
+          data-testid={`live-call-stop-${call.call_id}`}
+        >
+          {LIVE_CALLS_COPY.stop}
+        </button>
       </span>
     );
   }
@@ -475,7 +530,7 @@ function Action({
           {LIVE_CALLS_COPY.listen}
         </button>
         <span id={reasonId} className={styles.reason} data-testid={`live-call-reason-${call.call_id}`}>
-          {notListenableCopy(call.not_listenable_reason)}
+          {notListenableCopy(call.not_listenable_reason, call.listeners.length)}
         </span>
       </span>
     );
@@ -485,7 +540,7 @@ function Action({
       type="button"
       className={`btn-secondary ${styles.actionButton}`}
       onClick={() => listen.listen(call, clockOffsetMs)}
-      aria-label={`Listen to ${agentName(call)}’s call`}
+      aria-label={listenToLabel(agentName(call))}
       data-listen-trigger={call.call_id}
       data-testid={`live-call-listen-${call.call_id}`}
     >
