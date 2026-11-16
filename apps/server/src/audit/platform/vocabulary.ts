@@ -202,6 +202,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   // Live call listening (docs/listening.md): "listening" in both, so neither reads as the agent's act.
   { value: 'agency_call.listen_started', label: 'Supervisor started listening to a call', group: 'Calls', product: 'agency' },
   { value: 'agency_call.listen_ended', label: 'Supervisor stopped listening to a call', group: 'Calls', product: 'agency' },
+  { value: 'agency_listen_sessions.exported', label: 'Listening history exported', group: 'Calls', product: 'agency' },
 
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },

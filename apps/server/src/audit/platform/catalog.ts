@@ -122,6 +122,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // Tenant-wide reads, never campaign-scoped.
   'agency_customer_history.searched',
   'agency_customer_history.exported',
+  // ── Listening history (docs/listening.md §12) ─────────────────────────────────
+  // The account's listening history exported as CSV (who listened to which call). `resource_id` is
+  // the account; `details` carry the rows written, the filters and any truncation. Account-wide,
+  // never campaign-scoped.
+  'agency_listen_sessions.exported',
   // ── Reports (docs/reports.md) ─────────────────────────────────────────────────
   // A report run asked for (`details.via`: `request`, `retry` or `run_now`; kind, subject,
   // window, zone, formats, audience) and one file of it downloaded (`details.format`). Filed under

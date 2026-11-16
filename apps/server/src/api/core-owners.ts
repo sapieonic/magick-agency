@@ -118,6 +118,8 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   // same process, spends.
   'GET /live-calls': 'none',
   'POST /listen-grants': 'body_session',
+  // The account's listening history (`agency/listen-history.ts`, docs/listening.md §12): SQL only.
+  'GET /listen-history': 'none',
 };
 
 /** A matched internal route: its owner kind and the path's `:id`, if it has one. */
