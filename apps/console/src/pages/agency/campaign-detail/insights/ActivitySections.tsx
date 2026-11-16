@@ -1,4 +1,5 @@
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
+import { LabelWithHint } from '@magick-agency/web-ui/components/HelpTooltip';
 import type { AgencyAttemptOutcome } from '../../../../types/agency';
 import type {
   AgencyInsightsActivity,
@@ -13,6 +14,7 @@ import {
   allCallsCounts,
   averageHandleSeconds,
   callsConnectRate,
+  firstDials,
   insightsRate,
   showSoftphoneFigures,
   softphoneConnectRate,
@@ -22,7 +24,16 @@ import {
 } from '../../../../utils/agency/insights/rates';
 import { attemptsLink } from '../../../../utils/agency/insights/links';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
-import { callbacksGapNote, keptOnTimeSub, notDialledSub, overdueNowSub } from '../../../../utils/agency/insights/copy';
+import {
+  CONNECTED_TILE_HINT,
+  CONNECTED_WITH_REDIALS_HINT,
+  CONNECTED_WITH_REDIALS_LABEL,
+  callbacksGapNote,
+  connectRateLine,
+  keptOnTimeSub,
+  notDialledSub,
+  overdueNowSub,
+} from '../../../../utils/agency/insights/copy';
 import {
   CountLink,
   CsvButton,
@@ -71,6 +82,8 @@ const OUTCOME_ORDER: AgencyAttemptOutcome[] = [
 export interface OutcomeLine {
   outcome: AgencyAttemptOutcome | null;
   label: string;
+  /** Extra words beside the label. Only the connected row, which is not the tile's count. */
+  hint?: string;
   count: number;
 }
 
@@ -79,7 +92,9 @@ export function outcomeLines(activity: AgencyInsightsActivity): OutcomeLine[] {
   const by = activity.calls.by_outcome;
   const lines: OutcomeLine[] = OUTCOME_ORDER.map((outcome) => ({
     outcome,
-    label: ATTEMPT_OUTCOME_LABELS[outcome],
+    // "Connected" on its own is the tile above, which leaves wrap-up redials out.
+    label: outcome === 'connected' ? CONNECTED_WITH_REDIALS_LABEL : ATTEMPT_OUTCOME_LABELS[outcome],
+    hint: outcome === 'connected' ? CONNECTED_WITH_REDIALS_HINT : undefined,
     count: by[outcome] ?? 0,
   }));
   lines.push({ outcome: null, label: 'Still live or not yet recorded', count: by.null_outcome ?? 0 });
@@ -100,7 +115,12 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
   const all = soft ? allCallsCounts(calls, soft) : null;
 
   const outcomeColumns: InsightsColumn<OutcomeLine>[] = [
-    { key: 'label', header: 'Outcome', render: (l) => l.label, csv: (l) => l.outcome ?? 'null_outcome' },
+    {
+      key: 'label',
+      header: 'Outcome',
+      render: (l) => (l.hint ? <LabelWithHint label={l.label} hint={l.hint} size={13} /> : l.label),
+      csv: (l) => l.outcome ?? 'null_outcome',
+    },
     {
       key: 'count',
       header: 'Dials',
@@ -164,8 +184,9 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
         />
         <Kpi
           label="Connected"
+          hint={CONNECTED_TILE_HINT}
           value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'connected', redial: false })} value={calls.connected} label="connected calls" />}
-          sub={`${soft ? 'Dialler connect rate' : 'Connect rate'} ${connect.value}`}
+          sub={connectRateLine(connect.value, calls.human_connects, firstDials(calls), soft !== null)}
           testId="kpi-connected"
         />
         <Kpi

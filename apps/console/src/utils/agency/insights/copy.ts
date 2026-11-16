@@ -204,6 +204,63 @@ export function rangeFreshness(read: { as_of: string | null; pending_buckets: nu
     : asOf;
 }
 
+// ── Connected: two counts, one word ─────────────────────────────────────────
+
+/**
+ * The Calls panel shows "Connected" twice, and they are not the same count.
+ *
+ *  - The tile is `calls.connected`: outcome `connected` and not a wrap-up redial.
+ *  - The By outcome row is every placed dial with outcome `connected`, wrap-up
+ *    redials included, so it is larger by `calls.redials.connected`.
+ *  - The rate under the tile is not that tile divided by anything. It is people
+ *    answered (`human_connects`: a conversation closed with an outcome other than
+ *    voicemail or "no outcome") over first dials placed (a placed dial that was
+ *    not a wrap-up redial). The same words as the campaign Performance card (IN10).
+ */
+
+/** The By outcome row. The tile's "Connected" leaves wrap-up redials out. */
+export const CONNECTED_WITH_REDIALS_LABEL = 'Connected (including wrap-up redials)';
+
+/** Beside that row: how it differs from the tile. */
+export const CONNECTED_WITH_REDIALS_HINT =
+  'Every placed dial that connected, including wrap-up redials. The Connected tile leaves those redials out.';
+
+/** Beside the Connected tile: the figure, and why the rate under it is a different count. */
+export const CONNECTED_TILE_HINT =
+  'Calls that connected, not counting wrap-up redials. The rate is people answered — a conversation closed with an outcome other than voicemail or “no outcome” — over first dials placed, not this number over dials.';
+
+/**
+ * "Dialler connect rate" wherever soft-phone figures sit beside the dialler's (SR1);
+ * "Connect rate" on its own.
+ */
+export function connectRateName(dialler: boolean): string {
+  return dialler ? 'Dialler connect rate' : 'Connect rate';
+}
+
+/**
+ * The words after a count printed on its own: "people answered, of 433 first dials placed".
+ * One person and one dial agree ("person answered", "first dial"). The campaign Performance
+ * card prints the count in its own weight and these words after it (IN10).
+ */
+export function peopleAnsweredRest(humanConnects: number, firstDials: number): string {
+  const people = humanConnects === 1 ? 'person answered' : 'people answered';
+  return `${people}, of ${plural(firstDials, 'first dial')} placed`;
+}
+
+/** The connect rate's own fraction, the Performance card's words, so it is not read as the Connected figure over dials. */
+export function peopleAnsweredOfFirstDials(humanConnects: number, firstDials: number): string {
+  return `${formatCount(humanConnects)} ${peopleAnsweredRest(humanConnects, firstDials)}`;
+}
+
+/**
+ * Under the Connected tile. `rate` is already the page's rate text (`30%`,
+ * "Not enough calls yet", "—"). `dialler` names it as the dialler's when
+ * soft-phone figures sit beside it.
+ */
+export function connectRateLine(rate: string, humanConnects: number, firstDials: number, dialler: boolean): string {
+  return `${connectRateName(dialler)} ${rate} · ${peopleAnsweredOfFirstDials(humanConnects, firstDials)}`;
+}
+
 // ── Callbacks ───────────────────────────────────────────────────────────────
 
 /**

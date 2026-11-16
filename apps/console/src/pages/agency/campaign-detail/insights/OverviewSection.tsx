@@ -14,11 +14,13 @@ import {
   allCallsConnectRate,
   allCallsCounts,
   callsConnectRate,
+  firstDials,
   penetrationRate,
   showSoftphoneFigures,
   softphoneConnectRate,
   successRate,
 } from '../../../../utils/agency/insights/rates';
+import { connectRateName, peopleAnsweredOfFirstDials } from '../../../../utils/agency/insights/copy';
 import { attemptsLink, rosterBucketLink } from '../../../../utils/agency/insights/links';
 import {
   agentsTeaser,
@@ -102,10 +104,10 @@ export function OverviewKpis({
         testId="overview-kpi-dials"
       />
       <Kpi
-        label={`${soft ? 'Dialler connect rate' : 'Connect rate'} · ${rangeLabel}`}
+        label={`${connectRateName(soft !== null)} · ${rangeLabel}`}
         value={connect ? connect.value : pending('activity')}
         withheld={!connect || connect.withheld}
-        sub={calls ? `${formatCount(calls.connected)} connected calls${softAndAll}` : undefined}
+        sub={calls ? `${peopleAnsweredOfFirstDials(calls.human_connects, firstDials(calls))}${softAndAll}` : undefined}
         testId="overview-kpi-connect"
       />
       <Kpi

@@ -404,7 +404,13 @@ that opens a list, the list, and its params. `test/integration/api/agency-insigh
 seeds a campaign in every bucket, runs the rollup job, reads the sections through `buildApp` and checks
 each list's `include_total=1` total equals its number; the console's `insightsDrilldowns.test.tsx`
 checks its builders send exactly those params and the sections, rendered from that run's real
-responses (`insights-responses.json`), carry the link. The "Connected" links send `redial=0`. Numbers
+responses (`insights-responses.json`), carry the link. The Connected tile's link sends `redial=0`
+(outcome connected, wrap-up redials left out). The By outcome row is labelled "Connected (including
+wrap-up redials)" and its link sends `outcome=connected` with no `redial` filter, so the list is every
+connected dial, redials included; adding `redial=0` there would open a shorter list than the number
+beside it. The line under that tile, and under the Overview connect-rate tile, is the rate's own
+fraction in the Performance card's words (IN10): "N people answered, of M first dials placed", one
+person and one dial agreeing, not the tile's count over dials. Numbers
 with no list whose total is theirs are not linked: callbacks due today (due before local midnight),
 the callbacks' open-by-owner counts (booked in range, due ones included), the Unassigned row's dial
 counters (dials with no session), overrides by outcome (counted by the granting outcome, which no
