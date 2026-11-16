@@ -7,6 +7,7 @@ import { proxyAgencyAgentRoutes } from './routes/proxy-agency-agent.routes.js';
 import { proxyAgencyStationRoutes } from './routes/proxy-agency-station.routes.js';
 import { proxyAgencyListenRoutes } from './routes/proxy-agency-listen.routes.js';
 import { proxyAgencyLiveCallsRoutes } from './routes/proxy-agency-live-calls.routes.js';
+import { proxyAgencyListenHistoryRoutes } from './routes/proxy-agency-listen-history.routes.js';
 import { dncAvailabilityProbe } from '../agency/dnc-availability.js';
 import { buildCoreHandlers } from './core-handlers.js';
 import { getCoreHandlers, setCoreHandlers } from './core-dispatch.js';
@@ -212,6 +213,11 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // Its own refusals for ids: a malformed call id is the uniform `404 listen_call_not_live`.
   await app.register(async (scope) => {
     await scope.register(proxyAgencyLiveCallsRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── The account's listening history (`proxy-agency-listen-history.routes.ts`, docs/listening.md §12) ──
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyListenHistoryRoutes, { prefix: P.proxyAgency });
   });
 
   // ── The ring of an away agent's phone (Mode B; `proxy-agency-inbound-ring.routes.ts`) ─────

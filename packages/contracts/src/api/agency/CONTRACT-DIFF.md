@@ -198,6 +198,13 @@ caller; the row's `correlation_id`, the spine row the call pages are keyed on, a
 `aht_seconds`, added with the server side), so none has a dialer twin; `AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS` is a
 subset of the dialer contract's `AgencyListenErrorCode`, so a row and the grant say the same thing.
 
+The listening history (`listen-history.ts`, docs/listening.md §12) is console-side too:
+`AgencyListenHistoryEntry` (a supervisor's merged sessions on one call, with the names and the
+masked number the public layer adds, and `customer_phone_withheld`), `AgencyListenHistoryResponse`,
+`AgencyListenHistoryQuery`, the merge gap, the page and export limits and
+`AGENCY_LISTEN_END_REASON_LABELS` (keyed by the dialer contract's `AgencyListenEndReason`). The
+internal handler answers the same visits with the full number and no names; it has no dialer twin.
+
 ## 5. Request fields the server sets itself
 
 - `agent_user_id` on `AgencyCreateSessionRequest` and `AgencyActorFields` is filled by the public API

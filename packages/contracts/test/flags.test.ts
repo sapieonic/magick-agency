@@ -17,7 +17,8 @@ const EXPECTED = {
   // Live call listening (LS1): the consent gate, off until a tenant turns it on.
   agency_live_listen_enabled: { default: false, envVar: 'FF_AGENCY_LIVE_LISTEN', clientExposed: true },
   // On by default: a narrowing of listening (recorded calls only when off), not a capability (LS4).
-  agency_live_listen_unrecorded: { default: true, envVar: 'FF_AGENCY_LIVE_LISTEN_UNRECORDED', clientExposed: undefined },
+  // Client-exposed since LS20: the account's Settings says whether unrecorded calls are included.
+  agency_live_listen_unrecorded: { default: true, envVar: 'FF_AGENCY_LIVE_LISTEN_UNRECORDED', clientExposed: true },
 } as const;
 
 describe('agency flags', () => {
@@ -47,9 +48,9 @@ describe('agency flags', () => {
       agency_reports_enabled: false,
       agency_inbound_enabled: false,
       agency_live_listen_enabled: false,
+      agency_live_listen_unrecorded: true,
     };
     expect(Object.keys(map)).not.toContain('agency_late_binding');
-    expect(Object.keys(map)).not.toContain('agency_live_listen_unrecorded');
   });
 
   it('is frozen', () => {

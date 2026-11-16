@@ -18,8 +18,7 @@
  *    app is a plain Fastify app; the bodies asserted are the route's own first-party 4xx.
  * Not covered, because there is nothing to test: a broadcast-concurrency cache bust (no
  * broadcast campaigns, `afterOverrideWrite` is deleted), an unreachable upstream (no hop),
- * flag policies (`flag-policies` is deleted; no agency flag has a policy, so there is no
- * reason-required / bulk-refused / `policy` field), an `Invalid Scope` row for bulk (every
+ * an `Invalid Scope` row for bulk (every
  * flag permits tenant scope), and masking of upstream 4xx/5xx (no upstream response and no
  * error mask).
  */
@@ -305,9 +304,8 @@ describe('super-admin feature-flags routes', () => {
       expect(coreTouched()).toBe(false);
     });
   });
-  // Bot transcripts in Loki: tenant/account only. The flag is an unregistered fixture;
-  // only the cases that do not depend on `flag-policies` (deleted) are here (see the file
-  // note).
+  // Bot transcripts in Loki: tenant/account only. The flag is an unregistered fixture with no
+  // policy of its own (`flag-policies.ts` holds only registered flags).
   describe('ai_turn_transcript_logging policy', () => {
     const FLAG = 'ai_turn_transcript_logging';
     const put = (payload: object) => app.inject({
@@ -360,6 +358,90 @@ describe('super-admin feature-flags routes', () => {
       const res = await app.inject({
         method: 'PUT', url: '/super-admin/feature-flags/agency_dialer_enabled/overrides',
         headers: authHeaders(), payload: { scope_type: 'tenant', tenant_id: TENANT_1, value: true },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  // Live call listening's consent gate (LS20, `src/feature-flags/flag-policies.ts`): a handling
+  // policy served on the catalog and the detail read, and enforced on every write path.
+  describe('agency_live_listen_enabled policy', () => {
+    const FLAG = 'agency_live_listen_enabled';
+    const put = (payload: object) => app.inject({
+      method: 'PUT', url: `/super-admin/feature-flags/${FLAG}/overrides`, headers: authHeaders(), payload,
+    });
+    const POLICY = {
+      warning: expect.stringMatching(/monitor/),
+      bulk_allowed: false,
+      reason_required_to_enable: true,
+    };
+
+    it('the catalog and the detail read carry its policy; other flags carry none', async () => {
+      const catalog = (await app.inject({ method: 'GET', url: '/super-admin/feature-flags', headers: authHeaders() })).json();
+      const byKey = new Map<string, unknown>(catalog.flags.map((f: { key: string }) => [f.key, f]));
+      expect((byKey.get(FLAG) as { policy?: unknown }).policy).toEqual(POLICY);
+      for (const [key, entry] of byKey) if (key !== FLAG) expect(entry, key).not.toHaveProperty('policy');
+      const detail = (await app.inject({ method: 'GET', url: `/super-admin/feature-flags/${FLAG}`, headers: authHeaders() })).json();
+      expect(detail.flag.policy).toEqual(POLICY);
+    });
+
+    it.each([
+      ['no reason', {}],
+      ['a null reason', { reason: null }],
+      ['a blank reason', { reason: '   ' }],
+    ])('turning it ON for a tenant or an account with %s is refused 400, nothing written or audited', async (_name, extra) => {
+      for (const scope of [{ scope_type: 'tenant', tenant_id: TENANT_1 }, { scope_type: 'account', tenant_id: TENANT_1, account_id: ACC_1 }]) {
+        const res = await put({ ...scope, value: true, ...extra });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toMatchObject({ error: 'Reason Required', code: 'flag_reason_required' });
+      }
+      expect(mocks.flagRepo.upsert).not.toHaveBeenCalled();
+      expect(mocks.auditLog).not.toHaveBeenCalled();
+    });
+
+    it('turning it ON for a tenant with a reason is written and audited with the reason', async () => {
+      const res = await put({ scope_type: 'tenant', tenant_id: TENANT_1, value: true, reason: 'Callers told; checklist done' });
+      expect(res.statusCode).toBe(200);
+      expect(mocks.flagRepo.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        flag_key: FLAG, scope_type: 'tenant', value: true, reason: 'Callers told; checklist done',
+      }));
+      expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+        details: expect.objectContaining({ value: true, reason: 'Callers told; checklist done' }),
+      }));
+    });
+
+    it('turning it ON globally is refused 422 even with a reason (every tenant at once); OFF globally is allowed', async () => {
+      const on = await put({ scope_type: 'global', value: true, reason: 'everyone' });
+      expect(on.statusCode).toBe(422);
+      expect(on.json()).toMatchObject({ error: 'Bulk Not Allowed', code: 'flag_bulk_not_allowed' });
+      expect(mocks.flagRepo.upsert).not.toHaveBeenCalled();
+      const off = await put({ scope_type: 'global', value: false });
+      expect(off.statusCode).toBe(200);
+      expect(mocks.flagRepo.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('turning it OFF needs no reason', async () => {
+      const res = await put({ scope_type: 'account', tenant_id: TENANT_1, account_id: ACC_1, value: false });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('a bulk rollout is refused 422 whatever the value, nothing written or audited', async () => {
+      for (const value of [true, false]) {
+        const res = await app.inject({
+          method: 'POST', url: `/super-admin/feature-flags/${FLAG}/overrides/bulk`,
+          headers: authHeaders(), payload: { tenant_ids: [T1, T2], value, reason: 'all of them' },
+        });
+        expect(res.statusCode).toBe(422);
+        expect(res.json()).toMatchObject({ error: 'Bulk Not Allowed', code: 'flag_bulk_not_allowed' });
+      }
+      expect(mocks.flagRepo.upsert).not.toHaveBeenCalled();
+      expect(mocks.auditLog).not.toHaveBeenCalled();
+    });
+
+    it('deleting an override is not guarded (it falls back to the inherited value, off by default)', async () => {
+      const res = await app.inject({
+        method: 'DELETE', url: `/super-admin/feature-flags/${FLAG}/overrides`,
+        headers: authHeaders(), payload: { scope_type: 'tenant', tenant_id: TENANT_1 },
       });
       expect(res.statusCode).toBe(200);
     });

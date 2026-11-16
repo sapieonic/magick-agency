@@ -101,14 +101,16 @@ describe('the guards', () => {
     expect(deps.listenFlags).toHaveBeenCalledWith(TENANT, ACCOUNT);
   });
 
-  it('the flags cannot be read: the grant is 503 listen_unavailable (counted), the list and the number the flag\'s default 403', async () => {
+  it('the flags cannot be read: 503 listen_unavailable on every route through the error mask (a transient answer, never the terminal feature_disabled); only the grant is counted', async () => {
     (deps.listenFlags as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
     const grant = await listen();
     expect([grant.statusCode, grant.json().code]).toEqual([503, 'listen_unavailable']);
     expect(deps.trackGrant).toHaveBeenCalledWith('listen_unavailable');
     for (const res of [await get('/proxy/agency/live-calls'), await get(`/proxy/agency/live-calls/${CALL}/number`)]) {
-      expect([res.statusCode, res.json().code]).toEqual([403, 'feature_disabled']);
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toEqual({ error: 'Service Unavailable', code: 'listen_unavailable', message: 'Listening could not be started. Try again.' });
     }
+    expect(deps.trackGrant).toHaveBeenCalledTimes(1);
     expect(deps.calls).toEqual([]);
   });
 

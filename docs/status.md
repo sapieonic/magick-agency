@@ -2137,6 +2137,29 @@ withheld rule; the token query's type guard; the logger's flush stopping it; the
 reversed; "Listened to by" without `live_at`; 0048's CHECK without the reason; its Down's refusal;
 the worker reap closing every open row; the worker reap closing none.
 
+### Live call listening, the persona review: history and guard rails 2026-11-16 (LS18–LS20, [`listening.md`](listening.md) §12)
+
+The product owner's decisions on the persona review, server side (the console's pages are a later
+step). **The listening history (LS19):** `GET /proxy/agency/listen-history` and `.csv`
+(`agency.supervise` and the consent flag), through the internal `GET /api/v1/agency/listen-history`;
+a supervisor's sessions on one call merged on the server into one entry (30 s gap, or while one is
+open; overlaps counted once); the CSV masked and audited `agency_listen_sessions.exported`;
+contracts `api/agency/listen-history.ts`. A campaign's listen History rows name the agent
+(`detail.agent_name`, at the read). **Guard rails (LS20):** `agency_live_listen_enabled` has a
+handling policy in the super-admin flag routes (`feature-flags/flag-policies.ts`: a reason to turn
+it on, no bulk rollout, no global On); the super-admin registry says why a global On is refused;
+`agency_live_listen_unrecorded` is client-exposed for the Settings line; the enablement checklist
+is in [`operations.md`](operations.md), with LS18's inbound item. **The live list and the number**
+answer a flag store outage `503 listen_unavailable`, not the `403 feature_disabled` the console
+stops polling on. Mutation-checked: the history's merge gap, its open-session merge, its time
+counted once, its account scope and its cursor's id tiebreak (`listen-history.test.ts`); the
+public layer's masking, its export audit row and its outage answer
+(`proxy-agency-listen-history.routes.test.ts`); the listen row's agent name
+(`agency-activity-service.test.ts`); the live list's and number's outage 403 and an unmasked 503
+(`proxy-agency-live-calls.routes.test.ts`); the policy's override check, bulk check, global
+refusal and blank reason (`super-admin-feature-flags.test.ts`); the registry's global-On guard
+(`SAFeatureFlagsPage.test.tsx`). Counts under "Test counts".
+
 ## Test counts
 
 **Live call listening, the server persona-review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`,
@@ -2151,6 +2174,17 @@ test database under a running suite (dozens of unrelated reds followed). `packag
 files) and lint clean; `packages/observability` 23 (5 files); `contracts-literals.mjs --check` up to
 date (71 vocabularies, 3 label maps); `agency_wire` 688 (`dart test`). From the root: `pnpm
 test:grafana` 33, `pnpm test:tooling` 20. `apps/console` lint clean against the contract changes.
+
+**Live call listening, the persona review's history and guard rails, 2026-11-16.** Worktree branch
+`worktree-agent-a316307ab48001ee7` (on `ccr-364c489c-zeoxwy` at `a13635b`), run on the tree of
+`3538f66` with its own test database. From `apps/server`: `pnpm lint` clean; unit 10357 passed + 1
+expected fail (522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3008 passed + 9 expected
+fail + 2 skipped (273 files passed, 2 skipped); the wall-clock lane not run here (its load check is
+the coordinator's). `apps/super-admin` `pnpm lint` clean, `pnpm test` 509 (37 files);
+`packages/contracts` `pnpm lint` clean, `pnpm test` 548 (16 files), the literal extractor's check up
+to date; `apps/console` `pnpm lint` clean (tests not rerun: no console file changed);
+`agency_wire` 688 (`dart test`); `apps/mobile` `station_listen_notice_test.dart` 4. From the root:
+`pnpm test:grafana` 33, `pnpm test:tooling` 20.
 
 **Live call listening, the server review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on the
 tree of `e0bf526`. From `apps/server`: `pnpm lint` clean; unit 10337 passed + 1 expected fail (521
@@ -3044,9 +3078,10 @@ image names it as its arbiter, a new migration drops it, and the same change del
 **Live call listening** ([`listening.md`](listening.md) §10): built end to end behind the flag
 `agency_live_listen_enabled` (off by default): the bridge tap, the registry, token store, socket,
 routes, revocation and reaps, the console's Live calls and listening bar, the agent's standing
-line, the inbound notice's words and the load check, with the review fixes. Rulings marked
-"default, pending Manas" in `decisions.md` (LS14–LS17) await sign-off. The agent's live
-"Supervisor listening" indicator is not built (LS2).
+line, the inbound notice's words and the load check, with the review fixes; the listening
+history and the consent gate's guard rails server side (LS19, LS20). Rulings marked "default,
+pending Manas" in `decisions.md` (LS14–LS17, the build's calls in LS19 and LS20, LS22) await
+sign-off. The agent's live "Supervisor listening" indicator is not built (LS2).
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
