@@ -1,3 +1,4 @@
+import 'package:agency_wire/agency_wire.dart' show FeatureFlags;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,9 +16,10 @@ void main() {
   const line = 'Calls may be listened to by a supervisor for quality and training.';
 
   test('follows the contract’s client flag', () {
-    expect(liveListenFlagKey, 'agency_live_listen_enabled');
+    // The key is agency_wire's, pinned there against the contract's platform.json fixture.
+    expect(FeatureFlags.liveListenEnabled, 'agency_live_listen_enabled');
     for (final on in [true, false]) {
-      final container = ProviderContainer(overrides: [featureFlagProvider(liveListenFlagKey).overrideWithValue(on)]);
+      final container = ProviderContainer(overrides: [featureFlagProvider(FeatureFlags.liveListenEnabled).overrideWithValue(on)]);
       addTearDown(container.dispose);
       expect(container.read(stationListenNoticeProvider), on);
     }

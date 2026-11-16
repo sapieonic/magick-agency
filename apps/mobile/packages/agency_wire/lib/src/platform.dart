@@ -583,6 +583,10 @@ final class FeatureFlags {
   /// shown whatever it says (the server's pacing reads the stored mode).
   static const contactAssignmentEnabled = 'agency_contact_assignment_enabled';
 
+  /// Live call listening (docs/listening.md LS1): supervisors may listen in.
+  /// The app reads it for the station's standing line only (LS2).
+  static const liveListenEnabled = 'agency_live_listen_enabled';
+
   final Map<String, Object> values;
 
   bool isOn(String key) => values[key] == true;
