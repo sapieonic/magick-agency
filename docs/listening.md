@@ -4,8 +4,9 @@ Supervisors see the calls in progress in their account and listen in silently fr
 Listen only: no whisper, no barge. The audio is forked from our own WebRTC bridge, in the process
 that owns the call; the carrier is not involved, and a slow, failing or dropped listener never
 affects the agent's or the customer's audio. Designed 2026-11-16 from the code, reviewed and locked
-by Manas the same day; decisions LS1–LS14 below. Built in phases (§10): phase 1, the foundation,
-is built; nothing a supervisor can use is yet.
+by Manas the same day; decisions LS1–LS15 below. Built in phases (§10): phase 1, the foundation,
+and phase 2, the tap in the bridge and its seam member, are built; nothing a supervisor can use is
+yet (the socket and routes are phase 3).
 
 Where things are: the socket's contract `packages/contracts/src/agency/listen.ts`, the console wire
 `packages/contracts/src/api/agency/live-calls.ts`, refusals `packages/contracts/src/errors.ts` §7,
@@ -13,12 +14,15 @@ permission `agency.calls.listen` (`rbac.ts`), flags `agency_live_listen_enabled`
 `agency_live_listen_unrecorded` (`flags.ts`), migration `0047_listen_sessions.sql`, repository
 `apps/server/src/db/repositories/agency/listen-session.repository.ts`, config `agency.listen`
 (`apps/server/src/config/blocks/agency.ts`), metrics in `packages/observability/src/metrics/agency.ts`
-and `voice.ts`, alert group `listen` (`grafana/terraform/alert-rules.tf`).
+and `voice.ts`, alert group `listen` (`grafana/terraform/alert-rules.tf`), the tap
+`apps/server/src/core/bridge/listen-tap.ts`, the seam member `WebRtcBridgeManager.openListenTap`
+(types in `core/bridge/bridge-types.ts`, `docs/seams.md` §3.1), `LISTENER_LIMITS`
+(`apps/server/src/utils/ws-backpressure.ts`).
 
 ## 1. Decisions
 
 Status words as in [`decisions.md`](decisions.md). LS1–LS13 are the locked design (Manas,
-2026-11-16); LS14 collects the calls phase 1 made where the design was silent.
+2026-11-16); LS14 collects the calls phase 1 made where the design was silent, LS15 phase 2's.
 
 | ID | Decision | Status |
 |---|---|---|
@@ -36,17 +40,19 @@ Status words as in [`decisions.md`](decisions.md). LS1–LS13 are the locked des
 | LS12 | **Retention.** `agency_listen_sessions` follows the platform audit log: its rows are deleted by the audit maintenance at the same cutoff (`AUDIT_RETENTION_DAYS`, default 85 days). | **Decided** (Manas, 2026-11-16) |
 | LS13 | **Who listened, on the call.** The call detail pages get a "Listened to by" section (who, start–end, duration) read from `agency_listen_sessions` by call id, visible to `agency.supervise` holders like the rest of the call page. | **Decided** (Manas, 2026-11-16) |
 | LS14 | **Phase 1's own calls.** (a) Refusal statuses: `listen_call_not_live` 404 (uniform: an ended call and another account's look alike), `listen_recording_off`, `listen_limit_call`, `listen_own_call` 409, `listen_limit_server`, `listen_unavailable` 503. (b) The socket's close codes and the code each end reason closes with (§3). (c) The session table carries a CHECK that a listener is never the call's agent, a backstop under `listen_own_call`, and has no foreign keys (it outlives its call, campaign and users). (d) Its Down refuses while any row exists. (e) Retention ages a row by its start, open or not: an open row past 85 days can only be one a dead process left, which the boot reap closes long before. (f) The live row carries `inbound_route_name` for "Inbound: <route>", which the field list in the design did not name. (g) `AGENCY_LISTEN_MAX_PER_USER` is a setting (default 1, at most 5). (h) `webrtc_relay_dwell_seconds` samples one frame in 50 per call and direction. | **default, pending Manas** |
+| LS15 | **Phase 2's own calls.** (a) The fault budget counts each leg's failed frames in a row apart: a dead customer leg is not kept attached by the agent's good frames. (b) A sink whose `send` throws, or answers `closed`, is ended `listener_disconnected` (4408, the console reconnects); `tap_error` is the budget only. (c) A sink's `frames_dropped` counts the frames it did not get: dropped at its soft limit, and the frames the tap failed while it was attached. (d) A call is listenable once the bridge has been announced (`bridged`: both legs live, the carrier's media negotiated), and stays so through the agent's re-attach window; a parked inbound caller, answered but with no agent bound, is `not_bridged`. (e) The tail of the customer leg needs the carrier's media negotiated and drops a payload too big to relay, as the relay does; an agent message the relay would refuse (not whole 20 ms frames) is not the tap's either. (f) During a VoiceLink hangup's wait for the carrier's confirmation (`ending`) a listener stays attached, hearing nothing, until the session is destroyed (`call_ended`); a new `openListenTap` is refused `ending`. (g) As on the station, media alone stops at the soft limit, so the hard cap (`send_backlog`) is reached only by other bytes queued on the listener's socket (its control frames); a listener that stops reading entirely is expected to be ended by its idle timeout (phase 3). | **default, pending Manas** |
 
 ## 2. Architecture
 
 Five pieces, each in the module area that owns its kind of work:
 
-1. **The tap** (`apps/server/src/core/bridge/listen-tap.ts`, voice; phase 2): per bridge session, a
-   fan-out of both legs to its listeners' sinks, normalised to A-law 8 kHz in 20 ms frames.
-2. **The bridge seam** (phase 2): a new `WebRtcBridgeManager` member
+1. **The tap** (`apps/server/src/core/bridge/listen-tap.ts`, voice; phase 2, built): per bridge
+   session, a fan-out of both legs to its listeners' sinks, normalised to A-law 8 kHz in 20 ms
+   frames (§5 "The tap as built").
+2. **The bridge seam** (phase 2, built): the `WebRtcBridgeManager` member
    `openListenTap(callId, sink): ListenTapHandle | { refused: 'not_found' | 'not_bridged' | 'ending' }`
-   (types in `core/bridge/bridge-types.ts`), changed in one commit with `docs/seams.md` §3.1 and the
-   seam contract tests.
+   (types in `core/bridge/bridge-types.ts`), pinned with `docs/seams.md` §3.1 by the seam contract
+   tests.
 3. **The listen runtime** (`apps/server/src/agency/listen/`, agency; phase 3): `ListenRegistry`
    (sessions, the caps, supersede, revoke, the periodic re-check), `ListenTokenStore` (single-use
    socket tokens in Redis, modelled on `StationTokenStore`) and `listen-socket.ts`.
@@ -172,6 +178,51 @@ wrapped and every listener socket has its `error` handler attached before anythi
 - **On the way in:** fail closed (LS7). A refused grant is a toast with the reason; a refused
   upgrade closes with its code and reason (§3).
 
+### The tap as built (phase 2)
+
+**On the session.** `WebRtcBridgeSession.listenTap` is null until the first `openListenTap`, which
+makes a `ListenTap` and adds the sink; later sinks join it. When its last sink goes (detached by its
+owner or ended by the tap) or it fails its budget, the tap ends and the session drops the field, so
+the next listener gets a fresh tap with fresh codecs. `destroy()` ends it `call_ended`. A re-attach
+of the agent's socket keeps it (`adoptBorrowedBrowserLeg` resets only the agent leg's framer and
+encoder, so a socket that chose another format is taken up).
+
+**In the relay.** `onPstnMessage` (customer), `onBrowserMessage` (`pcm16` agent) and
+`onBrowserBinary` (`alaw8` agent) each call the relay (`relayPstnMedia`, `relayBrowserPcm16`,
+`relayBrowserAlaw`, the old bodies unchanged, `relayCarrierToAlawBrowser` inside the first) and then
+a tail: `const listen = session.listenTap; if (listen !== null && …) listen.feed…(…)`. The tail runs
+whether or not the relay wrote (the agent's socket inside its re-attach window, the carrier's
+socket gated), and only after `recordRelayFrame`, so the dwell excludes the tap. With nobody
+listening the tail is that one read: no codec, no tap call, no send.
+
+**The legs.** Customer: the carrier's base64 payload decoded again by the tap; A-law on the wire
+(VoiceLink) is copied; anything else goes through the tap's own `carrier.media.createCodec()` to
+PCM16 16 kHz and its own `VoicelinkTranscoder.pcm16kToAlaw`. Agent: a `pcm16` frame through the
+tap's own encoder; an `alaw8` message copied. Each leg has its own `AlawFramer`, so a 1 s agent
+message is 50 messages and a carrier frame that is not whole 20 ms frames carries its tail. Each
+frame is built once (`Buffer.allocUnsafe(161)`, tag then audio) and the same Buffer goes to every
+sink.
+
+**Sinks.** `ListenSink { listenId, send(message): 'sent' | 'dropped' | 'backlog' | 'closed',
+close(reason, stats) }` (`bridge-types.ts`): `dropped` counts the frame against the sink, `backlog`
+ends it `send_backlog`, `closed` or a throw ends it `listener_disconnected` (counted
+`stage="send"`); the other sinks get the frame. `sendToListenerSocket(ws, message)` is the
+socket-backed `send` phase 3's socket uses: `sendVerdict` under `LISTENER_LIMITS`, counting
+`websocket_send_backpressure_total{socket="listener"}`, a throwing `ws.send` answered `closed`.
+The handle's `stats()` and `close`'s second argument give `framesSent` and `framesDropped` for the
+session row.
+
+**Faults.** Every feed is one try/catch with its stage (`decode`: the base64 or the carrier codec;
+`encode`: the A-law encoder; `frame`: the framer and the message), counted in
+`agency_listen_tap_errors_total{stage}`. The leg's run of failures resets on its next good frame;
+at `agency.listen.faultBudget` in a row every sink is ended `tap_error` and the tap detaches. A
+fault line is logged at most once per tap per 10 s, with the call id, the listen ids, the leg, the
+stage and the run; a sink ended by the tap gets one line. A throwing `close` or idle hook is caught.
+
+**The relay's dwell.** `recordRelayFrame` records one frame in `RELAY_DWELL_SAMPLE_EVERY` (50) per
+call and direction in `webrtc_relay_dwell_seconds{direction}`, from the per-direction frame counts
+it already kept.
+
 ## 6. Data
 
 **`agency_listen_sessions`** (`0047_listen_sessions.sql`; `packages/db/BASELINE.md`): `id` (the
@@ -218,7 +269,9 @@ so a session row can go up to a month before the audit rows about it.
 
 ## 8. Observability
 
-Declared in phase 1; nothing emits them until phases 2 and 3.
+Declared in phase 1. Emitted since phase 2: `agency_listen_tap_errors_total`,
+`websocket_send_backpressure_total{socket="listener"}` and `webrtc_relay_dwell_seconds`; the rest
+from phase 3.
 
 | Series | Kind | Labels | What it says |
 |---|---|---|---|
@@ -263,7 +316,7 @@ the standing line of LS2.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Foundation: the permission, both flags, the socket and console contracts, the refusal codes, `0047_listen_sessions.sql` and its repository, the retention sweep, the audit actions and resource type, `agency.listen` config, the metric declarations, the alert group and dashboard row, this document | **Built** (2026-11-16) |
-| 2 | The tap and the bridge seam: `listen-tap.ts`, `openListenTap` with `docs/seams.md` §3.1 and the seam contract tests, `LISTENER_LIMITS`, the fault budget, the sampled relay dwell, fault-injection tests | Not built yet |
+| 2 | The tap and the bridge seam: `listen-tap.ts`, `openListenTap` with `docs/seams.md` §3.1 and the seam contract tests, `LISTENER_LIMITS`, the fault budget, the sampled relay dwell, fault-injection tests | **Built** (2026-11-16) |
 | 3 | The server side: `ListenRegistry`, `ListenTokenStore`, the listener socket, the four routes and two internal handlers with their guards (route tables, agent reach, owners, `wsOwner`, `ws-limits`, the rate-limit bucket, `token` redaction), revocation over IPC, the re-check, the boot and worker reaps, the audit writes, the call detail's `listen_sessions` | Not built yet |
 | 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | Not built yet |
 | 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | Not built yet |
@@ -291,3 +344,15 @@ the standing line of LS2.
   contract).
 - Observability: `test/metrics-agency.test.ts` and its instrument snapshot. Grafana:
   `pnpm test:grafana`.
+- The tap (phase 2): `apps/server/test/unit/core/webrtc-bridge-listen-tap.test.ts` (both legs byte
+  for byte on passthrough and framed, a 1 s agent message as 50; the μ-law customer and the `pcm16`
+  agent on the tap's own codecs with the session's codec called once per frame; no tap, no extra
+  call; the tail after `recordRelayFrame` and the dwell samples unchanged by two listeners; the
+  tail when the leg gate returns early; soft and hard limits on the listener's socket; a throwing
+  codec, encoder, framer, sink and close, a socket that errors mid-send or closes, one that never
+  drains, each with both legs relayed and the right end reason; the budget at exactly N in a row,
+  reset by a success, per leg; `call_ended` at the end; the re-attach keeping the tap; the
+  refusals), `webrtc-bridge-seam-contract.test.ts` (the member and its types),
+  `webrtc-bridge-manager.seams.test.ts` (the refusals and the handle through a VoiceLink call's
+  life), `webrtc-bridge-inbound-connect.test.ts` (a parked caller `not_bridged`; after the bind,
+  both legs through the tap on the real Plivo codec).

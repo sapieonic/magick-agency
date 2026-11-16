@@ -13,7 +13,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  - the carrier tap: bounded, installed only while recording, fed with nobody bound, with a
 //    prompt and beep before it, ended by the caller leaving or the wall clock;
 //  - the recording at the bind: the Record API only after `bridged`, with a webhook token minted
-//    for its callback; never for a call that did not ask, or on a carrier that cannot.
+//    for its callback; never for a call that did not ask, or on a carrier that cannot;
+//  - a supervisor's listen tap (docs/listening.md): refused `not_bridged` while the caller is
+//    parked on hold, attached once an agent is bound, the caller heard through the tap's own codec.
 //
 // Mock harness mirrors webrtc-bridge-inbound.test.ts (project convention: no shared test utilities).
 // ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ vi.mock('../../../src/config/index.js', () => ({
       plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
     telephonyCredentials: { keyring: '', activeKeyId: '' },
+    agency: { listen: { faultBudget: 50 } },
   },
 }));
 
@@ -602,5 +605,39 @@ describe('recording at the bind', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(mgr.getSession(LEG)).toBeDefined();
     expect(lifecycle.filter((e) => e.phase === 'bridged')).toHaveLength(1);
+  });
+});
+
+describe('a supervisor listening to an inbound call (docs/listening.md)', () => {
+  function sink() {
+    const messages: Buffer[] = [];
+    return { listenId: 'listen-1', messages, send: vi.fn((m: Buffer) => { messages.push(m); return 'sent' as const; }), close: vi.fn() };
+  }
+
+  it('a caller parked on hold is not_bridged; once an agent is bound the tap attaches and hears both legs', async () => {
+    const { mgr } = bridge();
+    await mgr.acceptInboundCall(PARAMS);
+    const carrier = connectStream(mgr);
+    const hold = mgr.playInboundHold(INBOUND, { preambleClipHashes: [], holdClipHash: 'hold' });
+    callerSays(carrier, 2);
+    const s = sink();
+    // FALSIFIED by keying `not_bridged` on the answer alone: a parked inbound call is answered.
+    expect(mgr.getSession(LEG)!.answeredAt).not.toBeNull();
+    expect(mgr.openListenTap(LEG, s)).toEqual({ refused: 'not_bridged' });
+    expect(mgr.getSession(LEG)!.listenTap).toBeNull();
+
+    const station = fakeWs();
+    expect(mgr.bindBorrowedBrowserLeg(INBOUND, station as any)).toBe(true);
+    expect(await hold).toBe('released');
+    expect(mgr.openListenTap(LEG, s)).toMatchObject({ callId: LEG, attached: true });
+    callerSays(carrier, 5);
+    for (let i = 0; i < 3; i++) station.emit('message', JSON.stringify({ event: 'media', media: { payload: Buffer.alloc(640).toString('base64') } }));
+    const tags = s.messages.map((m) => m[0]);
+    expect(tags.filter((t) => t === 1).length).toBeGreaterThan(0);
+    expect(tags.filter((t) => t === 2).length).toBeGreaterThan(0);
+    for (const m of s.messages) expect(m.length).toBe(161);
+    // The agent heard every caller frame since the bind, through the session's own codec.
+    expect(station.sent.filter((m) => m.event === 'media')).toHaveLength(5);
+    expect(s.close).not.toHaveBeenCalled();
   });
 });

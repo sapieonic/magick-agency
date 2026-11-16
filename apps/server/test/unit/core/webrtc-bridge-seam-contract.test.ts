@@ -27,13 +27,20 @@ import {
   type InboundHoldResult,
   type InboundRecordOptions,
   type InboundAudioRecording,
+  type ListenSendResult,
+  type ListenSink,
+  type ListenTapEndReason,
+  type ListenTapHandle,
+  type ListenTapRefusal,
+  type ListenTapStats,
+  type OpenListenTapResult,
 } from '../../../src/core/webrtc-bridge-manager.js';
 import {
   browserLegMediaFormatOf,
   setBrowserLegMediaFormat,
   type BrowserLegMediaFormat,
 } from '../../../src/core/bridge/browser-leg-media.js';
-import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
+import type { AgencyListenEndReason, AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 
 /** The seam member list. */
 interface BridgeSeam {
@@ -57,6 +64,8 @@ interface BridgeSeam {
   playInboundHold(correlationId: string, opts: CoreInboundHoldOptions): Promise<CoreInboundHoldResult>;
   stopInboundHold(correlationId: string): void;
   recordInboundAudio(correlationId: string, opts: CoreInboundRecordOptions): Promise<CoreInboundAudioRecording>;
+  /** A supervisor listening in (docs/listening.md, LS8): a sink attached to a bridged call's listen tap. */
+  openListenTap(callId: string, sink: CoreListenSink): CoreOpenListenTapResult;
 }
 
 /** The bridge's exported types (`sipConnectionId` is excluded: docs/seams.md allows it, SIP is out). */
@@ -133,6 +142,26 @@ type CoreInboundAcceptance =
   | { accepted: true; streamUrl: string; maxDurationSeconds: number; capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' }
   | { accepted: false; reason: 'stream_unavailable' | 'ended' };
 type CoreClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_found';
+type CoreListenTapEndReason = 'call_ended' | 'tap_error' | 'send_backlog' | 'listener_disconnected';
+type CoreListenSendResult = 'sent' | 'dropped' | 'backlog' | 'closed';
+interface CoreListenTapStats {
+  framesSent: number;
+  framesDropped: number;
+}
+interface CoreListenSink {
+  readonly listenId: string;
+  send(message: Buffer): CoreListenSendResult;
+  close(reason: CoreListenTapEndReason, stats: CoreListenTapStats): void;
+}
+interface CoreListenTapHandle {
+  readonly callId: string;
+  readonly listenId: string;
+  readonly attached: boolean;
+  stats(): CoreListenTapStats;
+  detach(): void;
+}
+type CoreListenTapRefusal = 'not_found' | 'not_bridged' | 'ending';
+type CoreOpenListenTapResult = CoreListenTapHandle | { refused: CoreListenTapRefusal };
 type CoreRejectReason =
   | 'global_concurrency_limit'
   | 'account_concurrency_limit'
@@ -162,6 +191,7 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcBridgeManager['playInboundHold']>().toEqualTypeOf<BridgeSeam['playInboundHold']>();
     expectTypeOf<WebRtcBridgeManager['stopInboundHold']>().toEqualTypeOf<BridgeSeam['stopInboundHold']>();
     expectTypeOf<WebRtcBridgeManager['recordInboundAudio']>().toEqualTypeOf<BridgeSeam['recordInboundAudio']>();
+    expectTypeOf<WebRtcBridgeManager['openListenTap']>().toEqualTypeOf<BridgeSeam['openListenTap']>();
     // And the class as a whole satisfies the interface.
     expectTypeOf<WebRtcBridgeManager>().toMatchTypeOf<BridgeSeam>();
     expect(true).toBe(true);
@@ -182,6 +212,18 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<InboundHoldResult>().toEqualTypeOf<CoreInboundHoldResult>();
     expectTypeOf<InboundRecordOptions>().toEqualTypeOf<CoreInboundRecordOptions>();
     expectTypeOf<InboundAudioRecording>().toEqualTypeOf<CoreInboundAudioRecording>();
+    expectTypeOf<ListenTapEndReason>().toEqualTypeOf<CoreListenTapEndReason>();
+    expectTypeOf<ListenSendResult>().toEqualTypeOf<CoreListenSendResult>();
+    expectTypeOf<ListenTapStats>().toEqualTypeOf<CoreListenTapStats>();
+    expectTypeOf<ListenSink>().toEqualTypeOf<CoreListenSink>();
+    expectTypeOf<ListenTapHandle>().toEqualTypeOf<CoreListenTapHandle>();
+    expectTypeOf<ListenTapRefusal>().toEqualTypeOf<CoreListenTapRefusal>();
+    expectTypeOf<OpenListenTapResult>().toEqualTypeOf<CoreOpenListenTapResult>();
+    expect(true).toBe(true);
+  });
+
+  it('keeps the listen tap`s end reasons inside the contract`s (docs/listening.md §3)', () => {
+    expectTypeOf<ListenTapEndReason>().toMatchTypeOf<AgencyListenEndReason>();
     expect(true).toBe(true);
   });
 

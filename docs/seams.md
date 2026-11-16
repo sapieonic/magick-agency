@@ -5,7 +5,7 @@ each module area owns, which config keys each declares, where shared infrastruct
 cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B).
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening).
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -91,6 +91,8 @@ class WebRtcBridgeManager {
   playInboundHold(correlationId: string, opts: InboundHoldOptions): Promise<InboundHoldResult>;
   stopInboundHold(correlationId: string): void;
   recordInboundAudio(correlationId: string, opts: InboundRecordOptions): Promise<InboundAudioRecording>;
+  // Live call listening (docs/listening.md, LS8):
+  openListenTap(callId: string, sink: ListenSink): OpenListenTapResult;
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
@@ -190,6 +192,24 @@ params and the Record API's alike); the hold is never recorded.
 
 `InboundHoldOptions`, `InboundHoldResult`, `InboundRecordOptions` and `InboundAudioRecording` are in
 `bridge-types.ts`, pinned by the contract test.
+
+`openListenTap` attaches a supervisor's sink to a call this process bridges, keyed on the call id
+(`agency_calls.id`, the bridge session's id), for live call listening ([`listening.md`](listening.md)
+§2, LS8). It is synchronous and never waits. It answers a `ListenTapHandle` (`callId`, `listenId`,
+`attached`, `stats()`, `detach()`) or `{ refused }`: `not_found` (no session for the call here),
+`ending` (it is settling), `not_bridged` (never bridged: still ringing, an inbound caller parked on
+hold with no agent bound, or a carrier the bridge relays no audio for). Once bridged a call stays
+listenable through an agent's dropped socket and its re-attach. The sink (`ListenSink`) is the
+agency's listener socket: `send(message)` takes one tagged 20 ms A-law message and answers
+`ListenSendResult` (`sent`, `dropped`, `backlog`, `closed`), and `close(reason, stats)` is called
+at most once when the bridge ends it, with a `ListenTapEndReason` (`call_ended`, `tap_error`,
+`send_backlog`, `listener_disconnected`) and the frames sent and dropped (`ListenTapStats`);
+neither may throw or wait, and the bridge guards both. A sink detached by its owner is never
+closed by the bridge. The caps (per call, per process, per supervisor) are the caller's.
+`sendToListenerSocket(ws, message)` (`core/bridge/listen-tap.ts`) is the socket-backed `send`,
+under `LISTENER_LIMITS` (`utils/ws-backpressure.ts`). The types are in `bridge-types.ts`, pinned by
+the contract test, which also holds `ListenTapEndReason` inside the contract's
+`AgencyListenEndReason`.
 
 ### 3.2 Voice engine → analysis
 

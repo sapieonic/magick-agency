@@ -5,6 +5,8 @@ import type { CarrierMediaCodec, CarrierModule } from '../telephony/carrier-modu
 import { findCarrierModule } from '../telephony/carrier-modules.js';
 import { VoicelinkTranscoder } from '../utils/audio-fir.js';
 import { AlawFramer, browserLegMediaFormatOf, type BrowserLegMediaFormat } from './bridge/browser-leg-media.js';
+import { ListenTap } from './bridge/listen-tap.js';
+import type { ListenSink, ListenTapHandle } from './bridge/bridge-types.js';
 
 /** A consumer of the caller's media frames (`WebRtcBridgeSession.installCarrierTap`). */
 export interface CarrierTap {
@@ -102,6 +104,14 @@ export class WebRtcBridgeSession {
    * {@link destroy} closes it. Null otherwise, so nothing is copied when nobody records.
    */
   private tap: CarrierTap | null = null;
+
+  /**
+   * The listen tap (`bridge/listen-tap.ts`, docs/listening.md LS8): while a supervisor listens, the
+   * relay feeds it both legs, after its own write. Null otherwise, so a frame costs one read of this
+   * field. Made by the first {@link openListenTap}, dropped when its last sink goes or it fails
+   * (`tap_error`); {@link destroy} ends it `call_ended`. A re-attach of the agent's socket keeps it.
+   */
+  listenTap: ListenTap | null = null;
 
   /**
    * For providers that negotiate the media stream via a `start` frame (VoiceLink):
@@ -558,6 +568,34 @@ export class WebRtcBridgeSession {
     }
   }
 
+  /**
+   * Whether the bridge was announced (`markBridged`): both legs were live with the carrier's media
+   * negotiated, once. Stays true through an agent's dropped socket and its re-attach.
+   */
+  get bridged(): boolean {
+    return this.bridgeAnnounced;
+  }
+
+  /**
+   * Attach a listener's sink to this call's listen tap, making the tap on the first. The caller
+   * (`WebRtcBridgeManager.openListenTap`) has checked the call is bridged and has a carrier.
+   */
+  openListenTap(sink: ListenSink, faultBudget: number): ListenTapHandle {
+    let tap = this.listenTap;
+    if (!tap) {
+      tap = new ListenTap({
+        callId: this.callId,
+        carrierMedia: this.carrier!.media,
+        faultBudget,
+        onIdle: (idle) => {
+          if (this.listenTap === idle) this.listenTap = null;
+        },
+      });
+      this.listenTap = tap;
+    }
+    return tap.addSink(sink);
+  }
+
   /** Total call duration (create → now) in whole seconds. */
   getDurationSeconds(): number {
     return Math.round((Date.now() - this.startedAt.getTime()) / 1000);
@@ -637,6 +675,8 @@ export class WebRtcBridgeSession {
     // socket is not this one's to receive.
     this.browserMediaFormat = browserLegMediaFormatOf(ws);
     this.browserAlawFramer.reset();
+    // A supervisor listening keeps listening: only the agent leg's own tap state starts afresh.
+    this.listenTap?.resetAgentLeg();
   }
 
   /**
@@ -744,6 +784,9 @@ export class WebRtcBridgeSession {
     this.carrierPlayback?.stop();
     this.carrierPlayback = null;
     this.closeCarrierTap();
+    // Every listener hears the call end (`ListenTap.end` never throws).
+    this.listenTap?.end('call_ended');
+    this.listenTap = null;
     this.clearMaxDurationTimer();
     this.clearRingDeadlineTimer();
     this.clearEndConfirmationTimer();

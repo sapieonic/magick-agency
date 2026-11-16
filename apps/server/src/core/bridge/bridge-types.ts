@@ -5,6 +5,7 @@
  */
 import type WebSocket from 'ws';
 import type { WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
+import type { AgencyListenEndReason } from '@magick-agency/contracts/agency';
 
 /** Reason a call was refused before any provider work — drives the HTTP status. */
 export type WebRtcRejectReason =
@@ -341,3 +342,72 @@ export type WebRtcInboundAcceptance =
  *  - `not_found`: no live call by that correlation id.
  */
 export type ClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_found';
+
+// ─── Live call listening (docs/listening.md, LS8) ───────────────────────────
+
+/**
+ * Why the bridge ended a listener's sink (`ListenSink.close`), a subset of the contract's end
+ * reasons: `call_ended` (the session was destroyed), `tap_error` (the tap failed
+ * `AGENCY_LISTEN_FAULT_BUDGET` frames of one leg in a row and detached), `send_backlog` (the sink
+ * answered `backlog`: its socket's unsent bytes passed the hard cap) and `listener_disconnected`
+ * (the sink answered `closed`, or its `send` threw).
+ */
+export type ListenTapEndReason = Extract<
+  AgencyListenEndReason, 'call_ended' | 'tap_error' | 'send_backlog' | 'listener_disconnected'
+>;
+
+/**
+ * What a sink did with one message (`ListenSink.send`): `sent`; `dropped` (its socket's backlog is
+ * past the soft limit: this frame is thrown away and counted, the sink stays); `backlog` (past the
+ * hard cap: the bridge ends the sink `send_backlog`); `closed` (its socket is no longer open: the
+ * bridge ends the sink `listener_disconnected`).
+ */
+export type ListenSendResult = 'sent' | 'dropped' | 'backlog' | 'closed';
+
+/** What one sink was given: messages sent, and frames it did not get (dropped or failed). */
+export interface ListenTapStats {
+  framesSent: number;
+  framesDropped: number;
+}
+
+/**
+ * One listener, as the bridge sees it (the agency's listener socket implements it). Both methods
+ * must not throw; the bridge guards every call anyway, and a `send` that throws ends the sink
+ * `listener_disconnected`. Neither may wait or touch the call: they run on the media relay's path.
+ */
+export interface ListenSink {
+  /** The listen session's id (`agency_listen_sessions.id`), for the bridge's log lines. */
+  readonly listenId: string;
+  /**
+   * One binary message: a tag byte (`AGENCY_LISTEN_LEG`) and 160 bytes of A-law (20 ms). The same
+   * Buffer goes to every sink on the call and is never written again: send it as is.
+   */
+  send(message: Buffer): ListenSendResult;
+  /**
+   * The bridge is done with this sink (the reason, and what it was given). Called at most once,
+   * and never after the owner's own `ListenTapHandle.detach()`.
+   */
+  close(reason: ListenTapEndReason, stats: ListenTapStats): void;
+}
+
+/** A sink attached to a call (`WebRtcBridgeManager.openListenTap`). */
+export interface ListenTapHandle {
+  readonly callId: string;
+  readonly listenId: string;
+  /** False once the sink is detached, by {@link detach} or by the bridge (`ListenSink.close`). */
+  readonly attached: boolean;
+  /** What the sink was given so far. */
+  stats(): ListenTapStats;
+  /** Detach the sink (the listener stopped or left): no further frames, no `close`. Idempotent. */
+  detach(): void;
+}
+
+/**
+ * Why `WebRtcBridgeManager.openListenTap` attached nothing: `not_found` (no session for the call
+ * id in this process), `ending` (the call is settling), `not_bridged` (no agent on it yet: still
+ * ringing, or an inbound caller parked on hold; or a carrier the bridge relays no audio for).
+ */
+export type ListenTapRefusal = 'not_found' | 'not_bridged' | 'ending';
+
+/** What `WebRtcBridgeManager.openListenTap` answers. */
+export type OpenListenTapResult = ListenTapHandle | { refused: ListenTapRefusal };

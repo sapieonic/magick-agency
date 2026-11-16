@@ -744,6 +744,7 @@ are IQ67, the take-over ending `away_ring` is OS3).
 | IQ25 | Inbound standard recordings: listening and licence | Nobody has listened to the seven recordings in a call, and they come from a "low" Piper voice. They are CC BY-SA 4.0 derivatives (OpenSLR 83): attribution is in `apps/server/assets/inbound/README.md` and ShareAlike applies to the files. Sign off both, or replace them with recordings of the same names | Manas |
 | — | Inbound retention for a UK pilot | Voicemails and the inbound spine age out on `AGENCY_RETENTION_DAYS`, unset by default (rows kept). Decide the window under UK GDPR, and how one voicemail is deleted on request | Manas |
 | LS14 | Live call listening: phase 1's own calls | Built, pending ratification (the LS section at the end; [`listening.md`](listening.md) §1): the refusal statuses, the socket's close codes, the session table's CHECK and Down refusal, retention by a session's start, `inbound_route_name` on the live row, the per-supervisor cap as a setting, the relay dwell's sampling | Manas |
+| LS15 | Live call listening: phase 2's own calls | Built, pending ratification (the LS section at the end; [`listening.md`](listening.md) §1): the fault budget per leg, a throwing or closed sink ended `listener_disconnected`, what `frames_dropped` counts, "bridged" as the bridge's announcement (a parked inbound caller `not_bridged`), a listener kept through VoiceLink's `ending` wait, the hard cap reached only by bytes other than media | Manas |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |
 
@@ -872,7 +873,7 @@ names; shared rules `packages/domain/src/promise-to-pay.ts` (ported by hand to
 Supervisors see the calls in progress in their account and listen in silently from the console:
 listen only, forked from our own bridge in the process that owns the call, never touching the
 agent's or the customer's audio. Planned from the code, reviewed and locked by Manas on
-2026-11-16; LS14 is the build's own calls in phase 1. The full table, the architecture, the wire
+2026-11-16; LS14 and LS15 are the build's own calls in phases 1 and 2. The full table, the architecture, the wire
 format, the lifecycle and the phase status are in [`listening.md`](listening.md). Permission
 `agency.calls.listen` (floor `account_admin`); flags `agency_live_listen_enabled` and
 `agency_live_listen_unrecorded`; migration `0047_listen_sessions.sql`; contracts
@@ -894,3 +895,4 @@ format, the lifecycle and the phase status are in [`listening.md`](listening.md)
 | LS12 | `agency_listen_sessions` is kept for the platform audit log's horizon, deleted by the same daily maintenance at the same cutoff | **Decided** (Manas, 2026-11-16) |
 | LS13 | The call detail pages show "Listened to by" (who, start–end, duration) from `agency_listen_sessions`, to `agency.supervise` holders | **Decided** (Manas, 2026-11-16) |
 | LS14 | Phase 1's own calls: the refusal statuses (`listen_call_not_live` a uniform 404); the socket's close codes and each end reason's code; a CHECK that a listener is never the call's agent; no foreign keys on the session table and a Down that refuses while it has rows; retention by a row's start; `inbound_route_name` on the live row; `AGENCY_LISTEN_MAX_PER_USER` as a setting; the relay dwell sampled one frame in 50 | **default, pending Manas** |
+| LS15 | Phase 2's own calls: the fault budget counts each leg's failed frames in a row apart; a sink whose `send` throws or answers `closed` is ended `listener_disconnected` (`tap_error` is the budget only); a sink's `frames_dropped` counts its soft-limit drops and the frames the tap failed while it was attached; a call is listenable once the bridge was announced (`bridged`) and through the agent's re-attach window, a parked inbound caller `not_bridged`; a listener stays attached through VoiceLink's `ending` wait and ends `call_ended` at the destroy; the hard cap is reached only by bytes other than media (the idle timeout ends a listener that stops reading) | **default, pending Manas** |
