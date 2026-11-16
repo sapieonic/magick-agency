@@ -7,7 +7,8 @@ import { testWorkers } from '../../tooling/test-env.js';
  * another, about two in parallel): on Redis TTLs (fake timers cannot move a
  * server-side PTTL), or on a forked server's own liveness timers (the mobile stations file: the 10 s grace and the 8 s
  * deferred hangup, which have no overrides; the mobile inbound file: the 8 s deferred
- * hangup ending an inbound call). CI runs them as their own job beside the
+ * hangup ending an inbound call; the listen load check: paced audio and the 30 s listener idle
+ * bound). CI runs them as their own job beside the
  * rest: INTEGRATION_LANE=wall-clock runs only these, =rest runs everything else, unset
  * runs all.
  */
@@ -19,6 +20,10 @@ const WALL_CLOCK_FILES = [
   'test/integration/telephony/inbound-mobile-wall-clock.test.ts',
   // Mode B: a ring expiring on the real 20 s window (AGENCY_INBOUND_RING_MS).
   'test/integration/telephony/inbound-ring-e2e.test.ts',
+  // Live listening's load check: three floors of real-time paced audio, about two minutes, and a
+  // stalled listener ended by the real 30 s idle bound (AGENCY_LISTEN_IDLE_TIMEOUT_MS). Its timing
+  // bounds also fare better in this lane, beside files that mostly wait, than in the busy rest.
+  'test/integration/load/listen-media-load.test.ts',
 ];
 
 const lane = process.env['INTEGRATION_LANE'] || undefined;
