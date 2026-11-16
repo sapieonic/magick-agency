@@ -33,6 +33,12 @@ export interface WsOwnerConfig {
   by: 'session' | 'carrier_hint';
   /** The path param that keys the owner (`sessionId`, `id`). */
   param: string;
+  /**
+   * The upgraded socket's name in the handoff and its metric (`ws_handoff_total{route}`), when it
+   * is not the default for `by` (`session`: `station`, `carrier_hint`: `pstn`). The supervisor's
+   * listener socket is owned by the agent's session too, and is `listen`.
+   */
+  route?: 'listen';
 }
 
 declare module 'fastify' {
@@ -120,7 +126,7 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
         (request.params ?? {}) as Record<string, string | undefined>,
         (request.query ?? {}) as Record<string, unknown>,
       ) ?? null;
-      const route = owner.by === 'session' ? 'station' : 'pstn';
+      const route = owner.route ?? (owner.by === 'session' ? 'station' : 'pstn');
       if (!target || slot === null) {
         trackWsHandoff(route, 'no_owner');
         refuse(socket, 503, 2);

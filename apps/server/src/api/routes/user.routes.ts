@@ -7,6 +7,7 @@ import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { redisCache } from '../../cache/redis-cache.js';
 import { membershipCacheKey } from '../middleware/membership-cache-key.js';
+import { revokeListens } from '../../agency/listen/listen-revocation.js';
 import { sendRevocationCacheUnavailable } from '../../cache/revocation-unavailable.js';
 import { inviteUserSchema, updateRoleSchema } from '../validators/user.validator.js';
 import { canManageRole, ROLE_HIERARCHY } from '@magick-agency/contracts/rbac';
@@ -650,6 +651,9 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // (the guard reads the now-current role), deletes the key again, and has nothing left to
     // close (the staffing step keys on the demotion, which has already happened).
     const membershipCacheCleared = await redisCache.delForRevocation(membershipCacheKey(targetUserId, request.tenantId!));
+    // Live call listening (LS10): their open listens are re-checked against the database now, and
+    // end `permission_revoked` if the new role no longer clears `agency.calls.listen`. Never throws.
+    await revokeListens(request.tenantId!, targetUserId);
 
     /**
      * A demotion out of `agent` closes their agency staffing — last, and unable to
@@ -756,6 +760,9 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // reaches this line and could never clear the key. A 503 would only send the admin into
     // a retry that cannot help; the TTL (30 min) bounds the exposure.
     await redisCache.delForRevocation(membershipCacheKey(targetUserId, request.tenantId!));
+    // Live call listening (LS10): their open listens end `permission_revoked` now, unless another
+    // membership they keep in the tenant still clears the floor. Never throws.
+    await revokeListens(request.tenantId!, targetUserId);
 
     /**
      * Close their agency staffing — last, and unable to fail this request.

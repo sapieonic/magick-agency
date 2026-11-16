@@ -33,6 +33,9 @@ import type { CallLease, ReaperSnapshotBody } from './ipc-protocol.js';
 import { forkServerChild } from './fork.js';
 import { probeSocketReadStop } from './socket-pause.js';
 import { slotFor } from './roles.js';
+import { onListenRevocation } from '../agency/listen/listen-revocation.js';
+import { agencyListenSessionRepository } from '../db/repositories/agency.repository.js';
+import { trackListenSessionEnded } from '@magick-agency/observability/metrics/agency';
 
 export interface PrepareMediaPrimaryOptions {
   /** Tests: how a media child is forked. */
@@ -163,6 +166,8 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
   setConcurrencyControl(broadcasting);
   // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
   const offDialable = relayDialableInvalidations(cluster);
+  // A role change or a member's removal re-checks the supervisor's listens in every worker (LS10).
+  const offListen = onListenRevocation((tenantId, userId) => cluster.revokeListens(tenantId, userId));
 
   await cluster.start();
   logger.info({ mediaWorkers: cluster.count }, 'Media worker processes started');
@@ -178,6 +183,7 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
     ]);
     offRevoke();
     offDialable();
+    offListen();
     if (getConcurrencyControl() === broadcasting) setConcurrencyControl(inner);
   };
 }
@@ -219,6 +225,13 @@ export async function reapSlot(
     }
     logger.warn({ slot, report, slotsReleased: held.length, callRowsFailed: callIds.length },
       'Reaped a dead media worker\'s calls, attempts and agents');
+    // Its listens (docs/listening.md §4): every open row of a process not alive now closes
+    // `server_restarted` (the dead worker's incarnation is no longer among the live ones).
+    const listens = await agencyListenSessionRepository
+      .closeOrphansExcept([runtime.replicaId, ...cluster.directory.liveReplicaIds()])
+      .catch((err) => { logger.error({ err, slot }, 'Could not close the dead media worker\'s listen sessions'); return []; });
+    for (let i = 0; i < listens.length; i++) trackListenSessionEnded('server_restarted');
+    if (listens.length > 0) logger.warn({ slot, closed: listens.length }, 'Closed a dead media worker\'s listen sessions');
   }
   voice?.guardHost.wakeSelfHeal();
 }

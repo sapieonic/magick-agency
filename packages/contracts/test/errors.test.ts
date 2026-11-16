@@ -363,7 +363,11 @@ const _listenExact: Equals<(typeof AGENCY_LISTEN_ERROR_CODES)[number], AgencyLis
 const _consoleListenAgrees: Equals<AgencyApi.AgencyListenErrorCode, AgencyListenErrorCode> = true;
 // A live row's reason is the refusal its grant would answer.
 const _notListenableIsACode: AgencyApi.AgencyLiveCallNotListenableReason extends AgencyListenErrorCode ? true : false = true;
-void [_listenExact, _consoleListenAgrees, _notListenableIsACode];
+// The row's spine id and its campaign's AHT (added with the server side, for "Open call" and the
+// amber timer): present, and of these types.
+const _rowCorrelation: Equals<AgencyApi.AgencyLiveCall['correlation_id'], string> = true;
+const _rowAht: Equals<AgencyApi.AgencyLiveCall['aht_seconds'], number | null> = true;
+void [_listenExact, _consoleListenAgrees, _notListenableIsACode, _rowCorrelation, _rowAht];
 
 describe('listen codes', () => {
   it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {

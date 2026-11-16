@@ -8,6 +8,7 @@ import {
   parseRatePausedBody,
   parseReadyBody,
   parseShutdownBody,
+  parseWsHandoff,
 } from '../../../src/cluster/ipc-protocol.js';
 
 const roundTrip = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
@@ -189,11 +190,35 @@ describe('body decoders', () => {
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},
       'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' } },
+      'listen.revoke': { tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['l1'] },
     };
     for (const [type, decode] of Object.entries(IPC_EVENT_DECODERS)) {
       const sample = samples[type];
       expect(sample, `a sample for ${type}`).toBeDefined();
       expect((decode as (r: unknown) => unknown)(roundTrip(sample))).toEqual(sample);
     }
+  });
+});
+
+describe('listen.revoke (docs/listening.md, LS10)', () => {
+  const decode = IPC_EVENT_DECODERS['listen.revoke'];
+  it('a revocation names the supervisor and no listens; a supersede names exactly what it ends', () => {
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null }))
+      .toEqual({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null });
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['a', 'b'] }))
+      .toEqual({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['a', 'b'] });
+  });
+  it('refuses the mixed shapes, another reason, a missing id and an oversized list', () => {
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: ['a'] })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: null })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'call_ended', listenIds: null })).toBeNull();
+    expect(decode({ tenantId: 't', reason: 'permission_revoked', listenIds: null })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: Array.from({ length: 101 }, (_, i) => `l${i}`) })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: [42] })).toBeNull();
+  });
+  it('a handoff may name the listener socket', () => {
+    const msg = { v: 1, kind: 'handoff', route: 'listen', method: 'GET', url: '/proxy/agency/listen/s/l?token=x', httpVersion: '1.1', rawHeaders: [], head: '', requestId: 'r' };
+    expect(parseWsHandoff(msg)?.route).toBe('listen');
+    expect(parseWsHandoff({ ...msg, route: 'audio' })).toBeNull();
   });
 });

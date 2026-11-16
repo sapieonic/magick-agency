@@ -99,6 +99,11 @@ export interface AgencyLiveCall {
   /** `agency_calls.id`: the id the number and listen routes take. */
   call_id: string;
   origin: AgencyCallOrigin;
+  /**
+   * The call's spine row, matching `origin`: the attempt id (`campaign`), the soft-phone call id
+   * (`manual`) or the inbound call id (`inbound`). The id the call pages are keyed on ("Open call").
+   */
+  correlation_id: string;
   /** The campaign (a dialler call's, a tagged soft-phone call's, a matched inbound call's); null otherwise. */
   campaign_id: string | null;
   campaign_name: string | null;
@@ -117,6 +122,12 @@ export interface AgencyLiveCall {
   customer_phone_masked: string;
   /** ISO-8601. When the agent was connected to the customer: the time-on-call clock counts from it. */
   connected_at: string;
+  /**
+   * The campaign's average handle time in seconds, as its stats read computes `aht_seconds` (the
+   * agent's leg of its ended, bridged calls); null for a call with no campaign, or a campaign with
+   * no such call yet. The console shows the time on call in amber past twice it.
+   */
+  aht_seconds: number | null;
   /** Whether the call is being recorded (`agency_calls.recording_requested`). */
   recording: boolean;
   /** Whether the caller may open a listen on it now (their permission, the caps, LS4, LS3). */

@@ -48,6 +48,8 @@ export type {
   ListenSessionOpenInput,
   ListenSessionRecord,
 } from './agency/listen-session.repository.js';
+export { AgencyLiveCallRepository, agencyLiveCallRepository } from './agency/live-call.repository.js';
+export type { AgencyLiveCallQuery, AgencyLiveCallRow } from './agency/live-call.repository.js';
 export { AgencyManualCallRepository, agencyManualCallRepository } from './agency/manual-call.repository.js';
 export type {
   AgencyManualCallAdvanceState,

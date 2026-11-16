@@ -31,20 +31,24 @@ function start() {
     providerConcurrencyGuard: { invalidateLimits: vi.fn(async () => {}) },
     gracefulShutdown: vi.fn(async () => {}),
   };
-  const child = startMediaChild({
-    slot: 0,
-    channel: channel as any,
-    runtime: {
+  const app = { close: vi.fn(async () => {}), server: {} };
+  const runtime = {
       replicaId: 'h:mw0:1',
       stations: { onAttached: vi.fn(), onDetached: vi.fn(), all: () => [] },
       stopShard: vi.fn(async () => {}),
-    } as any,
+      listen: { shutdown: vi.fn(async () => {}), revokeUser: vi.fn(async () => 0), endSessions: vi.fn(async () => 0), limits: { maxPerUser: 1 }, get: () => undefined },
+      supersedeListensElsewhere: null as null | ((session: unknown) => void),
+  };
+  const child = startMediaChild({
+    slot: 0,
+    channel: channel as any,
+    runtime: runtime as any,
     bridge: { observeLeases: vi.fn(), getActiveCallIds: () => [], gracefulShutdown: vi.fn(async () => {}) } as any,
     guardHost: guardHost as any,
-    app: { close: vi.fn(async () => {}), server: {} } as any,
+    app: app as any,
     core: { close: vi.fn(async () => {}) } as any,
   });
-  return { channel, guardHost, child };
+  return { channel, guardHost, child, runtime, app };
 }
 
 describe('a media worker applies the primary\'s invalidations', () => {
@@ -62,6 +66,22 @@ describe('a media worker applies the primary\'s invalidations', () => {
     expect(guardHost.accountConcurrencyGuard.invalidateLimit).toHaveBeenCalledWith('t', 'a');
     expect(guardHost.providerConcurrencyGuard.invalidateLimits).toHaveBeenCalledWith('t', 'a');
     await child.shutdown();
+  });
+
+  it('`listen.revoke` re-checks the supervisor (a revocation) or ends exactly the named listens (a supersede); shutdown ends the listens before the app closes', async () => {
+    const { channel, child, runtime, app } = start();
+    channel.events.get('listen.revoke')!({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null });
+    expect(runtime.listen.revokeUser).toHaveBeenCalledWith('t', 'u');
+    expect(runtime.listen.endSessions).not.toHaveBeenCalled();
+    channel.events.get('listen.revoke')!({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['l1', 'l2'] });
+    expect(runtime.listen.endSessions).toHaveBeenCalledWith(['l1', 'l2'], 'superseded');
+    expect(runtime.supersedeListensElsewhere).toBeTypeOf('function');
+    const order: string[] = [];
+    runtime.listen.shutdown.mockImplementation(async () => { order.push('listen'); });
+    app.close.mockImplementation(async () => { order.push('app'); });
+    await child.shutdown();
+    expect(order).toEqual(['listen', 'app']);
+    expect(runtime.listen.shutdown).toHaveBeenCalledTimes(1);
   });
 
   it('a cache invalidation published here goes to the primary as `cache.invalidate`, and to this process too', () => {

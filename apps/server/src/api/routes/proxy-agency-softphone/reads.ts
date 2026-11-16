@@ -19,6 +19,7 @@ import { parseOr400 } from '../helpers/parse-or-400.js';
 import { softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
 import { definedQueryString } from '../helpers/query-string.js';
 import { decodeRawErrorBody, shapeMediaCall } from '../proxy-agency-calls.routes.js';
+import { callListenSessions } from '../helpers/listen.js';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   accountMediaGrants,
@@ -163,6 +164,12 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
       [detail.call.agent_user_id, detail.call.dispositioned_by_user_id], request.tenantId!,
     );
     const grants = media ? await accountMediaGrants(request) : { recording: false, analytics: false };
+    // Who listened to the call live (docs/listening.md LS13): `agency.supervise` only, like the media
+    // leg; absent without a leg or when the read failed.
+    const mediaId = media && typeof media['id'] === 'string' ? media['id'] : null;
+    const listenSessions = mediaId && request.accountId
+      ? await callListenSessions(request.tenantId!, request.accountId, mediaId)
+      : null;
     return reply.send({
       ...detail,
       call: withAgentName(detail.call, names),
@@ -170,6 +177,7 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
         ? names.get(detail.call.dispositioned_by_user_id) ?? null
         : null,
       media: media ? shapeMediaCall(media, grants, publicRecordingPath(request.params.id)) : null,
+      ...(listenSessions ? { listen_sessions: listenSessions } : {}),
     });
   });
 

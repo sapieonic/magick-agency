@@ -192,7 +192,8 @@ Live calls (`live-calls.ts`, docs/listening.md) are console-side too: the live l
 reveal (`AgencyLiveCallNumberResponse`), the grant (`AgencyListenGrant`), the refusal body
 (`AgencyListenErrorResponse`) and a call's listen sessions (`AgencyCallListenSession`) are what the
 public API layer serves after enrichment (names from `users`, the masked number, `listenable`
-computed for the caller), so none has a dialer twin; `AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS` is a
+computed for the caller; the row's `correlation_id`, the spine row the call pages are keyed on, and
+the campaign's `aht_seconds`, added with the server side), so none has a dialer twin; `AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS` is a
 subset of the dialer contract's `AgencyListenErrorCode`, so a row and the grant say the same thing.
 
 ## 5. Request fields the server sets itself

@@ -11,6 +11,7 @@ import { agencyCampaignRepository } from '../../db/repositories/agency.repositor
 import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../../settings/agency-account-settings.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { enrichAttemptAgentName } from '../../agency/agency-spine.js';
+import { callListenSessions } from './helpers/listen.js';
 
 const log = createChildLogger({ component: 'proxy-agency-calls-routes' });
 
@@ -535,7 +536,12 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         });
       }
 
-      return reply.send(await withAttemptAgentName(stripped.body, tenantId));
+      const body = await withAttemptAgentName(stripped.body, tenantId);
+      // Who listened to the call live ("Listened to by", docs/listening.md LS13): this route is
+      // already `agency.supervise`. Absent when there is no call, or when the read failed.
+      const callId = isDetailEnvelope(body) && body.call && typeof body.call['id'] === 'string' ? body.call['id'] : null;
+      const listenSessions = callId && request.accountId ? await callListenSessions(tenantId, request.accountId, callId) : null;
+      return reply.send(listenSessions ? { ...(body as object), listen_sessions: listenSessions } : body);
     },
   );
 

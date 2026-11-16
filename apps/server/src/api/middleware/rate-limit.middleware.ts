@@ -126,6 +126,14 @@ const WEBRTC_MEDIA_LEG_SUFFIXES = ['/pstn-stream', '/browser-stream'] as const;
  */
 const STATION_PATH_PREFIX = '/proxy/agency/station';
 
+/**
+ * The supervisor's listener socket upgrade, `/proxy/agency/listen/:sessionId/:listenId`
+ * (docs/listening.md): a single-use query token like the station's, so the station's bucket. A
+ * console reconnecting a dropped listen (up to 15 s of re-mints) must not spend the `ip` bucket
+ * the sign-in shares.
+ */
+const LISTEN_PATH_PREFIX = '/proxy/agency/listen';
+
 /** Control-plane prefix (bearer-authenticated callers). No route is served there today. */
 const INTERNAL_PATH_PREFIX = '/internal';
 
@@ -339,7 +347,7 @@ export function budgetFor(
   if (EXEMPT_PATHS.some((p) => path === p)) return 'exempt';
   if (isWebhookPath(path)) return 'webhook';
   if (isCarrierMediaPath(path)) return 'carrier_media';
-  if (hasPrefix(path, STATION_PATH_PREFIX)) return 'station';
+  if (hasPrefix(path, STATION_PATH_PREFIX) || hasPrefix(path, LISTEN_PATH_PREFIX)) return 'station';
   if (hasPrefix(path, INTERNAL_PATH_PREFIX)) return 'internal';
   if (hasBearer(request.headers)) return 'ip_auth';
   return 'ip';

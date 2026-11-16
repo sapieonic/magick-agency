@@ -67,6 +67,7 @@ import {
   PLACED_FIRST_DIAL_SQL,
   VOICEMAIL_DISPOSITION_CODE,
   WRAPUP_MEASURED_RESOLUTIONS_SQL,
+  ahtSecondsSql,
   readAttemptMetrics,
 } from './sql-fragments.js';
 import {
@@ -299,11 +300,7 @@ export async function campaignStats(
                 -- replica died contributes its whole time-until-sweep — minutes, or
                 -- hours — to the average. One orphan moves the tile visibly on a
                 -- low-volume campaign, and the outcome column already names them.
-                AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FILTER (
-                  WHERE state = 'ended'
-                    AND bridged_at IS NOT NULL
-                    AND outcome IS DISTINCT FROM 'orphaned'
-                    AND disposition_code IS DISTINCT FROM $3) AS aht_seconds,
+                ${ahtSecondsSql('$3')} AS aht_seconds,
                 AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FILTER (
                   WHERE state = 'ended'
                     AND bridged_at IS NOT NULL

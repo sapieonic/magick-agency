@@ -53,6 +53,11 @@ export class StationDirectory implements PacingStations {
     for (const [sessionId, e] of this.entries) if (e.slot === slot) this.entries.delete(sessionId);
   }
 
+  /** The replica ids of the workers alive now. */
+  liveReplicaIds(): string[] {
+    return [...this.liveReplicas.keys()];
+  }
+
   isLiveReplica(replicaId: string): boolean {
     return this.liveReplicas.has(replicaId);
   }

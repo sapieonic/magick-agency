@@ -2890,6 +2890,34 @@
       "source": "apps/console/src/api/reports.ts",
       "status": "served",
       "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): produce a scheduled report's run now (202)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/live-calls",
+      "source": "apps/console/src/api/liveCalls.ts",
+      "status": "served",
+      "reason": "live calls route (contracts api/agency/live-calls.ts, docs/listening.md): the account's calls in progress, numbers masked (agency.supervise, the agency_live_listen_enabled flag)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/live-calls/:callId/number",
+      "source": "apps/console/src/api/liveCalls.ts",
+      "status": "served",
+      "reason": "live calls route (docs/listening.md LS9): one live call's full number on demand (agency.supervise)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/live-calls/:callId/listen",
+      "source": "apps/console/src/api/liveCalls.ts",
+      "status": "served",
+      "reason": "live calls route (docs/listening.md §4): a grant to listen to a live call, whose ws_url opens the listener socket (agency.calls.listen)"
+    },
+    {
+      "method": "WS",
+      "path": "/proxy/agency/listen/:sessionId/:listenId",
+      "source": "apps/console/src/hooks/listen/useListenSession.ts",
+      "status": "served",
+      "reason": "the supervisor's listener socket: URL is `ws_url` from POST /proxy/agency/live-calls/:callId/listen (src/api/liveCalls.ts), served at /proxy/agency/listen/:sessionId/:listenId?token= (proxy-agency-listen.routes.ts)"
     }
   ]
 }

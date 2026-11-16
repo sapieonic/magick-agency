@@ -1,0 +1,369 @@
+import type WebSocket from 'ws';
+import { createChildLogger } from '@magick-agency/observability';
+import { trackListenSessionEnded } from '@magick-agency/observability/metrics/agency';
+import {
+  AGENCY_LISTEN_CLOSE,
+  AGENCY_LISTEN_END_CLOSE,
+  AGENCY_LISTEN_FRAME_BYTES,
+  AGENCY_LISTEN_IDLE_TIMEOUT_MS,
+  type AgencyListenClientFrame,
+  type AgencyListenEndReason,
+  type AgencyListenServerFrame,
+} from '@magick-agency/contracts/agency';
+import type { AgencyListenErrorCode } from '@magick-agency/contracts/errors';
+import type {
+  ListenSink, ListenTapEndReason, ListenTapHandle, ListenTapStats, OpenListenTapResult,
+} from '../../core/webrtc-bridge-manager.js';
+import { sendToListenerSocket } from '../../core/bridge/listen-tap.js';
+import { LISTEN_MAX_CLIENT_MESSAGE_BYTES } from '../../utils/ws-limits.js';
+import type { ListenSessionCloseInput, ListenSessionOpenInput } from '../../db/repositories/agency.repository.js';
+import type { PlatformCreateAuditLogInput } from '../../audit/platform/audit-logger.js';
+import type { ListenGrantPayload, ListenTokenStore } from './listen-token.js';
+import type { ListenRegistry, ListenSessionHandle } from './listen-registry.js';
+
+const log = createChildLogger({ component: 'agency-listen-socket' });
+
+/**
+ * The supervisor's listener socket (`docs/listening.md` §3, §4): the upgrade's fail-closed
+ * admission, then the session — the bridge's {@link ListenSink} over the socket, the control
+ * frames, the idle bound, and the one end that closes the row, the socket and the audit pair.
+ *
+ * ── The upgrade, in order (LS7: no row, no audio) ────────────────────────────
+ *  1. The socket's `error` handler, before anything else: a throw inside a `ws` listener would
+ *     take the process down, and an errored socket is just a closed one here.
+ *  2. Spend the single-use token (4401 `listen_token_invalid` if it is missing, spent, expired or
+ *     another listen's; the grant must name this socket's session too).
+ *  3. Reserve a slot under the caps (4429 with `listen_limit_call` / `listen_limit_server`).
+ *  4. Write the `agency_listen_sessions` row and AWAIT it (1011 `listen_unavailable` if it
+ *     fails: nothing was opened).
+ *  5. Attach the bridge's tap (4404 `listen_call_not_live` if the bridge no longer has the call
+ *     bridged; the row just written closes `call_ended`).
+ *  6. Admit the session (the supervisor's older listen ends `superseded`), send `ready`, audit
+ *     `agency_call.listen_started`.
+ * A refusal closes with the error code as the close reason, so the listening bar can say why.
+ *
+ * ── The end ──────────────────────────────────────────────────────────────────
+ * Exactly once, whoever ends it (the client's `stop` or close, the idle bound, the tap, the
+ * registry's supersede, revoke or shutdown): the tap detached, `ended { reason }` sent and the
+ * socket closed with the reason's code (unless the client closed it), the row closed with its
+ * reason and counters, `agency_call.listen_ended` audited, the metrics counted. A failed row
+ * close or audit write is logged; neither touches the call.
+ */
+
+/** Sent as the close reason when the upgrade's token does not verify. */
+export const LISTEN_TOKEN_INVALID_REASON = 'listen_token_invalid';
+
+/**
+ * The largest client message the listener socket reads (`utils/ws-limits.ts`): its frames are
+ * `ping` and `stop`, tens of bytes. Anything longer is ignored unparsed (the app-wide `maxPayload`
+ * still bounds the socket).
+ */
+export { LISTEN_MAX_CLIENT_MESSAGE_BYTES };
+
+/** The control frame a client message is, or null: JSON, an object, a known event, known keys only. */
+export function parseListenClientFrame(raw: string): AgencyListenClientFrame | null {
+  if (raw.length > LISTEN_MAX_CLIENT_MESSAGE_BYTES) return null;
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return null; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (o['event'] === 'stop') return keys.length === 1 ? { event: 'stop' } : null;
+  if (o['event'] === 'ping') {
+    if (keys.some((k) => k !== 'event' && k !== 'ts')) return null;
+    if (o['ts'] === undefined) return { event: 'ping' };
+    const ts = o['ts'];
+    return typeof ts === 'number' && Number.isFinite(ts) ? { event: 'ping', ts } : null;
+  }
+  return null;
+}
+
+/** What the socket needs from the rest of the process. Production wiring: `runtime.ts`. */
+export interface ListenSocketDeps {
+  tokens: Pick<ListenTokenStore, 'consume'>;
+  registry: ListenRegistry;
+  bridge: { openListenTap(callId: string, sink: ListenSink): OpenListenTapResult };
+  rows: {
+    open(input: ListenSessionOpenInput): Promise<unknown>;
+    close(id: string, input: ListenSessionCloseInput): Promise<unknown>;
+  };
+  audit(entry: PlatformCreateAuditLogInput): void;
+  /** This process (`agency_listen_sessions.replica_id`). */
+  replicaId: string;
+  /**
+   * After an admission: end the supervisor's sessions held by OTHER processes past their cap
+   * (`superseded`). Null in one process, where every session is this registry's.
+   */
+  supersedeElsewhere?: ((session: ListenSessionHandle) => void) | null;
+  idleTimeoutMs?: number;
+  now?: () => number;
+}
+
+/** `ws`'s `readyState` for an open socket. */
+const OPEN = 1;
+
+function sendJson(ws: WebSocket, frame: AgencyListenServerFrame): void {
+  if (ws.readyState !== OPEN) return;
+  try { ws.send(JSON.stringify(frame)); } catch { /* the close follows */ }
+}
+
+function closeWith(ws: WebSocket, code: number, reason: string): void {
+  try { ws.close(code, reason); } catch { /* already gone */ }
+}
+
+/** A refusal at the upgrade: the close code for each error code (`AGENCY_LISTEN_CLOSE`). */
+function refuse(ws: WebSocket, code: AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON): void {
+  const close = code === LISTEN_TOKEN_INVALID_REASON ? AGENCY_LISTEN_CLOSE.TOKEN_REJECTED
+    : code === 'listen_limit_call' || code === 'listen_limit_server' ? AGENCY_LISTEN_CLOSE.LIMIT
+      : code === 'listen_call_not_live' ? AGENCY_LISTEN_CLOSE.CALL_GONE
+        : AGENCY_LISTEN_CLOSE.INTERNAL_ERROR;
+  closeWith(ws, close, code);
+}
+
+/** One open listen: the registry's handle and the bridge's sink. */
+class ListenSocketSession implements ListenSessionHandle, ListenSink {
+  readonly listenId: string;
+  readonly tenantId: string;
+  readonly accountId: string;
+  readonly callId: string;
+  readonly listenerUserId: string;
+  readonly recording: boolean;
+  readonly startedAt: number;
+  tap: ListenTapHandle | null = null;
+  private ended: Promise<void> | null = null;
+  private idle: NodeJS.Timeout | null = null;
+  private live = false;
+
+  constructor(
+    private readonly ws: WebSocket,
+    readonly grant: ListenGrantPayload,
+    private readonly deps: ListenSocketDeps,
+  ) {
+    this.listenId = grant.listenId;
+    this.tenantId = grant.tenantId;
+    this.accountId = grant.accountId;
+    this.callId = grant.callId;
+    this.listenerUserId = grant.listenerUserId;
+    this.recording = grant.recording;
+    this.startedAt = (deps.now ?? Date.now)();
+  }
+
+  get isEnded(): boolean {
+    return this.ended !== null;
+  }
+
+  // ── ListenSink ──────────────────────────────────────────────────────────
+  send(message: Buffer) {
+    return sendToListenerSocket(this.ws, message);
+  }
+
+  close(reason: ListenTapEndReason, stats: ListenTapStats): void {
+    // The tap has detached this sink already: end with what it was given.
+    void this.end(reason, stats);
+  }
+
+  // ── The session ─────────────────────────────────────────────────────────
+  /** Live from `ready`: control frames are answered and the idle bound runs. */
+  goLive(): void {
+    this.live = true;
+    this.touch();
+  }
+
+  /** A client frame arrived: the idle bound starts again. */
+  touch(): void {
+    if (!this.live || this.ended) return;
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = setTimeout(() => {
+      log.info({ listenId: this.listenId, callId: this.callId }, 'Listener silent past the idle bound — ending the listen');
+      void this.end('listener_disconnected');
+    }, this.deps.idleTimeoutMs ?? AGENCY_LISTEN_IDLE_TIMEOUT_MS);
+    this.idle.unref?.();
+  }
+
+  onClientFrame(frame: AgencyListenClientFrame): void {
+    if (!this.live || this.ended) return;
+    this.touch();
+    if (frame.event === 'stop') {
+      void this.end('listener_stopped');
+      return;
+    }
+    sendJson(this.ws, { event: 'pong', ...(frame.ts !== undefined ? { ts: frame.ts } : {}), server_ts: (this.deps.now ?? Date.now)() });
+  }
+
+  /**
+   * End the session once. `stats` is the tap's when the tap ended it; `clientClosed` when the
+   * socket is already closing from the other side (nothing more is sent on it).
+   */
+  end(reason: AgencyListenEndReason, stats?: ListenTapStats, clientClosed = false): Promise<void> {
+    if (this.ended) return this.ended;
+    this.ended = this.finish(reason, stats, clientClosed);
+    return this.ended;
+  }
+
+  private async finish(reason: AgencyListenEndReason, tapStats: ListenTapStats | undefined, clientClosed: boolean): Promise<void> {
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = null;
+    let stats: ListenTapStats = tapStats ?? { framesSent: 0, framesDropped: 0 };
+    if (!tapStats && this.tap) {
+      try {
+        stats = this.tap.stats();
+        this.tap.detach();
+      } catch (err) {
+        log.warn({ err, listenId: this.listenId }, 'Listen tap detach threw');
+      }
+    }
+    this.deps.registry.remove(this.listenId);
+    if (!clientClosed && reason !== 'server_restarted') {
+      sendJson(this.ws, { event: 'ended', reason });
+      closeWith(this.ws, AGENCY_LISTEN_END_CLOSE[reason], reason);
+    }
+    const now = (this.deps.now ?? Date.now)();
+    const seconds = Math.max(0, (now - this.startedAt) / 1000);
+    try {
+      await this.deps.rows.close(this.listenId, { reason, framesSent: stats.framesSent, framesDropped: stats.framesDropped });
+    } catch (err) {
+      log.error({ err, listenId: this.listenId, callId: this.callId, reason }, 'Could not close the listen session row');
+    }
+    // A session refused after its row was written (the call ended under the upgrade) never
+    // started: its row says so, and there is no `listen_started` for an `_ended` to pair with.
+    if (this.live) {
+      auditListen(this.deps, this.grant, 'agency_call.listen_ended', {
+        duration_seconds: Math.round(seconds), end_reason: reason, frames_dropped: stats.framesDropped,
+      });
+      try { trackListenSessionEnded(reason, seconds); } catch { /* a metric is never worth the end */ }
+    }
+    log.info({ listenId: this.listenId, callId: this.callId, reason, framesSent: stats.framesSent, framesDropped: stats.framesDropped },
+      'Listen session ended');
+  }
+}
+
+function auditListen(
+  deps: Pick<ListenSocketDeps, 'audit'>,
+  grant: ListenGrantPayload,
+  action: 'agency_call.listen_started' | 'agency_call.listen_ended',
+  extra: Record<string, unknown> = {},
+): void {
+  try {
+    deps.audit({
+      tenant_id: grant.tenantId,
+      account_id: grant.accountId,
+      actor_type: 'human',
+      user_id: grant.listenerUserId,
+      action,
+      resource_type: 'agency_call',
+      resource_id: grant.callId,
+      ...(grant.campaignId ? { campaign_id: grant.campaignId } : {}),
+      details: {
+        listen_id: grant.listenId,
+        call_id: grant.callId,
+        origin: grant.origin,
+        correlation_id: grant.correlationId,
+        agent_user_id: grant.agentUserId,
+        ...extra,
+      },
+    });
+  } catch (err) {
+    // The row is the record (LS7); a lost audit row is logged, never fatal.
+    log.error({ err, listenId: grant.listenId, action }, 'Could not write the listen audit row');
+  }
+}
+
+/**
+ * Run one listener socket from its upgrade to its end. The route has refused a malformed upgrade
+ * already (`proxy-agency-listen.routes.ts`); `sessionId` and `listenId` are canonical UUIDs.
+ * Resolves once the upgrade is decided (admitted or refused), not when the session ends.
+ */
+export async function handleListenSocket(
+  ws: WebSocket,
+  input: { sessionId: string; listenId: string; token: string | undefined },
+  deps: ListenSocketDeps,
+): Promise<ListenSocketSession | null> {
+  // 1. First, before any await: an errored socket is a closed one, never a crash.
+  ws.on('error', (err) => log.debug({ err: err.message, listenId: input.listenId }, 'Listener socket error'));
+  let clientGone = false;
+  let session: ListenSocketSession | null = null;
+  ws.on('close', () => {
+    clientGone = true;
+    if (session) void session.end('listener_disconnected', undefined, true);
+  });
+  ws.on('message', (raw: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+    if (!session || isBinary) return; // audio from the client is ignored
+    const bytes = Buffer.isBuffer(raw) ? raw : Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw);
+    if (bytes.length > LISTEN_MAX_CLIENT_MESSAGE_BYTES) return;
+    const frame = parseListenClientFrame(bytes.toString('utf8'));
+    if (frame) session.onClientFrame(frame);
+  });
+
+  // 2. The token, spent once, and it must be this socket's.
+  const grant = await deps.tokens.consume(input.listenId, input.token);
+  if (!grant || grant.sessionId !== input.sessionId) {
+    log.warn({ listenId: input.listenId, sessionId: input.sessionId }, 'Listen upgrade with a missing, spent or foreign token — refusing');
+    refuse(ws, LISTEN_TOKEN_INVALID_REASON);
+    return null;
+  }
+  if (clientGone) return null;
+
+  // 3. A slot under the caps.
+  const reserved = deps.registry.reserve({
+    listenId: grant.listenId, callId: grant.callId, tenantId: grant.tenantId, listenerUserId: grant.listenerUserId,
+  });
+  if (!reserved.ok) {
+    log.info({ listenId: grant.listenId, callId: grant.callId, code: reserved.code }, 'Listen upgrade refused at the cap');
+    refuse(ws, reserved.code);
+    return null;
+  }
+
+  // 4. The row, awaited: no row, no audio.
+  try {
+    await deps.rows.open({
+      id: grant.listenId, tenantId: grant.tenantId, accountId: grant.accountId, callId: grant.callId,
+      origin: grant.origin, campaignId: grant.campaignId, correlationId: grant.correlationId,
+      agentSessionId: grant.sessionId, agentUserId: grant.agentUserId, listenerUserId: grant.listenerUserId,
+      replicaId: deps.replicaId,
+    });
+  } catch (err) {
+    deps.registry.release(reserved.reservation);
+    log.error({ err, listenId: grant.listenId, callId: grant.callId }, 'Could not write the listen session row — refusing the listen');
+    refuse(ws, 'listen_unavailable');
+    return null;
+  }
+
+  const s = new ListenSocketSession(ws, grant, deps);
+  if (clientGone || deps.registry.isStopping) {
+    deps.registry.release(reserved.reservation);
+    await s.end(clientGone ? 'listener_disconnected' : 'server_shutdown', undefined, clientGone);
+    return null;
+  }
+
+  // 5. The tap.
+  let opened: OpenListenTapResult;
+  try {
+    opened = deps.bridge.openListenTap(grant.callId, s);
+  } catch (err) {
+    log.error({ err, listenId: grant.listenId, callId: grant.callId }, 'Opening the listen tap threw');
+    opened = { refused: 'not_found' };
+  }
+  if ('refused' in opened) {
+    deps.registry.release(reserved.reservation);
+    log.info({ listenId: grant.listenId, callId: grant.callId, refused: opened.refused }, 'Listen upgrade: the call is not live here');
+    // The row says what happened to the listen: the call it was for had ended.
+    await s.end('call_ended', undefined, true);
+    refuse(ws, 'listen_call_not_live');
+    return null;
+  }
+  s.tap = opened;
+
+  // 6. Admitted.
+  session = s;
+  deps.registry.admit(reserved.reservation, s);
+  sendJson(ws, {
+    event: 'ready', listen_id: grant.listenId, call_id: grant.callId, format: 'alaw8', frame_bytes: AGENCY_LISTEN_FRAME_BYTES,
+  });
+  s.goLive();
+  auditListen(deps, grant, 'agency_call.listen_started');
+  log.info({ listenId: grant.listenId, callId: grant.callId, sessionId: grant.sessionId }, 'Listen session started');
+  try { deps.supersedeElsewhere?.(s); } catch (err) { log.warn({ err, listenId: grant.listenId }, 'Cross-process supersede threw'); }
+  return s;
+}
+
+export type { ListenSocketSession };
