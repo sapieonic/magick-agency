@@ -8,7 +8,7 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
  * guard order (permission, then the consent flag's `403 feature_disabled`), the UUID check at the
  * edge (a malformed call id is the uniform 404), the masking and the per-caller `listenable`, the
  * number reveal, and the grant's own refusals (own call, LS4) before `callCore` and its mapping of
- * the owning process's answer. The SQL is pinned on Postgres by the live-listen end-to-end suite.
+ * the owning process's answer, through the app-wide error mask (a 503 refusal keeps its code). The SQL is pinned on Postgres by the live-listen end-to-end suite.
  */
 
 vi.mock('../../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: async () => {} }));
@@ -16,6 +16,7 @@ vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({ 
 
 import { notListenableReason, proxyAgencyLiveCallsRoutes, type LiveCallRouteDeps } from '../../../../src/api/routes/proxy-agency-live-calls.routes.js';
 import type { CoreCallRequest, CoreCallResult } from '../../../../src/api/core-dispatch.js';
+import { errorMaskHook } from '../../../../src/api/middleware/error-mask.middleware.js';
 
 const TENANT = '33333333-3333-4333-8333-333333333333';
 const ACCOUNT = '44444444-4444-4444-8444-444444444444';
@@ -61,6 +62,8 @@ beforeEach(async () => {
   };
   deps = d as never;
   app = Fastify({ logger: false });
+  // The app-wide error mask (`app.ts`): the grant's 503 refusals must reach the console with their code.
+  app.addHook('onSend', errorMaskHook);
   app.addHook('onRequest', async (request) => {
     const r = request as unknown as Record<string, unknown>;
     r['tenantId'] = TENANT;

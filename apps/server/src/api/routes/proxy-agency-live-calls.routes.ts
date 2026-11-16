@@ -22,7 +22,6 @@ import { config } from '../../config/index.js';
 import {
   LIVE_LISTEN_DISABLED_BODY,
   isUuid,
-  listenRefusalBody,
   listenRefusalCode,
   sendListenRefusal,
 } from './helpers/listen.js';
@@ -264,7 +263,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
       const code = listenRefusalCode(result.body);
       if (code) {
         deps.trackGrant(code);
-        return reply.code(result.status).send(listenRefusalBody(code));
+        return sendListenRefusal(reply, code, result.status);
       }
       log.warn({ callId, status: result.status }, 'listen grant: the owning process answered something other than a grant');
       return refuse('listen_unavailable');

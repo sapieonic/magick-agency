@@ -40,9 +40,16 @@ export function listenRefusalBody(code: AgencyListenErrorCode): { error: string;
   return { error: ERROR_LABEL[LISTEN_ERROR_STATUS[code]] ?? 'Error', code, message: LISTEN_ERROR_MESSAGES[code] };
 }
 
-/** `{ error, code, message }` with the code's status. */
-export function sendListenRefusal(reply: FastifyReply, code: AgencyListenErrorCode): FastifyReply {
-  return reply.code(LISTEN_ERROR_STATUS[code]).send(listenRefusalBody(code));
+/**
+ * `{ error, code, message }` with the code's status (or `status`, the owning process's answer).
+ * The 503s (`listen_limit_server`, `listen_unavailable`) are reviewed fixed-shape bodies the
+ * console reads by code (the refused grant's toast says why), so they are let through the
+ * app-wide error mask (`error-mask.middleware.ts`) as the soft phone's reviewed 503s are; the body
+ * is always {@link listenRefusalBody}'s, never forwarded text.
+ */
+export function sendListenRefusal(reply: FastifyReply, code: AgencyListenErrorCode, status = LISTEN_ERROR_STATUS[code]): FastifyReply {
+  if (status >= 500) reply.request.preserveReviewedUpstreamError = true;
+  return reply.code(status).send(listenRefusalBody(code));
 }
 
 /** Is this a listen refusal body (`{ code }` one of §7's)? */
