@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.8](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.7...super-admin-v0.5.8) (2026-11-16)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/web-ui bumped to 0.3.1
+
 ## [0.5.7](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.6...super-admin-v0.5.7) (2026-11-16)
 
 
