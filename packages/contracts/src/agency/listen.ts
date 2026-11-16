@@ -149,7 +149,8 @@ export interface AgencyListenPongFrame {
  *  - `tap_error`: the tap failed too many frames in a row and detached itself; the call carries on;
  *  - `server_shutdown`: the process that owned the call is stopping;
  *  - `server_restarted`: the session was still open when its process died; closed at the next
- *    boot (or when the primary reaped the dead media worker), never sent on a socket.
+ *    boot (or when the primary reaped the dead media worker), or by a live process's sweep of its
+ *    own rows that no session holds (LS16 (o)); never sent on a socket.
  */
 export const AGENCY_LISTEN_END_REASONS = [
   'call_ended',

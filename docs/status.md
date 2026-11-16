@@ -2957,11 +2957,12 @@ image names it as its arbiter, a new migration drops it, and the same change del
 23505 catch on that index (`upsertLiveSession` in
 `apps/server/src/db/repositories/agency/agent-session.repository.ts`).
 
-**Live call listening** ([`listening.md`](listening.md) §10): phase 1, the foundation, is built
-(contracts, `agency_listen_sessions`, audit actions, config, metrics, alerts); nothing a supervisor
-can use is yet. Not built: the tap and the bridge seam (phase 2); the listen registry, token store,
-socket, routes, revocation and reaps (phase 3); the console's Live calls and listening bar (phase
-4); the agent's standing line (phase 5); the inbound notice's words (phase 6).
+**Live call listening** ([`listening.md`](listening.md) §10): built end to end behind the flag
+`agency_live_listen_enabled` (off by default): the bridge tap, the registry, token store, socket,
+routes, revocation and reaps, the console's Live calls and listening bar, the agent's standing
+line, the inbound notice's words and the load check, with the review fixes. Rulings marked
+"default, pending Manas" in `decisions.md` (LS14–LS17) await sign-off. The agent's live
+"Supervisor listening" indicator is not built (LS2).
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.

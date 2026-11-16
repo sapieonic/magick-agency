@@ -562,8 +562,10 @@ every account the caller belongs to (CH2) where every internal handler is single
   carrier module's `wireFormat` matches (`alaw8` on VoiceLink) the relay is **passthrough**: the
   agent's bytes go out base64 in the carrier's frame and the carrier's decoded bytes go to the
   agent as `Buffer` views, with no codec either way. A carrier with another wire format transcodes
-  through A-law ⇄ PCM16 16 kHz and its own codec. Nothing else reads the browser leg's audio:
-  recordings are the carrier's, analysis reads the recording, and the abandon clip
+  through A-law ⇄ PCM16 16 kHz and its own codec. The only other reader of the browser leg's
+  audio is the live-listening tap (`core/bridge/listen-tap.ts`, [`listening.md`](listening.md)),
+  which copies each frame after the relay has sent it and never writes to the call: recordings
+  are the carrier's, analysis reads the recording, and the abandon clip
   (`playClipToCarrierThenHangUp`) and any other playback go to the carrier leg only.
 - **Concurrency guard** (`core/telephony-guard-host.ts`, `core/concurrency-guard.ts`,
   `account-concurrency-guard.ts`, `provider-concurrency-guard.ts`). Global, account and provider
