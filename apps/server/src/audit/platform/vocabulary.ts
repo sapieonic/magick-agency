@@ -199,6 +199,9 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_inbound_clip.deleted', label: 'Inbound recording deleted', group: 'Calls', product: 'agency' },
   { value: 'agency_push_device.ring_opt_in_changed', label: 'Agent turned inbound ringing on or off for a phone', group: 'Calls', product: 'agency' },
   { value: 'agency_push_device.revoked', label: 'Agent removed a phone from inbound ringing', group: 'Calls', product: 'agency' },
+  // Live call listening (docs/listening.md): "listening" in both, so neither reads as the agent's act.
+  { value: 'agency_call.listen_started', label: 'Supervisor started listening to a call', group: 'Calls', product: 'agency' },
+  { value: 'agency_call.listen_ended', label: 'Supervisor stopped listening to a call', group: 'Calls', product: 'agency' },
 
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },

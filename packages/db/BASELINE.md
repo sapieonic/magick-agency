@@ -1529,6 +1529,33 @@ first run clears the rows from before RC1 it holds none. The predicate is spelle
 the purge's batch read on it in its keyset order, the invalid-index refusal, down then up) and the
 down → up inventory suite.
 
+### 0047 — `migrations/0047_listen_sessions.sql`
+
+Live call listening (`docs/listening.md`, LS1–LS14). **`agency_listen_sessions`** (new): one row per
+listen session, a supervisor listening in to a call in progress, written before any audio flows
+(LS7) and closed when it ends; the record of who listened, kept for the audit log's horizon (LS12:
+the audit maintenance deletes rows started before `AUDIT_RETENTION_DAYS`). `id` (the listen id,
+minted with the grant), `tenant_id`, `account_id`, `call_id` (`agency_calls.id`), `origin`
+`VARCHAR(16)` (`AGENCY_CALL_ORIGINS`, the same list as `ck_agency_calls_origin`), `campaign_id`,
+`correlation_id` (the spine row: attempt, manual call or inbound call), `agent_session_id`,
+`agent_user_id`, `listener_user_id`, `started_at` (default now), `ended_at` and `end_reason`
+`VARCHAR(32)` (`AGENCY_LISTEN_END_REASONS`, both or neither), `frames_sent` and `frames_dropped`
+`INTEGER` (default 0), `replica_id` `VARCHAR(100)` (the process that owns the session; the reaps
+close a dead process's open rows `server_restarted` by it). **No foreign keys**: the row outlives
+its call, campaign and users. CHECKs `ck_agency_listen_sessions_origin`, `_end_reason`, `_ended`
+(both or neither, never before the start), `_campaign` (a dialler call names its campaign),
+`_frames` (never negative), `_not_own_call` (`listener_user_id <> agent_user_id`, LS3).
+**`idx_agency_listen_sessions_open`** `(tenant_id, account_id) WHERE ended_at IS NULL` (the live
+list, the caps, the reaps), **`idx_agency_listen_sessions_call`** `(call_id)` ("Listened to by"),
+**`idx_agency_listen_sessions_listener`** `(tenant_id, listener_user_id, started_at DESC)`. The
+retention delete has no index of its own (a daily scan of a small table). **Down** refuses while
+any row exists (the record of who listened), else drops the table. Repository
+`apps/server/src/db/repositories/agency/listen-session.repository.ts`. **Tests**:
+`test/integration/db/listen-sessions-migration.test.ts` (the shape, every CHECK both ways, each
+stored list against the contract's and `ck_agency_calls_origin`, the indexes and the plans that read
+them on analysed data, the Down's refusal, down then up), `baseline.test.ts` and the down → up
+inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

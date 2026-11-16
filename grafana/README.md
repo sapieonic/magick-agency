@@ -8,7 +8,7 @@ repo; see [Routing](#routing-managed-outside-this-repo).
 | Path | What it is |
 |---|---|
 | [`terraform/`](terraform/) | The root module: the folder **Magick Agency Alerts** (uid `magick-agency-alerts`), the alert rules, the dashboard |
-| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 34 `agy-*` rules, as data (the newest, the `inbound` group, watches inbound calls on Plivo numbers: the answer webhook, failed and unanswered calls, the queue, connect availability and each tenant's Application; the `reports` group before it watches report runs, their pending age and the renderer's signed callback; the `carrier-credentials` group before it watches the tenant carrier credential keyring and sweep; `agy-pacing-share-starved` before it watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
+| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 39 `agy-*` rules, as data (the newest, the `listen` group, watches live call listening: the media relay's own dwell, listener sockets closed for not reading, listens refused at the per-process limit and the listener tap's failures; the `inbound` group before it watches inbound calls on Plivo numbers: the answer webhook, failed and unanswered calls, the queue, connect availability, each tenant's Application and the rings to away phones; the `reports` group before it watches report runs, their pending age and the renderer's signed callback; the `carrier-credentials` group before it watches the tenant carrier credential keyring and sweep; `agy-pacing-share-starved` before it watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
 | [`terraform/alerting.tf`](terraform/alerting.tf) | The folder, `local.agency` (the selector), the routing labels, and the one `grafana_rule_group` resource |
 | [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`) |
 | [`dashboards/magick-agency-overview.json`](dashboards/magick-agency-overview.json) | The dashboard (uid `magick-agency-overview`, classic model) |
@@ -132,6 +132,10 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-inbound-application-broken` | `agency_inbound_applications{health=~"url_mismatch\|app_missing"}` above 0 for 5m (the scheduled health check, every 15m); pages |
 | `agy-inbound-application-unchecked` | `agency_inbound_applications{health=~"unreachable\|failed"}` above 0 for 45m (three passes) |
 | `agy-inbound-ring-push-failed` | `agency_inbound_rings_total`: of the rings to away agents' phones over 15m, the share `push_failed` above 0.2, with a floor of 5 rings (Mode B) |
+| `agy-listen-relay-dwell-regressed` | `webrtc_relay_dwell_seconds` p99 over 15m above 5 ms (a quarter of the 20 ms frame interval), with a floor of 300 samples: the relay is slow, the promise that listening never touches a call's audio (docs/listening.md, LS8) the first thing to rule out |
+| `agy-listen-backlog-closes` | `websocket_send_backpressure_total{socket="listener",action="closed"}`, 3+ in 15m, with the new-series guard: supervisors' listener sockets closed `send_backlog` |
+| `agy-listen-grants-server-limit` | `agency_listen_grants_total{result="listen_limit_server"}`, any in 15m, with the new-series guard: a listen refused at `AGENCY_LISTEN_MAX_PER_PROCESS` |
+| `agy-listen-tap-errors` | `agency_listen_tap_errors_total`, any rate sustained for 10m: the listener tap failing frames (never the call's own audio) |
 | `agy-reports-callback-bad-signature` | `agency_reports_callbacks_total{result="bad_signature"}`, any in 15m, with the new-series guard: the renderer's and the server's `AGENCY_REPORTS_CALLBACK_SECRET` differ, or something else posts to the callback |
 
 **Re-baseline `agy-error-log-volume` after the pilot.** It starts at 10+
@@ -171,6 +175,10 @@ and `service_name=~"$service_name"`. The rows:
 - **Reports**: runs finished by kind and status, pending runs by status and the
   oldest one's age, assembly and render duration p95 by kind, and render callbacks,
   report-ready emails and subscription runs by result.
+- **Live call listening**: sessions open and grants by result, sessions ended by reason, session
+  length, the tap's errors by stage with the listener sockets' back-pressure, the media relay's
+  per-frame dwell by direction (p50 / p99, sampled one frame in 50), and listener socket handoffs to
+  media workers.
 - **Voice, capacity and storage**: WebSockets, telephony lease release,
   provider concurrency admission, rate-limit rejections, S3, the carrier
   credential keyring and sweeps, carrier dial refusals.

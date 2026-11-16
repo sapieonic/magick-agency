@@ -177,6 +177,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/abandonment-otlp-export.test.ts` | 11 |
 | `apps/server/test/unit/agency/abandonment-window.test.ts` | 19 |
 | `apps/server/test/unit/agency/agency-activity-actions.test.ts` | 8 |
+| `apps/server/test/unit/agency/listen/listen-metric-vocabulary.test.ts` (the `agency_listen_*` metric labels against the contract's end reasons and refusal codes; type-level and runtime) | 1 |
 | `apps/server/test/unit/agency/agent-caller-ids-route.test.ts` | 6 |
 | `apps/server/test/unit/agency/agency-activity.test.ts` | 57 |
 | `apps/server/test/unit/agency/agency-ingest-audit.test.ts` | 5 |
@@ -775,15 +776,15 @@ Files: `decode.ts`, `ensure-pcm-clip.ts`, `telephony-clip.ts`
 
 ### `apps/server/src/audit/`
 
-Both audit writers and their buffer (`audit-logger.ts` → `audit_logs`; `platform/` → `platform_audit_log`), partition maintenance and retention, super-admin audit helper (decision B7).
+Both audit writers and their buffer (`audit-logger.ts` → `audit_logs`; `platform/` → `platform_audit_log`), partition maintenance and retention (with the row delete, at the same cutoff, of the tables kept for the audit horizon: `agency_listen_sessions`, LS12), super-admin audit helper (decision B7).
 
 Files: `audit-buffer.ts`, `audit-logger.ts`, `audit-partition-maintenance.ts`, `audit-retention.ts`, `audit.types.ts`, `super-admin-audit.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/audit/audit-loggers.test.ts` | ~4 |
-| `apps/server/test/integration/audit/audit-partition-maintenance.test.ts` | ~4 |
-| `apps/server/test/unit/audit/audit-partition-maintenance.test.ts` | 7 |
+| `apps/server/test/integration/audit/audit-partition-maintenance.test.ts` (with the listen sessions' delete at the audit cutoff, LS12) | ~5 |
+| `apps/server/test/unit/audit/audit-partition-maintenance.test.ts` (with `purgeAuditHorizonRows`: batches, the dry run, a failure recorded on its own) | 11 |
 | `apps/server/test/unit/audit/audit-retention.test.ts` | 8 |
 | `apps/server/test/unit/audit/super-admin-audit-failure-logged.test.ts` | 4 |
 
@@ -902,7 +903,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` (with `PLIVO_RECORDING_REDIRECT_HOSTS`, RC4: empty by default, a lower-cased list, and the refusals at load) | 25 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 21 |
+| `apps/server/test/unit/config/config.test.ts` (with `agency.listen`) | 22 |
 | `apps/server/test/unit/config/db-session-config.test.ts` (`DB_*_TIMEOUT_MS`: off by default, the refusals, `dbSessionOptions`, each process's `application_name`) | 7 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
@@ -993,11 +994,14 @@ The agency repository is a folder, `repositories/agency/`, behind the `agency.re
 
 Mode B: `repositories/agency/push-device.repository.ts` (`AgencyPushDeviceRepository`: register and opt in, each answering the opt-in it replaced, revoke, the failure record, the device that holds a session's station, and with it the live session's side of the ring rule in one statement (`findForLiveSession`, the ring as it starts), `toWirePushDevice` without the tokens); `agent-session.repository.ts` keeps `away_ring_since` and `ring_misses` in `setState` and adds `restoreAwayRing` (answering the absence's start and its missed rings, so a ring's end reads neither again), `endAwayRing` (also matching a row still on `break/away_ring` whose key the reconcile cleared), `clearAwayRingSince`, `findAwayRingCandidates` (every live absence with its station's device and missed rings, or one account's for the inbound search, on 0037's partial index; who of them may be rung is `AwayRingService`'s rule), `noteRingMiss`, `ringAnswered` (a bound ring: misses reset and `away_ring_since` cleared) and `findLiveAwayRingForDevice` (the take-over's claim ends `away_ring` in its own statement); `inbound-call.repository.ts` writes the ring columns (`offer` with `channel`, `markRingAnswered`, `setRingResult`, which answers the row it wrote).
 
-Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-caller-id.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-retry.repository.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/assignment-reads.repository.ts`, `repositories/agency/assignment-sql.ts`, `repositories/agency/assignment.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact-unclaim-sql.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/customer-history.repository.ts`, `repositories/agency/drilldown-sql.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/inbound-answer.repository.ts`, `repositories/agency/inbound-call.repository.ts`, `repositories/agency/inbound-clip.repository.ts`, `repositories/agency/inbound-route.repository.ts`, `repositories/agency/insights-pacing.repository.ts`, `repositories/agency/insights-range-reads.ts`, `repositories/agency/insights-reads.repository.ts`, `repositories/agency/insights-rollup-reads.ts`, `repositories/agency/insights-rollup-sql.ts`, `repositories/agency/insights-rollup.repository.ts`, `repositories/agency/insights-sql.ts`, `repositories/agency/manual-call.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/report-run.repository.ts`, `repositories/agency/report-subscription.repository.ts`, `repositories/agency/softphone-campaign-sql.ts`, `repositories/agency/roster-presence.repository.ts` (what a roster import finds already in its campaign, IM3: numbers by the digits index, exact copies by `row_fingerprint`, key-column parts paged on `(created_at, id)`, each bounded by the job's own start), `repositories/agency/softphone-settings.repository.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`, `sql-utils.ts` (SQL spellings shared across areas: `endsWithDigitsSql`), `repositories/agency/push-device.repository.ts`
+Live call listening: `repositories/agency/listen-session.repository.ts` (`AgencyListenSessionRepository`, `agency_listen_sessions`, 0047: open a session's row, close an open one once with its reason and counters, the account's and the calls' open sessions, a call's sessions for "Listened to by", one supervisor's open sessions, and the reaps that close a dead process's open rows `server_restarted` by replica).
+
+Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-caller-id.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-retry.repository.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/assignment-reads.repository.ts`, `repositories/agency/assignment-sql.ts`, `repositories/agency/assignment.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact-unclaim-sql.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/customer-history.repository.ts`, `repositories/agency/drilldown-sql.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/inbound-answer.repository.ts`, `repositories/agency/inbound-call.repository.ts`, `repositories/agency/inbound-clip.repository.ts`, `repositories/agency/inbound-route.repository.ts`, `repositories/agency/insights-pacing.repository.ts`, `repositories/agency/insights-range-reads.ts`, `repositories/agency/insights-reads.repository.ts`, `repositories/agency/insights-rollup-reads.ts`, `repositories/agency/insights-rollup-sql.ts`, `repositories/agency/insights-rollup.repository.ts`, `repositories/agency/insights-sql.ts`, `repositories/agency/manual-call.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/report-run.repository.ts`, `repositories/agency/report-subscription.repository.ts`, `repositories/agency/softphone-campaign-sql.ts`, `repositories/agency/roster-presence.repository.ts` (what a roster import finds already in its campaign, IM3: numbers by the digits index, exact copies by `row_fingerprint`, key-column parts paged on `(created_at, id)`, each bounded by the job's own start), `repositories/agency/softphone-settings.repository.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`, `sql-utils.ts` (SQL spellings shared across areas: `endsWithDigitsSql`), `repositories/agency/push-device.repository.ts`, `repositories/agency/listen-session.repository.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/agency/insights-pacing-repository.test.ts` | 11 |
+| `apps/server/test/integration/agency/listen-session-repository.test.ts` (every method on real Postgres: the tenant and account scopes, the open-only reads, a close that wins once and its race, no end before the start, the two reaps) | 10 |
 | `apps/server/test/integration/repositories/agency-ingest-job-account-scope.test.ts` | ~9 |
 | `apps/server/test/integration/repositories/membership-invite-claim-confinement.test.ts` | ~7 |
 | `apps/server/test/integration/repositories/notification-delivery.repository.test.ts` | ~42 |
@@ -1041,7 +1045,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
-| `apps/server/test/unit/feature-flags/registry.test.ts` | 17 |
+| `apps/server/test/unit/feature-flags/registry.test.ts` | 20 |
 
 ### `apps/server/src/invites/`
 
@@ -1410,10 +1414,10 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/assignment.test.ts` | 6 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
-| `packages/contracts/test/errors.test.ts` (the customer-history, report and inbound code lists: a hand-written snapshot and a two-way type guard) | 19 |
-| `packages/contracts/test/exports.test.ts` | 13 |
-| `packages/contracts/test/flags.test.ts` | 11 |
-| `packages/contracts/test/rbac.test.ts` | 71 |
+| `packages/contracts/test/errors.test.ts` (the customer-history, report, inbound and listen code lists: a hand-written snapshot and a two-way type guard; a live row's not-listenable reasons a subset of the listen codes) | 25 |
+| `packages/contracts/test/exports.test.ts` (live listening's vocabularies, wire sizes, close codes and their re-exports among the rest) | 15 |
+| `packages/contracts/test/flags.test.ts` | 14 |
+| `packages/contracts/test/rbac.test.ts` | 74 |
 | `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
 | `packages/contracts/test/inbound-route-warnings.test.ts` (`inboundRouteWarnings`: no opening hours, a deployment that cannot connect, a call recorded unannounced; the actions offered; the standard recordings' words and slots, only call-back and voicemail promising a call back; the `connect_unavailable` words naming the call-back message) | 10 |
 | `packages/contracts/test/stall.test.ts` | 4 |
@@ -1426,15 +1430,17 @@ The dialer contract, one file per surface, re-exported by `../agency.ts`: shared
 
 Mode B: `push-devices.ts` (the push device, its register and opt-in bodies and status, the ring push and its types, the ring-off and push-failure reasons, the away-ring refusals); `breaks.ts` gains `away_ring`; `inbound.ts` the ring fields, constants, results, decline reasons, the ring routes' bodies and the codes `ring_not_offered`, `ring_expired`, `already_accepted`. Samples in `fixtures/agent/push.json`, `inbound.json` and `station.json`.
 
-Files: `actions.ts`, `assignment.ts`, `breaks.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `inbound.ts`, `performance.ts`, `session.ts`, `softphone.ts`, `spine.ts`, `station.ts`, `station-device.ts` (one station per agent: the device fields and the two refusals, OS1–OS8), `push-devices.ts`
+Live call listening (`docs/listening.md`): `listen.ts` (the calls' origins, the listener socket's leg tags, wire sizes and timings, its client and server frames, the end reasons, the close codes and each end reason's code).
+
+Files: `actions.ts`, `assignment.ts`, `breaks.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `inbound.ts`, `performance.ts`, `session.ts`, `softphone.ts`, `spine.ts`, `station.ts`, `listen.ts`, `station-device.ts` (one station per agent: the device fields and the two refusals, OS1–OS8), `push-devices.ts`
 
 _No dedicated test files._
 
 ### `packages/contracts/src/api/agency/`
 
-Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone, contact assignment (`assignment.ts`: the supervisor's operations, progress and history, the agent's own contacts and agent-led retry; the public API layer serves those routes itself, so they have no dialer-contract twin), customer history (`customer-history.ts`: the search, timeline, export and options shapes, the filter caps `CUSTOMER_FILTER_LIST_MAX` and `CUSTOMER_FILTER_CODE_MAX`, the family's error codes; also served without a dialer twin), reports (`reports.ts`, docs/reports.md: runs, the create request, the history page, downloads, subscriptions, their vocabularies and constants, the RP2 window rule `reportWindowProblem`; the error codes are `errors.ts` §5, re-exported), inbound calls (`inbound.ts`, docs/inbound.md: the route DTOs, the Missed inbound item, its query and page, the mark-handled answer; the dialer vocabularies re-exported, the error codes `errors.ts` §6), Home's board (`home.ts`, B28a: `AgencyHomeBoard`, the cap and the active statuses; served by the public API layer itself), dedicated caller IDs (`agent-caller-id.ts`, DN1–DN10: the supervisor's list, set and release, their refusal codes, the PATCH's `caller_id_dedicated`, the audit actions; also served by the public API layer itself). Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
+Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone, contact assignment (`assignment.ts`: the supervisor's operations, progress and history, the agent's own contacts and agent-led retry; the public API layer serves those routes itself, so they have no dialer-contract twin), customer history (`customer-history.ts`: the search, timeline, export and options shapes, the filter caps `CUSTOMER_FILTER_LIST_MAX` and `CUSTOMER_FILTER_CODE_MAX`, the family's error codes; also served without a dialer twin), reports (`reports.ts`, docs/reports.md: runs, the create request, the history page, downloads, subscriptions, their vocabularies and constants, the RP2 window rule `reportWindowProblem`; the error codes are `errors.ts` §5, re-exported), inbound calls (`inbound.ts`, docs/inbound.md: the route DTOs, the Missed inbound item, its query and page, the mark-handled answer; the dialer vocabularies re-exported, the error codes `errors.ts` §6), Home's board (`home.ts`, B28a: `AgencyHomeBoard`, the cap and the active statuses; served by the public API layer itself), dedicated caller IDs (`agent-caller-id.ts`, DN1–DN10: the supervisor's list, set and release, their refusal codes, the PATCH's `caller_id_dedicated`, the audit actions; also served by the public API layer itself), live calls (`live-calls.ts`, docs/listening.md: the live list and its row, the number reveal, the listen grant, the refusal body, a call's listen sessions; the socket's vocabularies re-exported from `../../agency/listen.ts`, the error codes `errors.ts` §7). Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
 
-Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `agent-caller-id.ts`, `assignment.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `customer-history.ts`, `dnc.ts`, `home.ts`, `inbound.ts`, `index.ts`, `reports.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
+Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `agent-caller-id.ts`, `assignment.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `customer-history.ts`, `dnc.ts`, `home.ts`, `inbound.ts`, `index.ts`, `live-calls.ts`, `reports.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
 
 _No dedicated test files._
 
@@ -1587,6 +1593,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/recording-honours-request-migration.test.ts` (0043: only the buckets of attempts whose call holds a link it did not ask for are marked for a recount, the links kept, down then up) | 2 |
 | `packages/db/test/integration/db/unrequested-recordings-index-migration.test.ts` (0046: the definition, the purge's batch pick on it in id order from the keyset and its dry-run count, the invalid-index refusal, down then up) | 5 |
 | `packages/db/test/integration/db/inbound-ring-migration.test.ts` (0036, Mode B: the push devices table, its CHECKs and partial token indexes, the ring columns, the session's `ring_misses` and `away_ring_since`, each CHECKed list equal to its contract list, the down) | ~11 |
+| `packages/db/test/integration/db/listen-sessions-migration.test.ts` (0047, live call listening: the session table, every CHECK both ways, its stored lists against the contract's and `ck_agency_calls_origin`, the three indexes and their plans on analysed data, the Down's refusal while rows exist, down then up) | 7 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the inbound reached trigger and its races, the summary's index and its plan, down and up) | 8 |
 | `packages/db/test/integration/db/inbound-reach-settles-migration.test.ts` (0029: `callback_reopened` false by default, `carrier_seconds` and its CHECK, no rewrite of `agency_contacts`, down and up) | 3 |
@@ -1671,7 +1678,7 @@ Files: `crypto.ts`, `index.ts`, `log-context.ts`, `logger.ts`, `meter.ts`, `metr
 |---|---|
 | `packages/observability/test/logger.test.ts` | 4 |
 | `packages/observability/test/metric-instruments.test.ts` (the settable gauge: every label set observed; `retire` reports once and goes) | 3 |
-| `packages/observability/test/metrics-agency.test.ts` | 9 |
+| `packages/observability/test/metrics-agency.test.ts` (with the `agency_listen_*` labels and the active gauge) | 11 |
 | `packages/observability/test/metrics-platform.test.ts` (the push senders' instruments and `trackPushSend`) | 3 |
 | `packages/observability/test/tracing.test.ts` | 2 |
 

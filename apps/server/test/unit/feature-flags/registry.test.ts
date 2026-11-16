@@ -41,7 +41,7 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled, agency_inbound_enabled, agency_inbound_ring_enabled', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled, agency_inbound_enabled, agency_inbound_ring_enabled, agency_live_listen_enabled, agency_live_listen_unrecorded', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
@@ -51,10 +51,12 @@ describe('feature-flag registry', () => {
       expect(getFlag('agency_reports_enabled')).toBeDefined();
       expect(getFlag('agency_inbound_enabled')).toBeDefined();
       expect(getFlag('agency_inbound_ring_enabled')).toBeDefined();
+      expect(getFlag('agency_live_listen_enabled')).toBeDefined();
+      expect(getFlag('agency_live_listen_unrecorded')).toBeDefined();
       expect(allFlags().map((f) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
         'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled', 'agency_inbound_enabled',
-        'agency_inbound_ring_enabled',
+        'agency_inbound_ring_enabled', 'agency_live_listen_enabled', 'agency_live_listen_unrecorded',
       ]);
     });
 
@@ -145,6 +147,27 @@ describe('feature-flag registry', () => {
       expect(f.clientExposed).toBeUndefined();
       expect(f.envVar).toBe('FF_AGENCY_INBOUND_RING');
     });
+
+    it('agency_live_listen_enabled (the consent gate, LS1) is boolean, default off, tri-scoped, client-exposed', () => {
+      const f = getFlag('agency_live_listen_enabled')!;
+      expect(f.type).toBe('boolean');
+      expect(f.default).toBe(false);
+      expect(f.scopes).toEqual(['global', 'tenant', 'account']);
+      // The console shows/hides Live calls and the station's standing line.
+      expect(f.clientExposed).toBe(true);
+      expect(f.envVar).toBe('FF_AGENCY_LIVE_LISTEN');
+    });
+
+    it('agency_live_listen_unrecorded (LS4) is boolean, default ON, tri-scoped, not client-exposed', () => {
+      const f = getFlag('agency_live_listen_unrecorded')!;
+      expect(f.type).toBe('boolean');
+      // On: unrecorded calls may be listened to; off narrows listening to recorded calls.
+      expect(f.default).toBe(true);
+      expect(f.scopes).toEqual(['global', 'tenant', 'account']);
+      // The server computes each live row's `listenable`; the console reads that.
+      expect(f.clientExposed).toBeUndefined();
+      expect(f.envVar).toBe('FF_AGENCY_LIVE_LISTEN_UNRECORDED');
+    });
   });
 
   describe('defineFlag', () => {
@@ -224,8 +247,10 @@ describe('feature-flag registry', () => {
       expect(keys).toContain('agency_console_alaw8');
       expect(keys).toContain('agency_reports_enabled');
       expect(keys).toContain('agency_inbound_enabled');
+      expect(keys).toContain('agency_live_listen_enabled');
       expect(keys).not.toContain('agency_late_binding');
       expect(keys).not.toContain('agency_inbound_ring_enabled');
+      expect(keys).not.toContain('agency_live_listen_unrecorded');
     });
   });
 });

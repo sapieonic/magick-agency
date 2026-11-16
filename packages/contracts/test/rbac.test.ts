@@ -75,6 +75,8 @@ const FLOORS: ReadonlyArray<{
   // Inbound calls (docs/inbound.md §8.1): an agent's own Missed rows; routes at account_admin.
   { permission: 'agency.inbound.read', floor: 'agent', masterName: null, masterLine: null },
   { permission: 'agency.inbound.write', floor: 'account_admin', masterName: null, masterLine: null },
+  // Live call listening (docs/listening.md, LS3): a supervisor's act, at account_admin.
+  { permission: 'agency.calls.listen', floor: 'account_admin', masterName: null, masterLine: null },
 ];
 
 describe('permission floors', () => {
@@ -122,6 +124,15 @@ describe('the agent role', () => {
     expect(hasPermission('agent', 'agency.campaigns.read')).toBe(false);
     expect(hasPermission('agent', 'agency.dnc.read')).toBe(false);
     expect(hasPermission('agent', 'agency.softphone.manage')).toBe(false);
+  });
+
+  it('cannot listen to calls (LS3): listening starts at account_admin, the agency.supervise seat', () => {
+    expect(hasPermission('agent', 'agency.calls.listen')).toBe(false);
+    expect(hasPermission('viewer', 'agency.calls.listen')).toBe(false);
+    expect(hasPermission('operator', 'agency.calls.listen')).toBe(false);
+    for (const role of ROLES) {
+      expect(hasPermission(role, 'agency.calls.listen'), role).toBe(hasPermission(role, 'agency.supervise'));
+    }
   });
 
   it('reads their Missed inbound rows but cannot configure inbound routes', () => {

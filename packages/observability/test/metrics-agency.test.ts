@@ -56,7 +56,7 @@ vi.mock('@opentelemetry/api', () => {
   };
 });
 
-const { trackInboundQueueWaiting } = await import('../src/metrics/agency.js');
+const { trackInboundQueueWaiting, trackListenSessionsActive } = await import('../src/metrics/agency.js');
 
 const SOURCE = readFileSync(resolve(__dirname, '../src/metrics/agency.ts'), 'utf8');
 
@@ -205,5 +205,28 @@ describe('agency_inbound_queue_waiting', () => {
     trackInboundQueueWaiting('route-2', 0);
     collect();
     expect(collect()).toEqual([]);
+  });
+});
+
+describe('agency_listen_* (docs/listening.md)', () => {
+  it('labels each counter by its one closed set, and the gauge and histogram by nothing', () => {
+    expect(declaredLabels('agency_listen_grants_total')).toEqual(['result']);
+    expect(declaredLabels('agency_listen_sessions_ended_total')).toEqual(['reason']);
+    expect(declaredLabels('agency_listen_tap_errors_total')).toEqual(['stage']);
+    expect(declaredLabels('agency_listen_sessions_active')).toEqual([]);
+    expect(declaredLabels('agency_listen_session_seconds')).toEqual([]);
+  });
+
+  it('the active gauge reads 0 from boot, then what the registry sets, never below 0', () => {
+    const collect = () => {
+      const seen: number[] = [];
+      otel.gauges.get('agency_listen_sessions_active')!({ observe: (value) => { seen.push(value); } });
+      return seen;
+    };
+    expect(collect()).toEqual([0]);
+    trackListenSessionsActive(3);
+    expect(collect()).toEqual([3]);
+    trackListenSessionsActive(-1);
+    expect(collect()).toEqual([0]);
   });
 });

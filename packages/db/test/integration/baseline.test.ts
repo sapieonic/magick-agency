@@ -79,6 +79,8 @@ const EXPECTED_TABLES = [
   'agency_inbound_routes', 'agency_inbound_route_numbers', 'agency_inbound_calls',
   // Mode B: the agent app's push devices (0036, IQ58-IQ74)
   'agency_push_devices',
+  // live call listening: one row per listen session (0047, docs/listening.md)
+  'agency_listen_sessions',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [

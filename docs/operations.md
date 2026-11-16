@@ -203,6 +203,7 @@ production.
 | `AGENCY_CAMPAIGN_STATS_CACHE_MS` | `2000` (0–10000) | How long one campaign's stats read is shared between the supervisors polling it (`GET …/campaigns/:id/stats`, every 10 s per open page; `apps/server/src/agency/campaign-stats-reads.ts`). Requests that arrive while the read runs always join it; for this long after it settles it is served as is, so however many supervisors watch one campaign, its contacts and attempts are scanned at most about five times per 10 s (once per viewer before). `0` shares only the read in flight. The campaign's own writes (start, pause, stop, a settings save), a force-available and a completed roster upload drop it at once; contacts arriving (each roster chunk) only stop the read in flight being kept, so an ingest never overlaps two scans. `agency_campaign_stats_reads_total{result="scanned"\|"shared"}` says what it saves |
 | `AGENCY_REPORTS_RENDERER`, `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_BASE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET`, `AGENCY_REPORTS_CHROME_PATH` | `inline`, unset | Reports (`docs/reports.md`): `inline` renders in process; `sqs` sends runs to the renderer Lambda and needs the queue URL, the server's public base URL (callback `<base>/webhooks/reports/rendered`) and a secret of at least 32 characters (used exactly as written: leading or trailing whitespace fails boot), and the S3 bucket (`S3_AUDIO_BUCKET`), or boot fails; the base URL is scheme and host only. Per tenant it also needs the `agency_reports_enabled` flag (default off; `FF_AGENCY_REPORTS` sets the default) |
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS`, `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS`, `AGENCY_REPORTS_TICK_INTERVAL_MS`, `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, `AGENCY_REPORTS_MAX_ATTEMPTS`, `AGENCY_REPORTS_RETENTION_DAYS`, `AGENCY_REPORTS_TENANT_PENDING_LIMIT`, `AGENCY_REPORTS_USER_PER_MINUTE` | `100000`, `2000`, `60000`, `900000`, `3`, `90`, `5`, `3` | Reports: detail-sheet row cap (RP12), assembler poll, tick, render timeout and sends before `render_timed_out` (RP13), file retention in days (RP8), runs pending per tenant, ad hoc requests per user per minute |
+| `AGENCY_LISTEN_MAX_PER_CALL`, `AGENCY_LISTEN_MAX_PER_PROCESS`, `AGENCY_LISTEN_MAX_PER_USER`, `AGENCY_LISTEN_RECHECK_MS`, `AGENCY_LISTEN_TOKEN_TTL_MS`, `AGENCY_LISTEN_FAULT_BUDGET` | `2` (1–5), `20` (1–200), `1` (1–5), `30000` (5000–300000), `60000` (5000–300000), `50` (1–1000) | Live call listening (`docs/listening.md`): supervisors on one call at once (`listen_limit_call` past it), listeners one process carries across its calls (each media worker its own; `listen_limit_server` past it), listens one supervisor holds (a new one past it ends their oldest, `superseded`), how often an open listen re-reads the supervisor's membership from the database and the flags (the longest a missed revocation takes to bite, LS10), how long a grant's single-use socket token lasts, and the frames in a row the tap may fail before it detaches (`tap_error`; 50 is one second of one leg). Per tenant it also needs the `agency_live_listen_enabled` flag (default off, the consent gate; `FF_AGENCY_LIVE_LISTEN` sets the default) |
 | `AGENCY_AWAY_RING_MAX_MS` | `14400000` (4 h; 60000–86400000) | Mode B (IQ67): how long one absence on the `away_ring` break may last, from its start across the rings in it, before the server ends it (`device_away`, a `ring_off` push with `max_age`). It is the Redis key's TTL; the reconcile (boot and every 60 s) ends an absence past it |
 | `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B27); the web image is then built with `CONSOLE_API_BASE_URL` |
 | `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
@@ -239,7 +240,7 @@ production.
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
 | `RETENTION_PURGE_INTERVAL_MS` | 1 day | Purge cadence (also runs 60 s after boot) |
-| `AUDIT_RETENTION_DAYS` | `85` (min 30) | Audit partitions older than this are dropped |
+| `AUDIT_RETENTION_DAYS` | `85` (min 30) | Audit partitions older than this are dropped, and listen sessions (`agency_listen_sessions`, `docs/listening.md`) started before it are deleted |
 | `AUDIT_PARTITION_MAINTENANCE_ENABLED` | `true` | Creates partitions 3 months ahead and drops old ones, daily |
 | `INVITE_TOKEN_TTL_DAYS` | `7` (1–90) | Invite expiry |
 | `PLATFORM_BRAND_NAME`, `_ACCENT`, `_LOGO_URL` | `Magick Agency`, `#7c5cfc`, unset | Brand in mail (B17) |
@@ -962,8 +963,8 @@ and a longer one only delays the retry of a genuinely lost message.
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page, for the carrier credential rules, for the inbound rules, and for the
-reports rules (warn only). The insights rules first: a stale or holed Insights page costs no
+warn (Slack) and never page, for the carrier credential rules, for the inbound rules, for the
+reports rules (warn only), and for the live call listening rules (warn only). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -1182,6 +1183,41 @@ caller of a tenant (or of the deployment) from reaching anyone.
   pauses ringing again each time it is tried, as the 429 itself did: a long project quota shows as
   repeated pauses, not as callers walked through the pool); `unregistered`: phones reinstalled or signed out (each revokes its
   device; nothing to do unless it is many).
+
+### The listening rules (`agy-listen-*`)
+
+The `listen` group ([`listening.md`](listening.md)); its panels are the dashboard's *Live call
+listening* row. All warn: none of them is a call lost, because a listener is forked from the
+bridge after the relay write and can only lose its own audio. Thresholds are for a pilot (5–6
+supervisors, about 100 calls at peak). Every series is per process with media workers on; the
+rules sum them. As of phase 1 the series are declared and nothing emits them yet (`listening.md`,
+"Status"), so the rules read no data (OK) until the tap and the registry ship.
+
+- **`agy-listen-relay-dwell-regressed`**. **Means:** the bridge's p99 per-frame dwell (arrival on
+  one leg to the write to the other, sampled one frame in 50) has been above 5 ms for 15 minutes:
+  agents and customers will start to hear it. **Check:** *Media Relay Dwell* beside *Sessions Open*:
+  did it rise with listeners open? **Do:** if it did, the tap is costing the relay, which it must
+  not (LS8): switch `agency_live_listen_enabled` off for the tenants listening (their listens end at
+  the next re-check, at most `AGENCY_LISTEN_RECHECK_MS`) and file it with the graph. If not, it is
+  the process: event-loop delay and utilization, host CPU, calls per process (`MEDIA_WORKERS`).
+- **`agy-listen-backlog-closes`**. **Means:** listener sockets were closed `send_backlog` (their
+  unsent audio passed 256 KiB) 3+ times in 15 minutes. The calls were not affected. **Check:**
+  *Tap Errors and Listener Back-pressure*: `media_dropped` climbing first is a slow reader.
+  **Do:** usually the supervisors' network or a starved browser tab; if every listener is hit at
+  once, our egress or the proxy in front of `/proxy/agency/listen`.
+- **`agy-listen-grants-server-limit`**. **Means:** a Listen was refused because the process owning
+  the call already carries `AGENCY_LISTEN_MAX_PER_PROCESS` listeners. **Check:**
+  `agency_listen_sessions_active` against the listeners the Live calls page shows. **Do:** far above
+  them: sessions are not being closed; read `agency_listen_sessions_ended_total` by reason and the
+  open `agency_listen_sessions` rows for the replica, and file it. Equal: raise the limit with care
+  (a Plivo call's listener costs a transcode per frame), or spread the calls over media workers.
+- **`agy-listen-tap-errors`**. **Means:** the tap has failed frames for 10 minutes (decode, encode,
+  frame or send). Each failed frame is dropped for the listeners only; 50 in a row
+  (`AGENCY_LISTEN_FAULT_BUDGET`) detach the tap and end its listens `tap_error`. **Check:** *Tap
+  Errors by Stage* and the logs `component=agency-listen-tap` (one line per listen per 10 s, call
+  and listen ids only). **Do:** decode or encode on one carrier is a codec fault; `send` is a
+  listener socket throwing. If supervisors cannot listen at all, switch the flag off for the tenant
+  while it is fixed; calls are unaffected either way.
 
 ### `agy-reports-pending-too-long`
 

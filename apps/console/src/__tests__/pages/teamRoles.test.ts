@@ -26,7 +26,8 @@ const CLAIMS: Array<{ phrase: RegExp; truth: (role: Role) => boolean }> = [
     phrase: /Can’t change campaigns or settings/,
     truth: (r) => holdsNone(r, 'agency.campaigns.write', 'agency.softphone.manage', 'agency.inbound.write', 'agency.analysis_profiles.write'),
   },
-  { phrase: /Runs campaigns and live calls/, truth: (r) => holds(r, 'agency.campaigns.write', 'agency.supervise') },
+  // Live calls: supervising them and listening in to them (docs/listening.md, LS3).
+  { phrase: /Runs campaigns and live calls/, truth: (r) => holds(r, 'agency.campaigns.write', 'agency.supervise', 'agency.calls.listen') },
   {
     phrase: /edits the account’s settings and the Do Not Call list/,
     truth: (r) => holds(r, 'agency.softphone.manage', 'agency.inbound.write', 'agency.analysis_profiles.write', 'agency.dnc.manage'),

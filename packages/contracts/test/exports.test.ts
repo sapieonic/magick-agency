@@ -33,6 +33,16 @@ import {
   AGENCY_PUSH_PLATFORMS,
   AGENCY_RING_OFF_REASONS,
   AGENCY_RING_PUSH_TYPES,
+  AGENCY_CALL_ORIGINS,
+  AGENCY_LISTEN_CLOSE,
+  AGENCY_LISTEN_END_CLOSE,
+  AGENCY_LISTEN_END_REASONS,
+  AGENCY_LISTEN_FRAME_BYTES,
+  AGENCY_LISTEN_IDLE_TIMEOUT_MS,
+  AGENCY_LISTEN_LEG,
+  AGENCY_LISTEN_MESSAGE_BYTES,
+  AGENCY_LISTEN_PING_INTERVAL_MS,
+  AGENCY_LISTEN_RECONNECT_WINDOW_MS,
 } from '../src/agency';
 import {
   AGENCY_CALL_FIELD_TYPES,
@@ -271,6 +281,55 @@ describe('package surface', () => {
     // The console wire layer re-exports the same values rather than copies.
     expect(AgencyApi.AGENCY_INBOUND_RING_MS).toBe(AGENCY_INBOUND_RING_MS);
     expect(AgencyApi.AGENCY_INBOUND_OFFER_CHANNELS).toBe(AGENCY_INBOUND_OFFER_CHANNELS);
+  });
+
+  it('declares live listening\'s vocabularies, wire format and close codes once (SNAPSHOT, docs/listening.md)', () => {
+    expect([...AGENCY_CALL_ORIGINS]).toEqual(['campaign', 'manual', 'inbound']);
+    expect([...AGENCY_LISTEN_END_REASONS]).toEqual([
+      'call_ended', 'listener_stopped', 'listener_disconnected', 'permission_revoked', 'superseded',
+      'send_backlog', 'tap_error', 'server_shutdown', 'server_restarted',
+    ]);
+    expect(new Set(AGENCY_LISTEN_END_REASONS).size).toBe(AGENCY_LISTEN_END_REASONS.length);
+    // One tag byte, then one 20 ms frame of the station's A-law.
+    expect(AGENCY_LISTEN_LEG).toEqual({ customer: 1, agent: 2 });
+    expect(AGENCY_LISTEN_FRAME_BYTES).toBe(AGENCY_STATION_ALAW8_FRAME_BYTES);
+    expect(AGENCY_LISTEN_MESSAGE_BYTES).toBe(161);
+    expect(AGENCY_LISTEN_MESSAGE_BYTES).toBeLessThan(AGENCY_WS_MAX_MESSAGE_BYTES);
+    // Three missed pings end the session; the console reconnects for 15 s.
+    expect(AGENCY_LISTEN_PING_INTERVAL_MS).toBe(10_000);
+    expect(AGENCY_LISTEN_IDLE_TIMEOUT_MS).toBe(3 * AGENCY_LISTEN_PING_INTERVAL_MS);
+    expect(AGENCY_LISTEN_RECONNECT_WINDOW_MS).toBe(15_000);
+    expect(AGENCY_LISTEN_CLOSE).toEqual({
+      NORMAL: 1000,
+      GOING_AWAY: 1001,
+      TOKEN_REJECTED: 4401,
+      FORBIDDEN: 4403,
+      CALL_GONE: 4404,
+      HEARTBEAT_TIMEOUT: 4408,
+      SUPERSEDED: 4409,
+      LIMIT: 4429,
+      INVALID_UPGRADE: 1008,
+      INTERNAL_ERROR: 1011,
+    });
+    expect(new Set(Object.values(AGENCY_LISTEN_CLOSE)).size).toBe(Object.keys(AGENCY_LISTEN_CLOSE).length);
+    // Every reason sent on a socket has its close code; `server_restarted` is written to rows only.
+    expect(AGENCY_LISTEN_END_CLOSE).toEqual({
+      call_ended: 1000,
+      listener_stopped: 1000,
+      listener_disconnected: 4408,
+      permission_revoked: 4403,
+      superseded: 4409,
+      send_backlog: 4408,
+      tap_error: 1011,
+      server_shutdown: 1001,
+    });
+    expect(Object.keys(AGENCY_LISTEN_END_CLOSE).sort())
+      .toEqual(AGENCY_LISTEN_END_REASONS.filter((r) => r !== 'server_restarted').sort());
+    // The console wire layer re-exports the same values rather than copies.
+    expect(AgencyApi.AGENCY_LISTEN_CLOSE).toBe(AGENCY_LISTEN_CLOSE);
+    expect(AgencyApi.AGENCY_LISTEN_END_REASONS).toBe(AGENCY_LISTEN_END_REASONS);
+    expect(AgencyApi.AGENCY_LISTEN_LEG).toBe(AGENCY_LISTEN_LEG);
+    expect(AgencyApi.AGENCY_CALL_ORIGINS).toBe(AGENCY_CALL_ORIGINS);
   });
 
   it('declares both rate floors, side by side and different on purpose', () => {
