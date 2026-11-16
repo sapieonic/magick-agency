@@ -1825,8 +1825,8 @@ later phases build on, with no runtime behaviour yet:
   `listen` handoff labels; the `agy-listen-*` alert group and the dashboard's *Live call listening*
   row.
 
-Not built yet: the tap and the bridge seam (phase 2), the registry, socket, routes and revocation
-(phase 3), the console (phase 4), the agent's standing line (phase 5), the inbound notice's words
+Not built yet at phase 1: the tap and the bridge seam (phase 2, since built: below), the registry,
+socket, routes and revocation (phase 3), the console (phase 4), the agent's standing line (phase 5), the inbound notice's words
 (phase 6). Mutation-checked (each red, then restored): the permission's floor at `operator`; the
 listen codes' order against their snapshot; the unrecorded flag exposed to clients or defaulted
 off; a close code moved; an end reason dropped from the contract (its close map fails `tsc`) or
@@ -1837,7 +1837,41 @@ once-only close, its tenant scope on the open calls' read, its account scope on 
 the `NOT` in the boot reap, and its never-before-the-start end; the end-reason, origin and
 own-call CHECKs; the Down's refusal.
 
+### Live call listening, phase 2: the tap in the bridge 2026-11-16 (LS8, LS15, [`listening.md`](listening.md) §5)
+
+The voice side, with no route or socket yet (phase 3): `core/bridge/listen-tap.ts` fans a bridged
+call's two legs out to supervisors' sinks as one tag byte and 160 bytes of A-law, fed after the
+relay's write in a guarded tail at the three hot-path sites (one field read with nobody listening),
+on its own codecs and framers, every entry guarded, a per-leg fault budget ending its sinks
+`tap_error`, one bad sink ended alone (`listener_disconnected`, `send_backlog`). The seam member
+`WebRtcBridgeManager.openListenTap(callId, sink)` (refusals `not_found`, `not_bridged`, `ending`)
+with `docs/seams.md` §3.1 and the seam contract tests; `LISTENER_LIMITS` and
+`sendToListenerSocket` for phase 3's socket; `webrtc_relay_dwell_seconds` sampled one frame in 50
+from `recordRelayFrame`. The calls the design left open are LS15.
+
+Mutation-checked (each red, then restored with `git checkout`): the tap fed before the relay (the
+dwell would include it); the tap sharing the session's codec; the session keeping the field after
+the last sink; the budget off by one; no reset on a good frame; one run for both legs; a throwing
+sink ending every sink; the sink's send unguarded; the soft limit widened; the hard cap treated as
+a drop; a closed sink kept; `destroy` leaving the tap open; the re-attach ending it; the tail
+skipped when the agent's leg is gated; "bridged" read as "answered" (a parked inbound caller
+listenable); `ending` not refused; the dwell sampled every frame; the customer feed's catch
+removed; `sendToListenerSocket`'s catch removed; the fault log not rate-limited; a widened
+`ListenTapRefusal` (the seam contract fails `tsc`).
+
 ## Test counts
+
+**Live call listening, phase 2, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on `9a40de3` (this
+phase's later commit changes docs only; the console's commits beside it touch no server file), from
+inside `apps/server`, on a local Postgres 16 and Redis on the
+agency ports with no other run sharing them; the integration as two lanes run one after the other.
+`pnpm --filter @magick-agency/server lint` clean; `pnpm test:grafana` 33. `apps/server`: unit
+10222 passed + 1 expected fail (513 files); rest lane 2978 passed, 9 expected fail, 2 skipped (268
+files passed, 2 skipped); wall-clock lane 26 (6 files). A first rest-lane run had one failure,
+`load/voicelink-media-ws-load.test.ts` "start negotiation failures" (a `media_before_bad_start`
+call ended `provider_start_timeout` under the run's load); the file passed alone three times
+(9 each) and the lane passed in full on the rerun above. Not rerun (untouched): the other
+packages and apps.
 
 **Live call listening, phase 1, 2026-11-16.** Branch `ccr-364c489c-zeoxwy` on `e229e06`, run on
 `b7a59d8` (later commits change docs and one test comment only). Each package from inside its
