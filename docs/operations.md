@@ -688,6 +688,61 @@ the pilot starts, not measured values.
 | Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert pages above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
 | Bind headroom | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_ring_bind_seconds_bucket{$s}[7d])))` against the 15 s accept grace; `accept_lapsed` in `agency_inbound_rings_total` | p90 below 8 s; `accept_lapsed` below 0.05 of answered rings |
 
+## Enabling live call listening for a tenant
+
+`agency_live_listen_enabled` is the consent gate for supervisors listening in to calls
+([`listening.md`](listening.md), LS1). Only a super-admin turns it on, for one tenant or one account
+at a time, and only once that tenant's callers and agents are told calls may be monitored. Its
+handling policy enforces the last part of this list (LS20): turning it on needs a reason, it is
+never in a bulk rollout, and it cannot be turned on globally (a global Off, the kill switch, stays
+allowed). Before turning it on, with the tenant's administrator:
+
+1. **Outbound callers are told.** The agents' scripts for every campaign the account dials say the
+   call may be monitored. The product does not speak to outbound callers (LS1).
+2. **Inbound callers are told (LS18).** Callers hear "This call may be recorded or monitored for
+   quality and training purposes." only on a recorded call (the route records and the account
+   allows recording) whose route has its notice on and plays the standard notice. Unrecorded calls
+   can be listened to by default (`agency_live_listen_unrecorded` on, LS4). So list the routes that
+   can be listened to without that sentence:
+
+   ```sql
+   SELECT r.account_id, r.id, r.name, r.record_calls, r.recording_notice,
+          r.recording_notice_audio_id IS NOT NULL AS custom_notice, s.allow_recording
+     FROM agency_inbound_routes r
+     LEFT JOIN account_settings s ON s.tenant_id = r.tenant_id AND s.account_id = r.account_id
+    WHERE r.tenant_id = '<tenant id>' AND r.deleted_at IS NULL
+      AND (NOT r.record_calls OR NOT r.recording_notice OR r.recording_notice_audio_id IS NOT NULL
+           OR s.allow_recording IS NOT TRUE);
+   ```
+
+   For each route listed, either the tenant changes it so it plays a notice that mentions
+   monitoring (recording and the notice on, or a custom notice clip whose words say "monitored"),
+   or turn `agency_live_listen_unrecorded` **off** for that tenant or account (an override with a
+   reason), so a call that is not recorded cannot be listened to. Turning it off covers the routes
+   that do not record; a recorded route with its notice off, or with a custom clip that says only
+   "recorded", still has to be changed by the tenant. Routes are the tenant's own settings: the
+   product does not change or block them (LS18). Record in the flag's reason which way each route
+   was settled.
+3. **Agents know.** Once the flag is on, the station shows "Calls may be listened to by a supervisor
+   for quality and training." (console and app, LS2). Tell the agents before the day it starts.
+4. **Who can listen.** Listening needs `agency.calls.listen` (`account_admin` and above, LS3); the
+   live list and the Listening history need `agency.supervise`. Review who holds those roles in the
+   tenant's Team page.
+5. **The record is kept.** Each listen is a row in `agency_listen_sessions` and an audit pair, kept
+   for `AUDIT_RETENTION_DAYS` (85 days by default, LS12) and readable on the account's Listening
+   history (LS19). If the tenant's own retention or privacy notice names how long monitoring
+   records are kept, it should say so.
+6. **Turn it on.** Super-admin console → the tenant → Feature flags → `agency_live_listen_enabled` → On, at
+   tenant scope or for one account, with the reason (who asked, items 1–2 confirmed, any routes
+   settled by turning `agency_live_listen_unrecorded` off). The super-admin audit log keeps it.
+7. **Check it.** The account's Settings shows "Live call listening: On" and whether calls that are
+   not recorded are included (both flags are client-exposed, LS20); a supervisor sees Live calls;
+   one test listen appears in the Listening history with its start, end and how it ended.
+
+To turn it off: set it Off for the tenant or account (no reason needed), or Off globally in an
+incident. Open listens end at the next re-check (at most `AGENCY_LISTEN_RECHECK_MS`, 30 s) with
+`permission_revoked`; their rows stay in the history.
+
 ## Recordings
 
 VoiceLink recordings are public MP3s on the carrier's host. The fetcher accepts only `https` URLs

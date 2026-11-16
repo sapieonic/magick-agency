@@ -2072,7 +2072,41 @@ spine and the `reserved_agent_id` predicate (the plan test); the sweep's keep li
 (real Postgres); retention at the exact cutoff; the immediate path off in one process (end to end)
 and in a media worker (the cluster suite).
 
+### Live call listening, the persona review: history and guard rails 2026-11-16 (LS18–LS20, [`listening.md`](listening.md) §12)
+
+The product owner's decisions on the persona review, server side (the console's pages are a later
+step). **The listening history (LS19):** `GET /proxy/agency/listen-history` and `.csv`
+(`agency.supervise` and the consent flag), through the internal `GET /api/v1/agency/listen-history`;
+a supervisor's sessions on one call merged on the server into one entry (30 s gap, or while one is
+open; overlaps counted once); the CSV masked and audited `agency_listen_sessions.exported`;
+contracts `api/agency/listen-history.ts`. A campaign's listen History rows name the agent
+(`detail.agent_name`, at the read). **Guard rails (LS20):** `agency_live_listen_enabled` has a
+handling policy in the super-admin flag routes (`feature-flags/flag-policies.ts`: a reason to turn
+it on, no bulk rollout, no global On); the super-admin registry says why a global On is refused;
+`agency_live_listen_unrecorded` is client-exposed for the Settings line; the enablement checklist
+is in [`operations.md`](operations.md), with LS18's inbound item. **The live list and the number**
+answer a flag store outage `503 listen_unavailable`, not the `403 feature_disabled` the console
+stops polling on. Mutation-checked: the history's merge gap, its open-session merge, its time
+counted once, its account scope and its cursor's id tiebreak (`listen-history.test.ts`); the
+public layer's masking, its export audit row and its outage answer
+(`proxy-agency-listen-history.routes.test.ts`); the listen row's agent name
+(`agency-activity-service.test.ts`); the live list's and number's outage 403 and an unmasked 503
+(`proxy-agency-live-calls.routes.test.ts`); the policy's override check, bulk check, global
+refusal and blank reason (`super-admin-feature-flags.test.ts`); the registry's global-On guard
+(`SAFeatureFlagsPage.test.tsx`). Counts under "Test counts".
+
 ## Test counts
+
+**Live call listening, the persona review's history and guard rails, 2026-11-16.** Worktree branch
+`worktree-agent-a316307ab48001ee7` (on `ccr-364c489c-zeoxwy` at `a13635b`), run on the tree of
+`3538f66` with its own test database. From `apps/server`: `pnpm lint` clean; unit 10357 passed + 1
+expected fail (522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3008 passed + 9 expected
+fail + 2 skipped (273 files passed, 2 skipped); the wall-clock lane not run here (its load check is
+the coordinator's). `apps/super-admin` `pnpm lint` clean, `pnpm test` 509 (37 files);
+`packages/contracts` `pnpm lint` clean, `pnpm test` 548 (16 files), the literal extractor's check up
+to date; `apps/console` `pnpm lint` clean (tests not rerun: no console file changed);
+`agency_wire` 688 (`dart test`); `apps/mobile` `station_listen_notice_test.dart` 4. From the root:
+`pnpm test:grafana` 33, `pnpm test:tooling` 20.
 
 **Live call listening, the server review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on the
 tree of `e0bf526`. From `apps/server`: `pnpm lint` clean; unit 10337 passed + 1 expected fail (521
