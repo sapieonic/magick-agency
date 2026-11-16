@@ -242,7 +242,7 @@ plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
   | closed | Thank you for calling. We’re closed at the moment. Please call again during our opening hours. Goodbye. |
   | busy | Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye. |
   | call-back | Thank you for calling. Everyone is busy at the moment, so we’ll call you back as soon as we can. Goodbye. |
-  | recording notice | This call may be recorded for quality and training purposes. |
+  | recording notice | This call may be recorded or monitored for quality and training purposes. |
   | please hold | Thank you for calling. Please hold and we’ll put you through to the next person available. |
   | voicemail prompt | Please leave your name and a short message after the tone, and we’ll call you back. |
   | neutral voicemail prompt | Please leave your name, your number and a short message after the tone. |
