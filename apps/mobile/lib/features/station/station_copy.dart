@@ -45,11 +45,15 @@ abstract final class StationCopy {
   static const paused = 'Paused';
   static const weakConnection = 'Weak connection';
 
-  // ── Station info sheet (docs/listening.md LS2) ──
-  // While the account allows listening, the agent is told so: a standing line, the console
-  // station's words (`LISTEN_AGENT_NOTICE`). Not a live indicator.
-  static const stationInfo = 'About this station';
+  // ── Monitoring and recording (docs/listening.md LS2) ──
+  // While the account allows listening, the agent is told so: a standing line behind the info
+  // button on the station and the soft phone, and once, in place, the first time on this phone
+  // for an account. The console's words (`LISTEN_AGENT_NOTICE`, `LISTEN_AGENT_INFO_LABEL`,
+  // `LISTEN_AGENT_FIRST_NOTICE`). Not a live indicator.
+  static const listenInfo = 'Monitoring and recording';
   static const listenNotice = 'Calls may be listened to by a supervisor for quality and training.';
+  static const listenFirstDetail = 'You can read this again at any time under $listenInfo, the i button at the top of the screen.';
+  static const listenFirstDismiss = 'Got it';
 
   // ── Waiting ──
   static const waitingHeadline = 'Waiting for a call';

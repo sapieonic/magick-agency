@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
@@ -231,6 +232,9 @@ Future<SoftphoneHarness> pumpSoftphone(
   bool disableAnimations = false,
   bool supportsAnnounce = false,
   Brightness brightness = Brightness.dark,
+  bool listenNotice = false,
+  String? listenScope,
+  KeyValueStore? store,
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
@@ -262,6 +266,11 @@ Future<SoftphoneHarness> pumpSoftphone(
       softphonePermissionsProvider.overrideWithValue(permissions),
       stationClockProvider.overrideWithValue(clock.call),
       stationOpenSettingsProvider.overrideWithValue(() async => h.settingsOpened++),
+      // That a supervisor may listen (docs/listening.md LS2): off, and nobody to remember the
+      // one-time notice for, unless a test says otherwise.
+      stationListenNoticeProvider.overrideWithValue(listenNotice),
+      listenNoticeScopeProvider.overrideWithValue(listenScope),
+      keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
     ],
   );
   addTearDown(container.dispose);

@@ -9,6 +9,7 @@ import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/flags/feature_flags.dart';
+import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
@@ -282,6 +283,8 @@ Future<StationHarness> pumpStation(
   SoftphoneView softphone = const SoftphoneView(),
   bool contactAssignment = false,
   bool listenNotice = false,
+  String? listenScope,
+  KeyValueStore? store,
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -320,6 +323,9 @@ Future<StationHarness> pumpStation(
       softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(availabilityHolder)),
       contactAssignmentEnabledProvider.overrideWithValue(contactAssignment),
       stationListenNoticeProvider.overrideWithValue(listenNotice),
+      // Nobody to remember the one-time listening notice for unless a test names one.
+      listenNoticeScopeProvider.overrideWithValue(listenScope),
+      keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
       ...extra,
     ],
   );
