@@ -273,10 +273,11 @@ describe('reconnecting (up to 15 s, a fresh grant each time)', () => {
     expect(late.phase).toBe('lost');
   });
 
-  it('server failures (1011) are retried a bounded number of times', () => {
+  it('server failures (1011) are retried a bounded number of times: three ends it', () => {
+    expect(LISTEN_MAX_INTERNAL_ERRORS).toBe(3);
     let s = live();
     let attempt = 1;
-    for (let i = 1; i < LISTEN_MAX_INTERNAL_ERRORS; i++) {
+    for (let i = 1; i < 3; i++) {
       s = reduce(s, { type: 'closed', attempt, code: 1011, reason: 'tap_error', now: 2_000 + i });
       expect(s.phase, `failure ${i}`).toBe('reconnecting');
       expect(s.retry?.internalErrors).toBe(i);
