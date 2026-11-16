@@ -11,6 +11,11 @@
  * where the earlier ones ended. The merge runs over the sessions the filters keep (the date range
  * filters sessions by their start), so the page and the CSV, which drain the same read, agree.
  *
+ * ── Live sessions only ──────────────────────────────────────────────────────
+ * Only sessions that went live (`live_at` set, `0048_listen_sessions_unverified.sql`, LS22 c) are
+ * read, as "Listened to by" reads them (`listForCall`): a row the upgrade wrote and then refused
+ * carried no audio, so it neither shows nor bridges two visits.
+ *
  * ── Keyset, newest first ────────────────────────────────────────────────────
  * Ordered by the visit's start and its first listen id, both descending; the cursor carries the
  * start at microsecond precision (`keysetAtSql`, `@magick-agency/domain/keyset-cursor`). A visit's
@@ -82,6 +87,7 @@ export const LISTEN_HISTORY_SQL = `
            count(*) OVER earlier AS earlier_count
       FROM agency_listen_sessions ls
      WHERE ls.tenant_id = $1::uuid AND ls.account_id = $2::uuid
+       AND ls.live_at IS NOT NULL
        AND ($3::uuid IS NULL OR ls.listener_user_id = $3::uuid)
        AND ($4::uuid IS NULL OR ls.agent_user_id = $4::uuid)
        AND ($5::timestamptz IS NULL OR ls.started_at >= $5::timestamptz)

@@ -146,11 +146,14 @@ describe('GET /listen-history', () => {
     expect(res.json().entries[0]).not.toHaveProperty('customer_phone');
   });
 
-  it('a withheld caller is "withheld" with no mask; a purged call row neither', async () => {
-    pages = [json(200, { entries: [entry({ customer_phone: '' }), entry({ customer_phone: null })], next_cursor: null })];
+  it('a withheld caller is "withheld" with no mask, by the live list\'s rule (no digit at all); a purged call row neither', async () => {
+    pages = [json(200, {
+      entries: [entry({ customer_phone: '' }), entry({ customer_phone: 'anonymous' }), entry({ customer_phone: null })],
+      next_cursor: null,
+    })];
     const body = (await get('/proxy/agency/listen-history')).json();
     expect(body.entries.map((e: Record<string, unknown>) => [e['customer_phone_masked'], e['customer_phone_withheld']]))
-      .toEqual([[null, true], [null, false]]);
+      .toEqual([[null, true], [null, true], [null, false]]);
   });
 
   it('the internal handler\'s refusal keeps its status and body', async () => {

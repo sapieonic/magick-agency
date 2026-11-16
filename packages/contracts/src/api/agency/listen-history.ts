@@ -52,6 +52,7 @@ export const AGENCY_LISTEN_END_REASON_LABELS: Readonly<Record<AgencyListenEndRea
   listener_stopped: 'Stopped by the supervisor',
   listener_disconnected: 'Connection lost',
   permission_revoked: 'Access to listen was removed',
+  access_unverified: 'Access could not be checked',
   superseded: 'Started listening elsewhere',
   send_backlog: 'Connection too slow',
   tap_error: 'The call audio could not be relayed',

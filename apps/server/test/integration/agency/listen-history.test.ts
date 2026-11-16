@@ -32,7 +32,8 @@ type Deps = import('../../../src/api/routes/proxy-agency-listen-history.routes.j
  * the 10 s reconnect; dropping `earlier_open` splits a session that started while another was open;
  * summing whole durations instead of each session's share counts the overlap twice; dropping
  * `account_id = $2` returns the other account's visit; dropping the `id` tiebreak from the cursor
- * condition skips or repeats a visit at a shared start.
+ * condition skips or repeats a visit at a shared start; dropping `live_at IS NOT NULL` shows a
+ * session refused at the upgrade and lets it bridge two visits.
  */
 
 const T = DEFAULTS.tenantId;
@@ -55,6 +56,8 @@ interface Session {
   origin?: 'campaign' | 'manual' | 'inbound';
   campaign?: string | null;
   correlation?: string;
+  /** False: a row the upgrade wrote and then refused (`live_at` null, LS22 c). Default true. */
+  live?: boolean;
 }
 
 const AGENT = randomUUID();
@@ -64,11 +67,12 @@ async function session(s: Session): Promise<string> {
   const origin = s.origin ?? 'manual';
   await pool().query(
     `INSERT INTO agency_listen_sessions (id, tenant_id, account_id, call_id, origin, campaign_id, correlation_id,
-       agent_session_id, agent_user_id, listener_user_id, started_at, ended_at, end_reason, replica_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'r1')`,
+       agent_session_id, agent_user_id, listener_user_id, started_at, ended_at, end_reason, replica_id, live_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'r1', $14)`,
     [id, s.tenant ?? T, s.account ?? A, s.call, origin, origin === 'campaign' ? (s.campaign ?? randomUUID()) : (s.campaign ?? null),
       s.correlation ?? randomUUID(), randomUUID(), s.agent ?? AGENT, s.listener,
-      at(s.start), s.end === null ? null : at(s.end), s.end === null ? null : (s.reason ?? 'listener_stopped')],
+      at(s.start), s.end === null ? null : at(s.end), s.end === null ? null : (s.reason ?? 'listener_stopped'),
+      s.live === false ? null : at(s.start)],
   );
   return id;
 }
@@ -116,6 +120,22 @@ describe('the listening history statement', () => {
     const open = await list();
     expect(open.rows).toHaveLength(1);
     expect(open.rows[0]).toMatchObject({ id: o1, listen_ids: [o1, o2], ended_at: null, listened_seconds: null, end_reason: null });
+  });
+
+  it('leaves out a session that never went live, as "Listened to by" does: it neither shows nor joins a visit', async () => {
+    const L = randomUUID();
+    const C = randomUUID();
+    // Refused at the upgrade (row written, never admitted): live_at null.
+    await session({ listener: L, call: C, start: 0, end: 1, reason: 'permission_revoked', live: false });
+    await session({ listener: randomUUID(), call: randomUUID(), start: 5, end: 6, reason: 'call_ended', live: false });
+    expect((await list()).rows).toEqual([]);
+
+    // Between two live sessions 40 s apart it does not bridge them into one visit.
+    const a = await session({ listener: L, call: C, start: 100, end: 110 });
+    await session({ listener: L, call: C, start: 130, end: 131, reason: 'access_unverified', live: false });
+    const b = await session({ listener: L, call: C, start: 150, end: 160 });
+    const { rows } = await list();
+    expect(rows.map((r) => r.listen_ids)).toEqual([[b], [a]]);
   });
 
   it('two supervisors on one call, or one on two calls, are separate visits', async () => {

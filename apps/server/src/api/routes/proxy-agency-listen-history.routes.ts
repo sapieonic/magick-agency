@@ -18,7 +18,7 @@ import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { toCsvLine } from '../../agency/agency-csv.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
-import { LIVE_LISTEN_DISABLED_BODY, sendListenRefusal } from './helpers/listen.js';
+import { LIVE_LISTEN_DISABLED_BODY, isWithheldNumber, sendListenRefusal } from './helpers/listen.js';
 import {
   listenHistoryExportQuerySchema,
   listenHistoryFilterQuery,
@@ -82,9 +82,13 @@ class HistoryReadRefused extends Error {
   }
 }
 
-/** One visit for the console: names added, the number masked (`maskPhone`; `''` is withheld). */
+/**
+ * One visit for the console: names added, the number masked (`maskPhone`). Withheld by the live
+ * list's rule (`isWithheldNumber`: no digit at all), so the two agree; null here is a purged call
+ * row, not a withheld number, and is neither.
+ */
 export function toHistoryEntry(e: CoreListenHistoryEntry, names: Map<string, string | null>): AgencyListenHistoryEntry {
-  const withheld = e.customer_phone === '';
+  const withheld = e.customer_phone !== null && isWithheldNumber(e.customer_phone);
   return {
     id: e.id,
     listen_ids: e.listen_ids,

@@ -2107,7 +2107,7 @@ and in a media worker (the cluster suite).
 The principal reviews' server, database and contract items (SWE-M1, M3, L1–L8, the nits and doc
 drift; QA-M1–M5, L1–L9; PM-minor9 and 10), in `b3114f9`. Manas's decision 4 (LS21): an access
 re-check that cannot be made ends a listen after 2 × the re-check (60 s, was 2 min) as
-`access_unverified`, close 4503, not `permission_revoked` (migration 0048 extends the CHECK; the
+`access_unverified`, close 4503, not `permission_revoked` (`0048_listen_sessions_unverified.sql` extends the CHECK; the
 contract, the metric label). The rest are LS22: `live_at` (0048) so "Listened to by" shows only
 sessions that went live; protocol pings with the pong as liveness (a hidden tab's throttled timers
 no longer end it every minute); a per-socket message rate (1008); refusals with no `ended` frame (a
@@ -2160,7 +2160,37 @@ public layer's masking, its export audit row and its outage answer
 refusal and blank reason (`super-admin-feature-flags.test.ts`); the registry's global-On guard
 (`SAFeatureFlagsPage.test.tsx`). Counts under "Test counts".
 
+### Live call listening, the two persona-review branches merged 2026-11-16 (LS18–LS22)
+
+The history and guard rails branch (LS18–LS20) merged into the server persona-review fixes (LS21,
+LS22) in `74eaeaa`; the docs keep both sides (rulings LS18–LS22 in order, the pending rows
+together). The live list's flag gate answers an outage `503 listen_unavailable` on every route
+(LS20's branch) with the withheld-number changes (LS22 i) kept. Integration fixes in the commit after the merge:
+`AGENCY_LISTEN_END_REASON_LABELS` has words for `access_unverified` ("Access could not be
+checked"); `LISTEN_HISTORY_SQL` reads only sessions that went live (`live_at IS NOT NULL`, as
+"Listened to by"), so a row refused at the upgrade neither shows in the history nor bridges two
+visits (the history test seeds `live_at`); the history's withheld flag uses the live list's rule
+(`isWithheldNumber`, no digit at all; a null number is still a purged call row). Two lines of the
+LS21 docs named the migration as "migration 0048", which the self-containment guard
+(`no-external-references.test.ts`) reads as another repository's migration number: they name the
+file instead. Mutation-checked (each red, then restored with `git checkout`), 3: the label removed
+(`listen-history.test.ts` in contracts, and the lint); `live_at IS NOT NULL` dropped (the history
+integration test); withheld back to `''` only (`proxy-agency-listen-history.routes.test.ts`). The
+console does not yet word `access_unverified` (its `terminalEndReason` falls to the close code):
+the console pass after this one.
+
 ## Test counts
+
+**Live call listening, the two persona-review branches merged, 2026-11-16.** Branch
+`ccr-364c489c-zeoxwy`, on the tree of the merge's integration-fix commit (its code and tests as run). From the
+root: `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:tooling` 20; `contracts-literals.mjs
+--check` up to date (71 vocabularies, 3 label maps). `packages/contracts` `pnpm test` 549 (16
+files). `apps/server` unit 10375 passed + 1 expected fail (523 files); `INTEGRATION_LANE=rest pnpm
+test:integration` 3015 passed + 9 expected fail + 2 skipped (273 files passed, 2 skipped);
+`INTEGRATION_LANE=wall-clock pnpm test:integration` 30 passed (7 files; 4 CPUs, the load check's
+timing bounds asserted). `apps/console` `pnpm test` 7340 (387 files); `apps/super-admin` `pnpm test`
+509 (37 files); `packages/db` `pnpm test:integration` 826 (90 files); `agency_wire` 688 (`dart
+test`).
 
 **Live call listening, the server persona-review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`,
 on the tree of `b3114f9`. From `apps/server`: `pnpm lint` clean; unit 10355 passed + 1 expected fail

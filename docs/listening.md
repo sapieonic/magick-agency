@@ -1004,12 +1004,13 @@ before every listener send"), which goes red for it.
 - The history and the guard rails (§12): `packages/contracts/test/listen-history.test.ts` (the end
   reasons' words, the merge gap), `apps/server/test/integration/agency/listen-history.test.ts` (on
   Postgres: the merge within the gap and past it, a session joining an open one or overlapping it,
-  the time listened counted once, the last-ended reason, the tenant and account scope, the filters,
+  the time listened counted once, the last-ended reason, a session that never went live left out
+  (it neither shows nor bridges two visits), the tenant and account scope, the filters,
   keyset pages with ties on the start, the joins that survive a purged call row; then the internal
   handler and the public routes together: masking, "Withheld", a malformed cursor, the CSV drained
   across pages and its audit row), `test/unit/api/routes/proxy-agency-listen-history.routes.test.ts`
   (RBAC before the flag, the flag, a flag store outage `503` through the error mask, the query
-  refused at the edge, names and masking, the CSV's pages, row ceiling, formula guard and audit row,
+  refused at the edge, names and masking, withheld by the live list's rule, the CSV's pages, row ceiling, formula guard and audit row,
   a refused page answering its own status with no file),
   `test/integration/agency/agency-activity-service.test.ts` (a listen row's `detail.agent_name`),
   `test/unit/api/routes/proxy-agency-live-calls.routes.test.ts` (an outage is `503` on the list and
@@ -1033,9 +1034,10 @@ ISO instants, `to` exclusive and not before `from`, `limit` 1–100, `cursor`; u
 It reads the internal `GET /api/v1/agency/listen-history` (owner `none`;
 `api/routes/agency/listen-history.ts`, `AgencyListenHistoryRepository.listVisits`,
 `LISTEN_HISTORY_SQL`), then adds the supervisor's and the agent's names (`agentNamesOrNone`) and
-masks the number (`maskPhone`; `''`, a withheld caller, is `customer_phone_withheld: true`; a
-purged call row is neither). An entry is a visit: one supervisor's sessions on one call, merged in
-the SQL (LS19 b), with `listen_ids`, the first start, the last end (null while one is open), the
+masks the number (`maskPhone`; a withheld caller, by the live list's rule `isWithheldNumber`
+(no digit at all, `''` as stored), is `customer_phone_withheld: true`; a purged call row is
+neither). An entry is a visit: one supervisor's sessions on one call, merged in the SQL (LS19 b),
+with `listen_ids`, the first start, the last end (null while one is open), the
 time listened, the reason of the session that ended last (null while open), the call's origin and
 spine row (`correlation_id`, for the link: the campaign's attempt page, the soft-phone call page,
 the inbound call), the campaign, the inbound route and the roster contact's name. Newest first by
@@ -1057,9 +1059,9 @@ on success only: one `agency_listen_sessions.exported` audit row (resource `acco
 the rows, any truncation).
 
 Sessions that never went live (a row written, then closed at the upgrade without admission) are
-in the table too, and the history shows every row the statement keeps. Whatever marks a session
-that went live (the persona review's QA-M2) is to be applied to `LISTEN_HISTORY_SQL`'s first CTE as
-well, so "Listened to by" and the history agree.
+in the table too, with `live_at` null (LS22 c). `LISTEN_HISTORY_SQL`'s first CTE keeps only rows
+with `live_at` set, as "Listened to by" does, so the two agree: a refused row neither shows nor
+bridges two visits.
 
 **The campaign History's listen rows (LS19 e).** `fetchActivityPage` resolves the
 `detail.agent_user_id` of `agency_call.listen_started` / `_ended` rows in the page's one identity
