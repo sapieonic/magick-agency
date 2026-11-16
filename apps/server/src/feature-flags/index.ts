@@ -3,7 +3,7 @@ import { FeatureFlagService } from './feature-flag.service.js';
 
 export { FLAGS, getFlag, allFlags, clientExposedFlags, defineFlag, resolveEnvDefault } from './registry.js';
 export type { FlagDefinition, FlagScope, FlagType } from './registry.js';
-export { FeatureFlagService } from './feature-flag.service.js';
+export { FeatureFlagService, FlagReadError } from './feature-flag.service.js';
 export type {
   FlagContext,
   FlagSnapshot,

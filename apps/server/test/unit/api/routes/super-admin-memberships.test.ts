@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
       findAnyByUserAndTenant: vi.fn(),
     },
     closeAllForUser: vi.fn(),
+    revokeListens: vi.fn(async () => {}),
     redisDel: vi.fn(),
     // Q5: what the revocation delete reports (true unless a case says the Redis DEL failed).
     revocation: { cleared: true },
@@ -87,6 +88,10 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
   // failure); this double forwards to the `del` mock and reports success, so the assertions on
   // `del` still observe the key.
   redisCache: { del: mocks.redisDel, delForRevocation: async (...k: string[]) => { await mocks.redisDel(...k); return mocks.revocation.cleared; } },
+}));
+// Live call listening (LS10): a role change or a removal re-checks the user's open listens.
+vi.mock('../../../../src/agency/listen/listen-revocation.js', () => ({
+  revokeListens: mocks.revokeListens,
 }));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({
   issueInvite: mocks.issueInvite,
@@ -617,6 +622,18 @@ describe('PUT /super-admin/tenants/:id/memberships/:membershipId/role', () => {
     expect(res.json().membership).toMatchObject({ id: MEMBERSHIP, role: 'viewer' });
   });
 
+  it('LS10: re-checks the user\'s open listens in the tenant at once, after the cache delete; a refused change does not', async () => {
+    mocks.membershipRepository.findByIdInTenant.mockResolvedValue(target('account_admin'));
+    expect((await put({ role: 'viewer' })).statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER);
+    expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    mocks.revokeListens.mockClear();
+    mocks.membershipRepository.updateRoleGuardingLastOwner.mockResolvedValueOnce({ ok: false, reason: 'role_changed' });
+    expect((await put({ role: 'viewer' })).statusCode).toBe(409);
+    expect(mocks.revokeListens).not.toHaveBeenCalled();
+  });
+
   it('closes staffing tenant-wide on a demotion out of agent when no other agent membership remains', async () => {
     mocks.closeAllForUser.mockResolvedValue([
       { id: 'asg-1', campaign_id: 'camp-1', account_id: ACCOUNT },
@@ -789,6 +806,17 @@ describe('DELETE /super-admin/tenants/:id/memberships/:membershipId', () => {
         ],
       },
     });
+  });
+
+  it('LS10: ends the user\'s open listens in the tenant at once, after the cache delete; a refused removal does not', async () => {
+    expect((await del()).statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER);
+    expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    mocks.revokeListens.mockClear();
+    mocks.membershipRepository.removeGuardingLastOwner.mockResolvedValueOnce({ ok: false, reason: 'last_owner' });
+    expect((await del()).statusCode).toBe(400);
+    expect(mocks.revokeListens).not.toHaveBeenCalled();
   });
 
   it('a staffing close failure does not fail the revoke: 200, staffing_closed 0', async () => {

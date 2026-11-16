@@ -43,8 +43,14 @@ export async function revokeListens(tenantId: string, userId: string): Promise<v
 
 /**
  * The listens of `session`'s supervisor held by OTHER processes that its admission supersedes:
- * their open rows, newest first, past `maxPerUser` counting this registry's own, those not held
- * here (another replica's). Empty when there is nothing to end elsewhere.
+ * their open rows OLDER than this session's own row (by `started_at`, then id), newest first, past
+ * `maxPerUser` counting this one, those not held here (another replica's). Empty when there is
+ * nothing to end elsewhere.
+ *
+ * Only older rows: two listens admitted at once in two workers each read the other's row, and
+ * each superseding every other row would end both. Ranked by the rows themselves (the database's
+ * `started_at`, one clock), the newer one ends the older and the older ends nothing; a newer row
+ * past the cap is that newer listen's own admission to settle.
  */
 export async function remoteSupersedeTargets(
   session: ListenSessionHandle,
@@ -55,8 +61,15 @@ export async function remoteSupersedeTargets(
     (t, u) => agencyListenSessionRepository.listOpenForListener(t, u),
 ): Promise<string[]> {
   const open = await readOpen(session.tenantId, session.listenerUserId);
+  const mine = open.find((r) => r.id === session.listenId);
+  // Its own row is written before the admission; without it (closed already: it ended under the
+  // read) there is nothing for it to supersede.
+  if (!mine) return [];
+  const at = (r: ListenSessionRecord) => new Date(r.started_at).getTime();
+  const olderThanMine = (r: ListenSessionRecord) => at(r) < at(mine) || (at(r) === at(mine) && r.id < mine.id);
   // Newest first; the cap keeps the newest (this one among them).
+  const older = open.filter((r) => r.id !== mine.id && olderThanMine(r)).sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : -1));
   const keep = Math.max(1, registry.limits.maxPerUser);
-  const past = open.filter((r) => r.id !== session.listenId).slice(keep - 1);
+  const past = older.slice(keep - 1);
   return past.filter((r) => r.replica_id !== replicaId && registry.get(r.id) === undefined).map((r) => r.id);
 }

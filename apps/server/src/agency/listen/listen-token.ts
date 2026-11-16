@@ -27,6 +27,11 @@ export interface ListenGrantPayload {
   listenerUserId: string;
   /** The call's `recording_requested`, for the re-check's LS4 rule. */
   recording: boolean;
+  /**
+   * The supervisor's revocation generation in the minting process when the grant was minted
+   * (`ListenRegistry.generation`): a revocation there before the upgrade refuses it (LS16 b).
+   */
+  revocationGen: number;
 }
 
 /**
@@ -65,11 +70,13 @@ export function parseListenGrantPayload(raw: unknown): ListenGrantPayload | null
   if (!(AGENCY_CALL_ORIGINS as readonly unknown[]).includes(r['origin'])) return null;
   if (r['campaignId'] !== null && !isUuid(r['campaignId'])) return null;
   if (typeof r['recording'] !== 'boolean') return null;
+  if (typeof r['revocationGen'] !== 'number' || !Number.isSafeInteger(r['revocationGen']) || r['revocationGen'] < 0) return null;
   return {
     listenId: r['listenId'] as string, sessionId: r['sessionId'] as string, tenantId: r['tenantId'] as string,
     accountId: r['accountId'] as string, callId: r['callId'] as string, origin: r['origin'] as AgencyCallOrigin,
     campaignId: r['campaignId'] as string | null, correlationId: r['correlationId'] as string,
     agentUserId: r['agentUserId'] as string, listenerUserId: r['listenerUserId'] as string, recording: r['recording'] as boolean,
+    revocationGen: r['revocationGen'] as number,
   };
 }
 

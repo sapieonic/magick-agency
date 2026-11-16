@@ -35,6 +35,7 @@ import { createAccountSchema } from '../../validators/account.validator.js';
 import type { CreateAccountErrorCode } from '@magick-agency/contracts/api/platform/auth';
 import { returnContactsOnUnstaff } from '../../../agency/assignment/unstaff.js';
 import { SYSTEM_AUDIT_ACTOR } from '../../../audit/platform/audit-actor.js';
+import { revokeListens } from '../../../agency/listen/listen-revocation.js';
 
 const log = createChildLogger({ component: 'super-admin-routes' });
 
@@ -463,6 +464,9 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     // the membership is re-read with its new role, the same role is re-applied, the key is
     // deleted again, and the demotion's staffing close has nothing left to do.
     const membershipCacheCleared = await redisCache.delForRevocation(membershipCacheKey(target.user_id, tenantId));
+    // Live call listening (LS10): their open listens are re-checked against the database now, and
+    // end `permission_revoked` if the new role no longer clears `agency.calls.listen`. Never throws.
+    await revokeListens(tenantId, target.user_id);
 
     let staffingClosed: Array<{ id: string; campaign_id: string; account_id: string | null }> = [];
     if (isDemotionFromAgent(target.role, role as MembershipRole)) {
@@ -536,6 +540,9 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     // KEPT because a re-sent revoke is not idempotent — `findByIdInTenant` reads active rows
     // only, so the retry 404s before reaching this line. The TTL (30 min) bounds it.
     await redisCache.delForRevocation(membershipCacheKey(target.user_id, tenantId));
+    // Live call listening (LS10): their open listens end `permission_revoked` now, unless another
+    // membership they keep in the tenant still clears the floor. Never throws.
+    await revokeListens(tenantId, target.user_id);
 
     const staffingClosed = await closeStaffingTenantWide(tenantId, target.user_id, 'membership_removed');
 

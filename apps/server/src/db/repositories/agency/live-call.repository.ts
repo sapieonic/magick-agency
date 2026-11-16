@@ -2,8 +2,9 @@
  * `AgencyLiveCallRepository`: the calls in progress in an account (live call listening,
  * docs/listening.md §4 "The live list"): an agent connected to a customer, on any of the three
  * spines, each on its live index:
- *  - a dialler call: `agency_call_attempts.state = 'bridged'` (`idx_agency_attempts_live`, per
- *    campaign of the account);
+ *  - a dialler call: `agency_call_attempts.state = 'bridged'` (`idx_agency_attempts_account_live`,
+ *    the account's live attempts; not through the account's campaigns, which would read every
+ *    campaign it has ever had on every poll: `test/integration/agency/live-call-plan.test.ts`);
  *  - a soft-phone call: `agency_manual_calls.state = 'bridged'` (`idx_agency_manual_calls_live`);
  *  - an inbound call: `agency_inbound_calls.state = 'connected'` with its audio bound
  *    (`bridged_at` set; `idx_agency_inbound_calls_account_live`). A caller parked on hold, answered
@@ -48,16 +49,17 @@ export interface AgencyLiveCallQuery {
   callId?: string | null;
 }
 
-const LIVE_SQL = `
+/** The live list's statement (`listLive`); exported for its plan test. */
+export const LIVE_CALLS_SQL = `
   WITH live AS (
     SELECT 'campaign'::varchar AS origin, a.id AS correlation_id, a.webrtc_call_id AS call_id, a.campaign_id,
            a.reserved_agent_id AS session_id, a.contact_id, a.bridged_at AS connected_at, NULL::uuid AS route_id
-      FROM agency_campaigns cam
-      JOIN agency_call_attempts a ON a.campaign_id = cam.id
-     WHERE cam.tenant_id = $1::uuid AND cam.account_id = $2::uuid
-       AND ($3::uuid IS NULL OR cam.id = $3::uuid)
-       AND a.state <> 'ended' AND a.state = 'bridged'
-       AND a.webrtc_call_id IS NOT NULL AND a.reserved_agent_id IS NOT NULL
+      FROM agency_call_attempts a
+     WHERE a.tenant_id = $1::uuid AND a.account_id = $2::uuid
+       AND ($3::uuid IS NULL OR a.campaign_id = $3::uuid)
+       AND a.state <> 'ended' AND a.state = 'bridged' AND a.webrtc_call_id IS NOT NULL
+       -- No "reserved_agent_id IS NOT NULL" here: the session join below needs one anyway, and the
+       -- predicate would offer the planner idx_agency_attempts_agent (every tenant's live attempts).
     UNION ALL
     SELECT 'manual'::varchar, m.id, m.webrtc_call_id, m.campaign_id, m.session_id, m.contact_id, m.bridged_at, NULL::uuid
       FROM agency_manual_calls m
@@ -92,7 +94,7 @@ const LIVE_SQL = `
 export class AgencyLiveCallRepository {
   /** The account's live calls (or one campaign's, or one call), longest on call first. */
   async listLive(q: AgencyLiveCallQuery): Promise<AgencyLiveCallRow[]> {
-    const { rows } = await getPool().query<AgencyLiveCallRow>(LIVE_SQL, [
+    const { rows } = await getPool().query<AgencyLiveCallRow>(LIVE_CALLS_SQL, [
       q.tenantId, q.accountId, q.campaignId ?? null, q.callId ?? null,
     ]);
     return rows;

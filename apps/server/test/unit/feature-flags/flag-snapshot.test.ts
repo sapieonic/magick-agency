@@ -21,7 +21,7 @@ vi.mock('@magick-agency/observability/metrics/shared', () => ({
   featureFlagEvaluationsTotal: { inc: mocks.evalInc },
 }));
 
-import { FeatureFlagService } from '../../../src/feature-flags/feature-flag.service.js';
+import { FeatureFlagService, FlagReadError } from '../../../src/feature-flags/feature-flag.service.js';
 import { FLAGS as REGISTERED_FLAGS } from '../../../src/feature-flags/registry.js';
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
@@ -523,5 +523,55 @@ describe('FeatureFlagService.snapshot (request-scoped flag snapshot)', () => {
         expect.objectContaining({ flag: GATED.key, source: 'default' }),
       );
     });
+  });
+});
+
+describe('FeatureFlagService.strictSnapshot (an outage is an error, not the registry default)', () => {
+  const ORIG = { ...process.env };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findGlobal.mockResolvedValue([]);
+    mocks.findByTenant.mockResolvedValue([]);
+    delete process.env[GATED_ENV];
+  });
+  afterEach(() => {
+    process.env = { ...ORIG };
+  });
+
+  it('a healthy read resolves exactly as snapshot() does, env layer included, and records the evaluation', async () => {
+    process.env[GATED_ENV] = 'true';
+    mocks.findByTenant.mockResolvedValue([override({ flag_key: FLAGS.knowledge_bases_enabled.key, value: true })]);
+    const svc = new FeatureFlagService(createMockRedis(), PREFIX);
+    const strict = await svc.strictSnapshot(CTX);
+    const loose = await svc.snapshot(CTX);
+    expect(strict.isEnabled(GATED)).toBe(true);
+    expect(strict.isEnabled(GATED)).toBe(loose.isEnabled(GATED));
+    expect(strict.isEnabled(FLAGS.knowledge_bases_enabled)).toBe(loose.isEnabled(FLAGS.knowledge_bases_enabled));
+    expect(mocks.evalInc).toHaveBeenCalledWith(expect.objectContaining({ flag: GATED.key, source: 'env' }));
+  });
+
+  it('a failed read rejects with FlagReadError (where snapshot() would answer the registry default)', async () => {
+    mocks.findGlobal.mockRejectedValue(new Error('redis + db down'));
+    mocks.findByTenant.mockRejectedValue(new Error('redis + db down'));
+    const svc = new FeatureFlagService(createMockRedis(), PREFIX);
+    await expect(svc.strictSnapshot(CTX)).rejects.toBeInstanceOf(FlagReadError);
+    expect((await svc.snapshot(CTX)).isEnabled(GATED)).toBe(false);
+  });
+
+  it('a partial failure rejects too: the surviving layer is never resolved alone', async () => {
+    mocks.findGlobal.mockResolvedValue([override({ scope_type: 'global', tenant_id: null, value: true })]);
+    mocks.findByTenant.mockRejectedValue(new Error('tenant read down'));
+    const svc = new FeatureFlagService(createMockRedis(), PREFIX);
+    await expect(svc.strictSnapshot(CTX)).rejects.toBeInstanceOf(FlagReadError);
+  });
+
+  it('a corrupt cached snapshot rejects; a resolver throw on a later read throws FlagReadError', async () => {
+    const corrupt = new FeatureFlagService(createMockRedis({ get: vi.fn().mockResolvedValue('{"not":"an array"}') }), PREFIX);
+    await expect(corrupt.strictSnapshot(CTX)).rejects.toBeInstanceOf(FlagReadError);
+    // An array whose rows cannot be read: the pair reads, the resolution throws.
+    const junk = new FeatureFlagService(createMockRedis({ get: vi.fn().mockResolvedValue('[null]') }), PREFIX);
+    const snap = await junk.strictSnapshot(CTX);
+    expect(() => snap.isEnabled(GATED)).toThrow(FlagReadError);
+    expect((await junk.snapshot(CTX)).isEnabled(GATED)).toBe(GATED.default);
   });
 });

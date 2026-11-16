@@ -184,7 +184,7 @@ describe('audit partition maintenance against the baseline (integration)', () =>
     }
   });
 
-  it('deletes listen sessions started before the same cutoff, closed or not, and keeps the rest (LS12)', async () => {
+  it('deletes listen sessions with their month\'s audit partition, closed or not, and keeps the rest (LS12)', async () => {
     const at = (iso: string, ended: boolean) => getPool().query<{ id: string }>(
       `INSERT INTO agency_listen_sessions
          (tenant_id, account_id, call_id, origin, campaign_id, correlation_id, agent_session_id, agent_user_id,
@@ -193,8 +193,11 @@ describe('audit partition maintenance against the baseline (integration)', () =>
       [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(),
         new Date(iso), ended ? new Date(iso) : null, ended ? 'call_ended' : null],
     ).then((r) => r.rows[0]!.id);
-    await at('2026-03-01T00:00:00Z', true); // before the cutoff: deleted
-    await at('2026-03-20T00:00:00Z', false); // before the cutoff, left open by a dead process: deleted
+    // The cutoff (2026-03-22) falls in March: the February partitions go, March's is kept.
+    await at('2026-02-28T23:59:59Z', true); // February: deleted with February's audit rows
+    await at('2026-02-10T00:00:00Z', false); // February, left open by a dead process: deleted
+    const marchFirst = await at('2026-03-01T00:00:00Z', true); // March: kept, as March's audit rows are
+    const beforeCutoff = await at('2026-03-20T00:00:00Z', true); // before the cutoff, but in March: kept
     const kept = await at('2026-03-23T00:00:00Z', true); // after the cutoff: kept
 
     // now = 2026-06-15, 85 days back = 2026-03-22. A dry run counts and deletes nothing.
@@ -202,7 +205,7 @@ describe('audit partition maintenance against the baseline (integration)', () =>
       retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'), dryRun: true,
     });
     expect(dry.horizonRowsDeleted).toEqual({ agency_listen_sessions: 2 });
-    expect(await rowsIn('agency_listen_sessions')).toBe(3);
+    expect(await rowsIn('agency_listen_sessions')).toBe(5);
 
     const report = await runAuditPartitionMaintenance({
       retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'),
@@ -210,6 +213,6 @@ describe('audit partition maintenance against the baseline (integration)', () =>
     expect(report.errors).toEqual({});
     expect(report.horizonRowsDeleted).toEqual({ agency_listen_sessions: 2 });
     const { rows } = await getPool().query<{ id: string }>('SELECT id FROM agency_listen_sessions');
-    expect(rows.map((r) => r.id)).toEqual([kept]);
+    expect(rows.map((r) => r.id).sort()).toEqual([marchFirst, beforeCutoff, kept].sort());
   });
 });

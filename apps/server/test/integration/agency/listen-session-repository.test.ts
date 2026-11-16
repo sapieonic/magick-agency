@@ -16,12 +16,14 @@ type OpenInput = import('../../../src/db/repositories/agency.repository.js').Lis
  * every field it is given; close ends an open row exactly once (a second close, or a close racing
  * another, changes nothing and answers null) and never writes an end before the start; each read's
  * tenant and account scope; the open-only reads skip closed rows; the reaps close a dead process's
- * open rows `server_restarted` and nothing else.
+ * open rows, and the sweep a live process's lost ones, `server_restarted` and nothing else.
  *
  * Mutation-checked: dropping `AND ended_at IS NULL` from `close` lets the second close rewrite the
  * reason; dropping `tenant_id = $1` from `listOpenForCalls` returns another tenant's session;
  * dropping `account_id = $2` from `listForCall` returns another account's; dropping the `NOT` from
- * `closeOrphansExcept` closes the live replica's sessions instead of the dead one's; writing
+ * `closeOrphansExcept` closes the live replica's sessions instead of the dead one's; dropping
+ * `id <> ALL($2)` from `closeOrphans` closes a held session's row, and dropping its age floor a
+ * young one's; writing
  * `ended_at = now()` without `GREATEST(…, started_at)` lets a close write an end before the start.
  */
 
@@ -160,24 +162,32 @@ describe('agency listen session repository', () => {
     expect(ids(await repo.listOpenForListener(T, me))).toEqual([newer.id, older.id]);
   });
 
-  it('closeOrphans: a dead process\'s open sessions close server_restarted; nothing else moves', async () => {
-    const dead = await repo.open(input({ replicaId: 'worker-dead' }));
-    const deadElsewhere = await repo.open(input({ replicaId: 'worker-dead', tenantId: OTHER_TENANT }));
-    const deadEnded = await repo.open(input({ replicaId: 'worker-dead' }));
-    await repo.close(deadEnded.id, { reason: 'call_ended', framesSent: 7, framesDropped: 0 });
-    const live = await repo.open(input({ replicaId: 'worker-live' }));
+  it('closeOrphans: this process\'s open rows it no longer holds, past the age floor, close server_restarted; nothing else moves', async () => {
+    const aged = (id: string) => pool().query(`UPDATE agency_listen_sessions SET started_at = now() - interval '5 minutes' WHERE id = $1`, [id]);
+    const lost = await repo.open(input({ replicaId: 'worker-me' }));
+    const lostElsewhere = await repo.open(input({ replicaId: 'worker-me', tenantId: OTHER_TENANT }));
+    const held = await repo.open(input({ replicaId: 'worker-me' }));
+    const young = await repo.open(input({ replicaId: 'worker-me' }));
+    const ended = await repo.open(input({ replicaId: 'worker-me' }));
+    await repo.close(ended.id, { reason: 'call_ended', framesSent: 7, framesDropped: 0 });
+    const otherProcess = await repo.open(input({ replicaId: 'worker-other' }));
+    for (const r of [lost, lostElsewhere, held, ended, otherProcess]) await aged(r.id);
 
-    const closed = await repo.closeOrphans('worker-dead');
-    expect(ids(closed).sort()).toEqual([dead.id, deadElsewhere.id].sort());
+    const closed = await repo.closeOrphans('worker-me', { keep: [held.id], minAgeMs: 60_000 });
+    expect(ids(closed).sort()).toEqual([lost.id, lostElsewhere.id].sort());
     expect(closed.every((r) => r.end_reason === 'server_restarted' && r.ended_at !== null)).toBe(true);
     const { rows } = await pool().query<{ id: string; end_reason: string | null; frames_sent: number }>(
       'SELECT id, end_reason, frames_sent FROM agency_listen_sessions WHERE id = ANY($1::uuid[]) ORDER BY id',
-      [[deadEnded.id, live.id]]);
+      [[held.id, young.id, ended.id, otherProcess.id]]);
     expect(Object.fromEntries(rows.map((r) => [r.id, [r.end_reason, r.frames_sent]]))).toEqual({
-      [deadEnded.id]: ['call_ended', 7],
-      [live.id]: [null, 0],
+      [held.id]: [null, 0],
+      [young.id]: [null, 0],
+      [ended.id]: ['call_ended', 7],
+      [otherProcess.id]: [null, 0],
     });
-    expect(await repo.closeOrphans('worker-dead')).toEqual([]);
+    expect(await repo.closeOrphans('worker-me', { keep: [held.id], minAgeMs: 60_000 })).toEqual([]);
+    // Nothing held, no age floor: the rest of this process's open rows go.
+    expect(ids(await repo.closeOrphans('worker-me', { keep: [], minAgeMs: 0 })).sort()).toEqual([held.id, young.id].sort());
   });
 
   it('closeOrphansExcept: at boot, every open session of a process not running now closes server_restarted', async () => {

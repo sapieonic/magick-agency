@@ -85,6 +85,19 @@ type SnapshotPairResult =
   | { ok: true; global: FeatureFlagOverrideRecord[]; tenant: FeatureFlagOverrideRecord[] }
   | { ok: false };
 
+/**
+ * The flags could not be read (Redis and the database both failed, or a cached snapshot was
+ * corrupt), or a value could not be resolved from what was read. Thrown only by
+ * {@link FeatureFlagService.strictSnapshot}: every other entry point degrades to the registry
+ * default instead.
+ */
+export class FlagReadError extends Error {
+  constructor(readonly tenantId: string, options?: { cause?: unknown }) {
+    super('Feature flags could not be read', options);
+    this.name = 'FlagReadError';
+  }
+}
+
 interface CacheEntry {
   value: FeatureFlagOverrideRecord[];
   expiresAt: number;
@@ -105,8 +118,9 @@ interface CacheEntry {
  * a single round-trip pair.
  *
  * All public methods are best-effort and never throw into the call path
- * (`isEnabled` is the one exception: it throws when asked to coerce a
- * non-boolean flag — a programming error, not an infra failure).
+ * (`isEnabled` is one exception: it throws when asked to coerce a
+ * non-boolean flag — a programming error, not an infra failure; `strictSnapshot`
+ * is the other, by design: it is the one reader that reports an outage).
  */
 export class FeatureFlagService {
   private redis: Redis | null;
@@ -232,6 +246,49 @@ export class FeatureFlagService {
       }
     };
 
+    return {
+      isEnabled: (flag: FlagDefinition): boolean => {
+        if (flag.type !== 'boolean') {
+          throw new Error(
+            `isEnabled called on non-boolean flag '${flag.key}' (type ${flag.type}); use getValue`,
+          );
+        }
+        return resolve(flag) === true;
+      },
+      getValue: <T,>(flag: FlagDefinition<T>): T => resolve(flag) as T,
+    };
+  }
+
+  /**
+   * {@link snapshot}, except that a flag that cannot be read is an ERROR rather than its registry
+   * default: the pair read failing (or a corrupt cached snapshot) rejects with
+   * {@link FlagReadError}, and so does a resolver throw on a later `isEnabled` / `getValue`.
+   *
+   * For a caller to whom "off" and "could not be read" must differ, because the registry default
+   * is the wrong answer to an outage for it: a gate whose default is ON (a policy that would
+   * fail OPEN), or a re-check that must not end what it is re-checking because the store is down
+   * (live call listening's access check, `agency/listen/listen-access.ts`). A healthy read
+   * resolves exactly as {@link snapshot} does (an empty pair still reaches the env layer) and
+   * records the same evaluations; a failed one records none.
+   */
+  async strictSnapshot(ctx: FlagContext): Promise<FlagSnapshot> {
+    let global: FeatureFlagOverrideRecord[];
+    let tenant: FeatureFlagOverrideRecord[];
+    try {
+      [global, tenant] = await Promise.all([this.getGlobalSnapshot(), this.getTenantSnapshot(ctx.tenantId)]);
+    } catch (err) {
+      throw new FlagReadError(ctx.tenantId, { cause: err });
+    }
+    const resolve = (flag: FlagDefinition): unknown => {
+      let resolved: { value: unknown; source: ResolutionSource };
+      try {
+        resolved = this.resolveFrom(flag, ctx, global, tenant);
+      } catch (err) {
+        throw new FlagReadError(ctx.tenantId, { cause: err });
+      }
+      this.recordEval(flag, resolved.value, resolved.source);
+      return resolved.value;
+    };
     return {
       isEnabled: (flag: FlagDefinition): boolean => {
         if (flag.type !== 'boolean') {

@@ -7,13 +7,14 @@ import {
   LISTEN_MAX_CLIENT_MESSAGE_BYTES,
   type ListenSocketDeps,
 } from '../../../../src/agency/listen/listen-socket.js';
-import { ListenRegistry } from '../../../../src/agency/listen/listen-registry.js';
+import { ListenRegistry, type ListenAccessCheck } from '../../../../src/agency/listen/listen-registry.js';
 import type { ListenGrantPayload } from '../../../../src/agency/listen/listen-token.js';
 import type { ListenSink, ListenTapStats, OpenListenTapResult } from '../../../../src/core/webrtc-bridge-manager.js';
 
 /*
  * The listener socket (docs/listening.md §3, §4): the upgrade's fail-closed order (token, caps,
- * row, tap), the control frames and their strict parsing, the idle bound, and the one end — the
+ * the access check, row, tap, admission — a revocation anywhere between the grant and the
+ * admission refuses it, LS16 b), the control frames and their strict parsing, the idle bound, and the one end — the
  * `ended` frame and the close code for each reason, the row closed with its counters, the audit
  * pair. Over a fake socket, a fake bridge and stubbed rows.
  */
@@ -24,7 +25,7 @@ const GRANT: ListenGrantPayload = {
   listenId: L, sessionId: S, tenantId: '33333333-3333-4333-8333-333333333333', accountId: '44444444-4444-4444-8444-444444444444',
   callId: '55555555-5555-4555-8555-555555555555', origin: 'campaign', campaignId: '66666666-6666-4666-8666-666666666666',
   correlationId: '77777777-7777-4777-8777-777777777777', agentUserId: '88888888-8888-4888-8888-888888888888',
-  listenerUserId: '99999999-9999-4999-8999-999999999999', recording: true,
+  listenerUserId: '99999999-9999-4999-8999-999999999999', recording: true, revocationGen: 0,
 };
 
 class FakeWs extends EventEmitter {
@@ -59,6 +60,7 @@ interface Harness {
 
 function harness(over: {
   grant?: ListenGrantPayload | null;
+  access?: ListenAccessCheck;
   open?: () => Promise<unknown>;
   tap?: 'refused' | 'ok';
   limits?: Partial<{ maxPerCall: number; maxPerProcess: number; maxPerUser: number }>;
@@ -66,7 +68,7 @@ function harness(over: {
   const ws = new FakeWs();
   const registry = new ListenRegistry({
     limits: { maxPerCall: 2, maxPerProcess: 20, maxPerUser: 1, recheckMs: 30_000, ...over.limits },
-    access: async () => new Set(),
+    access: over.access ?? (async () => ({ revoked: new Set(), unchecked: new Set() })),
   });
   const rows = { open: vi.fn(over.open ?? (async () => ({}))), close: vi.fn(async () => ({})) };
   const audit = vi.fn();
@@ -146,6 +148,60 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.deps.bridge.openListenTap).not.toHaveBeenCalled();
     expect(h.registry.check(GRANT.callId, GRANT.tenantId, 'x')).toBeNull();
     expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it('LS16 b: the database says they may no longer listen: 4403 permission_revoked, no row, the slot given back', async () => {
+    const h = harness({ access: async (subjects) => ({ revoked: new Set(subjects.map((x) => x.listenId)), unchecked: new Set() }) });
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.FORBIDDEN, reason: 'permission_revoked' });
+    expect(h.rows.open).not.toHaveBeenCalled();
+    expect(h.deps.bridge.openListenTap).not.toHaveBeenCalled();
+    expect(h.registry.held().size).toBe(0);
+  });
+
+  it('LS16 b: an access check that cannot be made refuses 1011 listen_unavailable, no row (fail closed)', async () => {
+    for (const access of [
+      (async (subjects) => ({ revoked: new Set(), unchecked: new Set(subjects.map((x) => x.listenId)) })) as ListenAccessCheck,
+      (async () => { throw new Error('ECONNREFUSED'); }) as ListenAccessCheck,
+    ]) {
+      const h = harness({ access });
+      expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+      expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, reason: 'listen_unavailable' });
+      expect(h.rows.open).not.toHaveBeenCalled();
+      expect(h.registry.held().size).toBe(0);
+    }
+  });
+
+  it('LS16 b: revoked between the grant and the upgrade: the grant\'s generation is stale, 4403 before the database is asked', async () => {
+    const access = vi.fn<ListenAccessCheck>(async () => ({ revoked: new Set(), unchecked: new Set() }));
+    const h = harness({ access });
+    await h.registry.revokeUser(GRANT.tenantId, GRANT.listenerUserId); // no session yet: only the generation moves
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.FORBIDDEN, reason: 'permission_revoked' });
+    expect(access).not.toHaveBeenCalled();
+    expect(h.rows.open).not.toHaveBeenCalled();
+  });
+
+  it('LS16 b: revoked between the reservation and the admission: the row closes permission_revoked, 4403, no ready, no audit', async () => {
+    const h = harness();
+    h.rows.open.mockImplementation(async () => { await h.registry.revokeUser(GRANT.tenantId, GRANT.listenerUserId); });
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    await settle();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.FORBIDDEN, reason: 'permission_revoked' });
+    expect(h.ws.json().some((f) => f['event'] === 'ready')).toBe(false);
+    expect(h.rows.close).toHaveBeenCalledWith(L, { reason: 'permission_revoked', framesSent: 7, framesDropped: 1 });
+    expect(h.tap.detach).toHaveBeenCalledTimes(1);
+    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.registry.size).toBe(0);
+    expect(h.registry.held().size).toBe(0);
+  });
+
+  it('a stopping process refuses 1011 listen_unavailable at the reservation, not the server\'s limit', async () => {
+    const h = harness();
+    await h.registry.shutdown();
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, reason: 'listen_unavailable' });
+    expect(h.rows.open).not.toHaveBeenCalled();
   });
 
   it('the row is written BEFORE the tap opens (no row, no audio)', async () => {

@@ -33,13 +33,19 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  *     take the process down, and an errored socket is just a closed one here.
  *  2. Spend the single-use token (4401 `listen_token_invalid` if it is missing, spent, expired or
  *     another listen's; the grant must name this socket's session too).
- *  3. Reserve a slot under the caps (4429 with `listen_limit_call` / `listen_limit_server`).
- *  4. Write the `agency_listen_sessions` row and AWAIT it (1011 `listen_unavailable` if it
+ *  3. Reserve a slot under the caps (4429 with `listen_limit_call` / `listen_limit_server`; 1011
+ *     `listen_unavailable` while the process stops), recording the supervisor's revocation
+ *     generation; a grant minted before their latest revocation here is refused 4403
+ *     `permission_revoked`.
+ *  4. Ask the database whether they may still listen (LS16 b: the grant's checks are up to a token
+ *     TTL old): 4403 `permission_revoked` if not, 1011 `listen_unavailable` if it cannot say.
+ *  5. Write the `agency_listen_sessions` row and AWAIT it (1011 `listen_unavailable` if it
  *     fails: nothing was opened).
- *  5. Attach the bridge's tap (4404 `listen_call_not_live` if the bridge no longer has the call
+ *  6. Attach the bridge's tap (4404 `listen_call_not_live` if the bridge no longer has the call
  *     bridged; the row just written closes `call_ended`).
- *  6. Admit the session (the supervisor's older listen ends `superseded`), send `ready`, audit
- *     `agency_call.listen_started`.
+ *  7. Admit the session (the supervisor's older listen ends `superseded`), send `ready`, audit
+ *     `agency_call.listen_started`. A revocation since step 3 refuses it instead: the row closes
+ *     `permission_revoked`, `ended` and 4403, no audit pair.
  * A refusal closes with the error code as the close reason, so the listening bar can say why.
  *
  * ── The end ──────────────────────────────────────────────────────────────────
@@ -47,7 +53,8 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  * registry's supersede, revoke or shutdown): the tap detached, `ended { reason }` sent and the
  * socket closed with the reason's code (unless the client closed it), the row closed with its
  * reason and counters, `agency_call.listen_ended` audited, the metrics counted. A failed row
- * close or audit write is logged; neither touches the call.
+ * close is logged and retried by the rows' upkeep (`listen-rows.ts`); a failed audit write is
+ * logged; neither touches the call.
  */
 
 /** Sent as the close reason when the upgrade's token does not verify. */
@@ -111,12 +118,16 @@ function closeWith(ws: WebSocket, code: number, reason: string): void {
   try { ws.close(code, reason); } catch { /* already gone */ }
 }
 
-/** A refusal at the upgrade: the close code for each error code (`AGENCY_LISTEN_CLOSE`). */
-function refuse(ws: WebSocket, code: AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON): void {
+/**
+ * A refusal at the upgrade: the close code for each error code (`AGENCY_LISTEN_CLOSE`).
+ * `permission_revoked` (an end reason, not an error code) is the supervisor's access gone: 4403.
+ */
+function refuse(ws: WebSocket, code: AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON | 'permission_revoked'): void {
   const close = code === LISTEN_TOKEN_INVALID_REASON ? AGENCY_LISTEN_CLOSE.TOKEN_REJECTED
-    : code === 'listen_limit_call' || code === 'listen_limit_server' ? AGENCY_LISTEN_CLOSE.LIMIT
-      : code === 'listen_call_not_live' ? AGENCY_LISTEN_CLOSE.CALL_GONE
-        : AGENCY_LISTEN_CLOSE.INTERNAL_ERROR;
+    : code === 'permission_revoked' ? AGENCY_LISTEN_CLOSE.FORBIDDEN
+      : code === 'listen_limit_call' || code === 'listen_limit_server' ? AGENCY_LISTEN_CLOSE.LIMIT
+        : code === 'listen_call_not_live' ? AGENCY_LISTEN_CLOSE.CALL_GONE
+          : AGENCY_LISTEN_CLOSE.INTERNAL_ERROR;
   closeWith(ws, close, code);
 }
 
@@ -222,7 +233,8 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
     try {
       await this.deps.rows.close(this.listenId, { reason, framesSent: stats.framesSent, framesDropped: stats.framesDropped });
     } catch (err) {
-      log.error({ err, listenId: this.listenId, callId: this.callId, reason }, 'Could not close the listen session row');
+      // Production's rows (`listen-rows.ts`) queue it: the re-check tick retries it with this reason.
+      log.error({ err, listenId: this.listenId, callId: this.callId, reason }, 'Could not close the listen session row — retrying on the next re-check');
     }
     // A session refused after its row was written (the call ended under the upgrade) never
     // started: its row says so, and there is no `listen_started` for an `_ended` to pair with.
@@ -303,17 +315,28 @@ export async function handleListenSocket(
   }
   if (clientGone) return null;
 
-  // 3. A slot under the caps.
+  // 3. A slot under the caps, at the supervisor's revocation generation (the grant's, or refused).
   const reserved = deps.registry.reserve({
     listenId: grant.listenId, callId: grant.callId, tenantId: grant.tenantId, listenerUserId: grant.listenerUserId,
+    grantGeneration: grant.revocationGen,
   });
   if (!reserved.ok) {
-    log.info({ listenId: grant.listenId, callId: grant.callId, code: reserved.code }, 'Listen upgrade refused at the cap');
+    log.info({ listenId: grant.listenId, callId: grant.callId, code: reserved.code }, 'Listen upgrade refused at the reservation');
     refuse(ws, reserved.code);
     return null;
   }
 
-  // 4. The row, awaited: no row, no audio.
+  // 4. May they still listen? Asked of the database, fail closed.
+  const access = await deps.registry.verify(grant);
+  if (access !== 'ok' || clientGone) {
+    deps.registry.release(reserved.reservation);
+    if (clientGone) return null;
+    log.info({ listenId: grant.listenId, callId: grant.callId, access }, 'Listen upgrade refused at the access check');
+    refuse(ws, access === 'revoked' ? 'permission_revoked' : 'listen_unavailable');
+    return null;
+  }
+
+  // 5. The row, awaited: no row, no audio.
   try {
     await deps.rows.open({
       id: grant.listenId, tenantId: grant.tenantId, accountId: grant.accountId, callId: grant.callId,
@@ -335,7 +358,7 @@ export async function handleListenSocket(
     return null;
   }
 
-  // 5. The tap.
+  // 6. The tap.
   let opened: OpenListenTapResult;
   try {
     opened = deps.bridge.openListenTap(grant.callId, s);
@@ -353,9 +376,12 @@ export async function handleListenSocket(
   }
   s.tap = opened;
 
-  // 6. Admitted.
+  // 7. Admitted, unless the supervisor was revoked here since the reservation.
+  if (!deps.registry.admit(reserved.reservation, s).ok) {
+    await s.end('permission_revoked');
+    return null;
+  }
   session = s;
-  deps.registry.admit(reserved.reservation, s);
   sendJson(ws, {
     event: 'ready', listen_id: grant.listenId, call_id: grant.callId, format: 'alaw8', frame_bytes: AGENCY_LISTEN_FRAME_BYTES,
   });

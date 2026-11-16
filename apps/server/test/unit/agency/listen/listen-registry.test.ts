@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgencyListenEndReason } from '@magick-agency/contracts/agency';
-import { ListenRegistry, type ListenAccessCheck, type ListenLimits, type ListenSessionHandle } from '../../../../src/agency/listen/listen-registry.js';
+import {
+  ListenRegistry, STALE_AFTER_RECHECKS, type ListenAccessCheck, type ListenAccessSubject, type ListenAccessVerdict, type ListenLimits, type ListenSessionHandle,
+} from '../../../../src/agency/listen/listen-registry.js';
 import { listenAccessCheck, membershipMayListen, type ListenAccessDeps } from '../../../../src/agency/listen/listen-access.js';
 import type { MembershipRecord } from '@magick-agency/db/models/membership.model';
 
 /*
- * The listen registry (docs/listening.md §4, LS5, LS10): the three caps, the supersede, the
- * revocation and its periodic re-check against a database stub, the shutdown. And the re-check's
- * question itself (`listen-access.ts`): the membership floor and both flags.
+ * The listen registry (docs/listening.md §4, LS5, LS10, LS16): the three caps, the supersede, the
+ * revocation and its periodic re-check against a database stub (the immediate path fails closed,
+ * the periodic pass fails open under the staleness cap), the revocation generation between a grant
+ * and its admission, the rows' upkeep on the tick, the shutdown. And the re-check's question itself
+ * (`listen-access.ts`): the membership floor and both flags, a failed read unchecked.
  */
 
 const LIMITS: ListenLimits = { maxPerCall: 2, maxPerProcess: 3, maxPerUser: 1, recheckMs: 30_000 };
@@ -32,12 +36,17 @@ function session(over: Partial<ListenSessionHandle> & { listenId: string }, regi
 function open(registry: ListenRegistry, s: FakeSession): FakeSession {
   const r = registry.reserve({ listenId: s.listenId, callId: s.callId, tenantId: s.tenantId, listenerUserId: s.listenerUserId });
   if (!r.ok) throw new Error(`refused ${r.code}`);
-  registry.admit(r.reservation, s);
+  if (!registry.admit(r.reservation, s).ok) throw new Error('admission refused');
   return s;
 }
 
-function registryWith(access: ListenAccessCheck = vi.fn(async () => new Set<string>()), limits: Partial<ListenLimits> = {}) {
-  return new ListenRegistry({ limits: { ...LIMITS, ...limits }, access });
+/** A verdict: these revoked, those unchecked, the rest passed. */
+const verdict = (revoked: Iterable<string> = [], unchecked: Iterable<string> = []): ListenAccessVerdict =>
+  ({ revoked: new Set(revoked), unchecked: new Set(unchecked) });
+const allPass: ListenAccessCheck = async () => verdict();
+
+function registryWith(access: ListenAccessCheck = vi.fn(allPass), limits: Partial<ListenLimits> = {}, over: { maintainRows?: (held: ReadonlySet<string>) => Promise<unknown> } = {}) {
+  return new ListenRegistry({ limits: { ...LIMITS, ...limits }, access, ...over });
 }
 
 afterEach(() => { vi.useRealTimers(); });
@@ -76,10 +85,11 @@ describe('ListenRegistry: the caps (LS5)', () => {
     expect(registry.check('c1', 't1', 'u1')).toBeNull();
   });
 
-  it('a stopping registry admits nothing', async () => {
+  it('a stopping registry admits nothing: listen_unavailable (a fresh grant reaches the next process), not the server\'s limit', async () => {
     const registry = registryWith();
     await registry.shutdown();
-    expect(registry.check('c1', 't1', 'u1')).toBe('listen_limit_server');
+    expect(registry.check('c1', 't1', 'u1')).toBe('listen_unavailable');
+    expect(registry.reserve({ listenId: 'l1', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' })).toEqual({ ok: false, code: 'listen_unavailable' });
   });
 });
 
@@ -116,9 +126,9 @@ describe('ListenRegistry: supersede', () => {
   });
 });
 
-describe('ListenRegistry: revocation and the re-check (LS10)', () => {
+describe('ListenRegistry: revocation and the re-check (LS10, LS16 c, d)', () => {
   it('revokeUser re-checks only that supervisor\'s sessions in the tenant, and ends those that fail', async () => {
-    const access = vi.fn(async (sessions: readonly ListenSessionHandle[]) => new Set(sessions.map((s) => s.listenId)));
+    const access = vi.fn(async (subjects: readonly ListenAccessSubject[]) => verdict(subjects.map((s) => s.listenId)));
     const registry = registryWith(access, { maxPerProcess: 10 });
     const mine = open(registry, session({ listenId: 'm', listenerUserId: 'u1' }, registry));
     const theirs = open(registry, session({ listenId: 't', listenerUserId: 'u2' }, registry));
@@ -132,7 +142,7 @@ describe('ListenRegistry: revocation and the re-check (LS10)', () => {
   });
 
   it('a role change that still clears the floor ends nothing; with no session it reads nothing', async () => {
-    const access = vi.fn(async () => new Set<string>());
+    const access = vi.fn(allPass);
     const registry = registryWith(access);
     expect(await registry.revokeUser('t1', 'u1')).toBe(0);
     expect(access).not.toHaveBeenCalled();
@@ -141,17 +151,66 @@ describe('ListenRegistry: revocation and the re-check (LS10)', () => {
     expect(s.ended).toEqual([]);
   });
 
-  it('a check that cannot be made (the database is down) ends nothing', async () => {
+  it('the immediate path fails CLOSED: a check that throws, or leaves a session unchecked, ends it', async () => {
+    const throwing = registryWith(vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
+    const a = open(throwing, session({ listenId: 'a' }, throwing));
+    expect(await throwing.revokeUser('t1', 'u1')).toBe(1);
+    expect(a.ended).toEqual(['permission_revoked']);
+
+    const partial = registryWith(vi.fn(async () => verdict([], ['b'])));
+    const b = open(partial, session({ listenId: 'b' }, partial));
+    expect(await partial.revokeUser('t1', 'u1')).toBe(1);
+    expect(b.ended).toEqual(['permission_revoked']);
+  });
+
+  it('the periodic pass fails OPEN: a check that cannot be made ends nothing, short of the staleness cap', async () => {
     const registry = registryWith(vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
     const s = open(registry, session({ listenId: 'l1' }, registry));
-    expect(await registry.revokeUser('t1', 'u1')).toBe(0);
     expect(await registry.recheck()).toBe(0);
     expect(s.ended).toEqual([]);
   });
 
+  it('the staleness cap: unverified for STALE_AFTER_RECHECKS × recheckMs ends permission_revoked; a good check resets it', async () => {
+    vi.useFakeTimers();
+    let failing = false;
+    const access = vi.fn(async (subjects: readonly ListenAccessSubject[]) => {
+      if (failing) throw new Error('down');
+      return verdict([], subjects.filter((x) => x.listenId === 'flaky').map((x) => x.listenId));
+    });
+    const registry = registryWith(access, { maxPerProcess: 10 });
+    const fine = open(registry, session({ listenId: 'fine', listenerUserId: 'u1' }, registry));
+    const flaky = open(registry, session({ listenId: 'flaky', listenerUserId: 'u2' }, registry));
+    registry.start();
+    // `flaky`'s account cannot be read on any pass; `fine` passes until the store goes down.
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs * (STALE_AFTER_RECHECKS - 1));
+    expect(flaky.ended).toEqual([]);
+    failing = true;
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs);
+    expect(flaky.ended).toEqual(['permission_revoked']);
+    expect(fine.ended).toEqual([]);
+    // `fine` was last verified one interval before the outage: it goes once the cap has passed.
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs * (STALE_AFTER_RECHECKS - 2));
+    expect(fine.ended).toEqual([]);
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs);
+    expect(fine.ended).toEqual(['permission_revoked']);
+    registry.stop();
+  });
+
+  it('a pass that hangs does not hold the staleness cap off: the next ticks still end the stale sessions', async () => {
+    vi.useFakeTimers();
+    const registry = registryWith(vi.fn(() => new Promise<ListenAccessVerdict>(() => {})));
+    const s = open(registry, session({ listenId: 'l1' }, registry));
+    registry.start();
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs * STALE_AFTER_RECHECKS - 1);
+    expect(s.ended).toEqual([]);
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs);
+    expect(s.ended).toEqual(['permission_revoked']);
+    registry.stop();
+  });
+
   it('the periodic re-check runs every recheckMs and ends what the database says may no longer listen', async () => {
     vi.useFakeTimers();
-    let revoked = new Set<string>();
+    let revoked = verdict();
     const access = vi.fn(async () => revoked);
     const registry = registryWith(access, { maxPerProcess: 10 });
     const a = open(registry, session({ listenId: 'a', listenerUserId: 'u1' }, registry));
@@ -162,7 +221,7 @@ describe('ListenRegistry: revocation and the re-check (LS10)', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(access).toHaveBeenCalledTimes(1);
     expect(a.ended).toEqual([]);
-    revoked = new Set(['b']);
+    revoked = verdict(['b']);
     await vi.advanceTimersByTimeAsync(LIMITS.recheckMs);
     expect(access).toHaveBeenCalledTimes(2);
     expect(b.ended).toEqual(['permission_revoked']);
@@ -170,6 +229,59 @@ describe('ListenRegistry: revocation and the re-check (LS10)', () => {
     registry.stop();
     await vi.advanceTimersByTimeAsync(LIMITS.recheckMs * 3);
     expect(access).toHaveBeenCalledTimes(2);
+  });
+
+  it('each tick hands the rows\' upkeep the ids it holds: open sessions and reservations', async () => {
+    vi.useFakeTimers();
+    const maintainRows = vi.fn(async (held: ReadonlySet<string>) => { void held; });
+    const registry = registryWith(undefined, { maxPerProcess: 10 }, { maintainRows });
+    open(registry, session({ listenId: 'open1', listenerUserId: 'u1' }, registry));
+    registry.reserve({ listenId: 'reserved1', callId: 'c2', tenantId: 't1', listenerUserId: 'u2' });
+    registry.start();
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs);
+    expect(maintainRows).toHaveBeenCalledTimes(1);
+    expect([...maintainRows.mock.calls[0]![0]].sort()).toEqual(['open1', 'reserved1']);
+    registry.stop();
+  });
+});
+
+describe('ListenRegistry: between the grant and the admission (LS16 b)', () => {
+  it('verify answers the database\'s verdict for one subject, and `unchecked` when the check throws', async () => {
+    const subject = { listenId: 'l1', tenantId: 't1', accountId: 'a1', listenerUserId: 'u1', recording: true };
+    expect(await registryWith().verify(subject)).toBe('ok');
+    expect(await registryWith(async () => verdict(['l1'])).verify(subject)).toBe('revoked');
+    expect(await registryWith(async () => verdict([], ['l1'])).verify(subject)).toBe('unchecked');
+    expect(await registryWith(async () => { throw new Error('down'); }).verify(subject)).toBe('unchecked');
+  });
+
+  it('a grant minted before a revocation is refused at the reservation (revoke between grant and upgrade)', async () => {
+    const registry = registryWith();
+    const minted = registry.generation('t1', 'u1');
+    await registry.revokeUser('t1', 'u1'); // no session yet: only the generation moves
+    expect(registry.generation('t1', 'u1')).not.toBe(minted);
+    expect(registry.reserve({ listenId: 'l1', callId: 'c1', tenantId: 't1', listenerUserId: 'u1', grantGeneration: minted }))
+      .toEqual({ ok: false, code: 'permission_revoked' });
+    // Someone else's grant, or the same user in another tenant, is untouched.
+    expect(registry.reserve({ listenId: 'l2', callId: 'c1', tenantId: 't1', listenerUserId: 'u2', grantGeneration: registry.generation('t1', 'u2') }).ok).toBe(true);
+    expect(registry.reserve({ listenId: 'l3', callId: 'c2', tenantId: 't2', listenerUserId: 'u1', grantGeneration: registry.generation('t2', 'u1') }).ok).toBe(true);
+    // A fresh grant, at the new generation, is admitted.
+    expect(registry.reserve({ listenId: 'l4', callId: 'c3', tenantId: 't1', listenerUserId: 'u1', grantGeneration: registry.generation('t1', 'u1') }).ok).toBe(true);
+  });
+
+  it('a revocation between the reservation and the admission refuses the admission and gives the slot back', async () => {
+    const registry = registryWith(undefined, { maxPerCall: 1 });
+    const r = registry.reserve({ listenId: 'l1', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' });
+    if (!r.ok) throw new Error('refused');
+    await registry.revokeUser('t1', 'u1');
+    const s = session({ listenId: 'l1' }, registry);
+    expect(registry.admit(r.reservation, s)).toEqual({ ok: false });
+    expect(registry.size).toBe(0);
+    expect(registry.check('c1', 't1', 'u2')).toBeNull();
+    // Another supervisor's revocation does not touch this one's reservation.
+    const r2 = registry.reserve({ listenId: 'l2', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' });
+    if (!r2.ok) throw new Error('refused');
+    await registry.revokeUser('t1', 'u9');
+    expect(registry.admit(r2.reservation, session({ listenId: 'l2' }, registry)).ok).toBe(true);
   });
 });
 
@@ -194,39 +306,54 @@ function membership(over: Partial<MembershipRecord>): MembershipRecord {
 describe('listenAccessCheck', () => {
   const deps = (over: Partial<ListenAccessDeps> = {}): ListenAccessDeps => ({
     memberships: vi.fn(async () => [membership({ account_id: 'a1' })]),
-    listenEnabled: vi.fn(async () => true),
-    unrecordedAllowed: vi.fn(async () => true),
+    flags: vi.fn(async () => ({ enabled: true, unrecordedAllowed: true })),
     ...over,
   });
-  const s = (over: Partial<ListenSessionHandle>): ListenSessionHandle =>
-    ({ listenId: 'l', tenantId: 't1', accountId: 'a1', callId: 'c1', listenerUserId: 'u1', recording: true, startedAt: 0, end: async () => {}, ...over });
+  const s = (over: Partial<ListenAccessSubject>): ListenAccessSubject =>
+    ({ listenId: 'l', tenantId: 't1', accountId: 'a1', listenerUserId: 'u1', recording: true, ...over });
+  const none = verdict();
 
   it('keeps an account admin on a recorded call with the flag on', async () => {
-    expect(await listenAccessCheck(deps())([s({})])).toEqual(new Set());
+    expect(await listenAccessCheck(deps())([s({})])).toEqual(none);
   });
 
   it('ends a listen whose supervisor fell below account_admin, lost the membership, or holds only another account', async () => {
-    expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: 'a1', role: 'operator' })] }))([s({})])).toEqual(new Set(['l']));
-    expect(await listenAccessCheck(deps({ memberships: async () => [] }))([s({})])).toEqual(new Set(['l']));
-    expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: 'a2' })] }))([s({})])).toEqual(new Set(['l']));
+    const revoked = verdict(['l']);
+    expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: 'a1', role: 'operator' })] }))([s({})])).toEqual(revoked);
+    expect(await listenAccessCheck(deps({ memberships: async () => [] }))([s({})])).toEqual(revoked);
+    expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: 'a2' })] }))([s({})])).toEqual(revoked);
     // A tenant-wide admin passes in every account.
-    expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: null, role: 'tenant_admin' })] }))([s({})])).toEqual(new Set());
+    expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: null, role: 'tenant_admin' })] }))([s({})])).toEqual(none);
   });
 
   it('ends every listen in an account whose consent flag went off', async () => {
-    expect(await listenAccessCheck(deps({ listenEnabled: async () => false }))([s({})])).toEqual(new Set(['l']));
+    expect(await listenAccessCheck(deps({ flags: async () => ({ enabled: false, unrecordedAllowed: true }) }))([s({})])).toEqual(verdict(['l']));
   });
 
   it('LS4: the unrecorded flag ends only listens on unrecorded calls', async () => {
-    const d = deps({ unrecordedAllowed: vi.fn(async () => false) });
-    expect(await listenAccessCheck(d)([s({ listenId: 'rec' }), s({ listenId: 'unrec', recording: false })])).toEqual(new Set(['unrec']));
+    const d = deps({ flags: vi.fn(async () => ({ enabled: true, unrecordedAllowed: false })) });
+    expect(await listenAccessCheck(d)([s({ listenId: 'rec' }), s({ listenId: 'unrec', recording: false })])).toEqual(verdict(['unrec']));
+  });
+
+  it('a read that fails leaves its listens unchecked, never passed; what could be read and says no still revokes', async () => {
+    const flagsDown = deps({ flags: vi.fn(async () => { throw new Error('flag store down'); }) });
+    expect(await listenAccessCheck(flagsDown)([s({})])).toEqual(verdict([], ['l']));
+    // The membership says no: revoked, whatever the flags.
+    const demoted = deps({ memberships: async () => [membership({ account_id: 'a1', role: 'viewer' })], flags: async () => { throw new Error('down'); } });
+    expect(await listenAccessCheck(demoted)([s({})])).toEqual(verdict(['l']));
+    // The flags say no: revoked, whatever the membership.
+    const off = deps({ memberships: async () => { throw new Error('down'); }, flags: async () => ({ enabled: false, unrecordedAllowed: true }) });
+    expect(await listenAccessCheck(off)([s({})])).toEqual(verdict(['l']));
+    // One account unreadable: only its listens are unchecked.
+    const oneDown = deps({ memberships: async () => [membership({ account_id: null, role: 'tenant_admin' })], flags: vi.fn(async (_t: string, a: string) => { if (a === 'a2') throw new Error('down'); return { enabled: true, unrecordedAllowed: true }; }) });
+    expect(await listenAccessCheck(oneDown)([s({ listenId: 'x' }), s({ listenId: 'y', accountId: 'a2' })])).toEqual(verdict([], ['y']));
   });
 
   it('reads each supervisor\'s memberships and each account\'s flags once per pass', async () => {
     const d = deps();
-    await listenAccessCheck(d)([s({ listenId: 'a' }), s({ listenId: 'b', callId: 'c2' }), s({ listenId: 'c', listenerUserId: 'u2' })]);
+    await listenAccessCheck(d)([s({ listenId: 'a' }), s({ listenId: 'b' }), s({ listenId: 'c', listenerUserId: 'u2' })]);
     expect(d.memberships).toHaveBeenCalledTimes(2);
-    expect(d.listenEnabled).toHaveBeenCalledTimes(1);
+    expect(d.flags).toHaveBeenCalledTimes(1);
   });
 
   it('membershipMayListen picks the account\'s membership before the tenant-wide one', () => {

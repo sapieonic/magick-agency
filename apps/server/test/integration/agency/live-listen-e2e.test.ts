@@ -11,7 +11,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *
  * Covered: joining mid-call with both legs tagged; the call ending (`ended { call_ended }`, the row
  * closed, the audit pair); a listener dropping (the call unaffected); the per-call cap; supersede;
- * a role change through the real route; LS4 both ways; the own-call rule; another account and
+ * a role change through the real route (the periodic re-check held off, so it is the immediate
+ * path), and one between a grant and its upgrade (refused at the upgrade, no row); LS4 both ways; the own-call rule; another account and
  * another tenant (404, absent from the list); agents and operators (403); the flag off (403); the
  * number reveal; the call detail's `listen_sessions`; a soft-phone call; a wrap-up redial (a new
  * call listened to by its own id); the boot sweep of a dead process's rows. The Plivo and inbound
@@ -31,6 +32,9 @@ const env = vi.hoisted(() => {
     RATE_LIMIT_STATION_MAX: '1000000',
     RATE_LIMIT_MAX: '1000000',
     RATE_LIMIT_USER_MAX: '1000000',
+    // The periodic re-check (LS10's backstop) out of the way: a revocation that ends a listen here
+    // within seconds went through the immediate path (`revokeListens`), not a pass.
+    AGENCY_LISTEN_RECHECK_MS: '300000',
     LOG_LEVEL: 'error',
   };
   Object.assign(process.env, e);
@@ -425,6 +429,8 @@ describe('live call listening, end to end on VoiceLink', () => {
   });
 
   it('a role change and a member\'s removal through the real routes end the listen `permission_revoked` (4403) at once', async () => {
+    // At once: the periodic pass cannot be what ends it within the wait below.
+    expect(getAgencyRuntime()!.listen.limits.recheckMs).toBe(300_000);
     const call = await liveCall();
     const target = await user('account_admin');
     const l = await listen(target, call.callId);
@@ -443,6 +449,25 @@ describe('live call listening, end to end on VoiceLink', () => {
     await waitFor('removed member revoked', () => l2.closed, 10_000);
     expect(l2.closed).toEqual({ code: 4403, reason: 'permission_revoked' });
     await closedRow(l2.listenId, 'permission_revoked');
+  });
+
+  it('LS16 b: a grant whose supervisor is demoted before the upgrade is refused 4403 at the upgrade, with no row', async () => {
+    const call = await liveCall();
+    const target = await user('account_admin');
+    const res = await http(target, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`);
+    expect(res.statusCode, res.body).toBe(201);
+    const grant = res.json() as { listen_id: string; ws_url: string };
+    // Demoted between the grant and the upgrade, through the real route.
+    expect((await http(owner, 'PUT', `/users/${target.id}/role`, { role: 'operator' })).statusCode).toBe(200);
+    const ws = new WebSocket(`${rig!.origin.replace('http', 'ws')}${grant.ws_url}`);
+    const frames: string[] = [];
+    ws.on('message', (raw: Buffer, isBinary) => { if (!isBinary) frames.push(raw.toString()); });
+    ws.on('error', () => { /* the close follows */ });
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })));
+    expect(closed).toEqual({ code: 4403, reason: 'permission_revoked' });
+    expect(frames.some((f) => f.includes('"ready"'))).toBe(false);
+    expect(await listenRow(grant.listen_id)).toBeUndefined();
+    expect(getAgencyRuntime()!.listen.all().some((x) => x.listenId === grant.listen_id)).toBe(false);
   });
 
   it('LS4: an unrecorded call is listenable by default; with the flag off the row says why and the grant is 409', async () => {

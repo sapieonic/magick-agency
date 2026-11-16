@@ -13,9 +13,11 @@
  * ── Every row ends exactly once ─────────────────────────────────────────────
  * {@link AgencyListenSessionRepository.close} writes only an open row, so a second close (the
  * socket's close racing the call's end) changes nothing and answers null. A row left open by a
- * process that died is closed `server_restarted` by its replica: by the primary when it reaps a
- * dead media worker ({@link AgencyListenSessionRepository.closeOrphans}), and at boot for every
- * process no longer running ({@link AgencyListenSessionRepository.closeOrphansExcept}).
+ * process that died is closed `server_restarted`: at boot, and when the primary reaps a dead media
+ * worker, for every process no longer running
+ * ({@link AgencyListenSessionRepository.closeOrphansExcept}); a row a live process no longer holds
+ * (its close failed for good, or its insert answered an error after it committed) by that
+ * process's own sweep ({@link AgencyListenSessionRepository.closeOrphans}).
  *
  * Reads are scoped to the tenant (and the account where the caller names one); ids are validated
  * at the edge (a non-UUID reaching a `uuid` cast is `22P02`). The retention sweep at the audit
@@ -164,16 +166,21 @@ export class AgencyListenSessionRepository {
   }
 
   /**
-   * Close every session a dead process left open (`server_restarted`; the counters stay as they
-   * were, unknown): the primary's reap of a media worker that exited. Answers the rows closed.
+   * Close this process's open sessions that it no longer holds (`server_restarted`; the counters
+   * stay as they were, unknown): every open row of `replicaId` not in `keep` that started more
+   * than `minAgeMs` ago. The live process's sweep (`agency/listen/listen-rows.ts`): `keep` is what
+   * it holds (open sessions, reservations, closes in flight or queued), and the age floor keeps a
+   * row written after `keep` was read out of reach. Answers the rows closed.
    */
-  async closeOrphans(replicaId: string): Promise<ListenSessionRecord[]> {
+  async closeOrphans(replicaId: string, opts: { keep: readonly string[]; minAgeMs: number }): Promise<ListenSessionRecord[]> {
     const { rows } = await getPool().query<ListenSessionRecord>(
       `UPDATE agency_listen_sessions
           SET ended_at = GREATEST(now(), started_at), end_reason = 'server_restarted'
         WHERE ended_at IS NULL AND replica_id = $1
+          AND id <> ALL($2::uuid[])
+          AND started_at < now() - make_interval(secs => $3::double precision / 1000)
         RETURNING *`,
-      [replicaId],
+      [replicaId, opts.keep, Math.max(0, opts.minAgeMs)],
     );
     return rows;
   }

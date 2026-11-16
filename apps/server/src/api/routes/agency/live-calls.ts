@@ -33,11 +33,33 @@ const log = createChildLogger({ component: 'agency-live-calls' });
 /** Each campaign's AHT is read at most this often per process (the list is polled every 5 s). */
 export const LIVE_CALL_AHT_CACHE_MS = 60_000;
 
+/**
+ * At most this many campaigns' AHT are held per process. Entries past their minute are dropped as
+ * misses are read, and past this bound the oldest go too, so the cache is bounded by what is live
+ * now, not by every campaign the process has ever listed.
+ */
+export const LIVE_CALL_AHT_CACHE_MAX = 1_000;
+
 const ahtCache = new Map<string, { at: number; value: number | null }>();
 
 /** Tests only. */
 export function clearLiveCallAhtCacheForTests(): void {
   ahtCache.clear();
+}
+
+/** Tests only: how many campaigns' AHT are held. */
+export function liveCallAhtCacheSizeForTests(): number {
+  return ahtCache.size;
+}
+
+/** Drop the entries past their minute, then the oldest past {@link LIVE_CALL_AHT_CACHE_MAX}. */
+function pruneAhtCache(now: number): void {
+  for (const [key, hit] of ahtCache) if (now - hit.at >= LIVE_CALL_AHT_CACHE_MS) ahtCache.delete(key);
+  while (ahtCache.size > LIVE_CALL_AHT_CACHE_MAX) {
+    const oldest = ahtCache.keys().next().value;
+    if (oldest === undefined) break;
+    ahtCache.delete(oldest);
+  }
 }
 
 async function ahtFor(tenantId: string, campaignIds: string[], now: number): Promise<Map<string, number | null>> {
@@ -53,9 +75,13 @@ async function ahtFor(tenantId: string, campaignIds: string[], now: number): Pro
       const read = await agencyLiveCallRepository.campaignAhtSeconds(tenantId, missing);
       for (const id of missing) {
         const value = read.get(id) ?? null;
-        ahtCache.set(`${tenantId}:${id}`, { at: now, value });
+        const key = `${tenantId}:${id}`;
+        // Re-inserted, so the map's order is the read order (the oldest first, for the bound).
+        ahtCache.delete(key);
+        ahtCache.set(key, { at: now, value });
         out.set(id, value);
       }
+      pruneAhtCache(now);
     } catch (err) {
       // The AHT colours a timer; it never fails the list.
       log.warn({ err, tenantId }, 'Could not read the live calls\' campaign AHT — answering null');
@@ -137,6 +163,8 @@ export async function registerLiveCallRoutes(sub: FastifyInstance, runtime: Agen
         listenId, sessionId, tenantId, accountId, callId: body.call_id, origin: body.origin, campaignId: body.campaign_id,
         correlationId: body.correlation_id, agentUserId: body.agent_user_id, listenerUserId: body.listener_user_id,
         recording: body.recording,
+        // A revocation of this supervisor here before the upgrade refuses it (LS16 b).
+        revocationGen: runtime.listen.generation(tenantId, body.listener_user_id),
       });
     } catch (err) {
       if (err instanceof ListenTokenUnavailableError) return sendListenRefusal(reply, 'listen_unavailable');

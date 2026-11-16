@@ -15,7 +15,7 @@ import { tenantContextMiddleware } from '../middleware/tenant-context.middleware
 import { ACCOUNT_HEADER } from '../middleware/headers.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore, type CoreCallRequest, type CoreCallResult } from '../core-dispatch.js';
-import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
+import { readListenFlags, type ListenFlags } from '../../agency/listen/listen-access.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { config } from '../../config/index.js';
@@ -52,8 +52,8 @@ const log = createChildLogger({ component: 'proxy-agency-live-calls' });
 
 /** What the routes read besides the request. Tests replace it. */
 export interface LiveCallRouteDeps {
-  listenEnabled(tenantId: string, accountId: string): Promise<boolean>;
-  unrecordedAllowed(tenantId: string, accountId: string): Promise<boolean>;
+  /** Both listening flags for the account; REJECTS when they cannot be read (`readListenFlags`). */
+  listenFlags(tenantId: string, accountId: string): Promise<ListenFlags>;
   callCore(req: CoreCallRequest): Promise<CoreCallResult>;
   names(ids: Iterable<string | null>, tenantId: string): Promise<Map<string, string | null>>;
   maxPerCall(): number;
@@ -61,10 +61,7 @@ export interface LiveCallRouteDeps {
 }
 
 export const defaultLiveCallRouteDeps: LiveCallRouteDeps = {
-  listenEnabled: (tenantId, accountId) =>
-    getFeatureFlagService().isEnabled(FLAGS.agency_live_listen_enabled, { tenantId, accountId }),
-  unrecordedAllowed: (tenantId, accountId) =>
-    getFeatureFlagService().isEnabled(FLAGS.agency_live_listen_unrecorded, { tenantId, accountId }),
+  listenFlags: readListenFlags,
   callCore,
   names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'live calls'),
   maxPerCall: () => config.agency.listen.maxPerCall,
@@ -121,19 +118,42 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
 
-  /** The account, the flag and the scope's ids, or a reply. Runs after the permission. */
-  async function gate(request: FastifyRequest, reply: FastifyReply): Promise<{ tenantId: string; accountId: string } | null> {
+  /**
+   * The account and the consent flag, or a reply. Runs after the permission. The flags are read
+   * strictly (a flag store that cannot be read is not "off"): for the grant an outage is
+   * `503 listen_unavailable` (LS16 c: no answer, no listen; nothing about the account's consent is
+   * claimed); for the list and the number, which grant nothing, it is the flag's default (off:
+   * `403 feature_disabled`), as before.
+   */
+  async function gate(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    onOutage: 'feature_disabled' | 'listen_unavailable',
+  ): Promise<{ tenantId: string; accountId: string; flags: ListenFlags } | null> {
     if (!request.accountId) {
       await reply.code(400).send({ error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` });
       return null;
     }
     const tenantId = request.tenantId!.toLowerCase();
     const accountId = request.accountId.toLowerCase();
-    if (!(await deps.listenEnabled(tenantId, accountId))) {
+    let flags: ListenFlags;
+    try {
+      flags = await deps.listenFlags(tenantId, accountId);
+    } catch (err) {
+      log.warn({ err, tenantId }, 'live calls: the listening flags could not be read');
+      if (onOutage === 'listen_unavailable') {
+        deps.trackGrant('listen_unavailable');
+        sendListenRefusal(reply, 'listen_unavailable');
+      } else {
+        await reply.code(403).send(LIVE_LISTEN_DISABLED_BODY);
+      }
+      return null;
+    }
+    if (!flags.enabled) {
       await reply.code(403).send(LIVE_LISTEN_DISABLED_BODY);
       return null;
     }
-    return { tenantId, accountId };
+    return { tenantId, accountId, flags };
   }
 
   /** The live list for the scope (one campaign's, one call's), or null when the handler refused. */
@@ -141,7 +161,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     scope: { tenantId: string; accountId: string },
     query: Record<string, string>,
   ): Promise<{ calls: CoreLiveCall[]; as_of: string } | { status: number; body: unknown }> {
-    const result = await deps.callCore({ method: 'GET', path: '/agency/live-calls', query, ...scope });
+    const result = await deps.callCore({ method: 'GET', path: '/agency/live-calls', query, tenantId: scope.tenantId, accountId: scope.accountId });
     if (result.status !== 200 || !isCoreLiveCalls(result.body)) {
       if (result.status === 200) log.error({ tenantId: scope.tenantId }, 'live calls: the internal handler answered an unrecognised body');
       return { status: result.status === 200 ? 502 : result.status, body: result.status === 200 ? { error: 'Bad Gateway', message: 'Live calls could not be read.' } : result.body };
@@ -154,7 +174,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     '/live-calls',
     { preHandler: [requirePermission('agency.supervise')] },
     async (request, reply) => {
-      const scope = await gate(request, reply);
+      const scope = await gate(request, reply, 'feature_disabled');
       if (!scope) return reply;
       const campaignId = request.query.campaign_id;
       if (campaignId !== undefined && campaignId !== '' && !isUuid(campaignId)) {
@@ -164,7 +184,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
       if ('status' in live) return reply.code(live.status).send(live.body);
       const me = request.user!.id;
       const canListen = hasPermission(request.membership!.role, 'agency.calls.listen');
-      const unrecorded = canListen ? await deps.unrecordedAllowed(scope.tenantId, scope.accountId) : true;
+      const unrecorded = scope.flags.unrecordedAllowed;
       const maxPerCall = deps.maxPerCall();
       const names = await deps.names(
         live.calls.flatMap((c) => [c.agent_user_id, ...c.listeners.map((l) => l.user_id)]), scope.tenantId,
@@ -202,7 +222,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     '/live-calls/:callId/number',
     { preHandler: [requirePermission('agency.supervise')] },
     async (request, reply) => {
-      const scope = await gate(request, reply);
+      const scope = await gate(request, reply, 'feature_disabled');
       if (!scope) return reply;
       if (!isUuid(request.params.callId)) return sendListenRefusal(reply, 'listen_call_not_live');
       const callId = request.params.callId.toLowerCase();
@@ -220,8 +240,9 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     '/live-calls/:callId/listen',
     { preHandler: [requirePermission('agency.calls.listen')] },
     async (request, reply) => {
-      const scope = await gate(request, reply);
-      if (!scope) return reply;
+      const gated = await gate(request, reply, 'listen_unavailable');
+      if (!gated) return reply;
+      const { flags, ...scope } = gated;
       const refuse = (code: Exclude<ListenGrantResult, 'granted'>): FastifyReply => {
         deps.trackGrant(code);
         return sendListenRefusal(reply, code);
@@ -240,7 +261,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
       const call = live.calls[0];
       if (!call) return refuse('listen_call_not_live');
       if (call.agent_user_id === me) return refuse('listen_own_call');
-      if (!call.recording && !(await deps.unrecordedAllowed(scope.tenantId, scope.accountId))) return refuse('listen_recording_off');
+      if (!call.recording && !flags.unrecordedAllowed) return refuse('listen_recording_off');
 
       const grantBody: ListenGrantRequest = {
         session_id: call.agent_session_id, call_id: call.call_id, origin: call.origin, campaign_id: call.campaign_id, correlation_id: call.correlation_id,

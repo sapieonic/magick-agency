@@ -24,6 +24,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { trackWsHandoff } from '@magick-agency/observability/metrics/voice';
 import { IPC_PROTOCOL_VERSION, type WsHandoff } from './ipc-protocol.js';
 import { detachFromServer, stopSocketReads } from './socket-pause.js';
+import { redactSpanUrl } from '../utils/redact-url.js';
 
 const log = createChildLogger({ component: 'ws-handoff' });
 
@@ -135,7 +136,7 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
       if (socket.readableLength > 0) {
         // Should be unreachable with reads stopped at the upgrade: refuse rather than
         // hand off a socket whose bytes would stay behind.
-        log.warn({ url: request.url, buffered: socket.readableLength }, 'Upgrade socket has bytes buffered in the primary — refusing');
+        log.warn({ url: redactSpanUrl(request.url), buffered: socket.readableLength }, 'Upgrade socket has bytes buffered in the primary — refusing');
         trackWsHandoff(route, 'buffered');
         refuse(socket, 503, 1);
         return;
@@ -158,7 +159,9 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
       }
       raw[kHandedOff] = true;
       if (!target.handoff(slot, msg, socket)) {
-        log.warn({ slot, url: request.url }, 'Upgrade handoff could not be sent — closing the socket');
+        // The URL is logged redacted: an unspent single-use token (`?token=` on the station and
+        // listener upgrades) is a bearer to the socket for its TTL.
+        log.warn({ slot, url: redactSpanUrl(request.url) }, 'Upgrade handoff could not be sent — closing the socket');
         trackWsHandoff(route, 'not_sent');
         socket.destroy();
         return;

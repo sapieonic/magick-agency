@@ -35,9 +35,11 @@ const log = createChildLogger({ component: 'audit-partition-maintenance' });
  *
  * 3. **Delete** the rows of the unpartitioned tables kept for the audit log's
  *    horizon ({@link AUDIT_HORIZON_TABLES}, {@link purgeAuditHorizonRows}) older
- *    than the same cutoff, in batches. Today one: `agency_listen_sessions`, the
- *    record of who listened to which call (docs/listening.md, LS12), which is
- *    kept exactly as long as the audit rows about it.
+ *    than the first instant of the cutoff's month, in batches: the boundary below
+ *    which step 2 has dropped every partition, so these rows go on the same day as
+ *    their month's audit rows. Today one: `agency_listen_sessions`, the record of
+ *    who listened to which call (docs/listening.md, LS12), which is kept exactly as
+ *    long as the audit rows about it.
  */
 
 /** Rows per DEFAULT-partition delete batch. */
@@ -63,9 +65,10 @@ export interface AuditHorizonTableSpec {
 }
 
 /**
- * The tables purged at the audit log's cutoff by row. A listen session is aged by its start, so an
- * open row (a session in progress) is never near the cutoff; one left open by a process that died
- * is closed by the next boot long before it is.
+ * The tables purged at the audit log's horizon by row: a row goes when the audit partition of its
+ * month does (older than the first instant of the cutoff's UTC month, {@link runAuditPartitionMaintenance}).
+ * A listen session is aged by its start, so an open row (a session in progress) is never near the
+ * cutoff; one left open by a process that died is closed by the next boot long before it is.
  */
 export const AUDIT_HORIZON_TABLES: readonly AuditHorizonTableSpec[] = [
   { table: 'agency_listen_sessions', tsColumn: 'started_at' },
@@ -300,9 +303,13 @@ export async function runAuditPartitionMaintenance(
       log.error({ err, table: spec.table }, 'Audit partition purge failed for table');
     }
   }
+  // The horizon tables follow the partitions, not the exact cutoff: a partition goes once its
+  // whole month is past the cutoff, so a row goes once it is older than the first instant of the
+  // cutoff's month — the same day its month's audit rows go (LS12).
+  const horizonCutoff = utcMonthStart(cutoff);
   for (const spec of AUDIT_HORIZON_TABLES) {
     try {
-      report.horizonRowsDeleted[spec.table] = await purgeAuditHorizonRows(spec, cutoff, opts.dryRun ?? false);
+      report.horizonRowsDeleted[spec.table] = await purgeAuditHorizonRows(spec, horizonCutoff, opts.dryRun ?? false);
     } catch (err) {
       report.errors[`${spec.table}.purge`] = err instanceof Error ? err.message : String(err);
       log.error({ err, table: spec.table }, 'Audit horizon purge failed for table');

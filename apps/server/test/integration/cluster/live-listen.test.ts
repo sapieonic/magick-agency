@@ -11,7 +11,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  *  - a supervisor's listen on one worker is superseded by their listen on the other (the
  *    supersede relayed as `listen.revoke` through the primary);
  *  - a role change through the real route reaches the worker as `listen.revoke` and ends the
- *    listen `permission_revoked` (4403).
+ *    listen `permission_revoked` (4403), with the periodic re-check held off (5 min), so it is the
+ *    immediate path; and a grant whose supervisor is demoted before its upgrade is refused 4403 by
+ *    the owning worker, with no row.
  */
 
 import WebSocket from 'ws';
@@ -178,6 +180,9 @@ beforeAll(async () => {
     RATE_LIMIT_WEBHOOK_MAX: '1000000',
     RATE_LIMIT_CARRIER_MEDIA_MAX: '1000000',
     RATE_LIMIT_STATION_MAX: '1000000',
+    // The periodic re-check out of the way: a revocation that ends a listen within seconds came
+    // through the immediate path (`listen.revoke` over IPC), not a pass.
+    AGENCY_LISTEN_RECHECK_MS: '300000',
     LOG_LEVEL: process.env['CLUSTER_TEST_LOG_LEVEL'] ?? 'warn',
   });
   origin = server.origin;
@@ -258,5 +263,20 @@ describe('listening with media workers', () => {
     await until('revoked', 10_000, () => l.closed !== null);
     expect(l.closed).toEqual({ code: 4403, reason: 'permission_revoked' });
     await until('row closed', 10_000, async () => (await row(l.listenId))?.end_reason === 'permission_revoked');
+  }, 60_000);
+
+  it('a grant whose supervisor is demoted before the upgrade is refused 4403 by the owning worker, with no row', async () => {
+    const sup = await supervisor();
+    const owner = await insertUser();
+    await insertMembership({ user_id: owner.id, tenant_id: tenantId, account_id: null, role: 'tenant_owner' });
+    const res = await api(sup, 'POST', `/proxy/agency/live-calls/${calls.get(0)!.callId}/listen`);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const changed = await api({ id: owner.id as string, uid: owner.firebase_uid as string }, 'PUT', `/users/${sup.id}/role`, { role: 'operator' });
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+    const ws = new WebSocket(`${server.origin.replace('http', 'ws')}${res.body.ws_url}`);
+    ws.on('error', () => undefined);
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })));
+    expect(closed).toEqual({ code: 4403, reason: 'permission_revoked' });
+    expect(await row(res.body.listen_id)).toBeUndefined();
   }, 60_000);
 });

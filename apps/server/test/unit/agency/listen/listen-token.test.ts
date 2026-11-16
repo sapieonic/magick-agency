@@ -18,7 +18,7 @@ const GRANT: ListenGrantPayload = {
   listenId: L, sessionId: '11111111-1111-4111-8111-111111111111', tenantId: '33333333-3333-4333-8333-333333333333',
   accountId: '44444444-4444-4444-8444-444444444444', callId: '55555555-5555-4555-8555-555555555555', origin: 'manual',
   campaignId: null, correlationId: '77777777-7777-4777-8777-777777777777', agentUserId: '88888888-8888-4888-8888-888888888888',
-  listenerUserId: '99999999-9999-4999-8999-999999999999', recording: false,
+  listenerUserId: '99999999-9999-4999-8999-999999999999', recording: false, revocationGen: 3,
 };
 
 function fakeRedis() {
@@ -101,7 +101,7 @@ describe('parseListenGrantPayload', () => {
     expect(parseListenGrantPayload(GRANT)).toEqual(GRANT);
     expect(parseListenGrantPayload({ ...GRANT, campaignId: '66666666-6666-4666-8666-666666666666' })).not.toBeNull();
     for (const bad of [
-      { ...GRANT, origin: 'pstn' }, { ...GRANT, recording: 'yes' }, { ...GRANT, callId: 'c1' },
+      { ...GRANT, origin: 'pstn' }, { ...GRANT, recording: 'yes' }, { ...GRANT, callId: 'c1' }, { ...GRANT, revocationGen: -1 }, { ...GRANT, revocationGen: 1.5 }, { ...GRANT, revocationGen: undefined },
       { ...GRANT, campaignId: 'x' }, { ...GRANT, listenerUserId: undefined }, null, [], 'grant',
     ]) expect(parseListenGrantPayload(bad)).toBeNull();
   });

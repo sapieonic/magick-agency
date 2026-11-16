@@ -46,8 +46,7 @@ beforeEach(async () => {
     calls: [] as CoreCallRequest[],
     live: [coreCall()],
     grantAnswer: json(201, { listen_id: 'L', ws_url: `/proxy/agency/listen/${SESSION}/L?token=t`, expires_at: '2026-11-16T10:01:00.000Z' }),
-    listenEnabled: vi.fn(async () => true),
-    unrecordedAllowed: vi.fn(async () => true),
+    listenFlags: vi.fn(async () => ({ enabled: true, unrecordedAllowed: true })),
     callCore: vi.fn(async (req: CoreCallRequest) => {
       d.calls.push(req);
       if (req.path === '/agency/live-calls') {
@@ -89,17 +88,28 @@ describe('the guards', () => {
         expect(res.json().message).toMatch(/^Insufficient permissions/);
       }
     }
-    expect(deps.listenEnabled).not.toHaveBeenCalled();
+    expect(deps.listenFlags).not.toHaveBeenCalled();
   });
 
   it('the consent flag off: 403 feature_disabled on every route, nothing read', async () => {
-    (deps.listenEnabled as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (deps.listenFlags as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: false, unrecordedAllowed: true });
     for (const res of [await get('/proxy/agency/live-calls'), await get(`/proxy/agency/live-calls/${CALL}/number`), await listen()]) {
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('feature_disabled');
     }
     expect(deps.calls).toEqual([]);
-    expect(deps.listenEnabled).toHaveBeenCalledWith(TENANT, ACCOUNT);
+    expect(deps.listenFlags).toHaveBeenCalledWith(TENANT, ACCOUNT);
+  });
+
+  it('the flags cannot be read: the grant is 503 listen_unavailable (counted), the list and the number the flag\'s default 403', async () => {
+    (deps.listenFlags as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
+    const grant = await listen();
+    expect([grant.statusCode, grant.json().code]).toEqual([503, 'listen_unavailable']);
+    expect(deps.trackGrant).toHaveBeenCalledWith('listen_unavailable');
+    for (const res of [await get('/proxy/agency/live-calls'), await get(`/proxy/agency/live-calls/${CALL}/number`)]) {
+      expect([res.statusCode, res.json().code]).toEqual([403, 'feature_disabled']);
+    }
+    expect(deps.calls).toEqual([]);
   });
 
   it('needs an account; a malformed campaign id is a 400, a malformed call id the uniform 404', async () => {
@@ -142,7 +152,7 @@ describe('GET /live-calls', () => {
   });
 
   it('the unrecorded flag off: the row says why', async () => {
-    (deps.unrecordedAllowed as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (deps.listenFlags as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: true, unrecordedAllowed: false });
     deps.live = [coreCall({ recording: false })];
     const body = (await get('/proxy/agency/live-calls')).json();
     expect(body.calls[0]).toMatchObject({ recording: false, listenable: false, not_listenable_reason: 'listen_recording_off' });
@@ -183,7 +193,7 @@ describe('POST /live-calls/:callId/listen', () => {
     const own = await listen();
     expect([own.statusCode, own.json().code]).toEqual([409, 'listen_own_call']);
     deps.live = [coreCall({ recording: false })];
-    (deps.unrecordedAllowed as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (deps.listenFlags as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: true, unrecordedAllowed: false });
     const off = await listen();
     expect([off.statusCode, off.json().code]).toEqual([409, 'listen_recording_off']);
     expect(deps.calls.filter((c) => c.method === 'POST')).toEqual([]);

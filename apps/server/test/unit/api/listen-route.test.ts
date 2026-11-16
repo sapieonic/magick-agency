@@ -2,9 +2,25 @@
 // (docs/listening.md §3): registered once as a websocket route at the console's path, owned by the
 // agent's session for the handoff (`wsOwner`, labelled `listen`), refusing a malformed upgrade
 // before its token is spent; charged to the station's rate-limit bucket; its token redacted from
-// spans and logs. Enumerated from Fastify's `onRoute` hook, never by grep.
+// spans and from the handoff's own log lines (asserted on the line itself). Enumerated from Fastify's `onRoute` hook, never by grep.
 import { describe, it, expect, vi } from 'vitest';
 import Fastify, { type RouteOptions } from 'fastify';
+
+/** Every line the `ws-handoff` component logs, as handed to the logger (before any serializer). */
+const handoffLog = vi.hoisted(() => [] as Array<{ level: string; obj: unknown; msg: unknown }>);
+vi.mock('@magick-agency/observability', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@magick-agency/observability')>();
+  return {
+    ...real,
+    createChildLogger: (bindings: Record<string, unknown>) => {
+      const child = real.createChildLogger(bindings);
+      if (bindings['component'] !== 'ws-handoff') return child;
+      const record = (level: string) => (obj: unknown, msg?: unknown) => { handoffLog.push({ level, obj, msg }); };
+      return Object.assign(Object.create(child), { warn: record('warn'), info: record('info'), error: record('error'), debug: record('debug') });
+    },
+  };
+});
+
 import { buildApp } from '../../../src/app.js';
 import { budgetFor } from '../../../src/api/middleware/rate-limit.middleware.js';
 import { redactSpanUrl } from '../../../src/utils/redact-url.js';
@@ -82,8 +98,28 @@ describe('the listener socket route', () => {
     expect(budgetFor({ url: `/proxy/agency/live-calls/${S}/listen`, headers: { authorization: 'Bearer x' } })).toBe('ip_auth');
   });
 
-  it('its token never reaches a span or a log line', () => {
+  it('its token never reaches a span or a log line', async () => {
     const url = `/proxy/agency/listen/${S}/${L}?token=secret-token-value`;
     expect(redactSpanUrl(url)).toBe(`/proxy/agency/listen/${S}/${L}?token=[REDACTED]`);
+
+    // The handoff's refusal logs the upgrade's URL while its token is unspent: redacted.
+    handoffLog.length = 0;
+    const target: WsHandoffTarget = { slotFor: () => 1, handoff: () => false };
+    const app = Fastify({ logger: false });
+    registerWsHandoff(app, { target: () => target });
+    await app.register(proxyAgencyListenRoutes, { prefix: '/proxy/agency/listen', getRuntime: () => null });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const port = (app.server.address() as { port: number }).port;
+      const { WebSocket } = await import('ws');
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${url}`);
+      await new Promise<void>((resolve) => { ws.on('error', () => resolve()); ws.on('close', () => resolve()); });
+      await vi.waitFor(() => expect(handoffLog.some((l) => String(l.msg).startsWith('Upgrade handoff could not be sent'))).toBe(true));
+    } finally {
+      await app.close();
+    }
+    const line = handoffLog.find((l) => String(l.msg).startsWith('Upgrade handoff could not be sent'))!;
+    expect(line.obj).toEqual({ slot: 1, url: `/proxy/agency/listen/${S}/${L}?token=[REDACTED]` });
+    expect(JSON.stringify(handoffLog)).not.toContain('secret-token-value');
   });
 });

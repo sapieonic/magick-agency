@@ -50,6 +50,7 @@ import { agencyListenSessionRepository } from '../db/repositories/agency.reposit
 import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { ListenRegistry, type ListenLimits, type ListenSessionHandle } from './listen/listen-registry.js';
 import { ListenTokenStore } from './listen/listen-token.js';
+import { ListenRowKeeper } from './listen/listen-rows.js';
 import { listenAccessCheck } from './listen/listen-access.js';
 import type { ListenSocketDeps } from './listen/listen-socket.js';
 
@@ -167,6 +168,8 @@ export class AgencyRuntime {
    */
   readonly listen: ListenRegistry;
   readonly listenTokens: ListenTokenStore;
+  /** The listen session rows: their opens and closes, a failed close retried, lost rows swept (`listen/listen-rows.ts`). */
+  readonly listenRows: ListenRowKeeper;
   /** The bridge, for the listener socket's tap (the seam member `openListenTap`). */
   private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'getActiveCallIds'>;
   /**
@@ -279,9 +282,17 @@ export class AgencyRuntime {
     this.awayRing = new AwayRingService({ agents: this.agents, stations: this.stations, inbound: () => this.inbound, breaks: this.breaks });
     // The loaded config's, over the block's defaults (a test may load a config without the block).
     const listen = { ...agencyConfigSchema.parse({}).agency.listen, ...config?.agency?.listen, ...options.listen };
+    // The repository is read per call, not here: a runtime built over a mocked agency barrel that
+    // has no listen repository must still construct.
+    this.listenRows = new ListenRowKeeper({
+      open: (input) => agencyListenSessionRepository.open(input),
+      close: (id, input) => agencyListenSessionRepository.close(id, input),
+      closeOrphans: (replicaId, opts) => agencyListenSessionRepository.closeOrphans(replicaId, opts),
+    }, this.replicaId);
     this.listen = new ListenRegistry({
       limits: { maxPerCall: listen.maxPerCall, maxPerProcess: listen.maxPerProcess, maxPerUser: listen.maxPerUser, recheckMs: listen.recheckMs },
       access: listenAccessCheck(),
+      maintainRows: (held) => this.listenRows.maintain(held),
     });
     this.listenTokens = new ListenTokenStore(redis, keyPrefix, listen.tokenTtlMs);
     this.listenBridge = bridge;
@@ -902,7 +913,7 @@ export class AgencyRuntime {
       tokens: this.listenTokens,
       registry: this.listen,
       bridge: this.listenBridge,
-      rows: agencyListenSessionRepository,
+      rows: this.listenRows,
       audit: (entry) => platformAuditLogger.log(entry),
       replicaId: this.replicaId,
       supersedeElsewhere: this.supersedeListensElsewhere,

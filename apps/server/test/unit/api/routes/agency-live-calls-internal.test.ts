@@ -4,7 +4,8 @@ import Fastify from 'fastify';
 /*
  * The internal grant handler (`api/routes/agency/live-calls.ts`, `POST /listen-grants`, owner
  * `body_session`): the bridge of this process must hold the call, the caps must admit it, and the
- * single-use token carries the grant to the socket. Over a stubbed runtime; the list's SQL is
+ * single-use token carries the grant to the socket. And the list's per-campaign AHT cache: read at
+ * most once a minute per campaign, and bounded. Over a stubbed runtime; the list's SQL is
  * pinned on Postgres by the live-listen end-to-end suite.
  */
 
@@ -13,7 +14,14 @@ vi.mock('../../../../src/db/repositories/agency.repository.js', () => ({
   agencyLiveCallRepository: { listLive: vi.fn(async () => []), campaignAhtSeconds: vi.fn(async () => new Map()) },
 }));
 
-import { registerLiveCallRoutes } from '../../../../src/api/routes/agency/live-calls.js';
+import {
+  LIVE_CALL_AHT_CACHE_MAX,
+  LIVE_CALL_AHT_CACHE_MS,
+  clearLiveCallAhtCacheForTests,
+  liveCallAhtCacheSizeForTests,
+  registerLiveCallRoutes,
+} from '../../../../src/api/routes/agency/live-calls.js';
+import { agencyLiveCallRepository } from '../../../../src/db/repositories/agency.repository.js';
 import { ListenTokenUnavailableError } from '../../../../src/agency/listen/listen-token.js';
 
 const TENANT = '33333333-3333-4333-8333-333333333333';
@@ -35,7 +43,7 @@ async function build(runtime: Record<string, unknown>) {
 function runtime(over: Partial<{ holds: boolean; check: string | null; mint: () => Promise<unknown> }> = {}) {
   return {
     holdsCall: vi.fn(() => over.holds ?? true),
-    listen: { check: vi.fn(() => over.check ?? null) },
+    listen: { check: vi.fn(() => over.check ?? null), generation: vi.fn(() => 4) },
     listenTokens: { mint: vi.fn(over.mint ?? (async () => ({ token: 'tok', expiresAt: new Date('2026-11-16T10:01:00Z') }))) },
   };
 }
@@ -57,8 +65,10 @@ describe('POST /listen-grants', () => {
     expect(rt.listenTokens.mint).toHaveBeenCalledWith({
       listenId: body.listen_id, sessionId: SESSION, tenantId: TENANT, accountId: ACCOUNT, callId: BODY.call_id, origin: 'campaign',
       campaignId: BODY.campaign_id, correlationId: BODY.correlation_id, agentUserId: BODY.agent_user_id,
-      listenerUserId: BODY.listener_user_id, recording: true,
+      listenerUserId: BODY.listener_user_id, recording: true, revocationGen: 4,
     });
+    // The supervisor's revocation generation here, so a revocation before the upgrade refuses it (LS16 b).
+    expect(rt.listen.generation).toHaveBeenCalledWith(TENANT, BODY.listener_user_id);
     expect(rt.listen.check).toHaveBeenCalledWith(BODY.call_id, TENANT, BODY.listener_user_id);
     await app.close();
   });
@@ -73,8 +83,8 @@ describe('POST /listen-grants', () => {
     await app.close();
   });
 
-  it('the caps refuse with their codes and statuses; no token is minted', async () => {
-    for (const [check, status] of [['listen_limit_call', 409], ['listen_limit_server', 503]] as const) {
+  it('the caps (and a stopping process, listen_unavailable) refuse with their codes and statuses; no token is minted', async () => {
+    for (const [check, status] of [['listen_limit_call', 409], ['listen_limit_server', 503], ['listen_unavailable', 503]] as const) {
       const rt = runtime({ check });
       const app = await build(rt);
       const res = await grant(app);
@@ -91,5 +101,46 @@ describe('POST /listen-grants', () => {
     expect((await grant(app, { ...BODY, call_id: 'nope' })).statusCode).toBe(400);
     expect((await grant(app, { ...BODY, extra: 1 })).statusCode).toBe(400);
     await app.close();
+  });
+});
+
+describe('GET /live-calls: the campaigns\' AHT cache', () => {
+  const campaign = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+  const liveRow = (campaignId: string) => ({
+    call_id: '55555555-5555-4555-8555-555555555555', origin: 'campaign', correlation_id: campaignId, campaign_id: campaignId,
+    campaign_name: 'C', inbound_route_name: null, agent_user_id: BODY.agent_user_id, agent_session_id: SESSION, client_kind: 'web',
+    customer_phone: '+919812345678', contact_context: null, connected_at: new Date('2026-11-16T10:00:00Z'), recording: true,
+  });
+  const listLive = agencyLiveCallRepository.listLive as unknown as ReturnType<typeof vi.fn>;
+  const ahtRead = agencyLiveCallRepository.campaignAhtSeconds as unknown as ReturnType<typeof vi.fn>;
+  const list = (app: Awaited<ReturnType<typeof build>>) => app.inject({
+    method: 'GET', url: '/api/v1/agency/live-calls', headers: { 'x-mgkvc-tenant': TENANT, 'x-mgkvc-account': ACCOUNT },
+  });
+
+  it('reads each campaign at most once a minute; entries past their minute are dropped; never more than the bound', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      clearLiveCallAhtCacheForTests();
+      ahtRead.mockClear();
+      const app = await build(runtime());
+      listLive.mockResolvedValue([liveRow(campaign(1)), liveRow(campaign(2))]);
+      expect((await list(app)).statusCode).toBe(200);
+      await list(app);
+      expect(ahtRead).toHaveBeenCalledTimes(1);
+      expect(liveCallAhtCacheSizeForTests()).toBe(2);
+      // A minute on, another campaign's read drops the two that lapsed.
+      vi.setSystemTime(Date.now() + LIVE_CALL_AHT_CACHE_MS);
+      listLive.mockResolvedValue([liveRow(campaign(3))]);
+      await list(app);
+      expect(liveCallAhtCacheSizeForTests()).toBe(1);
+      // More live campaigns than the bound: the cache keeps at most the bound.
+      listLive.mockResolvedValue(Array.from({ length: LIVE_CALL_AHT_CACHE_MAX + 5 }, (_, i) => liveRow(campaign(100 + i))));
+      await list(app);
+      expect(liveCallAhtCacheSizeForTests()).toBe(LIVE_CALL_AHT_CACHE_MAX);
+      await app.close();
+    } finally {
+      vi.useRealTimers();
+      listLive.mockResolvedValue([]);
+    }
   });
 });
