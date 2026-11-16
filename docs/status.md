@@ -1905,9 +1905,8 @@ socket, ping every 10 s, a fresh grant per reconnect for 15 s) and the playback 
 leg a decoder, a 120 ms queue, a meter and a mute; no microphone). "Listened to by" on the dialler
 and soft-phone call pages. The agent's standing line (LS2) behind an info button in the station
 header and on the campaign screen they join from, and in the mobile app's station info sheet
-behind the client flag (copy only). Two gaps, stated in `listening.md` §9: amber past twice the AHT
-shows on the campaign view only (the live row has no handle time), and "Open call" opens the call's
-live view, not the call page (the live row has no attempt or soft-phone call id).
+behind the client flag (copy only). The two gaps this phase left (amber on the campaign view only,
+"Open call" to the live view) are closed by the follow-up below.
 
 Mutation-checked (each red, then restored with `git checkout`): the Live calls tab or the campaign
 Live screen without the flag (`navRouteGates`); a close from an older attempt applied; the
@@ -1920,6 +1919,28 @@ column without `agency.calls.listen`; a microphone API named in a listening modu
 leg audible; no cushion on an underrun; an unknown leg tag accepted; the listener token not
 redacted at the analytics boundary; the station's line shown with the flag off; and on the mobile
 app the info button shown with the flag off and a wrong flag key.
+
+### Live call listening, the console against the server 2026-11-16 ([`listening.md`](listening.md) §9)
+
+The console reads what phase 3 added to the live row. **"Open call"**, in each table row and in the
+listening bar, opens the call's own page from `correlation_id`: a dialler call's attempt, a
+soft-phone call's page; an inbound call has no call page in the console, so its row has no link
+and the bar opens its live view. **Amber** past twice the AHT reads the row's own `aht_seconds` on
+the account page and the campaign view alike (the campaign view's stats workaround is gone).
+Checked field by field and message by message against the server (the routes, the grant's `ws_url`
+and `token`, `ready` / `ended` / `pong`, `ping` / `stop`, every close code and reason, the refusal
+statuses, the call details' `listen_sessions`): it matches, except that the server's error mask
+strips the grant's own 503 bodies (`listen_limit_server`, `listen_unavailable`), so the console now
+reads a 503 without a listen code as `listen_unavailable`. A shutdown's close with no `ended`
+frame (1005, LS16 g) is pinned as a reconnect. The route-path guard
+(`apps/server/test/unit/api/agency-route-table.test.ts`, `console-paths.json`) has the four paths
+and passes (9).
+
+Counts: `apps/console` 7274 (386 files), lint clean; `pnpm test:tooling` 20. Mutation-checked
+(each red, then restored with `git checkout`): a soft-phone call opening an attempt path; an inbound
+call given a page; amber ignoring the row's AHT; the bar back to the live view for every call; a
+503 without a code not read as unavailable; a close with no code (1005) taken as the call's end;
+"Open call" dropped from a row fading as ended.
 
 ### Live call listening, phase 6: the notice's monitoring words 2026-11-16 (LS1, [`listening.md`](listening.md) §10)
 
