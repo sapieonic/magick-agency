@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.13.0...mobile-v0.14.0) (2026-11-16)
+
+
+### Features
+
+* **server,console,mobile,contracts,db,report-renderer:** honour recording off, promise to pay, Do Not Call scope, soft-phone results and a checked import ([#90](https://github.com/sapieonic/magick-agency/issues/90)) ([69c4ffc](https://github.com/sapieonic/magick-agency/commit/69c4ffc0816044abad051eba6f44199c2965a325))
+
 ## [0.13.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.12.0...mobile-v0.13.0) (2026-11-15)
 
 
