@@ -4,6 +4,7 @@ import {
   normaliseUrlScope,
   redactAnalyticsProperties,
   redactInviteToken,
+  redactListenToken,
   stripJoinPageElements,
 } from '../../analytics/redact';
 import { safeAnalyticsPath } from '../../api/error-analytics';
@@ -81,6 +82,28 @@ describe('redactInviteToken', () => {
     expect(redactInviteToken('/agency/join/:token')).toBe('/agency/join/:token');
     expect(redactInviteToken('/agency/campaigns/abc')).toBe('/agency/campaigns/abc');
     expect(redactInviteToken('/agency/join')).toBe('/agency/join');
+  });
+});
+
+describe('redactListenToken', () => {
+  const TOKEN = 'q9Zt-Lw3xYb_4Nc8';
+
+  it('takes the single-use token out of a listener socket URL, keeping the rest', () => {
+    expect(redactListenToken(`/proxy/agency/listen/s-1/l-1?token=${TOKEN}`)).toBe('/proxy/agency/listen/s-1/l-1?token=:token');
+    expect(redactListenToken(`wss://api.example/proxy/agency/listen/s-1/l-1?a=1&token=${TOKEN}&b=2`)).toBe(
+      'wss://api.example/proxy/agency/listen/s-1/l-1?a=1&token=:token&b=2',
+    );
+    expect(redactListenToken(`opening "/proxy/agency/listen/s/l?token=${TOKEN}" failed`)).toBe('opening "/proxy/agency/listen/s/l?token=:token" failed');
+  });
+
+  it('leaves every other URL alone, a token parameter elsewhere included', () => {
+    expect(redactListenToken('/proxy/agency/live-calls/c-1/listen')).toBe('/proxy/agency/live-calls/c-1/listen');
+    expect(redactListenToken('/proxy/agency/station?token=abc')).toBe('/proxy/agency/station?token=abc');
+  });
+
+  it('is applied at the PostHog boundary', () => {
+    const out = redactAnalyticsProperties({ url: `/proxy/agency/listen/s-1/l-1?token=${TOKEN}` });
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
   });
 });
 

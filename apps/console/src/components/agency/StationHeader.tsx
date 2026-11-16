@@ -4,6 +4,7 @@ import { CueSettings } from './CueSettings';
 import { StationIdentity, type StationIdentityUser } from './StationIdentity';
 import { StationMenu } from './StationMenu';
 import { ConnectionHealthPill } from './ConnectionHealthPill';
+import { StationListenNotice } from './StationListenNotice';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import type { StationConnection } from '../../hooks/useAgencyStation';
 import type { AgencyAgentState } from '../../types/agency';
@@ -98,6 +99,9 @@ export function StationHeader({
           unreachable" shape this guards against.
         */}
         {extra}
+        {/* That a supervisor may listen (`docs/listening.md` LS2): a standing line behind an
+            info button, while the account allows listening. Not a live indicator. */}
+        <StationListenNotice />
         <CueSettings prefs={cuePrefs} onChange={onCuePrefsChange} />
         {/*
           The way OUT of the station, beside cue settings and deliberately not

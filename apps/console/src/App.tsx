@@ -85,6 +85,8 @@ const AgencyAttemptCallPage = lazy(() => import('./pages/agency/AgencyAttemptCal
 const AgencyContactDetailPage = lazy(() => import('./pages/agency/AgencyContactDetailPage'));
 const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampaignActivityPage'));
 const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCampaignManualCallsPage'));
+const AgencyCampaignLiveCallsPage = lazy(() => import('./pages/agency/AgencyCampaignLiveCallsPage'));
+const LiveCallsPage = lazy(() => import('./pages/agency/live/LiveCallsPage'));
 const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
@@ -700,6 +702,21 @@ export default function App() {
                   <Route
                     path="campaigns/:id/manual-calls"
                     element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
+                  />
+                  {/*
+                    Live calls (`docs/listening.md` §9): the account's calls in progress, and a
+                    campaign's (the Calls tab's Live view), behind `agency_live_listen_enabled`
+                    (the consent gate, LS1) on top of the subtree's gates. The server floors the
+                    list at `agency.supervise`, as the sidebar entry and the Calls tab do; the
+                    table says so to anyone below it.
+                  */}
+                  <Route
+                    path="live"
+                    element={<RequireFlag flag="agency_live_listen_enabled"><LiveCallsPage /></RequireFlag>}
+                  />
+                  <Route
+                    path="campaigns/:id/calls/live"
+                    element={<RequireFlag flag="agency_live_listen_enabled"><AgencyCampaignLiveCallsPage /></RequireFlag>}
                   />
                   {/* Missed inbound calls (`docs/inbound.md` §7): the account's for a supervisor,
                       the caller's own otherwise (the server's rule). Not behind `agency_inbound_enabled`

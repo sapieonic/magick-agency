@@ -112,6 +112,7 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'home:home': ['attention', 'needs attention', 'what needs me', 'alerts', 'notifications', 'today', 'floor', 'stalled', 'paused', 'overdue'],
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
   'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
+  'campaigns:live': ['live', 'live calls', 'in progress', 'listen', 'listen in', 'monitor', 'calls'],
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],
   'inbound:summary': ['inbound summary', 'queue', 'incoming'],
   'reports:analytics': ['analytics', 'stats', 'performance', 'agents'],
@@ -370,6 +371,7 @@ export const CAMPAIGN_TAB_KEYWORDS: Record<CampaignTabId, readonly string[]> = {
   contacts: ['contacts', 'roster', 'contact list'],
   attempts: ['call log', 'call attempts', 'attempts', 'dials', 'dialler calls'],
   manual: ['soft phone calls', 'softphone calls', 'manual calls'],
+  live: ['live calls', 'in progress', 'listen', 'listen in', 'monitor'],
   activity: ['activity', 'history', 'audit', 'audit trail', 'who did what', 'changes'],
   settings: ['settings', 'configure', 'set up'],
 };

@@ -45,6 +45,12 @@ abstract final class StationCopy {
   static const paused = 'Paused';
   static const weakConnection = 'Weak connection';
 
+  // ── Station info sheet (docs/listening.md LS2) ──
+  // While the account allows listening, the agent is told so: a standing line, the console
+  // station's words (`LISTEN_AGENT_NOTICE`). Not a live indicator.
+  static const stationInfo = 'About this station';
+  static const listenNotice = 'Calls may be listened to by a supervisor for quality and training.';
+
   // ── Waiting ──
   static const waitingHeadline = 'Waiting for a call';
   // Says nothing about when the customer's details appear: on a late-binding account they

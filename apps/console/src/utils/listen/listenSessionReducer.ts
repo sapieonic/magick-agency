@@ -1,0 +1,296 @@
+import { AGENCY_LISTEN_RECONNECT_WINDOW_MS, type AgencyCallOrigin, type AgencyListenEndReason, type AgencyListenErrorCode } from '../../types/live-calls';
+import { ClockOffsetEstimator, type ClockSample } from '../agencyClock';
+import { listenCloseOutcome, terminalEndReason, type ListenCloseOutcome } from './listenFrames';
+
+/**
+ * Every state of one supervisor's listen, as one pure reducer (`docs/listening.md` §3, §4, §9).
+ * `useListenSession` dispatches what happened (a grant answered, a frame arrived, the socket
+ * closed, a timer fired) and does what the new state asks (mint, open, wait, close); nothing
+ * about the session lives anywhere else, so every transition is a unit test.
+ *
+ * Phases:
+ *  - `idle`: nothing open (and, with `refusal`, a start that was refused before any audio);
+ *  - `connecting`: the first attach of this listen: minting a grant (`step: 'grant'`), opening the
+ *    socket and waiting for `ready` (`'socket'`), or waiting to try again after a drop before
+ *    any audio (`'wait'`);
+ *  - `live`: `ready` arrived; audio plays;
+ *  - `reconnecting`: the socket dropped after `ready` and the console is re-minting and
+ *    reconnecting, within {@link AGENCY_LISTEN_RECONNECT_WINDOW_MS} of the first drop;
+ *  - `lost`: the window passed (or the server failed too often): "Connection lost", Try again;
+ *  - `ended`: the session is over for a reason to tell the supervisor (`end.kind`).
+ *
+ * Every attach (a grant, a socket, a `ready`) carries the `attempt` it belongs to; an event from
+ * an older attempt is dropped, so a late grant or a dead socket's close can never move a newer one.
+ */
+
+/** What the bar shows about the call being listened to, fixed when the listen starts. */
+export interface ListenTarget {
+  callId: string;
+  origin: AgencyCallOrigin;
+  campaignId: string | null;
+  /** The Campaign column's words (`campaignCellLabel`). */
+  campaignLabel: string;
+  /** The agent's display name. */
+  agentName: string;
+  customerMasked: string;
+  /** ISO-8601, server clock: the call's time-on-call anchor. */
+  connectedAt: string;
+  /** The live list's server clock correction when the listen started (ms, subtracted from server instants). */
+  clockOffsetMs: number;
+}
+
+export type ListenPhase = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'lost' | 'ended';
+export type ListenStep = 'grant' | 'socket' | 'wait';
+export type ListenEndKind = 'call_ended' | 'revoked' | 'superseded' | 'refused';
+
+/** A grant that did not answer 201: its status (null: no answer at all) and code. */
+export interface ListenGrantRefusal {
+  status: number | null;
+  code: string | null;
+}
+
+export interface ListenSessionState {
+  phase: ListenPhase;
+  target: ListenTarget | null;
+  /** Bumped by every attach; events carry the attempt they belong to. */
+  attempt: number;
+  /** Within `connecting` and `reconnecting`: what the attach is doing. Null otherwise. */
+  step: ListenStep | null;
+  /** The session the current attach was granted (`ready` repeats it). */
+  listenId: string | null;
+  /** Client ms of this listen's first `ready`: "you listened for". */
+  startedAt: number | null;
+  /** While recovering from a drop: when the window closes, and how many server failures so far. */
+  retry: { deadline: number; internalErrors: number } | null;
+  /** Why the session ended, in `ended`. */
+  end: { kind: ListenEndKind; listenedMs: number; code: AgencyListenErrorCode | null } | null;
+  /** A start refused before any audio, for the toast; `refusalSeq` moves once per refusal. */
+  refusal: ListenGrantRefusal | null;
+  refusalSeq: number;
+  /** The browser will not run the audio (autoplay policy): "Your browser blocked the sound." */
+  soundBlocked: boolean;
+  /** The agent's leg has been silent for over two seconds while live: "Agent reconnecting…". */
+  agentSilent: boolean;
+  /** Pong samples: the bar's timer on the server clock. */
+  clock: ClockOffsetEstimator;
+}
+
+export type ListenSessionEvent =
+  | { type: 'start'; target: ListenTarget; now: number }
+  | { type: 'granted'; attempt: number; listenId: string }
+  | { type: 'grant_refused'; attempt: number; refusal: ListenGrantRefusal; now: number }
+  | { type: 'ready'; attempt: number; listenId: string; now: number }
+  | { type: 'server_ended'; attempt: number; reason: AgencyListenEndReason; now: number }
+  | { type: 'closed'; attempt: number; code: number; reason: string; now: number }
+  | { type: 'reattach'; now: number }
+  | { type: 'tick'; now: number }
+  | { type: 'pong'; attempt: number; sample: ClockSample }
+  | { type: 'stop' }
+  | { type: 'retry'; now: number }
+  | { type: 'dismiss' }
+  | { type: 'sound'; blocked: boolean }
+  | { type: 'agent_silent'; silent: boolean };
+
+/** Server failures (close 1011) in one recovery before the console stops retrying. */
+export const LISTEN_MAX_INTERNAL_ERRORS = 3;
+
+export const INITIAL_LISTEN_STATE: ListenSessionState = {
+  phase: 'idle',
+  target: null,
+  attempt: 0,
+  step: null,
+  listenId: null,
+  startedAt: null,
+  retry: null,
+  end: null,
+  refusal: null,
+  refusalSeq: 0,
+  soundBlocked: false,
+  agentSilent: false,
+  clock: ClockOffsetEstimator.empty(),
+};
+
+/** Whether an attach is under way: the phases with a step. */
+function attaching(state: ListenSessionState): boolean {
+  return state.phase === 'connecting' || state.phase === 'reconnecting';
+}
+
+/** The session over, keeping the target for the bar. */
+function toEnded(state: ListenSessionState, kind: ListenEndKind, now: number, code: AgencyListenErrorCode | null = null): ListenSessionState {
+  return {
+    ...state,
+    phase: 'ended',
+    step: null,
+    retry: null,
+    end: { kind, listenedMs: state.startedAt === null ? 0 : Math.max(0, now - state.startedAt), code },
+    agentSilent: false,
+  };
+}
+
+function toIdle(state: ListenSessionState): ListenSessionState {
+  return { ...INITIAL_LISTEN_STATE, attempt: state.attempt, refusal: state.refusal, refusalSeq: state.refusalSeq };
+}
+
+function toLost(state: ListenSessionState): ListenSessionState {
+  return { ...state, phase: 'lost', step: null, retry: null, agentSilent: false };
+}
+
+/**
+ * Recover from a drop: wait, then attach again, until the window closes. The window opens at the
+ * first drop and is not renewed by later ones; only a `ready` (or Try again) ends the recovery.
+ */
+function recover(state: ListenSessionState, now: number, internal: boolean): ListenSessionState {
+  const retry = state.retry ?? { deadline: now + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 };
+  const internalErrors = retry.internalErrors + (internal ? 1 : 0);
+  if (internalErrors >= LISTEN_MAX_INTERNAL_ERRORS || now >= retry.deadline) return toLost(state);
+  return {
+    ...state,
+    phase: state.startedAt === null ? 'connecting' : 'reconnecting',
+    step: 'wait',
+    retry: { deadline: retry.deadline, internalErrors },
+    agentSilent: false,
+  };
+}
+
+function applyOutcome(state: ListenSessionState, outcome: ListenCloseOutcome, now: number): ListenSessionState {
+  switch (outcome.kind) {
+    case 'call_ended':
+      return toEnded(state, 'call_ended', now);
+    case 'stopped':
+      return toIdle(state);
+    case 'revoked':
+      return toEnded(state, 'revoked', now);
+    case 'superseded':
+      return toEnded(state, 'superseded', now);
+    case 'refused':
+      return toEnded(state, 'refused', now, outcome.code);
+    case 'remint':
+    case 'reconnect':
+      return recover(state, now, false);
+    case 'internal':
+      return recover(state, now, true);
+  }
+}
+
+/**
+ * What a refused re-grant means while recovering: the call is gone (`listen_call_not_live`, a
+ * 404), the supervisor may no longer listen (403: the permission, or the flag's
+ * `feature_disabled`), a refusal that will not change (409 `listen_recording_off`,
+ * `listen_limit_call`, `listen_own_call`), or one worth retrying within the window (no answer,
+ * 5xx, `listen_limit_server`, `listen_unavailable`).
+ */
+export function regrantOutcome(refusal: ListenGrantRefusal): ListenCloseOutcome {
+  if (refusal.code === 'listen_call_not_live' || refusal.status === 404) return { kind: 'call_ended' };
+  if (refusal.status === 401 || refusal.status === 403) return { kind: 'revoked' };
+  if (
+    refusal.code === 'listen_recording_off'
+    || refusal.code === 'listen_limit_call'
+    || refusal.code === 'listen_own_call'
+  ) {
+    return { kind: 'refused', code: refusal.code };
+  }
+  if (refusal.status !== null && refusal.status >= 400 && refusal.status < 500 && refusal.status !== 408 && refusal.status !== 429) {
+    return { kind: 'refused', code: null };
+  }
+  return { kind: 'reconnect' };
+}
+
+export function listenSessionReducer(state: ListenSessionState, event: ListenSessionEvent): ListenSessionState {
+  switch (event.type) {
+    case 'start':
+      return {
+        ...INITIAL_LISTEN_STATE,
+        phase: 'connecting',
+        step: 'grant',
+        target: event.target,
+        attempt: state.attempt + 1,
+        refusal: null,
+        refusalSeq: state.refusalSeq,
+      };
+
+    case 'granted':
+      if (!attaching(state) || event.attempt !== state.attempt || state.step !== 'grant') return state;
+      return { ...state, step: 'socket', listenId: event.listenId };
+
+    case 'grant_refused': {
+      if (!attaching(state) || event.attempt !== state.attempt || state.step !== 'grant') return state;
+      // The very first grant of a listen: nothing was heard, so it is a toast and no bar.
+      if (state.phase === 'connecting' && state.startedAt === null && state.retry === null) {
+        return { ...toIdle(state), refusal: event.refusal, refusalSeq: state.refusalSeq + 1 };
+      }
+      return applyOutcome(state, regrantOutcome(event.refusal), event.now);
+    }
+
+    case 'ready':
+      if (!attaching(state) || event.attempt !== state.attempt || state.step !== 'socket') return state;
+      return {
+        ...state,
+        phase: 'live',
+        step: null,
+        listenId: event.listenId,
+        startedAt: state.startedAt ?? event.now,
+        retry: null,
+      };
+
+    case 'server_ended': {
+      if (event.attempt !== state.attempt || !(attaching(state) || state.phase === 'live')) return state;
+      const outcome = terminalEndReason(event.reason);
+      return outcome ? applyOutcome(state, outcome, event.now) : state;
+    }
+
+    case 'closed':
+      if (event.attempt !== state.attempt) return state;
+      if (state.phase === 'live' || (attaching(state) && state.step === 'socket')) {
+        return applyOutcome(state, listenCloseOutcome(event.code, event.reason), event.now);
+      }
+      return state;
+
+    case 'reattach':
+      if (!attaching(state) || state.step !== 'wait') return state;
+      if (state.retry && event.now >= state.retry.deadline) return toLost(state);
+      return { ...state, attempt: state.attempt + 1, step: 'grant', listenId: null };
+
+    case 'tick':
+      if (attaching(state) && state.retry && event.now >= state.retry.deadline) return toLost(state);
+      return state;
+
+    case 'pong':
+      if (event.attempt !== state.attempt || state.phase !== 'live') return state;
+      return { ...state, clock: state.clock.push(event.sample) };
+
+    case 'stop':
+      return state.phase === 'idle' ? state : toIdle(state);
+
+    case 'retry':
+      if (state.phase !== 'lost' || !state.target) return state;
+      return {
+        ...state,
+        phase: state.startedAt === null ? 'connecting' : 'reconnecting',
+        step: 'grant',
+        attempt: state.attempt + 1,
+        listenId: null,
+        retry: { deadline: event.now + AGENCY_LISTEN_RECONNECT_WINDOW_MS, internalErrors: 0 },
+      };
+
+    case 'dismiss':
+      return state.phase === 'ended' || state.phase === 'lost' ? toIdle(state) : state;
+
+    case 'sound':
+      return state.soundBlocked === event.blocked ? state : { ...state, soundBlocked: event.blocked };
+
+    case 'agent_silent': {
+      const silent = event.silent && state.phase === 'live';
+      return state.agentSilent === silent ? state : { ...state, agentSilent: silent };
+    }
+  }
+}
+
+/** Whether the bar is up: anything but idle. */
+export function listenBarVisible(state: ListenSessionState): boolean {
+  return state.phase !== 'idle' && state.target !== null;
+}
+
+/** Whether a socket should be open or opening: the attach is at its socket step, or live. */
+export function listenSocketWanted(state: ListenSessionState): boolean {
+  return state.phase === 'live' || (attaching(state) && state.step === 'socket');
+}

@@ -2,6 +2,7 @@ import { hasPermission, type Permission } from './permissions';
 import { INBOUND_FLAG } from './inbound/inboundFlag';
 import { REPORTS_FLAG } from './reports/reportsFlag';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
+import { LIVE_LISTEN_FLAG } from './listen/liveListenFlag';
 import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from './agencyPersona';
 import { campaignLandingPath } from './agencyCampaignTabs';
 import type { Role } from '../types/auth';
@@ -197,7 +198,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'campaigns',
     label: 'Campaigns',
-    paths: ['/agency/campaigns', '/agency/softphone'],
+    paths: ['/agency/campaigns', '/agency/softphone', '/agency/live'],
     tabs: [
       {
         id: 'campaigns',
@@ -214,6 +215,15 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         to: '/agency/softphone',
         gate: agencyGate({ permission: 'agency.supervise', flags: [SOFTPHONE_FLAG] }),
         subPage: { label: 'Soft-phone call' },
+      },
+      /* `docs/listening.md` §9: the account's calls in progress. The list floors at
+         `agency.supervise` (the Listen action needs `agency.calls.listen` as well), behind the
+         listening flag, the consent gate (LS1). */
+      {
+        id: 'live',
+        label: 'Live calls',
+        to: '/agency/live',
+        gate: agencyGate({ permission: 'agency.supervise', flags: [LIVE_LISTEN_FLAG] }),
       },
     ],
   },

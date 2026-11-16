@@ -1,0 +1,453 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, act, fireEvent, cleanup } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { liveCall } from '../helpers/liveCalls';
+
+/**
+ * The listening bar with the shell's listen behind it (`docs/listening.md` §9, LS6): the first
+ * use confirmation, every bar state and its words, the notice always, Esc, the mutes and the
+ * remembered volume, the refused grant's toast, and the listen ending with the account.
+ */
+
+const mocks = vi.hoisted(() => ({
+  listLiveCalls: vi.fn(),
+  revealLiveCallNumber: vi.fn(),
+  grantListen: vi.fn(),
+  showToast: vi.fn(),
+  compact: false,
+  audioState: 'running' as AudioContextState,
+}));
+
+vi.mock('../../api/liveCalls', () => ({
+  listLiveCalls: mocks.listLiveCalls,
+  revealLiveCallNumber: mocks.revealLiveCallNumber,
+  grantListen: mocks.grantListen,
+}));
+vi.mock('../../contexts/TenantContext', () => ({
+  useTenant: () => ({ tenantId: 't-1', accountId: 'a-1', role: 'account_admin' }),
+}));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me' } }) }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (f: string) => f === 'agency_live_listen_enabled', status: 'ready' }),
+}));
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
+}));
+vi.mock('../../hooks/useMediaQuery', () => ({ useMediaQuery: () => mocks.compact }));
+
+import { LiveCallsTable } from '../../components/listen/LiveCallsTable';
+import { ListenProvider, LISTEN_CONFIRMED_KEY } from '../../components/listen/ListenProvider';
+import { ListenBar } from '../../components/listen/ListenBar';
+import { LISTEN_VOLUME_KEY } from '../../hooks/listen/useListenPlayback';
+
+class FakeWs {
+  static all: FakeWs[] = [];
+  binaryType = 'blob';
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: unknown }) => void) | null = null;
+  onclose: ((e: { code: number; reason: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  sent: unknown[] = [];
+  closed: number | null = null;
+  constructor(public url: string) {
+    FakeWs.all.push(this);
+  }
+  send(data: string) {
+    this.sent.push(JSON.parse(data));
+  }
+  close(code?: number) {
+    this.closed = code ?? 1005;
+    this.readyState = 3;
+  }
+  ready() {
+    this.readyState = 1;
+    this.onopen?.();
+    this.onmessage?.({ data: JSON.stringify({ event: 'ready', listen_id: 'l-1', call_id: 'c-1', format: 'alaw8', frame_bytes: 160 }) });
+  }
+  frame(event: unknown) {
+    this.onmessage?.({ data: JSON.stringify(event) });
+  }
+  serverClose(code: number, reason = '') {
+    this.readyState = 3;
+    this.onclose?.({ code, reason });
+  }
+}
+
+class FakeAudioContext {
+  static all: FakeAudioContext[] = [];
+  state: AudioContextState = mocks.audioState;
+  currentTime = 0;
+  destination = {};
+  resumed = 0;
+  constructor() {
+    FakeAudioContext.all.push(this);
+  }
+  createGain() {
+    return { connect: () => {}, gain: { value: 1 } };
+  }
+  createAnalyser() {
+    return { connect: () => {}, fftSize: 512, getFloatTimeDomainData: (o: Float32Array) => o.fill(0) };
+  }
+  createBuffer(_c: number, length: number, rate: number) {
+    const d = new Float32Array(length);
+    return { duration: length / rate, getChannelData: () => d };
+  }
+  createBufferSource() {
+    return { connect: () => {}, start: () => {}, stop: () => {}, buffer: null, onended: null };
+  }
+  async resume() {
+    this.resumed += 1;
+    if (mocks.audioState === 'running') this.state = 'running';
+  }
+  async close() {
+    this.state = 'closed';
+  }
+}
+
+const NOW = new Date('2026-11-16T10:10:00Z').getTime();
+const CALL = liveCall({ call_id: 'c-1', agent_name: 'Priya Sharma', customer_phone_masked: '****4321', connected_at: '2026-11-16T10:06:18Z', campaign_name: 'Renewals · Nov' });
+const OTHER = liveCall({ call_id: 'c-2', agent_user_id: 'u-2', agent_name: 'Arjun Nair', connected_at: '2026-11-16T10:08:00Z' });
+
+function App({ account = 'a-1' }: { account?: string }) {
+  return (
+    <MemoryRouter>
+      <ListenProvider key={account}>
+        <LiveCallsTable />
+        <ListenBar />
+      </ListenProvider>
+    </MemoryRouter>
+  );
+}
+
+async function renderApp() {
+  const view = render(<App />);
+  await act(async () => {});
+  return view;
+}
+
+const flush = () => act(async () => {
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+async function startListening(callId = 'c-1') {
+  await act(async () => {
+    fireEvent.click(screen.getByTestId(`live-call-listen-${callId}`));
+  });
+  if (screen.queryByText('Listening is logged')) {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start listening' }));
+    });
+  }
+  await flush();
+  return FakeWs.all[FakeWs.all.length - 1]!;
+}
+
+const bar = () => screen.getByTestId('listen-bar');
+
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(NOW);
+  FakeWs.all = [];
+  FakeAudioContext.all = [];
+  mocks.compact = false;
+  mocks.audioState = 'running';
+  mocks.showToast.mockReset();
+  mocks.listLiveCalls.mockReset().mockResolvedValue({ calls: [CALL, OTHER], as_of: new Date(NOW).toISOString() });
+  mocks.grantListen.mockReset().mockImplementation(async () => ({
+    ok: true,
+    grant: { listen_id: 'l-1', ws_url: '/proxy/agency/listen/s-1/l-1?token=tok', expires_at: '2026-11-16T10:11:00Z' },
+  }));
+  vi.stubGlobal('WebSocket', FakeWs);
+  vi.stubGlobal('AudioContext', FakeAudioContext);
+  window.localStorage.clear();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe('the first listen in this browser', () => {
+  it('asks once that the supervisor knows listening is logged', async () => {
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-listen-c-1'));
+    });
+    expect(screen.getByText('Listening is logged')).toBeTruthy();
+    expect(screen.getByText('Each time you listen, your name, the call and the start and end times are recorded in the activity history.')).toBeTruthy();
+    // Cancel: nothing starts, nothing is remembered.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(mocks.grantListen).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+    expect(window.localStorage.getItem(LISTEN_CONFIRMED_KEY)).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-listen-c-1'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start listening' }));
+    });
+    expect(mocks.grantListen).toHaveBeenCalledWith('c-1', 't-1', 'a-1');
+    expect(window.localStorage.getItem(LISTEN_CONFIRMED_KEY)).toBe('1');
+  });
+
+  it('does not ask again in this browser', async () => {
+    window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
+    await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-listen-c-1'));
+    });
+    expect(screen.queryByText('Listening is logged')).toBeNull();
+    expect(mocks.grantListen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the bar', () => {
+  beforeEach(() => {
+    window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
+  });
+
+  it('Connecting…, then Listening, with who, the campaign and the time on call; the notice throughout', async () => {
+    await renderApp();
+    const ws = await startListening();
+    expect(ws.url).toMatch(/^ws:\/\/[^/]+\/proxy\/agency\/listen\/s-1\/l-1\?token=tok$/);
+    expect(screen.getByTestId('listen-status').textContent).toBe('Connecting…');
+    expect(screen.getByTestId('live-call-connecting-c-1')).toBeTruthy();
+    expect(screen.getByTestId('listen-notice').textContent).toBe('This session is logged. Do not record or share what you hear.');
+
+    act(() => ws.ready());
+    expect(screen.getByTestId('listen-status').textContent).toBe('Listening');
+    expect(bar().textContent).toContain('Priya S. with ****4321');
+    expect(bar().textContent).toContain('Renewals · Nov · 03:42');
+    expect(screen.getByTestId('listen-meter-agent').textContent).toContain('Agent');
+    expect(screen.getByTestId('listen-meter-customer').textContent).toContain('Customer');
+    expect(screen.getByTestId('listen-open-call').getAttribute('href')).toBe('/agency/campaigns/camp-1/calls/live');
+    expect(screen.getByTestId('listen-notice')).toBeTruthy();
+    // The row is the supervisor's: tinted, with Stop.
+    expect(screen.getByTestId('live-call-c-1').getAttribute('data-mine')).toBe('true');
+    expect(screen.getByTestId('live-call-stop-c-1')).toBeTruthy();
+  });
+
+  it('Stop listening sends `stop` and closes the bar', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    fireEvent.click(screen.getByTestId('listen-stop'));
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+    expect(ws.closed).toBe(1000);
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('Esc stops while the bar has focus, and not from elsewhere', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByTestId('listen-bar')).toBeTruthy();
+    fireEvent.keyDown(screen.getByTestId('listen-volume'), { key: 'Escape' });
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('the row’s Stop stops too', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    fireEvent.click(screen.getByTestId('live-call-stop-c-1'));
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+  });
+
+  it('mutes each leg on its own', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    const mute = screen.getByTestId('listen-mute-agent');
+    expect(mute.getAttribute('aria-label')).toBe('Mute the agent');
+    fireEvent.click(mute);
+    expect(mute.getAttribute('aria-pressed')).toBe('true');
+    expect(mute.getAttribute('aria-label')).toBe('Unmute the agent');
+    expect(screen.getByTestId('listen-mute-customer').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('remembers the volume in this browser', async () => {
+    window.localStorage.setItem(LISTEN_VOLUME_KEY, '0.35');
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    const volume = screen.getByTestId('listen-volume') as HTMLInputElement;
+    expect(volume.value).toBe('35');
+    fireEvent.change(volume, { target: { value: '60' } });
+    expect(window.localStorage.getItem(LISTEN_VOLUME_KEY)).toBe('0.6');
+  });
+
+  it('works with browser storage blocked', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    fireEvent.change(screen.getByTestId('listen-volume'), { target: { value: '40' } });
+    expect((screen.getByTestId('listen-volume') as HTMLInputElement).value).toBe('40');
+    vi.restoreAllMocks();
+  });
+
+  it('says when the browser blocked the sound, and turns it on with a click', async () => {
+    mocks.audioState = 'suspended';
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(screen.getByTestId('listen-sound-blocked').textContent).toContain('Your browser blocked the sound. Click to turn it on.');
+    mocks.audioState = 'running';
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Turn sound on' }));
+    });
+    expect(screen.queryByTestId('listen-sound-blocked')).toBeNull();
+  });
+
+  it('says "Agent reconnecting…" when the agent’s leg is silent over 2 s', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    expect(screen.queryByTestId('listen-agent-gap')).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_600);
+    });
+    expect(screen.getByTestId('listen-agent-gap').textContent).toBe('Agent reconnecting…');
+    const frame = new Uint8Array(161);
+    frame[0] = 2;
+    act(() => ws.onmessage?.({ data: frame.buffer }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(screen.queryByTestId('listen-agent-gap')).toBeNull();
+  });
+
+  it('a drop: "Reconnecting…", and back to Listening on a fresh grant', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(1006));
+    expect(screen.getByTestId('listen-status').textContent).toBe('Reconnecting…');
+    expect(screen.getByTestId('listen-reconnecting').textContent).toContain('15 s');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(mocks.grantListen).toHaveBeenCalledTimes(2);
+    const next = FakeWs.all[FakeWs.all.length - 1]!;
+    expect(next).not.toBe(ws);
+    act(() => next.ready());
+    expect(screen.getByTestId('listen-status').textContent).toBe('Listening');
+  });
+
+  it('no way back within 15 s: "Connection lost" and Try again', async () => {
+    mocks.grantListen.mockImplementation(async () => ({ ok: false, status: 503, code: 'listen_unavailable' }));
+    await renderApp();
+    mocks.grantListen.mockImplementationOnce(async () => ({
+      ok: true,
+      grant: { listen_id: 'l-1', ws_url: '/proxy/agency/listen/s-1/l-1?token=tok', expires_at: 'x' },
+    }));
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(1006));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(16_000);
+    });
+    expect(screen.getByTestId('listen-status').textContent).toBe('Connection lost');
+    expect(screen.getByTestId('listen-notice')).toBeTruthy();
+    const calls = mocks.grantListen.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('listen-retry'));
+    });
+    expect(mocks.grantListen.mock.calls.length).toBe(calls + 1);
+  });
+
+  it('the call ends: "Call ended · you listened for mm:ss", Open call, gone after 6 s', async () => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(130_000);
+    });
+    act(() => ws.frame({ event: 'ended', reason: 'call_ended' }));
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe('Call ended · you listened for 02:10');
+    expect(screen.getByTestId('listen-open-call')).toBeTruthy();
+    expect(screen.getByTestId('listen-notice')).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it.each([
+    [4403, 'permission_revoked', 'You no longer have access to listen to calls.'],
+    [4409, 'superseded', 'Listening moved to another call.'],
+  ])('close %i: "%s" says so until dismissed', async (code, reason, words) => {
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(code, reason));
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe(words);
+    expect(screen.getByTestId('listen-status').textContent).toBe('Listening stopped');
+    fireEvent.click(screen.getByTestId('listen-dismiss'));
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('a refused grant is a toast with the reason, and no bar', async () => {
+    mocks.grantListen.mockResolvedValue({ ok: false, status: 409, code: 'listen_limit_call' });
+    await renderApp();
+    await startListening();
+    expect(mocks.showToast).toHaveBeenCalledWith('Two supervisors are already listening to that call.', 'error');
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+    expect(FakeWs.all).toEqual([]);
+  });
+
+  it('listening to another call stops the first', async () => {
+    await renderApp();
+    const first = await startListening('c-1');
+    act(() => first.ready());
+    await startListening('c-2');
+    expect(first.sent).toEqual([{ event: 'stop' }]);
+    expect(mocks.grantListen).toHaveBeenLastCalledWith('c-2', 't-1', 'a-1');
+  });
+
+  it('switching account (the provider re-keyed) ends the listen', async () => {
+    const view = await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    view.rerender(<App account="a-2" />);
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it('leaving the shell (unmount) ends the listen', async () => {
+    const view = await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    view.unmount();
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+  });
+
+  it('at phone width: the dot, the timer and Stop, with the notice', async () => {
+    mocks.compact = true;
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    expect(screen.getByTestId('listen-bar').getAttribute('data-compact')).toBe('true');
+    expect(screen.getByTestId('listen-timer').textContent).toBe('03:42');
+    expect(screen.queryByTestId('listen-meter-agent')).toBeNull();
+    expect(screen.queryByTestId('listen-volume')).toBeNull();
+    expect(screen.getByTestId('listen-stop').textContent).toBe('Stop');
+    expect(screen.getByTestId('listen-notice')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('listen-stop'));
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+  });
+});

@@ -87,6 +87,20 @@ export function redactInviteToken(value: string): string {
 }
 
 /**
+ * The listener socket's single-use token (`docs/listening.md` §3): a grant's `ws_url` is
+ * `/proxy/agency/listen/<session>/<listen>?token=<token>`, and whoever holds the token within its
+ * minute can open that listen. Nothing sends the URL to analytics today; this keeps it so if one
+ * ever lands in a property (an error's URL, an element's text). Keyed on the listen path, like the
+ * invite rule, and only the `token` parameter's value goes.
+ */
+const LISTEN_TOKEN_RE = /(\/agency\/listen\/[^?#\s"'<>]*\?(?:[^#\s"'<>]*&)?token=)[^&#\s"'<>]+/gi;
+
+/** Redact every listener socket token in one string. Returns the input when there is none. */
+export function redactListenToken(value: string): string {
+  return value.includes('/listen/') ? value.replace(LISTEN_TOKEN_RE, `$1${REDACTED_TOKEN}`) : value;
+}
+
+/**
  * What replaces a signed-in page's `/t/<tenantId>/a/<accountId>` prefix.
  *
  * ── Why the scope comes out of every URL ───────────────────────────────────
@@ -162,7 +176,7 @@ function cleanString(value: string): string {
       : normaliseUrlScope(value);
     scoped = normaliseEncodedUrlScope(scoped);
   }
-  return redactInviteToken(scoped);
+  return redactListenToken(redactInviteToken(scoped));
 }
 
 /**

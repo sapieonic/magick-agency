@@ -1,0 +1,222 @@
+/* The listening bar: docked at the foot of the shell's content area (`ConsoleLayout`). Tokens
+   only; ember is the live dot's alone (the platform DOING something), the rest stays neutral. */
+
+.bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 24px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.bar[data-phase='live'] {
+  border-top-color: var(--ember-glow);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.line {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono,
+.timer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.timer {
+  color: var(--text-primary);
+}
+
+.meters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  flex: 1 1 260px;
+}
+
+.meter {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+
+.meterLabel {
+  display: inline-flex;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 64px;
+}
+
+.meterNote {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--warning);
+}
+
+.track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--ember);
+  transition: width 90ms linear;
+}
+
+.meter[data-muted='true'] .fill {
+  background: var(--text-muted);
+}
+
+.mute {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.mute[aria-pressed='true'] {
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.volume input {
+  width: 96px;
+  accent-color: var(--accent);
+}
+
+.volumeLabel {
+  font-weight: 600;
+}
+
+.link {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--danger-subtle);
+  border: 1px solid var(--danger-border);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.banner[data-tone='warning'] {
+  background: var(--warning-subtle);
+  border-color: var(--border);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.noticeIcon {
+  flex-shrink: 0;
+}
+
+.compactHead {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .bar {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .row {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition: none;
+  }
+}
+
+@media print {
+  .bar {
+    display: none !important;
+  }
+}

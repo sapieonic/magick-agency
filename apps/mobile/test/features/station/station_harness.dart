@@ -281,6 +281,7 @@ Future<StationHarness> pumpStation(
   SoftphoneAvailability availability = SoftphoneAvailability.hidden,
   SoftphoneView softphone = const SoftphoneView(),
   bool contactAssignment = false,
+  bool listenNotice = false,
   List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
@@ -318,6 +319,7 @@ Future<StationHarness> pumpStation(
       softphoneViewProvider.overrideWith((ref) => ref.watch(softphoneHolder)),
       softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(availabilityHolder)),
       contactAssignmentEnabledProvider.overrideWithValue(contactAssignment),
+      stationListenNoticeProvider.overrideWithValue(listenNotice),
       ...extra,
     ],
   );

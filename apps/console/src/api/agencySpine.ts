@@ -1,3 +1,4 @@
+import type { AgencyCallListenSession } from '../types/live-calls';
 import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
 import { buildAuthHeaders } from './authHeaders';
@@ -147,6 +148,11 @@ export interface AgencyAttemptCallDetail {
   /** Null whenever `call_availability` is not `available`. */
   call: WebRtcCallRecord | null;
   call_availability: AgencyCallAvailability;
+  /**
+   * Who listened to the call live (`docs/listening.md` LS13), earliest first. Optional: a server
+   * without listening answers the detail alone, and the page then shows no "Listened to by".
+   */
+  listen_sessions?: AgencyCallListenSession[];
 }
 
 /**

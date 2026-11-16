@@ -21,6 +21,7 @@ class StationHeader extends ConsumerWidget {
     final name = ref.watch(stationViewProvider.select((v) => v?.campaignName ?? ''));
     final dialing = ref.watch(stationViewProvider.select((v) => v?.campaignDialing ?? true));
     final weak = ref.watch(stationViewProvider.select((v) => v != null && v.weakConnection && v.link == StationLink.open));
+    final listenNotice = ref.watch(stationListenNoticeProvider);
     final text = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.sm),
@@ -50,10 +51,42 @@ class StationHeader extends ConsumerWidget {
               ],
             ),
           ),
+          if (listenNotice)
+            IconButton(
+              key: const Key('station-info'),
+              tooltip: StationCopy.stationInfo,
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => showStationInfoSheet(context),
+            ),
         ],
       ),
     );
   }
+}
+
+/// The station info sheet: the standing line that a supervisor may listen (docs/listening.md
+/// LS2), the console station's words. Copy only; it reads no call and changes nothing.
+Future<void> showStationInfoSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    builder: (context) {
+      final text = Theme.of(context).textTheme;
+      return Padding(
+        key: const Key('station-info-sheet'),
+        padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Semantics(header: true, child: Text(StationCopy.stationInfo, style: text.titleLarge)),
+            const SizedBox(height: Space.sm),
+            Text(StationCopy.listenNotice, style: text.bodyMedium),
+          ],
+        ),
+      );
+    },
+  );
 }
 
 /// Reconnecting / disconnected while no call is on screen: a slim banner

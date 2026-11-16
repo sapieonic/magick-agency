@@ -1,0 +1,311 @@
+/* The live calls table: the spine list's table (`SpineListLayout.module.css`) plus its own
+   header, filters and row states. Tokens only; ember marks only what is live. */
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 12px;
+}
+
+.countPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--ember-faint);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.updated {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.filter {
+  margin: 0;
+}
+
+.filter select {
+  min-width: 160px;
+  max-width: 100%;
+}
+
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.error {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--warning-subtle);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.noMatch {
+  padding: 24px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.table td {
+  vertical-align: middle;
+}
+
+.row[data-mine='true'] td {
+  background: var(--ember-faint);
+}
+
+.row[data-ended='true'] td {
+  opacity: 0.5;
+  transition: opacity 3s ease;
+}
+
+.sortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.avatar,
+.stackAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.mobile {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.customer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.customerName {
+  color: var(--text-primary);
+}
+
+.number {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reveal {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-hover);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reveal:disabled {
+  color: var(--text-muted);
+  cursor: progress;
+}
+
+.revealError {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.badge {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge[data-origin='campaign'] {
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+}
+
+.badge[data-origin='inbound'] {
+  background: var(--info-subtle);
+  color: var(--text-primary);
+}
+
+.timer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.timer[data-overrun='true'] {
+  color: var(--warning);
+  font-weight: 700;
+}
+
+.recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.recordingDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.recording[data-on='true'] {
+  color: var(--text-secondary);
+}
+
+.recording[data-on='true'] .recordingDot {
+  background: var(--danger);
+}
+
+.stack {
+  display: inline-flex;
+}
+
+.stackAvatar {
+  border: 2px solid var(--bg-secondary);
+  margin-left: -6px;
+}
+
+.stackAvatar:first-child {
+  margin-left: 0;
+}
+
+.stackAvatar[data-you='true'] {
+  width: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ember-subtle);
+  color: var(--text-primary);
+}
+
+.actionCell {
+  white-space: nowrap;
+}
+
+.actionButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.refused {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.reason {
+  max-width: 220px;
+  white-space: normal;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.footnote {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row[data-ended='true'] td {
+    transition: none;
+  }
+}

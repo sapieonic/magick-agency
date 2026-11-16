@@ -41,6 +41,7 @@ const ALL_ON = new Set([
   'agency_reports_enabled',
   'agency_inbound_enabled',
   'agency_call_analysis',
+  'agency_live_listen_enabled',
 ]);
 
 function input(
@@ -116,15 +117,23 @@ describe('the work sections', () => {
 describe('the tab bar of a grouped page', () => {
   it('shows Campaigns and Soft-phone calls to a supervisor with the soft phone on', () => {
     const bar = tabBarFor('/agency/campaigns', input('account_admin'));
-    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls']);
+    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls', 'Live calls']);
     expect(bar?.activeId).toBe('campaigns');
     expect(tabBarFor('/agency/softphone', input('account_admin'))?.activeId).toBe('softphone');
+    expect(tabBarFor('/agency/live', input('account_admin'))?.activeId).toBe('live');
+  });
+
+  it('offers Live calls beside Soft-phone calls only to a supervisor with the listening flag on', () => {
+    const labels = (i: GateInput) => tabBarFor('/agency/campaigns', i)?.tabs.map((t) => t.label) ?? [];
+    expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'Soft-phone calls']);
+    expect(labels(input('viewer'))).toEqual([]);
+    expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'Live calls']);
   });
 
   it('is not shown when only one tab is left', () => {
     // Soft-phone calls floors at agency.supervise and needs its flag.
     expect(tabBarFor('/agency/campaigns', input('viewer'))).toBeNull();
-    expect(tabBarFor('/agency/campaigns', input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toBeNull();
+    expect(tabBarFor('/agency/campaigns', input('account_admin', { flagsOff: ['agency_softphone_enabled', 'agency_live_listen_enabled'] }))).toBeNull();
     // The summary floors at agency.supervise.
     expect(tabBarFor('/agency/inbound/missed', input('viewer'))).toBeNull();
     expect(tabBarFor('/agency/analytics', input('account_admin', { flagsOff: ['agency_reports_enabled'] }))).toBeNull();
@@ -159,6 +168,7 @@ describe('the active sidebar entry', () => {
     ['/agency/campaigns/c-1/agents', 'campaigns'],
     ['/agency/softphone', 'campaigns'],
     ['/agency/softphone/calls/x', 'campaigns'],
+    ['/agency/live', 'campaigns'],
     ['/agency/inbound/missed', 'inbound'],
     ['/agency/inbound/summary', 'inbound'],
     ['/agency/analytics', 'reports'],
@@ -190,6 +200,10 @@ describe('the breadcrumb', () => {
       { label: 'Campaign' },
     ]);
     expect(breadcrumbFor('/agency/campaigns/new')[1]).toEqual({ label: 'New campaign' });
+    expect(breadcrumbFor('/agency/live')).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Live calls' },
+    ]);
   });
 
   it('puts the crumbs a page supplies after its section, in place of the generic one', () => {

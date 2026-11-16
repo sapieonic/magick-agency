@@ -9,6 +9,7 @@ import { CampaignAssignmentProgress } from '../../components/agency/CampaignAssi
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CallsViews } from '../../components/agency/CallsViews';
 import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { publishCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
@@ -152,6 +153,8 @@ export function AgencyCampaignDetailPage() {
           callbacksOverdue={callbacksOverdue}
         />
       }
+      /* The Calls tab's two views, Summary (this panel) and Live (`docs/listening.md` §9). */
+      subnav={panel === 'calls' ? <CallsViews campaignId={campaign.id} active="calls" role={role} /> : undefined}
     >
       {/* No description line: the API has no such column, so it was a paragraph
           that could only ever be empty. See the note on `AgencyCampaign`. */}

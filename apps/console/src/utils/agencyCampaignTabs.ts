@@ -1,6 +1,7 @@
 import type { Permission } from './permissions';
 import { hasPermission } from './permissions';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
+import { LIVE_LISTEN_FLAG } from './listen/liveListenFlag';
 import type { Role } from '../types/auth';
 
 /**
@@ -64,6 +65,7 @@ export type CampaignTabId =
   | 'contacts'
   | 'attempts'
   | 'manual'
+  | 'live'
   | 'activity'
   | 'settings';
 
@@ -181,6 +183,18 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     flag: SOFTPHONE_FLAG,
   },
   {
+    id: 'live',
+    group: null,
+    label: 'Live calls',
+    hint: 'The calls in progress on this campaign, to listen in to',
+    // The account's live list, campaign-filtered (`docs/listening.md` §9): floored at
+    // `agency.supervise` like the Calls tab it is the second view of ("Summary | Live"),
+    // behind the listening flag (LS1). Listening itself needs `agency.calls.listen` too.
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/calls/live`,
+    flag: LIVE_LISTEN_FLAG,
+  },
+  {
     // "Activity" until it became the header's History button; the id and the URL stay.
     id: 'activity',
     group: null,
@@ -260,10 +274,12 @@ export function visibleCampaignTabGroups(role: Role | undefined): CampaignTabGro
 
 /**
  * The bar tab marked current while a screen shows: Call log for both of its
- * views, and none for Activity, which is the header's History and not a tab.
+ * views, Calls for both of its (Summary and Live), and none for Activity,
+ * which is the header's History and not a tab.
  */
 export function barTabFor(id: CampaignTabId): CampaignTabId | null {
   if (id === 'manual') return 'attempts';
+  if (id === 'live') return 'calls';
   if (id === 'activity') return null;
   return id;
 }
@@ -282,6 +298,22 @@ export function visibleCallLogViews(
   isFlagEnabled: (flag: string) => boolean = () => false,
 ): { id: CallLogViewId; label: string }[] {
   return CALL_LOG_VIEWS.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
+}
+
+/** The Calls tab's two views, in segment order: the analytic panel and the calls in progress. */
+export type CallsViewId = 'calls' | 'live';
+
+export const CALLS_VIEWS: readonly { id: CallsViewId; label: string }[] = [
+  { id: 'calls', label: 'Summary' },
+  { id: 'live', label: 'Live' },
+];
+
+/** The Calls views a role can open; each is gated as its screen (`CAMPAIGN_TABS`), Live by its flag too. */
+export function visibleCallsViews(
+  role: Role | undefined,
+  isFlagEnabled: (flag: string) => boolean = () => false,
+): { id: CallsViewId; label: string }[] {
+  return CALLS_VIEWS.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
 }
 
 /**

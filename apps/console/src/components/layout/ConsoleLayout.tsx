@@ -10,6 +10,8 @@ import { FOCUSABLE_SELECTOR, trapTab } from '@magick-agency/web-ui/hooks/useDial
 import { ConsoleSidebar } from './ConsoleSidebar';
 import { ConsoleTopBar } from './ConsoleTopBar';
 import { PageCrumbsProvider } from './PageCrumbs';
+import { ListenProvider } from '../listen/ListenProvider';
+import { ListenBar } from '../listen/ListenBar';
 import styles from './ConsoleLayout.module.css';
 
 export const MOBILE_SIDEBAR_ID = 'console-mobile-sidebar';
@@ -120,6 +122,12 @@ export function ConsoleLayout() {
   return (
     /* Lets a page name itself in the top bar's breadcrumb (`usePageCrumbs`). */
     <PageCrumbsProvider>
+      {/*
+        The one listen of the shell (`docs/listening.md` §9): a listen carries on across its
+        pages, docked in the bar under the content, and ends when the reader leaves the shell
+        (this unmounts) or switches account (the key).
+      */}
+      <ListenProvider key={accountId ?? 'no-account'}>
       <div className={styles.layout}>
         <a href="#main-content" className={styles.skipLink}>
           Skip to main content
@@ -158,11 +166,13 @@ export function ConsoleLayout() {
             */}
             <Outlet key={accountId ?? 'no-account'} />
           </main>
+          <ListenBar />
         </div>
 
         {/* ⌘K / Ctrl+K and the top bar's search field, on every page of the shell. */}
         <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
       </div>
+      </ListenProvider>
     </PageCrumbsProvider>
   );
 }

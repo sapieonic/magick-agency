@@ -28,6 +28,7 @@ import {
   type CallFactCard,
 } from '../../components/calls/CallDetailView';
 import { ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
+import { ListenedToBy } from '../../components/listen/ListenedToBy';
 import {
   agentCellCopy,
   AUTO_DISPOSITION_HINT,
@@ -538,6 +539,8 @@ export default function AgencyAttemptCallPage() {
           {identityCards.map((card) => (
             <FactCard key={card.title} card={card} icon={<MessageSquare size={16} />} />
           ))}
+          {/* Who listened outlives the call row, as the attempt does (LS13). */}
+          <ListenedToBy sessions={detail.listen_sessions} />
         </div>
       </div>
     );
@@ -581,6 +584,8 @@ export default function AgencyAttemptCallPage() {
         onRetryAnalysis={undefined}
         onReload={() => void load()}
       />
+      {/* Supervisors who listened in live (`docs/listening.md` LS13). */}
+      <ListenedToBy sessions={detail.listen_sessions} />
     </div>
   );
 }
