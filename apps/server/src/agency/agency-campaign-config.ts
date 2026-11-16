@@ -5,6 +5,7 @@ import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/age
 // shared the same way: same rules, same messages.
 import {
   dispositionOverrideIssues,
+  dispositionPromiseIssues,
   reservedDispositionCodeMessage,
   validateAssignmentSettings,
   validateOutcomeDispositions,
@@ -440,6 +441,8 @@ function validateDispositionCatalog(catalog: unknown): ConfigIssue[] {
 
     // An outcome's override grant (contact assignment): the internal handler's rule.
     issues.push(...dispositionOverrideIssues(entry, at));
+    // Promise to pay (PT1, PT2, PT10): the internal handler's rule, same messages.
+    issues.push(...dispositionPromiseIssues(entry, at));
 
     // Built-in semantic mismatch — only for a code that IS one
     // of the three built-ins, matched byte-for-byte like every other code

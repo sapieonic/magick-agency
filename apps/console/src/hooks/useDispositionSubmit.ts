@@ -331,6 +331,8 @@ export function useDispositionSubmit(options: {
               suppress: submittedDisposition?.suppress ?? false,
               requires_note: submittedDisposition?.requires_note ?? false,
               requires_datetime: submittedDisposition?.requires_datetime ?? false,
+              requires_promise: submittedDisposition?.requires_promise ?? false,
+              has_promise: Boolean(payload.promise_date),
               has_note: Boolean((notes || form.notes).trim()),
               scheduled_callback: outcome.nextAttemptAt != null,
               selection_method: selectionMethodRef.current,
@@ -452,6 +454,8 @@ export function useDispositionSubmit(options: {
               // The asked-for time,
               // so a callback moved into calling hours says so.
               callbackRequestedAt: outcome.callbackRequestedAt,
+              // A suppress outcome whose number could not go on the list says so (DS8).
+              dncRecorded: outcome.dncRecorded,
             }),
           );
           return;

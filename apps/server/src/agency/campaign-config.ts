@@ -9,6 +9,8 @@ import {
   AGENCY_CALLBACK_GRACE_MINUTES_MAX,
   AGENCY_ON_UNSTAFF_VALUES,
   AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
+  AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX,
+  AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN,
   AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
   AGENCY_REDIALED_DISPOSITION_CODE,
   DEVICE_AWAY_BREAK_REASON,
@@ -206,6 +208,12 @@ export { DEFAULT_ABANDONMENT_CEILING_PCT } from './campaign-thresholds.js';
 export interface CampaignConfigOptions {
   /** A catalog entry may carry `override` (default true: a campaign's catalog). */
   allowDispositionOverride?: boolean;
+  /**
+   * A catalog entry may ask for a promise to pay (`requires_promise`, PT1; default true: a
+   * campaign's catalog). False for the soft phone's own catalogue and an inbound route's,
+   * whose calls have no campaign contact to keep the promise on.
+   */
+  allowPromise?: boolean;
 }
 
 /**
@@ -420,7 +428,91 @@ export function dispositionOverrideIssues(
   return issues;
 }
 
-function validateDispositionCatalog(catalog: unknown, allowOverride: boolean): CampaignConfigIssue[] {
+/**
+ * A catalog entry's promise to pay (PT1, PT2, PT10), or nothing when it asks for none.
+ *
+ *  - `requires_promise` is a boolean; `promise_follow_up_days` an integer from
+ *    `AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN` to `_MAX`, only on an entry that asks for a promise.
+ *  - Not beside `requires_datetime`: the promise books its own follow-up, and an outcome that
+ *    asked for a callback time and a promised date would schedule two calls for one answer.
+ *  - Not beside `suppress`: a customer who asked not to be called again has made no promise
+ *    anyone will follow up.
+ *  - A follow-up not beside `retry` (two schedules for one outcome) or `terminal` (the contact
+ *    is finished, so the follow-up could never be dialled). A promise alone may be terminal
+ *    (record it and close the contact) or carry a `retry` (the retry decides, as today).
+ *  - Refused outright where `allowed` is false (the soft phone's and inbound routes' own
+ *    catalogues).
+ *
+ * Exported because the public API layer's validator applies the same rules with the same
+ * messages.
+ */
+export function dispositionPromiseIssues(
+  entry: Record<string, unknown>,
+  at: string,
+  allowed = true,
+): CampaignConfigIssue[] {
+  const asks = entry['requires_promise'];
+  const days = entry['promise_follow_up_days'];
+  if (asks === undefined && days === undefined) return [];
+  const issues: CampaignConfigIssue[] = [];
+  if (!allowed) {
+    if (asks === true || days !== undefined) {
+      issues.push({
+        field: `${at}.requires_promise`,
+        message: 'Only a campaign\'s outcome list can ask for a promise to pay: calls from this list have no campaign contact to keep the promise on.',
+      });
+    }
+    return issues;
+  }
+  if (asks !== undefined && typeof asks !== 'boolean') {
+    issues.push({ field: `${at}.requires_promise`, message: 'requires_promise must be a boolean.' });
+  }
+  if (days !== undefined) {
+    if (typeof days !== 'number' || !Number.isInteger(days)
+      || days < AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN || days > AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX) {
+      issues.push({
+        field: `${at}.promise_follow_up_days`,
+        message: `The follow-up must be a whole number of days from ${AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN} to ${AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX} after the promised date.`,
+      });
+    } else if (asks !== true) {
+      issues.push({
+        field: `${at}.promise_follow_up_days`,
+        message: 'A follow-up after the promised date needs the outcome to ask for a promise to pay.',
+      });
+    }
+  }
+  if (asks === true) {
+    if (entry['requires_datetime'] === true) {
+      issues.push({
+        field: `${at}.requires_promise`,
+        message: 'An outcome cannot ask for both a promise to pay and a callback time. To call the customer after the promised date, set a follow-up on the promise instead.',
+      });
+    }
+    if (entry['suppress'] === true) {
+      issues.push({
+        field: `${at}.requires_promise`,
+        message: 'An outcome that stops the number being called cannot record a promise to pay.',
+      });
+    }
+    if (days !== undefined) {
+      if (entry['retry'] !== undefined && entry['retry'] !== null) {
+        issues.push({
+          field: `${at}.promise_follow_up_days`,
+          message: 'An outcome with a follow-up after the promised date cannot also retry: choose one way to call the customer again.',
+        });
+      }
+      if (entry['terminal'] === true) {
+        issues.push({
+          field: `${at}.promise_follow_up_days`,
+          message: 'A closing outcome cannot book a follow-up: the contact is finished, so it would never be called.',
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+function validateDispositionCatalog(catalog: unknown, allowOverride: boolean, allowPromise = true): CampaignConfigIssue[] {
   if (!Array.isArray(catalog)) {
     return [{ field: 'disposition_catalog', message: 'disposition_catalog must be an array.' }];
   }
@@ -479,6 +571,7 @@ function validateDispositionCatalog(catalog: unknown, allowOverride: boolean): C
     }
 
     issues.push(...dispositionOverrideIssues(entry, at, allowOverride));
+    issues.push(...dispositionPromiseIssues(entry, at, allowPromise));
   });
 
   return issues;
@@ -655,6 +748,7 @@ export function validateAgencyCampaignConfig(
     issues.push(...validateDispositionCatalog(
       record['disposition_catalog'],
       options.allowDispositionOverride ?? true,
+      options.allowPromise ?? true,
     ));
   }
   issues.push(...validateOutcomeDispositions(record, base));
@@ -759,7 +853,10 @@ export function validateOutcomeDispositions(
       ? hasMap
         ? `'${code}' is not in this campaign's outcome list. Pick an outcome from the list for ${calls}.`
         : `The outcome list no longer has '${code}', the automatic outcome for ${calls}. Choose another automatic outcome for them first.`
-      : `'${code}' ${refusal === 'suppress' ? 'stops the number being called' : 'closes the contact'}, so it cannot be the automatic outcome for ${calls}: ${AUTO_OUTCOME_IS_A_LABEL}.`;
+      : refusal === 'promise'
+        // PT11: nobody spoke to the customer, so nothing was promised.
+        ? `'${code}' records a promise to pay, so it cannot be the automatic outcome for ${calls}: nobody spoke to the customer on those calls, so there is no promise to record.`
+        : `'${code}' ${refusal === 'suppress' ? 'stops the number being called' : 'closes the contact'}, so it cannot be the automatic outcome for ${calls}: ${AUTO_OUTCOME_IS_A_LABEL}.`;
     issues.push({ field: `outcome_dispositions.${outcome}`, message });
   }
   return issues;

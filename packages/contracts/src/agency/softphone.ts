@@ -382,6 +382,12 @@ export interface AgencyManualCall {
   notes: string | null;
   /** ISO-8601; a callback asked for in the outcome. */
   callback_at: string | null;
+  /**
+   * The promise to pay saved with the outcome (PT1): `YYYY-MM-DD` and a two-place decimal
+   * string, or null. Optional on the wire: a server that predates it sends nothing.
+   */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   fields: AgencyCallFieldValues;
   /** Who saved the outcome, which is not always who took the call. */
   dispositioned_by_user_id: string | null;
@@ -647,6 +653,13 @@ export interface AgencyManualCallDispositionRequest extends AgencyActorFields {
   notes?: string;
   /** ISO-8601. Required when the catalog entry sets `requires_datetime`. */
   callback_at?: string;
+  /**
+   * Promise to pay (PT1, PT4, PT5): `YYYY-MM-DD`, required when the catalog entry sets
+   * `requires_promise` and refused on any other; the amount optional, a decimal string ≥ 0
+   * with at most two places. As on the station's `AgencyDispositionRequest`.
+   */
+  promise_date?: string;
+  promise_amount?: string;
   /** Saved with the outcome, replacing the stored values; required fields must be filled. */
   fields?: AgencyCallFieldValues;
 }
@@ -773,7 +786,22 @@ export interface AgencySoftphoneOutsideHoursRefusal extends AgencySoftphoneError
  */
 export interface AgencySoftphoneDispositionInvalidRefusal extends AgencySoftphoneErrorResponse {
   code: 'disposition_invalid';
-  reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+  reason:
+    | 'unknown_code'
+    | 'note_required'
+    | 'datetime_required'
+    | 'invalid_callback_at'
+    | 'promise_required'
+    | 'invalid_promise_date'
+    | 'invalid_promise_amount'
+    | 'promise_not_expected'
+    /**
+     * A promise outcome on a call that did not claim a roster contact (PT13): untagged calls
+     * never see one (PT10), and a tagged call whose number is not on the roster, or whose
+     * contact it only linked, has no contact it settles to keep the promise or book its
+     * follow-up on. The pads hide promise entries on such calls (`contact.claimed`).
+     */
+    | 'promise_needs_contact';
 }
 
 /**

@@ -5,7 +5,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from 'react';
-import { findDisposition, type DispositionFormState } from '../../utils/agencyDispositionForm';
+import { findDisposition, localDay, type DispositionFormState } from '../../utils/agencyDispositionForm';
+import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
+import { addDays, formatPromiseDay } from '@magick-agency/domain/promise-to-pay';
+import { formatPromise } from '../../utils/format/promise';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import type { AgencyDisposition } from '../../types/agency';
 import styles from './DispositionPad.module.css';
@@ -51,6 +54,19 @@ export const CATALOG_CHANGED_COPY = "This campaign's outcomes changed. Pick one 
  */
 export const CALLBACK_GROUND_TRUTH_COPY =
   'The callback goes back into the campaign queue. It may not be you who makes it.';
+
+/**
+ * Promise to pay (PT1, PT3): what the row asks, and what saving it does. A promise books no
+ * call unless the outcome says so, and the agent is told which, because they are about to say
+ * it to the customer.
+ */
+export const PROMISE_TITLE_COPY = 'When will the customer pay?';
+export const PROMISE_NO_CALL_COPY = 'Saving a promise doesn’t book a call.';
+export function promiseFollowUpCopy(days: number): string {
+  return `We’ll call again ${days} day${days === 1 ? '' : 's'} after this date, in calling hours.`;
+}
+/** Whose calendar the date is on (the server checks it against the customer's today). */
+export const PROMISE_DATE_NOTE_COPY = 'The date is the customer’s, as they said it.';
 
 /** the pad's own labels are the only trustworthy guide after a re-sync. */
 export const KEYS_REMAPPED_COPY = 'The number keys have moved. Read the labels for this one.';
@@ -289,6 +305,100 @@ export function DispositionPad({
           groundTruth={callbackNote}
         />
       ) : null}
+
+      {/* Promise to pay (PT1): in the pad, like the callback row, for the same reason. */}
+      {selected?.requires_promise ? (
+        <PromiseRow
+          date={form.promiseDate ?? null}
+          amount={form.promiseAmount ?? ''}
+          followUpDays={selected.promise_follow_up_days}
+          now={now}
+          enabled={enabled}
+          onChange={(patch) => onChange({ ...form, ...patch })}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function PromiseRow({
+  date,
+  amount,
+  followUpDays,
+  now,
+  enabled,
+  onChange,
+}: {
+  date: string | null;
+  amount: string;
+  followUpDays: number | undefined;
+  now: () => number;
+  enabled: boolean;
+  onChange: (patch: Pick<DispositionFormState, 'promiseDate'> | Pick<DispositionFormState, 'promiseAmount'>) => void;
+}) {
+  const today = localDay(now());
+  const chips = [
+    { label: 'Today', date: formatPromiseDay(today) },
+    { label: 'Tomorrow', date: formatPromiseDay(addDays(today, 1)) },
+    { label: 'In a week', date: formatPromiseDay(addDays(today, 7)) },
+  ];
+  return (
+    <div className={styles.callback} data-testid="promise-row">
+      <p className={styles.callbackTitle}>{PROMISE_TITLE_COPY}</p>
+      <div className={styles.chips}>
+        {chips.map((chip) => (
+          <button
+            key={chip.label}
+            type="button"
+            className={styles.chip}
+            aria-disabled={!enabled || undefined}
+            data-selected={chip.date === date ? 'true' : undefined}
+            onClick={() => {
+              if (!enabled) return;
+              onChange({ promiseDate: chip.date });
+            }}
+          >
+            {chip.label}
+          </button>
+        ))}
+        <label className={styles.pick}>
+          <span className={styles.pickLabel}>Pick…</span>
+          <input
+            type="date"
+            className={styles.pickInput}
+            value={date ?? ''}
+            // One day either side of the agent's own today: the server judges the customer's.
+            min={formatPromiseDay(addDays(today, -1))}
+            max={formatPromiseDay(addDays(today, AGENCY_PROMISE_MAX_DAYS_AHEAD + 1))}
+            aria-label="Promised payment date"
+            disabled={!enabled}
+            onChange={(event) => onChange({ promiseDate: event.target.value || null })}
+          />
+        </label>
+      </div>
+      <label className={styles.pick}>
+        <span className={styles.pickLabel}>Amount (optional)</span>
+        <input
+          type="text"
+          inputMode="decimal"
+          className={styles.pickInput}
+          value={amount}
+          placeholder="e.g. 12500"
+          aria-label="Promised amount"
+          autoComplete="off"
+          disabled={!enabled}
+          onChange={(event) => onChange({ promiseAmount: event.target.value })}
+        />
+      </label>
+      {date ? (
+        <p className={styles.resolved} data-testid="promise-resolved">
+          {formatPromise({ date, amount: amount.trim() || null })}
+        </p>
+      ) : null}
+      <p className={styles.timezoneNote}>{PROMISE_DATE_NOTE_COPY}</p>
+      <p className={styles.groundTruth} data-testid="promise-ground-truth">
+        {followUpDays ? promiseFollowUpCopy(followUpDays) : PROMISE_NO_CALL_COPY}
+      </p>
     </div>
   );
 }

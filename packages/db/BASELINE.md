@@ -1438,6 +1438,97 @@ stays (0035 keeps it for rollback). **Down** re-creates them as 0001 defined the
 `test/integration/db/drop-duplicate-indexes-migration.test.ts` (gone, each lookup's plan on its
 covering index, down then up) and the down → up inventory suite.
 
+### 0041 — `migrations/0041_promise_to_pay.sql`
+
+Promise to pay (decisions PT1–PT14). `agency_call_attempts`, `agency_manual_calls` and
+`agency_inbound_calls` each get **`promise_date DATE`** and **`promise_amount NUMERIC(14,2)`**
+(exact, no currency), recorded with the call's outcome; `ck_agency_attempt_promise`,
+`ck_agency_manual_call_promise`, `ck_agency_inbound_call_promise`: a promise needs an outcome, an
+amount needs a date and is not negative. `agency_contacts` carries its **latest**
+promise, denormalised so the Contacts list reads it without the calls: `promise_date`,
+`promise_amount`, **`promise_due_from` / `promise_due_until`** (the promised day's start and the
+next day's start in the customer's zone, computed by the server, so the list's state is a
+comparison of instants with no zone arithmetic in SQL), **`promise_call_at`** (when the recording
+call started: a later call's promise replaces it, the same call's replay corrects it) and
+**`promise_followed_up_at`** (a later call's outcome on or after the day: "followed up", else
+"missed"; a replay of the promise's own call that keeps its date keeps the mark);
+`ck_agency_contact_promise` keeps them all-or-none. All four CHECKs are added NOT VALID
+(new NULL columns; enforced on writes, no scan), so the file is catalogue changes only under
+ACCESS EXCLUSIVE; 0044 validates the CHECKs and 0045 builds the list's index (the list filters by
+promise, it is not ordered by it). **Down** drops the CHECKs and columns (the promises are lost;
+outcomes stay). **Tests**: `test/integration/db/promise-to-pay-migration.test.ts` (column types,
+each CHECK, NOT VALID, no index of its own, down then up) and the down → up inventory suite.
+
+### 0042 — `migrations/0042_ingest_check_and_skipped.sql`
+
+Contact import, check then import, and the rows a re-import skips (rulings IM1–IM7). On
+**`agency_ingest_jobs`**: `skipped` `BIGINT NOT NULL DEFAULT 0` (rows the campaign already held,
+skipped rather than rejected: `accepted + skipped + rejected = rows_read`), `skipped_s3_key`
+`TEXT NULL`, `skipped_row_count` `INTEGER NOT NULL DEFAULT 0`, `skipped_truncated` `BOOLEAN NOT
+NULL DEFAULT FALSE` (the skipped-rows download, as for the rejected rows), `dnc_by_scope` `JSONB NOT
+NULL DEFAULT '{}'` (Do Not Call rejections by the widest scope that suppressed them),
+`rejected_sample` `JSONB NOT NULL DEFAULT '[]'` (the first 20 rejected rows for the review screen:
+line, column, the phone cell, code, reason), and `check_job_id` `UUID NULL` → `agency_ingest_jobs(id)
+ON DELETE SET NULL` (the check an import was started from). CHECKs
+`ck_agency_ingest_jobs_skipped` (non-negative), `ck_agency_ingest_jobs_dnc_by_scope` (an object),
+`ck_agency_ingest_jobs_rejected_sample` (an array). **`uq_agency_ingest_jobs_check_job`** on
+`(check_job_id) WHERE check_job_id IS NOT NULL AND status IN ('pending', 'running', 'completed')`:
+one import holds a check at a time; a failed or cancelled import lets it go (it keeps its
+`check_job_id`), so the check can be imported again while valid. Every existing row reads as an
+import that skipped nothing. Written only through the widest tier of the repository's write
+ladders, so the server runs on a schema without them, except importing a checked file, which
+refuses 409 `check_import_unavailable` there; a server before 0042 names none of them.
+**Down** drops the index, the CHECKs and the columns. **Tests**:
+`test/integration/db/ingest-check-and-skipped-migration.test.ts` (shapes and defaults, the CHECKs,
+the unique index and the `SET NULL`, down then up) and the down → up inventory suite.
+
+### 0043 — `migrations/0043_recording_honours_request.sql`
+
+No schema change (RC1). From this release a call whose `recording_requested` is false has no
+recording: `agency-call.repository.ts`'s `update` stores a non-null `recording_url` only on a row
+that asked for one, and every read takes the URL through one predicate (`recordingUrlSql`,
+`hasRecordingSql`, `honourRecordingRequest`). The Insights rollup had already counted such calls
+as recorded, so the Up marks the bucket of every attempt whose call holds a URL it did not ask
+for in `agency_insights_rollup_dirty`, and the job recomputes it. The migration writes no URL; the
+retention purge clears them (RC5, `docs/operations.md`; its index is 0046's). One read of
+`agency_calls`.
+**Down** is a no-op. **Tests**: `test/integration/db/recording-honours-request-migration.test.ts`
+(only those buckets marked, the URLs kept, down then up) and the down → up inventory suite.
+
+### 0044 — `migrations/0044_promise_checks_validate.sql`
+
+Validates 0041's four `NOT VALID` CHECKs (`ck_agency_attempt_promise`,
+`ck_agency_manual_call_promise`, `ck_agency_inbound_call_promise`, `ck_agency_contact_promise`) in
+its own transaction under SHARE UPDATE EXCLUSIVE (0010's and 0025's pattern). Down is a no-op.
+**Tests**: `test/integration/db/promise-to-pay-migration.test.ts` (NOT VALID after 0041 alone,
+validated after 0044), `contact-assignment-migration.test.ts` (no CHECK on the contact tables left
+unvalidated) and the down → up inventory suite.
+
+### 0045 — `migrations/0045_promise_contacts_index.sql`
+
+**`idx_agency_contacts_promise`** `(campaign_id, promise_date) WHERE promise_date IS NOT NULL`:
+the Contacts list's promise filter and "Promised for" order (PT6), the size of the promises rather
+than the roster. Its own transaction, after 0041's ACCESS EXCLUSIVE is released: a plain build
+(a SQL migration runs in a transaction, where `CONCURRENTLY` is refused) under SHARE, reads
+proceed; on the release that adds 0041 every `promise_date` is NULL, so it is one read of the roster
+writing an empty index. It cannot be built beforehand on a database without 0041 (the column is
+0041's). `IF NOT EXISTS`, and a `DO` block fails the migration on an invalid index left by a failed
+concurrent build (0039's pattern). **Down** drops it. **Tests**:
+`test/integration/db/promise-to-pay-migration.test.ts` (the definition, 0041 alone builds none, the
+invalid-index refusal, down then up) and the down → up inventory suite.
+
+### 0046 — `migrations/0046_unrequested_recordings_index.sql`
+
+**`idx_agency_calls_recording_unrequested`** `(id) WHERE recording_url IS NOT NULL AND NOT
+recording_requested`: the retention purge's recording step (RC5, `purgeUnrequestedRecordings`), a
+keyset walk by id over the calls still holding a link they did not ask for; partial, so after the
+first run clears the rows from before RC1 it holds none. The predicate is spelled as the purge's.
+`IF NOT EXISTS`, so a deployment with a large `agency_calls` can build it `CONCURRENTLY` first
+(`db-hygiene.md` §2); a `DO` block fails the migration on an invalid one. **Down** drops it.
+**Tests**: `test/integration/db/unrequested-recordings-index-migration.test.ts` (the definition,
+the purge's batch read on it in its keyset order, the invalid-index refusal, down then up) and the
+down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

@@ -19,6 +19,7 @@
  */
 
 import type * as Core from '../../agency';
+import type { AgencyPromiseFilter } from '../../agency/promise';
 import type { AgencyAttemptOutcome, AgencyAttemptState } from './agency';
 // Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
 import type {
@@ -152,6 +153,11 @@ export interface AgencyContactFilters {
   waiting?: AgencyContactWaiting;
   /** At least one dial placed (`1`) or none (`0`). Not a retry dimension. */
   attempted?: AgencyListFlag;
+  /**
+   * Promise to pay (PT7): `any` (contacts holding a promise) and/or the states. Repeated, ORed.
+   * Not a retry dimension: "promised to pay" is a fact that moves with the calendar.
+   */
+  promise?: AgencyPromiseFilter[];
 }
 
 /** The `assigned_to` filter value that selects contacts in the shared pool (no owner). */

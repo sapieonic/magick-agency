@@ -315,8 +315,9 @@ export type AgencyStall =
   | {
       code: 'dnc_unavailable';
       /**
-       * Per-tenant, not per-campaign: the DNC set is tenant-flat, so
-       * every campaign in the tenant is stopped by the same fault.
+       * Per-tenant, not per-campaign: every campaign's dial-time check reads the one
+       * `dnc_entries` table (decision B8), so a fault reading it stops every campaign
+       * in the tenant at once.
        */
       tenant_wide: true;
     }
@@ -397,6 +398,25 @@ export interface AgencyCampaignConcurrency {
   account_live: number;
   /** Campaigns in status `running` on the account, this one included when it runs. */
   running_campaigns: number;
+}
+
+/**
+ * Soft-phone calls tagged to a campaign (decisions SR1–SR3, docs/softphone.md §2): the soft
+ * phone's ONE campaign definition, served beside the dialler's figures and never folded into
+ * them. Agents choose whom to ring on the soft phone, so a blended connect rate would not
+ * measure the dialler. An untagged call belongs to no campaign and is in none of these (SR4).
+ *
+ * Counts only; the console derives the soft phone's connect rate (`human_connects` over
+ * `placed`: every soft-phone call is a first dial, it has no wrap-up redials) and the "All
+ * calls" figures (the dialler's counts plus these).
+ */
+export interface AgencySoftphoneCampaignCounts {
+  /** The dial was sent (`dialed_at` set). A dial that failed before it was sent is not counted. */
+  placed: number;
+  /** Outcome `connected`, the dialler's Connected figure's rule; set when the call ends. */
+  connected: number;
+  /** Bridged and written up with neither voicemail nor `no_disposition`: the connect rate's numerator. */
+  human_connects: number;
 }
 
 export interface AgencyCampaignStats {
@@ -569,6 +589,12 @@ export interface AgencyCampaignStats {
    * counts redials and queued rows never placed).
    */
   first_dials_placed: number;
+  /**
+   * The campaign's tagged soft-phone calls over its whole life ({@link AgencySoftphoneCampaignCounts},
+   * SR1–SR3): beside the dialler's figures above, never in them. Served whatever the soft
+   * phone's flag says; the console shows them while the flag is on or when there are any (SR5).
+   */
+  softphone: AgencySoftphoneCampaignCounts;
 
   /**
    * Bridged attempts whose disposition maps to a catalog entry flagged
@@ -788,6 +814,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   machine_connects_available: true,
   connect_rate_pct: true,
   first_dials_placed: true,
+  softphone: true,
   attempts_success: true,
   success_rate_pct: true,
   aht_seconds: true,

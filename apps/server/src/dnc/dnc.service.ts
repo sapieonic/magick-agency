@@ -8,8 +8,11 @@ import {
   type DncSearchShortfall,
 } from '@magick-agency/domain/dnc-search';
 import {
+  dncEntryScope,
   dncRepository,
+  type DncEntryNames,
   type DncEntryRecord,
+  type DncEntryScope,
   type DncListFilter,
   type DncLookupScope,
   type DncPhoneSearch,
@@ -47,8 +50,13 @@ const log = createChildLogger({ component: 'dnc-service' });
 /** Cap on one add request. Bulk regulator lists go through the same route. */
 export const DNC_ADD_MAX_NUMBERS = 1_000;
 
-/** Per-number outcome of an add. `already_present` is a success. */
-export type DncAddOutcome = 'added' | 'already_present' | 'invalid_phone';
+/**
+ * Per-number outcome of an add. `already_present` and `already_covered` are successes:
+ * `already_present` found the number listed at exactly this scope, `already_covered` found a
+ * WIDER entry that already blocks it here (every campaign, or the campaign's account) and wrote
+ * nothing (DS4).
+ */
+export type DncAddOutcome = 'added' | 'already_present' | 'already_covered' | 'invalid_phone';
 
 export interface DncAddResult {
   /** The input string, unchanged, so the caller can point at the row they sent. */
@@ -74,6 +82,12 @@ export interface DncAddResult {
    * need not match this request at all.
    */
   campaign_id?: string | null;
+  /**
+   * How far that row reaches (`dncEntryScope`), read from the row like `campaign_id`. On
+   * `already_covered` it is the WIDER entry's reach, which is what the console names ("already
+   * blocked in every campaign"). Absent for `invalid_phone`.
+   */
+  scope?: DncEntryScope;
 }
 
 export interface DncAddRequest {
@@ -85,14 +99,25 @@ export interface DncAddRequest {
   source: DncSource;
   reason?: string | null;
   addedBy?: string | null;
+  /**
+   * The account a narrower add reaches, for the "already covered" check (DS4): the account
+   * row's own, or the campaign's account for a campaign row. Absent: no check, every number is
+   * written at the scope asked (a tenant-wide add needs none).
+   */
+  coverAccountId?: string | null;
 }
 
 export interface DncAddSummary {
   added: number;
   already_present: number;
+  /** Numbers a wider entry already blocks in the scope asked for; nothing was written for them. */
+  already_covered: number;
   invalid: number;
   results: DncAddResult[];
 }
+
+/** A list entry with the words its scope is named by (DS7). */
+export type DncListedEntry = DncEntryRecord & DncEntryNames;
 
 /**
  * The list could not be consulted.
@@ -222,6 +247,7 @@ export class DncService {
             reason: request.reason ?? null,
             added_by: request.addedBy ?? null,
             phones: distinct,
+            ...(request.coverAccountId !== undefined ? { coverage: { accountId: request.coverAccountId } } : {}),
           })
         : { results: [] };
 
@@ -238,8 +264,10 @@ export class DncService {
       // makes the counters claim three suppressions where one happened — and
       // reconciling against the rows the operator sent is the summary's only job.
       // It is also simply true by then: the first copy put it on the list.
-      const outcome: DncAddOutcome =
-        row.created && !reported.has(phone) ? 'added' : 'already_present';
+      // A covered number is `already_covered` on every copy: nothing was written for it.
+      const outcome: DncAddOutcome = row.covered
+        ? 'already_covered'
+        : row.created && !reported.has(phone) ? 'added' : 'already_present';
       reported.add(phone);
       // `row.entry` is the row that is on the list — the one just inserted, or the
       // pre-existing one the conflict resolved to. Its scope is therefore the
@@ -251,12 +279,14 @@ export class DncService {
         phone_e164: phone,
         entry_id: row.entry.id,
         campaign_id: row.entry.campaign_id,
+        scope: dncEntryScope(row.entry),
       };
     });
 
     const summary: DncAddSummary = {
       added: results.filter((r) => r.outcome === 'added').length,
       already_present: results.filter((r) => r.outcome === 'already_present').length,
+      already_covered: results.filter((r) => r.outcome === 'already_covered').length,
       invalid: results.filter((r) => r.outcome === 'invalid_phone').length,
       results,
     };
@@ -272,6 +302,7 @@ export class DncService {
         source: request.source,
         added: summary.added,
         alreadyPresent: summary.already_present,
+        alreadyCovered: summary.already_covered,
         invalid: summary.invalid,
       },
       'DNC entries added',
@@ -313,8 +344,32 @@ export class DncService {
     }
   }
 
-  async list(filter: DncListFilter): Promise<{ entries: DncEntryRecord[]; total: number }> {
-    return dncRepository.list(filter);
+  /**
+   * Which list each suppressed number is on (its widest entry's scope), for the
+   * roster import's wording only. NOT a gate: {@link filterSuppressed} decides; a
+   * number it suppressed and this cannot place is still suppressed. Throws on a
+   * lookup failure like any read; the caller decides what a missing label costs.
+   */
+  async suppressionScopes(
+    scope: DncLookupScope,
+    phones: readonly string[],
+  ): Promise<Map<string, 'tenant' | 'account' | 'campaign'>> {
+    return dncRepository.findSuppressionScopes(scope, phones);
+  }
+
+  /** The list, each entry with the words its scope is named by (DS7). */
+  async list(filter: DncListFilter): Promise<{ entries: DncListedEntry[]; total: number }> {
+    const { entries, total } = await dncRepository.list(filter);
+    const names = entries.length > 0 ? await dncRepository.describeScopes(filter.tenantId, entries) : new Map();
+    return {
+      entries: entries.map((entry) => ({
+        ...entry,
+        ...(names.get(entry.id) ?? {
+          scope: dncEntryScope(entry), scope_account_id: entry.account_id, account_name: null, campaign_name: null,
+        }),
+      })),
+      total,
+    };
   }
 
   async getById(id: string, tenantId: string): Promise<DncEntryRecord | null> {

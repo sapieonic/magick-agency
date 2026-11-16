@@ -22,13 +22,13 @@ import { errorCode } from './agencyErrors';
  * harder-to-reach control an agent must choose on purpose. Absent `scope` is
  * defined server-side as campaign-scoped too, so an older client that sends
  * neither fails safe into the narrower reading rather than escalating by
- * accident; the API additionally floors `scope: 'tenant'` at `agency.dnc.manage`.
+ * accident; the API additionally floors `scope: 'tenant'` at `agency.dnc.manage` on a
+ * membership of the whole organisation (DS3).
  *
- * The tenant-wide scope is still genuinely tenant-wide: The API's
- * `/internal/agency/dnc` **refuses** an `account_id` rather than ignoring it,
- * precisely because an account-scoped row never enters the server's flat
- * `dnc:{tenantId}` Redis set and so would never suppress a dial. So that
- * escalation's confirmation may say "any campaign in this workspace" — but only
+ * The tenant-wide scope is genuinely tenant-wide: the mark writes a `dnc_entries` row
+ * with no account and no campaign, and the dial-time check reads that table itself,
+ * widened by scope (decision B8; there is no copy of the list anywhere else). So that
+ * escalation's confirmation may say "any campaign in this organisation" — but only
  * once `dnc_recorded` says the list write landed. Until then the honest claim is
  * the narrower one the server can make on its own: this campaign will not dial them
  * again.
@@ -75,31 +75,41 @@ export function dncTenantConfirmHint(phoneE164: string): string {
 }
 
 /**
+ * Why a campaign entry could not be written, and what that leaves open: the tail of every
+ * `dnc_recorded: false` sentence for this campaign's list (the Mark DNC button's and a suppress
+ * outcome's).
+ */
+export const DNC_CAMPAIGN_NOT_LISTED =
+  'It couldn’t go on this campaign’s Do Not Call list because the number isn’t in a form the list can hold, so a new upload could bring it back. Ask an admin to check the number.';
+
+/**
+ * A saved outcome that suppresses (DS8) whose Do Not Call entry could not be written
+ * (`dnc_recorded: false` on the disposition answer): only this contact is suppressed, so say
+ * that and no more. On `true` or absent nothing is added (absent: no entry was attempted).
+ */
+export const SUPPRESS_OUTCOME_NOT_LISTED = `This contact won’t be dialled again. ${DNC_CAMPAIGN_NOT_LISTED}`;
+
+/**
  * What to tell the agent once it lands. Scoped to what the agent actually chose
  * AND to what the response promised — `dnc_recorded: false` on the tenant-wide
  * escalation means the wider row is still in flight, so the wider promise is
  * not yet true. Claiming it anyway is exactly the overstatement that rule forbids,
  * and it is the claim an agent may repeat to the customer.
  *
- * **The campaign-scoped mark reads `dnc_recorded` too**, and the reason it once
- * did not is the reason it must. The old justification — "the server suppresses the
- * contact directly, so the promise is true on any success response" — is true of
- * the ROSTER and false of the LIST, and the sentence named the list. The server writes
- * the roster rows `suppressed` itself, then forwards to the API; when that forward
- * cannot land (the server unreachable, or a status the server's `PERMANENT_REJECTION_STATUSES`
- * treats as permanent, which abandons the outbox row) it still answers
- * `200 { contact_state: 'suppressed', dnc_recorded: false }`. No entry exists on
- * any list. The server's own abandon log states the consequence: the campaign's current
- * roster rows are suppressed, but nothing on record stops a re-upload of that
- * number into the same campaign — so it is dialled again at the next top-up,
- * after the agent read the promise out loud.
+ * **The campaign-scoped mark reads `dnc_recorded` too**: it is true of the ROSTER
+ * and of the LIST only when the list row landed. The server writes the roster rows
+ * `suppressed` and the `dnc_entries` row in one transaction (B8), so a failed write
+ * is a 5xx; `200 { dnc_recorded: false }` means the roster number was not usable
+ * E.164 and no entry could be written. The campaign's current roster rows are
+ * suppressed, but nothing on the list stops a re-upload of that number into the same
+ * campaign, so the copy must not claim the list.
  */
 export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): string {
   if (scope === 'campaign') {
     if (response.dnc_recorded) {
       return `${response.phone_e164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.`;
     }
-    return `${response.phone_e164} won’t be dialled again by this campaign’s current contacts. We’re still adding it to this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.`;
+    return `${response.phone_e164} won’t be dialled again by this campaign’s current contacts. ${DNC_CAMPAIGN_NOT_LISTED}`;
   }
   if (response.dnc_recorded) {
     /*
@@ -113,7 +123,7 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
     */
     return `${response.phone_e164} is on your Do Not Call list. No agency campaign in this organisation will dial it again.`;
   }
-  return `${response.phone_e164} won’t be dialled again by this campaign. We’re still adding it to your organisation’s Do Not Call list — check the list if you need to be sure.`;
+  return `${response.phone_e164} won’t be dialled again by this campaign. It couldn’t go on your organisation’s Do Not Call list because the number isn’t in a form the list can hold. Ask an admin to check the number.`;
 }
 
 /**

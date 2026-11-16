@@ -55,8 +55,18 @@ import { runRetentionPurge, isPurgeRunning } from '../../../src/maintenance/rete
 const DAY = 24 * 60 * 60 * 1000;
 
 /** Default query mock: every DELETE removes fewer rows than a batch, partitions listed above. */
-function mockQueries(opts: { deleteRowCounts?: number[]; updateRowCount?: number; voicemails?: Array<{ id: string; voicemail_key: string }> } = {}) {
+function mockQueries(opts: {
+  deleteRowCounts?: number[];
+  updateRowCount?: number;
+  voicemails?: Array<{ id: string; voicemail_key: string }>;
+  /** The recording step's batches (RC5): rows each one picks; the last id is `rec-<n>`. Then none. */
+  recordingBatches?: number[];
+  /** Makes the recording step's batch statement throw. */
+  recordingError?: Error;
+} = {}) {
   const deleteRowCounts = [...(opts.deleteRowCounts ?? [])];
+  const recordingBatches = [...(opts.recordingBatches ?? [])];
+  let recordingBatch = 0;
   let voicemails = [...(opts.voicemails ?? [])];
   mocks.query.mockImplementation(async (sql: string, values: unknown[] = []) => {
     if (sql.trimStart().startsWith('SELECT count')) {
@@ -81,6 +91,12 @@ function mockQueries(opts: { deleteRowCounts?: number[]; updateRowCount?: number
     }
     if (sql.trimStart().startsWith('UPDATE agency_calls')) {
       return { rows: [], rowCount: opts.updateRowCount ?? 0 };
+    }
+    if (sql.trimStart().startsWith('WITH picked AS MATERIALIZED')) {
+      if (opts.recordingError) throw opts.recordingError;
+      const n = recordingBatches.shift() ?? 0;
+      recordingBatch += 1;
+      return { rows: [{ picked: n, cleared: n, last_id: n > 0 ? `rec-${recordingBatch}` : null }], rowCount: 1 };
     }
     throw new Error(`Unexpected query: ${sql}`);
   });
@@ -162,7 +178,8 @@ describe('runRetentionPurge (agency slice)', () => {
     mockQueries();
     await runRetentionPurge();
 
-    const updates = mocks.query.mock.calls.filter((c) => (c[0] as string).trimStart().startsWith('UPDATE agency_calls'));
+    // The transcript step's statement: the recording step (RC5) is an UPDATE of agency_calls too.
+    const updates = mocks.query.mock.calls.filter((c) => (c[0] as string).includes('SET conversation_log = NULL'));
     expect(updates).toHaveLength(1);
     const cutoff = ((updates[0]![1] as unknown[])[0] as Date).getTime();
     expect(cutoff).toBe(Date.now() - 30 * DAY);
@@ -174,7 +191,7 @@ describe('runRetentionPurge (agency slice)', () => {
     mockQueries();
     await runRetentionPurge();
 
-    const update = executedSql().find((s) => s.startsWith('UPDATE agency_calls'))!;
+    const update = executedSql().find((s) => s.startsWith('UPDATE agency_calls') && s.includes('conversation_log'))!;
     expect(update).toContain('SET conversation_log = NULL, transcript_meta = NULL');
     expect(update).not.toContain('call_analysis');
     expect(update).not.toContain('analysis_status');
@@ -185,8 +202,68 @@ describe('runRetentionPurge (agency slice)', () => {
   it('runs no transcript step when the transcript window is unset', async () => {
     mockQueries();
     const report = await runRetentionPurge();
-    expect(executedSql().some((s) => s.startsWith('UPDATE'))).toBe(false);
+    expect(executedSql().some((s) => s.startsWith('UPDATE') && s.includes('conversation_log'))).toBe(false);
     expect(report.agency_transcripts_nulled).toBe(0);
+  });
+
+  it('clears recording links on calls that did not ask for one, every run, whatever the windows (RC5)', async () => {
+    mocks.config.retention.agencyRetentionDays = undefined;
+    mocks.config.retention.agencyTranscriptRetentionDays = undefined;
+    mockQueries({ recordingBatches: [4] });
+    const report = await runRetentionPurge();
+    const update = executedSql().find((s) => s.includes('SET recording_url = NULL'))!;
+    expect(update).toContain('SET recording_url = NULL, recording_duration_seconds = NULL');
+    // Only links the call did not ask for, and only rows still carrying one.
+    expect(update).toContain('recording_url IS NOT NULL AND NOT recording_requested');
+    // The claim shape packages/db/CLAUDE.md prescribes: the batch is exactly the rows picked.
+    expect(update).toMatch(/^WITH picked AS MATERIALIZED \( SELECT id FROM agency_calls WHERE .* ORDER BY id LIMIT \$1 FOR UPDATE SKIP LOCKED \)/);
+    expect(update).not.toContain('WHERE id IN');
+    expect(report.unrequested_recordings_cleared).toBe(4);
+    expect(report.unrequested_recordings_error).toBeUndefined();
+  });
+
+  it('walks the recording step by id until a batch picks fewer than a full one, counting what each cleared', async () => {
+    mocks.config.retention.agencyRetentionDays = undefined;
+    mockQueries({ recordingBatches: [5000, 5000, 3] });
+    const report = await runRetentionPurge();
+    const batches = mocks.query.mock.calls.filter((c) => (c[0] as string).startsWith('WITH picked'));
+    // Starts below every id, then after the last id of each batch: no batch re-reads a cleared row.
+    expect(batches.map((c) => c[1])).toEqual([
+      [5000, '00000000-0000-0000-0000-000000000000'], [5000, 'rec-1'], [5000, 'rec-2'],
+    ]);
+    expect(report.unrequested_recordings_cleared).toBe(10003);
+  });
+
+  it('a failed recording step is its own: logged and reported, the transcript and voicemail steps still run (RC5)', async () => {
+    mocks.config.retention.slackWebhookUrl = 'https://hooks.slack.com/services/T/B/x';
+    mocks.config.retention.agencyTranscriptRetentionDays = 30;
+    mocks.deleteFile.mockResolvedValue(undefined);
+    mockQueries({
+      updateRowCount: 2,
+      voicemails: [{ id: 'c-1', voicemail_key: 'inbound-voicemail/t/a/c-1.wav' }],
+      recordingError: new Error('canceling statement due to statement timeout'),
+    });
+    const report = await runRetentionPurge();
+
+    expect(report.error).toBeUndefined();
+    expect(report.unrequested_recordings_error).toBe('canceling statement due to statement timeout');
+    expect(report.unrequested_recordings_cleared).toBe(0);
+    expect(report.agency_transcripts_nulled).toBe(2);
+    expect(report.inbound_voicemails_deleted).toBe(1);
+    expect(mocks.logMock.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }), expect.stringContaining('the other retention steps still run'));
+    const payload = JSON.parse((fetch as any).mock.calls[0][1].body);
+    expect(payload.text).toContain('one step failed');
+    expect(payload.text).toContain('recording links step FAILED');
+    expect(payload.text).toContain('statement timeout');
+  });
+
+  it('counts those links without clearing them in a dry run', async () => {
+    mockQueries();
+    const report = await runRetentionPurge({ dryRun: true });
+    expect(executedSql().some((s) => s.includes('SET recording_url'))).toBe(false);
+    expect(executedSql().some((s) => s.startsWith('SELECT count') && s.includes('NOT recording_requested'))).toBe(true);
+    expect(report.unrequested_recordings_cleared).toBe(7);
   });
 
   it('reports the nulled transcripts', async () => {

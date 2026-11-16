@@ -25,12 +25,14 @@
  */
 import { getPool } from '@magick-agency/db';
 import { callSentimentLabelSql } from '@magick-agency/db/repositories/agency-call.repository';
+import { hasRecordingSql } from '@magick-agency/db/utils/recording-request';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
 import type { SentimentLabel } from '@magick-agency/contracts/api/agency/webrtc-call';
 import { REPORT_BUILD_TIMEOUT_MS } from '../../../agency/reports/datasets/types.js';
 import type { InsightsCallbackClass } from './insights-range-reads.js';
 import { CALLBACK_BOOKING_COLUMNS_SQL, callbackClassSql } from './insights-range-reads.js';
 import { INSIGHTS_MEASURES } from './insights-rollup-sql.js';
+import { SOFTPHONE_PLACED_SQL } from './softphone-campaign-sql.js';
 import {
   AGENCY_ATTEMPT_METRICS_SQL,
   AGENT_LEG_TALK_ATTEMPT_SQL,
@@ -337,6 +339,10 @@ export class AgencyReportDatasetRepository {
    * Do Not Call entries the agent wrote (`source = 'agent'`, `added_by` their user id, bare or
    * `user:`-prefixed) in the window, for this account's campaigns or tenant-wide. The tenant's
    * entries of the range on `idx_dnc_entries_tenant_created`, as Insights' DNC read takes them.
+   * "This account's" is the Do Not Call list's ownership rule (`ownedByAccountSql`, DS6): the
+   * account's own rows, and rows of its campaigns, which are stored `account_id NULL` as the
+   * station writes them; a NULL account alone would also take every other account's campaign
+   * marks. A campaign that no longer exists belongs to no account and is not counted.
    */
   async agentDncMarked(q: ReportAgentScope): Promise<number> {
     const { rows } = await getPool().query<{ n: number }>(
@@ -346,16 +352,19 @@ export class AgencyReportDatasetRepository {
           AND d.created_at >= $2::timestamptz AND d.created_at < $3::timestamptz
           AND d.source = 'agent'
           AND (d.added_by = $1::text OR d.added_by = 'user:' || $1::text)
-          AND (d.account_id = $5::uuid OR d.account_id IS NULL)`,
+          AND (d.account_id = $5::uuid
+               OR (d.account_id IS NULL AND d.campaign_id IS NULL)
+               OR (d.account_id IS NULL AND d.campaign_id IN (
+                     SELECT c.id FROM agency_campaigns c WHERE c.tenant_id = $4::uuid AND c.account_id = $5::uuid)))`,
       agentValues(q),
     );
     return n(rows[0]?.n);
   }
 
   /**
-   * Soft-phone calls the agent placed in this account: Insights' soft-phone count (`created_at`
-   * in range, `dialed_at` set) by agent instead of by campaign tag, on the manual calls' agent
-   * index.
+   * Soft-phone calls the agent placed in this account: the soft phone's one definition of placed
+   * (`SOFTPHONE_PLACED_SQL`, SR2; Insights' and `/stats`' count, `created_at` in range) by agent
+   * instead of by campaign tag, tagged or not, on the manual calls' agent index.
    */
   async agentSoftphoneCalls(q: ReportAgentScope): Promise<number> {
     const { rows } = await getPool().query<{ n: number }>(
@@ -365,7 +374,7 @@ export class AgencyReportDatasetRepository {
           AND m.account_id = $5::uuid
           AND m.agent_user_id = $1::uuid
           AND m.created_at >= $2::timestamptz AND m.created_at < $3::timestamptz
-          AND m.dialed_at IS NOT NULL`,
+          AND ${SOFTPHONE_PLACED_SQL}`,
       agentValues(q),
     );
     return n(rows[0]?.n);
@@ -558,7 +567,7 @@ export function agentCallsStatement(q: ReportAgentScope & { analysis: boolean })
   const label = callSentimentLabelSql('k.call_analysis');
   const extra = q.analysis
     ? `,
-                (k.recording_url IS NOT NULL) AS recorded,
+                ${hasRecordingSql('k')} AS recorded,
                 CASE WHEN k.analysis_status = 'completed' THEN lower(${label}) END AS sentiment`
     : '';
   const callJoin = (alias: string) => (q.analysis ? `\n           LEFT JOIN agency_calls k ON k.id = ${alias}.webrtc_call_id` : '');

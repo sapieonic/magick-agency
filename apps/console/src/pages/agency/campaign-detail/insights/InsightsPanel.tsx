@@ -5,6 +5,7 @@ import type { AsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { useTenant } from '../../../../contexts/TenantContext';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../../../hooks/useFeatureFlagEnabled';
 import { useAfterFirstPaint, useInsightsLive, useInsightsRange } from '../../../../hooks/useCampaignInsights';
 import { formatClockTime } from '../../../../utils/format/date';
 import { rangeFreshness } from '../../../../utils/agency/insights/copy';
@@ -99,6 +100,8 @@ function useStickyNeeds(view: CampaignPanelId, printing: boolean): InsightsRange
 export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, shellStatus, view, onCallbacksOverdue }: InsightsPanelProps) {
   const { search } = useLocation();
   const { tenantId, accountId } = useTenant();
+  // Soft-phone figures show while the soft phone is on, or when the range holds any (SR5).
+  const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   // The Agents tab has the floor's own stats poll: the insights reads are read once there.
   const live = useInsightsLive(campaignId, view !== 'agents');
   const summary = live.summary.data;
@@ -216,6 +219,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
     range: served.query,
     rangeLabel: served.label,
     agentName,
+    softphoneEnabled,
   };
   const staffedAgents = allocation ? allocation.agents.filter((a) => a.staffed).length : null;
   const zone = range?.timezone ?? summary.settings.timezone;

@@ -1,5 +1,6 @@
 import 'package:agency_wire/agency_wire.dart';
 
+import 'promise_rules.dart';
 import 'station_copy.dart';
 
 /// The disposition form's rules (port of `agencyDispositionForm.ts`) and the
@@ -21,6 +22,8 @@ DispositionBlock? dispositionBlock(
   required String notes,
   required DateTime? callbackAt,
   required DateTime now,
+  String? promiseDate,
+  String? promiseAmount,
 }) {
   final entry = findDisposition(catalog, code);
   if (entry == null) return DispositionBlock.noSelection;
@@ -28,6 +31,14 @@ DispositionBlock? dispositionBlock(
   if (entry.datetimeRequired) {
     if (callbackAt == null) return DispositionBlock.datetimeRequired;
     if (!callbackAt.isAfter(now)) return DispositionBlock.callbackInPast;
+  }
+  // Promise to pay (PT4, PT5): the client half of the server's rule.
+  if (entry.promiseRequired) {
+    final day = parsePromiseDay(promiseDate);
+    if (promiseDate == null || promiseDate.isEmpty) return DispositionBlock.promiseRequired;
+    if (day == null || !promiseDayAllowed(day, now)) return DispositionBlock.promiseDateInvalid;
+    final amount = promiseAmount?.trim() ?? '';
+    if (amount.isNotEmpty && normalisePromiseAmount(amount) == null) return DispositionBlock.promiseAmountInvalid;
   }
   return null;
 }
@@ -40,14 +51,31 @@ DispositionRequest? buildDispositionRequest(
   required String notes,
   required DateTime? callbackAt,
   required DateTime now,
+  String? promiseDate,
+  String? promiseAmount,
 }) {
-  if (dispositionBlock(catalog, code: code, notes: notes, callbackAt: callbackAt, now: now) != null) return null;
+  if (dispositionBlock(
+        catalog,
+        code: code,
+        notes: notes,
+        callbackAt: callbackAt,
+        now: now,
+        promiseDate: promiseDate,
+        promiseAmount: promiseAmount,
+      ) !=
+      null) {
+    return null;
+  }
   final trimmed = notes.trim();
   final entry = findDisposition(catalog, code)!;
+  // The promise only with the outcome that asks for one (the server refuses it on any other).
+  final amount = entry.promiseRequired ? normalisePromiseAmount(promiseAmount ?? '') : null;
   return DispositionRequest(
     dispositionCode: code,
     notes: trimmed.isEmpty ? null : trimmed,
     callbackAt: entry.datetimeRequired ? callbackAt : null,
+    promiseDate: entry.promiseRequired ? promiseDate : null,
+    promiseAmount: amount,
   );
 }
 

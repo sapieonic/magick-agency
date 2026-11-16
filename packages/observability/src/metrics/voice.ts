@@ -277,3 +277,46 @@ export function trackCarrierDialRefusal(
 ): void {
   safeEmit('carrier-dial-refusal', () => carrierDialRefusalsTotal.inc({ provider, kind }));
 }
+
+// ── Recordings a call did not ask for (RC1) ───────────────────────────────────
+// A carrier delivered a recording URL for a call whose `recording_requested` is false (recording
+// off for its campaign, soft phone, route or account), and the bridge discarded it: counted once
+// per call. A rising count names a carrier recording on its own default (VoiceLink is never told
+// whether to record). `provider` is a closed, code-owned set; no tenant, account or call ids (the
+// warn log names the call).
+const recordingDiscardedUnrequestedTotal = counter<'provider'>(meter, 'recording_discarded_unrequested_total', {
+  description: 'Recordings a carrier delivered for a call that did not ask for one, discarded (once per call), by provider',
+});
+
+/** Record one discarded recording (once per call). Guarded: it runs on the call teardown path. */
+export function trackRecordingDiscardedUnrequested(provider: string): void {
+  safeEmit('recording-discarded-unrequested', () => recordingDiscardedUnrequestedTotal.inc({ provider }));
+}
+
+/** Why a recording fetch did not return the audio (RC3; `recording_fetch_failures_total`'s `reason`). */
+export type RecordingFetchFailureReason =
+  | 'access_refused' | 'access_error' | 'host_not_allowed' | 'redirect_refused' | 'too_many_redirects'
+  | 'upstream_unauthorized' | 'upstream_not_found' | 'upstream_status' | 'timeout' | 'network';
+
+// ── Recording fetch failures (RC3) ────────────────────────────────────────────
+// A recording fetch that did not return the audio: the playback proxy (`surface="playback"`; the
+// console reads every reason but `access_refused` as "We could not reach the service that stores
+// this recording") or the analysis worker's fetch (`surface="analysis"`). `reason`:
+// `access_refused` (the call's credential cannot serve recordings: a 404), `access_error`
+// (resolving the access threw), `host_not_allowed` (the stored URL's host is off the carrier's
+// recording hosts), `redirect_refused` (a redirect hop's host is off them; the log names the
+// host, never the URL), `too_many_redirects`, `upstream_unauthorized` (401 or 403 from the
+// carrier), `upstream_not_found` (404 or 410), `upstream_status` (any other non-2xx), `timeout`,
+// `network`. `provider` is the call's carrier. No tenant, account or call ids.
+const recordingFetchFailuresTotal = counter<'provider' | 'surface' | 'reason'>(meter, 'recording_fetch_failures_total', {
+  description: 'Recording fetches that did not return the audio, by provider, surface (playback, analysis) and reason',
+});
+
+/** Record one failed recording fetch. Guarded: it runs on a request path. */
+export function trackRecordingFetchFailure(
+  provider: string,
+  surface: 'playback' | 'analysis',
+  reason: RecordingFetchFailureReason,
+): void {
+  safeEmit('recording-fetch-failure', () => recordingFetchFailuresTotal.inc({ provider, surface, reason }));
+}

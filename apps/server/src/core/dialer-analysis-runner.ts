@@ -41,6 +41,7 @@ import {
   dialerAnalysisDurationSeconds,
   dialerTranscriptionAudioSeconds,
 } from '@magick-agency/observability/metrics/analysis';
+import { trackRecordingFetchFailure } from '@magick-agency/observability/metrics/voice';
 import {
   trackDialerTranscription,
   trackDialerLlmAnalysis,
@@ -104,6 +105,8 @@ export interface DialerAnalysisRunnerDeps {
    * Omitted = empty = every fetch is refused (fail closed).
    */
   recordingHosts?: readonly string[];
+  /** Hosts a Plivo recording's redirect may go to (`plivoRecording.redirectHosts`, RC4). Omitted: none. */
+  plivoRedirectHosts?: readonly string[];
   /**
    * How a call's recording is fetched (hosts, headers). Omitted = the carrier table
    * of `telephony/recording-access.ts` over `recordingHosts` and this process's
@@ -137,6 +140,7 @@ export class DialerAnalysisRunner {
     this.cfg = deps.config;
     this.resolveRecordingAccess = deps.resolveRecordingAccess ?? createRecordingAccessResolver({
       voicelinkHosts: deps.recordingHosts ?? [],
+      ...(deps.plivoRedirectHosts ? { plivoRedirectHosts: deps.plivoRedirectHosts } : {}),
       credentials: processCredentialSource,
     });
   }
@@ -152,11 +156,17 @@ export class DialerAnalysisRunner {
       access = await this.resolveRecordingAccess(call);
     } catch (err) {
       if (err instanceof RecordingAccessRefusedError) {
+        trackRecordingFetchFailure(call.provider, 'analysis', 'access_refused');
         log.warn({
-          provider: err.provider, credentialId: err.credentialId, reason: err.reason, credentialKind: err.credentialKind,
+          provider: err.provider, credentialId: err.credentialId, reason: 'access_refused', refusal: err.reason,
+          credentialKind: err.credentialKind,
         }, 'Recording access refused; not fetching');
         throw new TranscriptionError('TRANSCRIPTION_FAILED', err.message, !err.permanent);
       }
+      // Not a refusal: the credential store or the database failed. Counted as the playback
+      // proxy counts it (RC3); the run's own handling then retries or fails the job.
+      trackRecordingFetchFailure(call.provider, 'analysis', 'access_error');
+      log.warn({ err, provider: call.provider, reason: 'access_error' }, 'Error resolving recording access; not fetching');
       throw err;
     }
     return fetchRecordingBytes(recordingUrl, {
@@ -165,6 +175,8 @@ export class DialerAnalysisRunner {
       allowedHosts: access.allowedHosts,
       ...(Object.keys(access.headers).length > 0 ? { headers: access.headers } : {}),
       ...(access.exactHosts ? { exactHosts: true } : {}),
+      ...(access.redirectHosts ? { redirectHosts: access.redirectHosts } : {}),
+      provider: call.provider,
     });
   }
 

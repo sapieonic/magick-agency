@@ -259,6 +259,29 @@ abstract final class StationCopy {
     DispositionBlock.noteRequired => 'This outcome needs a note.',
     DispositionBlock.callbackRequired => 'This outcome needs a callback time.',
     DispositionBlock.callbackInPast => 'That time has already passed. Pick when we should call back.',
+    DispositionBlock.promiseRequired => 'This outcome needs the date the customer promised to pay.',
+    DispositionBlock.promiseDateInvalid => 'Pick a promised date from today up to 30 days ahead.',
+    DispositionBlock.promiseAmountInvalid => 'Enter the amount as a number, with up to two decimal places and no commas.',
+  };
+
+  // ── Promise to pay (PT1–PT3, PT9) ─────────────────────────────────────────
+  static const promiseTitle = 'When will the customer pay?';
+  static const promiseToday = 'Today';
+  static const promiseTomorrow = 'Tomorrow';
+  static const promiseInAWeek = 'In a week';
+  static const promisePick = 'Pick a date';
+  static const promiseDateHelp = 'Promised payment date';
+  static const promiseAmountLabel = 'Amount (optional)';
+  static const promiseDateNote = 'The date is the customer’s, as they said it.';
+  static const promiseNoCall = 'Saving a promise doesn’t book a call.';
+  static String promiseFollowUp(int days) => 'We’ll call again $days day${days == 1 ? '' : 's'} after this date, in calling hours.';
+  static const promiseHeading = 'Promise to pay';
+  static String promiseStanding(PromiseStanding s) => switch (s) {
+    PromiseStanding.upcoming => 'Upcoming',
+    PromiseStanding.dueToday => 'Due today',
+    PromiseStanding.missed => 'Missed',
+    PromiseStanding.followedUp => 'Followed up',
+    PromiseStanding.unknown => '',
   };
   static const success = 'Success';
   static const stopsCalling = 'Stops calling';

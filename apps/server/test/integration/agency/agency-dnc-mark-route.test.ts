@@ -291,6 +291,34 @@ describe('POST /api/v1/agency/attempts/:id/dnc (integration)', () => {
     expect(contacts.get(seeded.duplicate!.id)).toMatchObject({ state: 'pending', suppressed_reason: null });
   });
 
+  it('a failed DNC write discards its connection rather than handing it back to the pool', async () => {
+    const seeded = await seedAttempt({ duplicate: false, otherCampaign: false });
+    await getTestPool().query(`
+      CREATE FUNCTION p8_fail_dnc() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'dnc table unavailable'; END $$`);
+    await getTestPool().query('CREATE TRIGGER p8_fail_dnc BEFORE INSERT ON dnc_entries FOR EACH ROW EXECUTE FUNCTION p8_fail_dnc()');
+    // What the route's own transaction client is released with (`pool.query` takes the
+    // callback form of `connect` and is left alone).
+    const pool = getTestPool();
+    const connect = pool.connect.bind(pool) as (...args: unknown[]) => unknown;
+    const released: unknown[] = [];
+    const spy = vi.spyOn(pool, 'connect').mockImplementation(((...args: unknown[]) => {
+      if (typeof args[0] === 'function') return connect(...args);
+      return (connect() as Promise<{ release: (err?: Error | boolean) => void }>).then((client) => {
+        const release = client.release.bind(client);
+        client.release = (err?: Error | boolean) => { released.push(err); client.release = release; release(err); };
+        return client;
+      });
+    }) as never);
+    try {
+      const response = await markDnc(seeded.attempt.id, { agent_user_id: AGENT_9 });
+      expect(response.statusCode).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(released).toEqual([expect.objectContaining({ message: expect.stringContaining('dnc table unavailable') })]);
+  });
+
   it('writes nothing for an invalid scope or for another account\'s attempt', async () => {
     const owned = await seedAttempt({ duplicate: false, otherCampaign: false });
 

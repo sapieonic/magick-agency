@@ -9,6 +9,7 @@ import '../../../ui/primitives.dart';
 import '../../station/logic/disposition_form.dart';
 import '../../station/logic/format.dart';
 import '../../station/parts/banners.dart' show BusyLabel;
+import '../../station/parts/promise_picker.dart';
 import '../../station/parts/wrapup_view.dart' show DispositionGrid;
 import '../../station/station_copy.dart';
 import '../../station/station_providers.dart';
@@ -46,6 +47,8 @@ class _OutcomeSectionState extends ConsumerState<OutcomeSection> {
           outcomes: v.outcomes,
           code: v.outcomeCode,
           callbackAt: v.callbackAt,
+          promiseDate: v.promiseDate,
+          promiseAmount: v.promiseAmount,
           enabled: v.padEnabled,
           reason: v.padDisabledReason,
           rejection: v.padRejection,
@@ -94,6 +97,17 @@ class _OutcomeSectionState extends ConsumerState<OutcomeSection> {
               setState(() => _choice = choice);
               actions.setCallback(at);
             },
+          ),
+        ],
+        if (selected != null && selected.requiresPromise) ...[
+          const SizedBox(height: Space.lg),
+          PromisePicker(
+            form: DispositionForm(code: s.code, promiseDate: s.promiseDate, promiseAmount: s.promiseAmount),
+            option: selected,
+            enabled: s.enabled && !s.saving,
+            station: false,
+            onDate: actions.setPromiseDate,
+            onAmount: actions.setPromiseAmount,
           ),
         ],
         if (widget.includeSave) ...[const SizedBox(height: Space.lg), const OutcomeSaveArea()],
@@ -256,12 +270,15 @@ class _SaveSlice {
       other.view.outcomeCode == view.outcomeCode &&
       other.view.phase == view.phase &&
       other.view.callbackAt == view.callbackAt &&
+      other.view.promiseDate == view.promiseDate &&
+      other.view.promiseAmount == view.promiseAmount &&
       other.view.notes.text == view.notes.text &&
       other.view.requiredFieldsMissing == view.requiredFieldsMissing &&
       other.view.saving == view.saving &&
       const ListEquality<DispositionOption>().equals(other.view.outcomes, view.outcomes);
   @override
-  int get hashCode => Object.hash(view.outcomeCode, view.phase, view.callbackAt, view.notes.text, view.saving);
+  int get hashCode =>
+      Object.hash(view.outcomeCode, view.phase, view.callbackAt, view.promiseDate, view.promiseAmount, view.notes.text, view.saving);
 }
 
 /// "Dialing is blocked until this call has an outcome. Without one, it closes

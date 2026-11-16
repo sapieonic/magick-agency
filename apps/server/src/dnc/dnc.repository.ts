@@ -47,6 +47,14 @@ export interface DncEntryInput {
   added_by?: string | null;
   /** Already E.164 and already de-duplicated by the caller. */
   phones: readonly string[];
+  /**
+   * The Do Not Call page's add only (DS4): skip a number a WIDER entry already blocks in this
+   * scope, and report it `covered` rather than writing a narrower row beside it. `accountId` is
+   * the account the new row reaches: its own for an account row, its campaign's for a campaign
+   * row (stored without one). Absent (an agent's mark, every other writer): write as asked.
+   * Ignored for a tenant-wide row, which nothing is wider than.
+   */
+  coverage?: { accountId: string | null };
 }
 
 /**
@@ -57,8 +65,14 @@ export interface DncEntryInput {
  */
 export interface DncInsertResult {
   phone_e164: string;
+  /**
+   * The row that is on the list for this number: the one just written, the same-scope one the
+   * add found, or (with `covered`) the wider one that already blocks it.
+   */
   entry: DncEntryRecord;
   created: boolean;
+  /** True when nothing was written because `entry`, a WIDER entry, already blocks the number here. */
+  covered?: boolean;
 }
 
 export interface DncInsertManyResult {
@@ -101,9 +115,51 @@ export interface DncListFilter {
   /** `'tenant'` selects rows with `account_id IS NULL`. */
   accountId?: string | null;
   campaignId?: string | null;
+  /**
+   * Only the entries that BELONG to this account (DS6): its own account rows and the rows of its
+   * campaigns (a campaign entry is stored without an account). Never a tenant-wide row. What an
+   * account-scoped caller lists.
+   */
+  ownerAccountId?: string;
+  /** Only entries of this reach (`dncEntryScope`). */
+  scope?: DncEntryScope;
   source?: DncSource;
   limit: number;
   offset: number;
+}
+
+/** How far an entry reaches: every campaign, one account's campaigns, or one campaign. */
+export type DncEntryScope = 'tenant' | 'account' | 'campaign';
+
+/**
+ * An entry's reach as the list and the soft phone name it: campaign when it names a campaign
+ * (an account-and-campaign row included, which matches that campaign alone), else account, else
+ * tenant-wide. `dncScopeLabel` below is the AUDIT label, which keeps the four-way split.
+ */
+export function dncEntryScope(entry: { account_id: string | null; campaign_id: string | null }): DncEntryScope {
+  return entry.campaign_id !== null ? 'campaign' : entry.account_id !== null ? 'account' : 'tenant';
+}
+
+/** What the list shows beside each entry so its scope can be named in words (DS7). */
+export interface DncEntryNames {
+  scope: DncEntryScope;
+  /** The account the entry belongs to: its own, or its campaign's. NULL for a tenant-wide entry. */
+  scope_account_id: string | null;
+  /** That account's name; NULL when there is none or it cannot be read. */
+  account_name: string | null;
+  /** The campaign's name; NULL when the entry names no campaign or the campaign no longer exists. */
+  campaign_name: string | null;
+}
+
+/**
+ * The SQL predicate "this row belongs to account `$n`": its own account row, or a row of one of
+ * the account's campaigns (stored `account_id NULL`, as `markDnc` writes it). A tenant-wide row
+ * belongs to no account. `tenantParam` and `accountParam` are bound placeholders.
+ */
+function ownedByAccountSql(tenantParam: string, accountParam: string): string {
+  return `(account_id = ${accountParam}::uuid OR (account_id IS NULL AND campaign_id IN (
+            SELECT c.id FROM agency_campaigns c
+             WHERE c.tenant_id = ${tenantParam}::uuid AND c.account_id = ${accountParam}::uuid)))`;
 }
 
 /**
@@ -225,8 +281,16 @@ export class DncRepository {
   ): Promise<DncInsertManyResult> {
     return withTransaction(async (client) => {
       const results: DncInsertResult[] = [];
+      const covering = input.coverage !== undefined && !isTenantWide(input)
+        ? await findCovering(client, input, input.coverage.accountId)
+        : new Map<string, DncEntryRecord>();
 
       for (const phone of input.phones) {
+        const wider = covering.get(phone);
+        if (wider) {
+          results.push({ phone_e164: phone, entry: wider, created: false, covered: true });
+          continue;
+        }
         const inserted = await client.query<DncEntryRecord>(
           `INSERT INTO dnc_entries
              (tenant_id, account_id, campaign_id, phone_e164, source, reason, added_by)
@@ -300,6 +364,33 @@ export class DncRepository {
       [scope.tenantId, phones as string[], scope.accountId ?? null, scope.campaignId ?? null],
     );
     return new Set(result.rows.map((r) => r.phone_e164));
+  }
+
+  /**
+   * For each of `phones` that {@link findSuppressed} matches, the WIDEST entry's
+   * scope (tenant-wide, then account, then campaign): the roster import says in
+   * words which list a rejected row is on (IM5). Same predicate and index as
+   * `findSuppressed`; a number that matches nothing is absent.
+   */
+  async findSuppressionScopes(
+    scope: DncLookupScope,
+    phones: readonly string[],
+  ): Promise<Map<string, 'tenant' | 'account' | 'campaign'>> {
+    if (phones.length === 0) return new Map();
+    const result = await getPool().query<{ phone_e164: string; scope: 'tenant' | 'account' | 'campaign' }>(
+      `SELECT DISTINCT ON (phone_e164) phone_e164,
+              CASE WHEN campaign_id IS NOT NULL THEN 'campaign'
+                   WHEN account_id IS NOT NULL THEN 'account'
+                   ELSE 'tenant' END AS scope
+         FROM dnc_entries
+        WHERE tenant_id = $1
+          AND phone_e164 = ANY($2::varchar[])
+          AND (account_id  IS NULL OR account_id  = $3::uuid)
+          AND (campaign_id IS NULL OR campaign_id = $4::uuid)
+        ORDER BY phone_e164, (campaign_id IS NOT NULL), (account_id IS NOT NULL)`,
+      [scope.tenantId, phones as string[], scope.accountId ?? null, scope.campaignId ?? null],
+    );
+    return new Map(result.rows.map((r) => [r.phone_e164, r.scope]));
   }
 
   /**
@@ -381,19 +472,18 @@ export class DncRepository {
    * check reads `dnc_entries` itself, so the row's absence IS the number becoming
    * dialable again, atomically.
    *
-   * `accountScope`, when passed, additionally requires `account_id = $3` —
-   * an account-scoped caller (`dnc.routes.ts`) may only remove a row it
-   * literally owns, never a sibling account's row and never a tenant-wide one
-   * (`account_id IS NULL`), so the predicate is an equality rather than the
-   * `IS NULL OR =` shape used for reads elsewhere. Omitted entirely (not
-   * passed as `undefined`) for a tenant-wide caller, so the statement text and
-   * argument count are byte-identical to the pre-existing unscoped delete.
+   * `accountScope`, when passed, additionally requires the row to BELONG to that
+   * account (DS6): its own account row, or a row of one of its campaigns (a campaign
+   * entry is stored `account_id NULL`, so an equality on `account_id` alone left an
+   * account admin unable to remove a mark on their own campaign). Never a sibling
+   * account's row and never a tenant-wide one (no account, no campaign). Omitted
+   * entirely (not passed as `undefined`) for a tenant-wide caller.
    */
   async deleteById(id: string, tenantId: string, accountScope?: string): Promise<DncDeleteResult | null> {
     const pool = getPool();
     const result = accountScope !== undefined
       ? await pool.query<DncEntryRecord>(
-          `DELETE FROM dnc_entries WHERE id = $1 AND tenant_id = $2 AND account_id = $3 RETURNING *`,
+          `DELETE FROM dnc_entries WHERE id = $1 AND tenant_id = $2::uuid AND ${ownedByAccountSql('$2', '$3')} RETURNING *`,
           [id, tenantId, accountScope],
         )
       : await pool.query<DncEntryRecord>(
@@ -402,6 +492,43 @@ export class DncRepository {
         );
     const entry = result.rows[0];
     return entry ? { entry } : null;
+  }
+
+  /**
+   * The words each entry's scope is named with (DS7): its reach, the account it belongs to and
+   * that account's and its campaign's names. Two reads by primary key over the page's ids, after
+   * the list (so the list's own statement and its plan stay as they are). A campaign that no
+   * longer exists (`campaign_id` has no FK) has no name and no account here.
+   */
+  async describeScopes(tenantId: string, entries: readonly DncEntryRecord[]): Promise<Map<string, DncEntryNames>> {
+    const pool = getPool();
+    const campaignIds = [...new Set(entries.flatMap((e) => (e.campaign_id ? [e.campaign_id] : [])))];
+    const campaigns = campaignIds.length > 0
+      ? (await pool.query<{ id: string; name: string; account_id: string }>(
+          `SELECT id, name, account_id FROM agency_campaigns WHERE tenant_id = $1::uuid AND id = ANY($2::uuid[])`,
+          [tenantId, campaignIds],
+        )).rows
+      : [];
+    const campaignById = new Map(campaigns.map((c) => [c.id, c]));
+    const ownerOf = (e: DncEntryRecord): string | null =>
+      e.account_id ?? (e.campaign_id ? campaignById.get(e.campaign_id)?.account_id ?? null : null);
+    const accountIds = [...new Set(entries.flatMap((e) => { const a = ownerOf(e); return a ? [a] : []; }))];
+    const accounts = accountIds.length > 0
+      ? (await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM accounts WHERE tenant_id = $1::uuid AND id = ANY($2::uuid[])`,
+          [tenantId, accountIds],
+        )).rows
+      : [];
+    const accountName = new Map(accounts.map((a) => [a.id, a.name]));
+    return new Map(entries.map((e) => {
+      const owner = ownerOf(e);
+      return [e.id, {
+        scope: dncEntryScope(e),
+        scope_account_id: owner,
+        account_name: owner ? accountName.get(owner) ?? null : null,
+        campaign_name: e.campaign_id ? campaignById.get(e.campaign_id)?.name ?? null : null,
+      }];
+    }));
   }
 
   async list(filter: DncListFilter): Promise<{ entries: DncEntryRecord[]; total: number }> {
@@ -431,6 +558,17 @@ export class DncRepository {
         conditions.push(`campaign_id = $${params.length}::uuid`);
       }
     }
+    if (filter.ownerAccountId !== undefined) {
+      params.push(filter.ownerAccountId);
+      conditions.push(ownedByAccountSql('$1', `$${params.length}`));
+    }
+    if (filter.scope !== undefined) {
+      conditions.push(
+        filter.scope === 'tenant' ? '(account_id IS NULL AND campaign_id IS NULL)'
+        : filter.scope === 'account' ? '(account_id IS NOT NULL AND campaign_id IS NULL)'
+        : 'campaign_id IS NOT NULL',
+      );
+    }
     if (filter.source !== undefined) {
       params.push(filter.source);
       conditions.push(`source = $${params.length}`);
@@ -451,6 +589,41 @@ export class DncRepository {
 
     return { entries: rows.rows, total: Number(total.rows[0]!.count) };
   }
+}
+
+/**
+ * For each of `input.phones`, the WIDER entry that already blocks it in the scope `input` would
+ * write (DS4): a tenant-wide row, an account row for `coverAccountId`, or (for a campaign row) an
+ * account-and-campaign row for the same campaign. A row of exactly the scope being written is not
+ * "wider" and is left to the insert's `ON CONFLICT` (`already_present`). The widest first, as
+ * `findMatchingEntry` orders them. One read on `idx_dnc_entries_tenant_phone`, in the add's
+ * transaction.
+ */
+async function findCovering(
+  client: Pick<PoolClient, 'query'>,
+  input: DncEntryInput,
+  coverAccountId: string | null,
+): Promise<Map<string, DncEntryRecord>> {
+  if (input.phones.length === 0) return new Map();
+  // A number already listed at exactly this scope is `already_present`, whatever else covers it:
+  // such a row sorts first and is dropped below, so the insert's `ON CONFLICT` reports it.
+  const { rows } = await client.query<DncEntryRecord & { same_scope: boolean }>(
+    `SELECT DISTINCT ON (phone_e164) *,
+            (COALESCE(account_id,  '${SCOPE_SENTINEL}'::uuid) = COALESCE($5::uuid, '${SCOPE_SENTINEL}'::uuid)
+         AND COALESCE(campaign_id, '${SCOPE_SENTINEL}'::uuid) = COALESCE($4::uuid, '${SCOPE_SENTINEL}'::uuid)) AS same_scope
+       FROM dnc_entries
+      WHERE tenant_id = $1::uuid
+        AND phone_e164 = ANY($2::varchar[])
+        AND (account_id  IS NULL OR account_id  = $3::uuid)
+        AND (campaign_id IS NULL OR campaign_id = $4::uuid)
+      ORDER BY phone_e164, same_scope DESC, (campaign_id IS NOT NULL), (account_id IS NOT NULL), created_at, id`,
+    [input.tenant_id, input.phones as string[], coverAccountId, input.campaign_id ?? null, input.account_id ?? null],
+  );
+  const covering = new Map<string, DncEntryRecord>();
+  for (const { same_scope: sameScope, ...row } of rows) {
+    if (!sameScope) covering.set(row.phone_e164, row);
+  }
+  return covering;
 }
 
 /**

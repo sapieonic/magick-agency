@@ -727,7 +727,7 @@ describe('Plivo callbacks drive the call', () => {
 
 describe('Plivo recordings', () => {
   it('a recording callback after the call ended persists recording_url and fires recording-ready', async () => {
-    mockRepo.findById.mockResolvedValueOnce({ id: CALL_ID, provider: 'plivo', recording_url: null, provider_call_id: 'uuid-1' });
+    mockRepo.findById.mockResolvedValueOnce({ id: CALL_ID, provider: 'plivo', recording_requested: true, recording_url: null, provider_call_id: 'uuid-1' });
     const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
     await mgr.handleCarrierRecording(CALL_ID, 'plivo', { recordingUrl: 'https://media.plivo.com/v1/Account/MA1/Recording/r1.mp3', carrierCallId: 'uuid-1' });
     expect(mockRepo.update).toHaveBeenCalledWith(CALL_ID, { recording_url: 'https://media.plivo.com/v1/Account/MA1/Recording/r1.mp3' });

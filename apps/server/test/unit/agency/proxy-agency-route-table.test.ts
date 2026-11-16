@@ -161,6 +161,7 @@ const EXPECTED_CAMPAIGN_ROUTES = [
   'GET /proxy/agency/carriers',
   'GET /proxy/agency/ingest/jobs/:id',
   'GET /proxy/agency/ingest/jobs/:id/rejected.csv',
+  'GET /proxy/agency/ingest/jobs/:id/skipped.csv',
   'GET /proxy/agency/ingest/limits',
   'PATCH /proxy/agency/campaigns/:id',
   'POST /proxy/agency/campaigns',
@@ -172,6 +173,7 @@ const EXPECTED_CAMPAIGN_ROUTES = [
   'POST /proxy/agency/ingest/analyze',
   'POST /proxy/agency/ingest/jobs',
   'POST /proxy/agency/ingest/jobs/:id/cancel',
+  'POST /proxy/agency/ingest/jobs/:id/import',
   'POST /proxy/agency/ingest/upload',
 ];
 

@@ -31,11 +31,15 @@ export interface RecordingCallRef {
  *  - `headers`: sent with the first request only; a redirect hop never carries them.
  *  - `exactHosts`: hosts match exactly rather than exact-or-subdomain. True whenever
  *    `headers` carries a credential: B21 sends it only to the provider's exact hosts.
+ *  - `redirectHosts`: further hosts a REDIRECT hop (never the first URL) may go to, matched
+ *    exactly, from operator config only (RC4; Plivo's `PLIVO_RECORDING_REDIRECT_HOSTS`, empty
+ *    by default). A hop never carries `headers`, so the credential stays on the first request.
  */
 export interface RecordingAccess {
   allowedHosts: readonly string[];
   headers: Readonly<Record<string, string>>;
   exactHosts: boolean;
+  redirectHosts?: readonly string[];
 }
 
 export type RecordingAccessResolver = (call: RecordingCallRef) => Promise<RecordingAccess>;
@@ -90,6 +94,8 @@ export interface RecordingCredentialSource {
 export interface RecordingAccessDeps {
   /** VoiceLink's recording hosts (`config.voicelinkRecording.allowedHosts`). */
   voicelinkHosts: readonly string[];
+  /** Hosts a Plivo recording's redirect may go to (`config.plivoRecording.redirectHosts`; RC4). Absent: none. */
+  plivoRedirectHosts?: readonly string[];
   /** The credential service; called only for a BYOC call. */
   credentials: () => RecordingCredentialSource | Promise<RecordingCredentialSource>;
 }
@@ -146,7 +152,12 @@ const RECORDING_ACCESS: ReadonlyMap<string, AccessEntry> = new Map<string, Acces
       throw new RecordingAccessRefusedError('credential_unavailable', call.provider, cred.id, 'no_current_secret');
     }
     const basic = Buffer.from(`${cred.accountRef}:${token}`).toString('base64');
-    return { allowedHosts: PLIVO_RECORDING_HOSTS, headers: { Authorization: `Basic ${basic}` }, exactHosts: true };
+    return {
+      allowedHosts: PLIVO_RECORDING_HOSTS,
+      headers: { Authorization: `Basic ${basic}` },
+      exactHosts: true,
+      ...(deps.plivoRedirectHosts?.length ? { redirectHosts: deps.plivoRedirectHosts } : {}),
+    };
   }],
 ]);
 
@@ -196,6 +207,7 @@ export async function getRecordingAccessResolver(): Promise<RecordingAccessResol
     const { config } = await import('../config/index.js');
     processResolver = createRecordingAccessResolver({
       voicelinkHosts: config.voicelinkRecording.allowedHosts,
+      plivoRedirectHosts: config.plivoRecording.redirectHosts,
       credentials: processCredentialSource,
     });
   }

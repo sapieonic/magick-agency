@@ -2,6 +2,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, PhoneOff, Search, Trash2 } from 'lucide-react';
 import { dncSearchShortfall } from '@magick-agency/domain/dnc-search';
 import { useTenant } from '../../contexts/TenantContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { listAgencyCampaigns } from '../../api/agencyCampaigns';
+import type { AgencyCampaign } from '../../types/agency-campaign';
+import {
+  DNC_EVERY_CAMPAIGN,
+  actsForWholeOrganisation,
+  dncScopeWords,
+  mayManageEveryCampaignDnc,
+} from '../../utils/dncScopeWords';
+import {
+  addChoiceBody,
+  addChoiceHint,
+  addSummaryParts,
+  entryScopeWords,
+  removalCopy,
+  removedToast,
+  stillBlocked,
+  type DncAddChoice,
+} from './dnc/dncPageCopy';
 import { useTeam } from '../../hooks/useTeam';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { addDncEntries, listDncEntries, removeDncEntry } from '../../api/dnc';
@@ -18,6 +37,8 @@ import {
   DNC_SOURCE_LABELS,
   type DncAddSummary,
   type DncEntry,
+  type DncEntryScope,
+  type DncListParams,
   type DncSource,
 } from '../../types/dnc';
 import styles from './DncPage.module.css';
@@ -26,13 +47,6 @@ const PAGE_SIZE = 50;
 
 /**
  * Where this row is enforced — three scopes, three genuinely different answers.
- *
- * ── Why this is not a boolean ────────────────────────────────────────────────
- * It used to be `isEnforced`, rendering everything narrower than tenant-wide as
- * "Not enforced". That was true while the server only ever wrote tenant-wide rows
- * from a mark. Campaign-scoped marks make it false, and false in the worst
- * direction: it prints "this does not stop any call" beside the number of a
- * customer who asked not to be called, next to a suppression that is live.
  *
  * Every enforcement point reads the one `dnc_entries` table with the same widening
  * predicate (decision B8), `(account_id IS NULL OR account_id = <the dial's account>)
@@ -48,57 +62,27 @@ const PAGE_SIZE = 50;
  *     tenant, its account, and a row for ANY campaign of that account.
  *
  * A campaign-scoped row additionally has its campaign's existing roster rows
- * suppressed at the moment an agent marks it (the API's `suppressByPhone`), but
- * that is a property of the mark, not of the row — the same row added through
- * the public API (`dnc.routes.ts` accepts `campaign_id`) gets no such sweep. So
- * the cell and its tooltip claim the import-time guarantee, which every row of
- * that scope really carries, and describe the mark-time sweep as what it is.
+ * suppressed at the moment an agent marks it (the station's `suppressByPhone`), but
+ * that is a property of the mark, not of the row — the same row added here gets no
+ * such sweep (the dial-time check still stops every dial). So the tooltip claims the
+ * guarantees every row of that scope carries, and describes the mark-time sweep as
+ * what it is.
  *
- * Scoped rows are shown rather than filtered out, which is the opposite of what
- * a "compliance view shows only enforced entries" reading would suggest, and
- * deliberately so. There is no other surface for them: filtering would leave a
- * scoped row invisible AND unremovable — reinstating the missing-correction-path
- * gap this page exists to close — and would hide the case where a
- * number is suppressed less widely than an operator assumes, which is exactly
- * the failure an operator must be able to notice.
- *
- * Naming the campaign is deliberately NOT attempted here: `dnc_entries` has no
- * FK to `agency_campaigns` (it lives in the API's database), so it is a lookup that
- * can fail, and a row whose campaign cannot be named must still show its scope.
- * Left as a follow-up.
+ * The cell names the scope in the words used everywhere (`dncScopeWords`, DS7):
+ * "Every campaign", "North account", "Campaign: Q4 Renewals". The names come from
+ * the server (`account_name`, `campaign_name`); a campaign that no longer exists
+ * (`campaign_id` has no FK) is said to be so rather than left blank.
  */
-type DncScopeKind = 'tenant' | 'campaign' | 'account';
-
-function scopeOf(entry: DncEntry): DncScopeKind {
-  // Campaign first: it is the narrowest, and the server's own lookup treats a
-  // campaign_id as the deciding column when both are set.
-  if (entry.campaign_id !== null) return 'campaign';
-  if (entry.account_id !== null) return 'account';
-  return 'tenant';
-}
-
-/**
- * The cell answers "enforced where?" in the space a table cell has; the tooltip
- * answers "how, and where not". Neither may claim a scope is enforced more
- * widely than it is — an operator who reads "One campaign" as "everywhere" will
- * not add the tenant-wide entry the customer actually asked for.
- */
-const SCOPE_LABEL: Record<DncScopeKind, string> = {
-  tenant: 'Every campaign',
-  campaign: 'One campaign',
-  account: 'One account',
-};
-
 /**
  * The soft-phone half of each scoped row's tooltip, shown only where the soft phone is on
  * (`agency_softphone_enabled`): where it is off, no soft-phone call exists to be stopped.
  */
-const SCOPE_SOFTPHONE_NOTE: Partial<Record<DncScopeKind, string>> = {
+const SCOPE_SOFTPHONE_NOTE: Partial<Record<DncEntryScope, string>> = {
   campaign: ' A soft-phone call from the same account that is not logged to a campaign is stopped too.',
   account: ' The soft phone stops a call to it from that account.',
 };
 
-const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
+const SCOPE_TOOLTIP: Record<DncEntryScope, string> = {
   // "Enforced everywhere" is what this said, and it was the widest claim on the
   // page — read as every kind of call honouring the number. DNC is an
   // agency-dialing suppression list: the dial-time gate lives in the API's
@@ -111,12 +95,12 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   campaign:
     'Enforced for one campaign only: that campaign won’t dial this number and drops it from its '
     + 'roster imports, and an agent’s mid-call mark also suppresses the contacts already on it. '
-    + 'Every other campaign in this organisation can still call this number. Add an '
-    + 'organisation-wide entry if the customer asked never to be called.',
+    + 'Every other campaign in this organisation can still call this number. Add an “Every '
+    + 'campaign” entry if the customer asked never to be called.',
   account:
     'Enforced for one account: none of that account’s campaigns will dial this number, and it is '
     + 'dropped from that account’s roster imports. Campaigns in other accounts are unaffected. Add '
-    + 'an organisation-wide entry if the customer asked never to be called.',
+    + 'an “Every campaign” entry if the customer asked never to be called.',
 };
 
 /**
@@ -139,8 +123,19 @@ const SOURCE_TOOLTIP: Partial<Record<DncSource, string>> = {
     + 'only — it is not a platform-wide compliance record.',
 };
 
+/** The list's scope filter: everything, one reach, or one campaign (`c:<id>`). */
+type ScopeFilter = '' | DncEntryScope | `c:${string}`;
+
+function scopeFilterParams(filter: ScopeFilter, accountId: string | null): Partial<DncListParams> {
+  if (filter === '') return {};
+  if (filter.startsWith('c:')) return { campaign_id: filter.slice(2) };
+  if (filter === 'account') return { scope: 'account', ...(accountId ? { account_id: accountId } : {}) };
+  return { scope: filter as DncEntryScope };
+}
+
 export function DncPage() {
-  const { tenantId, accountId, role } = useTenant();
+  const { tenantId, accountId, role, accounts } = useTenant();
+  const { memberships } = useAuth();
   const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const { showToast, showErrorToast } = useToast();
 
@@ -157,10 +152,47 @@ export function DncPage() {
   const [addInput, setAddInput] = useState('');
   const [addReason, setAddReason] = useState('');
   const [adding, setAdding] = useState(false);
-  const [lastSummary, setLastSummary] = useState<DncAddSummary | null>(null);
+  const [lastSummary, setLastSummary] = useState<{ summary: DncAddSummary; choice: DncAddChoice } | null>(null);
   const [removing, setRemoving] = useState<DncEntry | null>(null);
+  /** The other entries for the number being removed; undefined while read, null when it failed. */
+  const [removingOthers, setRemovingOthers] = useState<DncEntry[] | null | undefined>(undefined);
+
+  /**
+   * The scope of an add, chosen every time (DS1): nothing is preselected, so no add happens at a
+   * scope nobody picked. "Every campaign" is offered only to whom the server allows it (DS3).
+   */
+  const [addScope, setAddScope] = useState<DncEntryScope | null>(null);
+  const [addCampaignId, setAddCampaignId] = useState('');
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('');
+  const [campaigns, setCampaigns] = useState<AgencyCampaign[]>([]);
+  const [campaignsFailed, setCampaignsFailed] = useState(false);
 
   const canManage = hasPermission(role, 'agency.dnc.manage');
+  const mayEveryCampaign = mayManageEveryCampaignDnc(memberships, tenantId, accountId);
+  /** A member of the whole organisation lists every entry; anyone else, their account's. */
+  const seesEverything = actsForWholeOrganisation(memberships, tenantId, accountId);
+  const accountName = (accounts ?? []).find((a) => a.id === accountId)?.name ?? null;
+
+  /** This account's campaigns: the add's campaign choice and the list's campaign filter. */
+  useEffect(() => {
+    if (!tenantId || !accountId) return;
+    let live = true;
+    setCampaignsFailed(false);
+    listAgencyCampaigns(tenantId, accountId)
+      .then((list) => { if (live) setCampaigns(list); })
+      .catch(() => { if (live) { setCampaigns([]); setCampaignsFailed(true); } });
+    return () => { live = false; };
+  }, [tenantId, accountId]);
+
+  const addChoice: DncAddChoice | null = useMemo(() => {
+    if (addScope === 'tenant') return mayEveryCampaign ? { scope: 'tenant' } : null;
+    if (addScope === 'account') return accountId ? { scope: 'account', accountId, accountName } : null;
+    if (addScope === 'campaign') {
+      const campaign = campaigns.find((c) => c.id === addCampaignId);
+      return campaign ? { scope: 'campaign', campaignId: campaign.id, campaignName: campaign.name, accountName } : null;
+    }
+    return null;
+  }, [addScope, addCampaignId, campaigns, mayEveryCampaign, accountId, accountName]);
 
   /**
    * "Who suppressed this number" is the central question during a compliance
@@ -194,7 +226,12 @@ export function DncPage() {
     setLoading(true);
     setError(null);
     listDncEntries(
-      { limit: PAGE_SIZE, offset, ...(appliedFilter ? { phone: appliedFilter } : {}) },
+      {
+        limit: PAGE_SIZE,
+        offset,
+        ...(appliedFilter ? { phone: appliedFilter } : {}),
+        ...scopeFilterParams(scopeFilter, accountId),
+      },
       tenantId,
       accountId,
     )
@@ -210,7 +247,7 @@ export function DncPage() {
         setError(err instanceof Error ? err.message : 'Could not load the Do Not Call list.');
       })
       .finally(() => setLoading(false));
-  }, [tenantId, accountId, offset, appliedFilter]);
+  }, [tenantId, accountId, offset, appliedFilter, scopeFilter]);
 
   useEffect(load, [load]);
 
@@ -233,24 +270,24 @@ export function DncPage() {
       .split(/[\n,]/)
       .map((value) => value.trim())
       .filter(Boolean);
-    if (numbers.length === 0) return;
+    if (numbers.length === 0 || !addChoice) return;
 
     setAdding(true);
     try {
-      // `account_id` is deliberately not sent: an account-scoped row never
-      // enters the API's flat `dnc:{tenantId}` Redis set, so it would appear on
-      // this list while failing to suppress a single dial. Tenant-wide is the
-      // only scope that actually stops a call.
+      // The scope is the operator's choice, stated in the body (`addChoiceBody`): every
+      // scope is enforced at dial time (B8), and none is implied by a missing field.
+      const choice = addChoice;
       const summary = await addDncEntries(
         {
           phone_numbers: numbers,
           source: 'api',
+          ...addChoiceBody(choice),
           ...(addReason.trim() ? { reason: addReason.trim() } : {}),
         },
         tenantId ?? undefined,
         accountId ?? undefined,
       );
-      setLastSummary(summary);
+      setLastSummary({ summary, choice });
       setAddInput('');
       setAddReason('');
       // `setOffset` is asynchronous, so calling `load()` here unconditionally
@@ -265,11 +302,22 @@ export function DncPage() {
     } finally {
       setAdding(false);
     }
-  }, [addInput, addReason, offset, tenantId, accountId, load, showErrorToast]);
+  }, [addInput, addReason, addChoice, offset, tenantId, accountId, load, showErrorToast]);
+
+  /** Ask before removing, having read what else blocks the number (DS5). */
+  const startRemove = useCallback((entry: DncEntry) => {
+    setRemoving(entry);
+    setRemovingOthers(undefined);
+    listDncEntries({ phone: entry.phone_e164, limit: 50 }, tenantId ?? undefined, accountId ?? undefined)
+      .then((res) => setRemovingOthers(res.entries.filter((e) => e.id !== entry.id && e.phone_e164 === entry.phone_e164)))
+      .catch(() => setRemovingOthers(null));
+  }, [tenantId, accountId]);
 
   const onRemove = useCallback(async () => {
     if (!removing) return;
     const entry = removing;
+    // Only the entries that reach where this one did keep it blocked there (DS5).
+    const blocked = stillBlocked(entry, removingOthers ?? null);
     setRemoving(null);
     try {
       await removeDncEntry(entry.id, tenantId ?? undefined, accountId ?? undefined);
@@ -281,7 +329,7 @@ export function DncPage() {
         this number, so it is the one that most has to be right: what changed is
         that agency campaigns may dial it, and nothing else.
       */
-      showToast(`${entry.phone_e164} removed — agency campaigns can dial it again.`, 'success');
+      showToast(removedToast(entry, blocked), 'success');
       // Removing the only row on a later page would otherwise reload that same
       // offset, now past the end, and the pager is rendered only when there are
       // rows — so the operator lands on "Nothing on the list" while the earlier
@@ -292,7 +340,7 @@ export function DncPage() {
     } catch (err: unknown) {
       showErrorToast(err, 'Could not remove that number.');
     }
-  }, [removing, entries.length, offset, tenantId, accountId, load, showToast, showErrorToast]);
+  }, [removing, removingOthers, entries.length, offset, tenantId, accountId, load, showToast, showErrorToast]);
 
   return (
     <div className={styles.page}>
@@ -317,8 +365,8 @@ export function DncPage() {
       <PageDescription
         pageKey="agency-dnc"
         description={
-          'Agency campaigns don’t dial the numbers on this list — every campaign for an '
-          + 'organisation-wide entry, or only the campaign or account the Scope column names. '
+          'Agency campaigns don’t dial the numbers on this list, where each entry’s Scope says: '
+          + 'every campaign, every campaign of one account, or one campaign. '
           // The soft phone's sentence only where it is on (SP4): elsewhere it describes a
           // surface the account does not have.
           + (softphoneOn
@@ -332,12 +380,12 @@ export function DncPage() {
           + 'when a customer asks; you can also add them in bulk here.'
         }
         tips={[
-          'An organisation-wide entry blocks the number in every agency campaign and account.',
-          'Adding a number that is already listed is harmless — it stays listed once.',
-          'Removing a number lets agency campaigns dial it again — if the customer asked not to '
-          + 'be called, leave it listed.',
-          'An entry scoped to one campaign or account IS enforced, but only there. See the Scope '
-          + 'column.',
+          'Choose where each add applies: every campaign, this account’s campaigns, or one campaign.',
+          'An “Every campaign” entry blocks the number in every agency campaign of every account.',
+          'Adding a number that is already listed is harmless — it stays listed once, and a number '
+          + 'already blocked more widely is not added again.',
+          'Removing a number lets the campaigns its Scope names dial it again — if the customer asked '
+          + 'not to be called, leave it listed.',
         ]}
       />
 
@@ -365,11 +413,68 @@ export function DncPage() {
             placeholder="e.g. regulator list, customer request"
             maxLength={1000}
           />
+          <fieldset className={styles.scopeChoice}>
+            <legend className={styles.addLabel}>Where should these numbers be blocked?</legend>
+            {mayEveryCampaign && (
+              <label className={styles.scopeOption}>
+                <input
+                  type="radio"
+                  name="dnc-add-scope"
+                  value="tenant"
+                  checked={addScope === 'tenant'}
+                  onChange={() => setAddScope('tenant')}
+                />
+                {DNC_EVERY_CAMPAIGN}
+              </label>
+            )}
+            <label className={styles.scopeOption}>
+              <input
+                type="radio"
+                name="dnc-add-scope"
+                value="account"
+                checked={addScope === 'account'}
+                onChange={() => setAddScope('account')}
+              />
+              {dncScopeWords('account', { accountName })}
+            </label>
+            <label className={styles.scopeOption}>
+              <input
+                type="radio"
+                name="dnc-add-scope"
+                value="campaign"
+                checked={addScope === 'campaign'}
+                onChange={() => setAddScope('campaign')}
+              />
+              One campaign
+            </label>
+            {addScope === 'campaign' && (
+              <select
+                className={styles.scopeSelect}
+                aria-label="Campaign"
+                value={addCampaignId}
+                onChange={(e) => setAddCampaignId(e.target.value)}
+              >
+                <option value="">
+                  {campaignsFailed ? 'Couldn’t load the campaigns' : campaigns.length === 0 ? 'No campaigns in this account' : 'Choose a campaign'}
+                </option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.status === 'running' || c.status === 'paused' ? c.name : `${c.name} (${c.status})`}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className={styles.scopeHint} data-testid="dnc-add-scope-hint">
+              {addChoice
+                ? addChoiceHint(addChoice)
+                : 'Choose where to block them before adding.'}
+            </p>
+          </fieldset>
           <button
             type="button"
             className="btn-primary"
             onClick={() => void onAdd()}
-            disabled={adding || addInput.trim().length === 0}
+            disabled={adding || addInput.trim().length === 0 || addChoice === null}
           >
             {adding ? 'Adding…' : 'Add to Do Not Call'}
           </button>
@@ -382,13 +487,11 @@ export function DncPage() {
             caller's intent is satisfied.
           */}
           {lastSummary && (
-            <div className={styles.summary}>
-              <strong>{lastSummary.added}</strong> added,{' '}
-              <strong>{lastSummary.already_present}</strong> already listed,{' '}
-              <strong>{lastSummary.invalid}</strong> not usable.
-              {lastSummary.invalid > 0 && (
+            <div className={styles.summary} data-testid="dnc-add-summary">
+              {addSummaryParts(lastSummary.summary, lastSummary.choice).join(', ')}.
+              {lastSummary.summary.invalid > 0 && (
                 <ul className={styles.invalidList}>
-                  {lastSummary.results
+                  {lastSummary.summary.results
                     .filter((r) => r.outcome === 'invalid_phone')
                     .map((r, i) => (
                       <li key={`${r.input}-${i}`}>
@@ -427,6 +530,23 @@ export function DncPage() {
         <button type="button" className="btn-secondary" onClick={applySearch}>
           Search
         </button>
+        <select
+          className={styles.scopeSelect}
+          aria-label="Show entries for"
+          value={scopeFilter}
+          onChange={(e) => {
+            setOffset(0);
+            setScopeFilter(e.target.value as ScopeFilter);
+          }}
+        >
+          <option value="">All entries</option>
+          {seesEverything && <option value="tenant">{DNC_EVERY_CAMPAIGN}</option>}
+          <option value="account">{dncScopeWords('account', { accountName })}</option>
+          <option value="campaign">Any one campaign</option>
+          {campaigns.map((c) => (
+            <option key={c.id} value={`c:${c.id}`}>{dncScopeWords('campaign', { campaignName: c.name })}</option>
+          ))}
+        </select>
       </div>
       {searchShort && (
         <p id="dnc-search-short" className={styles.searchShort} role="alert">
@@ -473,18 +593,13 @@ export function DncPage() {
                 <tr key={entry.id}>
                   <td className={styles.phone}>{entry.phone_e164}</td>
                   <td>
-                    {(() => {
-                      const kind = scopeOf(entry);
-                      return (
-                        <span
-                          className={kind === 'tenant' ? styles.scopeGlobal : styles.scopeNarrow}
-                          title={SCOPE_TOOLTIP[kind] + (softphoneOn ? SCOPE_SOFTPHONE_NOTE[kind] ?? '' : '')}
-                          data-testid={`dnc-scope-${kind}`}
-                        >
-                          {SCOPE_LABEL[kind]}
-                        </span>
-                      );
-                    })()}
+                    <span
+                      className={entry.scope === 'tenant' ? styles.scopeGlobal : styles.scopeNarrow}
+                      title={SCOPE_TOOLTIP[entry.scope] + (softphoneOn ? SCOPE_SOFTPHONE_NOTE[entry.scope] ?? '' : '')}
+                      data-testid={`dnc-scope-${entry.scope}`}
+                    >
+                      {entryScopeWords(entry)}
+                    </span>
                   </td>
                   <td className={styles.nowrap}>{formatDate(entry.created_at)}</td>
                   <td className={entry.added_by ? undefined : styles.unattributed}>
@@ -499,7 +614,7 @@ export function DncPage() {
                       <button
                         type="button"
                         className={styles.removeBtn}
-                        onClick={() => setRemoving(entry)}
+                        onClick={() => startRemove(entry)}
                         aria-label={`Remove ${entry.phone_e164}`}
                       >
                         <Trash2 size={15} />
@@ -537,26 +652,27 @@ export function DncPage() {
       )}
 
       {/*
-        The title carries the scope too, not just the body. "Make this number
-        callable again?" is the question the operator answers, and read alone it
-        promises a change this page cannot make — the body's qualification comes
-        after the decision has already been framed.
+        The title carries the scope too, not just the body (DS5): "Let Q4 Renewals dial this
+        number again?" is the question the operator answers. The body says what else still
+        blocks the number, read when the dialog opened; Remove waits for that answer.
       */}
-      <ConfirmDialog
-        open={removing !== null}
-        title="Let agency campaigns dial this number again?"
-        message={
-          removing
-            ? `${removing.phone_e164} will be removed from the Do Not Call list, and agency `
-              + 'campaigns will be able to dial it again. If it was added at a customer’s request, '
-              + 'removing it undoes that request.'
-            : ''
-        }
-        confirmLabel="Remove"
-        danger
-        onConfirm={() => void onRemove()}
-        onCancel={() => setRemoving(null)}
-      />
+      {(() => {
+        const copy = removing
+          ? removalCopy(removing, removingOthers === undefined ? [] : removingOthers, seesEverything)
+          : null;
+        return (
+          <ConfirmDialog
+            open={removing !== null}
+            title={copy?.title ?? ''}
+            message={removingOthers === undefined ? 'Checking what else blocks this number…' : copy?.message ?? ''}
+            confirmLabel="Remove"
+            danger
+            disabled={removingOthers === undefined}
+            onConfirm={() => void onRemove()}
+            onCancel={() => setRemoving(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

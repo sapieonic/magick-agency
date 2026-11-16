@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
+/** The signed-in person's memberships: a member of the whole organisation unless a test says otherwise. */
+const auth = vi.hoisted(() => ({ memberships: [] as Array<Record<string, unknown>> }));
+
 const mocks = vi.hoisted(() => ({
   createAgencySession: vi.fn(),
   mintStationToken: vi.fn(),
@@ -19,8 +22,13 @@ vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { id: 'u-1', display_name: 'Asha Kumar', email: 'asha@example.com', avatar_url: null },
+    memberships: auth.memberships,
   }),
 }));
+
+function membership(role: string, accountId: string | null = null) {
+  return { id: 'm-1', user_id: 'u-1', tenant_id: 'tenant-1', account_id: accountId, role, status: 'active' };
+}
 
 const analyticsMocks = vi.hoisted(() => ({
   trackAgencyDncMarked: vi.fn(),
@@ -77,6 +85,7 @@ const BOOTSTRAP: AgencySessionBootstrap = {
     // Deliberately NOT called `callback`: the built-in codes are conventions and
     // a campaign may rename them, so the shortcut must key on the flag.
     { code: 'ring_me_later', label: 'Ring me later', requires_datetime: true },
+    { code: 'do_not_call', label: 'Do not call', suppress: true },
   ],
   wrapup_seconds: 30,
   wrapup_auto_return: true,
@@ -128,6 +137,7 @@ beforeEach(() => {
   // tenant_owner, so the RBAC mirror really grants `agency.dnc.write` rather
   // than the test asserting against a stub.
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'tenant_owner' });
+  auth.memberships = [membership('tenant_owner')];
   mocks.createAgencySession.mockResolvedValue(BOOTSTRAP);
   mocks.setAgentAvailable.mockResolvedValue(undefined);
   mocks.saveAttemptNotes.mockResolvedValue({ saved: false, refusal: 'not_hydrated' });
@@ -322,6 +332,41 @@ describe('the confirmation after a callback is saved', () => {
   });
 });
 
+describe('the confirmation after a suppress outcome is saved (DS8)', () => {
+  const saved = (dnc: Record<string, unknown>) => ({
+    attempt_id: 'att-1',
+    contact_id: 'c-1',
+    disposition_code: 'do_not_call',
+    contact_state: 'suppressed',
+    next_attempt_at: null,
+    agent_state: 'wrapup',
+    ...dnc,
+  });
+
+  async function saveDoNotCall() {
+    await onCall();
+    fireEvent.click(await screen.findByRole('button', { name: /Do not call/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save disposition/i }));
+    });
+    return assertiveRegion();
+  }
+
+  it('says the number could not go on the list when the server wrote no entry', async () => {
+    mocks.submitDisposition.mockResolvedValue(saved({ dnc_recorded: false }));
+    const live = await saveDoNotCall();
+    await waitFor(() => expect(live.textContent).toContain('Saved — Do not call.'));
+    expect(live.textContent).toContain('It couldn’t go on this campaign’s Do Not Call list');
+  });
+
+  it('adds nothing when the entry is on the list', async () => {
+    mocks.submitDisposition.mockResolvedValue(saved({ dnc_recorded: true }));
+    const live = await saveDoNotCall();
+    await waitFor(() => expect(live.textContent).toContain('Saved — Do not call.'));
+    expect(live.textContent).not.toContain('couldn’t go on');
+  });
+});
+
 describe('the C shortcut', () => {
   it('selects the datetime-bearing code by its FLAG, not by the string “callback”', async () => {
     await onCall();
@@ -448,12 +493,26 @@ describe('mark DNC', () => {
     expect(mocks.markContactDnc).toHaveBeenCalledTimes(1);
   });
 
+  it('hides the tenant-wide escalation from an admin of ONE account, as the server refuses it them (DS3)', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin' });
+    auth.memberships = [membership('account_admin', 'account-1')];
+    await onCall();
+    press('d');
+
+    expect(screen.queryByRole('button', { name: DNC_TENANT_ACTION_LABEL })).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: DNC_CAMPAIGN_ACTION_LABEL }));
+    });
+    expect(mocks.markContactDnc).toHaveBeenCalledWith('att-1', { scope: 'campaign' }, 'tenant-1', 'account-1');
+  });
+
   it('hides the tenant-wide escalation for a role lacking agency.dnc.manage — the campaign default still works', async () => {
     // `agent` (level 5) holds `agency.dnc.write` (floor: `agent`) but not
     // `agency.dnc.manage` (floor: `account_admin`, level 30) — the same floor
     // the API already uses for REMOVING an entry. Hiding the wider escalation
     // must not disable the narrower, default action.
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
+    auth.memberships = [membership('agent')];
     await onCall();
     press('d');
 

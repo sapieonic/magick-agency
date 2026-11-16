@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -118,6 +118,30 @@ describe('campaign tab bar', () => {
     expect(tabBadge('agents', null, null)).toBeNull();
     expect(tabBadge('callbacks', null, 0)).toBeNull();
     expect(tabBadge('overview', 4, 4)).toBeNull();
+  });
+
+  it('names each group by a label that is not a tab, a link or a tab stop (IN14, NV1)', () => {
+    show({ agentsOnShift: 0, callbacksOverdue: 0 });
+    const nav = screen.getByRole('navigation', { name: 'Campaign sections' });
+    const labels = [...nav.querySelectorAll('[data-nav-section-label]')];
+    expect(labels.map((l) => l.textContent)).toEqual(['Monitor', 'Data', 'Set up']);
+    for (const label of labels) {
+      expect(label.closest('a, button')).toBeNull();
+      expect(label.hasAttribute('tabindex')).toBe(false);
+      expect(label.getAttribute('role')).toBeNull();
+    }
+    const groupLinks = (name: string) =>
+      within(screen.getByRole('group', { name })).getAllByRole('link').map((a) => a.textContent);
+    expect(groupLinks('Monitor')).toEqual(['Overview', 'Calls', 'Agents', 'Callbacks', 'Health']);
+    expect(groupLinks('Data')).toEqual(['Contacts', 'Call log']);
+    expect(groupLinks('Set up')).toEqual(['Settings']);
+    // Every tab is still a plain link (no tablist), the current one marked, and the keyboard
+    // walks the tabs alone, in bar order: the labels add no stop.
+    expect(within(nav).queryAllByRole('tab')).toHaveLength(0);
+    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
+      'Overview', 'Calls', 'Agents', 'Callbacks', 'Health', 'Contacts', 'Call log', 'Settings',
+    ]);
+    expect(screen.getByTestId('campaign-tab-settings').getAttribute('aria-current')).toBe('page');
   });
 
   it('is as wide as its tabs, never as wide as the host page, so it does not move between screens', () => {

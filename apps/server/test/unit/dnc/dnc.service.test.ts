@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
 }));
 
-vi.mock('../../../src/dnc/dnc.repository.js', () => ({
+vi.mock('../../../src/dnc/dnc.repository.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/dnc/dnc.repository.js')>()),
   dncRepository: {
     insertMany: mocks.insertMany,
     findSuppressed: mocks.findSuppressed,
@@ -338,10 +339,54 @@ describe('add — outcomes an operator can reconcile', () => {
     await service.add({ tenantId: TENANT, phoneNumbers: ['+15551230001'], source: 'agent' });
 
     const input = mocks.insertMany.mock.calls[0]![0] as Record<string, unknown>;
-    // Only tenant-wide rows reach the dial-time check. A silently account-scoped default
-    // would produce entries that never propagate to the dial-time check.
+    // The service writes what it is told: the route decides the scope (and refuses an
+    // account-scoped caller who names none, DS3). No coverage check without one.
     expect(input['account_id']).toBeNull();
     expect(input['campaign_id']).toBeNull();
+    expect(input).not.toHaveProperty('coverage');
+  });
+
+  it('asks the repository to skip covered numbers only when given the account a narrower add reaches (DS4)', async () => {
+    await service.add({
+      tenantId: TENANT,
+      campaignId: '33333333-3333-4333-8333-333333333333',
+      coverAccountId: '22222222-2222-4222-8222-222222222222',
+      phoneNumbers: ['+15551230001'],
+      source: 'api',
+    });
+    expect((mocks.insertMany.mock.calls[0]![0] as Record<string, unknown>)['coverage'])
+      .toEqual({ accountId: '22222222-2222-4222-8222-222222222222' });
+  });
+
+  it('reports a number a wider entry covers as already_covered, with that entry and its reach, on every copy', async () => {
+    mocks.insertMany.mockResolvedValue({
+      results: [
+        {
+          phone_e164: '+15551230001',
+          entry: { id: 'wide', phone_e164: '+15551230001', account_id: null, campaign_id: null },
+          created: false,
+          covered: true,
+        },
+        {
+          phone_e164: '+15551230002',
+          entry: { id: 'new', phone_e164: '+15551230002', account_id: null, campaign_id: '33333333-3333-4333-8333-333333333333' },
+          created: true,
+        },
+      ],
+    });
+
+    const summary = await service.add({
+      tenantId: TENANT,
+      campaignId: '33333333-3333-4333-8333-333333333333',
+      coverAccountId: '22222222-2222-4222-8222-222222222222',
+      phoneNumbers: ['+15551230001', '+1 555 123 0001', '+15551230002'],
+      source: 'api',
+    });
+
+    expect(summary).toMatchObject({ added: 1, already_present: 0, already_covered: 2, invalid: 0 });
+    expect(summary.results[0]).toMatchObject({ outcome: 'already_covered', entry_id: 'wide', scope: 'tenant', campaign_id: null });
+    expect(summary.results[1]).toMatchObject({ outcome: 'already_covered', entry_id: 'wide' });
+    expect(summary.results[2]).toMatchObject({ outcome: 'added', entry_id: 'new', scope: 'campaign' });
   });
 
   it('passes an explicit scope through unchanged', async () => {

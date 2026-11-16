@@ -43,6 +43,24 @@ export interface AgencyDisposition {
   /** Disposition-driven retry — this is how voicemail retry works without answering-machine detection. */
   retry?: { delay_minutes?: number; max_attempts: number };
   /**
+   * Promise to pay (PT1): the agent must enter the date the customer promised to pay
+   * (`promise_date`), and may enter an amount (`promise_amount`). See `./promise.ts`.
+   *
+   * **Recording a promise never makes the dialler call** (PT3). Refused beside
+   * `requires_datetime` (a promise books its own follow-up) and `suppress` (a do-not-call
+   * outcome cannot record a promise), in the soft phone's own catalogue and an inbound
+   * route's (no roster contact to carry it), and as an automatic outcome's mapping.
+   */
+  requires_promise?: boolean;
+  /**
+   * PT2: when set (1–`AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX`), recording a promise books a call
+   * this many days after the promised date, through the callback path: deferred into the
+   * contact's calling window, owned as a callback (CA4), DNC checked at dial time. Absent
+   * (the default): the contact goes where the entry's flags and the retry policy send it.
+   * Only on a `requires_promise` entry, and never beside `retry` or `terminal`.
+   */
+  promise_follow_up_days?: number;
+  /**
    * What recording this outcome lets the contact's agent override, from then on, for this
    * contact only (contact assignment, phase 2). The latest granting outcome on a contact wins;
    * each part is used up when spent. Absent: the outcome grants nothing (every built-in).

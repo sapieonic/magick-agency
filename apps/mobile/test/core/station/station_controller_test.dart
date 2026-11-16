@@ -872,7 +872,7 @@ void main() {
               'dnc_recorded': false,
             });
         app.run(app.controller.markDnc());
-        expect(app.view!.dncOutcome, contains('We’re still adding it'));
+        expect(app.view!.dncOutcome, contains('It couldn’t go on'));
         app.releasedFrame('att-1', requiresDisposition: false);
         app.agentStateFrame('available');
         app.reserved('att-2');
@@ -925,6 +925,43 @@ void main() {
               reason: 'the disposition carried the notes; the pending autosave is dropped');
           expect(app.store.entries['att-1']?.notes, 'Wants a quote', reason: 'kept until the sweep, as the server has it');
           app.dispose();
+        });
+      });
+
+      test('a suppress outcome whose number could not go on the list says so; one that did, or another outcome, adds nothing (DS8)', () {
+        fakeAsync((async) {
+          Map<String, Object?> answer(String attemptId, String code, Object? dncRecorded) => {
+                'campaign_id': 'camp-1',
+                'attempt_id': attemptId,
+                'contact_id': 'c-$attemptId',
+                'disposition_code': code,
+                'contact_state': code == 'do_not_call' ? 'suppressed' : 'completed',
+                'dnc_recorded': ?dncRecorded,
+                'agent_state': 'wrapup',
+              };
+          final app = App(async)..start();
+          app.inWrapup('att-1');
+          app.routes['POST /proxy/agency/attempts/att-1/disposition'] = (_) => json(200, answer('att-1', 'do_not_call', false));
+          app.run(app.controller.submitDisposition('do_not_call'));
+          expect(app.view!.dispositionSaved, 'do_not_call');
+          expect(app.view!.dncOutcome, suppressOutcomeNotListedCopy);
+          expect(app.view!.dncOutcome, contains('It couldn’t go on this campaign’s Do Not Call list'));
+          app.dispose();
+
+          final listed = App(async)..start();
+          listed.inWrapup('att-2');
+          listed.routes['POST /proxy/agency/attempts/att-2/disposition'] = (_) => json(200, answer('att-2', 'do_not_call', true));
+          listed.run(listed.controller.submitDisposition('do_not_call'));
+          expect(listed.view!.dispositionSaved, 'do_not_call');
+          expect(listed.view!.dncOutcome, isNull);
+          listed.dispose();
+
+          final other = App(async)..start();
+          other.inWrapup('att-3');
+          other.routes['POST /proxy/agency/attempts/att-3/disposition'] = (_) => json(200, answer('att-3', 'interested', null));
+          other.run(other.controller.submitDisposition('interested'));
+          expect(other.view!.dncOutcome, isNull);
+          other.dispose();
         });
       });
 

@@ -9,6 +9,7 @@ import type { AgencyStationWrapupFrame, AgencyWrapupState } from './actions';
 import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, AgencyCampaignStatus } from './enums';
 import type { AgencyStationCustomerWaitingFrame, AgencyStationInboundCallFrame } from './inbound';
 import type { AgencyStationManualCallFrame } from './softphone';
+import type { AgencyContactPromise } from './promise';
 import type { AllListed } from '../primitives';
 
 // ─── Which client is on the other end ───────────────────────────────────────
@@ -410,6 +411,11 @@ export interface AgencyReservedAttempt {
   /** Prior attempts on this contact, newest first. Empty on a first dial. */
   prior_attempts: AgencyPriorAttempt[];
   /**
+   * The contact's latest promise to pay (PT9), so the agent sees "Promised 18 Nov · 12,500"
+   * when they next reach the customer; null or absent without one.
+   */
+  promise?: AgencyContactPromise | null;
+  /**
    * Set when this call is a wrap-up redial (`POST /sessions/:id/redial`): the attempt it
    * redials, its number (1, 2) and how many redials are left after it. Absent on a call
    * the pacing engine placed.
@@ -452,6 +458,9 @@ export interface AgencyPriorAttempt {
   /** As `AgencyAttemptRow.auto_disposition_code` (`agency/spine.ts`). */
   auto_disposition_code?: string | null;
   notes: string | null;
+  /** The promise to pay recorded on this attempt (PT9), as `AgencyAttemptRow`'s; absent: none. */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   /** ISO-8601. */
   ended_at: string | null;
   /** The campaign this attempt was placed on — not necessarily the current one. */

@@ -1,4 +1,11 @@
 import type { AgencyDisposition } from '../types/agency';
+import { AGENCY_PROMISE_MAX_DAYS_AHEAD } from '@magick-agency/contracts/agency';
+import {
+  daysBetween,
+  normalisePromiseAmount,
+  parsePromiseDate,
+  type PromiseDay,
+} from '@magick-agency/domain/promise-to-pay';
 
 /**
  * Disposition form logic (requirement: *a required note blocks
@@ -20,6 +27,12 @@ export interface DispositionFormState {
   notes: string;
   /** ISO-8601 local datetime string from the picker, or null. */
   callbackAt: string | null;
+  /**
+   * Promise to pay (PT1): the date picker's `YYYY-MM-DD`, and the amount as typed. Optional,
+   * so a form built before them reads as "no promise entered".
+   */
+  promiseDate?: string | null;
+  promiseAmount?: string;
 }
 
 export const EMPTY_DISPOSITION_FORM: DispositionFormState = {
@@ -33,7 +46,10 @@ export type DispositionBlockReason =
   | 'no_selection'
   | 'note_required'
   | 'datetime_required'
-  | 'callback_in_past';
+  | 'callback_in_past'
+  | 'promise_required'
+  | 'promise_date_invalid'
+  | 'promise_amount_invalid';
 
 /**
  * Copy for each block reason. Rendered **beside the submit control**, never as a
@@ -49,7 +65,30 @@ export const DISPOSITION_BLOCK_COPY: Record<DispositionBlockReason, string> = {
   note_required: 'This disposition needs a note.',
   datetime_required: 'This disposition needs a callback time.',
   callback_in_past: "That time has already passed. Pick when we should call back.",
+  promise_required: 'This outcome needs the date the customer promised to pay.',
+  promise_date_invalid: `Pick a promised date from today up to ${AGENCY_PROMISE_MAX_DAYS_AHEAD} days ahead.`,
+  promise_amount_invalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
 };
+
+/** The agent's own calendar date at `now` (the browser's zone). */
+export function localDay(now: number): PromiseDay {
+  const d = new Date(now);
+  return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+}
+
+/**
+ * The client half of the promised date's rule (PT4). The server judges "today" in the
+ * CUSTOMER's zone, which this screen is not given (see the callback row's timezone note), so
+ * the pad allows one day either side of the agent's own today and lets the server decide the
+ * edge: an agent in Kolkata speaking to a customer still on yesterday's date in New York can
+ * record "today" for them. A real date, never far ahead.
+ */
+export function promiseDateBlocked(value: string | null | undefined, now: number): boolean {
+  const d = parsePromiseDate(value);
+  if (!d) return true;
+  const ahead = daysBetween(localDay(now), d);
+  return ahead < -1 || ahead > AGENCY_PROMISE_MAX_DAYS_AHEAD + 1;
+}
 
 export function findDisposition(
   catalog: AgencyDisposition[],
@@ -101,6 +140,13 @@ export function blockReason(
     if (parsed <= now) return 'callback_in_past';
   }
 
+  if (entry.requires_promise) {
+    if (!form.promiseDate) return 'promise_required';
+    if (promiseDateBlocked(form.promiseDate, now)) return 'promise_date_invalid';
+    const amount = form.promiseAmount?.trim() ?? '';
+    if (amount !== '' && normalisePromiseAmount(amount) === null) return 'promise_amount_invalid';
+  }
+
   return null;
 }
 
@@ -116,6 +162,9 @@ export interface DispositionSubmitPayload {
   disposition_code: string;
   notes?: string;
   callback_at?: string;
+  /** PT1: only for an outcome that asks for a promise; the amount only when one was typed. */
+  promise_date?: string;
+  promise_amount?: string;
 }
 
 /**
@@ -146,6 +195,14 @@ export function buildSubmitPayload(
   const entry = findDisposition(catalog, form.selectedCode);
   if (entry?.requires_datetime && form.callbackAt) {
     payload.callback_at = new Date(Date.parse(form.callbackAt)).toISOString();
+  }
+
+  // Only for the outcome that asks: a date left in the form from an earlier selection is never
+  // sent with another outcome (the server would refuse it, `promise_not_expected`).
+  if (entry?.requires_promise && form.promiseDate) {
+    payload.promise_date = form.promiseDate;
+    const amount = normalisePromiseAmount(form.promiseAmount?.trim() ?? '');
+    if (amount !== null) payload.promise_amount = amount;
   }
 
   return payload;

@@ -15,7 +15,12 @@ before writing a repository or a migration.
   one live session per agent across tenants and the device that holds the station, 0036 Mode B's
   ring: the agent app's push devices, the ring on the inbound spine, and the away break's misses
   and start on the session, 0037 the partial index of the sessions on that away break, 0038 per-table autovacuum thresholds
-  and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped). node-pg-migrate,
+  and fillfactor, 0039 the retention purge's time indexes, 0040 seven duplicate indexes dropped, 0041
+  promise to pay: the promise on each call table and the contact's latest one, 0042 the
+  roster import's check-then-import and skipped rows, 0043 no schema change: the Insights buckets of
+  calls holding a recording they did not ask for are recounted, 0044 validates 0041's CHECKs, 0045
+  the Contacts list's promise index, built out of 0041's lock, 0046 the retention purge's index of
+  calls holding a recording link they did not ask for). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

@@ -239,7 +239,7 @@ export async function forceAgentAvailable(
  */
 export async function submitDisposition(
   attemptId: string,
-  payload: { disposition_code: string; notes?: string; callback_at?: string },
+  payload: { disposition_code: string; notes?: string; callback_at?: string; promise_date?: string; promise_amount?: string },
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyDispositionResponse> {
@@ -286,21 +286,18 @@ export async function redialFromWrapup(
  * **Not a disposition.** keeps this as its own action because of the case
  * that actually happens: the customer says "take me off your list" in the first
  * three seconds and hangs up, before there is anything to disposition. The server
- * suppresses the contact immediately and forwards to the server, which owns
- * `dnc_entries`.
+ * suppresses the contact and writes the `dnc_entries` row in one transaction
+ * (decision B8).
  *
- * **This path never writes an ACCOUNT-scoped row** — the server's internal route
- * refuses an `account_id` outright, because an account-scoped row never enters
- * the server's flat `dnc:{tenantId}` Redis set and so would never suppress a dial at
- * dial time. That leaves exactly two scopes reachable from here, and only one of
- * them is workspace-wide: `scope: 'tenant'` writes the unscoped row that reaches
- * the flat set, while the default `scope: 'campaign'` writes a campaign-scoped
- * row that does not. So the confirmation may state a workspace-wide scope only
- * for the escalation, never for the default.
+ * **This path never writes an ACCOUNT-scoped row**: a station mark is one campaign or
+ * every campaign (`markDnc` refuses an account). The dial-time check reads every scope
+ * from the table itself, so `scope: 'campaign'` stops this campaign only and
+ * `scope: 'tenant'` stops every campaign. So the confirmation may state an
+ * organisation-wide scope only for the escalation, never for the default.
  *
  * `dnc_recorded: false` is a success with a smaller promise **on either scope**:
- * the roster rows are suppressed locally, but the list write is still in flight
- * and may never land. The console must not claim the list write in that case —
+ * the roster rows are suppressed, but no list entry could be written (the number
+ * was not usable E.164). The console must not claim the list write in that case —
  * see `agencyDncCopy.ts`.
  *
  * The request asserts `scope`, never `campaign_id`: the server already knows the

@@ -62,6 +62,18 @@ function notesCell(notes: string | null, hidden: boolean): string {
 
 type CallEntry = Extract<CustomerTimelineEntry, { kind: 'campaign_call' | 'softphone_call' }>;
 
+/**
+ * A promise to pay recorded with the call (PT1), in "Details" as the automatic outcome is: the
+ * file's columns are shared by every entry kind and read by position. The amount has no
+ * currency: none is configured anywhere (PT5).
+ */
+function pushPromise(entry: CallEntry, details: string[]): void {
+  if (!entry.promise_date) return;
+  details.push(entry.promise_amount
+    ? `Promised to pay: ${entry.promise_date}, amount ${entry.promise_amount}`
+    : `Promised to pay: ${entry.promise_date}`);
+}
+
 /** A call's cells from "Campaign" on (see {@link CUSTOMER_HISTORY_CSV_HEADERS}); a call has no callback status. */
 function callCells(entry: CallEntry, campaignName: string | null | undefined, details: readonly string[]): string[] {
   return [
@@ -87,6 +99,7 @@ function customerHistoryCsvRow(
       if (entry.redial_number > 0) details.push(`Wrap-up redial ${entry.redial_number}`);
       if (entry.override_applied.length > 0) details.push(`Overrides: ${entry.override_applied.join(', ')}`);
       if (entry.override_note) details.push(`Override note: ${entry.override_note}`);
+      pushPromise(entry, details);
       return [...base, ...callCells(entry, entry.campaign.name, details)];
     }
     case 'softphone_call': {
@@ -96,6 +109,7 @@ function customerHistoryCsvRow(
       }
       if (entry.dnc_override_note) details.push(`Called despite do-not-call: ${entry.dnc_override_note}`);
       if (entry.hours_override_note) details.push(`Called outside calling hours: ${entry.hours_override_note}`);
+      pushPromise(entry, details);
       return [...base, ...callCells(entry, entry.campaign?.name, details)];
     }
     case 'callback':

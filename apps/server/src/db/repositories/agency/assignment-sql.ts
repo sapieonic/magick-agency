@@ -14,6 +14,7 @@ import type { AgencyAssignmentReason, AgencyDisposition } from '@magick-agency/c
 import type { AgencyCampaignRecord } from '../../models/agency.model.js';
 import type { params } from './query-builders.js';
 import { contactPhoneDigitsSql, inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
+import { promiseFollowUpDays } from '../../../agency/promise-to-pay.js';
 
 /** The states of a contact on a call or held for its write-up, as an `IN` list. */
 export const LIVE_STATES_SQL = `('in_flight', 'connected')`;
@@ -80,14 +81,17 @@ export function numberLiveSql(alias: string): string {
 }
 
 /**
- * The codes in a campaign's catalog that book a callback (`requires_datetime`). A contact whose
+ * The codes in a campaign's catalog that book a callback (`requires_datetime`), and the promise
+ * to pay codes that book a follow-up after the promised date (`requires_promise` with
+ * `promise_follow_up_days`, PT2: the follow-up is a callback in every respect). A contact whose
  * last disposition is one of them, and still open, is a callback, and in strict / preferred mode
  * it stays with its owner. Defensive on shape, as `resolveDisposition` is.
  */
 export function callbackCodes(catalog: readonly AgencyDisposition[] | null | undefined): string[] {
   if (!Array.isArray(catalog)) return [];
   return catalog
-    .filter((d) => !!d && typeof d === 'object' && typeof d.code === 'string' && d.requires_datetime === true)
+    .filter((d) => !!d && typeof d === 'object' && typeof d.code === 'string'
+      && (d.requires_datetime === true || promiseFollowUpDays(d) !== null))
     .map((d) => d.code);
 }
 

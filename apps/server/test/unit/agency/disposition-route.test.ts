@@ -65,6 +65,9 @@ const { repos } = vi.hoisted(() => ({
       releaseFromDisposition: vi.fn(async (o: { state: string; suppressedReason: string | null }): Promise<{ state: string; suppressed_reason: string | null } | null> =>
         ({ state: o.state, suppressed_reason: o.suppressedReason })),
       unclaim: vi.fn().mockResolvedValue(undefined),
+      // Promise to pay (PT6, PT7): the contact's latest promise, or an earlier one followed up.
+      recordContactPromise: vi.fn().mockResolvedValue(true),
+      notePromiseFollowUp: vi.fn().mockResolvedValue(false),
       // Read to resolve the contact's own timezone before it
       // schedules a callback. A callback is scheduled in the CUSTOMER's
       // window, so the route cannot answer from the campaign row alone.
@@ -73,11 +76,13 @@ const { repos } = vi.hoisted(() => ({
     session: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn() },
   },
 }));
-vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
+vi.mock('../../../src/db/repositories/agency.repository.js', async () => ({
   agencyAttemptRepository: repos.attempt,
   agencyCampaignRepository: repos.campaign,
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
+  // Pure (a DATE column read as `YYYY-MM-DD`): the real one.
+  promiseDateText: (await import('../../../src/db/repositories/agency/projections.js')).promiseDateText,
 }));
 
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
@@ -205,6 +210,9 @@ describe('POST /attempts/:id/disposition — the happy path and the contract sha
       // `next_attempt_at` can be the instant we will actually dial rather than a
       // repeat of the request. Null here — no callback was requested.
       callback_requested_at: null,
+      // Promise to pay (PT1): echoed as stored; null for an outcome that records none.
+      promise_date: null,
+      promise_amount: null,
       agent_state: 'available',
     });
     expect(repos.attempt.recordDisposition).toHaveBeenCalledWith(expect.objectContaining({
@@ -272,7 +280,7 @@ describe('POST /attempts/:id/disposition — idempotency', () => {
     // cannot act on. So the body must be indistinguishable from a first write.
     expect(Object.keys(res.json()).sort())
       .toEqual(['agent_state', 'attempt_id', 'callback_requested_at', 'campaign_id', 'contact_id',
-        'contact_state', 'disposition_code', 'next_attempt_at']);
+        'contact_state', 'disposition_code', 'next_attempt_at', 'promise_amount', 'promise_date']);
     expect(repos.attempt.recordDisposition).toHaveBeenCalledWith(
       expect.objectContaining({ notes: 'corrected' }),
     );

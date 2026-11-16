@@ -63,6 +63,7 @@
  */
 import type { QueryResultRow } from 'pg';
 import { getPool } from '@magick-agency/db';
+import { recordingUrlSql } from '@magick-agency/db/utils/recording-request';
 import { keysetAtSql } from '@magick-agency/domain/keyset-cursor';
 import { AGENCY_ATTEMPT_LIVE_STATES } from '../../models/agency.model.js';
 
@@ -127,6 +128,9 @@ export interface CustomerHistoryAttemptRow {
   auto_disposition_code: string | null;
   notes: string | null;
   callback_at: Date | null;
+  /** Promise to pay (PT1), read as text (`YYYY-MM-DD`); NULL = none. */
+  promise_date: string | null;
+  promise_amount: string | null;
   dialed_at: Date | null;
   ended_at: Date | null;
   talk_seconds: number | null;
@@ -158,6 +162,9 @@ export interface CustomerHistoryManualCallRow {
   disposition_code: string | null;
   notes: string | null;
   callback_at: Date | null;
+  /** Promise to pay (PT1), read as text (`YYYY-MM-DD`); NULL = none. */
+  promise_date: string | null;
+  promise_amount: string | null;
   fields: Record<string, unknown> | null;
   dnc_override_note: string | null;
   hours_override_note: string | null;
@@ -404,7 +411,7 @@ const CONTACT_COLUMNS = `c.id, c.root_contact_id, c.campaign_id, c.account_id, c
 
 const MANUAL_COLUMNS = `m.id, m.account_id, m.agent_user_id, m.campaign_id, m.contact_id, m.webrtc_call_id,
            m.destination_e164, m.state, m.outcome, m.disposition_code, m.notes, m.callback_at,
-           m.fields, m.dnc_override_note, m.hours_override_note, m.recording_requested, m.dialed_at,
+           m.promise_date::text AS promise_date, m.promise_amount, m.fields, m.dnc_override_note, m.hours_override_note, m.recording_requested, m.dialed_at,
            m.ended_at, m.talk_seconds, m.dispositioned_by_user_id, m.dispositioned_at, m.created_at,
            ${keysetAtSql('m.created_at')} AS at`;
 
@@ -552,7 +559,8 @@ export const CUSTOMER_HISTORY_SQL = {
        LIMIT $6::int)
     SELECT a.id, a.contact_id, a.campaign_id, a.account_id, a.attempt_number, a.webrtc_call_id,
            s.agent_user_id, a.state, a.outcome, a.disposition_code, a.auto_disposition_code,
-           a.notes, a.callback_at, a.dialed_at, a.ended_at, a.talk_seconds, a.dispositioned_by_user_id, a.dispositioned_at,
+           a.notes, a.callback_at, a.promise_date::text AS promise_date, a.promise_amount,
+           a.dialed_at, a.ended_at, a.talk_seconds, a.dispositioned_by_user_id, a.dispositioned_at,
            a.redial_of_attempt_id, ${CHAIN_SQL} AS chain_attempt_id, a.redial_number,
            a.override_applied, a.override_note, g.record_calls, a.created_at,
            ${keysetAtSql('a.created_at')} AS at
@@ -661,9 +669,12 @@ export const CUSTOMER_HISTORY_SQL = {
        AND g.tenant_id = $1::uuid
        AND g.account_id = ANY($2::uuid[])`,
 
-  /** The calls' media legs (primary key): present or purged, and recorded or not. $1 tenant, $2 accounts, $3 ids. */
+  /**
+   * The calls' media legs (primary key): present or purged, and recorded or not (a link the call did
+   * not ask for reads as none, RC1). $1 tenant, $2 accounts, $3 ids.
+   */
   mediaLegs: `
-    SELECT k.id, k.recording_url
+    SELECT k.id, ${recordingUrlSql('k')} AS recording_url
       FROM agency_calls k
      WHERE k.id = ANY($3::uuid[])
        AND k.tenant_id = $1::uuid

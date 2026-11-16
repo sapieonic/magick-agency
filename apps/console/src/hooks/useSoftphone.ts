@@ -490,12 +490,22 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const callerId = call ? call.caller_id : draftCallerId;
   const callerIdAutomatic = call === null && draftCampaign !== null && callerIdOptions.length > 0;
 
-  const baseCatalog: AgencyDisposition[] = call?.tag
+  const tagCatalog: AgencyDisposition[] = call?.tag
     ? (taggableCampaigns.find((c) => c.campaign_id === call.tag!.campaign_id)?.disposition_catalog
       ?? callCampaign?.disposition_catalog
       ?? bootstrap?.untagged.disposition_catalog
       ?? [])
     : (bootstrap?.untagged.disposition_catalog ?? []);
+  // A promise needs a roster contact this call claimed (PT13): on a tagged call with none (the
+  // number is not on the list, or its contact is closed and only linked) the server refuses it
+  // (`promise_needs_contact`), so the pad does not offer it.
+  const noClaimedContact = call !== null && call.contact?.claimed !== true;
+  const baseCatalog = useMemo(
+    () => (noClaimedContact && tagCatalog.some((e) => e.requires_promise)
+      ? tagCatalog.filter((e) => !e.requires_promise)
+      : tagCatalog),
+    [noClaimedContact, tagCatalog],
+  );
   const catalog = call && catalogOverride?.callId === call.id ? catalogOverride.catalog : baseCatalog;
 
   // ── A call arriving, and a call settling ─────────────────────────────────
@@ -976,6 +986,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         code: payload.disposition_code,
         ...notesField,
         ...(payload.callback_at ? { callback_at: payload.callback_at } : {}),
+        ...(payload.promise_date ? { promise_date: payload.promise_date } : {}),
+        ...(payload.promise_amount ? { promise_amount: payload.promise_amount } : {}),
         // Absent until the field set is known: the server then keeps (and checks) the stored values.
         ...(fieldsKnown ? { fields: cleaned } : {}),
       },
@@ -991,6 +1003,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         selection_method: selectionMethodRef.current,
         field_count: Object.keys(cleaned).length,
         has_callback: Boolean(payload.callback_at),
+        has_promise: Boolean(payload.promise_date),
       });
       return;
     }

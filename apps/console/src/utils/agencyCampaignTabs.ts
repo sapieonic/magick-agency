@@ -42,7 +42,7 @@ import type { Role } from '../types/auth';
  * ── Grouped, still flat (decision IN14) ───────────────────────────────────────
  * The bar reads as three labelled groups: Monitor (Overview, Calls, Agents,
  * Callbacks, Health), Data (Contacts, Call log) and Set up (Settings). The
- * groups are labels and dividers, never menus: every tab is still one click
+ * groups are labels, never menus (each label above its tabs, NV1): every tab is still one click
  * and one question. Two screens left the bar to make room for the grouping:
  * Soft-phone calls is the second view of Call log (`CALL_LOG_VIEWS`, a
  * segmented control on both list pages), and Activity is the campaign

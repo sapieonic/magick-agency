@@ -284,6 +284,10 @@ class PriorAttemptsCard extends StatelessWidget {
                         if (!a.sameCampaign && !allHere) Text(StationCopy.otherCampaign(a.campaignName), style: text.labelSmall),
                       ],
                     ),
+                    if (a.promise != null) ...[
+                      const SizedBox(height: 2),
+                      Text(a.promise!, key: const Key('prior-promise'), style: text.bodySmall),
+                    ],
                     if (a.notes != null && a.notes!.trim().isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(a.notes!, style: text.bodySmall),
@@ -297,6 +301,40 @@ class PriorAttemptsCard extends StatelessWidget {
               padding: const EdgeInsets.only(top: Space.sm),
               child: Text(StationCopy.moreAttempts(ordered.length - shown.length), style: text.labelSmall),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The contact's latest promise to pay (PT9): "Promised 18 Nov 2026 · 12,500"
+/// and where it stands, so the agent says it before anything else. Colour adds
+/// urgency; the word carries the meaning ("Missed" is no outcome since the
+/// date, not "unpaid").
+class PromiseLine extends StatelessWidget {
+  const PromiseLine({super.key, required this.promise});
+
+  final PromiseView promise;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final standing = StationCopy.promiseStanding(promise.state);
+    final tone = switch (promise.state) {
+      PromiseStanding.dueToday => Tone.warn,
+      PromiseStanding.missed => Tone.danger,
+      PromiseStanding.followedUp => Tone.ok,
+      PromiseStanding.upcoming || PromiseStanding.unknown => Tone.neutral,
+    };
+    return MergeSemantics(
+      child: Wrap(
+        key: const Key('contact-promise'),
+        spacing: Space.sm,
+        runSpacing: Space.xs,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(promise.text, style: text.titleSmall),
+          if (standing.isNotEmpty) StatusPill(standing, tone: tone),
         ],
       ),
     );

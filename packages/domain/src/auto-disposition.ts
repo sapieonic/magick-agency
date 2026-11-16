@@ -19,7 +19,7 @@ export function isAutoDispositionOutcome(value: string): value is AgencyAutoDisp
 }
 
 /** Why a code cannot be an automatic outcome, or null when it can. */
-export type AutoDispositionRefusal = 'missing' | 'suppress' | 'terminal';
+export type AutoDispositionRefusal = 'missing' | 'suppress' | 'terminal' | 'promise';
 
 /**
  * Whether `code` may be an automatic outcome against `catalog` (OD3): it must name an
@@ -27,15 +27,20 @@ export type AutoDispositionRefusal = 'missing' | 'suppress' | 'terminal';
  * neither `suppress`es nor is `terminal`. Those two claim a consequence an automatic
  * outcome never has: it is a label only, and the retry policy decides what happens to the
  * contact. Shape-safe on an untrusted catalog (a stored row, a request body).
+ *
+ * Nor one that asks for a promise to pay (`requires_promise`, PT11): nobody spoke to the
+ * customer on an unanswered call, so the label "Promised to pay" would be a record of a
+ * promise that was never made, with no date to show for it.
  */
 export function autoDispositionRefusal(catalog: unknown, code: string): AutoDispositionRefusal | null {
   const entries: unknown[] = Array.isArray(catalog) ? catalog : [];
   const entry = entries.find(
-    (e): e is { suppress?: unknown; terminal?: unknown } =>
+    (e): e is { suppress?: unknown; terminal?: unknown; requires_promise?: unknown } =>
       !!e && typeof e === 'object' && (e as { code?: unknown }).code === code,
   );
   if (!entry) return 'missing';
   if (entry.suppress === true) return 'suppress';
   if (entry.terminal === true) return 'terminal';
+  if (entry.requires_promise === true) return 'promise';
   return null;
 }

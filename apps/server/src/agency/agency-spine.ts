@@ -52,6 +52,8 @@ export const CONTACT_QUERY_PARAMS = [
   'state', 'suppressed_reason', 'last_outcome', 'last_disposition', 'assigned_to', 'phone', 'from', 'to',
   // The insights roster's buckets (WS F): one waiting bucket, and attempted (dials_placed > 0).
   'waiting', 'attempted',
+  // Promise to pay (PT7): contacts holding a promise, or in a promise state.
+  'promise',
 ] as const;
 
 export const PAGING_QUERY_PARAMS = ['cursor', 'limit'] as const;
@@ -68,6 +70,14 @@ export const TOTAL_QUERY_PARAMS = ['include_total'] as const;
  * See {@link forwardAllowedQuery}'s `consumedByRoute`.
  */
 export const PREAMBLE_QUERY_PARAMS = ['preamble'] as const;
+
+/**
+ * The campaign call export's own filter (decision SR6): `source=dialler|soft_phone` keeps one
+ * of the two sources of the campaign's call log; absent, the file carries both. Forwarded to
+ * the call log's internal read, which validates it. Not on the JSON attempt list, whose rows
+ * are the dialler's alone (the soft phone's are Call log's other view).
+ */
+export const CALL_LOG_EXPORT_QUERY_PARAMS = ['source'] as const;
 
 /**
  * The outcome of narrowing a query down to the params a route forwards.
@@ -169,9 +179,17 @@ export function forwardAllowedQuery(
 // renames a field must degrade to a blank cell rather than throw mid-export.
 
 export interface SpineAttemptRow {
+  /**
+   * Where the row came from (the call log, decision SR6): `dialler` for an attempt,
+   * `soft_phone` for a soft-phone call tagged to the campaign. Absent on the JSON attempt
+   * list, whose rows are all the dialler's.
+   */
+  source?: 'dialler' | 'soft_phone';
   id: string;
-  contact_id: string;
-  attempt_number: number;
+  /** Null on a soft-phone row whose number matched no roster contact. */
+  contact_id: string | null;
+  /** Null on a soft-phone row: the soft phone does not number its calls per contact. */
+  attempt_number: number | null;
   phone_e164: string;
   caller_id: string;
   agent_user_id: string | null;
@@ -190,6 +208,9 @@ export interface SpineAttemptRow {
   auto_disposition_code?: string | null;
   notes: string | null;
   callback_at: string | null;
+  /** Promise to pay (PT1); absent from a handler that predates it. */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   dispositioned_by_user_id: string | null;
   dispositioned_at: string | null;
   dispositioned_on_behalf: boolean;
@@ -223,6 +244,8 @@ export interface SpineContactRow {
    * {@link enrichContactOwnerNames}); null for the pool or an id this tenant cannot name.
    */
   assigned_to_name?: string | null;
+  /** Promise to pay (PT6, PT7): the latest promise; absent from a handler that predates it. */
+  promise?: { date: string; amount: string | null; state: string } | null;
   created_at: string;
   updated_at: string;
 }
@@ -394,6 +417,19 @@ export const ATTEMPT_CSV_COLUMNS = [
   // consumer reading by position keeps its columns. Its own column, never merged into
   // `disposition_code`: that one stays what a person recorded.
   'auto_disposition_code',
+  // Where the row came from (decision SR6): `dialler` (an attempt) or `soft_phone` (a soft-phone
+  // call an agent logged to this campaign). Appended after `auto_disposition_code`, like every
+  // column added after the first release, so a consumer reading by position keeps its columns
+  // (the promise columns, PT12, were appended after it in turn). A soft-phone row
+  // fills the attempt columns from the soft-phone call's own fields: `attempt_id` is the
+  // soft-phone call's id, `contact_id` the roster contact its number matched (empty for none),
+  // `phone` the number dialled, `recording_call_id` its media leg; `attempt_number`,
+  // `wrapup_seconds` and `auto_disposition_code` are empty (the soft phone has none).
+  'source',
+  // Promise to pay (PT12), appended: the promised date (`YYYY-MM-DD`, the customer's calendar)
+  // and amount (two places, no currency) recorded with this attempt's outcome.
+  'promise_date',
+  'promise_amount',
 ] as const;
 
 export const CONTACT_CSV_COLUMNS = [
@@ -416,6 +452,11 @@ export const CONTACT_CSV_COLUMNS = [
   'assigned_user_id',
   'assigned_to',
   'assigned_at',
+  // Promise to pay (PT12), appended: the contact's latest promise and where it stands
+  // (`upcoming`, `due_today`, `missed`, `followed_up`; `missed` means no later outcome, not unpaid).
+  'promise_date',
+  'promise_amount',
+  'promise_state',
 ] as const;
 
 /** `null`/`undefined` → an empty cell; everything else → its string form. */
@@ -439,6 +480,9 @@ export function attemptCsvRow(row: SpineAttemptRow): string {
     cell(row.created_at), cell(row.dialed_at), cell(row.answered_at), cell(row.bridged_at),
     cell(row.ended_at), cell(row.talk_seconds), cell(row.wrapup_seconds),
     cell(row.webrtc_call_id), cell(row.auto_disposition_code),
+    // A row with no `source` is an attempt: the JSON attempt list's rows carry none.
+    cell(row.source ?? 'dialler'),
+    cell(row.promise_date), cell(row.promise_amount),
   ]);
 }
 
@@ -453,6 +497,7 @@ export function contactCsvRow(row: SpineContactRow): string {
     cell(row.suppressed_reason), cell(row.next_attempt_at), cell(row.timezone),
     cell(row.csv_line_number), cell(row.created_at), cell(row.updated_at),
     cell(row.assigned_user_id), cell(row.assigned_to_name), cell(row.assigned_at),
+    cell(row.promise?.date), cell(row.promise?.amount), cell(row.promise?.state),
   ]);
 }
 
@@ -507,7 +552,7 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
     preambleLine(
       input.kind === 'attempts'
         // The product name, decision B17.
-        ? 'Magick Agency — campaign call-attempt export (one row per dial)'
+        ? 'Magick Agency — campaign call export (one row per dial, and one per soft-phone call logged to the campaign)'
         : 'Magick Agency — campaign contact roster export (one row per contact)',
     ),
     preambleLine(`Generated: ${input.generatedAt.toISOString()} (UTC)`),
@@ -526,10 +571,25 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
       + 'time in the console and are deliberately not exported in bulk.',
     ),
     ...(input.kind === 'attempts'
-      ? [preambleLine(
-        'Rows with no agent and no recording are real: an attempt that was abandoned, failed or '
-        + 'never answered has neither. They are the rows a call list cannot show.',
-      )]
+      ? [
+        preambleLine(
+          'Rows with no agent and no recording are real: an attempt that was abandoned, failed or '
+          + 'never answered has neither. They are the rows a call list cannot show.',
+        ),
+        preambleLine(
+          'The source column says where each row came from: dialler (the campaign\'s own '
+          + 'dial) or soft_phone (a call an agent placed on the soft phone and logged to this '
+          + 'campaign; its attempt_number, wrapup_seconds and auto_disposition_code are empty). '
+          + 'Soft-phone calls logged to no campaign are not in this file. Pass ?source=dialler '
+          + 'for the dialler\'s rows alone. The promise_date and promise_amount columns after it '
+          + 'are the promise to pay recorded with the row\'s outcome, empty where there is none.',
+        ),
+        preambleLine(
+          'Not included for a soft_phone row: the call details the agent entered and the reasons '
+          + 'given for dialling through a Do Not Call entry or outside calling hours. Each is on '
+          + 'the call\'s own page in the console (Call log, Soft-phone calls).',
+        ),
+      ]
       : [preambleLine(
         'Suppressed contacts appear here with the reason they were suppressed, including ones '
         + 'that were never dialled at all.',

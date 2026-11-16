@@ -698,7 +698,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   - *Status and recording.* Status callbacks drive ring, answer and terminal through the module's
     `lifecycle` reader (outcomes pinned by `plivo-carrier.fixture.json`); the recording callback
     persists `recording_url` and fires recording-ready, after teardown too
-    (`handleCarrierRecording`).
+    (`handleCarrierRecording`), only for a call that asked for a recording (RC1: any other is
+    discarded, logged and counted; `recording_discarded_unrequested_total`).
   - *Ending.* Before the answer a teardown cancels the dial by its request id (`DELETE
     …/Request/{request_uuid}/`, `cancelDialRequest`); after it, hangs up by the call id (`DELETE
     …/Call/{call_uuid}/`); neither with an empty or malformed id (PL8). So a soft-phone hang-up
@@ -789,7 +790,11 @@ One table, `dnc_entries`. Ingest drops suppressed numbers before they enter a ro
 (tenant, account, campaign), and **fails closed**: a database error halts the dial and aborts the
 claimed batch. An agent's mark (`agency/dnc-mark.ts`) is campaign-scoped by default and written in
 the same transaction as the attempt bookkeeping. Operators manage the list at `/dnc`
-(`dnc/dnc.service.ts`, E.164 required).
+(`dnc/dnc.service.ts`, E.164 required), choosing every campaign, one account or one campaign for
+each add (DS1–DS4: every campaign needs a membership of the whole organisation; a campaign add is
+stored as the station's mark is; a number a wider entry already blocks is reported
+`already_covered`, not written). An account admin lists and removes what belongs to their account,
+its campaigns' entries included (DS6). Scope is shown in the same words everywhere (DS7).
 
 ## Audit (B7) and notifications
 

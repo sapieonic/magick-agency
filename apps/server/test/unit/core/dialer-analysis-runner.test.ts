@@ -84,6 +84,12 @@ vi.mock('../../../src/analytics/llm-observability.js', () => ({
   trackDialerLlmAnalysis: mockTrackDialerLlmAnalysis,
 }));
 
+const { mockTrackRecordingFetchFailure } = vi.hoisted(() => ({ mockTrackRecordingFetchFailure: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  trackRecordingFetchFailure: mockTrackRecordingFetchFailure,
+}));
+
 // ── Audit ───────────────────────────────────────────────────────────────────
 const { mockAuditLogger } = vi.hoisted(() => ({ mockAuditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: mockAuditLogger }));
@@ -296,7 +302,7 @@ describe('DialerAnalysisRunner.run', () => {
       expect(creds.resolve).toHaveBeenCalledWith('cred-1', 'recording');
       expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
         allowedHosts: ['media.plivo.com'], headers: { Authorization: AUTH }, exactHosts: true,
-        maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs,
+        maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs, provider: 'plivo',
       });
     });
 
@@ -324,6 +330,23 @@ describe('DialerAnalysisRunner.run', () => {
       const creds = credentials();
       expect(await runner(creds).run(makeJob())).toBe('failed');
       expect(creds.resolve).not.toHaveBeenCalled();
+      expect(mockFetchRecordingBytes).not.toHaveBeenCalled();
+    });
+
+    it('a refused access counts access_refused; an access that throws (not a refusal) counts access_error (RC3)', async () => {
+      mockWebrtcRepo.findById.mockResolvedValue(plivoCall());
+      mockTrackRecordingFetchFailure.mockClear();
+      await runner(credentials('status')).run(makeJob());
+      expect(mockTrackRecordingFetchFailure).toHaveBeenCalledWith('plivo', 'analysis', 'access_refused');
+
+      mockTrackRecordingFetchFailure.mockClear();
+      const broken = new DialerAnalysisRunner({
+        transcriber: makeTranscriber() as never, analysisService: makeAnalysisService() as never, config: CFG,
+        resolveRecordingAccess: vi.fn().mockRejectedValue(new Error('connection terminated unexpectedly')),
+      });
+      await broken.run(makeJob());
+      expect(mockTrackRecordingFetchFailure).toHaveBeenCalledWith('plivo', 'analysis', 'access_error');
+      expect(mockTrackRecordingFetchFailure).toHaveBeenCalledOnce();
       expect(mockFetchRecordingBytes).not.toHaveBeenCalled();
     });
 
@@ -416,7 +439,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
     expect(mockFetchRecordingBytes.mock.calls[0]![0]).toBe('https://rec/call-1.wav');
     expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
-      allowedHosts: ['rec'], maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs,
+      allowedHosts: ['rec'], maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs, provider: 'voicelink',
     });
     expect(analysisService.analyze.mock.calls[0]![3]).toHaveProperty('audio');
     expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();

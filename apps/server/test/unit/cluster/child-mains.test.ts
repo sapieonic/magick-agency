@@ -38,6 +38,7 @@ vi.mock('../../../src/config/index.js', () => ({
     redis: { url: 'redis://localhost:6383/9', keyPrefix: '', commandTimeoutMs: 2000, maxRetriesPerRequest: 1, connectTimeoutMs: 2000 },
     processes: { mediaWorkers: 2, mediaWorkerDbPoolMax: 7 },
     voicelinkRecording: { allowedHosts: [] },
+    plivoRecording: { redirectHosts: [] },
   },
 }));
 vi.mock('../../../src/analytics/posthog.js', () => ({

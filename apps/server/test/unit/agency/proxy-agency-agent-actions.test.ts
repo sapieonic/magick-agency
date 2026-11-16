@@ -69,6 +69,8 @@ const PREFIX = '/proxy/agency';
 interface Caller {
   role?: MembershipRole;
   userId?: string | null;
+  /** The membership's account: absent for a member of the whole organisation. */
+  membershipAccountId?: string;
   // No API-key caller shapes: platform API keys do not exist in this app.
 }
 
@@ -82,7 +84,10 @@ async function buildApp(caller: Caller = { role: 'agent' }): Promise<FastifyInst
     r['tenantId'] = TENANT;
     r['accountId'] = 'account-1';
     r['user'] = { id: caller.userId === undefined ? AGENT_USER : caller.userId };
-    r['membership'] = { role: caller.role ?? 'agent' };
+    r['membership'] = {
+      role: caller.role ?? 'agent',
+      ...(caller.membershipAccountId !== undefined ? { account_id: caller.membershipAccountId } : {}),
+    };
   });
   await app.register(proxyAgencyAgentRoutes, { prefix: PREFIX });
   await app.ready();
@@ -909,6 +914,38 @@ describe('mark-DNC — the tenant-wide escalation needs `agency.dnc.manage`', ()
       agent_user_id: 'user-supervisor',
       on_behalf: true,
     });
+    await app.close();
+  });
+
+  it('403s an ACCOUNT-scoped admin escalating to every campaign, whatever their role (DS3)', async () => {
+    // The role floor alone let an admin of one account block a number in every other
+    // account's campaigns; `POST /dnc` already refused them the same row.
+    for (const role of ['account_admin', 'tenant_admin'] as const) {
+      mocks.proxyToCore.mockClear();
+      const app = await buildApp({ role, userId: 'user-supervisor', membershipAccountId: 'account-1' });
+      const res = await app.inject({
+        method: 'POST',
+        url: `${PREFIX}/attempts/attempt-1/dnc`,
+        payload: { reason: 'never call again', scope: 'tenant' },
+      });
+
+      expect(res.statusCode, role).toBe(403);
+      expect(res.json().message).toMatch(/whole organisation/);
+      expect(mocks.proxyToCore).not.toHaveBeenCalled();
+      await app.close();
+    }
+  });
+
+  it('still lets that account-scoped admin make the campaign mark', async () => {
+    const app = await buildApp({ role: 'account_admin', userId: 'user-supervisor', membershipAccountId: 'account-1' });
+    const res = await app.inject({
+      method: 'POST',
+      url: `${PREFIX}/attempts/attempt-1/dnc`,
+      payload: { scope: 'campaign' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
     await app.close();
   });
 

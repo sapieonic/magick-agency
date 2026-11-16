@@ -38,6 +38,7 @@ export async function computeUploads(campaign: Pick<AgencyCampaignRecord, 'id' |
       rows_read: r.rows_read,
       accepted: r.accepted,
       rejected: r.rejected,
+      skipped: r.skipped,
       rejected_by_reason: reasonCounts(r.rejected_by_reason),
       duplicates: r.duplicates,
       dedupe_columns: r.dedupe_columns,

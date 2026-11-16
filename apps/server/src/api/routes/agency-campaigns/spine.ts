@@ -31,6 +31,7 @@ import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { campaignOf, gate, ownedCampaign, requireOwned } from './guards.js';
+import { CAMPAIGN_CALL_SOURCES, isCampaignCallSource } from '../../../agency/campaign-call-log.js';
 
 /*
  * Route params reaching a `::uuid` cast are shape-checked first, against the shared
@@ -145,6 +146,40 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         : Promise.resolve(null),
     ]);
     return reply.send(total === null ? page : { ...page, total });
+  });
+
+  // ── GET /api/v1/agency-campaigns/:id/call-log ───────────────────────────
+  //
+  // The campaign's call log (decision SR6, `agency/campaign-call-log.ts`): its attempts and the
+  // soft-phone calls tagged to it, newest first on one keyset, each row marked with its
+  // `source`. The attempt list's filters and paging, plus `source=dialler|soft_phone` to keep
+  // one of the two. What the campaign call export drains; the Call log's JSON views stay one
+  // source each (Dialler calls, Soft-phone calls).
+  app.get<{ Params: { id: string } }>('/:id/call-log', async (request, reply) => {
+    const owned = await spinePageCampaign(request, reply);
+    if (!owned) return reply;
+
+    const query = (request.query ?? {}) as Record<string, unknown>;
+    const parsed = parseAttemptFilters(query);
+    if (!parsed.ok) return replyValidationFailed(reply, parsed.issues);
+    if (parsed.filters.agentUserId !== undefined && !UUID_RE.test(parsed.filters.agentUserId)) {
+      return replyValidationFailed(reply, [{ param: 'agent_user_id', message: 'must be an agent id' }]);
+    }
+    const rawSource = query['source'];
+    if (rawSource !== undefined && !isCampaignCallSource(rawSource)) {
+      return replyValidationFailed(reply, [{ param: 'source', message: `must be one of: ${CAMPAIGN_CALL_SOURCES.join(', ')}` }]);
+    }
+    const cursor = readKeysetCursor(request, reply);
+    if (cursor === null) return reply;
+
+    return reply.send(await agencyAttemptRepository.listCallLogForCampaign({
+      campaignId: owned.id,
+      tenantId: getTenantId(request),
+      filters: parsed.filters,
+      source: rawSource === undefined ? null : rawSource,
+      ...(cursor ? { after: cursor } : {}),
+      limit: clampLimit((query as { limit?: unknown }).limit),
+    }));
   });
 
   // ── The agency-native call read ──────────────────────────────

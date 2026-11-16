@@ -88,6 +88,10 @@ const dispositionSchema = z.object({
   disposition_code: z.string().min(1).max(50),
   notes: z.string().max(4000).optional(),
   callback_at: z.string().datetime().optional(),
+  // Promise to pay (PT1): shape and size only; the runtime checks the date against the
+  // customer's today and the amount's places (`promise_required`, `invalid_promise_*`).
+  promise_date: z.string().min(1).max(32).optional(),
+  promise_amount: z.string().max(32).optional(),
 });
 
 /**
@@ -711,8 +715,32 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
           ...(actor.actor.on_behalf ? { on_behalf: true } : {}),
         },
       });
+      // A suppress outcome's Do Not Call entry (DS8) gets the same `dnc_entry.created` row as
+      // the station's Mark DNC, the soft phone's and inbound's, so the DNC trail lists every
+      // entry whatever surface made it. Only when a NEW row was recorded; no phone number.
+      const dncEntry = dispositionDncEntry(result.body);
+      if (dncEntry?.created && dncEntry.id) {
+        platformAuditLogger.log({
+          ...accountAudit(request),
+          ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
+          action: 'dnc_entry.created',
+          resource_type: 'dnc_entry',
+          resource_id: dncEntry.id,
+          ...(campaignId ? { campaign_id: campaignId } : {}),
+          details: {
+            attempt_id: request.params.id,
+            scope: 'campaign',
+            disposition_code: parsed.data.disposition_code,
+            ...(campaignId ? { campaign_id: campaignId } : {}),
+            ...(actor.actor.on_behalf ? { on_behalf: true } : {}),
+          },
+        });
+      } else if (dncEntry && !dncEntry.recorded) {
+        log.warn({ tenantId: request.tenantId, attemptId: request.params.id },
+          'Suppress outcome recorded, but the contact\'s number is not usable E.164: no Do Not Call entry was written');
+      }
     }
-    return reply.code(result.status).send(result.body);
+    return reply.code(result.status).send(publicDispositionBody(result.body));
   });
 
   /**
@@ -817,6 +845,18 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     if (parsed.data.scope === 'tenant') {
       await requireDncManage(request, reply);
       if (reply.sent) return reply;
+      /**
+       * …and on a membership of the WHOLE organisation (DS3), as `POST /dnc` requires for the
+       * same row. The role floor alone let an account admin scoped to one account block a number
+       * in every other account's campaigns from the station, which the Do Not Call page refuses
+       * them. Their station still offers the campaign mark.
+       */
+      if (request.membership?.account_id != null) {
+        return reply.code(403).send({
+          error: 'Forbidden',
+          message: 'Only a member of the whole organisation can block a number in every campaign',
+        });
+      }
     }
 
     const actor = resolveAgencyActor(request);
@@ -870,4 +910,29 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     }
     return reply.code(result.status).send(result.body);
   });
+}
+
+/** The internal disposition answer's DS8 entry facts (read defensively off the untyped body). */
+function dispositionDncEntry(body: unknown): { recorded: boolean; id: string | null; created: boolean } | null {
+  if (!body || typeof body !== 'object') return null;
+  const raw = (body as Record<string, unknown>)['dnc_entry'];
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  return {
+    recorded: e['recorded'] === true,
+    id: typeof e['id'] === 'string' ? e['id'] : null,
+    created: e['created'] === true,
+  };
+}
+
+/**
+ * The disposition answer as the contract has it: `dnc_entry` is the audit's, never the client's;
+ * the client gets only whether the entry is on the list (`dnc_recorded`, DS8), present exactly
+ * when an entry was attempted, so the station never promises an entry that was not written.
+ */
+function publicDispositionBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || !('dnc_entry' in body)) return body;
+  const { dnc_entry: _audit, ...rest } = body as Record<string, unknown>;
+  const entry = dispositionDncEntry(body);
+  return entry ? { ...rest, dnc_recorded: entry.recorded } : rest;
 }

@@ -12,6 +12,7 @@ import {
 } from '../../utils/agencyCampaignTabs';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
+import { NavSectionLabel } from '../common/NavSectionLabel';
 import type { Role } from '../../types/auth';
 import styles from './CampaignTabs.module.css';
 
@@ -28,10 +29,13 @@ import styles from './CampaignTabs.module.css';
  * language is still a tab strip, because that is what it behaves like.
  *
  * ── Three labelled groups, one level (decision IN14) ───────────────────────
- * Monitor, Data and Set up are labels with a divider between them, not menus:
- * each group is a `role="group"` named by its label, and every tab is still a
- * direct link. On a phone the bar scrolls sideways and the labels hide; the
- * dividers keep the grouping.
+ * Monitor, Data and Set up are labels, not menus: each group is a
+ * `role="group"` named by its label, and every tab is still a direct link.
+ * The label sits ABOVE its group's tabs, never in the row beside them, and
+ * wears the console's one group-label look (`NavSectionLabel`, decision NV1),
+ * so it cannot be read as one more tab; its hairline spans the group, which
+ * is what draws the grouping. On a phone the bar scrolls sideways with the
+ * labels riding over their groups.
  *
  * ── Where it sits ──────────────────────────────────────────────────────────
  * Directly below whatever identifies the PAGE, and above the section's own
@@ -125,59 +129,61 @@ export function CampaignTabs({
             aria-labelledby={labelId}
             data-testid={`campaign-tab-group-${group.id}`}
           >
-            <span id={labelId} className={styles.groupLabel}>
+            <NavSectionLabel id={labelId} className={styles.groupLabel}>
               {group.label}
-            </span>
-            {group.tabs.map((tab) => {
-              const isActive = tab.id === current;
-              const badge = tabBadge(tab.id, onShift, overdue);
-              return (
-                /*
-                  A plain `Link`, deliberately not a `NavLink`. NavLink derives
-                  "active" from a prefix match, which makes `…/campaigns/:id` active
-                  on every section beneath it — two tabs marked `aria-current="page"`
-                  at once — and it writes that attribute itself, over anything passed
-                  in. The section that is rendering is the only thing that knows which
-                  tab it is (`…/contacts/add` is Contacts), so it says so via `active`.
-                */
-                <Link
-                  key={tab.id}
-                  to={campaignTabHref(tab.id, campaignId, carrySearch)}
-                  className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
-                  aria-current={isActive ? 'page' : undefined}
-                  title={tab.hint}
+            </NavSectionLabel>
+            <div className={styles.groupTabs}>
+              {group.tabs.map((tab) => {
+                const isActive = tab.id === current;
+                const badge = tabBadge(tab.id, onShift, overdue);
+                return (
                   /*
-                    One name for the link, said once: "Callbacks, 14 overdue". The
-                    badge's numeral is hidden from assistive tech, so the count is
-                    never read twice (it was: "Callbacks 14 , 14 overdue").
+                    A plain `Link`, deliberately not a `NavLink`. NavLink derives
+                    "active" from a prefix match, which makes `…/campaigns/:id` active
+                    on every section beneath it — two tabs marked `aria-current="page"`
+                    at once — and it writes that attribute itself, over anything passed
+                    in. The section that is rendering is the only thing that knows which
+                    tab it is (`…/contacts/add` is Contacts), so it says so via `active`.
                   */
-                  aria-label={badge ? `${tab.label}, ${badge.label}` : undefined}
-                  data-testid={`campaign-tab-${tab.id}`}
-                  onClick={() => {
-                    // Undefined or unrecognised ⇒ skip rather than guess (prop doc).
-                    if (campaignStatus && isKnownCampaignStatus(campaignStatus)) {
-                      trackAgencyCampaignTabViewed({
-                        campaign_id: campaignId,
-                        tab: tab.id,
-                        from_tab: active,
-                        campaign_status: campaignStatus,
-                      });
-                    }
-                  }}
-                >
-                  {tab.label}
-                  {badge && (
-                    <span
-                      className={`${styles.badge} ${badge.alert ? styles.badgeAlert : ''}`}
-                      aria-hidden="true"
-                      data-testid={badge.testId}
-                    >
-                      {badge.count}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
+                  <Link
+                    key={tab.id}
+                    to={campaignTabHref(tab.id, campaignId, carrySearch)}
+                    className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
+                    aria-current={isActive ? 'page' : undefined}
+                    title={tab.hint}
+                    /*
+                      One name for the link, said once: "Callbacks, 14 overdue". The
+                      badge's numeral is hidden from assistive tech, so the count is
+                      never read twice (it was: "Callbacks 14 , 14 overdue").
+                    */
+                    aria-label={badge ? `${tab.label}, ${badge.label}` : undefined}
+                    data-testid={`campaign-tab-${tab.id}`}
+                    onClick={() => {
+                      // Undefined or unrecognised ⇒ skip rather than guess (prop doc).
+                      if (campaignStatus && isKnownCampaignStatus(campaignStatus)) {
+                        trackAgencyCampaignTabViewed({
+                          campaign_id: campaignId,
+                          tab: tab.id,
+                          from_tab: active,
+                          campaign_status: campaignStatus,
+                        });
+                      }
+                    }}
+                  >
+                    {tab.label}
+                    {badge && (
+                      <span
+                        className={`${styles.badge} ${badge.alert ? styles.badgeAlert : ''}`}
+                        aria-hidden="true"
+                        data-testid={badge.testId}
+                      >
+                        {badge.count}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
           </div>
         );
       })}

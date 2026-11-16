@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import type { AgencyColumnAnalysis, AgencyIngestJob } from '../../types/agency-campaign';
 
@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   getIngestJob: vi.fn(),
   cancelIngestJob: vi.fn(),
   downloadRejectedRows: vi.fn(),
+  downloadSkippedRows: vi.fn(),
+  importCheckedFile: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
 }));
@@ -59,6 +61,8 @@ vi.mock('../../api/agencyCampaigns', () => ({
   getIngestJob: mocks.getIngestJob,
   cancelIngestJob: mocks.cancelIngestJob,
   downloadRejectedRows: mocks.downloadRejectedRows,
+  downloadSkippedRows: mocks.downloadSkippedRows,
+  importCheckedFile: mocks.importCheckedFile,
   createAgencyCampaign: mocks.createAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
 }));
@@ -105,6 +109,15 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     has_rejected_export: true,
     rejected_row_count: 769,
     rejected_truncated: false,
+    skipped: 0,
+    dnc_by_scope: {},
+    rejected_sample: [],
+    has_skipped_export: false,
+    skipped_row_count: 0,
+    skipped_truncated: false,
+    check_job_id: null,
+    import_job_id: null,
+    check_expires_at: null,
     error_code: null,
     error_message: null,
     created_by: '11111111-2222-4333-8444-555555555555',
@@ -187,7 +200,7 @@ describe('the abandonment limit on a draft created by the roster upload', () => 
     const input = screen.getByLabelText('CSV file') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['Cust Mobile\n9820041772\n'], 'c.csv', { type: 'text/csv' })] } });
     await screen.findByLabelText('Use Cust Mobile as');
-    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
     await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
     return mocks.createAgencyCampaign.mock.calls[0]![0] as Record<string, unknown>;
   }
@@ -255,7 +268,7 @@ describe('the page composes the mapper', () => {
       target: { value: 'ignore' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
     expect(mocks.startRosterIngest.mock.calls[0]![0]).toMatchObject({
@@ -279,7 +292,7 @@ describe('the page composes the mapper', () => {
     // the moment the operator is looking at the numbers.
     expect(screen.getByLabelText(/country code for numbers without one/i)).toBeTruthy();
 
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
     // Zero behaviour change at the default: the key is absent, not empty.
@@ -291,7 +304,7 @@ describe('the page composes the mapper', () => {
      fireEvent.change(screen.getByLabelText(/country code for numbers without one/i), {
       target: { value: '1' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
     expect(mocks.startRosterIngest.mock.calls[0]![0]).toMatchObject({ default_country_code: '1' });
@@ -304,7 +317,7 @@ describe('the page composes the mapper', () => {
     });
 
     expect(screen.getByTestId('country-code-error')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Import contacts' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: 'Import without checking' }) as HTMLButtonElement).disabled)
       .toBe(true);
     expect(mocks.startRosterIngest).not.toHaveBeenCalled();
   });
@@ -313,7 +326,7 @@ describe('the page composes the mapper', () => {
     await reachMapping();
     fireEvent.change(screen.getByLabelText('Use Cust Mobile as'), { target: { value: 'detail' } });
     expect(screen.getByTestId('mapping-block')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Import contacts' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: 'Import without checking' }) as HTMLButtonElement).disabled)
       .toBe(true);
   });
 });
@@ -324,7 +337,7 @@ describe('the page composes the ingest summary', () => {
     mocks.getIngestJob.mockResolvedValue(job());
 
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     const summary = await screen.findByTestId('ingest-summary', undefined, { timeout: 4000 });
     expect(summary).toBeTruthy();
@@ -344,7 +357,7 @@ describe('the page composes the ingest summary', () => {
   it('reports DNC suppressions separately AND says which total they sit in', async () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'completed' });
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     const notice = await screen.findByTestId('dnc-notice', undefined, { timeout: 4000 });
     expect(notice.textContent).toContain('41');
@@ -356,7 +369,7 @@ describe('the page composes the ingest summary', () => {
     mocks.downloadRejectedRows.mockResolvedValue(new Blob(['row_number,_reason\n88,bad\n']));
 
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     const download = await screen.findByRole(
       'button',
@@ -380,7 +393,7 @@ describe('the page composes the ingest summary', () => {
     );
 
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     const warning = await screen.findByRole('alert', undefined, { timeout: 4000 });
     expect(warning.textContent).toContain('70%');
@@ -395,7 +408,7 @@ describe('the page composes the ingest summary', () => {
     );
 
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     const progress = await screen.findByTestId('ingest-progress');
     expect(progress).toBeTruthy();
@@ -424,7 +437,7 @@ describe('the page composes the ingest summary', () => {
     );
 
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     const block = await screen.findByTestId('core-refused', undefined, { timeout: 4000 });
     expect(block.textContent).toContain('At least 1,204');
@@ -440,7 +453,7 @@ describe('the page composes the ingest summary', () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'completed' });
 
     await reachMapping();
-     fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+     fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
 
     await screen.findByTestId('ingest-summary', undefined, { timeout: 4000 });
     expect(screen.queryByTestId('core-refused')).toBeNull();
@@ -451,11 +464,100 @@ describe('the page composes the ingest summary', () => {
     mocks.getIngestJob.mockResolvedValue(job({ dry_run: true, campaign_id: null }));
 
     await reachMapping();
-    fireEvent.click(screen.getByRole('button', { name: 'Check the file first' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
 
     expect(await screen.findByTestId('dry-run-note', undefined, { timeout: 4000 })).toBeTruthy();
     // A check must not create a campaign — it is a check.
     expect(mocks.createAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it('Import N contacts after a check creates the draft and imports the checked file into it (IM2)', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({ job_id: 'check-1', dry_run: true, campaign_id: null, rows_read: 3, accepted: 3 }));
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    // Before any draft exists the check names no campaign.
+    await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
+    expect(mocks.startRosterIngest.mock.calls[0]![0]).not.toHaveProperty('campaign_id');
+
+    // The mapping that was checked is the one imported: it is locked on the review.
+    const importButton = await screen.findByRole('button', { name: 'Import 3 contacts' }, { timeout: 4000 });
+    expect((screen.getByLabelText('Use Cust Mobile as') as HTMLSelectElement).disabled).toBe(true);
+
+    mocks.getIngestJob.mockResolvedValue(job({ job_id: 'import-1', dry_run: false, rows_read: 3, accepted: 3, check_job_id: 'check-1' }));
+    fireEvent.click(importButton);
+    await waitFor(() => expect(mocks.importCheckedFile).toHaveBeenCalledWith('check-1', 'camp-1', 't1', 'a1'));
+    expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
+    expect(mocks.startRosterIngest).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByTestId('ingest-summary').getAttribute('data-kind')).toBe('import'));
+  });
+
+  it('a check that failed offers the way back Add contacts offers: a corrected file, or another mapping', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'check-1', dry_run: true, campaign_id: null, status: 'failed', error_code: 'malformed_csv',
+      error_message: 'Could not read the CSV: Invalid Closing Quote.',
+    }));
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const recovery = await screen.findByTestId('ingest-recovery', undefined, { timeout: 4000 });
+    expect(within(recovery).getByRole('button', { name: 'Upload a corrected file' })).toBeTruthy();
+
+    fireEvent.click(within(recovery).getByRole('button', { name: 'Change the column mapping' }));
+    expect(screen.queryByTestId('ingest-summary')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
+  });
+
+  it('an import of the checked file that failed offers Import again, while the check is valid (IM2)', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'check-1', dry_run: true, campaign_id: null, rows_read: 3, accepted: 3,
+      check_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    }));
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const importButton = await screen.findByRole('button', { name: 'Import 3 contacts' }, { timeout: 4000 });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'import-1', dry_run: false, status: 'failed', rows_read: 0, accepted: 0, rejected: 0, check_job_id: 'check-1',
+      error_code: 'dnc_unavailable', error_message: 'The Do Not Call list could not be checked, so no contacts were imported. Nothing was dialled. Try the import again.',
+    }));
+    fireEvent.click(importButton);
+
+    const again = await screen.findByRole('button', { name: 'Import again' }, { timeout: 4000 });
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-2', status: 'pending', check_job_id: 'check-1', already_started: false });
+    fireEvent.click(again);
+    await waitFor(() => expect(mocks.importCheckedFile).toHaveBeenCalledTimes(2));
+    expect(mocks.importCheckedFile.mock.calls[1]).toEqual(['check-1', 'camp-1', 't1', 'a1']);
+    expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
+  });
+
+  it('an import that failed after its check expired: Change the column mapping sets it aside for a new check', async () => {
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'check-1', dry_run: true, campaign_id: null, rows_read: 3, accepted: 3, check_expires_at: '2026-01-01T00:00:00.000Z',
+    }));
+    mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
+
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+    const importButton = await screen.findByRole('button', { name: 'Import 3 contacts' }, { timeout: 4000 });
+    mocks.getIngestJob.mockResolvedValue(job({
+      job_id: 'import-1', dry_run: false, status: 'failed', rows_read: 0, accepted: 0, rejected: 0, check_job_id: 'check-1',
+      error_code: 'unexpected_error', error_message: 'The import failed.',
+    }));
+    fireEvent.click(importButton);
+
+    const recovery = await screen.findByTestId('ingest-recovery', undefined, { timeout: 4000 });
+    expect(screen.queryByRole('button', { name: 'Import again' })).toBeNull();
+    fireEvent.click(within(recovery).getByRole('button', { name: 'Change the column mapping' }));
+    expect(screen.queryByTestId('ingest-summary')).toBeNull();
+    expect((screen.getByLabelText('Use Cust Mobile as') as HTMLSelectElement).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
   });
 });
 
@@ -552,7 +654,7 @@ describe('leaving the builder mid-upload', () => {
 describe('basics changed after the roster upload created the draft', () => {
   async function importThenBack() {
     await reachMapping();
-    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
     await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
     goToStep('Name & numbers');

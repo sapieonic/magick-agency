@@ -104,7 +104,7 @@ void main() {
       expect(p.kind, SoftphoneOverrideKind.dnc);
       final facts = factsOf(p);
       expect(facts['Number'], '+91 98204 61733');
-      expect(facts['Listed for'], 'The campaign Home Loan Renewals');
+      expect(facts['Listed for'], 'Campaign: Home Loan Renewals');
       expect(facts['Reason'], 'Asked not to be called');
       expect(facts['Added'], '12 Oct 2026');
       expect(p.consequence, contains('logged with your name'));
@@ -113,7 +113,7 @@ void main() {
 
     test('says when no reason was recorded, and a workspace-wide entry as such', () {
       final facts = factsOf(describeDncRefusal(dnc(scope: 'tenant', reason: null), number: '+919820461733', calendar: ist));
-      expect(facts['Listed for'], 'Every campaign and account in this organisation');
+      expect(facts['Listed for'], 'Every campaign');
       expect(facts['Reason'], 'No reason was recorded');
     });
 

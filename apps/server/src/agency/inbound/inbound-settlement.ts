@@ -29,10 +29,18 @@ export function inboundContactSettlement(
   entry: Pick<AgencyDisposition, 'is_success'>,
   decision: Pick<DispositionDecision, 'reason' | 'suppressedReason'>,
   nextAttemptAt: Date | null,
+  /**
+   * The callback is a promise's follow-up (PT2), which the operator asked for on the entry
+   * itself: it is booked even when the entry also counts as a success (`is_success`), which
+   * would otherwise close the contact first. A promise's entry is never `suppress` (refused at
+   * the catalogue), and its follow-up never sits beside `terminal`.
+   */
+  opts: { followUp?: boolean } = {},
 ): AgencyInboundContactSettlement {
   // Keyed on WHY the decision went where it did, not where: a plain label's or a spent retry's
   // decision also reads `completed` for a dial, and an inbound call is no dial (`none` for those).
   if (decision.reason === 'disposition_suppressed') return { kind: 'suppressed', reason: decision.suppressedReason ?? 'dnc' };
+  if (opts.followUp === true && decision.reason === 'callback_scheduled' && nextAttemptAt) return { kind: 'callback', at: nextAttemptAt };
   if (decision.reason === 'disposition_terminal' || entry.is_success === true) return { kind: 'completed' };
   if (decision.reason === 'callback_scheduled' && nextAttemptAt) return { kind: 'callback', at: nextAttemptAt };
   return { kind: 'none' };

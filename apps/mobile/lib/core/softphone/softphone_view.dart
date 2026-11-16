@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../station/promise_rules.dart';
 import '../station/station_view.dart';
 
 /// The soft phone as the screens see it: the seam between the soft-phone core
@@ -92,7 +93,17 @@ enum SoftphoneOutcomeKind {
 
 /// Why "Save outcome" is disabled right now. See [SoftphoneView.saveBlockAt]
 /// and [softphoneSaveBlockCopy].
-enum SoftphoneSaveBlock { noSelection, callLive, noteRequired, callbackRequired, callbackInPast, fieldsRequired }
+enum SoftphoneSaveBlock {
+  noSelection,
+  callLive,
+  noteRequired,
+  callbackRequired,
+  callbackInPast,
+  promiseRequired,
+  promiseDateInvalid,
+  promiseAmountInvalid,
+  fieldsRequired,
+}
 
 /// A session-level action in flight on the soft phone's header or screen card.
 enum SoftphoneSessionBusy { none, opening, closing, switching, returning }
@@ -705,6 +716,8 @@ class SoftphoneView {
     this.outcomes = const [],
     this.outcomeCode,
     this.callbackAt,
+    this.promiseDate,
+    this.promiseAmount = '',
     this.padEnabled = false,
     this.padDisabledReason,
     this.padRejection,
@@ -855,6 +868,11 @@ class SoftphoneView {
   /// The callback time for an outcome that asks for one (device clock).
   final DateTime? callbackAt;
 
+  /// Promise to pay (PT1): the promised day (only its date is read) and the
+  /// amount as typed, for an outcome that asks for one.
+  final DateTime? promiseDate;
+  final String promiseAmount;
+
   /// Outcomes may be picked (the customer answered).
   final bool padEnabled;
 
@@ -970,6 +988,13 @@ class SoftphoneView {
       if (at == null) return SoftphoneSaveBlock.callbackRequired;
       if (!at.isAfter(now)) return SoftphoneSaveBlock.callbackInPast;
     }
+    if (option.requiresPromise) {
+      final day = promiseDate;
+      if (day == null) return SoftphoneSaveBlock.promiseRequired;
+      if (!promiseDayAllowed(day, now)) return SoftphoneSaveBlock.promiseDateInvalid;
+      final amount = promiseAmount.trim();
+      if (amount.isNotEmpty && normalisePromiseAmount(amount) == null) return SoftphoneSaveBlock.promiseAmountInvalid;
+    }
     if (requiredFieldsMissing) return SoftphoneSaveBlock.fieldsRequired;
     return null;
   }
@@ -1031,6 +1056,8 @@ class SoftphoneView {
       _eqD.equals(other.outcomes, outcomes) &&
       other.outcomeCode == outcomeCode &&
       other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount &&
       other.padEnabled == padEnabled &&
       other.padDisabledReason == padDisabledReason &&
       other.padRejection == padRejection &&
@@ -1106,6 +1133,9 @@ const Map<SoftphoneSaveBlock, String> softphoneSaveBlockCopy = {
   SoftphoneSaveBlock.noteRequired: 'This disposition needs a note.',
   SoftphoneSaveBlock.callbackRequired: 'This disposition needs a callback time.',
   SoftphoneSaveBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
+  SoftphoneSaveBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
+  SoftphoneSaveBlock.promiseDateInvalid: 'Pick a promised date from today up to 30 days ahead.',
+  SoftphoneSaveBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
   SoftphoneSaveBlock.fieldsRequired: 'Fill in the required call details first.',
 };
 
@@ -1241,6 +1271,12 @@ abstract interface class SoftphoneActions {
 
   /// The callback time for an outcome that asks for one (device clock), or null.
   void setCallback(DateTime? at);
+
+  /// Promise to pay (PT1): the promised day for an outcome that asks for one, or null.
+  void setPromiseDate(DateTime? day);
+
+  /// The promised amount as typed (optional; checked before Save).
+  void setPromiseAmount(String amount);
 
   /// Saves the outcome (with the fields and the notes). Checks
   /// [SoftphoneView.saveBlockAt] first.

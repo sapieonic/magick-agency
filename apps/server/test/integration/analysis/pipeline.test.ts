@@ -55,7 +55,7 @@ function worker(transcriber = makeTranscriber(), svc = analysisService(), hosts:
   return { transcriber, svc, w: new DialerAnalysisWorker({ transcriber: transcriber as never, analysisService: svc as never, config: CFG, recordingHosts: hosts }) };
 }
 async function newCall(over: Record<string, unknown> = {}) {
-  const call = await insertWebrtcCall({ recording_url: URL_OK, recording_duration_seconds: 100, talk_time_seconds: 100, ...over });
+  const call = await insertWebrtcCall({ recording_requested: true, recording_url: URL_OK, recording_duration_seconds: 100, talk_time_seconds: 100, ...over });
   const job = (await jobs.enqueueFromCall({ call_id: call.id, profile_snapshot: { context: 'ctx', custom_dimensions: [{ key: 'ptp', description: 'd', type: 'boolean' }] } }))!;
   return { call, job };
 }
@@ -100,7 +100,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
   });
 
   it('a recording that arrives later is promoted by the sweep before it can expire', async () => {
-    const call = await insertWebrtcCall({ recording_url: null, recording_duration_seconds: 100 });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: null, recording_duration_seconds: 100 });
     const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     expect(job.status).toBe('awaiting_recording');
     await getTestPool().query(`UPDATE agency_calls SET recording_url = $2 WHERE id = $1`, [call.id, URL_OK]);

@@ -13,6 +13,8 @@ import {
   AGENCY_CALLBACK_GRACE_MINUTES_MAX,
   AGENCY_ON_UNSTAFF_VALUES,
   AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
+  AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX,
+  AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN,
 } from '@magick-agency/contracts/agency';
 import { autoDispositionRefusal } from '@magick-agency/domain/auto-disposition';
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
@@ -70,6 +72,7 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
     }
 
     if (entry.override) Object.assign(errors, validateOverride(entry, `${at}.override`));
+    Object.assign(errors, validatePromiseEntry(entry, at));
   });
 
   for (const [outcome, rule] of Object.entries(state.retryPolicy)) {
@@ -161,7 +164,10 @@ export function validateOutcomeDispositions(
       const label = dispositionLabel(code, catalog);
       errors[at] = refusal === 'suppress'
         ? `“${label}” stops calling the contact. ${AUTO_OUTCOME_IS_A_LABEL}`
-        : `“${label}” ends the contact. ${AUTO_OUTCOME_IS_A_LABEL}`;
+        : refusal === 'promise'
+          // PT11: an unanswered call has no promise to record.
+          ? `“${label}” records a promise to pay. Nobody spoke to the customer on an unanswered call, so it cannot be an automatic outcome.`
+          : `“${label}” ends the contact. ${AUTO_OUTCOME_IS_A_LABEL}`;
     }
   }
   return errors;
@@ -198,6 +204,43 @@ function validateOverride(entry: AgencyDispositionEntry, at: string): Record<str
   }
   if (!override.extra_attempts && !override.retry_delay && !override.calling_hours) {
     errors[at] = 'Pick at least one thing this outcome allows, or turn the override off.';
+  }
+  return errors;
+}
+
+/**
+ * An outcome's promise to pay (PT10), keyed `disposition_catalog[i].requires_promise` and
+ * `….promise_follow_up_days` as the server keys them, with the server's words
+ * (`dispositionPromiseIssues`). The editor only offers a follow-up while the promise is on;
+ * the flag combinations are the operator's to fix, so each is named.
+ */
+export function validatePromiseEntry(entry: AgencyDispositionEntry, at: string): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const days = entry.promise_follow_up_days;
+  if (days !== undefined) {
+    if (!Number.isInteger(days) || days < AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN || days > AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX) {
+      errors[`${at}.promise_follow_up_days`] =
+        `The follow-up must be a whole number of days from ${AGENCY_PROMISE_FOLLOW_UP_DAYS_MIN} to ${AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX} after the promised date.`;
+    } else if (entry.requires_promise !== true) {
+      errors[`${at}.promise_follow_up_days`] =
+        'A follow-up after the promised date needs the outcome to ask for a promise to pay.';
+    }
+  }
+  if (entry.requires_promise !== true) return errors;
+  if (entry.requires_datetime) {
+    errors[`${at}.requires_promise`] =
+      'An outcome cannot ask for both a promise to pay and a callback time. To call the customer after the promised date, set a follow-up on the promise instead.';
+  } else if (entry.suppress) {
+    errors[`${at}.requires_promise`] = 'An outcome that stops the number being called cannot record a promise to pay.';
+  }
+  if (days !== undefined && errors[`${at}.promise_follow_up_days`] === undefined) {
+    if (entry.retry) {
+      errors[`${at}.promise_follow_up_days`] =
+        'An outcome with a follow-up after the promised date cannot also retry: choose one way to call the customer again.';
+    } else if (entry.terminal) {
+      errors[`${at}.promise_follow_up_days`] =
+        'A closing outcome cannot book a follow-up: the contact is finished, so it would never be called.';
+    }
   }
   return errors;
 }

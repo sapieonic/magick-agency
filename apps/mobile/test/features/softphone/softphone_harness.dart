@@ -96,6 +96,10 @@ class FakeSoftphoneActions implements SoftphoneActions {
   @override
   void setCallback(DateTime? at) => _rec('setCallback', [at]);
   @override
+  void setPromiseDate(DateTime? day) => _rec('setPromiseDate', [day]);
+  @override
+  void setPromiseAmount(String amount) => _rec('setPromiseAmount', [amount]);
+  @override
   Future<void> saveOutcome() => _recAsync('saveOutcome');
   @override
   Future<void> hangUp() => _recAsync('hangUp');
@@ -572,6 +576,9 @@ SoftphoneView callView(
   // Null: the carrier cannot cancel a ringing call, so the warning shows while ringing.
   bool? warnRingingHangUp,
   NotesView notes = const NotesView(),
+  List<DispositionOption> outcomeOptions = outcomes,
+  DateTime? promiseDate,
+  String promiseAmount = '',
   bool dncEnabled = true,
   String? dncOutcome,
   bool saving = false,
@@ -616,7 +623,9 @@ SoftphoneView callView(
     requiredFieldsMissing: requiredFieldsMissing,
     notes: notes,
     notesEnabled: true,
-    outcomes: outcomes,
+    outcomes: outcomeOptions,
+    promiseDate: promiseDate,
+    promiseAmount: promiseAmount,
     outcomeCode: outcomeCode,
     callbackAt: callbackAt,
     padEnabled: answered,

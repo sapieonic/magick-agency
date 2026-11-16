@@ -23,7 +23,7 @@ import type {
 import { average, bucketDate, count, pct, rate, rateText, servedRate, share, unknownUser, type Rate } from '../format';
 import { definitionText as def } from '../definitions';
 import type { DetailReader } from '../io';
-import { accountFigures, agentConnectRate, agentSuccessRate, campaignFigures, recordingShare, rosterSuccessReportable } from '../rates';
+import { accountFigures, agentConnectRate, agentSuccessRate, campaignFigures, campaignSoftphoneFigures, recordingShare, rosterSuccessReportable } from '../rates';
 import { excelValue, NUM_FMT, sheetName, writeTable, type SheetColumn } from './sheet';
 
 type Row = unknown[];
@@ -362,6 +362,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
   const calls = d.activity.calls;
   const { firstDials, answered, abandoned, connect, success, abandonment, talk, wrap, handle } = campaignFigures(d);
   const roster = d.summary.roster;
+  const soft = campaignSoftphoneFigures(d);
   await writeSummary(wb, d, 'Campaign report', [
     { metric: 'Status (as of generation)', value: d.campaign.status, type: 'text' },
     { metric: 'Contacts in the list (as of generation)', value: roster.total, type: 'int' },
@@ -372,7 +373,8 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Connected', value: calls.connected, type: 'int', definition: def(d, 'connected') },
     { metric: 'Conversations', value: calls.conversations, type: 'int' },
     { metric: 'People reached', value: calls.human_connects, type: 'int' },
-    { metric: 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
+    // "Dialler connect rate" where the soft phone's rows follow (SR1).
+    { metric: soft ? 'Dialler connect rate' : 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: calls.successes, type: 'int' },
     { metric: 'Success rate', value: rateCell(success), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Answered', value: answered, type: 'int' },
@@ -384,6 +386,20 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Wrap-up redials placed', value: calls.redials.placed, type: 'int' },
     { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
+    // The soft-phone calls logged to the campaign and All calls (SR1-SR3), last, beside the
+    // dialler's figures above and in none of them; only when the window holds any, as the PDF
+    // (`campaignSoftphoneFigures`). A dataset from a server that predates them carries none.
+    ...(soft
+      ? [
+        { metric: 'Soft-phone calls placed', value: soft.placed, type: 'int' as const, definition: def(d, 'softphone_calls') },
+        { metric: 'Soft-phone calls connected', value: soft.connected, type: 'int' as const },
+        { metric: 'People reached on the soft phone', value: soft.humanConnects, type: 'int' as const },
+        { metric: 'Soft-phone connect rate', value: rateCell(soft.connect), type: 'percent' as const },
+        { metric: 'All calls placed', value: soft.all.placed, type: 'int' as const },
+        { metric: 'All calls connected', value: soft.all.connected, type: 'int' as const },
+        { metric: 'All calls connect rate', value: rateCell(soft.all.connect), type: 'percent' as const },
+      ]
+      : []),
   ]);
   const dates = d.trends.buckets.map((b) => bucketDate(b.bucket_start, d.range.timezone));
   await writeTable(

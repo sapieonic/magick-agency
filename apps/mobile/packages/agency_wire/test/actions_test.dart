@@ -24,6 +24,14 @@ void main() {
       expect(DispositionResponse.fromJson(json).callbackRequestedAt, isNull);
     });
 
+    test('a suppress outcome says whether its Do Not Call entry was written, and only then', () {
+      final unlisted = DispositionResponse.fromJson(fixture('actions.json', 'disposition_response_suppress_unlisted'));
+      expect(unlisted.contactState, ContactState.suppressed);
+      expect(unlisted.dncRecorded, isFalse);
+      // Absent on any other outcome (and from an older server): nothing is claimed.
+      expect(DispositionResponse.fromJson(fixture('actions.json', 'disposition_response_completed')).dncRecorded, isNull);
+    });
+
     test('a redial names the new attempt and the one it redials', () {
       final r = RedialResponse.fromJson(fixture('actions.json', 'redial_response'));
       expect(r.attemptId, '6b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8');
@@ -50,6 +58,25 @@ void main() {
         'callback_at': '2026-11-03T12:30:00.000Z',
       });
       expect(const DispositionRequest(dispositionCode: 'interested').toJson(), {'disposition_code': 'interested'});
+    });
+
+    test('a promise to pay (PT1) goes as the date and the amount, each only when set', () {
+      expect(
+        const DispositionRequest(dispositionCode: 'ptp', promiseDate: '2026-11-18', promiseAmount: '12500.00').toJson(),
+        {'disposition_code': 'ptp', 'promise_date': '2026-11-18', 'promise_amount': '12500.00'},
+      );
+      expect(const DispositionRequest(dispositionCode: 'ptp', promiseDate: '2026-11-18').toJson(), {
+        'disposition_code': 'ptp',
+        'promise_date': '2026-11-18',
+      });
+      expect(
+        ManualCallDispositionRequest(code: 'ptp', promiseDate: '2026-11-18', promiseAmount: '5.00').toJson(),
+        {'code': 'ptp', 'promise_date': '2026-11-18', 'promise_amount': '5.00'},
+      );
+      expect(const InboundCallDispositionRequest(code: 'ptp', promiseDate: '2026-11-18').toJson(), {
+        'code': 'ptp',
+        'promise_date': '2026-11-18',
+      });
     });
 
     test('DNC is always campaign-scoped and explicit', () {

@@ -243,11 +243,20 @@ String dncFailureCopy(Object error) {
   return detail != null ? 'Couldn’t mark Do Not Call: $detail' : 'Couldn’t mark Do Not Call. Nothing was changed.';
 }
 
+/// Why a campaign entry could not be written, and what that leaves open: the tail of every
+/// `dnc_recorded: false` sentence for this campaign's list (console `DNC_CAMPAIGN_NOT_LISTED`).
+const dncCampaignNotListedCopy =
+    'It couldn’t go on this campaign’s Do Not Call list because the number isn’t in a form the list can hold, '
+    'so a new upload could bring it back. Ask an admin to check the number.';
+
 /// Campaign scope only: the agent role cannot reach the workspace-wide list.
 String dncOutcomeCopy(DncResponse response) => response.dncRecorded
     ? '${response.phoneE164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.'
-    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. We’re still adding it to '
-        'this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.';
+    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. $dncCampaignNotListedCopy';
+
+/// A saved outcome that suppresses (DS8) whose Do Not Call entry could not be written
+/// (`dnc_recorded: false`): only this contact is suppressed (console `SUPPRESS_OUTCOME_NOT_LISTED`).
+const suppressOutcomeNotListedCopy = 'This contact won’t be dialled again. $dncCampaignNotListedCopy';
 
 const dncNeedsCallCopy = 'Available while you are on a call';
 
@@ -266,13 +275,24 @@ const leftOfflineCopy =
 
 // ─── Disposition ────────────────────────────────────────────────────────────
 
-enum DispositionBlock { noSelection, noteRequired, datetimeRequired, callbackInPast }
+enum DispositionBlock {
+  noSelection,
+  noteRequired,
+  datetimeRequired,
+  callbackInPast,
+  promiseRequired,
+  promiseDateInvalid,
+  promiseAmountInvalid,
+}
 
 const Map<DispositionBlock, String> dispositionBlockCopy = {
   DispositionBlock.noSelection: 'Pick a disposition to save this call.',
   DispositionBlock.noteRequired: 'This disposition needs a note.',
   DispositionBlock.datetimeRequired: 'This disposition needs a callback time.',
   DispositionBlock.callbackInPast: 'That time has already passed. Pick when we should call back.',
+  DispositionBlock.promiseRequired: 'This outcome needs the date the customer promised to pay.',
+  DispositionBlock.promiseDateInvalid: 'Pick a promised date from today up to 30 days ahead.',
+  DispositionBlock.promiseAmountInvalid: 'Enter the amount as a number, with up to two decimal places and no commas.',
 };
 
 const catalogChangedCopy = "This campaign's outcomes changed. Pick one of these.";

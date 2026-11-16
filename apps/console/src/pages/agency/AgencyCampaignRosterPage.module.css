@@ -55,6 +55,26 @@
   font-style: italic;
 }
 
+/* Promise to pay (PT7): the "Promised for" cell, and the filter's note on "Missed". */
+.promiseCell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  white-space: nowrap;
+}
+
+.promiseAmount {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.promiseHint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .state {
   display: inline-flex;
   align-items: center;

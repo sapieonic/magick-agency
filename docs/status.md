@@ -496,6 +496,47 @@ accepted row, and a row with any of them blank is kept.
   "duplicates on phone" for an upload sent with no duplicate check (`dedupe_phones: false` is not on
   the uploads read); unchanged by this work.
 
+### Contact import: check, review, import, re-import 2026-11-15 (IM1–IM7)
+
+Reshma's asks: check a CSV and review it before anything is written, then import the checked
+file; correct and re-import without duplicating anyone, with imported, skipped and rejected rows
+each shown and downloadable. Rulings: [`decisions.md`](decisions.md), "Rulings of 2026-11-15:
+contact import check and re-import (IM)".
+
+- **Server.** The CSV pass asks a per-batch screen (`agency-ingest-screen.ts`: the Do Not Call
+  list with its scope, and the campaign's roster through `roster-presence.repository.ts`) before
+  any row claims its duplicate key; the check (`dry_run`) and the import run it alike. Rows the
+  campaign already holds are skipped (`skipped`, a `skipped-rows.csv` download). `POST
+  /ingest/jobs/:id/import` imports a finished check's upload with its mapping, once (24 h). One live
+  import per campaign (409 `import_in_progress`). Reasons rewritten in plain words; the downloads
+  in file order with the phone cell as written. A missing upload fails `upload_missing`; a missing
+  download is 410.
+- **Migration** `0042_ingest_check_and_skipped.sql`: `skipped`, the skipped download, `dnc_by_scope`,
+  `rejected_sample`, `check_job_id` (unique).
+- **Contract:** `AgencyIngestJob` gains `skipped`, `dnc_by_scope`, `rejected_sample`, the skipped
+  download, `check_job_id`, `import_job_id`, `check_expires_at`; `AgencyIngestImportResponse`;
+  `AgencyInsightsUpload.skipped`. Not mirrored by the agent app.
+- **Console:** "Check the file" leads; the review shows the counts (ready, already in this campaign,
+  rejected), the rejected rows with what to fix, both downloads and **Import N contacts**; the
+  import's result says how it differs from its check. In the builder and on Add contacts. The
+  activity row and Insights' upload history show rows already in the campaign.
+- **Behaviour changes** (pending Manas): a top-up row whose number (or key) is already in the
+  campaign is skipped rather than landed as a second contact; a Do Not Call row no longer claims
+  its key (supersedes "DNC row claims its key"); a second import into a campaign while one runs
+  is refused. The load suite's concurrent-import cases were rewritten for the last.
+- Not done: no S3 lifecycle rule for uploads (a retention decision); the agent app has no import.
+- **Fix round (review).** A NUL past the encoding probe no longer fails a check or a finished
+  import (dropped from a data cell, a header carrying one refused before anything is sent). The
+  rejected and skipped downloads carry the exports' spreadsheet-formula guard, which the import
+  reads back off; a duplicate's reason names its row in words. A failed or cancelled import lets
+  its check go (0042's index holds pending, running and completed imports only): the console offers
+  **Import again** while the check is valid, and follows a check already imported to its import.
+  A check held in another account is refused `check_imported_elsewhere` without that import's id;
+  a schema without 0042 refuses a check's import `check_import_unavailable` (409, not a masked
+  500). Analytics: a check is no longer sent as a completed import. The builder offers the same
+  way back as Add contacts after a check or import that did not finish. Not done: Insights'
+  upload history offers no skipped-rows download (a new field through the contract and its read).
+
 ### Wrap-up redial 2026-11-03
 
 A connected call can drop for reasons on any side. With the campaign setting "Allow redial from
@@ -1062,7 +1103,7 @@ domain, contracts and console.
   re-check and the console. The internal handler checks every create, PATCH and retry override
   against the stored campaign (or parent), so a catalog edit that would break a mapping is
   refused, keyed on the mapping (OD6); retry campaigns inherit the map (OD8).
-- Reads: the attempt lists and their CSV (a last column), the supervisor's call page, the
+- Reads: the attempt lists and their CSV (column `auto_disposition_code`), the supervisor's call page, the
   agent's calls, the station's prior attempts (and the soft phone's), and the customer-history
   timeline (its CSV export adds it to "Details"). The console tags it "(automatic)", secondary
   under a write-up; the builder's editor offers only eligible outcomes, keeps a stale mapping
@@ -1573,7 +1614,211 @@ Every new guard was mutation-checked (the reset at the bind, the close not repea
 clear on `reserved` and the gap hold). **Not verified:** none of it has run against a real
 carrier, browser or phone.
 
+### Manas's rulings on the feedback branch, 2026-11-15
+
+- **Recordings with recording off (RC5):** got rid of. The retention purge clears the link of every
+  call that did not ask for a recording, on every run.
+- **VoiceLink (RC2):** whatever VoiceLink does with its recordings, we never honour a recording
+  callback for a call with recording off; nothing is asked of VoiceLink.
+- **Promise date (PT4):** at most 30 days ahead (was 180).
+- **Promise follow-ups and Insights (PT2):** the split stands as built.
+- **The open questions for Reshma** (which carrier each tenant dials on, where a DNC mark was made,
+  existing "Promise to pay" entries that book a callback): closed with the defaults, starting
+  fresh. No data was migrated or purged for them; Do Not Call entries are compliance records and
+  were left as they are.
+
+### Navigation group labels 2026-11-15 (NV1, NV2)
+
+Reshma: the Settings hub's group headings and the campaign bar's Monitor, Data and Set up looked
+too much like the entries beside them. Console styling only; no label, id, route, gate or event
+changed.
+
+- **One label.** `components/common/NavSectionLabel` renders every navigation group label (the
+  Settings hub, the campaign bar, the search's result groups): small, uppercase, muted, a
+  hairline to the end of its group, not interactive, and the name of its group
+  (`aria-labelledby`).
+- **Items.** Tabs (campaign bar and section bars, one shared `TabBar` style) are in
+  `--text-secondary`, no longer the label's grey; Settings entries carry a chevron and an inset
+  focus ring. The campaign bar's labels sit above their tabs and stay on a phone (NV2, amends IN14).
+- **Tests.** `navSectionLabel.test.ts` (the CSS rules), new cases in `SettingsHub.test.tsx`,
+  `CampaignTabs.test.tsx` and `GlobalSearch.test.tsx` (groups named by their labels, labels not
+  links or tab stops, keyboard order the items alone); each mutation-checked. **Not verified:**
+  seen only in an isolated render harness (dark, light, phone width, reduced motion), not in a
+  signed-in console against a backend.
+
+### Recording honours "recording off" 2026-11-15 (RC1–RC6, [`decisions.md`](decisions.md) "Rulings of 2026-11-15: recording honours")
+
+From an ops report on two tenants: one's calls were recorded with recording off, the other's
+recordings often would not play ("We could not reach the service that stores this recording").
+
+- **Recorded with recording off (RC1, RC2).** VoiceLink is never told whether to record (its
+  `add_lead` has no such field; none was invented), records on its account default and posts a
+  `recordingUrl`, which we stored and served whatever the call asked; the call read gated only on
+  the account's `agency.recording`. Now `recording_requested` is the one source of truth: the
+  bridge discards such a URL at every door (warn once per call, never the URL;
+  `recording_discarded_unrequested_total{provider}`), the call repository stores a
+  `recording_url` only on a row that asked, and every reader goes through one predicate
+  (`packages/db/src/utils/recording-request.ts`): call detail and playback (campaign, soft phone,
+  signed), customer history, Insights, the agent workbook's Recorded column, the analysis queue
+  and runner. Rows from before read as not recorded; `0043_recording_honours_request.sql` has
+  Insights recount their buckets, and the retention purge clears their links on every run (RC5,
+  Manas: get rid of them). We discard a recording a call did not ask for whatever the carrier
+  does with it (RC2, Manas); nothing is asked of VoiceLink.
+- **Will not play (RC3, RC4).** Every recording, VoiceLink's included, reaches the console through
+  our proxy, and any answer but 403/404 reads "could not reach". Each such answer now logs a
+  bounded `reason` with call id, provider and hosts (never a URL) and counts in
+  `recording_fetch_failures_total{provider,surface,reason}`; the proxy gives up after 20 s without
+  headers (504) instead of hanging. `PLIVO_RECORDING_REDIRECT_HOSTS` (empty by default, validated
+  at load) lets an operator allow a Plivo redirect target named in the logs; the credential never
+  follows a redirect. Which reason the second tenant hits is to be read from production logs.
+- **Not changed (RC6).** A tagged soft-phone call takes the campaign's `record_calls` (SP rulings);
+  retry campaigns inherit it; a campaign dial reads the campaign's flag at dial time. The
+  station's "Recording" badge comes from the join and can be stale after a mid-session toggle
+  (follow-up).
+
+Every new guard was mutation-checked (each bridge door, the repository's write guard, the row
+and SQL predicates against the analysis queue, customer history, the report oracle and the
+Insights oracle, the proxy's 404, reasons, timeout and redirect hosts, the config refusals, the
+migration's filter). **Not verified:** nothing has run against a real VoiceLink or Plivo account.
+
+**Fix round after review (migrations and recording):**
+- `0041_promise_to_pay` no longer builds `idx_agency_contacts_promise` under its ACCESS EXCLUSIVE;
+  `0045_promise_contacts_index` builds it in its own transaction under SHARE (an empty index on
+  the release: every promise is new). A SQL migration cannot use `CONCURRENTLY` (node-pg-migrate
+  wraps each file in a transaction), and this index cannot be pre-built (its column is 0041's).
+- RC5's purge step reads `idx_agency_calls_recording_unrequested`
+  (`0046_unrequested_recordings_index`, pre-buildable `CONCURRENTLY`), picks each batch with
+  `WITH picked AS MATERIALIZED (… FOR UPDATE SKIP LOCKED)` on an id keyset, and fails on its own:
+  the transcript and voicemail steps still run (`unrequested_recordings_error`, Slack "one step
+  failed").
+- A soft-phone call's `recording_requested` takes the account's `allow_recording` at the dial (the
+  "Recording" badge, customer history's "Recording expired"); an inbound call turned away for
+  capacity (`no_capacity`) records nothing on its live session either, so a URL the carrier still
+  sends is discarded at the bridge's door and counted.
+- The analysis runner counts `access_error` on `surface="analysis"`; the dashboard has a
+  Recordings row for the two RC counters.
+
+### Do Not Call scope 2026-11-15 (DS1–DS8)
+
+Reshma: marking a contact DNC applied across the whole tenant; she asked for one campaign beside
+a separate every-campaign option. The station, the soft phone and inbound already wrote one
+campaign (or the call's account) unless someone chose wider; the Do Not Call page's Add numbers
+always wrote every campaign, with no choice. Now:
+
+- **Page.** Add numbers asks where (every campaign, this account, one campaign), with nothing
+  preselected, and says what each blocks; the summary splits out numbers a wider entry already
+  blocks ("4 already blocked in every campaign"). The list names each entry's scope ("Every
+  campaign", "North account", "Campaign: Q4 Renewals"), filters by scope or campaign, and a
+  removal says who may dial again and which other entries still block the number.
+- **Server.** `POST /dnc` takes a stated `scope`; a campaign must be the tenant's and in an
+  account the caller manages (else one 404); every campaign needs a membership of the whole
+  organisation, on the page and on the station's escalation (DS3). An account admin lists and
+  removes their campaigns' entries too (DS6). No migration.
+- **Words.** The same scope words on customer history and the soft phone, console and mobile.
+- **Fixed (DS8).** A station `suppress` outcome (web, mobile, a supervisor's) wrote no list entry
+  while the mobile wrap-up said it did. The disposition route now writes the campaign entry with
+  its audit row and sweeps the campaign's other rows on the number, as the soft phone and inbound
+  do; a number the list cannot hold is told to the agent after saving (`dnc_recorded: false` on
+  the disposition answer) (`test/integration/api/station-suppress-dnc.test.ts`, mutation-checked).
+- **Review fixes.** A removal says a number stays blocked only by entries that reach where the
+  removed one did, and names the rest as blocking it elsewhere (DS5); the agent report's DNC count
+  no longer takes other accounts' campaign marks; the DNC route discards a failed transaction's
+  connection; campaign settings and the app's customer history say a suppress outcome and an
+  unknown scope as they are. DS6 carries the reviewer's open question for Manas.
+
+### Soft-phone calls in campaign results 2026-11-15 (SR1–SR10, [`decisions.md`](decisions.md))
+
+Reshma: soft-phone calls in the campaign results, the exported CSV, the connect rate and the
+analytics. Built beside the dialler's figures, never blended into its connect rate (SR1).
+
+- **One definition** (`softphone-campaign-sql.ts`, SR2): a call tagged to the campaign in its
+  tenant is placed (`dialed_at` set), connected (outcome `connected`), reached a person (bridged,
+  coded neither voicemail nor `no_disposition`); `created_at` in `[from, to)`. Served as Insights'
+  `calls.softphone` and `/stats` `softphone` (lifetime); the agent report's count uses the same
+  placed rule.
+- **Console.** The Calls tab shows Soft-phone calls (placed, connected, connect rate) and All calls
+  beside the dialler's figures; the Overview's connect rate and each Analytics card say "Dialler
+  connect rate" and add the soft phone's and all calls' rates. Shown while the soft phone is on or
+  when there are any (SR5). Call log's Export CSV says the file holds them.
+- **Export** (SR6). `attempts.csv` drains the campaign call log: attempts and tagged soft-phone
+  calls newest first on one keyset; a new column `source` (`dialler` | `soft_phone`) after `auto_disposition_code`, the promise columns after it; the
+  attempt filters mapped onto the soft-phone call; `?source=dialler|soft_phone`. Existing columns
+  unchanged.
+- **Campaign report** (SR8): when the window holds a soft-phone call, Soft-phone calls and All
+  calls rows on the Summary and lines in the PDF's Calls section, and the dialler's rate labelled
+  "Dialler connect rate" in both (one gate, `campaignSoftphoneFigures`); the account report is a
+  follow-up.
+- **Fix round after review:** the report follows SR1 (above); Call log's export tip and title show
+  when the campaign holds soft-phone calls with the flag off; the soft phone's and All calls'
+  withheld rates say "Not enough calls"; the export's preamble names what a soft-phone row leaves
+  out (call details, override notes).
+- **Left as the dialler's** (SR7): Agents tab, Trends, Health, the Insights CSV tables, Home, the
+  agent record. No index needed (SR9, measured on 2M soft-phone calls). The mobile app is
+  unaffected (it reads none of these payloads).
+
+Mutation-checked: blending the soft phone into `/stats`' or Insights' dialler rate, dropping the
+tenant check, the voicemail exclusion, the soft-phone branch's keyset, the export's tenant scope
+and the attempt-only filters, and blending in the console's Calls and Overview rates each go red;
+so do the report's gate, its "Dialler connect rate" label and its All calls denominator, the export
+tip's stats half and the withheld readout's noun.
+
+### Promise to pay 2026-11-15 (PT1–PT14, [`decisions.md`](decisions.md), "Rulings of 2026-11-15: promise to pay")
+
+Reshma (collections): when an agent files a promise to pay, record the promised payment date (and
+optionally the amount), show it, and let supervisors follow promises up.
+
+- **Catalogue.** An entry opts in with `requires_promise`; `promise_follow_up_days` (1–14, off by
+  default) books a call that many days after the promised date through the callback path (window,
+  CA4 ownership, CA5 fallback). A promise alone never books a call (PT3). Combinations that cannot
+  mean anything are refused on both validators with the field named (PT10); the soft phone's and
+  inbound routes' own catalogues cannot ask for one; a promise entry cannot be an automatic outcome.
+- **Capture.** The station (paced dials, the agent's own call, redials), a tagged soft-phone call and
+  a matched inbound call take `promise_date` (a real date, not before the customer's today, at most
+  30 days ahead) and an optional exact `promise_amount`; four refusal codes whose messages name
+  the fix for an app that predates them (PT8). Console: the shared outcome pad. App: the station's
+  wrap-up and inbound pads and the soft phone's.
+- **Storage.** Migration `0041_promise_to_pay.sql`: the promise on each call table, the contact's
+  latest promise (with the promised day's bounds in the customer's zone and a follow-up mark) and a
+  partial index (PT6).
+- **Display.** The Contacts tab's "Promised for" column and "Promise to pay" filter (upcoming, due
+  today, missed, followed up; "missed" means no later outcome, not unpaid); the contact page, the
+  attempt tables, the call pages, the customer history, the agent's panel and prior attempts (console
+  and app). Exports: `promise_date`, `promise_amount` appended to the attempts CSV and
+  `promise_date`, `promise_amount`, `promise_state` to the contacts CSV (PT12).
+
+Mutation-checked: the follow-up booked whatever the entry says (the PT3 cases go red), the
+past-date refusal (the server's "yesterday in Kolkata" case and the domain cases), the contact
+write's "later call wins" guard, the console's date window. **Pending Manas:** the 1–14 follow-up
+range, no currency (PT5), the `followed_up` state, Insights not counting follow-ups as booked
+callbacks (the 30-day bound is decided, PT4). **Not verified:** no browser or phone run.
+
+**Review fix round (2026-11-15).** A replay of the promise's own call that keeps its date keeps a
+later call's follow-up mark (PT7); a same-code replay may send its stored date after the day has
+passed, on all three paths, and an inbound replay with a corrected date moves the follow-up (PT1);
+a promise outcome on a soft-phone call that claimed no roster contact is refused
+`promise_needs_contact` and hidden from both pads, and Mark DNC refuses a promise code (PT13); the
+app shows each promise refusal in the console's words on the soft phone and inbound, its date
+picker reaches today + 31, and a test holds its two constants to the contract (PT8). PT2 now says
+CA4 ownership is the station's only. Each fix mutation-checked (the test named in its commit goes
+red without it).
+
 ## Test counts
+
+**Reshma's feedback: recording, promise to pay, Do Not Call scope, soft-phone results, import check, navigation labels, 2026-11-15 (after the fresh-context review and its fix round).** Branch
+`ccr-bfd860dd-nhdhej` on `1c4c2bd`, run on `7ee887b` (later commits change docs only). Each
+package from inside its directory, on a local Postgres 16 and Redis on the agency ports with no
+other run sharing them, integration with 4 workers; the server's integration as two lanes run one
+after the other; `mpg123` and `sndfile-programs` installed. `pnpm lint` clean; `pnpm build`
+clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and `pnpm test:tooling` 20 pass;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `packages/contracts`
+534 (15 files); `packages/domain` 278 (14 files); `packages/db` unit 457 (28 files), integration
+815 (88 files); `packages/observability` 21 (5 files); `packages/web-ui` 240 (20 files).
+`apps/server`: unit 10178 passed + 1 expected fail (511 files); rest lane 2967 passed, 9 expected
+fail, 2 skipped (267 files passed, 2 skipped); wall-clock lane 26 (6 files). `apps/console` 7055
+(376 files); `apps/super-admin` 506 (37 files); `apps/report-renderer` 94 passed, 2 skipped (12
+files, 1 skipped). `apps/mobile`: `flutter analyze` 118 infos, all `deprecated_member_use`, no
+warnings; 1964 (`flutter test`); `agency_wire` 687 (`dart test`, run outside the Flutter
+workspace). One run, no failures, no reruns.
 
 **Hidden dials on the waiting screen, 2026-11-15 (after the review fixes and the simplify pass).** Branch
 `ccr-43b095f3-7qzgsk` on `62ea1f6`, run on the branch's final tree (this entry changes docs only).
@@ -2367,7 +2612,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). A cellular call while available now pauses the agent (IQ51): test it on Android and iOS devices. First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls), and an inbound call on a phone (the offer and its chime, the call and the outcome, a reconnect mid-call, CallKit on iOS) with a Missed calls Call back; store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
-| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. The combined key's rules, its phone-only default and "DNC row claims its key" were ruled 2026-11-11 (`decisions.md` §4) |
+| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. The combined key's rules and its phone-only default were ruled 2026-11-11 (`decisions.md` §4); "DNC row claims its key" was ruled then too, and IM4 (below) now proposes the opposite (a row refused for Do Not Call claims no key) |
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
@@ -2377,6 +2622,12 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Inbound calls | The persona review's product rulings are decided and built (IQ48–IQ57, above); at the pilot's start raise `MOBILE_MIN_SUPPORTED_VERSION` to the first release that declares `caps=inbound` (IQ56); in-app voicemail playback after the pilot (IQ53). Engineering follow-ups: split the inbound call slot out of the station controller and merge the campaign `NotesAutosave` into `CallAutosave`; the `agent_audio` Kotlin tests now run in CI (`mobile.yml`, after the Android build). A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
 | Mode B (ringing an away phone) | Ratify the rest of Mode B (`decisions.md` §4, "Mode B"; IQ59, IQ62, IQ63, IQ65, IQ67, IQ73 decided 2026-11-13, IQ74 for now): IQ58, IQ60, IQ61, IQ64, IQ66, IQ68–IQ72 (incl. the token-only answer and decline), N1–N5, the second review round's IQ75 (a push failure is the device's or the service's; only the service's pauses ringing), IQ76 (one absence, one `since`; every `ring_off` names its absence) and IQ77 (the token-only ring routes limited per IP and ringing call), IQ78 (one ring rule: an agent at the maximum misses refused `away_ring` with `ring_not_allowed` until they go available, and ended `ring_missed` by the reconcile), the app's IQ79 ("Stop ringing" stops ringing for this absence through `device_away`, never an opt-out), IQ80 (a late `ring_off` dropped), IQ81 (the return banner only on a concrete reason; its 4 h must track `AGENCY_AWAY_RING_MAX_MS`), IQ82 (a 429 on the token-only ring routes retried once, natively) and IQ83 (`device_away` during a ring not yet answered declines it; an attach without `caps=inbound` during a ring ends the absence as `device_away`), and OS7 treating an `away_ring` session as idle; revisit IQ74 (away time as break in reports). A field test on Android phones (a locked phone, a headset or car answer, Android 14/15, battery killers, a force-stop), the FCM service account, the Play Console full-screen-intent declaration; iOS after its first compile (Apple account, APNs key) |
 | Plivo on tenants' own accounts | Ratify PL1–PL16 (`decisions.md` §4, "Plivo on tenants' own accounts"): a 403 on dial read as a geo-permission refusal; the three automatic pauses (`carrier_auth`, `carrier_account_unavailable`, and `carrier_refusing_calls` after five refusals in a row, PL11); a carrier with no webhook base not offered or started (PL12); numbers of a credential that cannot dial not offered; synced numbers tenant-wide; recordings from `media.plivo.com` only; the calls-per-second default of 2 per account; the carrier choice shown only with more than one carrier account |
+| Navigation labels (2026-11-15) | Ratify NV1, NV2 (`decisions.md`, "Rulings of 2026-11-15: navigation labels"): section names read as labels, not tabs; the campaign bar's labels sit above their groups and stay on a phone (amends IN14) |
+| Recording (2026-11-15) | RC2 and RC5 are decided (a recording the call did not ask for is discarded on every carrier, and the retention purge clears the old links). Ratify RC3 (the recording proxy's 20 s covers the carrier only, not our own credential lookup) and RC4 (`PLIVO_RECORDING_REDIRECT_HOSTS`) |
+| Do Not Call scope (2026-11-15) | Ratify DS1–DS8, in particular DS3 (an account-scoped admin's station mark is never tenant-wide) and DS8 (a suppress outcome lists the number for its campaign, audited, the campaign's roster swept). Decide DS6's open question: should an account admin see every-campaign entries, and should their add over a tenant-wide entry be written anyway, so it outlives that entry's removal? |
+| Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
+| Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
+| Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 
 ## Deployment invariants
 
@@ -2480,6 +2731,15 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] A release with `0039_retention_purge_indexes`: on a database where `agency_calls` holds more
       than about a million rows, its two indexes built `CONCURRENTLY` first and checked valid
       ([`db-hygiene.md`](../db-hygiene.md) §2).
+- [ ] A release with `0041_promise_to_pay`: 0041 is catalogue changes only (ACCESS EXCLUSIVE, no
+      scan), `0044_promise_checks_validate` validates its CHECKs under SHARE UPDATE EXCLUSIVE, and
+      `0045_promise_contacts_index` builds `idx_agency_contacts_promise` in its own transaction
+      under SHARE: one read of `agency_contacts`, writing an empty index (every promise is new).
+      Nothing to build beforehand: the column does not exist before 0041. Through the CLI, pass
+      `--no-single-transaction` so each file commits on its own, as the image's runner does.
+- [ ] A release with `0046_unrequested_recordings_index`: on a database where `agency_calls` holds
+      more than about a million rows, build `idx_agency_calls_recording_unrequested` `CONCURRENTLY`
+      first and check it valid ([`db-hygiene.md`](../db-hygiene.md) §2), as for 0039.
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
       `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.

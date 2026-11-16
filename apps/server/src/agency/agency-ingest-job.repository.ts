@@ -1,4 +1,6 @@
 import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
+import type { PoolClient } from 'pg';
 import type { AgencyIngestFailureCode } from './agency-csv-ingest.js';
 import { auditRosterUploadEnded } from './agency-ingest-audit.js';
 
@@ -13,6 +15,27 @@ import { auditRosterUploadEnded } from './agency-ingest-audit.js';
 function isUndefinedColumnError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === '42703';
 }
+
+/**
+ * Importing a checked file (`createExclusive` with `check_job_id`) on a schema without
+ * 0042: there is no `check_job_id` to record the import against, so it is refused
+ * before anything is created (the route answers 409 `check_import_unavailable`). An
+ * import started without a check, and every read, run unchanged on that schema.
+ */
+export class IngestCheckImportUnavailableError extends Error {
+  constructor() {
+    super('Importing a checked file needs agency_ingest_jobs.check_job_id (0042_ingest_check_and_skipped.sql).');
+    this.name = 'IngestCheckImportUnavailableError';
+  }
+}
+
+/**
+ * The statuses in which an import HOLDS its check (IM2): one at a time, by
+ * `uq_agency_ingest_jobs_check_job` (0042), whose predicate names the same three. A
+ * failed or cancelled import lets the check go, so the operator can import it again
+ * while it is valid (rows already imported are skipped, IM3).
+ */
+const CHECK_HOLDING_STATUSES = `('pending', 'running', 'completed')`;
 
 /** Lifecycle of a roster ingest. `pending` → `running` → terminal. */
 export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -56,6 +79,8 @@ export type AgencyIngestJobFailureCode =
   | 'core_rejected_chunk'
   /** The catch-all arm, deliberately distinguishable in logs and dashboards. */
   | 'unexpected_error'
+  /** The stored upload could not be found when the job opened it (expired, or never written). */
+  | 'upload_missing'
   /** The replace could not start — `RosterSupersedeError.code`, prefixed. */
   | 'replace_unsupported'
   | 'replace_campaign_not_found'
@@ -160,6 +185,21 @@ export interface AgencyIngestJobRecord {
    * see the column's comment and `IngestProgress`'s field of the same name.
    */
   core_rejected_duplicate_rows_may_undercount: boolean;
+  /**
+   * 0042 (IM3): rows the campaign already held, skipped rather than rejected.
+   * `accepted + skipped + rejected = rows_read`. Optional on the type because a row
+   * read from a schema before 0042 has no such key; readers default it.
+   */
+  skipped?: string;
+  skipped_s3_key?: string | null;
+  skipped_row_count?: number;
+  skipped_truncated?: boolean;
+  /** Do Not Call rejections by the widest scope that suppressed them (IM5). */
+  dnc_by_scope?: Record<string, number>;
+  /** The first rejected rows, for the review screen (IM2). */
+  rejected_sample?: IngestRowSample[];
+  /** The check (a completed dry run) this import was started from, if any (IM2). */
+  check_job_id?: string | null;
   error_code: string | null;
   error_message: string | null;
   created_by: string | null;
@@ -187,7 +227,31 @@ export interface CreateIngestJobInput {
   /** Omitted means `append` — the column's own default, and the safe one. */
   mode?: AgencyIngestMode;
   created_by?: string | null;
+  /** The check this import commits (IM2). Unique: one import per check. */
+  check_job_id?: string | null;
 }
+
+/** One rejected row as the review screen shows it, without the row's other columns. */
+export interface IngestRowSample {
+  row_number: number;
+  column: string | null;
+  raw_value: string;
+  reason_code: string;
+  reason: string;
+}
+
+/** How {@link AgencyIngestJobRepository.createExclusive} answered. */
+export type CreateExclusiveResult =
+  | { outcome: 'created'; job: AgencyIngestJobRecord }
+  /** Another import into the campaign is still live: nothing was created. */
+  | { outcome: 'busy'; live: AgencyIngestJobRecord }
+  /** This check was already imported: nothing was created; this is that import. */
+  | { outcome: 'already_imported'; job: AgencyIngestJobRecord }
+  /**
+   * This check is held by an import the caller cannot see (another account's campaign,
+   * from a builder check that named none): nothing was created, and its id is not given.
+   */
+  | { outcome: 'imported_elsewhere' };
 
 /**
  * How stale (no progress heartbeat) a `pending`/`running` job's `updated_at`
@@ -201,6 +265,8 @@ export interface IngestProgress {
   rows_read: number;
   accepted: number;
   rejected: number;
+  /** Rows the campaign already held (IM3); 0042's column, written by the widest ladder tier only. */
+  skipped?: number;
   duplicates: number;
   bytes_read: number;
   chunks_sent: number;
@@ -280,7 +346,115 @@ export class AgencyIngestJobRepository {
    * recorded must not run.
    */
   async create(input: CreateIngestJobInput): Promise<AgencyIngestJobRecord> {
-    const pool = getPool();
+    return this.insert(getPool(), input);
+  }
+
+  /**
+   * Create an import (not a check) that is the only live import into its campaign
+   * (IM7): two imports racing into one roster would each read the roster before
+   * the other wrote, and both land a contact the other already had under the
+   * operator's duplicate key. Live = `pending`/`running` with a heartbeat younger
+   * than {@link AGENCY_INGEST_JOB_STALE_MINUTES}: a job orphaned by a restart stops
+   * blocking when the reaper would fail it.
+   *
+   * With `check_job_id`, the check's import is also unique: a second commit of one
+   * check (a double click, a second tab) answers `already_imported` with the first
+   * import rather than importing twice, while that import is pending, running or
+   * completed. A failed or cancelled one no longer holds the check, so it can be
+   * imported again. `uq_agency_ingest_jobs_check_job` (on those same statuses) backs
+   * that up against a commit of one check into two campaigns at once, which the
+   * per-campaign lock below does not serialise. The import found is answered only when
+   * the caller can see it (`accountId`, as {@link findImportOfCheck} scopes it);
+   * otherwise `imported_elsewhere`, without its id. On a schema without 0042 a check's
+   * import throws {@link IngestCheckImportUnavailableError} rather than a raw 42703.
+   *
+   * One transaction under a transaction-scoped advisory lock on the campaign, so two
+   * creates cannot both see "nothing live". It never touches the campaign row, whose
+   * lock the roster chunks take.
+   */
+  async createExclusive(
+    input: CreateIngestJobInput & { campaign_id: string },
+    accountId?: string | null,
+  ): Promise<CreateExclusiveResult> {
+    try {
+      return await this.createExclusiveTx(input, accountId);
+    } catch (err) {
+      if (input.check_job_id && isUndefinedColumnError(err)) throw new IngestCheckImportUnavailableError();
+      throw err;
+    }
+  }
+
+  private async createExclusiveTx(
+    input: CreateIngestJobInput & { campaign_id: string },
+    accountId: string | null | undefined,
+  ): Promise<CreateExclusiveResult> {
+    return withTransaction<CreateExclusiveResult>(async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('agency_ingest:' || $1::text, 0))`, [input.campaign_id]);
+
+      if (input.check_job_id) {
+        const committed = await client.query<AgencyIngestJobRecord>(
+          `SELECT * FROM agency_ingest_jobs WHERE check_job_id = $1 AND status IN ${CHECK_HOLDING_STATUSES}`,
+          [input.check_job_id],
+        );
+        const holder = committed.rows[0];
+        if (holder) {
+          const visible = holder.tenant_id === input.tenant_id && (!accountId || holder.account_id === accountId);
+          return visible ? { outcome: 'already_imported', job: holder } : { outcome: 'imported_elsewhere' };
+        }
+      }
+
+      const live = await client.query<AgencyIngestJobRecord>(
+        `SELECT * FROM agency_ingest_jobs
+          WHERE campaign_id = $1::uuid AND dry_run = FALSE
+            AND status IN ('pending', 'running')
+            AND updated_at >= NOW() - ($2 * INTERVAL '1 minute')
+          ORDER BY created_at
+          LIMIT 1`,
+        [input.campaign_id, AGENCY_INGEST_JOB_STALE_MINUTES],
+      );
+      if (live.rows[0]) return { outcome: 'busy', live: live.rows[0] };
+
+      return { outcome: 'created', job: await this.insert(client, input) };
+    }, { pool: getPool() });
+  }
+
+  /**
+   * The import that holds a check (pending, running or completed), or null: none was
+   * started, or the last one failed or was cancelled, and the check may be imported
+   * again. Scoped like {@link findById}.
+   */
+  async findImportOfCheck(
+    checkJobId: string,
+    tenantId: string,
+    accountId?: string | null,
+  ): Promise<AgencyIngestJobRecord | null> {
+    try {
+      const result = accountId
+        ? await getPool().query<AgencyIngestJobRecord>(
+          `SELECT * FROM agency_ingest_jobs
+            WHERE check_job_id = $1 AND tenant_id = $2 AND account_id = $3 AND status IN ${CHECK_HOLDING_STATUSES}`,
+          [checkJobId, tenantId, accountId],
+        )
+        : await getPool().query<AgencyIngestJobRecord>(
+          `SELECT * FROM agency_ingest_jobs
+            WHERE check_job_id = $1 AND tenant_id = $2 AND status IN ${CHECK_HOLDING_STATUSES}`,
+          [checkJobId, tenantId],
+        );
+      return result.rows[0] ?? null;
+    } catch (err) {
+      // A schema without 0042 has no `check_job_id`, so no import was started from any check.
+      // Every poll of a check reads this; answering "none" keeps the check pollable there,
+      // as the progress ladders keep the rest of the job pollable. The write that would
+      // import one refuses instead (`IngestCheckImportUnavailableError`).
+      if (isUndefinedColumnError(err)) return null;
+      throw err;
+    }
+  }
+
+  private async insert(
+    executor: Pick<PoolClient, 'query'>,
+    input: CreateIngestJobInput,
+  ): Promise<AgencyIngestJobRecord> {
     const values: unknown[] = [
       input.tenant_id,
       input.account_id ?? null,
@@ -309,6 +483,8 @@ export class AgencyIngestJobRepository {
     // (the 0031 Down fails a combined-key job that has not finished instead).
     const optional: [string, unknown][] = [];
     if (input.mode === 'replace') optional.push(['mode', input.mode]);
+    // 0042: only an import committed from a check names it.
+    if (input.check_job_id) optional.push(['check_job_id', input.check_job_id]);
     if (input.dedupe_columns?.length) {
       optional.push(['dedupe_columns', input.dedupe_columns]);
       if (input.dedupe_columns.length === 1) {
@@ -319,7 +495,7 @@ export class AgencyIngestJobRepository {
     const extraColumns = optional.map(([column]) => `, ${column}`).join('');
     const extraParams = optional.map((_, i) => `,$${14 + i}`).join('');
 
-    const result = await pool.query<AgencyIngestJobRecord>(
+    const result = await executor.query<AgencyIngestJobRecord>(
       `INSERT INTO agency_ingest_jobs
          (tenant_id, account_id, campaign_id, s3_key, file_name, file_size_bytes,
           phone_column, timezone_column, ignore_columns, default_country_code,
@@ -519,6 +695,21 @@ export class AgencyIngestJobRepository {
                 duplicates = $5, bytes_read = $6, chunks_sent = $7`;
 
     await this.writeWideningDown([
+      // 0042's `skipped` too. Without it, the tiers below write what they always did.
+      {
+        sql: `UPDATE agency_ingest_jobs
+            SET ${BASE_SET},
+                core_rejected_duplicate_rows = $8, core_duplicate_source_rows = $9,
+                core_rejected_duplicate_rows_may_undercount = $10, skipped = $11
+          WHERE id = $1`,
+        values: [
+          ...base,
+          progress.core_rejected_duplicate_rows,
+          progress.core_duplicate_source_rows,
+          progress.core_rejected_duplicate_rows_may_undercount,
+          progress.skipped ?? 0,
+        ],
+      },
       {
         sql: `UPDATE agency_ingest_jobs
             SET ${BASE_SET},
@@ -561,6 +752,12 @@ export class AgencyIngestJobRepository {
       rejected_s3_key: string | null;
       rejected_row_count: number;
       rejected_truncated: boolean;
+      /** 0042 (IM2, IM3, IM5). Written by the widest tier only. */
+      skipped_s3_key?: string | null;
+      skipped_row_count?: number;
+      skipped_truncated?: boolean;
+      dnc_by_scope?: Record<string, number>;
+      rejected_sample?: IngestRowSample[];
     },
   ): Promise<void> {
     // Same schema tolerance as `updateProgress` above, through the same
@@ -590,6 +787,27 @@ export class AgencyIngestJobRepository {
                 rejected_s3_key = $11, rejected_row_count = $12, rejected_truncated = $13`;
 
     await this.writeWideningDown([
+      {
+        sql: `UPDATE agency_ingest_jobs
+            SET ${BASE_SET},
+                core_rejected_duplicate_rows = $14, core_duplicate_source_rows = $15,
+                core_rejected_duplicate_rows_may_undercount = $16,
+                skipped = $17, skipped_s3_key = $18, skipped_row_count = $19,
+                skipped_truncated = $20, dnc_by_scope = $21, rejected_sample = $22
+          WHERE id = $1`,
+        values: [
+          ...base,
+          result.progress.core_rejected_duplicate_rows,
+          result.progress.core_duplicate_source_rows,
+          result.progress.core_rejected_duplicate_rows_may_undercount,
+          result.progress.skipped ?? 0,
+          result.skipped_s3_key ?? null,
+          result.skipped_row_count ?? 0,
+          result.skipped_truncated ?? false,
+          JSON.stringify(result.dnc_by_scope ?? {}),
+          JSON.stringify(result.rejected_sample ?? []),
+        ],
+      },
       {
         sql: `UPDATE agency_ingest_jobs
             SET ${BASE_SET},

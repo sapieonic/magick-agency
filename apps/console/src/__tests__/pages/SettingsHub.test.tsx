@@ -104,6 +104,41 @@ describe('the sub-nav', () => {
     expect(screen.getByTestId('settings-nav-team').getAttribute('aria-current')).toBe('page');
   });
 
+  it('names each group’s list by its label, a heading that is neither a link nor a tab stop (NV1)', () => {
+    renderAt('/settings/team');
+    const nav = screen.getByTestId('settings-nav');
+    const labels = [...nav.querySelectorAll('[data-nav-section-label]')];
+    expect(labels.map((l) => l.textContent)).toEqual(['You', 'This account · Pune Collections', 'People and access']);
+    for (const label of labels) {
+      expect(label.tagName).toBe('H2');
+      expect(label.closest('a, button')).toBeNull();
+      expect(label.querySelector('a, button, [tabindex]')).toBeNull();
+      expect(label.hasAttribute('tabindex')).toBe(false);
+    }
+    // Each list is named by its label, and holds exactly that group's entries, still links.
+    const people = within(nav).getByRole('list', { name: 'People and access' });
+    expect(within(people).getAllByRole('link').map((a) => a.textContent)).toEqual(['Team']);
+    expect(within(nav).getByRole('list', { name: 'You' })).toBeTruthy();
+    expect(within(nav).getByRole('list', { name: 'This account · Pune Collections' })).toBeTruthy();
+    // Keyboard order is the entries alone, in list order: the labels add no stop.
+    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
+      'Profile and appearance',
+      'Email notifications',
+      'Soft phone',
+      'Inbound routing',
+      'Call summaries',
+      'Team',
+    ]);
+    expect(within(people).getByRole('link', { name: 'Team' }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('keeps a filtered group named by its label', () => {
+    renderAt('/settings/team');
+    fireEvent.change(screen.getByTestId('settings-filter'), { target: { value: 'team' } });
+    const list = within(screen.getByTestId('settings-nav')).getByRole('list', { name: 'People and access' });
+    expect(within(list).getAllByRole('link').map((a) => a.textContent)).toEqual(['Team']);
+  });
+
   it('hides a group with nothing in it', () => {
     mocks.role = 'viewer';
     renderAt('/settings/notifications');

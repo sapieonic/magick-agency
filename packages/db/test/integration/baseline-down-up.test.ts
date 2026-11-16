@@ -80,6 +80,12 @@ const ALL_MIGRATIONS = [
   '0033_inbound_answered_from_index', '0034_dnc_phone_ending_index',
   '0035_one_station_per_agent', '0036_inbound_ring', '0037_away_ring_sessions_index',
   '0038_table_storage_settings', '0039_retention_purge_indexes', '0040_drop_duplicate_indexes',
+  '0041_promise_to_pay',
+  '0042_ingest_check_and_skipped',
+  '0043_recording_honours_request',
+  '0044_promise_checks_validate',
+  '0045_promise_contacts_index',
+  '0046_unrequested_recordings_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

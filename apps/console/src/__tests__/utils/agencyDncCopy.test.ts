@@ -82,7 +82,7 @@ describe('the outcome promises only what the response promised', () => {
     expect(copy).toContain('It’s on this campaign’s Do Not Call list');
   });
 
-  it('the campaign-scoped mark does NOT claim the list while the write is in flight', () => {
+  it('the campaign-scoped mark does NOT claim the list when the number could not go on it', () => {
     // The over-claim guard, and the defect this pair exists for. The API writes the
     // roster rows `suppressed` and then forwards to the API; when that forward
     // cannot land it still answers 200 with `dnc_recorded: false`, and NO entry
@@ -94,11 +94,11 @@ describe('the outcome promises only what the response promised', () => {
     // Still says what IS true — the rows already on the roster are suppressed —
     // so the agent is not told the mark failed, because it did not.
     expect(copy).toContain('this campaign');
-    expect(copy).toContain('still adding');
+    expect(copy).toContain('couldn’t go on');
     // And names the residual exposure plus the way to be sure, rather than
     // leaving the gap unnamed.
     expect(copy).toContain('new upload');
-    expect(copy).toContain('check the list');
+    expect(copy).toContain('check the number');
     // It must not silently borrow the tenant-wide arm's wording either.
     expect(copy).not.toContain('No campaign in this organisation');
     expect(copy).not.toContain('workspace Do Not Call list');
@@ -119,7 +119,7 @@ describe('the outcome promises only what the response promised', () => {
     expect(copy).toContain('No agency campaign in this organisation');
   });
 
-  it('the tenant-wide mark WEAKENS to this campaign only while the list write is in flight', () => {
+  it('the tenant-wide mark WEAKENS to this campaign only when the number could not go on the list', () => {
     // The load-bearing case. `dnc_recorded: false` is a success with a smaller
     // promise: the API suppressed the contact locally, the API's tenant-wide row is
     // not confirmed. An agent may repeat this sentence to the customer.
@@ -127,7 +127,7 @@ describe('the outcome promises only what the response promised', () => {
     expect(copy).toContain('this campaign');
     expect(copy).not.toContain('No campaign in this organisation');
     // And it says how to be sure, rather than leaving the gap unnamed.
-    expect(copy).toContain('check the list');
+    expect(copy).toContain('check the number');
   });
 
   it('names the number in every form, because the agent may be on their second call', () => {

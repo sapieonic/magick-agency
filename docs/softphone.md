@@ -200,8 +200,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    its claimed contact is held (§5). When the call ends unanswered while the dial is still out
    (the agent hangs up during `add_lead`), the agent gets the ended `manual_call` at once and the
    contact waits for the dial's answer before it is settled.
-   Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
-   `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
+   Recording: tag's `record_calls`, else settings' `record_calls`, under the account's
+   `allow_recording` (NULL or an unreadable row: off). The call's `recording_requested` takes the
+   ceiling (so the "Recording" badge and customer history never claim a recording the account
+   cannot make), and the bridge applies it again to the media leg. Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).
 5. **Lifecycle → station frames.** Every state change sends `manual_call` (the full
    `AgencyManualCall` wire row). `bridged` starts audio both ways. The client plays ringback: the console
@@ -548,6 +550,19 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   path stays `/manual-calls`). **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
+- **Campaign results** (SR1–SR10, [`decisions.md`](decisions.md)). A tagged call is counted on its
+  campaign by one definition (`db/repositories/agency/softphone-campaign-sql.ts`): placed
+  (`dialed_at` set), connected (outcome `connected`), reached a person (bridged, coded neither
+  voicemail nor `no_disposition`), `created_at` in `[from, to)`. Insights' `calls.softphone` and
+  `/stats` `softphone` (lifetime) serve the three counts; the Calls tab, the Overview's connect
+  rate and each Analytics card show the soft phone's placed, connected and connect rate (reached ÷
+  placed) and an **All calls** total beside the dialler's figures, never inside the dialler's
+  connect rate, which they then label "Dialler connect rate". They show while the flag is on or
+  when the counts hold any call. The campaign call export (`attempts.csv`) carries the tagged calls
+  as `soft_phone` rows (its `source` column; the call details and override notes are not
+  exported, as its preamble says), and the Call log names them beside its Export button by the
+  same rule; the campaign report adds Soft-phone calls and All calls lines and labels the
+  dialler's rate when the window holds any. Untagged calls are in no campaign's results.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
 - **Roster contact detail.** Where the flag is on and the caller holds `agency.supervise`, a
   "Soft-phone calls" section below the attempts lists the soft-phone calls that matched the contact

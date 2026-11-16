@@ -1,3 +1,4 @@
+import { dncScopeWords } from './dncScopeWords';
 import type {
   CustomerCallbackStatus,
   CustomerHistoryCampaign,
@@ -149,16 +150,19 @@ export function campaignChainLabel(campaigns: readonly CustomerHistoryCampaign[]
   return campaigns.map((c) => c.name).join(' → ');
 }
 
-/** Where a DNC entry applies. */
+/**
+ * Where a DNC entry applies, in the words every surface uses (`dncScopeWords`, DS7): `Every
+ * campaign`, `North account`, `Campaign: Q4 Renewals`. A campaign entry adds its account in
+ * brackets, since the history spans the accounts the caller can see.
+ */
 export function dncScopeLabel(entry: CustomerHistoryDncEntry): string {
-  switch (entry.scope) {
-    case 'tenant':
-      return 'Every account';
-    case 'account':
-      return `Account: ${entry.account_name ?? 'an account'}`;
-    case 'campaign':
-      return `Campaign: ${entry.campaign?.name ?? 'a campaign'}${entry.account_name ? ` (${entry.account_name})` : ''}`;
-  }
+  if (entry.scope === 'account' && !entry.account_name?.trim()) return 'An account';
+  const words = dncScopeWords(entry.scope, {
+    accountName: entry.account_name,
+    campaignName: entry.campaign?.name,
+    unnamedCampaign: 'A campaign',
+  });
+  return entry.scope === 'campaign' && entry.account_name ? `${words} (${entry.account_name})` : words;
 }
 
 /** What an unspent override grants: `2 extra attempts, retry delay waived`. */

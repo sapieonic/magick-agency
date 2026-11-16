@@ -10,8 +10,8 @@ import { createChildLogger } from '@magick-agency/observability';
 // `getFileBuffer` is `storage/s3.ts`'s `getFile`, the one S3 module (decision B14): a
 // `GetObjectCommand` on the agency bucket, returning the whole object as a Buffer. The alias
 // names what the call sites want back.
-import { uploadFile, getFileStream, getFile as getFileBuffer } from '../../../storage/s3.js';
-import { AGENCY_MAX_DEDUPE_COLUMNS } from '@magick-agency/contracts/api/agency/agency-campaign';
+import { uploadFile, getFileStream, getFile as getFileBuffer, isS3NotFound } from '../../../storage/s3.js';
+import { AGENCY_INGEST_CHECK_VALID_HOURS, AGENCY_MAX_DEDUPE_COLUMNS } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { analyzeAgencyCsvColumns } from '../../../agency/agency-column-analysis.js';
 import {
   AgencyIngestError,
@@ -20,7 +20,13 @@ import {
   AGENCY_MAX_CELL_BYTES,
   sameHeader,
 } from '../../../agency/agency-csv-ingest.js';
-import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
+import {
+  agencyIngestJobRepository,
+  IngestCheckImportUnavailableError,
+  type AgencyIngestJobRecord,
+  type CreateExclusiveResult,
+  type CreateIngestJobInput,
+} from '../../../agency/agency-ingest-job.repository.js';
 import { isTenantUploadKey, uploadKey } from '../../../agency/agency-ingest-keys.js';
 import { agencyIngestService } from '../../../agency/agency-ingest.service.js';
 import { auditRosterCleared, auditRosterUploadStarted } from '../../../agency/agency-ingest-audit.js';
@@ -230,6 +236,12 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       if (err instanceof AgencyIngestError) {
         return reply.code(422).send({ code: err.code, message: err.message });
       }
+      if (isS3NotFound(err)) {
+        return reply.code(410).send({
+          error: 'Gone', code: 'upload_missing',
+          message: 'The uploaded file is no longer stored. Upload it again.',
+        });
+      }
       throw err;
     }
   });
@@ -373,7 +385,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       ownerAccountId = proven;
     }
 
-    const job = await agencyIngestJobRepository.create({
+    const jobInput: CreateIngestJobInput = {
       tenant_id: request.tenantId!,
       account_id: ownerAccountId,
       campaign_id: input.campaign_id ?? null,
@@ -390,33 +402,154 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       // A person, or nobody. `sessionMiddleware` has no API-key branch, so
       // `request.user` is always the person who ran the import.
       created_by: request.user?.id ?? null,
-    });
+    };
 
-    // The campaign's activity log: who started a committed upload, and with which
-    // file and duplicate rule (IN8). A dry run writes nothing (`agency-ingest-audit.ts`).
-    auditRosterUploadStarted(job, requestAuditActor(request));
+    // A check writes nothing, so any number may run beside anything. An import is
+    // the only live import into its campaign (IM7).
+    let job: AgencyIngestJobRecord;
+    if (jobInput.dry_run || !input.campaign_id) {
+      job = await agencyIngestJobRepository.create(jobInput);
+    } else {
+      const created = await agencyIngestJobRepository.createExclusive({ ...jobInput, campaign_id: input.campaign_id });
+      if (created.outcome === 'busy') return replyImportBusy(reply, created.live);
+      // Only an import of a check can find an import holding it; this one names none.
+      if (created.outcome !== 'created') throw new Error(`createExclusive answered ${created.outcome} for an import without a check`);
+      job = created.job;
+    }
 
-    // Detached deliberately: the ingest owns its own failure handling and
-    // records every outcome on the job row, so there is nothing here to await
-    // and nothing that can become an unhandled rejection.
-    void agencyIngestService
-      .run({
-        job,
-        // Only meaningful for a replace, and validated above for exactly that
-        // case. Passed rather than stored: it is an assertion about the instant
-        // the operator clicked and is consumed once.
-        ...(input.expected_contacts_total !== undefined
-          ? { expectedContactsTotal: input.expected_contacts_total }
-          : {}),
-      })
-      .catch((err: unknown) => {
-        log.error({ err, jobId: job.id }, 'Agency ingest promise rejected outside its own handler');
-      });
+    launchIngest(request, job, input.expected_contacts_total);
 
     // `mode` is echoed so the caller can see which semantics it actually got
     // rather than assuming its request was understood — the whole failure this
     // field exists to end was an intent nobody could observe.
     return reply.code(202).send({ job_id: job.id, status: job.status, mode: job.mode ?? 'append' });
+  });
+
+  /**
+   * Import the file a check validated (IM2): `POST /ingest/jobs/:id/import`, where
+   * `:id` is a completed check (a dry run). The import re-reads the SAME stored
+   * upload with the SAME column mapping, copied from the check's row, so what is
+   * imported is exactly what was checked; nothing is re-uploaded and the client
+   * cannot change the mapping between the two.
+   *
+   * It is a new job with its own result. The roster can move between the check
+   * and the import (another import, a colleague's DNC entry), and the import's
+   * own counts say what happened; the console compares the two.
+   *
+   *   202 `{ job_id, status, mode, check_job_id }` — the import started.
+   *   200 the same body, `already_started: true` — this check is held by an import
+   *       (pending, running or completed: a double click, a second tab): no second
+   *       import, its job instead. An import that failed or was cancelled does not
+   *       hold its check: Import starts a new one while the check is valid (IM2).
+   *   404 — not a job this caller can see (a sibling account's id is the same 404).
+   *   409 `not_a_check` / `check_not_finished` / `check_failed` / `import_in_progress`,
+   *       or `check_imported_elsewhere` (an import this caller cannot see holds it).
+   *   410 `check_expired` — the check finished more than {@link CHECK_VALID_HOURS} h ago.
+   *   409 `check_import_unavailable` — the database does not have 0042's `check_job_id` yet.
+   *   400 — a campaign that is not the check's, or none at all.
+   *
+   * `campaign_id` in the body: required when the check named none (the builder
+   * checks before its draft exists); must equal the check's when it named one.
+   */
+  app.post<{ Params: { id: string } }>('/ingest/jobs/:id/import', {
+    preHandler: requirePermission('agency.campaigns.write'),
+  }, async (request, reply) => {
+    if (!isIngestJobId(request.params.id)) return replyImportNotFound(reply);
+    const parsed = parseOr400(importCheckSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
+
+    const scope = ingestJobAccountScope(request);
+    const check = await agencyIngestJobRepository.findById(request.params.id, request.tenantId!, scope);
+    if (!check) return replyImportNotFound(reply);
+    if (!check.dry_run) {
+      return reply.code(409).send({
+        error: 'Conflict', code: 'not_a_check',
+        message: 'That job is an import, not a check. Check the file first, then import it.',
+      });
+    }
+
+    // A second commit of the same check answers with the first import, whatever
+    // else has changed since: the operator's click already did what it asked.
+    const earlier = await agencyIngestJobRepository.findImportOfCheck(check.id, request.tenantId!, scope);
+    if (earlier) return reply.code(200).send(importStartedBody(earlier, check.id, true));
+
+    if (check.status === 'failed' || check.status === 'cancelled') {
+      return reply.code(409).send({
+        error: 'Conflict', code: 'check_failed',
+        message: 'That check did not finish, so there is nothing to import. Check the file again.',
+      });
+    }
+    if (check.status !== 'completed') {
+      return reply.code(409).send({
+        error: 'Conflict', code: 'check_not_finished',
+        message: 'The check is still running. Import when it has finished.',
+      });
+    }
+    if (!check.finished_at || Date.now() - new Date(check.finished_at).getTime() > CHECK_VALID_HOURS * 3_600_000) {
+      return reply.code(410).send({
+        error: 'Gone', code: 'check_expired',
+        message: `That check is more than ${CHECK_VALID_HOURS} hours old, and the campaign may have changed since. Check the file again before importing.`,
+      });
+    }
+
+    const campaignId = parsed.data.campaign_id ?? check.campaign_id ?? undefined;
+    if (!campaignId) {
+      return reply.code(400).send({ error: 'Validation Error', message: 'campaign_id is required: the check named no campaign.' });
+    }
+    if (check.campaign_id && campaignId !== check.campaign_id) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: 'That check was made for another campaign. Check the file for this campaign first.',
+      });
+    }
+
+    const callerAccountId = scope ?? request.accountId ?? null;
+    const ownerAccountId = await proveCampaignOwnedForWrite(request, reply, campaignId, callerAccountId);
+    if (!ownerAccountId) return reply;
+
+    const created = await agencyIngestJobRepository.createExclusive({
+      tenant_id: request.tenantId!,
+      account_id: ownerAccountId,
+      campaign_id: campaignId,
+      s3_key: check.s3_key,
+      file_name: check.file_name,
+      phone_column: check.phone_column,
+      timezone_column: check.timezone_column,
+      ignore_columns: check.ignore_columns ?? [],
+      default_country_code: check.default_country_code,
+      dedupe_phones: check.dedupe_phones,
+      ...(check.dedupe_columns?.length ? { dedupe_columns: check.dedupe_columns } : {}),
+      dry_run: false,
+      created_by: request.user?.id ?? null,
+      check_job_id: check.id,
+    }, scope).catch(async (err: unknown): Promise<CreateExclusiveResult | 'unavailable'> => {
+      if (err instanceof IngestCheckImportUnavailableError) return 'unavailable';
+      // `uq_agency_ingest_jobs_check_job`: the same check committed into another
+      // campaign at the same instant (the per-campaign lock cannot see that). The
+      // first one stands.
+      if ((err as { code?: string }).code !== '23505') throw err;
+      const first = await agencyIngestJobRepository.findImportOfCheck(check.id, request.tenantId!, scope);
+      return first ? { outcome: 'already_imported', job: first } : { outcome: 'imported_elsewhere' };
+    });
+    if (created === 'unavailable') {
+      // A 4xx, not a 503: a 5xx body is masked app-wide (`error-mask.middleware.ts`) and the
+      // operator would lose the sentence that says what to do.
+      return reply.code(409).send({
+        error: 'Conflict', code: 'check_import_unavailable',
+        message: 'Importing a checked file is not available until the server\'s database is updated. Import the file without checking, or try again later.',
+      });
+    }
+    if (created.outcome === 'already_imported') return reply.code(200).send(importStartedBody(created.job, check.id, true));
+    if (created.outcome === 'imported_elsewhere') {
+      return reply.code(409).send({
+        error: 'Conflict', code: 'check_imported_elsewhere',
+        message: 'That check has already been imported into another campaign. Check the file again for this campaign.',
+      });
+    }
+    if (created.outcome === 'busy') return replyImportBusy(reply, created.live);
+
+    launchIngest(request, created.job, undefined);
+    return reply.code(202).send(importStartedBody(created.job, check.id, false));
   });
 
   /** Poll. `progress_pct` is byte-based — the only honest fraction when the
@@ -433,7 +566,11 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       ingestJobAccountScope(request),
     );
     if (!job) return reply.code(404).send({ error: 'Not Found', message: 'Import not found.' });
-    return reply.code(200).send(toJobResponse(job));
+    // A check answers with the import made from it, so a second tab finds it (IM2).
+    const imported = job.dry_run
+      ? await agencyIngestJobRepository.findImportOfCheck(job.id, request.tenantId!, ingestJobAccountScope(request))
+      : null;
+    return reply.code(200).send(toJobResponse(job, imported?.id ?? null));
   });
 
   app.post<{ Params: { id: string } }>('/ingest/jobs/:id/cancel', {
@@ -703,29 +840,110 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
    */
   app.get<{ Params: { id: string } }>('/ingest/jobs/:id/rejected.csv', {
     preHandler: requirePermission('agency.campaigns.read'),
-  }, async (request, reply) => {
-    if (!isIngestJobId(request.params.id)) return replyImportNotFound(reply);
-    // Same scope as the poll: this streams PII-bearing roster rows.
-    const job = await agencyIngestJobRepository.findById(
-      request.params.id,
-      request.tenantId!,
-      ingestJobAccountScope(request),
-    );
-    if (!job) return reply.code(404).send({ error: 'Not Found', message: 'Import not found.' });
-    if (!job.rejected_s3_key) {
-      return reply.code(404).send({
-        error: 'Not Found',
-        message: 'That import had no rejected rows.',
-      });
-    }
+  }, async (request, reply) => sendRowsExport(request, reply, 'rejected'));
 
-    const buffer = await getFileBuffer(job.rejected_s3_key);
-    return reply
-      .code(200)
-      .header('Content-Type', 'text/csv')
-      .header('Content-Disposition', csvAttachmentHeader(`${downloadBaseName(job.file_name)}-rejected-rows`))
-      .send(buffer);
+  /**
+   * Download the skipped rows (IM3): the rows the campaign already held, in the same
+   * shape as the rejected rows (the operator's columns plus `_row` and `_reason`), so
+   * they can be reviewed or set aside. Same scope as the poll and the rejected rows.
+   */
+  app.get<{ Params: { id: string } }>('/ingest/jobs/:id/skipped.csv', {
+    preHandler: requirePermission('agency.campaigns.read'),
+  }, async (request, reply) => sendRowsExport(request, reply, 'skipped'));
+}
+
+async function sendRowsExport(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply,
+  which: 'rejected' | 'skipped',
+): Promise<FastifyReply> {
+  if (!isIngestJobId(request.params.id)) return replyImportNotFound(reply);
+  // Same scope as the poll: this streams PII-bearing roster rows.
+  const job = await agencyIngestJobRepository.findById(
+    request.params.id,
+    request.tenantId!,
+    ingestJobAccountScope(request),
+  );
+  if (!job) return reply.code(404).send({ error: 'Not Found', message: 'Import not found.' });
+  const key = which === 'rejected' ? job.rejected_s3_key : job.skipped_s3_key ?? null;
+  if (!key) {
+    return reply.code(404).send({
+      error: 'Not Found',
+      message: which === 'rejected' ? 'That import had no rejected rows.' : 'That import skipped no rows.',
+    });
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await getFileBuffer(key);
+  } catch (err) {
+    // The stored export has gone (storage expiry): a sentence, not a masked 500.
+    if (!isS3NotFound(err)) throw err;
+    return reply.code(410).send({
+      error: 'Gone',
+      code: 'export_expired',
+      message: 'That download is no longer stored. Upload the file again to get a fresh one.',
+    });
+  }
+  return reply
+    .code(200)
+    .header('Content-Type', 'text/csv')
+    .header('Content-Disposition', csvAttachmentHeader(`${downloadBaseName(job.file_name)}-${which}-rows`))
+    .send(buffer);
+}
+
+/**
+ * How long a finished check may be imported from (IM2): long enough to check in the
+ * morning and import after lunch, short enough that the roster and the Do Not Call
+ * list it was checked against are still roughly what the import will meet. The import
+ * reports its own result either way; past this the operator is asked to check again.
+ */
+export const CHECK_VALID_HOURS = AGENCY_INGEST_CHECK_VALID_HOURS;
+
+const importCheckSchema = z.object({
+  campaign_id: z.string().uuid().optional(),
+});
+
+/** Start an import's detached run, with its activity row (IN8: a dry run writes none). */
+function launchIngest(request: FastifyRequest, job: AgencyIngestJobRecord, expectedContactsTotal: number | undefined): void {
+  // The campaign's activity log: who started a committed upload, and with which
+  // file and duplicate rule (IN8). A dry run writes nothing (`agency-ingest-audit.ts`).
+  auditRosterUploadStarted(job, requestAuditActor(request));
+
+  // Detached deliberately: the ingest owns its own failure handling and
+  // records every outcome on the job row, so there is nothing here to await
+  // and nothing that can become an unhandled rejection.
+  void agencyIngestService
+    .run({
+      job,
+      // Only meaningful for a replace, and validated by the route for exactly that
+      // case. Passed rather than stored: it is an assertion about the instant
+      // the operator clicked and is consumed once.
+      ...(expectedContactsTotal !== undefined ? { expectedContactsTotal } : {}),
+    })
+    .catch((err: unknown) => {
+      log.error({ err, jobId: job.id }, 'Agency ingest promise rejected outside its own handler');
+    });
+}
+
+/** 409 for a campaign whose roster is already being imported into (IM7). Names the file and when. */
+function replyImportBusy(reply: FastifyReply, live: AgencyIngestJobRecord): FastifyReply {
+  return reply.code(409).send({
+    error: 'Conflict',
+    code: 'import_in_progress',
+    live_job_id: live.id,
+    message: `Another import into this campaign is still running (${live.file_name}). Wait for it to finish, then import again.`,
   });
+}
+
+function importStartedBody(job: AgencyIngestJobRecord, checkJobId: string, alreadyStarted: boolean) {
+  return {
+    job_id: job.id,
+    status: job.status,
+    mode: job.mode ?? 'append',
+    check_job_id: checkJobId,
+    already_started: alreadyStarted,
+  };
 }
 
 /**
@@ -835,8 +1053,11 @@ function downloadBaseName(fileName: string): string {
   return Array.from(sanitised).slice(0, 100).join('') || 'import';
 }
 
-function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.findById>>) {
+function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.findById>>, importJobId: string | null = null) {
   if (!job) return null;
+  const checkExpiresAt = job.dry_run && job.status === 'completed' && job.finished_at
+    ? new Date(new Date(job.finished_at).getTime() + CHECK_VALID_HOURS * 3_600_000).toISOString()
+    : null;
   const bytesTotal = job.file_size_bytes ? Number(job.file_size_bytes) : null;
   const bytesRead = Number(job.bytes_read);
   const terminal = ['completed', 'failed', 'cancelled'].includes(job.status);
@@ -898,14 +1119,26 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
     rows_read: Number(job.rows_read),
     accepted: Number(job.accepted),
     rejected: Number(job.rejected),
+    // IM3: accepted + skipped + rejected = rows_read. `?? 0` for a row read before 0042.
+    skipped: Number(job.skipped ?? 0),
     duplicates: Number(job.duplicates),
     rejected_by_reason: job.rejected_by_reason,
+    dnc_by_scope: job.dnc_by_scope ?? {},
+    rejected_sample: job.rejected_sample ?? [],
     chunks_sent: job.chunks_sent,
     headers: job.headers,
     context_columns: job.context_columns,
     has_rejected_export: Boolean(job.rejected_s3_key),
     rejected_row_count: job.rejected_row_count,
     rejected_truncated: job.rejected_truncated,
+    has_skipped_export: Boolean(job.skipped_s3_key),
+    skipped_row_count: job.skipped_row_count ?? 0,
+    skipped_truncated: Boolean(job.skipped_truncated ?? false),
+    // IM2: an import names the check it came from; a check names its import (or
+    // null) and, once finished, until when it may be imported.
+    check_job_id: job.check_job_id ?? null,
+    import_job_id: importJobId,
+    check_expires_at: checkExpiresAt,
     // Independent of accepted/rejected above: those count what the ingest
     // decided to SEND; this counts what the roster actually REFUSED on arrival
     // because it already held the row (a re-upload into a populated campaign,

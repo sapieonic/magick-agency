@@ -3050,6 +3050,184 @@
         "x": 0,
         "y": 165
       },
+      "id": 143,
+      "title": "Recordings",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Recording fetches that did not return the audio (RC3), by surface (`playback`: the console player through our proxy; `analysis`: the transcription worker), provider and reason. The console reads every playback failure but a 403/404 as \"could not reach the service that stores this recording\". `host_not_allowed`: the stored URL is off the carrier's recording-host list (VoiceLink: `VOICELINK_RECORDING_HOSTS`). `redirect_refused` / `too_many_redirects`: the carrier redirected off its list (Plivo: `PLIVO_RECORDING_REDIRECT_HOSTS`, RC4). `upstream_unauthorized` / `upstream_not_found` / `upstream_status`: the carrier answered non-2xx. `timeout` / `network`: our egress to the host. `access_error`: resolving the call's access failed (database or keyring). `access_refused`: the credential cannot serve it (a 404, read as not recorded). Runbook: docs/operations.md, \"Recordings that will not play\".",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* access_error"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* upstream_unauthorized"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 166
+      },
+      "id": 144,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Recording Fetch Failures by Surface and Reason",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (surface, provider, reason) (increase(recording_fetch_failures_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{surface}} {{provider}} {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Recordings a carrier delivered for a call that did not ask for one (recording off for its campaign, soft phone or inbound route, or the account's allow_recording off), discarded at the bridge and never stored (RC1, RC2), counted once per call by provider. A steady `voicelink` line means VoiceLink keeps recording calls set not to record: no action needed, we never keep or show them. A `plivo` line is unexpected (Plivo is told when to record): read the warn log \"Carrier delivered a recording for a call that did not ask for one\". Runbook: docs/operations.md, \"Recordings a call did not ask for\".",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "plivo"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 166
+      },
+      "id": 145,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Recordings Discarded: Call Did Not Ask for One",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (provider) (increase(recording_discarded_unrequested_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 174
+      },
       "id": 3,
       "title": "Identity and mail",
       "type": "row",
@@ -3085,7 +3263,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 166
+        "y": 175
       },
       "id": 103,
       "options": {
@@ -3143,7 +3321,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 166
+        "y": 175
       },
       "id": 104,
       "options": {
@@ -3183,7 +3361,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 174
+        "y": 183
       },
       "id": 4,
       "title": "Analysis",
@@ -3251,7 +3429,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 175
+        "y": 184
       },
       "id": 68,
       "options": {
@@ -3315,7 +3493,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 175
+        "y": 184
       },
       "id": 69,
       "options": {
@@ -3391,7 +3569,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 183
+        "y": 192
       },
       "options": {
         "legend": {
@@ -3473,7 +3651,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 183
+        "y": 192
       },
       "options": {
         "legend": {
@@ -3520,7 +3698,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 191
+        "y": 200
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -3557,7 +3735,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 192
+        "y": 201
       },
       "id": 106,
       "options": {
@@ -3621,7 +3799,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 192
+        "y": 201
       },
       "id": 107,
       "options": {
@@ -3679,7 +3857,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 192
+        "y": 201
       },
       "id": 108,
       "options": {
@@ -3739,7 +3917,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 200
+        "y": 209
       },
       "id": 87,
       "options": {
@@ -3796,7 +3974,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 200
+        "y": 209
       },
       "id": 74,
       "options": {
@@ -3854,7 +4032,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 208
+        "y": 217
       },
       "id": 50,
       "options": {
@@ -3892,7 +4070,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 216
+        "y": 225
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -3929,7 +4107,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 217
+        "y": 226
       },
       "id": 112,
       "options": {
@@ -3987,7 +4165,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 217
+        "y": 226
       },
       "id": 113,
       "options": {
@@ -4045,7 +4223,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 225
+        "y": 234
       },
       "id": 114,
       "options": {
@@ -4103,7 +4281,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 225
+        "y": 234
       },
       "id": 115,
       "options": {

@@ -154,6 +154,9 @@ export interface AgencyInboundCallRecord {
   disposition_source: AgencyInboundDispositionSource | null;
   notes: string | null;
   callback_at: Date | null;
+  /** Promise to pay (0041, PT1), read as text (`YYYY-MM-DD`). NULL: none. */
+  promise_date: string | null;
+  promise_amount: string | null;
   dispositioned_by_user_id: string | null;
   dispositioned_at: Date | null;
   dispositioned_on_behalf: boolean;
@@ -253,6 +256,9 @@ export interface AgencyInboundDispositionInput {
   /** Null keeps the stored notes. */
   notes: string | null;
   callbackAt: Date | null;
+  /** Promise to pay (PT1): `YYYY-MM-DD` and the two-place amount; last-write-wins on a replay. */
+  promiseDate?: string | null;
+  promiseAmount?: string | null;
   actorUserId: string;
   onBehalf: boolean;
 }
@@ -320,7 +326,8 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
   c.answered_by_user_id, c.ended_at, c.talk_seconds, c.webrtc_call_id, c.voicemail_key, c.callback_due_at,
   c.follow_up_status, c.follow_up_reason, c.follow_up_assignee_user_id, c.handled_by_user_id, c.handled_at,
   c.session_id, c.queued_at, c.offered_at, c.offer_count, c.recording_requested, c.disposition_code,
-  c.disposition_source, c.notes, c.callback_at, c.dispositioned_by_user_id, c.dispositioned_at,
+  c.disposition_source, c.notes, c.callback_at, c.promise_date::text AS promise_date, c.promise_amount,
+  c.dispositioned_by_user_id, c.dispositioned_at,
   c.dispositioned_on_behalf, c.settled_at, c.voicemail_seconds, c.clash_attempt_id, c.wrapup_seconds,
   c.offer_channel, c.ringing_at, c.accepted_at, c.ring_result, c.ring_count,
   c.created_at, c.updated_at`;
@@ -789,6 +796,8 @@ export class AgencyInboundCallRepository {
               callback_at = $5::timestamptz,
               dispositioned_by_user_id = $6::uuid,
               dispositioned_on_behalf = $7::boolean,
+              promise_date = $8::date,
+              promise_amount = $9::numeric,
               dispositioned_at = now(),
               settled_at = COALESCE(c.settled_at, now())
          FROM prev
@@ -798,7 +807,10 @@ export class AgencyInboundCallRepository {
           AND c.disposition_code IS DISTINCT FROM '${AUTO_DISPOSITION_CODE}'
           AND ((c.disposition_code IS NULL AND c.settled_at IS NULL) OR c.disposition_code = $2::varchar)
         RETURNING ${CALL_COLUMNS}, prev.disposition_code AS prev_code`,
-      [input.id, input.code, input.source, input.notes, input.callbackAt, input.actorUserId, input.onBehalf],
+      [
+        input.id, input.code, input.source, input.notes, input.callbackAt, input.actorUserId, input.onBehalf,
+        input.promiseDate ?? null, input.promiseAmount ?? null,
+      ],
     );
     const row = rows[0];
     if (row) {

@@ -69,6 +69,11 @@ import {
   WRAPUP_MEASURED_RESOLUTIONS_SQL,
   readAttemptMetrics,
 } from './sql-fragments.js';
+import {
+  readSoftphoneCampaignCounts,
+  softphoneCampaignCountsStatement,
+  type SoftphoneCampaignCounts,
+} from './softphone-campaign-sql.js';
 
 /**
  * A `TIMESTAMPTZ` as an ISO instant, degrading to the epoch rather than throwing.
@@ -395,7 +400,14 @@ export async function campaignStats(
    */
   const attemptsBridged = humanConnects + machineConnects + unclassifiedConnects;
 
-  const agents = await supervisorAgents(campaignId);
+  // The tagged soft-phone calls over the campaign's life (SR1–SR3): beside the dialler's
+  // figures, never in them. Its own statement, on the tag's index, read beside the roster.
+  const soft = softphoneCampaignCountsStatement({ campaignId, tenantId: null });
+  const [agents, softphone] = await Promise.all([
+    supervisorAgents(campaignId),
+    getPool().query<SoftphoneCampaignCounts>(soft.text, soft.values)
+      .then((r) => readSoftphoneCampaignCounts(r.rows[0])),
+  ]);
 
   return {
     contacts_total: num('contacts_total'),
@@ -466,6 +478,7 @@ export async function campaignStats(
     // counted, and a queued attempt never placed is not a dial.
     connect_rate_pct: ratePct(humanConnects, num('first_dials_placed')),
     first_dials_placed: num('first_dials_placed'),
+    softphone,
     attempts_success: attemptsSuccess,
     // `null`, never `0`, when nothing has bridged — the same imported helper
     // `abandonment_rate_24h_pct` uses, and the same distinction: "nothing has

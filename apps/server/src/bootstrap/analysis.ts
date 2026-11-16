@@ -119,6 +119,7 @@ export async function startAnalysis(ctx: AppContext, opts: StartAnalysisOptions 
           analysisService,
           config: dialerAnalysis,
           recordingHosts: config.voicelinkRecording.allowedHosts,
+          plivoRedirectHosts: config.plivoRecording.redirectHosts,
         })
       : null;
 

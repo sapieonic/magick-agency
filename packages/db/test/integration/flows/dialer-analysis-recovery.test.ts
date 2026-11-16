@@ -10,7 +10,7 @@ const { dialerAnalysisJobRepository: jobs } = await import('../../../src/reposit
 describe('dialer analysis recovery scenarios', () => {
   beforeEach(truncateAll); afterAll(closeTestPool);
   it('recovers stale claims without burning attempts, fences resurrected writers, and hits total ceiling', async () => {
-    const call = await insertWebrtcCall({ recording_url: 'https://rec.example/a.wav' });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: 'https://rec.example/a.wav' });
     const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     const [first] = await jobs.claimRunnable(1);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET heartbeat_at = now() - interval '1 hour' WHERE id = $1`, [job.id]);
@@ -27,7 +27,7 @@ describe('dialer analysis recovery scenarios', () => {
   });
 
   it('graceful requeue is generation-owned and does not requeue a different recovered runner', async () => {
-    const call = await insertWebrtcCall({ recording_url: 'https://rec.example/a.wav' });
+    const call = await insertWebrtcCall({ recording_requested: true, recording_url: 'https://rec.example/a.wav' });
     const job = (await jobs.enqueueFromCall({ call_id: call.id }))!;
     const [claim] = await jobs.claimRunnable(1);
     expect(await jobs.gracefulRequeue([{ id: job.id, generation: claim!.claim_generation }])).toBe(1);

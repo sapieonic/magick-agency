@@ -1,6 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 
 import '../../core/api/api_error.dart';
+import '../../core/dnc/dnc_scope_words.dart';
 import '../../ui/primitives.dart';
 import '../performance/performance_api.dart' show errorMessage;
 
@@ -257,14 +258,16 @@ String fieldValueLabel(Object? value) => switch (value) {
   _ => '$value',
 };
 
-/// Where a DNC entry applies: `Every account`, `Account: North`,
-/// `Campaign: October dues (North)`.
+/// Where a DNC entry applies, in the words every surface uses ([dncScopeWords], DS7):
+/// `Every campaign`, `North account`, `Campaign: October dues (North)` (the history spans
+/// accounts, so a campaign entry adds its account, and an account entry whose name is not
+/// known is `An account`, not `This account`: it may be another of the caller's accounts).
+/// An unknown scope (a newer server) is named as [dncScopeWords] names it, never by its code.
 String dncScopeLabel(CustomerHistoryDncEntry e) => switch (e.scope) {
-  DncEntryScope.tenant => 'Every account',
-  DncEntryScope.account => 'Account: ${e.accountName ?? 'an account'}',
-  DncEntryScope.campaign =>
-    'Campaign: ${e.campaign?.name ?? 'a campaign'}${e.accountName == null ? '' : ' (${e.accountName})'}',
-  DncEntryScope.unknown => e.scopeRaw,
+  DncEntryScope.account when (e.accountName?.trim() ?? '').isEmpty => 'An account',
+  DncEntryScope.campaign => dncScopeWords(e.scope, campaignName: e.campaign?.name, unnamedCampaign: 'A campaign') +
+      (e.accountName == null ? '' : ' (${e.accountName})'),
+  _ => dncScopeWords(e.scope, accountName: e.accountName),
 };
 
 /// A person's name, "A former user" when the user row has no name, or [none] for no one.

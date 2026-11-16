@@ -1,6 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 
 import '../api/api_error.dart';
+import '../station/promise_rules.dart' show promiseRefusalCopy;
 
 /// The app's sentence for every soft-phone refusal code (a port of the
 /// console's `utils/softphone/refusalCopy.ts`).
@@ -77,6 +78,12 @@ const _fallback = 'That didn’t work. Try again.';
 String refusalCopy(ErrorBody refusal, {SoftphoneRefusalContext context = SoftphoneRefusalContext.call}) {
   final code = refusal.softphoneCode;
   if (code == SoftphoneErrorCode.unknown) return refusal.message.isNotEmpty ? refusal.message : _fallback;
+  // A promise to pay the server refused (PT8, PT13): its reason, in the pad's own words.
+  if (code == SoftphoneErrorCode.dispositionInvalid) {
+    final reason = refusal.raw['reason'];
+    final promise = reason is String ? promiseRefusalCopy[reason] : null;
+    if (promise != null) return promise;
+  }
   return (context == SoftphoneRefusalContext.status ? softphoneStatusRefusalCopy[code] : null) ??
       softphoneRefusalCopy[code] ??
       (refusal.message.isNotEmpty ? refusal.message : _fallback);

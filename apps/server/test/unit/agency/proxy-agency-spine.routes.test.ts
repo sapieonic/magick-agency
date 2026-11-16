@@ -444,10 +444,85 @@ describe('the CSV exports', () => {
     await app.close();
   });
 
-  it('exports the automatic outcome in its own last column, blank when there is none', () => {
+  it('keeps every column a consumer already reads, in place, and appends `source` after them (SR6)', () => {
+    // The file's columns as released before the soft phone joined it, by position. Customers
+    // parse this file: a column is only ever appended, never moved, renamed or dropped.
+    const released = [
+      'attempt_id', 'contact_id', 'attempt_number', 'phone', 'caller_id', 'agent_user_id', 'agent_name',
+      'state', 'outcome', 'disposition_code', 'dispositioned_by_user_id', 'dispositioned_on_behalf',
+      'notes', 'callback_at', 'created_at', 'dialed_at', 'answered_at', 'bridged_at', 'ended_at',
+      'talk_seconds', 'wrapup_seconds', 'recording_call_id', 'auto_disposition_code',
+    ];
+    expect(ATTEMPT_CSV_COLUMNS.slice(0, released.length)).toEqual(released);
+    expect(ATTEMPT_CSV_COLUMNS).toContain('source');
+    expect(ATTEMPT_CSV_COLUMNS.indexOf('source')).toBeGreaterThanOrEqual(released.length);
+  });
+
+  it('marks each row with its source; a soft-phone row leaves the attempt-only cells empty (SR6)', () => {
+    const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
+    // A row of the JSON attempt list carries no `source`: it is the dialler's.
+    expect(attemptCsvRow(ATTEMPT as never).trimEnd().split(',')[at('source')]).toBe('dialler');
+    expect(attemptCsvRow({ ...ATTEMPT, source: 'dialler' } as never).trimEnd().split(',')[at('source')]).toBe('dialler');
+    const soft = {
+      ...ATTEMPT, source: 'soft_phone', id: 'manual-1', contact_id: null, attempt_number: null,
+      wrapup_seconds: null, auto_disposition_code: null, redial_number: null, notes: null,
+      phone_e164: '+919876500009', webrtc_call_id: 'call-77',
+    };
+    const softCells = attemptCsvRow(soft as never).trimEnd().split(',');
+    expect(softCells).toHaveLength(ATTEMPT_CSV_COLUMNS.length);
+    expect(softCells[at('source')]).toBe('soft_phone');
+    expect(softCells[at('attempt_id')]).toBe('manual-1');
+    expect(softCells[at('contact_id')]).toBe('');
+    expect(softCells[at('attempt_number')]).toBe('');
+    expect(softCells[at('wrapup_seconds')]).toBe('');
+    expect(softCells[at('auto_disposition_code')]).toBe('');
+    // Rendered as every phone cell is (the formula guard prefixes a leading `+`).
+    expect(softCells[at('phone')]).toBe(attemptCsvRow({ ...ATTEMPT, phone_e164: '+919876500009' } as never).trimEnd().split(',')[at('phone')]);
+    expect(softCells[at('recording_call_id')]).toBe('call-77');
+    expect(softCells[at('disposition_code')]).toBe('not_interested');
+  });
+
+  it('drains the campaign call log, forwards `source`, and refuses it on the JSON list (SR6)', async () => {
+    mocks.proxyToCore
+      .mockResolvedValueOnce(CAMPAIGN_BODY)
+      .mockResolvedValueOnce(page([{ ...ATTEMPT, source: 'soft_phone' }]));
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts.csv?source=soft_phone&preamble=false`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[1]![0].path).toBe(`/agency-campaigns/${CAMPAIGN}/call-log`);
+    expect(mocks.proxyToCore.mock.calls[1]![0].query).toEqual(expect.objectContaining({ source: 'soft_phone' }));
+    // Read by the column's name: the promise-to-pay columns (PT12) were appended after `source`.
+    expect(res.body.trim().split('\n')[1]!.split(',')[ATTEMPT_CSV_COLUMNS.indexOf('source')]).toBe('soft_phone');
+
+    const list = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts?source=soft_phone` });
+    expect(list.statusCode).toBe(400);
+    expect(list.json()).toMatchObject({ code: 'unknown_query_params', details: { unknown: ['source'] } });
+    await app.close();
+  });
+
+  it('says in the preamble what the source column holds and how to leave the soft phone out', async () => {
+    mocks.proxyToCore
+      .mockResolvedValueOnce(CAMPAIGN_BODY)
+      .mockResolvedValueOnce(page([ATTEMPT]));
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts.csv` });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('one per soft-phone call logged to the campaign');
+    expect(res.body).toContain('Soft-phone calls logged to no campaign are not in this file');
+    expect(res.body).toContain('?source=dialler');
+    // What a soft-phone row leaves out, by name, as the preamble names every column it withholds.
+    expect(res.body).toContain('Not included for a soft_phone row: the call details the agent entered and the reasons given for dialling through a Do Not Call entry or outside calling hours');
+    await app.close();
+  });
+
+  it('exports the automatic outcome in its own column, blank when there is none', () => {
     // Appended, so a consumer reading by position keeps every earlier column; and its own
     // column, so `disposition_code` stays what a person recorded (OD4).
-    expect(ATTEMPT_CSV_COLUMNS.at(-1)).toBe('auto_disposition_code');
+    expect(ATTEMPT_CSV_COLUMNS.indexOf('auto_disposition_code')).toBe(22);
+    // Followed by `source` (SR6), then the promise-to-pay columns (PT12), each appended in turn.
+    expect(ATTEMPT_CSV_COLUMNS.slice(-4)).toEqual(['auto_disposition_code', 'source', 'promise_date', 'promise_amount']);
     const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
     const auto = {
       ...ATTEMPT, outcome: 'no_answer', disposition_code: null, notes: null,

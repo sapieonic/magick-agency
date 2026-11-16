@@ -1,5 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 
+import '../station/promise_rules.dart'
+    show promiseAmountRefusedCopy, promiseDateRefusedCopy, promiseNotExpectedCopy, promiseRequiredCopy;
 import 'inbound_call_api.dart';
 import 'inbound_call_rules.dart';
 
@@ -26,6 +28,11 @@ const Map<InboundDispositionRule, String> inboundDispositionRuleCopy = {
   InboundDispositionRule.noteRequired: 'This outcome needs a note.',
   InboundDispositionRule.datetimeRequired: 'This outcome needs a callback time.',
   InboundDispositionRule.invalidCallbackAt: 'That callback time can’t be used. Pick a time in the future.',
+  // Promise to pay (PT8): the console's words for the four rules.
+  InboundDispositionRule.promiseRequired: promiseRequiredCopy,
+  InboundDispositionRule.invalidPromiseDate: promiseDateRefusedCopy,
+  InboundDispositionRule.invalidPromiseAmount: promiseAmountRefusedCopy,
+  InboundDispositionRule.promiseNotExpected: promiseNotExpectedCopy,
 };
 
 /// The outcome window ended before an outcome was saved: the call was closed without one.

@@ -168,6 +168,35 @@ describe('campaign report', () => {
     expect(text(block(html, 'data-kpi', 'success_rate'))).toContain(pct((calls.successes / calls.conversations) * 100));
   });
 
+  it('prints the soft-phone calls logged to the campaign and All calls beside the dialler\'s figures, and only when there are any (SR1, SR3)', () => {
+    const line = text(block(html, 'data-testid', 'softphone-calls'));
+    expect(line).toContain('42 calls placed and logged to this campaign, 30 connected, 18 people reached');
+    expect(line).toContain(`connect rate ${pct((18 / 42) * 100)}`);
+    expect(line).toContain('not in the dialler’s figures above');
+    // The dialler's rate is labelled as the dialler's where the soft phone's figures show.
+    expect(text(block(html, 'data-kpi', 'connect_rate'))).toContain('Dialler connect rate');
+    const all = text(block(html, 'data-testid', 'all-calls'));
+    const firstCalls = calls.dials - calls.redials.placed + 42;
+    expect(all).toContain(`${count(calls.dials + 42)} calls placed by the dialler and the soft phone together, ${count(calls.connected + 30)} connected, ${count(calls.human_connects + 18)} people reached`);
+    expect(all).toContain(`connect rate ${pct(((calls.human_connects + 18) / firstCalls) * 100)}, over ${count(firstCalls)} first dials and soft-phone calls`);
+    const none = structuredClone(d);
+    none.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0 };
+    const plain = renderReportHtml(none, NO_FONTS);
+    expect(plain).not.toContain('data-testid="softphone-calls"');
+    expect(plain).not.toContain('data-testid="all-calls"');
+    expect(text(block(plain, 'data-kpi', 'connect_rate'))).not.toContain('Dialler');
+    expect(text(block(plain, 'data-kpi', 'connect_rate'))).toContain('Connect rate');
+  });
+
+  it('withholds the All calls rate below the floor on its own denominator (SR3)', () => {
+    const small = structuredClone(d);
+    // A dialler with no dials and 10 soft-phone calls: 10 first calls, under the floor of 25.
+    small.activity.calls = { ...small.activity.calls, dials: 0, connected: 0, human_connects: 0, redials: { ...small.activity.calls.redials, placed: 0 }, softphone: { placed: 10, connected: 6, human_connects: 4 } };
+    const all = text(block(renderReportHtml(small, NO_FONTS), 'data-testid', 'all-calls'));
+    expect(all).toContain('10 calls placed');
+    expect(all).toContain('connect rate Not enough calls to rate');
+  });
+
   it('draws trends, best hours, agents, callbacks and health', () => {
     for (const id of ['headline', 'outcomes', 'trends', 'best-hours', 'agents', 'callbacks', 'stalls', 'caller-ids']) expect(html).toContain(`data-block="${id}"`);
     expect(text(block(html, 'data-block', 'agents'))).toContain('Arjun Mehta');

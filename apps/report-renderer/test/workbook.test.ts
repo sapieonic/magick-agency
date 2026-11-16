@@ -178,11 +178,51 @@ describe('campaign workbook', async () => {
     expectDefinitions(wb, d, [
       ['Dials', 'dials'],
       ['Connected', 'connected'],
-      ['Connect rate', 'connect_rate'],
+      ['Dialler connect rate', 'connect_rate'],
       ['Success rate', 'success_rate'],
       ['Abandonment', 'abandonment_rate'],
       ['Callbacks booked', 'callbacks_booked'],
+      ['Soft-phone calls placed', 'softphone_calls'],
     ]);
+  });
+  const summaryRows = (book: import('exceljs').Workbook): Array<[string, unknown]> => {
+    const rows: Array<[string, unknown]> = [];
+    book.getWorksheet('Summary')!.eachRow((r) => { rows.push([String(r.getCell(1).value), r.getCell(2).value]); });
+    return rows;
+  };
+  const SOFT_ROWS = [
+    'Soft-phone calls placed', 'Soft-phone calls connected', 'People reached on the soft phone', 'Soft-phone connect rate',
+    'All calls placed', 'All calls connected', 'All calls connect rate',
+  ];
+  it('writes the soft-phone calls logged to the campaign and All calls last on the Summary, beside the dialler\'s (SR1, SR3)', () => {
+    const rows = summaryRows(wb);
+    const at = (metric: string) => rows.find(([m]) => m === metric)?.[1];
+    const calls = d.activity.calls;
+    expect(at('Soft-phone calls placed')).toBe(42);
+    expect(at('Soft-phone calls connected')).toBe(30);
+    expect(at('People reached on the soft phone')).toBe(18);
+    // 18 / 42, a fraction under the report's percentage format.
+    expect(Number(at('Soft-phone connect rate'))).toBeCloseTo(18 / 42, 6);
+    // The dialler's connect rate is the dialler's alone, labelled so: people reached over first dials.
+    const firstDials = d.trends.buckets.reduce((s, b) => s + b.first_dials, 0);
+    expect(at('Connect rate')).toBeUndefined();
+    expect(Number(at('Dialler connect rate'))).toBeCloseTo(calls.human_connects / firstDials, 6);
+    // All calls: the two added; its rate over the dialler's first dials and the soft phone's placed.
+    expect(at('All calls placed')).toBe(calls.dials + 42);
+    expect(at('All calls connected')).toBe(calls.connected + 30);
+    expect(Number(at('All calls connect rate'))).toBeCloseTo((calls.human_connects + 18) / (calls.dials - calls.redials.placed + 42), 6);
+    expect(rows.map(([m]) => m).slice(-SOFT_ROWS.length)).toEqual(SOFT_ROWS);
+  });
+  it('writes neither, and the dialler\'s rate as plain Connect rate, when the window holds no soft-phone call (as the PDF)', async () => {
+    const none = structuredClone(d);
+    none.activity.calls.softphone = { placed: 0, connected: 0, human_connects: 0 };
+    none.activity.calls.softphone_calls = 0;
+    const rows = summaryRows(await readWorkbook(await build(none, details)));
+    const metrics = rows.map(([m]) => m);
+    for (const m of SOFT_ROWS) expect(metrics).not.toContain(m);
+    expect(metrics).not.toContain('Dialler connect rate');
+    expect(metrics).toContain('Connect rate');
+    expect(metrics.at(-1)).toBe('Numbers marked Do Not Call');
   });
   it('writes one Daily row per day and every attempt', () => {
     expect(wb.getWorksheet('Daily')!.actualRowCount).toBe(d.range.days + 1);

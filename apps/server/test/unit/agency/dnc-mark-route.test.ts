@@ -133,6 +133,8 @@ const { repos } = vi.hoisted(() => ({
       // duplicate-number case this route now has to cover and a one-element
       // default would let a by-contact-id regression look identical.
       suppressByPhone: vi.fn().mockResolvedValue(['contact-1', 'contact-dup']),
+      // Promise to pay (PT7): an outcome marks an earlier promise followed up, in the transaction.
+      notePromiseFollowUp: vi.fn().mockResolvedValue(false),
       unclaim: vi.fn().mockResolvedValue(undefined),
       findById: vi.fn(),
     },

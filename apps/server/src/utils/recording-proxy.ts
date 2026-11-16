@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
+import { trackRecordingFetchFailure, type RecordingFetchFailureReason } from '@magick-agency/observability/metrics/voice';
 import {
   RecordingAccessRefusedError,
   type RecordingAccess,
@@ -71,15 +72,31 @@ export function recordingHostMatches(
   });
 }
 
+/**
+ * Release a response whose body will never be read, so its connection goes back now rather than
+ * at GC (undici pins the socket until the body is consumed or cancelled). Never throws.
+ */
+export async function discardResponseBody(res: Response): Promise<void> {
+  const body = res.body as { cancel?: () => Promise<void> } | null;
+  if (typeof body?.cancel !== 'function') return;
+  await body.cancel().catch(() => undefined);
+}
+
 /** Redirect hops followed before a fetch is refused. */
 export const MAX_RECORDING_REDIRECTS = 3;
 
-/** A URL (the first, or a redirect hop) is not on the recording-host allow-list. */
+/**
+ * A URL (the first, or a redirect hop) is not on the recording-host allow-list. Carries hosts
+ * only, never a URL: a carrier's signed recording URL holds its secret in the path or query.
+ * `host` is the refused URL's host (a redirect's TARGET at `hop > 0`; null when unparseable or
+ * not https); `redirectedFrom` the host that answered with the redirect (null at hop 0).
+ */
 export class RecordingHostRefusedError extends Error {
   constructor(
     public readonly host: string | null,
     public readonly reason: 'off_list' | 'too_many_redirects',
     public readonly hop: number,
+    public readonly redirectedFrom: string | null = null,
   ) {
     super(
       reason === 'too_many_redirects'
@@ -113,6 +130,11 @@ function redirectSafeHeaders(headers: RequestInit['headers']): Record<string, st
 export interface FetchAllowedOptions {
   /** Hosts match exactly, no subdomains (a credentialed fetch; see `RecordingAccess`). */
   exactHosts?: boolean;
+  /**
+   * Further hosts a REDIRECT hop may go to, matched exactly (`RecordingAccess.redirectHosts`,
+   * RC4, operator config only). Never the first URL; the hop still carries no header but Range.
+   */
+  redirectHosts?: readonly string[];
 }
 
 /**
@@ -133,9 +155,13 @@ export async function fetchWithAllowedRedirects(
   opts: FetchAllowedOptions = {},
 ): Promise<Response> {
   let current = url;
+  let redirectedFrom: string | null = null;
+  const redirectHosts = opts.redirectHosts ?? [];
   for (let hop = 0; ; hop++) {
-    if (!recordingHostMatches(current, allowedHosts, opts.exactHosts === true)) {
-      throw new RecordingHostRefusedError(recordingHostname(current), 'off_list', hop);
+    const allowed = recordingHostMatches(current, allowedHosts, opts.exactHosts === true)
+      || (hop > 0 && redirectHosts.length > 0 && recordingHostMatches(current, redirectHosts, true));
+    if (!allowed) {
+      throw new RecordingHostRefusedError(recordingHostname(current), 'off_list', hop, redirectedFrom);
     }
     const hopInit: RequestInit = hop === 0
       ? { ...init, redirect: 'manual' }
@@ -147,19 +173,55 @@ export async function fetchWithAllowedRedirects(
     // A hop we do not hand back is never read: release its connection now rather
     // than at GC (undici pins the socket until the body is consumed or cancelled).
     await res.body?.cancel().catch(() => undefined);
+    redirectedFrom = recordingHostname(current);
     if (hop >= MAX_RECORDING_REDIRECTS) {
-      throw new RecordingHostRefusedError(null, 'too_many_redirects', hop + 1);
+      throw new RecordingHostRefusedError(null, 'too_many_redirects', hop + 1, redirectedFrom);
     }
     try {
       current = new URL(location, current).toString();
     } catch {
-      throw new RecordingHostRefusedError(null, 'off_list', hop + 1);
+      throw new RecordingHostRefusedError(null, 'off_list', hop + 1, redirectedFrom);
     }
   }
 }
 
+/**
+ * Why a fetch that threw did not return the audio (RC3; `recording_fetch_failures_total`'s
+ * `reason`): an allow-list refusal by where it struck, a timeout (an `AbortSignal.timeout`, or
+ * an abort `timedOut` says was ours), else the network.
+ */
+export function recordingFetchErrorReason(err: unknown, timedOut = false): RecordingFetchFailureReason {
+  if (err instanceof RecordingHostRefusedError) {
+    if (err.reason === 'too_many_redirects') return 'too_many_redirects';
+    return err.hop > 0 ? 'redirect_refused' : 'host_not_allowed';
+  }
+  const name = (err as { name?: unknown } | null)?.name;
+  if (timedOut || name === 'TimeoutError') return 'timeout';
+  return 'network';
+}
+
+/** Why a carrier's non-2xx answer did not return the audio (RC3). */
+export function recordingUpstreamStatusReason(status: number): RecordingFetchFailureReason {
+  if (status === 401 || status === 403) return 'upstream_unauthorized';
+  if (status === 404 || status === 410) return 'upstream_not_found';
+  return 'upstream_status';
+}
+
+/**
+ * How long the playback proxy waits for the carrier's response headers (RC3). Before RC3 a
+ * carrier host that never answered held the request open until the viewer's browser gave up;
+ * now it is a 504 with `reason: timeout` in the log and the failure counter. Only the headers
+ * are timed: a long recording still streams for as long as it takes.
+ */
+export const RECORDING_PROXY_HEADERS_TIMEOUT_MS = 20_000;
+
 /** The call-row fields the proxy reads. */
-export type ProxiedRecordingCall = RecordingCallRef & { id: string; recording_url: string | null };
+export type ProxiedRecordingCall = RecordingCallRef & {
+  id: string;
+  recording_url: string | null;
+  /** A read row has the URL nulled already when false (RC1); checked again here, the bytes' last door. */
+  recording_requested?: boolean;
+};
 
 /**
  * Proxy a call's recording from the carrier to the client. Forwards Range
@@ -171,26 +233,51 @@ export type ProxiedRecordingCall = RecordingCallRef & { id: string; recording_ur
  * unknown provider) is a 404 `recording_unavailable`, before any fetch. A URL, or a
  * redirect hop, whose host is off the allow-list is a 502, rather than fetching
  * whatever `recording_url` says.
+ *
+ * ── What a viewer sees as "We could not reach the service that stores this recording" ──
+ *
+ * The console says that for every answer but a 403 or a 404 (`recordingRefusal`). Every such
+ * answer this function gives is logged with a bounded `reason`, the call id and its provider,
+ * and counted in `recording_fetch_failures_total{surface="playback"}`; hosts are logged, never
+ * a URL (RC3, `docs/operations.md` "Recordings that will not play"):
+ *  - 502 `access_error`: resolving the call's access threw (not a refusal: the credential
+ *    store or the database failed);
+ *  - 502 `host_not_allowed`: the stored URL's host is not this carrier's recording host;
+ *  - 502 `redirect_refused` / `too_many_redirects`: the carrier's host redirected elsewhere
+ *    (`redirectHost` and `redirectedFrom` logged);
+ *  - 502 `upstream_unauthorized` / `upstream_not_found` / `upstream_status`: the carrier
+ *    answered non-2xx (`upstreamStatus` logged);
+ *  - 504 `timeout`: no response headers within {@link RECORDING_PROXY_HEADERS_TIMEOUT_MS} of the
+ *    first request to the carrier. Resolving the access before it is not timed here: it is our
+ *    database and keyring, not the carrier, so a stall there is not "the recording host did not
+ *    answer" (the pool's timeouts bound it, db-hygiene.md §5) and a failure is `access_error`;
+ *  - 502 `network`: the fetch failed (DNS, refused, reset, TLS).
+ * The 404s (`access_refused`, a call with no recording) read as "not recorded".
  */
 export async function proxyCallRecording(
   callRecord: ProxiedRecordingCall,
   request: FastifyRequest,
   reply: FastifyReply,
   resolveAccess: RecordingAccessResolver,
+  opts: { headersTimeoutMs?: number } = {},
 ): Promise<FastifyReply> {
-  if (!callRecord.recording_url) {
+  // RC1: a call that did not ask for a recording has none, whatever the row still holds.
+  if (!callRecord.recording_url || callRecord.recording_requested === false) {
     return reply.code(404).send({ error: 'Not Found', message: 'No recording available for this call' });
   }
+  const provider = callRecord.provider;
+  const failed = (reason: RecordingFetchFailureReason): void => trackRecordingFetchFailure(provider, 'playback', reason);
 
   let access: RecordingAccess;
   try {
     access = await resolveAccess(callRecord);
   } catch (err) {
     if (err instanceof RecordingAccessRefusedError) {
+      failed('access_refused');
       log.warn(
         {
           callId: callRecord.id, provider: err.provider, credentialId: err.credentialId,
-          reason: err.reason, credentialKind: err.credentialKind,
+          reason: 'access_refused', refusal: err.reason, credentialKind: err.credentialKind,
         },
         'Recording access refused; not proxying',
       );
@@ -200,7 +287,8 @@ export async function proxyCallRecording(
         message: 'This recording is no longer available',
       });
     }
-    log.error({ err, callId: callRecord.id }, 'Error resolving recording access');
+    failed('access_error');
+    log.error({ err, callId: callRecord.id, provider, reason: 'access_error' }, 'Error resolving recording access');
     return reply.code(502).send({ error: 'Bad Gateway', message: 'Failed to fetch recording' });
   }
 
@@ -208,13 +296,27 @@ export async function proxyCallRecording(
   const range = request.headers['range'];
   if (typeof range === 'string' && range.length > 0) headers['Range'] = range;
 
+  const host = recordingHostname(callRecord.recording_url);
+  // Times the carrier's response headers only (not the access resolved above, which is ours):
+  // cleared once they arrive, so the body streams untimed.
+  const headersTimeout = new AbortController();
+  const timer = setTimeout(() => headersTimeout.abort(), opts.headersTimeoutMs ?? RECORDING_PROXY_HEADERS_TIMEOUT_MS);
   try {
-    const upstream = await fetchWithAllowedRedirects(
-      callRecord.recording_url, { headers }, access.allowedHosts, { exactHosts: access.exactHosts },
-    );
+    let upstream: Response;
+    try {
+      upstream = await fetchWithAllowedRedirects(
+        callRecord.recording_url, { headers, signal: headersTimeout.signal }, access.allowedHosts,
+        { exactHosts: access.exactHosts, ...(access.redirectHosts ? { redirectHosts: access.redirectHosts } : {}) },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
     if (!upstream.ok && upstream.status !== 206) {
+      const reason = recordingUpstreamStatusReason(upstream.status);
+      failed(reason);
+      await discardResponseBody(upstream);
       log.warn(
-        { callId: callRecord.id, status: upstream.status },
+        { callId: callRecord.id, provider, reason, upstreamStatus: upstream.status, host },
         'Failed to fetch recording from provider',
       );
       return reply
@@ -236,9 +338,15 @@ export async function proxyCallRecording(
 
     return reply.send(upstream.body);
   } catch (err) {
+    const reason = recordingFetchErrorReason(err, headersTimeout.signal.aborted);
+    failed(reason);
     if (err instanceof RecordingHostRefusedError) {
       log.warn(
-        { callId: callRecord.id, host: err.host, reason: err.reason, hop: err.hop },
+        {
+          callId: callRecord.id, provider, reason, hop: err.hop,
+          // Hosts only, never the URL: the refused one, or a redirect's target and its sender.
+          ...(err.hop > 0 ? { host, redirectHost: err.host, redirectedFrom: err.redirectedFrom } : { host: err.host }),
+        },
         'Recording URL is not on the recording-host allow-list; refusing to proxy',
       );
       return reply.code(502).send({
@@ -246,8 +354,12 @@ export async function proxyCallRecording(
         message: 'The recording is not hosted on an allowed carrier host',
       });
     }
+    if (reason === 'timeout') {
+      log.warn({ callId: callRecord.id, provider, reason, host }, 'Recording host did not answer in time; giving up');
+      return reply.code(504).send({ error: 'Gateway Timeout', message: 'The recording host did not answer in time' });
+    }
     // The error is logged without the request init: it may hold a credential.
-    log.error({ err, callId: callRecord.id }, 'Error proxying recording');
+    log.error({ err, callId: callRecord.id, provider, reason, host }, 'Error proxying recording');
     return reply.code(502).send({ error: 'Bad Gateway', message: 'Failed to fetch recording' });
   }
 }

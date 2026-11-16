@@ -48,9 +48,11 @@ export function CampaignWorkspaceFrame({
 /**
  * What a section that acts on the campaign itself (Add contacts) is handed besides the campaign:
  * whether the first read is still on its way, and how to repaint the workspace with a campaign
- * it read or wrote, so the header and the section never hold two copies that disagree.
+ * it read or wrote, so the header and the section never hold two copies that disagree. And the
+ * workspace's own stats read (`null` until it answers or when it failed), so a section that
+ * needs a count from it (Call log: whether the campaign holds soft-phone calls) sends none of its own.
  */
-export type CampaignWorkspaceSection = Pick<AgencyCampaignDetail, 'loading' | 'commitCampaign'>;
+export type CampaignWorkspaceSection = Pick<AgencyCampaignDetail, 'loading' | 'commitCampaign' | 'stats'>;
 
 /**
  * The frame with the campaign's own reads behind it, for a section that has no
@@ -129,7 +131,7 @@ export function CampaignWorkspace({
     >
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
       {typeof children === 'function'
-        ? children(sectionCampaign, { loading, commitCampaign })
+        ? children(sectionCampaign, { loading, commitCampaign, stats: sectionCampaign ? stats : null })
         : children}
       {chrome.dialogs}
     </CampaignWorkspaceFrame>

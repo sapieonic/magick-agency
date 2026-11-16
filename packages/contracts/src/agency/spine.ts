@@ -7,6 +7,7 @@
  */
 
 import type { AgencyAttemptOutcome, AgencyAttemptState, AgencyContactState } from './enums';
+import type { AgencyContactPromise } from './promise';
 
 // ─── Billing wire shapes — intentionally absent ─────────────────────────────
 //
@@ -109,6 +110,13 @@ export interface AgencyAttemptRow {
   /** See privacy decision 3 above. */
   notes: string | null;
   callback_at: string | null;
+  /**
+   * The promise to pay recorded with this attempt's outcome (PT1): `YYYY-MM-DD`, and the
+   * amount as a two-place decimal string or null. Optional on the wire: a server that
+   * predates it sends nothing, which reads as null.
+   */
+  promise_date?: string | null;
+  promise_amount?: string | null;
   /** Who filed the write-up, which is not always who took the call. */
   dispositioned_by_user_id: string | null;
   dispositioned_at: string | null;
@@ -164,6 +172,12 @@ export interface AgencyContactRow {
   assigned_user_id: string | null;
   /** ISO-8601: when the current owner was given it. NULL in the pool. */
   assigned_at: string | null;
+  /**
+   * The contact's latest promise to pay (PT6, PT7), from whichever call recorded it (a
+   * campaign call, a soft-phone call on this campaign, an inbound call matched to it), or
+   * null. Optional on the wire: a server that predates it sends nothing.
+   */
+  promise?: AgencyContactPromise | null;
   created_at: string;
   updated_at: string;
 }

@@ -44,6 +44,11 @@ import {
 } from './insights-sql.js';
 import { neverSeededSuppressionSql, params, retrySelectionConditions } from './query-builders.js';
 import { INSIGHTS_BUCKET_SQL_INTERVAL } from './insights-rollup-sql.js';
+import {
+  readSoftphoneCampaignCounts,
+  softphoneCampaignCountsStatement,
+  type SoftphoneCampaignCounts,
+} from './softphone-campaign-sql.js';
 import type { AgencyRetrySelector } from '@magick-agency/contracts/agency';
 import { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } from '@magick-agency/domain/abandonment-predicate';
 
@@ -245,22 +250,14 @@ export function allocationCountersStatement(campaignId: string): InsightsStateme
 // ─── Range reads that are neither the rollup nor the pacing history ────────
 
 /**
- * Soft-phone calls tagged to the campaign and PLACED (`dialed_at` set), created in `[from, to)`:
- * a range of `idx_agency_manual_calls_campaign (campaign_id, created_at DESC) WHERE campaign_id IS
+ * Soft-phone calls tagged to the campaign, created in `[from, to)`: placed, connected and reached
+ * a person, the soft phone's ONE campaign definition (`softphone-campaign-sql.ts`, SR1–SR3). A
+ * range of `idx_agency_manual_calls_campaign (campaign_id, created_at DESC) WHERE campaign_id IS
  * NOT NULL`. On `created_at` because that is the column the tag's index orders (a call is placed
  * seconds after it is created); tenant-checked because the tag carries no foreign key.
  */
 export function softphoneCallsStatement(q: { campaignId: string; tenantId: string; from: Date; to: Date }): InsightsStatement {
-  return {
-    text: `
-      SELECT count(*)::int AS n
-        FROM agency_manual_calls m
-       WHERE m.campaign_id = $1::uuid
-         AND m.created_at >= $2::timestamptz AND m.created_at < $3::timestamptz
-         AND m.tenant_id = $4::uuid
-         AND m.dialed_at IS NOT NULL`,
-    values: [q.campaignId, q.from, q.to, q.tenantId],
-  };
+  return softphoneCampaignCountsStatement(q);
 }
 
 /**
@@ -385,6 +382,8 @@ export interface InsightsUploadRow {
   rows_read: number;
   accepted: number;
   rejected: number;
+  /** Rows already in the campaign (IM3; 0 before 0042): accepted + skipped + rejected = rows_read. */
+  skipped: number;
   rejected_by_reason: Record<string, unknown> | null;
   duplicates: number;
   /** The upload's duplicate key, in order; empty = phone (or no check). */
@@ -505,11 +504,11 @@ export class AgencyInsightsReadRepository {
     }]));
   }
 
-  /** {@link softphoneCallsStatement}'s count. */
-  async softphoneCalls(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<number> {
+  /** {@link softphoneCallsStatement}'s three counts. */
+  async softphoneCalls(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<SoftphoneCampaignCounts> {
     const { text, values } = softphoneCallsStatement(q);
-    const { rows } = await getPool().query<{ n: number }>(text, values);
-    return num(rows[0]?.n);
+    const { rows } = await getPool().query<SoftphoneCampaignCounts>(text, values);
+    return readSoftphoneCampaignCounts(rows[0]);
   }
 
   /** {@link dncMarkedStatement}'s rows, most first; `added_by` as stored. */
@@ -558,7 +557,9 @@ export class AgencyInsightsReadRepository {
     const { rows } = await getPool().query<Record<string, unknown>>(
       `SELECT j.id, j.file_name, j.created_by, j.created_at, j.finished_at, j.status, j.mode, j.phone_column,
               j.rows_read, j.accepted, j.rejected, j.rejected_by_reason, j.duplicates, j.dedupe_columns,
-              (j.rejected_s3_key IS NOT NULL) AS has_rejected_export
+              (j.rejected_s3_key IS NOT NULL) AS has_rejected_export,
+              -- 0042; read through to_jsonb so a schema without it reads NULL rather than failing.
+              (to_jsonb(j) ->> 'skipped')::bigint AS skipped
          FROM agency_ingest_jobs j
         WHERE j.campaign_id = $1::uuid AND j.tenant_id = $2::uuid AND NOT j.dry_run
           AND (NOT $3::boolean OR j.status = 'completed')
@@ -578,6 +579,7 @@ export class AgencyInsightsReadRepository {
       rows_read: num(r['rows_read']),
       accepted: num(r['accepted']),
       rejected: num(r['rejected']),
+      skipped: num(r['skipped']),
       rejected_by_reason: (r['rejected_by_reason'] as Record<string, unknown> | null) ?? null,
       duplicates: num(r['duplicates']),
       dedupe_columns: (r['dedupe_columns'] as string[] | null) ?? [],

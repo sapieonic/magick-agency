@@ -34,6 +34,7 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
+import type { ContactPromiseWrite } from '../../../agency/promise-to-pay.js';
 import { contactBucketSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
@@ -1042,6 +1043,33 @@ export class AgencyContactRepository {
   }
 
   // ─── Inbound calls (docs/inbound.md §5.4, §6, P2) ────────────────────────
+
+  /**
+   * A same-code REPLAY of an inbound outcome that booked a callback (a `callback_at`, or a
+   * promise's follow-up, PT2) with a corrected time or promised date: move the matched contact's
+   * `next_attempt_at` to the new instant, as `rescheduleFromManualReplay` does for the soft phone.
+   * Only while the contact is still `pending` on that code (pacing has not claimed it and nothing
+   * else has written it up since the first save, which put it there) and never a DNC-suppressed
+   * one. Nothing else changes. Null when no row qualifies.
+   */
+  async rescheduleFromInboundReplay(
+    input: { inboundCallId: string; dispositionCode: string; nextAttemptAt: Date },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{ contactId: string; state: AgencyContactState; nextAttemptAt: Date | null } | null> {
+    const { rows } = await (deps.client ?? getPool()).query<{ id: string; state: AgencyContactState; next_attempt_at: Date | null }>(
+      `UPDATE agency_contacts c
+          SET next_attempt_at = $3::timestamptz, updated_at = now()
+         FROM agency_inbound_calls i
+        WHERE i.id = $1::uuid AND i.bridged_at IS NOT NULL
+          AND c.id = i.matched_contact_id AND c.campaign_id = i.matched_campaign_id AND c.tenant_id = i.tenant_id
+          AND c.state = 'pending' AND c.last_disposition = $2::varchar
+          AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+        RETURNING c.id, c.state, c.next_attempt_at`,
+      [input.inboundCallId, input.dispositionCode, input.nextAttemptAt],
+    );
+    const row = rows[0];
+    return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at } : null;
+  }
 
   /**
    * Settle the roster contact an inbound call matched, from the outcome its agent saved
@@ -2312,6 +2340,7 @@ export class AgencyContactRepository {
              c.last_outcome, c.last_disposition, c.next_attempt_at,
              c.suppressed_reason, c.timezone, c.csv_line_number,
              c.assigned_user_id, c.assigned_at,
+             c.promise_date, c.promise_amount, c.promise_due_from, c.promise_due_until, c.promise_followed_up_at,
              c.created_at, c.updated_at,
              ${keysetAtSql('c.created_at')} AS cursor_at
         FROM agency_contacts c
@@ -2379,6 +2408,73 @@ export class AgencyContactRepository {
       [id],
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * Copy a recorded promise onto the contact as its latest (0041, PT6): date, amount, the
+   * promised day's bounds and the recording call's start, and a fresh follow-up mark.
+   *
+   * **Only while no LATER call holds the contact's promise** (`promise_call_at <= callAt`): a
+   * promise from a later call replaces an earlier one; a replay of the same call (equal
+   * `callAt`) corrects it, as the outcome's notes and callback are corrected; a replay of an
+   * older call, long after a newer promise, writes nothing. One guarded statement, so two
+   * outcomes saved at once cannot leave the older one on top. Returns whether it landed.
+   *
+   * **A replay that keeps the date keeps the follow-up mark** (PT7): call A promises today, a
+   * later call B marks it followed up, then A's outcome is saved again (an amount corrected, a
+   * queued retry). B's follow-up still happened on or after that day, so clearing the mark would
+   * call the promise missed. A new promise (another call), or the same call moving the date, starts
+   * unmarked: whether B's call still qualifies for the new day is not known here.
+   *
+   * Writes nothing else: the contact's state and next dial are the disposition's own write.
+   * A promise never schedules a dial (PT3).
+   */
+  async recordContactPromise(
+    input: { contactId: string; promise: ContactPromiseWrite },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<boolean> {
+    const p = input.promise;
+    const { rowCount } = await (deps.client ?? getPool()).query(
+      `UPDATE agency_contacts
+          SET promise_date = $2::date,
+              promise_amount = $3::numeric,
+              promise_due_from = $4::timestamptz,
+              promise_due_until = $5::timestamptz,
+              promise_call_at = $6::timestamptz,
+              promise_followed_up_at = CASE
+                                         WHEN promise_call_at = $6::timestamptz AND promise_date = $2::date
+                                           THEN promise_followed_up_at
+                                       END,
+              updated_at = now()
+        WHERE id = $1::uuid
+          AND (promise_call_at IS NULL OR promise_call_at <= $6::timestamptz)`,
+      [input.contactId, p.date, p.amount, p.dueFrom, p.dueUntil, p.callAt],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * An outcome that records no promise was saved on the contact by a call that started at
+   * `callAt` (PT7): when that call started after the promise's call and on or after the
+   * promised day, the promise is followed up (the list then reads `followed_up`, not
+   * `missed`). The first such outcome is the one kept. A no-op, by primary key, for the
+   * contacts without a promise, which is nearly all of them.
+   */
+  async notePromiseFollowUp(
+    input: { contactId: string; callAt: Date },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<boolean> {
+    const { rowCount } = await (deps.client ?? getPool()).query(
+      `UPDATE agency_contacts
+          SET promise_followed_up_at = now(), updated_at = now()
+        WHERE id = $1::uuid
+          AND promise_date IS NOT NULL
+          AND promise_followed_up_at IS NULL
+          AND promise_call_at < $2::timestamptz
+          AND promise_due_from <= $2::timestamptz`,
+      [input.contactId, input.callAt],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   /**

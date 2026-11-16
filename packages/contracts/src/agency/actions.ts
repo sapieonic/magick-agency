@@ -102,6 +102,21 @@ export interface AgencyDispositionRequest extends AgencyActorFields {
    *  `preferred_agent_user_id`: agent-facing copy must say "we'll call you back",
    *  never "I'll call you back". */
   callback_at?: string;
+  /**
+   * Promise to pay (PT1, PT4): the date the customer promised to pay, `YYYY-MM-DD` on their
+   * calendar. Required when the catalog entry sets `requires_promise`, refused
+   * (`promise_not_expected`) on any other entry. Not before the customer's today (the
+   * contact's timezone, else the campaign's) and at most `AGENCY_PROMISE_MAX_DAYS_AHEAD`
+   * days after it. Recording it never makes the dialler call (PT3).
+   */
+  promise_date?: string;
+  /**
+   * The promised amount, optional (PT5): a decimal string, ≥ 0, at most two places
+   * (`"12500"`, `"12500.5"`, `"12500.50"`). No currency: the number is what the agent typed.
+   * Only with `promise_date`. Like `notes` and `callback_at`, a same-code replay's promise is
+   * last-write-wins (an honest correction).
+   */
+  promise_amount?: string;
 }
 
 export interface AgencyDispositionResponse extends AgencyCampaignScoped {
@@ -164,6 +179,22 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    */
   callback_requested_at?: string | null;
   /**
+   * The promise recorded (PT1), echoed as stored: `YYYY-MM-DD` and the amount as a two-place
+   * decimal string. Null (or absent, from a server that predates it) without one.
+   */
+  promise_date?: string | null;
+  promise_amount?: string | null;
+  /**
+   * A `suppress` outcome's Do Not Call entry (DS8): `true` when this campaign's entry is on
+   * the list (written now, or already there), `false` when the contact's number is not in a
+   * form the list can hold and no entry was written (only this contact is suppressed, and a
+   * new upload could bring the number back). **Absent when no entry was attempted**: another
+   * outcome, or a same-code replay (which never writes one). A client says "on the list" only
+   * on `true`, and the `false` copy on `false`; absent, it claims nothing about the list.
+   * The public API layer sets it from the internal answer.
+   */
+  dnc_recorded?: boolean;
+  /**
    * The agent's state after release.
    *
    * **ADVISORY — a point-in-time snapshot, and NOT the authority.** The station
@@ -183,17 +214,18 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
  * How far a mark-DNC reaches. The **only** thing a client asserts about scope.
  *
  *   * `campaign` — the campaign the marked attempt belongs to, and nothing else.
- *     The public API layer writes a campaign-scoped `dnc_entries` row, which by design does NOT
- *     enter the dialer runtime's flat `dnc:{tenantId}` set, so the in-campaign
- *     enforcement is the dialer runtime's Postgres suppression of every roster row carrying the
- *     number. A customer asking one campaign to stop is not asking to be removed
- *     from campaigns they have never heard from.
+ *     The dialer runtime writes a campaign-scoped `dnc_entries` row (`account_id NULL,
+ *     campaign_id <id>`); the dial-time check reads that table widened by scope (decision
+ *     B8), so the row stops that campaign's dials and no other's, and the mark also
+ *     suppresses every roster row of the campaign carrying the number. A customer asking
+ *     one campaign to stop is not asking to be removed from campaigns they have never
+ *     heard from.
  *   * `tenant` — every campaign the tenant runs, and every campaign it will run.
- *     The public API layer writes an entry with no campaign, which is the kind that reaches the
- *     flat set and blocks the number at dial time everywhere. This is the
- *     ESCALATION: the console gates it behind a permission and labels it in those
- *     words, and an agent may read that promise out to a customer, so it has to be
- *     the thing that actually happens.
+ *     The dialer runtime writes an entry with no account and no campaign, which the
+ *     dial-time check matches for every campaign. This is the ESCALATION: the console
+ *     gates it behind `agency.dnc.manage` on a membership of the whole organisation (DS3)
+ *     and labels it in those words, and an agent may read that promise out to a customer,
+ *     so it has to be the thing that actually happens.
  *
  * Both scopes suppress the roster rows in front of the agent identically — that
  * write is not conditional on scope, because the contact on the line leaves the

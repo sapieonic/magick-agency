@@ -19,6 +19,12 @@ import { deleteFile, isStorageConfigured } from '../storage/s3.js';
  *    transcript and its provenance, which carries `source_url`) on
  *    `AGENCY_TRANSCRIPT_RETENTION_DAYS`, leaving `call_analysis` to survive until
  *    the row expires; unset = transcripts are not nulled early;
+ *  - recordings a call did not ask for (RC5, Manas 2026-11-15): on every run, whatever the
+ *    windows, `recording_url` and `recording_duration_seconds` are cleared on every
+ *    `agency_calls` row whose `recording_requested` is false. Since RC1 none is stored, so this
+ *    clears the links stored before it (VoiceLink recorded on its own default and we kept the
+ *    link) and any a future writer lets through. Its failure is the step's own: it is logged and
+ *    reported, and the transcript and voicemail steps still run;
  *  - it is invoked by a timer in `bootstrap/analysis.ts`.
  * Deletes are batched, in FK-safe order, and the run posts a Slack summary.
  */
@@ -85,6 +91,16 @@ export interface RetentionPurgeReport {
    */
   agency_transcripts_nulled: number;
   /**
+   * Recording links cleared on calls that did not ask for a recording (RC5): every run, any age
+   * (that would be, in dry-run mode). On a failed step, the batches committed before it.
+   */
+  unrequested_recordings_cleared: number;
+  /**
+   * Why the recording step (RC5) failed this run, when it did. Its own failure, not the run's:
+   * the steps after it still ran, and the next run carries on where it stopped.
+   */
+  unrequested_recordings_error?: string;
+  /**
    * Inbound voicemails past the row cutoff: their objects deleted from the bucket and their
    * calls' `voicemail_key` cleared (that would be, in dry-run mode). 0 with the window unset.
    */
@@ -138,6 +154,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
     duration_ms: 0,
     tables: {},
     agency_transcripts_nulled: 0,
+    unrequested_recordings_cleared: 0,
     inbound_voicemails_deleted: 0,
     inbound_voicemails_failed: 0,
   };
@@ -168,6 +185,17 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
           log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
         }
       }
+    }
+
+    // Recordings a call did not ask for (RC5): every run, any age, before the windows below. Its
+    // failure (a statement timeout on a large backlog, say) is caught here, so it never holds
+    // back the transcript and voicemail steps; the batches it committed stay cleared.
+    try {
+      await purgeUnrequestedRecordings(dryRun, report);
+    } catch (err: any) {
+      report.unrequested_recordings_error = err?.message ?? String(err);
+      log.error({ err, recordingsCleared: report.unrequested_recordings_cleared },
+        'Clearing recording links on calls that did not ask for one failed — the other retention steps still run; the next run carries on');
     }
 
     // Transcript window: null conversation_log + transcript_meta on agency_calls
@@ -245,6 +273,78 @@ async function purgeAgencyTranscripts(dryRun: boolean, retentionDays: number): P
   return total;
 }
 
+/**
+ * The calls holding a recording link they did not ask for. Spelled exactly as
+ * `idx_agency_calls_recording_unrequested`'s predicate (0046), so the planner can prove each read
+ * implies it and walk that index, which holds only these rows.
+ */
+const UNREQUESTED_RECORDING = 'recording_url IS NOT NULL AND NOT recording_requested';
+
+/** Below every id: the recording step's keyset starts here (`gen_random_uuid` never returns it). */
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * One batch of the recording step: $1 = batch size, $2 = the last id of the previous batch.
+ * Picks with `WITH picked AS MATERIALIZED (… FOR UPDATE SKIP LOCKED)` (packages/db/CLAUDE.md), so
+ * the batch is exactly the rows picked, never a re-run of the pick; a row another transaction
+ * holds is skipped for the next run. A keyset on id, so no batch walks the index entries the
+ * batches before it cleared. `picked` below the batch size means the walk reached the end.
+ */
+export const CLEAR_UNREQUESTED_RECORDINGS_SQL = `WITH picked AS MATERIALIZED (
+         SELECT id FROM agency_calls
+          WHERE ${UNREQUESTED_RECORDING} AND id > $2::uuid
+          ORDER BY id
+          LIMIT $1
+          FOR UPDATE SKIP LOCKED
+       ), cleared AS (
+         UPDATE agency_calls k SET recording_url = NULL, recording_duration_seconds = NULL
+           FROM picked WHERE k.id = picked.id
+         RETURNING k.id
+       )
+       SELECT (SELECT count(*) FROM picked)::int AS picked,
+              (SELECT count(*) FROM cleared)::int AS cleared,
+              (SELECT id FROM picked ORDER BY id DESC LIMIT 1) AS last_id`;
+
+/**
+ * Recordings a call did not ask for (RC5, Manas 2026-11-15): clear `recording_url` and
+ * `recording_duration_seconds` on every call whose `recording_requested` is false, in batches,
+ * adding each batch to `report.unrequested_recordings_cleared` as it commits (so a failure part
+ * way still reports what was done). Every read already treats such a link as "not recorded"
+ * (RC1); this removes the link itself. Our link only: a carrier that recorded anyway (VoiceLink,
+ * on its own account default) still holds the audio. Only rows that still carry a link, so a
+ * no-op once cleared; reads `idx_agency_calls_recording_unrequested` (0046), which then holds
+ * nothing, so a run with nothing to clear reads next to nothing.
+ *
+ * Insights: 0012's row trigger on `recording_url` fires for each cleared call and inserts one
+ * dirty mark for its attempt's bucket (none for a soft-phone or inbound call, which has no
+ * attempt). The recompute counts the same as before (RC1's reads already left the link out, and
+ * 0043 had marked those buckets), and the job claims every mark of a bucket at once, so the cost
+ * is one small insert per cleared row, once, on the first run after RC1; nothing else needs doing.
+ * In dry-run mode it counts.
+ */
+async function purgeUnrequestedRecordings(dryRun: boolean, report: RetentionPurgeReport): Promise<void> {
+  const pool = getPool();
+  if (dryRun) {
+    const result = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM agency_calls WHERE ${UNREQUESTED_RECORDING}`,
+    );
+    report.unrequested_recordings_cleared = result.rows[0]?.n ?? 0;
+    return;
+  }
+  let after = NIL_UUID;
+  for (;;) {
+    const { rows }: { rows: Array<{ picked: number; cleared: number; last_id: string | null }> } =
+      await pool.query(CLEAR_UNREQUESTED_RECORDINGS_SQL, [BATCH_SIZE, after]);
+    const batch = rows[0];
+    report.unrequested_recordings_cleared += batch?.cleared ?? 0;
+    if (!batch || batch.picked < BATCH_SIZE || batch.last_id === null) break;
+    after = batch.last_id;
+  }
+  if (report.unrequested_recordings_cleared > 0) {
+    log.info({ recordingsCleared: report.unrequested_recordings_cleared }, 'Recording links cleared on calls that did not ask for a recording');
+  }
+}
+
 /** Voicemails deleted per batch: each is one object delete, so far fewer than a row batch. */
 const VOICEMAIL_BATCH_SIZE = 200;
 
@@ -317,9 +417,11 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
 
   const title = report.error
     ? ':rotating_light: Retention purge FAILED'
-    : report.dry_run
-      ? ':mag: Retention purge — dry run'
-      : ':wastebasket: Retention purge complete';
+    : report.unrequested_recordings_error
+      ? ':warning: Retention purge complete, one step failed'
+      : report.dry_run
+        ? ':mag: Retention purge — dry run'
+        : ':wastebasket: Retention purge complete';
 
   const text = [
     `*${title}*`,
@@ -329,6 +431,10 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
     `Rows ${report.dry_run ? 'matched' : 'deleted'} (${totalRows.toLocaleString()} total):`,
     tableLines,
     `agency transcripts nulled: ${report.agency_transcripts_nulled.toLocaleString()}`,
+    `recording links cleared (calls that did not ask for one): ${report.unrequested_recordings_cleared.toLocaleString()}`,
+    report.unrequested_recordings_error
+      ? `recording links step FAILED (the other steps ran; the next run carries on): ${report.unrequested_recordings_error}`
+      : null,
     `inbound voicemails ${report.dry_run ? 'matched' : 'deleted'}: ${report.inbound_voicemails_deleted.toLocaleString()}`,
     report.inbound_voicemails_failed > 0
       ? `inbound voicemails not deleted (retried next run): ${report.inbound_voicemails_failed.toLocaleString()}`

@@ -298,7 +298,7 @@ void main() {
       });
       final o = facts(softphoneCallDetailSections(detail, bootstrap()), 'Overrides');
       expect(o['Called through Do Not Call'], 'Customer asked us to call back.');
-      expect(o['Listed for'], 'The campaign Home Loan Renewals');
+      expect(o['Listed for'], 'Campaign: Home Loan Renewals');
       expect(o['Reason'], 'Asked not to be called');
       expect(o['Called outside calling hours'], 'Agreed time with the customer.');
 

@@ -72,7 +72,7 @@ export function campaignDefinitions(): ReportDefinition[] {
     d('first_dials', 'First dials', 'Dials that were not wrap-up redials: the connect rate\'s denominator.'),
     d('connected', 'Connected', 'Calls answered and bridged to an agent, not counting wrap-up redials.'),
     d('conversations', 'Conversations', 'Calls an agent spoke on, a wrap-up redial chain once: the success rate\'s denominator.'),
-    d('connect_rate', 'Connect rate', `People reached ÷ first dials. A person is reached when a conversation is closed with an outcome other than voicemail or "no outcome". Shown in words below ${INSIGHTS_FLOOR} first dials.`),
+    d('connect_rate', 'Connect rate', `The dialler's: people reached ÷ first dials. A person is reached when a conversation is closed with an outcome other than voicemail or "no outcome". Soft-phone calls are not in it (see Soft-phone calls). Shown in words below ${INSIGHTS_FLOOR} first dials.`),
     d('success_rate', 'Success rate', `Successes ÷ conversations, by the campaign's current outcome list. Shown in words below ${INSIGHTS_FLOOR} conversations.`),
     d('abandonment_rate', 'Abandonment rate', `Answered calls that reached no agent ÷ answered calls. Shown in words below ${INSIGHTS_FLOOR} answered calls.`),
     d('talk_time', 'Talk time', 'The agent\'s leg of each connected call, from the bridge to the end of the call; calls the system closed after a fault are left out.'),
@@ -83,13 +83,21 @@ export function campaignDefinitions(): ReportDefinition[] {
     d('stalls', 'Stalled minutes', 'Minutes in which at least half of the dialler\'s checks on the running campaign placed no call, by the main reason.'),
     d('predial_blocks', 'Blocked before dialling', 'Contacts the dialler skipped because they were on the Do Not Call list, had an invalid number, or were outside calling hours.'),
     d('recording_share', 'Recording share', 'Connected calls with a recording ÷ connected calls.'),
+    d('softphone_calls', 'Soft-phone calls', `Calls agents placed on the soft phone and logged to this campaign, counted when the call was started: placed (the call was dialled), connected (it ended connected) and people reached (closed with an outcome other than voicemail or "no outcome"). Their connect rate is people reached ÷ placed, shown in words below ${INSIGHTS_FLOOR} placed. They are outside every dialler figure above; soft-phone calls logged to no campaign are in no campaign report. All calls adds them to the dialler's: calls placed (dials and soft-phone calls), connected, and a connect rate of every person reached ÷ first dials and soft-phone calls placed, shown in words below ${INSIGHTS_FLOOR}. Both show only when the window holds a soft-phone call, and the dialler's rate is then labelled Dialler connect rate. The soft-phone counts are read when the report is made and the dialler's from the Insights rollup, usually seconds behind, so All calls can add counts taken moments apart.`),
   ];
 }
+
+/** The account report's connect rate: the campaign's text without its pointer to Soft-phone calls (SR8). */
+const ACCOUNT_CONNECT_RATE = d('connect_rate', 'Connect rate', `The dialler's: people reached ÷ first dials. A person is reached when a conversation is closed with an outcome other than voicemail or "no outcome". Soft-phone calls are not in it. Shown in words below ${INSIGHTS_FLOOR} first dials.`);
 
 /** The account report's definitions, in print order. */
 export function accountDefinitions(): ReportDefinition[] {
   return [
-    ...campaignDefinitions().filter((x) => !['best_hours', 'agents_online_peak', 'stalls', 'callbacks_on_time', 'callbacks_late', 'callbacks_missed', 'callbacks_pending'].includes(x.key)),
+    // `softphone_calls`: the account report does not show the soft phone's campaign figures yet (SR8).
+    ...campaignDefinitions()
+      .filter((x) => !['best_hours', 'agents_online_peak', 'stalls', 'callbacks_on_time', 'callbacks_late', 'callbacks_missed', 'callbacks_pending', 'softphone_calls'].includes(x.key))
+      // The campaign text points at Soft-phone calls, which this report leaves out.
+      .map((x) => (x.key === 'connect_rate' ? ACCOUNT_CONNECT_RATE : x)),
     d('totals', 'Account totals', 'Each figure summed over the covered campaigns; every rate of the totals is worked out again from the summed counts, never averaged across campaigns.'),
     d('agent_rates', 'Agent rates', `Each agent's connect rate (people reached ÷ first dials), success rate (successes ÷ connected calls) and handle time ((talk + wrap-up) ÷ connected calls) over all the account's campaigns. Shown in words below ${ROSTER_FLOOR} first dials.`),
     d('occupancy', 'Occupancy (handling)', '(Talk time + wrap-up time) ÷ logged-in time, breaks included, from the recorded state changes.'),

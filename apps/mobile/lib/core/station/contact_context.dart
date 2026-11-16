@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:agency_wire/agency_wire.dart' as wire;
 import 'package:meta/meta.dart';
 
+import 'promise_rules.dart';
 import 'server_clock.dart';
 import 'station_copy.dart';
 import 'station_view.dart';
@@ -257,8 +258,24 @@ List<PriorAttempt> priorAttemptsFor(
       notes: notes == null || notes.isEmpty ? null : notes,
       sameCampaign: p.campaignId == campaignId,
       campaignName: p.campaignName,
+      promise: p.promiseDate == null ? null : formatPromise(p.promiseDate!, p.promiseAmount),
     );
     (view.sameCampaign ? same : other).add(view);
   }
   return List.unmodifiable([...same, ...other]);
 }
+
+/// A contact's latest promise to pay (PT9), as the station shows it; null
+/// without one.
+PromiseView? promiseViewFor(wire.ContactPromise? promise) => promise == null
+    ? null
+    : PromiseView(
+        text: formatPromise(promise.date, promise.amount),
+        state: switch (promise.state) {
+          wire.PromiseState.upcoming => PromiseStanding.upcoming,
+          wire.PromiseState.dueToday => PromiseStanding.dueToday,
+          wire.PromiseState.missed => PromiseStanding.missed,
+          wire.PromiseState.followedUp => PromiseStanding.followedUp,
+          wire.PromiseState.unknown => PromiseStanding.unknown,
+        },
+      );

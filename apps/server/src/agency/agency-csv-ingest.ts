@@ -1,6 +1,7 @@
 import { parse, type Info } from 'csv-parse';
 import { Transform, type Readable } from 'node:stream';
 import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
+import { unguardFormulaSigil } from './agency-csv.js';
 import { dedupeKeyName } from '@magick-agency/contracts/api/agency/agency-campaign';
 
 /**
@@ -20,7 +21,12 @@ import { dedupeKeyName } from '@magick-agency/contracts/api/agency/agency-campai
  *     a second full copy as row objects. At the 1M-contact target that is
  *     gigabytes resident on the server. Here the source is a `Readable` consumed as
  *     a stream, and accepted rows are handed to `onBatch` in fixed-size batches,
- *     so peak memory is O(batchSize + distinct phone numbers), not O(file).
+ *     so this pass holds O(batchSize + distinct duplicate keys), not O(file).
+ *     Its callers add their own, bounded or not: the ingest service keeps up to
+ *     `MAX_EXPORT_ROWS` (50k) rejected and 50k skipped rows, each with its columns,
+ *     for the downloads, and the screen for a column key holds every key of the
+ *     campaign's roster (O(contacts already in the campaign);
+ *     `agency-ingest-screen.ts`). A check runs the same pass, so it costs the same.
  *  2. **The phone column is mapped, not named.** The operator picks any header
  *     in the column-mapping step; nothing requires it to be called `phone`.
  *  3. **Every other column is retained unchanged** — original header text as the
@@ -117,11 +123,11 @@ const MAX_ERRORS = 100;
 /**
  * Why one row was not ingested. The file is still processed.
  *
- * `dnc_suppressed` is the one code this module never raises itself: the DNC check
+ * `dnc_suppressed` is raised from the caller's `screen` answer: the DNC lookup
  * needs a database and this module is deliberately transport-free (see the header),
- * so `agency-ingest.service.ts` raises it. It lives here because the code set is
- * contract — QA pins the exact string per fixture, and the rejected-rows export
- * and the wizard's summary both read it.
+ * so the caller asks the list and this module settles the row (before its key is
+ * claimed, IM4). The code set is contract — QA pins the exact string per fixture,
+ * and the rejected-rows export and the wizard's summary both read it.
  */
 export type AgencyIngestErrorCode =
   | 'missing_phone_value'
@@ -228,6 +234,79 @@ export function rejectionLabel(code: AgencyIngestErrorCode): string {
   return REJECTION_LABEL[code];
 }
 
+/**
+ * Why a row was SKIPPED rather than rejected: nothing is wrong with it, the campaign
+ * already holds it (IM3). Not an error code, so not in {@link AgencyIngestErrorCode},
+ * and a skipped row is counted in `skipped`, never in `rejected`:
+ * `accepted + skipped + rejected = rows_read`.
+ */
+export type AgencyIngestSkipCode = 'already_in_campaign';
+
+/**
+ * The widest Do Not Call entry that suppresses a number, as the ingest's screen
+ * reports it: the whole organisation (`tenant`), this account, or this campaign.
+ * `unknown` when the list said "suppressed" but the scope could not be read back:
+ * the row is still rejected (fail-closed), only the wording is weaker.
+ */
+export type AgencyDncScope = 'tenant' | 'account' | 'campaign' | 'unknown';
+
+/**
+ * The per-row reasons, in plain British English, each saying how to fix the row
+ * (IM6). They are the rejected-rows download's `_reason` column, beside the
+ * operator's own columns, so whoever fixes the file in a spreadsheet reads them
+ * there. The wire codes beside them are unchanged.
+ */
+export const ROW_REASON = {
+  missingPhone: (column: string) =>
+    `The '${column}' column is empty. Add the customer's phone number, or delete the row.`,
+  invalidPhone: (raw: string, countryCode: string | undefined) =>
+    `'${raw}' is not a phone number we can dial. Check the digits${
+      countryCode ? `, and add the country code if it is not +${countryCode}` : ', and add the country code'
+    }.`,
+  // Names the row it repeats, never the number: a reason that started with `+91…` would be
+  // read as a formula by a spreadsheet, and the phone cell is beside it in the download.
+  duplicatePhone: (firstRow: number) =>
+    `The same phone number is already on row ${firstRow} of this file, so this row was left out. Delete one of the two rows, or keep both by choosing "Don't remove duplicates".`,
+  duplicateKey: (keyLabel: string, firstRow: number) =>
+    `Same ${keyLabel} as row ${firstRow} of this file, so this row was left out. Delete one of the two rows, or correct the ${keyLabel}.`,
+  ragged: (values: number, columns: number) =>
+    `This row has ${values} values but the header has ${columns} columns, usually because a value contains an unquoted comma. Put that value in double quotes, or remove the comma.`,
+  valueTooLarge: (column: string, max: number) =>
+    `The value in '${column}' is longer than ${max.toLocaleString('en-GB')} bytes. Shorten it.`,
+  rowTooLarge: (max: number) =>
+    `This row is longer than ${max.toLocaleString('en-GB')} bytes across its columns. Shorten its longest values.`,
+  dnc: (scope: AgencyDncScope) => {
+    const where =
+      scope === 'tenant' ? ' for every campaign in your organisation'
+        : scope === 'account' ? ' for every campaign in this account'
+          : scope === 'campaign' ? ' for this campaign'
+            : '';
+    return `This number is on the Do Not Call list${where}, so it cannot be imported. If the customer has agreed to be called again, an admin must remove it from the Do Not Call list first; otherwise delete the row.`;
+  },
+  alreadyInCampaign: () =>
+    'Already in this campaign from an earlier import, so it was skipped. Nothing about that contact was changed.',
+} as const;
+
+/**
+ * A duplicate key from its parts, the one definition shared by the in-file check
+ * (`rowKey` below) and the campaign check (`agency-ingest-screen.ts`, which reads
+ * the parts back off contacts already in the campaign through
+ * `roster-presence.repository.ts`): each part compared by
+ * {@link dedupeKey}, `null` when any part is blank (never a duplicate), one part as
+ * itself and several as their JSON array, so `["a,b","c"]` and `["a","b,c"]` stay
+ * apart where a joined string would not.
+ */
+export function combineKeyParts(parts: ReadonlyArray<string | null | undefined>): string | null {
+  const keyed: string[] = [];
+  for (const part of parts) {
+    const value = dedupeKey(part ?? '');
+    if (value === '') return null;
+    keyed.push(value);
+  }
+  if (keyed.length === 0) return null;
+  return keyed.length === 1 ? keyed[0]! : JSON.stringify(keyed);
+}
+
 // ─── Result shapes ──────────────────────────────────────────────────────────
 
 /** One accepted contact, in the shape the roster hand-off (`sendRosterChunk`) expects. */
@@ -260,6 +339,46 @@ export interface AgencyIngestRejection {
   context: Record<string, string>;
 }
 
+/** One skipped row: the row is fine, the campaign already holds it. Same shape as a rejection. */
+export interface AgencyIngestSkip {
+  row_number: number;
+  column: string | null;
+  raw_value: string;
+  reason_code: AgencyIngestSkipCode;
+  reason: string;
+  context: Record<string, string>;
+}
+
+/**
+ * A row that passed every check this module can make alone, waiting for the
+ * caller's {@link AgencyIngestOptions.screen} (the Do Not Call list and the
+ * campaign's roster) before its duplicate key is claimed.
+ */
+export interface AgencyIngestCandidate extends AgencyIngestContact {
+  /** The row's duplicate key (normalised number, or the key columns' parts), null when it has none. */
+  key: string | null;
+  /** The phone cell as the file has it, for the rejected-rows download (the operator fixes that text). */
+  raw_phone: string;
+}
+
+/** What the caller's screen found about one batch of candidates. */
+export interface AgencyIngestScreenResult {
+  /** Numbers on the Do Not Call list, each with the widest scope that suppresses it. */
+  dnc: ReadonlyMap<string, AgencyDncScope>;
+  /** Indexes (into the candidates passed) of rows the campaign already holds. */
+  existing: ReadonlySet<number>;
+}
+
+/** The resolved key, passed to the screen so it can read the same key off the roster. */
+export interface AgencyIngestKeyInfo {
+  /** `phone`: the normalised number; `column`: the key columns; `none`: no duplicate check. */
+  mode: 'phone' | 'column' | 'none';
+  /** The key columns as the file names them (resolved headers), in the operator's order. */
+  columns: string[];
+  /** Per key column: true when it is the phone column (compared as the normalised number). */
+  phone_parts: boolean[];
+}
+
 export interface AgencyIngestProgress {
   /** Data rows read so far (excludes the header). */
   rows_read: number;
@@ -282,9 +401,14 @@ export interface AgencyIngestSummary {
   context_columns: string[];
   /** Data rows read (excludes the header; includes rejected and duplicate). */
   rows_read: number;
+  /** `accepted + skipped + rejected = rows_read`, exactly. */
   accepted: number;
   rejected: number;
+  /** Rows the campaign already held (the screen's `existing`): neither imported nor rejected. */
+  skipped: number;
   duplicates: number;
+  /** Do Not Call rejections by the widest scope that suppressed them; a breakdown of `rejected`. */
+  dnc_by_scope: Partial<Record<AgencyDncScope, number>>;
   /** First `maxErrors` rejections, for immediate display. */
   errors: AgencyIngestRejection[];
   /** Rejections beyond `maxErrors` and therefore not in `errors`. */
@@ -319,6 +443,28 @@ export interface AgencyIngestOptions {
   onBatch?: (contacts: AgencyIngestContact[], progress: AgencyIngestProgress) => Promise<void> | void;
   /** Receives EVERY rejection, including ones past the `errors` cap. */
   onRejected?: (rejection: AgencyIngestRejection) => Promise<void> | void;
+  /** Receives every skipped row (the campaign already holds it). */
+  onSkipped?: (skip: AgencyIngestSkip) => Promise<void> | void;
+  /**
+   * The checks this module cannot make alone, asked once per batch BEFORE any row
+   * of the batch claims its duplicate key: which numbers are on the Do Not Call
+   * list, and which rows the campaign already holds. Awaited like `onBatch`, and
+   * an error it throws is the caller's own (the DNC lookup's fail-closed
+   * `DncUnavailableError` reaches the caller unchanged).
+   *
+   * Asking before the claim is what lets a Do Not Call row NOT claim its key (IM4):
+   * a later row with the same loan number on a callable number is imported rather
+   * than dropped as a duplicate of a row that was never imported. A skipped row
+   * claims no key either: its key is in the campaign, so a later row carrying it is
+   * skipped too (IM3, `flush`). Without a screen every candidate is accepted.
+   *
+   * The check and the import run this same function, so a check cannot drift from
+   * the import it previews (IM1).
+   */
+  screen?: (
+    candidates: readonly AgencyIngestCandidate[],
+    key: AgencyIngestKeyInfo,
+  ) => Promise<AgencyIngestScreenResult> | AgencyIngestScreenResult;
   /**
    * Suppress rows whose normalised E.164 already appeared earlier in the file.
    * Default true — the customer asked for duplicate detection by name.
@@ -458,6 +604,27 @@ export function dedupeKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
+const hasNul = (value: string): boolean => value.includes('\u0000');
+
+/**
+ * One data row's cells as the import reads them. Two things a spreadsheet does not
+ * show are undone, and nothing else is touched (a row needing neither is returned as is):
+ *
+ *  - **A NUL** past the encoding probe's first 512 bytes is dropped. Postgres stores no
+ *    U+0000 in text or jsonb, so one left in a cell would fail the roster insert, the
+ *    screen's exact-copy lookup or the job's review sample, after earlier chunks
+ *    landed. It is invisible in a spreadsheet, so the cell is read as the operator sees it.
+ *    (A header carrying one is refused instead: headers are the mapping's keys.)
+ *  - **The formula guard's apostrophe** (`'+919876543210`), which our own downloads add
+ *    (`agency-csv.ts`): a rejected row fixed and uploaded again reads as the value it was.
+ *
+ * Shared with the column analysis, so the mapping screen samples the same values.
+ */
+export function readDataCells(record: string[]): string[] {
+  if (!record.some((cell) => hasNul(cell) || cell.charCodeAt(0) === 0x27)) return record;
+  return record.map((cell) => unguardFormulaSigil(hasNul(cell) ? cell.replace(/\u0000/g, '') : cell));
+}
+
 function normalizeHeader(header: string): string {
   return header.trim().toLowerCase();
 }
@@ -498,6 +665,8 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     ignoreColumns = [],
     onBatch,
     onRejected,
+    onSkipped,
+    screen,
     batchSize = AGENCY_INGEST_BATCH_SIZE,
     maxRows = AGENCY_MAX_ROWS,
     maxColumns = AGENCY_MAX_COLUMNS,
@@ -543,18 +712,24 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   let rowsRead = 0;
   let accepted = 0;
   let rejected = 0;
+  let skipped = 0;
   let duplicates = 0;
   let errorsTruncated = 0;
   let bytesRead = 0;
   let truncated = false;
   const errors: AgencyIngestRejection[] = [];
   const rejectedByReason: Record<string, number> = {};
+  const dncByScope: Partial<Record<AgencyDncScope, number>> = {};
 
   // See the module header: O(distinct phones), and deliberately so. Holds
   // normalised numbers for the phone dedupe, or the key built by `rowKey` for
   // duplicate columns: O(distinct keys) either way, and empty with dedupe off.
-  const seen = new Set<string>();
-  let batch: AgencyIngestContact[] = [];
+  // The value is the line of the row that claimed the key, so a duplicate's
+  // reason can say which row it repeats.
+  const seen = new Map<string, number>();
+  /** Rows that passed the checks above, waiting for the screen and their key claim. */
+  let pending: AgencyIngestCandidate[] = [];
+  let keyInfo: AgencyIngestKeyInfo = { mode: 'none', columns: [], phone_parts: [] };
 
   // `info.lines` is the line on which the current record ENDS. The line it
   // STARTS on is what a spreadsheet shows the operator, so track the previous
@@ -571,13 +746,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
    * stay apart where a joined string would not.
    */
   function rowKey(record: string[], phoneE164: string): string | null {
-    const parts: string[] = [];
-    for (const i of keyIndexes) {
-      const part = i === phoneIndex ? phoneE164 : dedupeKey(record[i] ?? '');
-      if (part === '') return null;
-      parts.push(part);
-    }
-    return parts.length === 1 ? parts[0]! : JSON.stringify(parts);
+    return combineKeyParts(keyIndexes.map((i) => (i === phoneIndex ? phoneE164 : record[i] ?? '')));
   }
 
   async function reject(rejection: AgencyIngestRejection): Promise<void> {
@@ -591,10 +760,98 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     if (onRejected) await fromCaller(() => onRejected(rejection));
   }
 
+  /**
+   * Settle the pending rows, in file order: screen them, then for each row
+   *
+   *   1. already in the campaign → skipped (IM3). First, because it is true of every
+   *      row carrying that key, a repeat in the file or a Do Not Call number
+   *      included: none of them would be imported, and "already imported" is the
+   *      answer that tells the operator there is nothing to fix. It claims no key:
+   *      a later row with the same key is in the campaign too.
+   *   2. a key an earlier accepted row claimed → rejected as a duplicate;
+   *   3. on the Do Not Call list → rejected, WITHOUT claiming its key (IM4);
+   *   4. otherwise accepted, claiming its key.
+   *
+   * The accepted rows go to `onBatch` as one batch. `onBatch` is called for every
+   * settled batch, even one that accepted nothing, so a caller's per-batch work
+   * (the cancel check) sees every batch boundary.
+   */
   async function flush(): Promise<void> {
-    if (batch.length === 0) return;
-    const outgoing = batch;
-    batch = [];
+    if (pending.length === 0) return;
+    const candidates = pending;
+    pending = [];
+    const screened: AgencyIngestScreenResult = screen
+      ? await fromCaller(() => screen(candidates, keyInfo))
+      : { dnc: new Map(), existing: new Set() };
+
+    const outgoing: AgencyIngestContact[] = [];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const { key, raw_phone: rawPhone, ...contact } = candidates[i]!;
+      const row = contact.source_row_number;
+      const phoneHeader = headers[phoneIndex]!;
+
+      if (screened.existing.has(i)) {
+        skipped += 1;
+        if (onSkipped) {
+          const skip: AgencyIngestSkip = {
+            row_number: row,
+            column: null,
+            raw_value: rawPhone,
+            reason_code: 'already_in_campaign',
+            reason: ROW_REASON.alreadyInCampaign(),
+            context: contact.context,
+          };
+          await fromCaller(() => onSkipped(skip));
+        }
+        continue;
+      }
+
+      const firstRow = key === null ? undefined : seen.get(key);
+      if (firstRow !== undefined) {
+        duplicates += 1;
+        await reject(
+          keyInfo.mode === 'phone'
+            ? {
+              row_number: row,
+              column: phoneHeader,
+              raw_value: rawPhone,
+              reason_code: 'duplicate_phone',
+              reason: ROW_REASON.duplicatePhone(firstRow),
+              context: contact.context,
+            }
+            : {
+              // The reason names the columns and never their values, which may sit
+              // in a column the rejected-rows export must not leak.
+              row_number: row,
+              column: keyLabel,
+              raw_value: rawPhone,
+              reason_code: 'duplicate_key',
+              reason: ROW_REASON.duplicateKey(keyLabel, firstRow),
+              context: contact.context,
+            },
+        );
+        continue;
+      }
+
+      const dncScope = screened.dnc.get(contact.phone_e164);
+      if (dncScope !== undefined) {
+        dncByScope[dncScope] = (dncByScope[dncScope] ?? 0) + 1;
+        await reject({
+          row_number: row,
+          column: phoneHeader,
+          raw_value: rawPhone,
+          reason_code: 'dnc_suppressed',
+          reason: ROW_REASON.dnc(dncScope),
+          context: contact.context,
+        });
+        continue;
+      }
+
+      if (key !== null) seen.set(key, row);
+      accepted += 1;
+      outgoing.push(contact);
+    }
+
     if (onBatch) {
       await fromCaller(() => onBatch(outgoing, { rows_read: rowsRead, bytes_read: bytesRead }));
     }
@@ -614,7 +871,9 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     // parser and the underlying source stay paused. That is the mechanism by
     // which a 1M-row file never materialises in memory — not an optimisation.
     for await (const item of stream as AsyncIterable<{ info: Info; record: string[] }>) {
-      const { info, record } = item;
+      const { info } = item;
+      // A data row's NULs and formula-guard apostrophes (`readDataCells`); the header row as written.
+      const record = headers.length > 0 ? readDataCells(item.record) : item.record;
       bytesRead = info.bytes;
       const startLine = previousEndLine + 1;
       previousEndLine = info.lines;
@@ -630,13 +889,13 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
 
         headers = dedupeHeaders(record);
 
-        // A replacement character in a HEADER is fatal: headers are the keys the
+        // A replacement character (or a NUL) in a HEADER is fatal: headers are the keys the
         // operator maps against and the keys `context` is written with, so a
         // mangled one is unmappable and unrenderable. The same character inside
         // a data cell is tolerated — see the row loop — because rejecting a
         // million-row file over one accented name in row 900,000 is worse than
         // showing the agent a slightly mangled one.
-        if (headers.some((h) => h.includes('�'))) {
+        if (headers.some((h) => h.includes('�') || hasNul(h))) {
           throw new AgencyIngestError(
             'unsupported_encoding',
             'The column headers contain characters that are not valid UTF-8. Save the file as CSV UTF-8 and upload it again.',
@@ -683,6 +942,15 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
         dedupeMode = keyIndexes.length > 0
           ? 'column'
           : (dedupeColumns?.length ?? 0) > 0 || dedupePhones ? 'phone' : 'none';
+        keyInfo = dedupeMode === 'column'
+          ? {
+            mode: 'column',
+            columns: keyIndexes.map((i) => headers[i]!),
+            phone_parts: keyIndexes.map((i) => i === phoneIndex),
+          }
+          : dedupeMode === 'phone'
+            ? { mode: 'phone', columns: [headers[phoneIndex]!], phone_parts: [true] }
+            : { mode: 'none', columns: [], phone_parts: [] };
 
         retainedHeaders = headers.filter(
           (h, i) => i !== phoneIndex && !ignored.has(normalizeHeader(h)),
@@ -734,7 +1002,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           column: null,
           raw_value: rawPhone,
           reason_code: 'ragged_row',
-          reason: `Row has ${record.length} values but the header has ${headers.length} columns — check for an unquoted comma.`,
+          reason: ROW_REASON.ragged(record.length, headers.length),
           context,
         });
         continue;
@@ -746,7 +1014,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           column: oversizeColumn,
           raw_value: rawPhone,
           reason_code: 'value_too_large',
-          reason: `The value in '${oversizeColumn}' is larger than ${maxCellBytes} bytes.`,
+          reason: ROW_REASON.valueTooLarge(oversizeColumn, maxCellBytes),
           context: {},
         });
         continue;
@@ -758,7 +1026,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           column: null,
           raw_value: rawPhone,
           reason_code: 'row_too_large',
-          reason: `The row is larger than ${maxRowBytes} bytes across its columns.`,
+          reason: ROW_REASON.rowTooLarge(maxRowBytes),
           context: {},
         });
         continue;
@@ -770,7 +1038,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           column: headers[phoneIndex]!,
           raw_value: '',
           reason_code: 'missing_phone_value',
-          reason: `No value in the '${headers[phoneIndex]}' column.`,
+          reason: ROW_REASON.missingPhone(headers[phoneIndex]!),
           context,
         });
         continue;
@@ -786,71 +1054,37 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           column: headers[phoneIndex]!,
           raw_value: rawPhone,
           reason_code: 'invalid_phone',
-          reason: `'${rawPhone}' is not a valid phone number.`,
+          reason: ROW_REASON.invalidPhone(rawPhone, defaultCountryCode),
           context,
         });
         continue;
       }
 
-      // Dedupe on the NORMALISED number, so `09876543210`, `+91 98765 43210`
-      // and `9876543210` are one contact rather than three calls to one person.
-      // See `dedupePhones` for why this is switchable.
-      if (dedupeMode === 'phone') {
-        if (seen.has(phoneE164)) {
-          duplicates += 1;
-          await reject({
-            row_number: startLine,
-            column: headers[phoneIndex]!,
-            raw_value: rawPhone,
-            reason_code: 'duplicate_phone',
-            reason: `${phoneE164} already appears earlier in this file.`,
-            context,
-          });
-          continue;
-        }
-        seen.add(phoneE164);
-      }
-
-      // Dedupe on the operator's columns. Checked after the phone, like the phone
-      // dedupe, so a row this module rejects never claims its key: a first row
-      // rejected for a bad number does not cost a later, good row with the same
-      // loan number. A row the DNC check later suppresses DOES claim it (that
-      // check runs in the service's `onBatch`, after this one), so a later row
-      // with the same key on another, callable number is dropped as a duplicate:
-      // kept by ruling, docs/decisions.md §4, "DNC row claims its key".
-      // The reason names the columns and never their values, which may sit in an
-      // ignored column the rejected-rows export must not leak.
-      if (dedupeMode === 'column') {
-        const key = rowKey(record, phoneE164);
-        if (key !== null) {
-          if (seen.has(key)) {
-            duplicates += 1;
-            await reject({
-              row_number: startLine,
-              column: keyLabel,
-              raw_value: rawPhone,
-              reason_code: 'duplicate_key',
-              reason: `Duplicate ${keyLabel} of an earlier row in this file.`,
-              context,
-            });
-            continue;
-          }
-          seen.add(key);
-        }
-      }
+      // The duplicate key: the NORMALISED number for the phone dedupe, so
+      // `09876543210`, `+91 98765 43210` and `9876543210` are one contact rather
+      // than three calls to one person (see `dedupePhones` for why it is
+      // switchable), or the operator's columns. It is checked and claimed in
+      // `flush`, after the screen, never here: a row this module rejects above
+      // never claims its key (a first row rejected for a bad number does not cost
+      // a later, good row with the same loan number), and since IM4 neither does a
+      // row the Do Not Call list rejects.
+      const key = dedupeMode === 'phone'
+        ? phoneE164
+        : dedupeMode === 'column' ? rowKey(record, phoneE164) : null;
 
       const timezone =
         timezoneIndex === -1 ? undefined : record[timezoneIndex]?.trim() || undefined;
 
-      batch.push({
+      pending.push({
         phone_e164: phoneE164,
         context,
         source_row_number: startLine,
         ...(timezone !== undefined ? { timezone } : {}),
+        key,
+        raw_phone: rawPhone,
       });
-      accepted += 1;
 
-      if (batch.length >= batchSize) await flush();
+      if (pending.length >= batchSize) await flush();
     }
 
     await flush();
@@ -878,8 +1112,12 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     rows_read: rowsRead,
     accepted,
     rejected,
+    skipped,
     duplicates,
-    errors,
+    dnc_by_scope: dncByScope,
+    // In file order: the screened rejections are settled a batch after the
+    // structural ones, so they arrive out of order.
+    errors: errors.sort((a, b) => a.row_number - b.row_number),
     errors_truncated: errorsTruncated,
     rejected_by_reason: rejectedByReason,
     bytes_read: bytesRead,

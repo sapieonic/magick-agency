@@ -111,7 +111,7 @@ own expressions:
 | redials | placed (`redial_number > 0`), connected, chains at `AGENCY_WRAPUP_REDIAL_LIMIT` |
 | agent retries | `agent_reopened` and `agent_manual` dials, and their connected |
 | overrides used | `override_applied` non-empty; the granting code is the contact's latest dispositioned attempt before the dial |
-| recorded | `connected` calls whose `agency_calls` row (`webrtc_call_id`) has a `recording_url` |
+| recorded | `connected` calls whose `agency_calls` row (`webrtc_call_id`) asked for a recording and has a `recording_url` (`hasRecordingSql`, RC1: a link the carrier sent for a call that did not ask is not a recording; `0043_recording_honours_request.sql` recounted the buckets that held one) |
 | callbacks booked | `callback_at` set, at the booking dial's bucket |
 | human connects | `HUMAN_CONNECT_ATTEMPT_SQL` (`sql-fragments.ts`): conversations coded neither `voicemail` nor `no_disposition`; a stored measure on buckets, agents and the `caller_id` / `local_hour` facets (0014); the connect rate's numerator |
 | no outcome | conversations coded NULL or `no_disposition` (`/stats` `unclassified_connects`), by wrap-up resolution |
@@ -211,7 +211,7 @@ definition, `insights-sql.ts`, for the summary and the contacts list's drill-dow
 | `GET /proxy/agency/campaigns/:id/insights/summary` | header, settings, status headline, roster | yes |
 | `GET /proxy/agency/campaigns/:id/insights/readiness` | the draft checklist | no |
 | `GET /proxy/agency/campaigns/:id/insights/allocation` | per-agent allocation, imbalance, at risk, history | yes |
-| `GET /proxy/agency/campaigns/:id/insights/uploads` | committed uploads, newest first (at most 200) | no |
+| `GET /proxy/agency/campaigns/:id/insights/uploads` | committed uploads, newest first (at most 200), with `skipped` (rows already in the campaign, IM3) beside accepted and rejected | no |
 
 The range reads (`activity`, `trends`, `health`) are the next section.
 
@@ -334,12 +334,12 @@ or four times its compute time.
 |---|---|
 | `activity.calls`, `outcomes`, `overrides`, `no_outcome`, the agents' dial columns, `reconciliation`, `as_of` | the rollup's `activity` read: ONE `REPEATABLE READ` snapshot, so every reconciliation is checked against the numbers served beside it |
 | `calls.redials.refused_at_limit` | the pacing history |
-| `calls.softphone_calls` | `agency_manual_calls` tagged to the campaign, placed, `created_at` in range (`idx_agency_manual_calls_campaign`) |
+| `calls.softphone` (and `calls.softphone_calls`, its `placed`) | `agency_manual_calls` tagged to the campaign, `created_at` in range: placed, connected and reached a person by the soft phone's one definition (`softphone-campaign-sql.ts`, SR2), one statement on `idx_agency_manual_calls_campaign`. Beside the dialler's figures, never in them (SR1): the console adds the soft phone's connect rate and All calls, and shows them while the soft phone is on or the range holds any (SR5). Read live, not from the rollup: All calls adds these to the rollup's counts as of its `as_of`, normally seconds older |
 | `callbacks.booked` | the rollup (by the booking dial's time) |
 | `callbacks` timing classes, `by_owner` | `callbackTiming` (IN4), the callbacks whose booked time is in range |
 | `callbacks.open_due_today`, `open_overdue` | as of now: the allocation's totals, through the cache under the allocation's own key (the polled allocation and this read share one computation) |
 | `activity.agents` state seconds, `never_joined` | `agentStateSeconds` (the occupancy intervals); never joined = staffed with neither state time nor a dial in range |
-| `dnc_marked` | agent DNC entries scoped to the campaign, created in range (`idx_dnc_entries_tenant_created`) |
+| `dnc_marked` | agent DNC entries scoped to the campaign, created in range (`idx_dnc_entries_tenant_created`): Mark DNC presses on the station, the soft phone's and inbound's marks, and (since DS8) every station outcome that suppresses, which writes the same entry; an agent's tenant-wide escalation names no campaign and is not counted |
 | `trends.buckets`, `best_hours` | the rollup's `trends` read; `agents_online_peak` from `agentsOnlinePeak`, joined on the bucket label |
 | `health.abandonment.rolling_24h` | the guardrail's window for this campaign (`abandonmentWindowStatement`: ended, answered in the last 24 h; read as a day of the campaign's dials) |
 | `health.abandonment.auto_pauses` | the guardrail's `agency_campaign.auto_paused` audit rows in range (at most 200): reason `abandonment_ceiling`, or none (its oldest rows); the carrier-account pause's rows (`carrier_auth`, `carrier_account_unavailable`, `carrier_refusing_calls`) share the event and are left out |
@@ -393,6 +393,11 @@ redials_placed`), and it is one dial per clash, which is rare.
   pins Insights, `/stats`, the roster and the scorecard to one number on a seed with voicemail,
   no-disposition and unwritten connects, redial chains and never-placed queued attempts.
 - `range.clamped` (IN12) and `health.carrier_failures_by_code` (0014) added.
+- `calls.softphone` `{ placed, connected, human_connects }` (SR1–SR3, 2026-11-15): the tagged
+  soft-phone calls by their one definition; `softphone_calls` stays, equal to `placed`.
+  `test/integration/api/agency-softphone-campaign-results.test.ts` checks the counts on real rows
+  (placed, ringing, never placed, voicemail, lapsed, unwritten, untagged, another campaign's,
+  another tenant's, the range's two edges) and that the dialler's connect rate does not move.
 
 **Drill-downs, end to end.** `apps/server/test/fixtures/insights-drilldowns.json` lists every number
 that opens a list, the list, and its params. `test/integration/api/agency-insights-drilldowns.test.ts`

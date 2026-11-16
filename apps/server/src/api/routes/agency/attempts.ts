@@ -4,13 +4,16 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { getPool } from '@magick-agency/db';
-import { agencyAttemptRepository, agencyContactRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAttemptRepository, agencyContactRepository, promiseDateText } from '../../../db/repositories/agency.repository.js';
 import {
   checkActor,
   dispositionRefusal,
+  promiseZoneFor,
   resolveDisposition,
   validateDispositionFields,
 } from '../../../agency/disposition.js';
+import { contactPromiseWrite, promiseFollowUpAt } from '../../../agency/promise-to-pay.js';
+import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import { resolveDispositionDecision } from '../../../agency/disposition-policy.js';
 import {
   dispositionRuleDelayMinutes,
@@ -121,20 +124,98 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     if (!resolved.ok) {
       return sendActionError(reply, 400, 'unknown_disposition_code', resolved.allowed);
     }
-    const fields = validateDispositionFields(resolved.entry, body, new Date());
+    // The contact is read up front when the outcome can turn on it: a disposition `retry`'s
+    // attempt count (below), and a promise's "today", which is the customer's (PT4: the
+    // contact's zone, else the campaign's, as calling hours pick it).
+    //
+    // `.catch(() => null)` is not defensive noise: a DB blip must not fail an agent's
+    // disposition, because the conversation is over and this write is the only record of it —
+    // the same posture `resolveCallbackDialTime` already takes on its own read of this row.
+    const wantsPromise = resolved.entry.requires_promise === true;
+    const needsContact = wantsPromise || (!!resolved.entry.retry && !body.callback_at);
+    const contactRow = needsContact
+      ? await agencyContactRepository.findById(attempt.contact_id).catch(() => null)
+      : null;
+    const promiseZone = promiseZoneFor(contactRow?.timezone, campaign.default_timezone);
+    const now = new Date();
+    // A same-code replay may send the date already stored on the attempt after that day has
+    // passed (a queued retry, a supervisor correcting the amount): it is not a new promise.
+    const recordedPromiseDate = attempt.disposition_code === resolved.entry.code
+      ? promiseDateText(attempt.promise_date ?? null)
+      : null;
+    const fields = validateDispositionFields(
+      resolved.entry, body, now, todayIn(promiseZone, now) ?? undefined, recordedPromiseDate);
     if (!fields.ok) return sendActionError(reply, 400, fields.code);
+    // PT2: the entry's follow-up, when it has one. It takes the callback arm below exactly as a
+    // `callback_at` would (the two cannot meet: a catalogue entry may not set both
+    // `requires_promise` and `requires_datetime`). Without it a promise books nothing (PT3).
+    const followUpAt = promiseFollowUpAt(resolved.entry, fields.promise, promiseZone);
+    const callbackAt = fields.callbackAt ?? followUpAt;
 
     // ── 4. The write. Same code ⇒ success; different code ⇒ 409 ──────────
     // One guarded UPDATE does both, so a double-click cannot interleave a read
     // with a write and quietly overwrite the record of a conversation.
-    const updated = await agencyAttemptRepository.recordDisposition({
+    const dispositionWrite = {
       attemptId: attempt.id,
       dispositionCode: resolved.entry.code,
       notes: fields.notes,
       callbackAt: fields.callbackAt,
       actorUserId: actor.actorUserId,
       onBehalf: actor.onBehalf,
-    });
+      promiseDate: fields.promise?.date ?? null,
+      promiseAmount: fields.promise?.amount ?? null,
+    };
+    // ── A `suppress` outcome is a Do Not Call mark for this campaign (DS8) ──
+    // The customer asked not to be called, so the number goes on the list, not only this one
+    // contact: without a `dnc_entries` row another contact on the same number stayed dialable
+    // and a re-upload brought the number back. Campaign scope, as the station's own mark
+    // defaults to and as the soft phone and inbound write for the same outcome
+    // (`disposition:<code>`, by whoever filed it).
+    //
+    // Only on the outcome's FIRST write, and in one transaction with it (B8, as the DNC
+    // route's optional disposition): a failed entry rolls the outcome back, so the agent's
+    // retry is a first write again and writes both. A same-code REPLAY (a queued retry, a
+    // supervisor re-filing from history) writes no entry, so it never puts back a number an
+    // admin has since removed from the list. "First" is decided on the attempt row locked in
+    // this transaction, not on the read above: of two submissions racing, the second waits
+    // for the first's COMMIT and then sees its code. A number that is not usable E.164 writes
+    // nothing, as `markDnc` always has; the response says so (`dnc_recorded: false` on the
+    // internal answer's `dnc_entry`), and the proxy writes the entry's audit row.
+    const dncPhone = resolved.entry.suppress === true && attempt.disposition_code === null
+      ? (contactRow?.phone_e164 ?? (await agencyContactRepository.findById(attempt.contact_id))?.phone_e164 ?? null)
+      : null;
+    let updated: Awaited<ReturnType<typeof agencyAttemptRepository.recordDisposition>>;
+    let dncMark: Awaited<ReturnType<typeof markDnc>> | null = null;
+    if (dncPhone) {
+      const client = await getPool().connect();
+      let failure: Error | undefined;
+      try {
+        await client.query('BEGIN');
+        const locked = await client.query<{ disposition_code: string | null }>(
+          'SELECT disposition_code FROM agency_call_attempts WHERE id = $1 FOR UPDATE', [attempt.id]);
+        const firstWrite = locked.rows[0]?.disposition_code === null;
+        updated = await agencyAttemptRepository.recordDisposition(dispositionWrite, { client });
+        if (updated && firstWrite) {
+          dncMark = await markDnc({
+            tenantId: attempt.tenant_id,
+            campaignId: campaign.id,
+            phoneE164: dncPhone,
+            reason: `disposition:${resolved.entry.code}`,
+            addedBy: actor.actorUserId,
+          }, { client });
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        failure = err instanceof Error ? err : new Error(String(err));
+        await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
+        throw err;
+      } finally {
+        // A failed transaction's connection is discarded, never handed back to the pool.
+        client.release(failure);
+      }
+    } else {
+      updated = await agencyAttemptRepository.recordDisposition(dispositionWrite);
+    }
     if (!updated) {
       // The predicate only fails on a DIFFERENT code — a same-code replay is a
       // successful write above. Silently rewriting the record of what was said
@@ -166,25 +247,16 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // conversations. That is the opposite convention from the dial path, which
     // passes the post-bump count — hence a read rather than a reuse.
     //
-    // Read ONLY when the decision can turn on it — a disposition `retry` with no
-    // callback. Every other arm (`suppress`, `terminal`, a callback, a plain
-    // label) ignores `attemptsUsed`, so the common path costs no query, and the
-    // `0` those arms are handed cannot silently become load-bearing later without
-    // this condition being revisited.
-    //
-    // `.catch(() => null)` is not defensive noise: a DB blip must not fail an
-    // agent's disposition, because the conversation is over and this write is the
-    // only record of it — the same posture `resolveCallbackDialTime` already
-    // takes on its own read of this row. The fallback is 0, which is permissive:
-    // it schedules a retry rather than declaring a budget spent on no evidence.
-    const needsAttemptCount = !!resolved.entry.retry && !fields.callbackAt;
-    const contactRow = needsAttemptCount
-      ? await agencyContactRepository.findById(attempt.contact_id).catch(() => null)
-      : null;
+    // Read (step 3, `contactRow`) ONLY when the decision can turn on it — a disposition
+    // `retry` with no callback — or a promise needs the customer's zone. Every other arm
+    // (`suppress`, `terminal`, a callback, a plain label) ignores `attemptsUsed`, so the
+    // common path costs no query, and the `0` those arms are handed cannot silently become
+    // load-bearing later without this condition being revisited. The fallback is 0, which is
+    // permissive: it schedules a retry rather than declaring a budget spent on no evidence.
     const decision = resolveDispositionDecision(resolved.entry, {
       now: new Date(),
       attemptsUsed: contactRow?.attempt_count ?? 0,
-      callbackAt: fields.callbackAt,
+      callbackAt,
     });
     const contactState = decision.contactState;
     // ── The callback is scheduled for when we can actually dial ──────────
@@ -200,8 +272,8 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // the agent says the time out loud to a customer. `callback_at` on the attempt
     // row keeps the raw request — what was promised and what we scheduled are two
     // different facts and the audit needs both.
-    const scheduledAt = fields.callbackAt
-      ? await resolveCallbackDialTime(campaign, attempt.contact_id, fields.callbackAt)
+    const scheduledAt = callbackAt
+      ? await resolveCallbackDialTime(campaign, attempt.contact_id, callbackAt)
       : null;
     // `scheduledAt` wins over the decision's own instant when there is one: for a
     // callback they are the same moment, one deferred into the calling window, and
@@ -266,8 +338,10 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     const extraAttempt = MAX_ATTEMPTS_EXHAUSTION_REASONS.has(decision.reason)
       ? { reason: decision.reason, delayMinutes: dispositionRuleDelayMinutes(resolved.entry), now: new Date() }
       : null;
+    // A promise's follow-up (PT2) is a callback for ownership too: the agent who took the
+    // promise is the one who follows it up on a strict / preferred campaign.
     const callbackOwner = decision.reason === 'callback_scheduled'
-      && resolved.entry.requires_datetime === true
+      && (resolved.entry.requires_datetime === true || followUpAt !== null)
       && ownerModeOf(campaign) !== null
       && reservedUserId
       ? { userId: reservedUserId }
@@ -302,6 +376,37 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       );
     }
 
+    // ── 5a. The rest of the campaign's roster on that number (DS8) ───────────
+    // As the soft phone, inbound and Mark DNC do: every other row of this campaign carrying the
+    // number leaves the roster now, rather than staying `pending` until pacing claims it and
+    // the dial-time check suppresses it. After the release, so this call's own contact is
+    // settled by its decision first; a swept row keeps any reason it was already suppressed
+    // for. Outside the transaction on purpose: the entry already blocks every one of those rows
+    // at dial time, so a failure here costs nothing but that early sweep, and it must not turn
+    // a recorded outcome into an error the agent would retry as a replay.
+    if (dncMark?.recorded && dncPhone) {
+      await agencyContactRepository.suppressByPhone(campaign.id, dncPhone, 'dnc').catch((err: unknown) => {
+        log.warn({ err, campaignId: campaign.id, attemptId: attempt.id },
+          'Suppress outcome recorded and listed; sweeping the roster\'s other rows on the number failed (the dial-time check still blocks them)');
+      });
+    }
+
+    // ── 5b. The contact's latest promise (PT6, PT7) ─────────────────────────
+    // Its own statement, NOT in a transaction with the outcome (neither is the contact release
+    // above; only a suppress outcome's first write opens one, for its DNC entry). Before the
+    // wrap-up release, and not swallowed: if it fails the agent sees the save fail and saves
+    // again, and the replay writes it (the outcome itself is idempotent on the code, the write
+    // idempotent on the call). The soft phone and inbound write it inside their transaction.
+    // A promise replaces the contact's earlier one unless a later call already holds it; any
+    // other outcome marks an earlier promise followed up when this call qualifies.
+    const callAt = new Date(attempt.created_at);
+    const promiseWrite = fields.promise ? contactPromiseWrite(fields.promise, promiseZone, callAt) : null;
+    if (promiseWrite) {
+      await agencyContactRepository.recordContactPromise({ contactId: attempt.contact_id, promise: promiseWrite });
+    } else {
+      await agencyContactRepository.notePromiseFollowUp({ contactId: attempt.contact_id, callAt });
+    }
+
     // ── 6. Release the wrap-up, if this attempt is the one holding it ─────
     // `noteDisposition` is a no-op unless the session is in wrap-up FOR THIS
     // attempt, which is what lets a supervisor write up an old call without
@@ -330,12 +435,20 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
         ? landed.next_attempt_at.toISOString()
         : nextAttemptAt ? nextAttemptAt.toISOString() : null,
       callback_requested_at: fields.callbackAt ? fields.callbackAt.toISOString() : null,
+      promise_date: fields.promise?.date ?? null,
+      promise_amount: fields.promise?.amount ?? null,
       // ADVISORY, and it races the socket by design — releasing the wrap-up
       // returns the agent to the pool and the tick runs every 250ms, so a new
       // `reserved` frame can reach the console before this response does.
       agent_state: live?.state ?? 'offline',
     };
-    return reply.send(response);
+    // `dnc_entry` is for the public layer (it strips it): the audit row's facts, and whether the
+    // entry DS8 attempted is on the list (`recorded: false`, a number not usable E.164), which it
+    // passes on as `dnc_recorded`. Absent when no entry was attempted (another outcome, or a replay).
+    const dncEntry = dncMark
+      ? { recorded: dncMark.recorded, id: dncMark.written?.id ?? null, created: dncMark.recorded && !dncMark.alreadyPresent }
+      : null;
+    return reply.send(dncEntry ? { ...response, dnc_entry: dncEntry } : response);
   });
 
   // ── POST /attempts/:id/dnc ─────────────────────────────────────────────
@@ -405,6 +518,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       if (!resolved.ok) {
         return sendActionError(reply, 400, 'unknown_disposition_code', resolved.allowed);
       }
+      // A promise outcome needs its date (PT1, PT8), and this route takes none: recording the
+      // code bare would show a promise with no promised day on the attempt. Refused with the
+      // disposition route's own code, before anything is written; the mark itself is the agent's
+      // to send again without the code (or with another).
+      if (resolved.entry.requires_promise === true) {
+        return sendActionError(reply, 400, 'promise_required');
+      }
       // A disposition is the record of who said what about a customer, so it is
       // never written unattributed. The public API layer sends the authenticated
       // actor (`resolveAgencyActor`); a request without one is a loud 400 rather
@@ -436,6 +556,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     let forwarded!: Awaited<ReturnType<typeof markDnc>>;
     let noteDispositionFor: string | null = null;
     const client = await getPool().connect();
+    let failure: Error | undefined;
     try {
       await client.query('BEGIN');
       // ── 2. Suppress the roster rows ──────────────────────────────────────
@@ -495,11 +616,18 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
             { attemptId: attempt.id, dispositionCode: disposition.entry.code },
             'Attempt already carries a different disposition — the DNC suppression still stands',
           );
-        } else if (attempt.reserved_agent_id) {
-          // No-op unless the session is in wrap-up FOR THIS attempt, exactly as on
-          // the disposition route. Run after COMMIT (below), so a rolled-back
-          // disposition never releases wrap-up.
-          noteDispositionFor = attempt.reserved_agent_id;
+        } else {
+          // An outcome on the contact: an earlier promise to pay is followed up when this call
+          // qualifies (PT7), in this transaction.
+          await agencyContactRepository.notePromiseFollowUp(
+            { contactId: attempt.contact_id, callAt: new Date(attempt.created_at) }, { client },
+          );
+          if (attempt.reserved_agent_id) {
+            // No-op unless the session is in wrap-up FOR THIS attempt, exactly as on
+            // the disposition route. Run after COMMIT (below), so a rolled-back
+            // disposition never releases wrap-up.
+            noteDispositionFor = attempt.reserved_agent_id;
+          }
         }
       }
 
@@ -548,10 +676,13 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       }, { client });
       await client.query('COMMIT');
     } catch (err) {
+      failure = err instanceof Error ? err : new Error(String(err));
       await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
       throw err;
     } finally {
-      client.release();
+      // A failed transaction's connection is discarded, never handed back to the pool (as the
+      // disposition route's): a ROLLBACK that failed leaves it mid-transaction.
+      client.release(failure);
     }
     if (noteDispositionFor) {
       await runtime.wrapup.noteDisposition(noteDispositionFor, attempt.id);

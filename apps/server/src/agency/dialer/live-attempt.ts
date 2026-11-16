@@ -12,6 +12,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import type { DialCommand } from '../dial-dispatcher.js';
 import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
+import { contactPromise } from '../../db/repositories/agency/projections.js';
 
 /** An attempt this replica is currently driving, and what a reconnect needs to know. */
 export interface LiveAttempt {
@@ -201,6 +202,7 @@ export function isUnannounced(live: LiveAttempt): boolean {
  * Built once at dial time (see `LiveAttempt.panel`) and reused for the resume.
  */
 export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): AgencyReservedAttempt {
+  const promise = contactPromise(cmd.contact);
   return {
     attempt_id: cmd.attemptId,
     campaign_id: cmd.campaignId,
@@ -211,6 +213,9 @@ export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): Agen
     attempt_number: cmd.attemptNumber,
     context: cmd.contact.context,
     prior_attempts: priors,
+    // PT9: the contact's latest promise, so the agent sees it as they reach the customer. Only
+    // when there is one: a panel without a promise is what it was before.
+    ...(promise ? { promise } : {}),
     ...(cmd.redial
       ? {
           redial: {

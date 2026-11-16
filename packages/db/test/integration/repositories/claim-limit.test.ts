@@ -69,7 +69,7 @@ async function callsWithJobs(n: number, recording: boolean) {
   await freshTables(getTestPool(), ['agency_calls', 'dialer_analysis_jobs']);
   const out = [];
   for (let i = 0; i < n; i++) {
-    const call = await insertWebrtcCall({
+    const call = await insertWebrtcCall({ recording_requested: true,
       status: 'completed',
       recording_url: recording ? `https://recording.example/${i}.wav` : null,
     });
@@ -87,7 +87,7 @@ describe('batch claims take at most `limit` rows (integration)', () => {
   it('failStaleActive fails at most `limit` stuck calls', async () => {
     await freshTables(getTestPool(), ['agency_calls']);
     for (let i = 0; i < 5; i++) {
-      await insertWebrtcCall({ status: 'in_progress', created_at: ago(3_600 - i) });
+      await insertWebrtcCall({ recording_requested: true, status: 'in_progress', created_at: ago(3_600 - i) });
       if (i === 0) await analyze('agency_calls');
     }
     const failed = await pinnedRun(
@@ -116,7 +116,7 @@ describe('batch claims take at most `limit` rows (integration)', () => {
     // Inserted straight into their stale state, oldest heartbeat first, so the
     // heap holds them in the subquery's order.
     for (let i = 0; i < 5; i++) {
-      const call = await insertWebrtcCall({ status: 'completed' });
+      const call = await insertWebrtcCall({ recording_requested: true, status: 'completed' });
       await getTestPool().query(
         `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, claimed_at, heartbeat_at, claim_generation)
          SELECT id, tenant_id, account_id, 'transcribing', $2, $2, 1 FROM agency_calls WHERE id = $1`,

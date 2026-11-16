@@ -300,6 +300,8 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       // 0036 (Mode B): the ring (inbound-ring-migration.test.ts pins them).
       'offer_channel character varying', 'ringing_at timestamp with time zone', 'accepted_at timestamp with time zone',
       'ring_result character varying', 'ring_count smallint not null',
+      // 0041: the promise to pay recorded with the outcome (promise-to-pay-migration.test.ts pins them).
+      'promise_date date', 'promise_amount numeric',
     ]);
     expect(await call()).toMatchObject({ state: 'arrived', provider: 'plivo', caller_dnc: false, outcome: null, follow_up_status: null });
   });
@@ -604,7 +606,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(57); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1, 0032's 1 and 0036's 5
+    expect((await columns('agency_inbound_calls')).length).toBe(59); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1, 0032's 1, 0036's 5 and 0041's 2
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

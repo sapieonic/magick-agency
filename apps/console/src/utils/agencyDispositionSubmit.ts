@@ -1,4 +1,5 @@
 import type { AgencyActionErrorCode } from '../types/agency';
+import { SUPPRESS_OUTCOME_NOT_LISTED } from './agencyDncCopy';
 import {
   decideDispositionResponse,
   decideDispositionSuccess,
@@ -56,6 +57,11 @@ export type DispositionOutcome =
        * actually be dialled.
        */
       callbackRequestedAt?: string | null;
+      /**
+       * A suppress outcome's Do Not Call entry (DS8): carried only when the response says, so
+       * `false` (the number could not go on the list) is told and absence claims nothing.
+       */
+      dncRecorded?: boolean;
     }
   /**
    * A **different** code is already recorded. Not an overwrite: the agent has to
@@ -107,6 +113,7 @@ export function classifySubmitOutcome(response: RawSubmitResponse): DispositionO
       ...(typeof body['callback_requested_at'] === 'string'
         ? { callbackRequestedAt: body['callback_requested_at'] }
         : {}),
+      ...(typeof body['dnc_recorded'] === 'boolean' ? { dncRecorded: body['dnc_recorded'] } : {}),
     };
   }
 
@@ -229,6 +236,20 @@ export function confirmationCopy(input: {
    * named is always `nextAttemptAt`, and a differing request only adds why it
    * moved — the agent must not repeat the asked-for time to the customer.
    */
+  callbackRequestedAt?: string | null;
+  /**
+   * A suppress outcome's `dnc_recorded` (DS8). `false` appends that the number could not go on
+   * the list, so the agent is never left believing an entry was written; otherwise nothing.
+   */
+  dncRecorded?: boolean;
+}): string {
+  const saved = callbackConfirmation(input);
+  return input.dncRecorded === false ? `${saved} ${SUPPRESS_OUTCOME_NOT_LISTED}` : saved;
+}
+
+function callbackConfirmation(input: {
+  dispositionLabel: string;
+  nextAttemptAt: string | null;
   callbackRequestedAt?: string | null;
 }): string {
   if (input.nextAttemptAt === null) return `Saved — ${input.dispositionLabel}.`;

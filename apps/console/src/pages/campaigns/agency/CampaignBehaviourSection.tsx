@@ -160,6 +160,7 @@ export function CampaignBehaviourSection({
       }}
       errors={errors}
       overrides={assignment !== undefined}
+      promises
     />
   );
   const retryTable = (

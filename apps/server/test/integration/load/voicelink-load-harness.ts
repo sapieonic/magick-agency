@@ -143,7 +143,9 @@ export async function startLoadRig(opts: { maxConcurrentCalls?: number } = {}): 
   await truncateAll();
   await flushTestRedis();
   await getTestPool().query(
-    'INSERT INTO account_settings (tenant_id, account_id, max_concurrent_calls) VALUES ($1, $2, $3)',
+    // Recording allowed and every dial asks for it: the storms check the carrier's recording URL
+    // lands, which it does only on a call that asked (RC1).
+    'INSERT INTO account_settings (tenant_id, account_id, max_concurrent_calls, allow_recording) VALUES ($1, $2, $3, true)',
     [LOAD_TENANT, LOAD_ACCOUNT, opts.maxConcurrentCalls ?? 10_000],
   );
   resetVoiceEngineForTests();
@@ -184,8 +186,13 @@ export async function closeLoadDb(): Promise<void> {
 
 let attemptSeq = 0;
 
-/** Dial one call through the agency entry point with a borrowed station socket. */
-export async function dialBridged(rig: LoadRig, station: LoadStationSocket, destination = '+919812345678'): Promise<{ callId: string; attemptId: string }> {
+/**
+ * Dial one call through the agency entry point with a borrowed station socket. `record` is the
+ * call's recording request (the campaign's `record_calls`); the rig's account allows recording.
+ */
+export async function dialBridged(
+  rig: LoadRig, station: LoadStationSocket, destination = '+919812345678', opts: { record?: boolean } = {},
+): Promise<{ callId: string; attemptId: string }> {
   const attemptId = randomUUID();
   attemptSeq += 1;
   const record = await rig.bridge.createBridgedCall({
@@ -193,6 +200,7 @@ export async function dialBridged(rig: LoadRig, station: LoadStationSocket, dest
     accountId: LOAD_ACCOUNT,
     callerId: '+919800000001',
     destinationPhone: destination,
+    record: opts.record ?? true,
     browserSocket: station as never,
     correlation: { kind: 'attempt' as const, campaignId: LOAD_CAMPAIGN, agencyAttemptId: attemptId },
   });

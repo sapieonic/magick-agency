@@ -9,9 +9,13 @@ import type {
 import { formatCount } from '../../../../utils/format/number';
 import { durationWords } from '../../../../utils/format/duration';
 import {
+  allCallsConnectRate,
+  allCallsCounts,
   averageHandleSeconds,
   callsConnectRate,
   insightsRate,
+  showSoftphoneFigures,
+  softphoneConnectRate,
   successRate,
   rateText,
   rateValue,
@@ -43,6 +47,11 @@ export interface RangeSectionContext {
   /** "Lifetime", "Today", ... */
   rangeLabel: string;
   agentName: (userId: string | null) => string;
+  /**
+   * The soft phone's flag for the account (`agency_softphone_enabled`). Soft-phone figures show
+   * while it is on, or when the range holds tagged soft-phone calls whatever it says (SR5).
+   */
+  softphoneEnabled?: boolean;
 }
 
 /** Outcome order on the page: the connected first, then by how often they happen in a dialler. */
@@ -86,6 +95,9 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
   const success = rateFigure(successRate(calls.successes, calls.conversations));
   const handle = averageHandleSeconds(calls);
   const lines = outcomeLines(activity);
+  // The soft phone's tagged calls BESIDE the dialler's figures, never in them (SR1, SR5).
+  const soft = showSoftphoneFigures(ctx.softphoneEnabled ?? false, calls.softphone) ? calls.softphone : null;
+  const all = soft ? allCallsCounts(calls, soft) : null;
 
   const outcomeColumns: InsightsColumn<OutcomeLine>[] = [
     { key: 'label', header: 'Outcome', render: (l) => l.label, csv: (l) => l.outcome ?? 'null_outcome' },
@@ -153,7 +165,7 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
         <Kpi
           label="Connected"
           value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'connected', redial: false })} value={calls.connected} label="connected calls" />}
-          sub={`Connect rate ${connect.value}`}
+          sub={`${soft ? 'Dialler connect rate' : 'Connect rate'} ${connect.value}`}
           testId="kpi-connected"
         />
         <Kpi
@@ -188,12 +200,22 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
           sub={`Talk ${handle.talk === null ? '—' : durationWords(handle.talk)} · wrap-up ${handle.wrapup === null ? '—' : durationWords(handle.wrapup)}`}
           testId="kpi-aht"
         />
-        <Kpi
-          label="Soft-phone calls"
-          value={formatCount(calls.softphone_calls)}
-          sub="Tagged to this campaign; not in any other count here"
-          testId="kpi-softphone"
-        />
+        {soft && all ? (
+          <>
+            <Kpi
+              label="Soft-phone calls"
+              value={formatCount(soft.placed)}
+              sub={`${formatCount(soft.connected)} connected · connect rate ${rateFigure(softphoneConnectRate(soft)).value} · logged to this campaign, not in the dialler’s figures`}
+              testId="kpi-softphone"
+            />
+            <Kpi
+              label="All calls"
+              value={formatCount(all.placed)}
+              sub={`${formatCount(all.connected)} connected · connect rate ${rateFigure(allCallsConnectRate(all)).value} · dialler and soft phone`}
+              testId="kpi-all-calls"
+            />
+          </>
+        ) : null}
       </StatGrid>
 
       {/* Side by side once each keeps a readable width: on a wide screen one table across the panel set a row's label and its figure a screen apart. */}

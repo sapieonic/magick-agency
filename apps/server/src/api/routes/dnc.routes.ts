@@ -6,6 +6,8 @@ import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { dncPhoneSearch, dncService, DNC_ADD_MAX_NUMBERS } from '../../dnc/dnc.service.js';
 import { DNC_SOURCES, dncScopeLabel, dncScopeUuid } from '../../dnc/dnc.repository.js';
+import { DNC_ENTRY_SCOPES, type DncEntryScope } from '@magick-agency/contracts/api/agency/dnc';
+import { agencyCampaignRepository } from '../../db/repositories/agency.repository.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
@@ -23,6 +25,10 @@ const log = createChildLogger({ component: 'dnc-routes' });
  *
  * ── Two floors, not one ─────────────────────────────────────────────────────
  * Read is `viewer`; add and delete are `account_admin` (`agency.dnc.manage`).
+ * Where they reach is the caller's MEMBERSHIP (DS2, DS3, DS6): a member of the whole
+ * organisation reaches every scope; an account-scoped member reaches only what belongs
+ * to their account (its account entries and its campaigns' entries) and can never add
+ * or remove a tenant-wide ("every campaign") entry.
  * The agent-facing path is a different route entirely
  * (`POST /proxy/agency/attempts/:id/dnc`, floored at `agent`) and is
  * attempt-scoped: an agent suppresses the number on their own line, never an
@@ -43,6 +49,13 @@ const log = createChildLogger({ component: 'dnc-routes' });
  */
 const addSchema = z.object({
   phone_numbers: z.array(z.string().min(1).max(40)).min(1).max(DNC_ADD_MAX_NUMBERS),
+  /**
+   * The scope, stated (DS1). The console always sends it; present, it must agree with the ids
+   * below or the request is refused `invalid_dnc_scope`, so a client that lost a `campaign_id`
+   * on the way cannot turn a one-campaign add into an every-campaign one. Absent, the ids decide
+   * as they always did (neither ⇒ tenant-wide), for a caller that predates it.
+   */
+  scope: z.enum(DNC_ENTRY_SCOPES).optional(),
   /**
    * Omitted ⇒ tenant-wide. Every scope is enforced at dial time by the
    * `dnc_entries` read.
@@ -80,6 +93,8 @@ const listSchema = z.object({
   phone: z.string().min(1).max(40).optional(),
   account_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
   campaign_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
+  /** Only entries of this reach (`dncEntryScope`): every campaign, an account, one campaign. */
+  scope: z.enum(DNC_ENTRY_SCOPES).optional(),
   source: z.enum(DNC_SOURCES).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -134,6 +149,28 @@ function accountScopeAllows(request: FastifyRequest, requested: string | null | 
   return callerAccountId === null || requested === callerAccountId;
 }
 
+/**
+ * Does a stated `scope` agree with the ids sent beside it (DS1)? `tenant` names neither,
+ * `account` an account and no campaign, `campaign` a campaign (an account beside it is checked
+ * against the campaign's own below). Absent: nothing to agree with.
+ */
+function dncScopeAgrees(
+  scope: DncEntryScope | undefined,
+  ids: { account_id?: string | null | undefined; campaign_id?: string | null | undefined },
+): boolean {
+  const account = ids.account_id != null;
+  const campaign = ids.campaign_id != null;
+  switch (scope) {
+    case undefined: return true;
+    case 'tenant': return !account && !campaign;
+    case 'account': return account && !campaign;
+    case 'campaign': return campaign;
+  }
+}
+
+/** The answer for a campaign the caller may not add to: the same as one that does not exist. */
+const CAMPAIGN_NOT_FOUND = { error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' } as const;
+
 export async function dncRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
@@ -153,6 +190,12 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     // than the one they asked for. Omitting the filter is not a mismatch: it is
     // FORCED to the caller's own account below, which is what makes a plain
     // `GET /dnc` safe for an account-scoped viewer to call at all.
+    //
+    // What the list FORCES for an account-scoped caller is ownership (DS6): the entries that
+    // belong to their account, i.e. its account entries AND its campaigns' entries (a campaign
+    // entry is stored with no account, so a forced `account_id = <own>` hid every mark made on
+    // the account's own campaigns). Tenant-wide entries are not theirs to list (`scope=tenant` is
+    // refused like `account_id=tenant`).
     const callerAccountId = callerAccountScope(request);
     const requestedAccountId = scopeFilter(q.account_id);
     if (callerAccountId !== null && requestedAccountId !== undefined && requestedAccountId !== callerAccountId) {
@@ -161,7 +204,12 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
         message: 'account_id does not match your account-scoped membership',
       });
     }
-    const effectiveAccountId = callerAccountId !== null ? callerAccountId : requestedAccountId;
+    if (callerAccountId !== null && q.scope === 'tenant') {
+      return reply.code(403).send({
+        error: 'Forbidden',
+        message: 'Entries for every campaign are listed only for members of the whole organisation',
+      });
+    }
 
     // Too few digits is refused rather than run: one digit read a tenth of the list.
     const phone = q.phone !== undefined ? dncPhoneSearch(q.phone) : undefined;
@@ -172,8 +220,10 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     const { entries, total } = await dncService.list({
       tenantId: request.tenantId!,
       ...(phone ? { phone: phone.search } : {}),
-      ...(effectiveAccountId !== undefined ? { accountId: effectiveAccountId } : {}),
+      ...(callerAccountId !== null ? { ownerAccountId: callerAccountId } : {}),
+      ...(requestedAccountId !== undefined ? { accountId: requestedAccountId } : {}),
       ...(scopeFilter(q.campaign_id) !== undefined ? { campaignId: scopeFilter(q.campaign_id) } : {}),
+      ...(q.scope !== undefined ? { scope: q.scope } : {}),
       ...(q.source !== undefined ? { source: q.source } : {}),
       limit: q.limit,
       offset: q.offset,
@@ -199,40 +249,83 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed) return reply;
     const body = parsed.data;
 
-    // An account-scoped caller may only write to THEIR OWN account. Omitting
-    // `account_id` (⇒ tenant-wide), naming the tenant explicitly, or naming a
-    // sibling account are all refused — the dangerous one is the omission,
-    // which would otherwise silently create a suppression that blocks dialing
-    // for every account in the tenant, not just the caller's own.
-    if (!accountScopeAllows(request, body.account_id)) {
-      return reply.code(403).send({
-        error: 'Forbidden',
-        message: 'account_id must match your account-scoped membership',
+    if (!dncScopeAgrees(body.scope, body)) {
+      return reply.code(400).send({
+        error: 'Bad Request',
+        code: 'invalid_dnc_scope',
+        message: 'scope must agree with account_id and campaign_id: tenant names neither, account names an account, campaign names a campaign',
       });
     }
 
     /**
-     * `account_id` must belong to THIS tenant. `dnc_entries.account_id` is
-     * `REFERENCES accounts(id)` with no composite FK back to `tenant_id`
-     * — the same shape `POST /users/invite`, credits
-     * allocate, and the phone-number tag routes already document and fix.
-     * A tenant-wide caller naming a foreign tenant's account id would write
-     * a `dnc_entries` row this tenant does not own; dial-time suppression
-     * lookups are tenant-scoped so it cannot suppress the OTHER tenant's
-     * numbers, but it is the identical write-hygiene gap this PR already
-     * treats as load-bearing elsewhere, so it gets the same guard.
+     * Where the rows go, decided ONCE here from the request and the caller's membership.
+     *
+     * - **One campaign** (`campaign_id`, DS2): one of this tenant's campaigns, in an account the
+     *   caller manages (any, for a member of the whole organisation). Anything else, a foreign
+     *   tenant's id, a sibling account's campaign or an id that names nothing, is the same 404,
+     *   so the answer never says whether such a campaign exists. Stored the way an agent's mark
+     *   is (`account_id NULL, campaign_id <id>`, `markDnc`), so the page and the station write one
+     *   row for one scope and a re-add from either is `already_present`; an `account_id` sent
+     *   beside it must be the campaign's own and is not stored (the campaign already names it).
+     * - **One account** (`account_id`): the caller's own, or any of this tenant's for a member of
+     *   the whole organisation.
+     * - **Every campaign** (neither): only a member of the whole organisation (DS3). An
+     *   account-scoped caller is refused, never narrowed: saying nothing must not write the
+     *   widest row there is, and silently writing a narrower one would be a scope they did not ask
+     *   for either.
      */
-    if (body.account_id != null) {
+    const callerAccountId = callerAccountScope(request);
+    let stored: { accountId: string | null; campaignId: string | null; coverAccountId: string | null | undefined };
+    if (body.campaign_id != null) {
+      const campaign = await agencyCampaignRepository.findById(body.campaign_id);
+      if (
+        !campaign
+        || campaign.tenant_id !== request.tenantId
+        || (callerAccountId !== null && campaign.account_id !== callerAccountId)
+        || (body.account_id != null && body.account_id !== campaign.account_id)
+      ) {
+        return reply.code(404).send(CAMPAIGN_NOT_FOUND);
+      }
+      stored = { accountId: null, campaignId: campaign.id, coverAccountId: campaign.account_id };
+    } else if (body.account_id != null) {
+      if (!accountScopeAllows(request, body.account_id)) {
+        return reply.code(403).send({
+          error: 'Forbidden',
+          message: 'account_id must match your account-scoped membership',
+        });
+      }
+      /**
+       * `account_id` must belong to THIS tenant. `dnc_entries.account_id` is
+       * `REFERENCES accounts(id)` with no composite FK back to `tenant_id`
+       * — the same shape `POST /users/invite`, credits
+       * allocate, and the phone-number tag routes already document and fix.
+       * A tenant-wide caller naming a foreign tenant's account id would write
+       * a `dnc_entries` row this tenant does not own; dial-time suppression
+       * lookups are tenant-scoped so it cannot suppress the OTHER tenant's
+       * numbers, but it is the identical write-hygiene gap, so it gets the same guard.
+       */
       const targetAccount = await accountRepository.findByIdInTenant(body.account_id, request.tenantId!);
       if (!targetAccount) {
         return reply.code(404).send({ error: 'Not Found', message: 'Account not found' });
       }
+      stored = { accountId: body.account_id, campaignId: null, coverAccountId: body.account_id };
+    } else {
+      if (callerAccountId !== null) {
+        return reply.code(403).send({
+          error: 'Forbidden',
+          message: 'Only a member of the whole organisation can block a number in every campaign: '
+            + 'choose your account or one of its campaigns',
+        });
+      }
+      stored = { accountId: null, campaignId: null, coverAccountId: undefined };
     }
 
     const summary = await dncService.add({
       tenantId: request.tenantId!,
-      ...(body.account_id != null ? { accountId: body.account_id } : {}),
-      ...(body.campaign_id != null ? { campaignId: body.campaign_id } : {}),
+      ...(stored.accountId !== null ? { accountId: stored.accountId } : {}),
+      ...(stored.campaignId !== null ? { campaignId: stored.campaignId } : {}),
+      // DS4: a narrower add skips a number a wider entry already blocks there.
+      ...(stored.coverAccountId !== undefined ? { coverAccountId: stored.coverAccountId } : {}),
       phoneNumbers: body.phone_numbers,
       source: body.source,
       ...(body.reason !== undefined ? { reason: body.reason } : {}),
@@ -241,6 +334,8 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
       // a number self-reported.
       ...(request.user?.id ? { addedBy: request.user.id } : {}),
     });
+    const storedRow = { account_id: stored.accountId, campaign_id: stored.campaignId };
+    const auditAccountId = stored.accountId ?? stored.coverAccountId ?? null;
 
     // Platform audit trail, distinct from the DNC-specific log line
     // above. No phone numbers in `details` — `phone_numbers` is PII and
@@ -248,24 +343,25 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     // per-outcome breakdown are recorded.
     platformAuditLogger.log({
       tenant_id: request.tenantId!,
-      ...(body.account_id != null
-        ? { account_id: body.account_id }
+      ...(auditAccountId !== null
+        ? { account_id: auditAccountId }
         : request.accountId ? { account_id: request.accountId } : {}),
       ...requestAuditActor(request),
       action: 'dnc_entry.created',
       resource_type: 'dnc_entry',
-      ...(body.campaign_id != null ? { campaign_id: body.campaign_id } : {}),
+      ...(stored.campaignId !== null ? { campaign_id: stored.campaignId } : {}),
       details: {
-        // Both columns, via the shared helper — an entry carrying an account AND a
-        // campaign is the narrowest scope there is, and labelling it `account`
-        // recorded a wider reach than the row has. See `dncScopeLabel`.
-        scope: dncScopeLabel(body),
+        // The STORED scope, via the shared helper, never the request's ids: a campaign add
+        // that named its account too stores the campaign alone, and the audit records the
+        // reach the rows have. See `dncScopeLabel`.
+        scope: dncScopeLabel(storedRow),
         source: body.source,
         requested: body.phone_numbers.length,
         added: summary.added,
         already_present: summary.already_present,
+        already_covered: summary.already_covered,
         invalid: summary.invalid,
-        ...(body.campaign_id != null ? { campaign_id: body.campaign_id } : {}),
+        ...(stored.campaignId !== null ? { campaign_id: stored.campaignId } : {}),
       },
     });
 

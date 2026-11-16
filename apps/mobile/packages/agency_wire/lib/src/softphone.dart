@@ -1116,8 +1116,14 @@ final class ManualCallUpdateRequest {
 /// Contract: `AgencyApi.AgencyManualCallDispositionRequest`.
 @immutable
 final class ManualCallDispositionRequest {
-  ManualCallDispositionRequest({required this.code, this.notes, this.callbackAt, Map<String, Object?>? fields})
-    : fields = fields == null ? null : frozenMap(fields);
+  ManualCallDispositionRequest({
+    required this.code,
+    this.notes,
+    this.callbackAt,
+    this.promiseDate,
+    this.promiseAmount,
+    Map<String, Object?>? fields,
+  }) : fields = fields == null ? null : frozenMap(fields);
 
   /// A code of the catalog the call resolves against.
   final String code;
@@ -1126,6 +1132,11 @@ final class ManualCallDispositionRequest {
   /// Required when the catalog entry sets `requires_datetime`.
   final DateTime? callbackAt;
 
+  /// Promise to pay (PT1): `YYYY-MM-DD`, required when the entry sets
+  /// `requires_promise`; the amount optional (a decimal string).
+  final String? promiseDate;
+  final String? promiseAmount;
+
   /// Saved with the outcome, replacing the stored values; required fields must be filled.
   final Map<String, Object?>? fields;
 
@@ -1133,6 +1144,8 @@ final class ManualCallDispositionRequest {
     final json = <String, Object?>{'code': code};
     putIfSet(json, 'notes', notes);
     if (callbackAt != null) json['callback_at'] = isoUtc(callbackAt!);
+    putIfSet(json, 'promise_date', promiseDate);
+    putIfSet(json, 'promise_amount', promiseAmount);
     putIfSet(json, 'fields', fields);
     return json;
   }
@@ -1143,10 +1156,12 @@ final class ManualCallDispositionRequest {
       other.code == code &&
       other.notes == notes &&
       other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount &&
       jsonEquals(other.fields, fields);
 
   @override
-  int get hashCode => Object.hash(code, notes, callbackAt, jsonHash(fields));
+  int get hashCode => Object.hash(code, notes, callbackAt, promiseDate, promiseAmount, jsonHash(fields));
 }
 
 /// `POST /proxy/agency/softphone/calls/:id/dnc`. The client never states the

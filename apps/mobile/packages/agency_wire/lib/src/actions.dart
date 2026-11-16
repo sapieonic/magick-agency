@@ -70,7 +70,13 @@ final class HangupResponse {
 /// Contract: `AgencyDispositionRequest`.
 @immutable
 final class DispositionRequest {
-  const DispositionRequest({required this.dispositionCode, this.notes, this.callbackAt});
+  const DispositionRequest({
+    required this.dispositionCode,
+    this.notes,
+    this.callbackAt,
+    this.promiseDate,
+    this.promiseAmount,
+  });
 
   final String dispositionCode;
 
@@ -80,10 +86,19 @@ final class DispositionRequest {
   /// Required when the catalog entry sets `requires_datetime`.
   final DateTime? callbackAt;
 
+  /// Promise to pay (PT1): `YYYY-MM-DD` on the customer's calendar. Required
+  /// when the entry sets `requires_promise`, refused on any other.
+  final String? promiseDate;
+
+  /// The promised amount, a decimal string (≥ 0, at most two places), optional.
+  final String? promiseAmount;
+
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'disposition_code': dispositionCode};
     putIfSet(json, 'notes', notes);
     putIfSet(json, 'callback_at', callbackAt == null ? null : isoUtc(callbackAt!));
+    putIfSet(json, 'promise_date', promiseDate);
+    putIfSet(json, 'promise_amount', promiseAmount);
     return json;
   }
 
@@ -92,10 +107,12 @@ final class DispositionRequest {
       other is DispositionRequest &&
       other.dispositionCode == dispositionCode &&
       other.notes == notes &&
-      other.callbackAt == callbackAt;
+      other.callbackAt == callbackAt &&
+      other.promiseDate == promiseDate &&
+      other.promiseAmount == promiseAmount;
 
   @override
-  int get hashCode => Object.hash(dispositionCode, notes, callbackAt);
+  int get hashCode => Object.hash(dispositionCode, notes, callbackAt, promiseDate, promiseAmount);
 }
 
 /// Contract: `AgencyDispositionResponse`.
@@ -110,6 +127,7 @@ final class DispositionResponse {
     String? contactStateRaw,
     this.nextAttemptAt,
     this.callbackRequestedAt,
+    this.dncRecorded,
     required this.agentState,
     String? agentStateRaw,
   }) : contactStateRaw = contactStateRaw ?? contactState.wire,
@@ -127,6 +145,7 @@ final class DispositionResponse {
       contactStateRaw: contact,
       nextAttemptAt: j.timeOrNull('next_attempt_at'),
       callbackRequestedAt: j.timeOrNull('callback_requested_at'),
+      dncRecorded: j.boolOrNull('dnc_recorded'),
       agentState: AgentState.fromWire(agent),
       agentStateRaw: agent,
     );
@@ -148,6 +167,12 @@ final class DispositionResponse {
   /// What the agent asked for, echoed.
   final DateTime? callbackRequestedAt;
 
+  /// A suppress outcome's Do Not Call entry (DS8): true when it is on the
+  /// campaign's list, false when the number could not go on it. Null when no
+  /// entry was attempted (another outcome, a replay, an older server): say
+  /// nothing about the list then.
+  final bool? dncRecorded;
+
   /// ADVISORY snapshot; races the station by design. Never assign state from it.
   final AgentState agentState;
   final String agentStateRaw;
@@ -162,6 +187,7 @@ final class DispositionResponse {
       other.contactStateRaw == contactStateRaw &&
       other.nextAttemptAt == nextAttemptAt &&
       other.callbackRequestedAt == callbackRequestedAt &&
+      other.dncRecorded == dncRecorded &&
       other.agentStateRaw == agentStateRaw;
 
   @override
@@ -173,6 +199,7 @@ final class DispositionResponse {
     contactStateRaw,
     nextAttemptAt,
     callbackRequestedAt,
+    dncRecorded,
     agentStateRaw,
   );
 }

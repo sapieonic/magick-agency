@@ -296,7 +296,7 @@ describe('dedupeColumns — duplicates decided by a column the operator picks', 
       // The phone cell, as for every rejection: the export writes it in the phone column.
       raw_value: '+919800000002',
       reason_code: 'duplicate_key',
-      reason: 'Duplicate Loan No of an earlier row in this file.',
+      reason: 'Same Loan No as row 2 of this file, so this row was left out. Delete one of the two rows, or correct the Loan No.',
     });
   });
 
@@ -323,7 +323,7 @@ describe('dedupeColumns — duplicates decided by a column the operator picks', 
     const csv = 'Mobile,Loan No\n+919800000001,LN-SECRET\n+919800000002,LN-SECRET\n';
     const { summary, rejections } = await run(csv, { phoneColumn: 'Mobile', dedupeColumns: ['loan no'] });
     expect(summary).toMatchObject({ accepted: 1, duplicates: 1 });
-    expect(rejections[0]!.reason).toBe('Duplicate Loan No of an earlier row in this file.');
+    expect(rejections[0]!.reason).toBe('Same Loan No as row 2 of this file, so this row was left out. Delete one of the two rows, or correct the Loan No.');
     expect(rejections[0]!.reason).not.toContain('LN-SECRET');
   });
 
@@ -384,7 +384,7 @@ describe('dedupeColumns — a duplicate key combining up to three columns', () =
       column: 'Loan No + Branch',
       raw_value: '+919800000002',
       reason_code: 'duplicate_key',
-      reason: 'Duplicate Loan No + Branch of an earlier row in this file.',
+      reason: 'Same Loan No + Branch as row 2 of this file, so this row was left out. Delete one of the two rows, or correct the Loan No + Branch.',
     });
     expect(rejections[0]!.reason).not.toContain('LN-001');
   });

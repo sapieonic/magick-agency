@@ -62,14 +62,16 @@ describe('assigned_to on the roster', () => {
 
 describe('the roster CSV owner columns', () => {
   it('appends the owner id, name and time', () => {
-    expect(CONTACT_CSV_COLUMNS.slice(-3)).toEqual(['assigned_user_id', 'assigned_to', 'assigned_at']);
+    // Followed only by the promise-to-pay columns (PT12), appended after them.
+    expect(CONTACT_CSV_COLUMNS.slice(-6, -3)).toEqual(['assigned_user_id', 'assigned_to', 'assigned_at']);
+    expect(CONTACT_CSV_COLUMNS.slice(-3)).toEqual(['promise_date', 'promise_amount', 'promise_state']);
     const line = contactCsvRow({
       id: 'c1', phone_e164: '+1', state: 'pending', attempt_count: 0, our_fault_attempts: 0,
       last_outcome: null, last_disposition: null, next_attempt_at: 'n', suppressed_reason: null,
       timezone: null, csv_line_number: 1, created_at: 'c', updated_at: 'u',
       assigned_user_id: A, assigned_to_name: 'Asha', assigned_at: 't',
     });
-    expect(line.trimEnd().endsWith(`${A},Asha,t`)).toBe(true);
+    expect(line.trimEnd().endsWith(`${A},Asha,t,,,`)).toBe(true);
   });
 
   it('names owners in one lookup per page and degrades to blanks', async () => {

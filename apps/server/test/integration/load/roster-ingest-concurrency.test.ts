@@ -13,19 +13,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * idempotency keys are real.
  *
  * What it pins:
- *  1. K concurrent imports of one file into one campaign: every job completes, the roster
- *     holds each person exactly once (the row fingerprint), and the jobs' own accounting
- *     adds up — every job accepted the file's valid rows, and the roster refused the
- *     duplicates of all but one.
+ *  1. K concurrent starts of one file into one campaign: exactly one import runs and the
+ *     others are refused `import_in_progress` (IM7, one live import per campaign). Started
+ *     again once it has finished, as an operator would, each re-import skips every row as
+ *     already in the campaign (IM3): the roster holds each person exactly once, and every
+ *     job's accounting adds up (`accepted + skipped + rejected = rows_read`).
  *  2. Different files into one campaign, and files into many campaigns across two tenants,
- *     all at once: every campaign holds exactly its files' rows, on its own tenant and
- *     account, and the reads made meanwhile never 5xx, never see a total above the final
- *     one, and never go backwards.
+ *     all at once (a refused start retried until its campaign is free): every campaign
+ *     holds exactly its files' rows, on its own tenant and account, and the reads made
+ *     meanwhile never 5xx, never see a total above the final one, and never go backwards.
  *  3. A re-sent chunk is refused by its idempotency key however many copies race: one
  *     write, every other copy `duplicate_chunk`, nothing added.
- * Mutation-checked: inserting contacts without their `row_fingerprint` reds case 1 (4 800
- * rows for 1 200 people); turning the chunk marker's `ON CONFLICT … DO NOTHING` into an
- * update (`contact.repository.ts`) reds case 3.
+ * Mutation-checked: dropping `createExclusive`'s live-import check reds case 1 (more than
+ * one 202); turning the chunk marker's `ON CONFLICT … DO NOTHING` into an update
+ * (`contact.repository.ts`) reds case 3.
  */
 
 const s3 = vi.hoisted(() => ({ files: new Map<string, Buffer>() }));
@@ -102,13 +103,35 @@ async function upload(f: TenantFloor, csv: string, name = 'roster.csv'): Promise
   return res.json().s3_key as string;
 }
 
-async function startJob(f: TenantFloor, s3Key: string, campaign: string, who = 0): Promise<string> {
+/** Start an import: the job id, or null when the campaign already has a live import (409). */
+async function tryStartJob(f: TenantFloor, s3Key: string, campaign: string, who = 0): Promise<string | null> {
   const res = await call(app(), 'POST', '/proxy/agency/ingest/jobs', f.supervisors[who]!, f, {
     s3_key: s3Key, file_name: 'roster.csv', phone_column: 'Mobile', default_country_code: '91', campaign_id: campaign,
   });
   expectHealthy(res, 'start job');
+  if (res.statusCode === 409) {
+    expect(res.json()).toMatchObject({ code: 'import_in_progress' });
+    return null;
+  }
   expect(res.statusCode, res.body).toBe(202);
   return res.json().job_id as string;
+}
+
+async function startJob(f: TenantFloor, s3Key: string, campaign: string, who = 0): Promise<string> {
+  const id = await tryStartJob(f, s3Key, campaign, who);
+  expect(id, 'the campaign had a live import').not.toBeNull();
+  return id!;
+}
+
+/** Start an import, retrying while the campaign's one live import runs, as an operator would. */
+async function startJobWhenFree(f: TenantFloor, s3Key: string, campaign: string): Promise<string> {
+  const deadline = Date.now() + 45_000;
+  for (;;) {
+    const id = await tryStartJob(f, s3Key, campaign);
+    if (id) return id;
+    if (Date.now() > deadline) throw new Error(`campaign ${campaign} never became free`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 /** Poll like the wizard until the job is terminal. */
@@ -150,7 +173,7 @@ function expectNonDecreasingUpTo(series: number[], max: number, label: string) {
 }
 
 describe('concurrent roster imports (integration, load)', () => {
-  it('1. one file imported K times at once into one campaign: each person once, the accounting adds up', async () => {
+  it('1. one file started K times at once into one campaign: one import runs, the re-imports skip, each person once', async () => {
     const f = floors[0]!;
     const campaign = f.campaigns[0]!;
     const { csv, valid } = roster(1, ROWS);
@@ -158,17 +181,25 @@ describe('concurrent roster imports (integration, load)', () => {
 
     let finished = false;
     const reads = readWhile(f, campaign, () => finished);
-    const jobIds = await Promise.all(Array.from({ length: COPIES }, (_, i) => startJob(f, key, campaign, i % 2)));
-    const jobs = await Promise.all(jobIds.map((id) => settle(f, id)));
+    const started = await Promise.all(Array.from({ length: COPIES }, (_, i) => tryStartJob(f, key, campaign, i % 2)));
+    const winners = started.filter((id): id is string => id !== null);
+    expect(winners, 'exactly one import may run into a campaign at a time').toHaveLength(1);
+    const first = await settle(f, winners[0]!);
+    expect(first, JSON.stringify(first)).toMatchObject({ status: 'completed', accepted: valid, skipped: 0, rows_read: valid + 5 });
+
+    // The refused starts, again, once the campaign is free: every row is already in it.
+    for (let i = 1; i < COPIES; i++) {
+      const again = await settle(f, await startJob(f, key, campaign, i % 2));
+      // The two in-file repeats are of numbers in the campaign: skipped with them.
+      expect(again, JSON.stringify(again)).toMatchObject({ status: 'completed', accepted: 0, skipped: valid + 2, rejected: 3, rows_read: valid + 5 });
+      expect(again.accepted + again.skipped + again.rejected).toBe(again.rows_read);
+      expect(again.core_rejected_duplicate_rows).toBe(0);
+    }
     finished = true;
     const totals = await reads;
 
-    for (const job of jobs) expect(job, JSON.stringify(job)).toMatchObject({ status: 'completed', accepted: valid, rows_read: valid + 5 });
     expect(await contactsIn(campaign)).toBe(valid);
     expect(await distinctPhonesIn(campaign)).toBe(valid);
-    const refused = await scalar(
-      'SELECT COALESCE(sum(core_rejected_duplicate_rows), 0)::int AS n FROM agency_ingest_jobs WHERE id = ANY($1::uuid[])', [jobIds]);
-    expect(refused).toBe((COPIES - 1) * valid);
     expectNonDecreasingUpTo(totals, valid, 'contacts_total');
   }, 60_000);
 
@@ -193,7 +224,7 @@ describe('concurrent roster imports (integration, load)', () => {
     let finished = false;
     const reads = plan.filter((_, i) => i % 3 === 0).map((p) => readWhile(p.f, p.campaign, () => finished).then((t) => ({ p, t })));
     const started = await Promise.all(rng.shuffle(plan.flatMap((p) => p.files.map((file) => ({ p, file }))))
-      .map(async ({ p, file }) => ({ p, file, id: await startJob(p.f, file.key, p.campaign) })));
+      .map(async ({ p, file }) => ({ p, file, id: await startJobWhenFree(p.f, file.key, p.campaign) })));
     const jobs = await Promise.all(started.map(async (s) => ({ ...s, job: await settle(s.p.f, s.id) })));
     finished = true;
     const series = await Promise.all(reads);

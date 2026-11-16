@@ -91,6 +91,8 @@ final class Disposition {
     this.suppress,
     this.retry,
     this.overrideGrant,
+    this.requiresPromise,
+    this.promiseFollowUpDays,
   });
 
   factory Disposition.fromJson(Map<String, Object?> j) {
@@ -106,6 +108,8 @@ final class Disposition {
       suppress: j.boolOrNull('suppress'),
       retry: retry == null ? null : DispositionRetry.fromJson(retry),
       overrideGrant: override == null ? null : DispositionOverride.fromJson(override),
+      requiresPromise: j.boolOrNull('requires_promise'),
+      promiseFollowUpDays: j.integerOrNull('promise_follow_up_days'),
     );
   }
 
@@ -131,8 +135,19 @@ final class Disposition {
   /// afterwards (contact assignment); null when it grants nothing.
   final DispositionOverride? overrideGrant;
 
+  /// Promise to pay (PT1): collect the date the customer promised to pay (and
+  /// optionally an amount); it becomes `promise_date` / `promise_amount`.
+  /// Recording it never makes the dialler call by itself.
+  final bool? requiresPromise;
+
+  /// PT2: the server books a call this many days after the promised date
+  /// (1–14, the contract's `AGENCY_PROMISE_FOLLOW_UP_DAYS_MAX`); null when it
+  /// books none.
+  final int? promiseFollowUpDays;
+
   bool get noteRequired => requiresNote ?? false;
   bool get datetimeRequired => requiresDatetime ?? false;
+  bool get promiseRequired => requiresPromise ?? false;
 
   @override
   bool operator ==(Object other) =>
@@ -145,11 +160,15 @@ final class Disposition {
       other.terminal == terminal &&
       other.suppress == suppress &&
       other.retry == retry &&
-      other.overrideGrant == overrideGrant;
+      other.overrideGrant == overrideGrant &&
+      other.requiresPromise == requiresPromise &&
+      other.promiseFollowUpDays == promiseFollowUpDays;
 
   @override
-  int get hashCode =>
-      Object.hash(code, label, isSuccess, requiresNote, requiresDatetime, terminal, suppress, retry, overrideGrant);
+  int get hashCode => Object.hash(
+    code, label, isSuccess, requiresNote, requiresDatetime, terminal, suppress, retry, overrideGrant,
+    requiresPromise, promiseFollowUpDays,
+  );
 }
 
 /// An outcome's override grant: what the agent may then do past the

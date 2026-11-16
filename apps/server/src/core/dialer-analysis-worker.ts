@@ -42,6 +42,8 @@ export interface DialerAnalysisWorkerOptions {
   config: DialerAnalysisConfig;
   /** VoiceLink recording hosts the runner's fetch may touch (see `DialerAnalysisRunnerDeps`). */
   recordingHosts?: readonly string[];
+  /** Hosts a Plivo recording's redirect may go to (see `DialerAnalysisRunnerDeps`). */
+  plivoRedirectHosts?: readonly string[];
   /** Poll interval when armed. */
   pollIntervalMs?: number;
   /** Consecutive idle sweeps before disarming (default 2). */
@@ -139,6 +141,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
       analysisService: opts.analysisService,
       config: opts.config,
       ...(opts.recordingHosts ? { recordingHosts: opts.recordingHosts } : {}),
+      ...(opts.plivoRedirectHosts ? { plivoRedirectHosts: opts.plivoRedirectHosts } : {}),
     });
   }
 

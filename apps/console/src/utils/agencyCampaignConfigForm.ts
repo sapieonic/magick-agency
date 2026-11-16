@@ -91,6 +91,7 @@ export function dispositionSummary(entry: AgencyDispositionEntry): string {
   const asks: string[] = [];
   if (entry.requires_note) asks.push('type a note');
   if (entry.requires_datetime) asks.push('pick a date and time to call back');
+  if (entry.requires_promise) asks.push('enter the date the customer promised to pay (and the amount, if they gave one)');
 
   const parts: string[] = [];
   if (asks.length > 0) {
@@ -98,7 +99,9 @@ export function dispositionSummary(entry: AgencyDispositionEntry): string {
   }
 
   if (entry.suppress) {
-    parts.push('The contact is suppressed — nothing dials them again.');
+    // DS8: the outcome puts the number on THIS campaign's Do Not Call list; other campaigns can
+    // still call it, so "nothing dials them again" said more than the outcome does.
+    parts.push('The contact is suppressed and the number goes on this campaign’s Do Not Call list — this campaign won’t dial it again. Other campaigns still can.');
   } else if (entry.terminal) {
     parts.push('The contact is finished on this campaign — no more attempts.');
   } else if (entry.retry && entry.retry.max_attempts > 0) {
@@ -106,8 +109,15 @@ export function dispositionSummary(entry: AgencyDispositionEntry): string {
     parts.push(`We call the contact back ${retryCadence(entry.retry.delay_minutes ?? 0)}, ${times}.`);
   } else if (entry.requires_datetime) {
     parts.push('The contact keeps its place in the queue until that time comes round.');
+  } else if (entry.requires_promise && entry.promise_follow_up_days) {
+    const days = entry.promise_follow_up_days;
+    parts.push(`We call the contact ${days} day${days === 1 ? '' : 's'} after the promised date, in calling hours.`);
   } else {
     parts.push('The contact stays in the queue with its remaining attempts.');
+  }
+
+  if (entry.requires_promise && !entry.promise_follow_up_days) {
+    parts.push('Recording the promise does not book a call by itself.');
   }
 
   parts.push(
@@ -289,6 +299,13 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
     case 'update': {
       const entry = dispositions[edit.index];
       if (!entry) return state;
+      // Turning the promise off takes its follow-up with it: a follow-up without a promise is
+      // refused (PT10), and leaving it behind would make the operator clear two things.
+      if (edit.patch.requires_promise === false) {
+        const { promise_follow_up_days: _days, ...rest } = { ...entry, ...edit.patch };
+        void _days;
+        return { dispositions: dispositions.map((row, i) => (i === edit.index ? rest : row)), autoCodeRows };
+      }
       const merged = { ...entry, ...edit.patch };
       if (merged.override && (merged.suppress || merged.terminal)) {
         const rest = withoutOverride(merged);

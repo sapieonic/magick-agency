@@ -169,6 +169,20 @@ describe('acceptInboundCall', () => {
     expect(mgr.getSession(LEG)!.slotsHeld).toBe(false);
   });
 
+  it('a recorded call turned away (no_capacity) records nothing: it hears busy and is never connected', async () => {
+    const { mgr } = bridge(makeGuardHost({ global: false }));
+    await mgr.acceptInboundCall({ ...PARAMS, connectable: true, parkedSeconds: 60, browserCloseGraceMs: 5000, record: true });
+    expect(mgr.getSession(LEG)!.recordEnabled).toBe(false);
+    // With a slot, the same call records (the account allows it).
+    const admitted = bridge();
+    await admitted.mgr.acceptInboundCall({ ...PARAMS, connectable: true, parkedSeconds: 60, browserCloseGraceMs: 5000, record: true });
+    expect(admitted.mgr.getSession(LEG)!.recordEnabled).toBe(true);
+    // Over the account's own limit it is still held for an agent, so it keeps its recording.
+    const full = bridge(makeGuardHost({ account: false }));
+    await full.mgr.acceptInboundCall({ ...PARAMS, connectable: true, parkedSeconds: 60, browserCloseGraceMs: 5000, record: true });
+    expect(full.mgr.getSession(LEG)!.recordEnabled).toBe(true);
+  });
+
   it('takeSlots: false takes none', async () => {
     const { mgr, host } = bridge();
     expect(await mgr.acceptInboundCall({ ...PARAMS, takeSlots: false })).toMatchObject({ accepted: true, capacity: 'not_requested' });

@@ -25,6 +25,7 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 
 import { RosterSection } from '../../pages/agency/campaign-detail/insights/RosterSection';
+import { OverviewKpis } from '../../pages/agency/campaign-detail/insights/OverviewSection';
 import { reconciliationLabel } from '../../pages/agency/campaign-detail/insights/InsightsParts';
 import { AllocationSection } from '../../pages/agency/campaign-detail/insights/AllocationSection';
 import {
@@ -187,10 +188,67 @@ describe('calls and outcomes', () => {
   it('reads dials, connect rate, redials and handle time', () => {
     show(<CallsSection ctx={ctx} activity={activity()} />);
     // Human connects over first dials (/stats connect_rate_pct): 360 / (1,240 dials - 41 redials).
-    expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30%');
+    // The range holds soft-phone calls, so the dialler's rate is named as the dialler's (SR1).
+    expect(screen.getByTestId('kpi-connected').textContent).toContain('Dialler connect rate 30%');
     expect(screen.getByTestId('kpi-redials').textContent).toContain('29 connected · 3 hit the limit · 1 refused at the limit');
     expect(screen.getByTestId('kpi-aht').textContent).toContain('3m 41s');
     expect(screen.getByTestId('kpi-softphone').textContent).toContain('7');
+  });
+
+  describe('the soft phone beside the dialler (SR1, SR5)', () => {
+    type Soft = { placed: number; connected: number; human_connects: number };
+    const withSoft = (softphone: Soft) => {
+      const a = activity();
+      return { ...a, calls: { ...a.calls, softphone, softphone_calls: softphone.placed } };
+    };
+
+    it('shows the soft phone\'s placed, connected and rate, and All calls, never moving the dialler\'s rate', () => {
+      show(<CallsSection ctx={ctx} activity={withSoft({ placed: 40, connected: 30, human_connects: 20 })} />);
+      // The dialler's: 360 human connects over 1,240 dials − 41 redials, whatever the soft phone did.
+      expect(screen.getByTestId('kpi-connected').textContent).toContain('Dialler connect rate 30%');
+      const soft = screen.getByTestId('kpi-softphone').textContent;
+      expect(soft).toContain('40');
+      expect(soft).toContain('30 connected');
+      expect(soft).toContain('connect rate 50%');
+      expect(soft).toContain('not in the dialler’s figures');
+      // All calls: 1,240 + 40 placed; 400 + 30 connected; (360 + 20) / (1,199 + 40) = 30.7%.
+      const all = screen.getByTestId('kpi-all-calls').textContent;
+      expect(all).toContain('1,280');
+      expect(all).toContain('430 connected');
+      expect(all).toContain('connect rate 30.7%');
+    });
+
+    it('withholds the soft phone\'s rate below 25 calls placed, as every rate on the page', () => {
+      show(<CallsSection ctx={ctx} activity={withSoft({ placed: 7, connected: 4, human_connects: 3 })} />);
+      expect(screen.getByTestId('kpi-softphone').textContent).toContain('connect rate Not enough calls yet');
+    });
+
+    it('with the soft phone off and none in range: no soft-phone figures, and the rate is just the connect rate', () => {
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} />);
+      expect(screen.queryByTestId('kpi-softphone')).toBeNull();
+      expect(screen.queryByTestId('kpi-all-calls')).toBeNull();
+      expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30%');
+      expect(screen.getByTestId('kpi-connected').textContent).not.toContain('Dialler');
+    });
+
+    it('with the soft phone on and none in range: the figures, at zero', () => {
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: true }} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} />);
+      expect(screen.getByTestId('kpi-softphone').textContent).toContain('connect rate —');
+      expect(screen.getByTestId('kpi-all-calls').textContent).toContain('1,240');
+    });
+
+    it('with the soft phone off, calls already logged in range still show', () => {
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: false }} activity={withSoft({ placed: 2, connected: 1, human_connects: 1 })} />);
+      expect(screen.getByTestId('kpi-softphone').textContent).toContain('2');
+    });
+
+    it('from a server that predates the counts: no soft-phone figures', () => {
+      const a = activity();
+      const { softphone: _gone, ...older } = a.calls;
+      show(<CallsSection ctx={{ ...ctx, softphoneEnabled: true }} activity={{ ...a, calls: older as typeof a.calls }} />);
+      expect(screen.queryByTestId('kpi-softphone')).toBeNull();
+      expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30%');
+    });
   });
 
   it('lists every outcome, summing to the dials, each linked to its attempts in range', () => {
@@ -534,5 +592,29 @@ describe('upload history', () => {
   it('quotes a file name with a comma and quotes in its CSV', () => {
     show(<UploadsSection campaignId="camp-1" campaignName="EMI Recovery" uploads={uploads()} timezone={ZONE} tenantId="tenant-1" accountId="account-1" />);
     expect(csvOf('Download CSV').split('\r\n')[1]?.startsWith('"october, cycle ""B"".csv",Anita Kulkarni,')).toBe(true);
+  });
+});
+
+describe('the Overview\'s connect rate beside the soft phone (SR1, SR5)', () => {
+  const none = { activity: null, health: null, allocation: null };
+  const withSoft = (softphone: { placed: number; connected: number; human_connects: number }) => {
+    const a = activity();
+    return { ...a, calls: { ...a.calls, softphone, softphone_calls: softphone.placed } };
+  };
+
+  it('names the dialler\'s rate and adds the soft phone\'s and all calls\' when the range holds soft-phone calls', () => {
+    show(<OverviewKpis ctx={ctx} summary={summary()} allocation={allocation()} activity={withSoft({ placed: 40, connected: 30, human_connects: 20 })} health={health()} unavailable={none} />);
+    const kpi = screen.getByTestId('overview-kpi-connect').textContent;
+    expect(kpi).toContain('Dialler connect rate · Today');
+    expect(kpi).toContain('30%');
+    expect(kpi).toContain('soft phone 50%');
+    expect(kpi).toContain('all calls 30.7%');
+  });
+
+  it('is just the connect rate with the soft phone off and none in range', () => {
+    show(<OverviewKpis ctx={{ ...ctx, softphoneEnabled: false }} summary={summary()} allocation={allocation()} activity={withSoft({ placed: 0, connected: 0, human_connects: 0 })} health={health()} unavailable={none} />);
+    const kpi = screen.getByTestId('overview-kpi-connect').textContent;
+    expect(kpi).toContain('Connect rate · Today');
+    expect(kpi).not.toContain('soft phone');
   });
 });

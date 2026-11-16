@@ -33,6 +33,17 @@
     "callback_requested_at": null,
     "agent_state": "available"
   },
+  "disposition_response_suppress_unlisted": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+    "disposition_code": "do_not_call",
+    "contact_state": "suppressed",
+    "next_attempt_at": null,
+    "callback_requested_at": null,
+    "dnc_recorded": false,
+    "agent_state": "available"
+  },
   "notes_request": {
     "notes": "Customer asked about the no-claim bonus."
   },

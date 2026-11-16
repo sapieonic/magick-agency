@@ -47,7 +47,7 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 | `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile`, `push` |
 | `agency.ts` | `agency` |
 | `voice.ts` | `concurrency`, `telephony`, `telephonyCredentials`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
-| `analysis.ts` | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`, `retention` |
+| `analysis.ts` | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `plivoRecording`, `recordingUrlSigningSecret`, `retention` |
 
 A module that needs S3 reads `config.s3` rather than declaring its own key.
 
