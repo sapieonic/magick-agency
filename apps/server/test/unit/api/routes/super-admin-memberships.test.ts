@@ -89,10 +89,6 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
   // `del` still observe the key.
   redisCache: { del: mocks.redisDel, delForRevocation: async (...k: string[]) => { await mocks.redisDel(...k); return mocks.revocation.cleared; } },
 }));
-// Live call listening (LS10): a role change or a removal re-checks the user's open listens.
-vi.mock('../../../../src/agency/listen/listen-revocation.js', () => ({
-  revokeListens: mocks.revokeListens,
-}));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({
   issueInvite: mocks.issueInvite,
 }));
@@ -107,7 +103,11 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
 import { superAdminRoutes } from '../../../../src/api/routes/super-admin.routes.js';
+import { onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
 import { UNVERIFIED_ADDRESS_HOLDER } from '../../../../src/auth/firebase-identity.js';
+
+// Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
+onMembershipChanged(mocks.revokeListens);
 
 const SECRET = 'test-super-admin-secret-at-least-16';
 const ADMIN = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'root@magick.test', name: 'Root', status: 'active' };

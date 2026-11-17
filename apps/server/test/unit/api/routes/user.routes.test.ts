@@ -54,7 +54,6 @@ const mocks = vi.hoisted(() => ({
   },
   revokeListens: vi.fn(async () => {}),
 }));
-vi.mock('../../../../src/agency/listen/listen-revocation.js', () => ({ revokeListens: mocks.revokeListens }));
 
 vi.mock('../../../../src/auth/session.middleware.js', () => ({
   sessionMiddleware: async () => {},
@@ -85,6 +84,10 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
 
 import Fastify from 'fastify';
 import { userRoutes } from '../../../../src/api/routes/user.routes.js';
+import { onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
+
+// Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
+onMembershipChanged(mocks.revokeListens);
 
 // The validator requires `account_id: z.string().uuid()`, so every fixture
 // below has to be UUID-shaped or the request 400s at schema validation —

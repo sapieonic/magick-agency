@@ -33,7 +33,7 @@ import type { CallLease, ReaperSnapshotBody } from './ipc-protocol.js';
 import { forkServerChild } from './fork.js';
 import { probeSocketReadStop } from './socket-pause.js';
 import { slotFor } from './roles.js';
-import { onListenRevocation } from '../agency/listen/listen-revocation.js';
+import { onMembershipChanged } from '../rbac/membership-changed.js';
 
 export interface PrepareMediaPrimaryOptions {
   /** Tests: how a media child is forked. */
@@ -166,8 +166,8 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
   setConcurrencyControl(broadcasting);
   // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
   const offDialable = relayDialableInvalidations(cluster);
-  // A role change or a member's removal re-checks the supervisor's listens in every worker (LS10).
-  const offListen = onListenRevocation((tenantId, userId) => cluster.revokeListens(tenantId, userId));
+  // A membership change re-checks the supervisor's listens in every worker (LS10).
+  const offListen = onMembershipChanged((tenantId, userId) => cluster.revokeListens(tenantId, userId));
 
   await cluster.start();
   logger.info({ mediaWorkers: cluster.count }, 'Media worker processes started');

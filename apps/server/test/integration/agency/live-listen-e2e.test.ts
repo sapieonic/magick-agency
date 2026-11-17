@@ -36,7 +36,7 @@ const env = vi.hoisted(() => {
     RATE_LIMIT_MAX: '1000000',
     RATE_LIMIT_USER_MAX: '1000000',
     // The periodic re-check (LS10's backstop) out of the way: a revocation that ends a listen here
-    // within seconds went through the immediate path (`revokeListens`), not a pass.
+    // within seconds went through the immediate path (`membershipRevoked`'s subscriber), not a pass.
     AGENCY_LISTEN_RECHECK_MS: '300000',
     SUPER_ADMIN_JWT_SECRET: 'listen-e2e-super-admin-secret',
     LOG_LEVEL: 'error',

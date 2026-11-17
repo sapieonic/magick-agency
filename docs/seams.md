@@ -418,15 +418,17 @@ Bearer) and `test/unit/api/agency-agent-reach.test.ts` (`TOKEN_ONLY_ROUTES`: the
 routes without a session).
 
 **Platform's member routes reach agency's listen revocation.** Every platform route that changes
-a membership calls `revokeListens(tenantId, userId)` (`agency/listen/listen-revocation.ts`) after
-the membership cache is cleared, so a supervisor who may no longer listen is cut off at once
+a membership calls `membershipAdded` or `membershipRevoked(tenantId, userId)`
+(`rbac/membership-changed.ts`), which clears the membership cache and then tells its subscribers,
+so a supervisor who may no longer listen is cut off at once
 (docs/listening.md LS10): in `api/routes/user.routes.ts` the role change, the member removal and
 `POST /users/invite` (a seat added, LS22 l); in `api/routes/invites.routes.ts` the invite's claim
 (LS22 l); in `api/routes/super-admin/tenants.ts` the super-admin's add-user
-(`POST /super-admin/tenants/:id/users`, LS22 l), role change and member removal (LS16 t). It is a hook, not a reference to
-the runtime: the agency bootstrap registers the registry's `revokeUser` (`startAgency`) and the
+(`POST /super-admin/tenants/:id/users`, LS22 l), role change and member removal (LS16 t). It is a hook (`onMembershipChanged`), not a reference to
+the agency: the agency bootstrap subscribes the registry's `revokeUser` (`startAgency`) and the
 primary of a multi-process server its `listen.revoke` broadcast to the media workers
-(`startMediaWorkers`); with none registered it does nothing, and it never throws. Pinned through the
+(`startMediaWorkers`); with none subscribed only the cache is cleared, and a subscriber's failure
+is logged, never thrown. Pinned through the
 real routes by `test/integration/agency/live-listen-e2e.test.ts` and, across processes,
 `test/integration/cluster/live-listen.test.ts`; the super-admin's three by
 `test/unit/api/routes/super-admin-memberships.test.ts`.

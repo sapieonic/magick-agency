@@ -5,9 +5,7 @@ import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
-import { redisCache } from '../../cache/redis-cache.js';
-import { membershipCacheKey } from '../middleware/membership-cache-key.js';
-import { revokeListens } from '../../agency/listen/listen-revocation.js';
+import { membershipAdded, membershipRevoked } from '../../rbac/membership-changed.js';
 import { sendRevocationCacheUnavailable } from '../../cache/revocation-unavailable.js';
 import { inviteUserSchema, updateRoleSchema } from '../validators/user.validator.js';
 import { canManageRole, ROLE_HIERARCHY } from '@magick-agency/contracts/rbac';
@@ -432,11 +430,10 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     }
     const { membership, user } = invited;
 
-    await redisCache.del(membershipCacheKey(user.id, request.tenantId!));
     // A new account-scoped seat for someone already in the tenant (a tenant-wide admin invited as
-    // an account's viewer) is the membership the tenant context now picks in that account: their
-    // listens there are re-checked now, not at the next periodic pass (LS22 l, LS10).
-    await revokeListens(request.tenantId!, user.id);
+    // an account's viewer) is the membership the tenant context now picks in that account: the
+    // cached one is dropped and the subscribers told (their listens re-checked now, LS22 l, LS10).
+    await membershipAdded(request.tenantId!, user.id);
 
     /**
      * The invite email — attempted AFTER the membership is written, and unable to
@@ -654,10 +651,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // the retry must be able to finish the job: re-sent, this route re-applies the same role
     // (the guard reads the now-current role), deletes the key again, and has nothing left to
     // close (the staffing step keys on the demotion, which has already happened).
-    const membershipCacheCleared = await redisCache.delForRevocation(membershipCacheKey(targetUserId, request.tenantId!));
-    // Live call listening (LS10): their open listens are re-checked against the database now, and
-    // end `permission_revoked` if the new role no longer clears `agency.calls.listen`. Never throws.
-    await revokeListens(request.tenantId!, targetUserId);
+    // The subscribers are told too (live call listening, LS10: their open listens re-checked now).
+    const membershipCacheCleared = await membershipRevoked(request.tenantId!, targetUserId);
 
     /**
      * A demotion out of `agent` closes their agency staffing — last, and unable to
@@ -763,10 +758,9 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // retry — the membership is already gone, so a re-sent DELETE answers 404 before it
     // reaches this line and could never clear the key. A 503 would only send the admin into
     // a retry that cannot help; the TTL (30 min) bounds the exposure.
-    await redisCache.delForRevocation(membershipCacheKey(targetUserId, request.tenantId!));
-    // Live call listening (LS10): their open listens end `permission_revoked` now, unless another
-    // membership they keep in the tenant still clears the floor. Never throws.
-    await revokeListens(request.tenantId!, targetUserId);
+    // The subscribers are told too (live call listening, LS10: their open listens end now, unless
+    // another membership they keep in the tenant still clears the floor).
+    await membershipRevoked(request.tenantId!, targetUserId);
 
     /**
      * Close their agency staffing — last, and unable to fail this request.

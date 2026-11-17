@@ -1,32 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  onListenRevocation,
-  remoteSupersedeTargets,
-  revokeListens,
-} from '../../../../src/agency/listen/listen-revocation.js';
+import { remoteSupersedeTargets } from '../../../../src/agency/listen/listen-revocation.js';
 import type { ListenSessionRecord } from '../../../../src/db/repositories/agency.repository.js';
 import type { ListenSessionHandle } from '../../../../src/agency/listen/listen-registry.js';
 
 /*
- * How a supervisor's listens are ended from outside the process that holds them (LS10, LS5):
- * the revocation hook the user routes call, and the supersede of listens held by other processes.
+ * How a supervisor's listens are ended from outside the process that holds them (LS10, LS5): the
+ * supersede of listens held by other processes. (The revocation hook is the platform's membership
+ * change, `test/unit/rbac/membership-changed.test.ts`.)
  */
-
-describe('revokeListens', () => {
-  it('runs every registered handler, survives one that throws, and stops after unsubscribe', async () => {
-    const a = vi.fn();
-    const b = vi.fn(async () => { throw new Error('ipc down'); });
-    const offA = onListenRevocation(a);
-    const offB = onListenRevocation(b);
-    await expect(revokeListens('t', 'u')).resolves.toBeUndefined();
-    expect(a).toHaveBeenCalledWith('t', 'u');
-    expect(b).toHaveBeenCalledWith('t', 'u');
-    offA();
-    offB();
-    await revokeListens('t', 'u');
-    expect(a).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe('remoteSupersedeTargets', () => {
   /** A row started `at` seconds into the minute. */

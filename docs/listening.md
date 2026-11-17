@@ -139,8 +139,9 @@ comments and the other docs).
   goes when it started before the first instant of the cutoff's UTC month, the boundary below which
   the maintenance has dropped every audit partition, so it goes the same day as its month's audit
   rows.
-- **(t)** The super-admin role change and member removal (`api/routes/super-admin/tenants.ts`) call
-  `revokeListens` too, after their cache delete; so does its add-user route (LS22 l).
+- **(t)** The super-admin role change and member removal (`api/routes/super-admin/tenants.ts`) re-check
+  the listens too (`membershipRevoked`, which drops the cached membership first); so does its add-user
+  route (`membershipAdded`, LS22 l).
 - **(u)** The live list's AHT cache holds at most 1,000 campaigns per process (a `TtlCache`: an
   entry past its minute is read again, the least recently read go past the bound); the dialler spine reads the account's live attempts on
   `idx_agency_attempts_account_live` (pinned by `test/integration/agency/live-call-plan.test.ts`).
@@ -212,7 +213,7 @@ The persona review's server calls (2026-11-16), beside the decided LS21, and the
   the sweep's 60 s age floor. A tick that finds the last one still running starts no pass and no
   upkeep of its own and only applies the staleness cap, so hung ticks never stack.
 - **(l)** Adding a seat re-checks the invitee's listens: `POST /users/invite`, the invite's
-  claim and the super-admin's `POST /super-admin/tenants/:id/users` call `revokeListens` too, since an account-scoped seat is the membership the tenant context
+  claim and the super-admin's `POST /super-admin/tenants/:id/users` re-check them too (`membershipAdded`), since an account-scoped seat is the membership the tenant context
   picks in that account and can shadow a tenant-wide admin's (the access check shares the tenant
   context's `selectMembership`, now `rbac/select-membership.ts`). The tenant context reads
   `X-Tenant-Id` and `X-Account-Id` lower-cased, as the access check reads the account, so an
@@ -402,8 +403,9 @@ dead media worker, the open rows of the processes that are gone close `server_re
 and closes its own rows it no longer holds (`closeOrphans`, LS16 o).
 
 **Revocation (LS10).** The role-change and member-removal routes (`api/routes/user.routes.ts` and
-the super-admin's `api/routes/super-admin/tenants.ts`, where the membership cache is cleared) call
-`revokeListens(tenantId, userId)`: the registry's `revokeUser`, a re-check of that supervisor
+the super-admin's `api/routes/super-admin/tenants.ts`) call `membershipRevoked(tenantId, userId)`
+(`rbac/membership-changed.ts`: the membership cache cleared, then its subscribers told), whose
+subscriber here is the registry's `revokeUser`, a re-check of that supervisor
 against the database now that fails closed (LS16 c) and bumps their revocation generation (LS16 n),
 and with media workers IPC `listen.revoke` to every worker (`cluster/ipc-protocol.ts`,
 `docs/scaling.md` §4.3). The backstop re-checks every open session every 30 s against the database
@@ -480,9 +482,9 @@ leaving its sessions unchecked; each tick then hands the rows' upkeep (`listen-r
 a tick that finds the last still running applies only the staleness cap; `shutdown` ends every session `server_shutdown`
 and admits nothing more (`listen_unavailable`).
 
-**Across processes** (`agency/listen/listen-revocation.ts`): the role-change and member-removal routes
-(and the super-admin's), and the three that add a seat (`POST /users/invite`, the invite's claim,
-the super-admin's `POST /super-admin/tenants/:id/users`; LS22 l), call `revokeListens(tenantId, userId)`, whose handlers are the runtime's `revokeUser` (registered by
+**Across processes** (`rbac/membership-changed.ts`, `agency/listen/listen-revocation.ts`): the role-change and member-removal routes
+(and the super-admin's) call `membershipRevoked(tenantId, userId)`, and the three that add a seat (`POST /users/invite`, the invite's claim,
+the super-admin's `POST /super-admin/tenants/:id/users`; LS22 l) `membershipAdded`, whose subscribers are the runtime's `revokeUser` (registered by
 `startAgency`) and, with media workers, the primary's broadcast of `listen.revoke { reason:
 'permission_revoked', listenIds: null }` (registered by `startMediaWorkers`). A worker that admits a
 listen reads the supervisor's open rows and sends `listen.revoke { reason: 'superseded', listenIds }`

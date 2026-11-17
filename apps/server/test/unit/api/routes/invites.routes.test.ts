@@ -136,7 +136,6 @@ vi.mock('../../../../src/auth/session-payload.js', () => ({
   buildSessionPayload: mocks.buildSessionPayload,
 }));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({ issueInvite: mocks.issueInvite }));
-vi.mock('../../../../src/agency/listen/listen-revocation.js', () => ({ revokeListens: mocks.revokeListens }));
 vi.mock('../../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: () => mocks.log }));
 /**
@@ -153,9 +152,13 @@ import Fastify from 'fastify';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { inviteRoutes } from '../../../../src/api/routes/invites.routes.js';
+import { onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
 import { LiveInviteConflictError } from '../../../../src/db/repositories/membership-invite.repository.js';
 import { hashInviteToken } from '../../../../src/notifications/invite-token.js';
 import { ROLES } from '@magick-agency/contracts/rbac';
+
+// Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
+onMembershipChanged(mocks.revokeListens);
 
 const HOUR = 60 * 60 * 1000;
 

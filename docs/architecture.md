@@ -110,7 +110,8 @@ unique.
    `AgencyRuntime.start()`, which runs the startup reaper, then closes every listen session row a
    previous process left open (`server_restarted`, before any listener can attach; live call
    listening, [`listening.md`](listening.md) §4) and arms the listen registry's re-check, before
-   the pacing supervisor; then the listen revocation hook (`onListenRevocation`), the
+   the pacing supervisor; then the listen revocation's subscription to membership changes
+   (`onMembershipChanged`, `rbac/membership-changed.ts`), the
    insights rollup job, then the report pipeline: assembler and reports tick, `docs/reports.md`);
    `startAnalysis` (worker, retention purge). Voice starts before agency so the bridge's self-heal
    finishes before any pacing tick.
