@@ -51,12 +51,11 @@ export const LISTEN_HISTORY_PAGE_SIZE = 50;
  * never asked again. `failed`: anything else, with Try again. There is no "listening is off"
  * state: the history does not depend on the listening flag (LS19, amended 2026-11-17).
  */
-type Failure = { kind: 'forbidden' } | { kind: 'failed' };
+type Failure = 'forbidden' | 'failed';
 
 function failureOf(err: unknown): Failure {
   const status = errorStatus(err);
-  if (status === 401 || status === 403) return { kind: 'forbidden' };
-  return { kind: 'failed' };
+  return status === 401 || status === 403 ? 'forbidden' : 'failed';
 }
 
 /**
@@ -207,7 +206,7 @@ export default function ListenHistoryPage() {
     </header>
   );
 
-  if (!supervise || failure?.kind === 'forbidden') {
+  if (!supervise || failure === 'forbidden') {
     return (
       <div className={styles.page}>
         {header(false)}
@@ -215,7 +214,7 @@ export default function ListenHistoryPage() {
       </div>
     );
   }
-  const failed = failure?.kind === 'failed';
+  const failed = failure === 'failed';
 
   return (
     <div className={styles.page}>

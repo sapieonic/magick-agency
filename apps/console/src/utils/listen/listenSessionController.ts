@@ -1,4 +1,4 @@
-import { AGENCY_LISTEN_PING_INTERVAL_MS, type AgencyListenLeg } from '../../types/live-calls';
+import { AGENCY_LISTEN_PING_INTERVAL_MS, type AgencyListenClientFrame, type AgencyListenLeg } from '../../types/live-calls';
 import type { ListenGrantResult } from '../../api/liveCalls';
 import { encodeListenClientFrame, parseListenMessage } from './listenFrames';
 import {
@@ -99,7 +99,7 @@ export class ListenSessionController {
 
   /** The supervisor stopped: `stop` on the socket, then close it. */
   stop(): void {
-    this.sendStop();
+    this.send({ event: 'stop' });
     this.dispatch({ type: 'stop' });
   }
 
@@ -110,18 +110,18 @@ export class ListenSessionController {
    */
   withdraw(kind: 'revoked' | 'turned_off'): void {
     if (this.state.phase === 'idle' || this.state.phase === 'ended') return;
-    this.sendStop();
+    this.send({ event: 'stop' });
     this.dispatch({ type: 'withdrawn', kind, now: this.now() });
   }
 
-  private sendStop(): void {
+  /** One client frame, on a socket that is open; nothing otherwise. The close that follows a failed send is what matters. */
+  private send(frame: AgencyListenClientFrame): void {
     const socket = this.socket;
-    if (socket && socket.readyState === OPEN) {
-      try {
-        socket.send(encodeListenClientFrame({ event: 'stop' }));
-      } catch {
-        /* the close that follows is what matters */
-      }
+    if (!socket || socket.readyState !== OPEN) return;
+    try {
+      socket.send(encodeListenClientFrame(frame));
+    } catch {
+      /* the close follows */
     }
   }
 
@@ -167,7 +167,7 @@ export class ListenSessionController {
 
     // Liveness: `ping` every 10 s while live.
     if (next.phase === 'live' && this.pingTimer === null) {
-      this.pingTimer = setInterval(() => this.ping(), AGENCY_LISTEN_PING_INTERVAL_MS);
+      this.pingTimer = setInterval(() => this.send({ event: 'ping', ts: this.now() }), AGENCY_LISTEN_PING_INTERVAL_MS);
     } else if (next.phase !== 'live' && this.pingTimer !== null) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
@@ -276,16 +276,6 @@ export class ListenSessionController {
           this.dispatch({ type: 'pong', attempt, sample: { ts: frame.ts, server_ts: frame.server_ts, receivedAt: now } });
         }
         return;
-    }
-  }
-
-  private ping(): void {
-    const socket = this.socket;
-    if (!socket || socket.readyState !== OPEN) return;
-    try {
-      socket.send(encodeListenClientFrame({ event: 'ping', ts: this.now() }));
-    } catch {
-      /* the close follows */
     }
   }
 
