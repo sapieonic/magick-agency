@@ -135,6 +135,8 @@ export interface ListenRegistryDeps {
 export class ListenRegistry {
   private readonly sessions = new Map<string, ListenSessionHandle>();
   private readonly reservations = new Map<string, ListenReservation>();
+  /** Reservations another process superseded before they were admitted ({@link endSessions}, LS22 s). */
+  private readonly supersededReservations = new Set<string>();
   /** Epoch ms of each open session's last successful access check (its admission's, at first). */
   private readonly verifiedAt = new Map<string, number>();
   /** Each supervisor's revocation generation (`tenant:user`), bumped by {@link revokeUser}. */
@@ -253,7 +255,10 @@ export class ListenRegistry {
 
   /** Give a slot back: the upgrade failed before its session opened. */
   release(reservation: ListenReservation): void {
-    if (this.reservations.get(reservation.listenId) === reservation) this.reservations.delete(reservation.listenId);
+    if (this.reservations.get(reservation.listenId) === reservation) {
+      this.reservations.delete(reservation.listenId);
+      this.supersededReservations.delete(reservation.listenId);
+    }
   }
 
   /**
@@ -276,15 +281,23 @@ export class ListenRegistry {
   /**
    * Turn a reservation into an open session, ending the supervisor's older sessions past
    * `maxPerUser` (`superseded`). Refused (the slot given back, nothing ended) when the supervisor
-   * was revoked here since the reservation: the caller ends the session `permission_revoked`.
+   * was revoked here since the reservation (`permission_revoked`), or when another process
+   * superseded it while it was being admitted (`superseded`, LS22 s): the caller ends the session
+   * for that reason.
    */
   admit(reservation: ListenReservation, session: ListenSessionHandle):
     | { ok: true; superseded: ListenSessionHandle[] }
-    | { ok: false } {
+    | { ok: false; reason: 'permission_revoked' | 'superseded' } {
+    const supersededElsewhere = this.reservations.get(reservation.listenId) === reservation
+      && this.supersededReservations.has(reservation.listenId);
     this.release(reservation);
     if (this.generation(reservation.tenantId, reservation.listenerUserId) !== reservation.generation) {
       log.info({ listenId: session.listenId }, 'Listen upgrade refused: the supervisor was revoked while it was admitted');
-      return { ok: false };
+      return { ok: false, reason: 'permission_revoked' };
+    }
+    if (supersededElsewhere) {
+      log.info({ listenId: session.listenId }, 'Listen upgrade refused: the supervisor\'s newer listen elsewhere superseded it while it was admitted');
+      return { ok: false, reason: 'superseded' };
     }
     const superseded = this.toSupersede(session.tenantId, session.listenerUserId);
     this.sessions.set(session.listenId, session);
@@ -305,12 +318,22 @@ export class ListenRegistry {
 
   /**
    * End exactly these sessions for `reason`, those that are open here (a supersede decided in
-   * another process, `listen.revoke` over IPC). Answers how many it ended.
+   * another process, `listen.revoke` over IPC). A named listen still in its upgrade here (its row
+   * written, which is how the other process read it, not yet admitted) is marked instead, and its
+   * admission refuses it (LS22 s): otherwise it would be admitted after the supersede had passed
+   * it by, and the supervisor would hold two listens. Answers how many it ended or marked.
    */
   async endSessions(listenIds: readonly string[], reason: AgencyListenEndReason): Promise<number> {
+    let marked = 0;
+    for (const id of listenIds) {
+      if (reason === 'superseded' && !this.sessions.has(id) && this.reservations.has(id)) {
+        this.supersededReservations.add(id);
+        marked++;
+      }
+    }
     const hits = listenIds.map((id) => this.sessions.get(id)).filter((s): s is ListenSessionHandle => s !== undefined);
     await Promise.all(hits.map((s) => s.end(reason).catch(() => {})));
-    return hits.length;
+    return hits.length + marked;
   }
 
   /**
@@ -474,6 +497,7 @@ export class ListenRegistry {
     this.stopping = true;
     this.stop();
     this.reservations.clear();
+    this.supersededReservations.clear();
     const open = [...this.sessions.values()];
     await Promise.all(open.map((s) => s.end('server_shutdown').catch(() => {})));
   }

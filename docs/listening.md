@@ -246,6 +246,15 @@ Manas.
   "Listening now" in the history and draws a supersede aimed at nothing. Every sweep counts
   `agency_listen_sessions_ended_total{reason="server_restarted"}` only for the rows that went live
   (`live_at` set), as the socket counts only live sessions.
+- **(s)** A cross-process supersede (LS16 e, p) reaches a listen still in its upgrade: the worker it
+  names may hold it as a reservation (its row written, which is how the other worker read it, not
+  yet admitted), and `endSessions` marks it, so its admission is refused `superseded` (the row
+  closes `superseded`, 4409 as a live session's supersede, no `ready`, no audit pair) instead of
+  being admitted after the supersede passed it by, which left the supervisor two listens. Accepted:
+  with `AGENCY_LISTEN_MAX_PER_USER` 2 or more, a supersede decided in one worker counts the
+  supervisor's rows across processes but ends only the other processes' (its own registry keeps
+  its own count), so a supervisor can hold one listen over the cap across processes; at the
+  default 1 every older listen is ended, here and elsewhere.
 
 ## 2. Architecture
 
@@ -320,7 +329,7 @@ the microphone.
 | 4403 | `FORBIDDEN` | `permission_revoked` | stop ("You no longer have access to listen to calls.") |
 | 4404 | `CALL_GONE` | at the upgrade: the call is no longer live in this process (`listen_call_not_live`) | stop |
 | 4408 | `HEARTBEAT_TIMEOUT` | `listener_disconnected` (30 s silence), `send_backlog` | reconnect |
-| 4409 | `SUPERSEDED` | `superseded` | stop ("You started listening in another tab or window, so it stopped here.": the console stops its own first listen before a second, so a supersede it hears of came from elsewhere) |
+| 4409 | `SUPERSEDED` | `superseded`; at the upgrade, a supersede from another process while it was admitted (LS22 s) | stop ("You started listening in another tab or window, so it stopped here.": the console stops its own first listen before a second, so a supersede it hears of came from elsewhere) |
 | 4429 | `LIMIT` | at the upgrade: `listen_limit_call`, `listen_limit_server` | stop, with the reason |
 | 1008 | `INVALID_UPGRADE` | a malformed upgrade; past the client message rate (`listen_message_rate`, LS22 e) | stop |
 | 1011 | `INTERNAL_ERROR` | `tap_error`; at the upgrade, `listen_unavailable` (no row, no audio; the token store, the tap or the process failing, LS22 f, g; the access check or the row's insert not answering within 10 s, LS22 o) | reconnect, bounded |
@@ -350,7 +359,8 @@ lost" with "Try again".
    supervisor's revocation generation, and asks the database whether they may still listen
    (LS16 n).
 6. Insert the `agency_listen_sessions` row and await it (LS7).
-7. Open the tap, admit (refused if the supervisor was revoked since step 5), send `ready`, write
+7. Open the tap, admit (refused if the supervisor was revoked since step 5, or their newer listen
+   in another process superseded this one meanwhile, LS22 s), send `ready`, write
    `agency_call.listen_started`.
 
 **End.** `stop` or a socket close removes the sink, closes the row (reason, frames sent and

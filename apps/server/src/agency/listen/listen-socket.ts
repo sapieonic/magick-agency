@@ -52,7 +52,8 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  *     `agency_listen_tap_errors_total{stage="open"}`).
  *  7. Admit the session (the supervisor's older listen ends `superseded`), send `ready`, stamp the
  *     row live (not awaited), audit `agency_call.listen_started`. A revocation since step 3 refuses
- *     it instead: the row closes `permission_revoked`, 4403, no audit pair.
+ *     it instead: the row closes `permission_revoked`, 4403, no audit pair; so does a supersede by
+ *     the supervisor's newer listen in another process meanwhile (`superseded`, 4409, LS22 s).
  * A refusal closes with the error code as the close reason, so the listening bar can say why; it
  * sends no `ended` frame (only a session that went live does). A row written and then refused
  * stays not live (`live_at` NULL), so "Listened to by" leaves it out.
@@ -184,11 +185,13 @@ function closeWith(ws: WebSocket, code: number, reason: string): void {
 
 /**
  * A refusal at the upgrade: the close code for each error code (`AGENCY_LISTEN_CLOSE`).
- * `permission_revoked` (an end reason, not an error code) is the supervisor's access gone: 4403.
+ * `permission_revoked` (an end reason, not an error code) is the supervisor's access gone: 4403;
+ * `superseded` (one too) their newer listen elsewhere: 4409, as a live session's supersede.
  */
-function refuse(ws: WebSocket, code: AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON | 'permission_revoked'): void {
+function refuse(ws: WebSocket, code: AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON | 'permission_revoked' | 'superseded'): void {
   const close = code === LISTEN_TOKEN_INVALID_REASON ? AGENCY_LISTEN_CLOSE.TOKEN_REJECTED
     : code === 'permission_revoked' ? AGENCY_LISTEN_CLOSE.FORBIDDEN
+    : code === 'superseded' ? AGENCY_LISTEN_CLOSE.SUPERSEDED
       : code === 'listen_limit_call' || code === 'listen_limit_server' ? AGENCY_LISTEN_CLOSE.LIMIT
         : code === 'listen_call_not_live' ? AGENCY_LISTEN_CLOSE.CALL_GONE
           : AGENCY_LISTEN_CLOSE.INTERNAL_ERROR;
@@ -516,10 +519,12 @@ export async function handleListenSocket(
   }
   s.tap = opened;
 
-  // 7. Admitted, unless the supervisor was revoked here since the reservation.
-  if (!deps.registry.admit(reserved.reservation, s).ok) {
-    await s.end('permission_revoked');
-    refuse(ws, 'permission_revoked');
+  // 7. Admitted, unless the supervisor was revoked here since the reservation, or their newer
+  // listen in another process superseded this one meanwhile (LS22 s).
+  const admission = deps.registry.admit(reserved.reservation, s);
+  if (!admission.ok) {
+    await s.end(admission.reason);
+    refuse(ws, admission.reason);
     return null;
   }
   session = s;

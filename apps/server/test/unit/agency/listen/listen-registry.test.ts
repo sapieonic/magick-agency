@@ -126,6 +126,34 @@ describe('ListenRegistry: supersede', () => {
     expect(a.ended).toEqual(['superseded']);
     expect(b.ended).toEqual([]);
   });
+
+  it('LS22 s: endSessions reaches a listen still in its upgrade: its admission is refused superseded, the slot given back', async () => {
+    // Another worker's newer listen read this one's row (written, not yet admitted) and named it.
+    const registry = registryWith(undefined, { maxPerCall: 1 });
+    const r = registry.reserve({ listenId: 'mid', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' });
+    if (!r.ok) throw new Error('refused');
+    expect(await registry.endSessions(['mid'], 'superseded')).toBe(1);
+    const s = session({ listenId: 'mid' }, registry);
+    expect(registry.admit(r.reservation, s)).toEqual({ ok: false, reason: 'superseded' });
+    expect(registry.size).toBe(0);
+    expect(registry.held().size).toBe(0);
+    // A later upgrade of that supervisor is not touched by it.
+    const again = registry.reserve({ listenId: 'next', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' });
+    if (!again.ok) throw new Error('refused');
+    expect(registry.admit(again.reservation, session({ listenId: 'next' }, registry)).ok).toBe(true);
+  });
+
+  it('LS22 s: a supersede mark on a reservation given back is forgotten with it', async () => {
+    const registry = registryWith();
+    const r = registry.reserve({ listenId: 'gone', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' });
+    if (!r.ok) throw new Error('refused');
+    await registry.endSessions(['gone'], 'superseded');
+    registry.release(r.reservation);
+    // Nothing is left behind: the next reservation under the same id (a test's reuse) is admitted.
+    const again = registry.reserve({ listenId: 'gone', callId: 'c1', tenantId: 't1', listenerUserId: 'u1' });
+    if (!again.ok) throw new Error('refused');
+    expect(registry.admit(again.reservation, session({ listenId: 'gone' }, registry)).ok).toBe(true);
+  });
 });
 
 describe('ListenRegistry: revocation and the re-check (LS10, LS16 c, d)', () => {
@@ -306,7 +334,7 @@ describe('ListenRegistry: between the grant and the admission (LS16 n)', () => {
     if (!r.ok) throw new Error('refused');
     await registry.revokeUser('t1', 'u1');
     const s = session({ listenId: 'l1' }, registry);
-    expect(registry.admit(r.reservation, s)).toEqual({ ok: false });
+    expect(registry.admit(r.reservation, s)).toEqual({ ok: false, reason: 'permission_revoked' });
     expect(registry.size).toBe(0);
     expect(registry.check('c1', 't1', 'u2')).toBeNull();
     // Another supervisor's revocation does not touch this one's reservation.

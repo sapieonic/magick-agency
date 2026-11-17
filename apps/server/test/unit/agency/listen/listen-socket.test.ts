@@ -221,6 +221,20 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.registry.held().size).toBe(0);
   });
 
+  it('LS22 s: superseded from another process while it was being admitted: the row closes superseded, 4409, no ready, no audit', async () => {
+    const h = harness();
+    // The supervisor's newer listen in another worker read this row and sent `listen.revoke superseded`.
+    h.rows.open.mockImplementation(async () => { await h.registry.endSessions([L], 'superseded'); });
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    await settle();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.SUPERSEDED, reason: 'superseded' });
+    expect(h.ws.json().some((f) => f['event'] === 'ready')).toBe(false);
+    expect(h.rows.close).toHaveBeenCalledWith(L, { reason: 'superseded', framesSent: 7, framesDropped: 1, live: false });
+    expect(h.tap.detach).toHaveBeenCalledTimes(1);
+    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.registry.held().size).toBe(0);
+  });
+
   it('a stopping process refuses 1011 listen_unavailable at the reservation, not the server\'s limit', async () => {
     const h = harness();
     await h.registry.shutdown();
