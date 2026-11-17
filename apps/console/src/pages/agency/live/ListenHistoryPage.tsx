@@ -20,24 +20,24 @@ import {
   listenHistoryCountLabel,
   listenHistoryOpenLabel,
   listenHistoryTruncatedNotice,
+  listenedDurationLabel,
 } from '../../../utils/listen/listenCopy';
 import {
   EMPTY_LISTEN_HISTORY_DRAFT,
   callRowGone,
-  listenHistoryAgent,
   listenHistoryCallPath,
   listenHistoryCallType,
   listenHistoryCustomer,
   listenHistoryFilterCount,
   listenHistoryFilterOptions,
   listenHistoryHowEnded,
-  listenHistoryListened,
   listenHistoryQuery,
   listenHistoryRangeReversed,
   listenHistorySupervisor,
   type ListenHistoryDraft,
   type ListenHistoryOption,
 } from '../../../utils/listen/listenHistory';
+import { agentName } from '../../../utils/listen/liveCallsTable';
 import type { AgencyListenHistoryEntry } from '../../../types/listen-history';
 import type { TenantMember } from '../../../types/team';
 import spine from '../../../components/agency/SpineListLayout.module.css';
@@ -386,7 +386,7 @@ export default function ListenHistoryPage() {
 
 function HistoryRow({ entry, softphoneEnabled }: { entry: AgencyListenHistoryEntry; softphoneEnabled: boolean }) {
   const supervisor = listenHistorySupervisor(entry);
-  const agent = listenHistoryAgent(entry);
+  const agent = agentName(entry);
   const customer = listenHistoryCustomer(entry);
   const path = listenHistoryCallPath(entry, softphoneEnabled);
   const gone = callRowGone(entry);
@@ -402,7 +402,7 @@ function HistoryRow({ entry, softphoneEnabled }: { entry: AgencyListenHistoryEnt
         </span>
       </td>
       <td className={styles.when}>{formatSpineTimestamp(entry.started_at)}</td>
-      <td className={styles.mono}>{listenHistoryListened(entry)}</td>
+      <td className={styles.mono}>{listenedDurationLabel(entry.listened_seconds, entry.ended_at)}</td>
       <td>{listenHistoryHowEnded(entry)}</td>
       <td>
         {path ? (

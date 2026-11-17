@@ -1,8 +1,7 @@
 import { hasPermission } from '../permissions';
 import { exclusiveDateRange } from '../agencyAttemptFilters';
-import { durationWords } from '../format/duration';
 import { agentName, liveCallPagePath } from './liveCallsTable';
-import { LISTEN_HISTORY_COPY, LISTENED_TO_BY_COPY, LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel } from './listenCopy';
+import { LISTENED_TO_BY_COPY, LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel } from './listenCopy';
 import {
   AGENCY_LISTEN_END_REASON_LABELS,
   type AgencyListenHistoryEntry,
@@ -73,25 +72,14 @@ export function listenHistoryCustomer(entry: AgencyListenHistoryEntry): { name: 
   };
 }
 
-/** "2m 10s", or "Listening now" while a session of the visit is open. */
-export function listenHistoryListened(entry: Pick<AgencyListenHistoryEntry, 'listened_seconds' | 'ended_at'>): string {
-  if (entry.ended_at === null || entry.listened_seconds === null) return LISTEN_HISTORY_COPY.listeningNow;
-  return durationWords(entry.listened_seconds);
-}
-
 /** How the visit ended, in the contract's words (the CSV's `how_it_ended`). */
 export function listenHistoryHowEnded(entry: Pick<AgencyListenHistoryEntry, 'end_reason'>): string {
-  return entry.end_reason ? AGENCY_LISTEN_END_REASON_LABELS[entry.end_reason] : LISTEN_HISTORY_COPY.listeningNow;
+  return entry.end_reason ? AGENCY_LISTEN_END_REASON_LABELS[entry.end_reason] : LISTENED_TO_BY_COPY.listeningNow;
 }
 
 /** The supervisor's name; one the read could not name is "A supervisor". */
 export function listenHistorySupervisor(entry: Pick<AgencyListenHistoryEntry, 'listener_name'>): string {
   return entry.listener_name?.trim() || LISTENED_TO_BY_COPY.aSupervisor;
-}
-
-/** The agent's name, or the agent floor's id stand-in. */
-export function listenHistoryAgent(entry: Pick<AgencyListenHistoryEntry, 'agent_user_id' | 'agent_name'>): string {
-  return agentName(entry);
 }
 
 /**
@@ -133,7 +121,7 @@ export function listenHistoryFilterOptions(
   }
   for (const e of entries) {
     if (!supervisors.has(e.listener_user_id)) supervisors.set(e.listener_user_id, listenHistorySupervisor(e));
-    if (!agents.has(e.agent_user_id)) agents.set(e.agent_user_id, listenHistoryAgent(e));
+    if (!agents.has(e.agent_user_id)) agents.set(e.agent_user_id, agentName(e));
   }
   if (keep.supervisor && !supervisors.has(keep.supervisor.id)) supervisors.set(keep.supervisor.id, keep.supervisor.name);
   if (keep.agent && !agents.has(keep.agent.id)) agents.set(keep.agent.id, keep.agent.name);

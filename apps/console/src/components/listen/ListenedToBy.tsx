@@ -1,8 +1,7 @@
 import { Headphones } from 'lucide-react';
-import { durationWords } from '../../utils/format/duration';
 import { formatClockTime, formatDayMonth } from '../../utils/format/date';
 import { initialsFor } from '../../utils/initials';
-import { LISTENED_TO_BY_COPY, listeningSinceLabel } from '../../utils/listen/listenCopy';
+import { LISTENED_TO_BY_COPY, listenedDurationLabel, listeningSinceLabel } from '../../utils/listen/listenCopy';
 import { isoMs, mergeListenVisits, type ListenVisit } from '../../utils/listen/listenVisits';
 import type { AgencyCallListenSession } from '../../types/live-calls';
 import detail from '../../pages/calls/CallDetailPage.module.css';
@@ -18,12 +17,6 @@ export function listenSpanLabel(session: Pick<AgencyCallListenSession, 'started_
   if (Number.isNaN(end.getTime())) return from;
   const sameDay = start.toDateString() === end.toDateString();
   return `${from}–${sameDay ? '' : `${formatDayMonth(end)} `}${formatClockTime(end)}`;
-}
-
-/** "3m 10s", or "Listening now" while the session is open. */
-export function listenDurationLabel(session: Pick<AgencyCallListenSession, 'duration_seconds' | 'ended_at'>): string {
-  if (session.ended_at === null || session.duration_seconds === null) return LISTENED_TO_BY_COPY.listeningNow;
-  return durationWords(session.duration_seconds);
 }
 
 /** One listen as the section shows it: a supervisor's sessions merged (LS19 b's rule). */
@@ -76,7 +69,7 @@ export function ListenedToBy({ sessions }: { sessions: readonly AgencyCallListen
               </span>
               <span className={styles.name}>{name}</span>
               <span className={styles.span}>{listenSpanLabel({ started_at: first.started_at, ended_at: ended })}</span>
-              <span className={styles.duration}>{listenDurationLabel({ ended_at: ended, duration_seconds: seconds })}</span>
+              <span className={styles.duration}>{listenedDurationLabel(seconds, ended)}</span>
             </li>
           );
         })}

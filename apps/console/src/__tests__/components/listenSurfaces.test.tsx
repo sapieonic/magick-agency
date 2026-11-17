@@ -32,7 +32,8 @@ import {
   agentListenScope,
 } from '../../components/agency/StationListenNotice';
 import { AgentHomePage } from '../../pages/agency/AgentHomePage';
-import { ListenedToBy, listenDurationLabel, listenSpanLabel } from '../../components/listen/ListenedToBy';
+import { ListenedToBy, listenSpanLabel } from '../../components/listen/ListenedToBy';
+import { listenedDurationLabel } from '../../utils/listen/listenCopy';
 import { CallsViews } from '../../components/agency/CallsViews';
 import type { AgencyCallListenSession } from '../../types/live-calls';
 
@@ -244,8 +245,9 @@ describe('Listened to by (LS13)', () => {
     expect(listenSpanLabel({ started_at: '2026-11-16T14:02:00Z', ended_at: null })).toMatch(/^since /);
     expect(listenSpanLabel({ started_at: 'nonsense', ended_at: null })).toBe('—');
     expect(listenSpanLabel({ started_at: '2026-11-16T23:58:00Z', ended_at: '2026-11-17T00:02:00Z' })).toContain('17 Nov');
-    expect(listenDurationLabel({ duration_seconds: 190, ended_at: 'x' })).toBe('3m 10s');
-    expect(listenDurationLabel({ duration_seconds: null, ended_at: null })).toBe('Listening now');
+    expect(listenedDurationLabel(190, 'x')).toBe('3m 10s');
+    expect(listenedDurationLabel(null, null)).toBe('Listening now');
+    expect(listenedDurationLabel(190, null)).toBe('Listening now');
   });
 });
 

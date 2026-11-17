@@ -7,11 +7,10 @@ import {
   listenHistoryFilterCount,
   listenHistoryFilterOptions,
   listenHistoryHowEnded,
-  listenHistoryListened,
   listenHistoryQuery,
   listenHistoryRangeReversed,
 } from '../../../utils/listen/listenHistory';
-import { listenHistoryCountLabel, listenHistoryTruncatedNotice } from '../../../utils/listen/listenCopy';
+import { listenHistoryCountLabel, listenHistoryTruncatedNotice, listenedDurationLabel } from '../../../utils/listen/listenCopy';
 import { AGENCY_LISTEN_END_REASONS } from '../../../types/live-calls';
 import { AGENCY_LISTEN_END_REASON_LABELS } from '../../../types/listen-history';
 import { historyEntry } from '../../helpers/listenHistory';
@@ -69,10 +68,10 @@ describe('a row’s words', () => {
   });
 
   it('how long and how it ended; an open visit is "Listening now"', () => {
-    expect(listenHistoryListened(historyEntry())).toBe('2m 10s');
+    expect(listenedDurationLabel(historyEntry().listened_seconds, historyEntry().ended_at)).toBe('2m 10s');
     expect(listenHistoryHowEnded(historyEntry())).toBe('Stopped by the supervisor');
     const open = historyEntry({ ended_at: null, listened_seconds: null, end_reason: null });
-    expect(listenHistoryListened(open)).toBe('Listening now');
+    expect(listenedDurationLabel(open.listened_seconds, open.ended_at)).toBe('Listening now');
     expect(listenHistoryHowEnded(open)).toBe('Listening now');
   });
 

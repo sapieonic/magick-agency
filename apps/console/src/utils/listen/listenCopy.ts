@@ -1,3 +1,4 @@
+import { durationWords } from '../format/duration';
 import type {
   AgencyCallOrigin,
   AgencyListenErrorCode,
@@ -316,9 +317,18 @@ export const LISTENED_TO_BY_COPY = {
   title: 'Listened to by',
   /** A listener the read could not name. */
   aSupervisor: 'A supervisor',
-  /** A session still open. */
+  /** A session (or a history visit) still open: no end, no time listened yet. */
   listeningNow: 'Listening now',
 } as const;
+
+/**
+ * Time listened, "2m 10s" ("Listened to by" and the history's Time listened), or "Listening now"
+ * while the listen is still open.
+ */
+export function listenedDurationLabel(seconds: number | null, endedAt: string | null): string {
+  if (endedAt === null || seconds === null) return LISTENED_TO_BY_COPY.listeningNow;
+  return durationWords(seconds);
+}
 
 /** "since 14:02": a session still open. */
 export function listeningSinceLabel(clock: string): string {
@@ -391,8 +401,6 @@ export const LISTEN_HISTORY_COPY = {
   columnListened: 'Time listened',
   columnEnded: 'How it ended',
   columnCall: 'Call',
-  /** A visit still open: no end, no time listened yet. */
-  listeningNow: 'Listening now',
   openCall: 'Open call',
   /** The call's row has been purged: no number and no page to open. */
   callGone: 'Call no longer available',
