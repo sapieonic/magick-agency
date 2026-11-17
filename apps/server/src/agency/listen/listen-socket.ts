@@ -16,7 +16,9 @@ import type {
   ListenSink, ListenTapEndReason, ListenTapHandle, ListenTapStats, OpenListenTapResult,
 } from '../../core/webrtc-bridge-manager.js';
 import { sendToListenerSocket } from '../../core/bridge/listen-tap.js';
+import { rawDataToBuffer } from '../../core/bridge/browser-leg-media.js';
 import { closeThenTerminate } from '../../utils/ws-backpressure.js';
+import { withTimeoutOr } from '../../utils/with-timeout.js';
 import { LISTEN_MAX_CLIENT_MESSAGE_BYTES } from '../../utils/ws-limits.js';
 import type { ListenSessionCloseInput, ListenSessionOpenInput } from '../../db/repositories/agency.repository.js';
 import type { PlatformCreateAuditLogInput } from '../../audit/platform/audit-logger.js';
@@ -85,21 +87,8 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  */
 export const LISTEN_UPGRADE_STEP_TIMEOUT_MS = 10_000;
 
+/** What a bounded upgrade step answers once its bound has passed (`withTimeoutOr`). */
 const TIMED_OUT: unique symbol = Symbol('listen_upgrade_step_timed_out');
-
-/** `work`, or {@link TIMED_OUT} once `ms` have passed (a late rejection of `work` is handled by the race). */
-async function within<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMED_OUT), ms);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 /** Sent as the close reason when the upgrade's token does not verify. */
 export const LISTEN_TOKEN_INVALID_REASON = 'listen_token_invalid';
@@ -178,24 +167,28 @@ function sendJson(ws: WebSocket, frame: AgencyListenServerFrame): void {
   try { ws.send(JSON.stringify(frame)); } catch { /* the close follows */ }
 }
 
-/** Close, then terminate after 5 s if the peer never completes the handshake (LS22 h). Never throws. */
-function closeWith(ws: WebSocket, code: number, reason: string): void {
-  closeThenTerminate(ws, code, reason);
-}
+type UpgradeRefusal = AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON | 'permission_revoked' | 'superseded';
 
 /**
  * A refusal at the upgrade: the close code for each error code (`AGENCY_LISTEN_CLOSE`).
  * `permission_revoked` (an end reason, not an error code) is the supervisor's access gone: 4403;
  * `superseded` (one too) their newer listen elsewhere: 4409, as a live session's supersede.
  */
-function refuse(ws: WebSocket, code: AgencyListenErrorCode | typeof LISTEN_TOKEN_INVALID_REASON | 'permission_revoked' | 'superseded'): void {
-  const close = code === LISTEN_TOKEN_INVALID_REASON ? AGENCY_LISTEN_CLOSE.TOKEN_REJECTED
-    : code === 'permission_revoked' ? AGENCY_LISTEN_CLOSE.FORBIDDEN
-    : code === 'superseded' ? AGENCY_LISTEN_CLOSE.SUPERSEDED
-      : code === 'listen_limit_call' || code === 'listen_limit_server' ? AGENCY_LISTEN_CLOSE.LIMIT
-        : code === 'listen_call_not_live' ? AGENCY_LISTEN_CLOSE.CALL_GONE
-          : AGENCY_LISTEN_CLOSE.INTERNAL_ERROR;
-  closeWith(ws, close, code);
+const REFUSAL_CLOSE: Readonly<Record<UpgradeRefusal, number>> = {
+  [LISTEN_TOKEN_INVALID_REASON]: AGENCY_LISTEN_CLOSE.TOKEN_REJECTED,
+  permission_revoked: AGENCY_LISTEN_CLOSE.FORBIDDEN,
+  superseded: AGENCY_LISTEN_CLOSE.SUPERSEDED,
+  listen_limit_call: AGENCY_LISTEN_CLOSE.LIMIT,
+  listen_limit_server: AGENCY_LISTEN_CLOSE.LIMIT,
+  listen_call_not_live: AGENCY_LISTEN_CLOSE.CALL_GONE,
+  listen_recording_off: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR,
+  listen_own_call: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR,
+  listen_unavailable: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR,
+};
+
+/** Close with the refusal's code, then terminate after 5 s if the peer never completes the handshake (LS22 h). */
+function refuse(ws: WebSocket, code: UpgradeRefusal): void {
+  closeThenTerminate(ws, REFUSAL_CLOSE[code], code);
 }
 
 /** One open listen: the registry's handle and the bridge's sink. */
@@ -260,7 +253,10 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
   /** A client frame arrived: the idle bound starts again. */
   touch(): void {
     if (!this.live || this.ended) return;
-    if (this.idle) clearTimeout(this.idle);
+    if (this.idle) {
+      this.idle.refresh();
+      return;
+    }
     this.idle = setTimeout(() => {
       log.info({ listenId: this.listenId, callId: this.callId }, 'Listener silent past the idle bound — ending the listen');
       void this.end('listener_disconnected');
@@ -316,8 +312,8 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
     // requires it to be left out.
     if (this.live && !clientClosed && reason !== 'server_restarted') {
       sendJson(this.ws, { event: 'ended', reason });
-      if (closeCode) closeWith(this.ws, closeCode.code, closeCode.reason);
-      else closeWith(this.ws, AGENCY_LISTEN_END_CLOSE[reason], reason);
+      if (closeCode) closeThenTerminate(this.ws, closeCode.code, closeCode.reason);
+      else closeThenTerminate(this.ws, AGENCY_LISTEN_END_CLOSE[reason], reason);
     }
     const now = (this.deps.now ?? Date.now)();
     const seconds = Math.max(0, (now - this.startedAt) / 1000);
@@ -405,12 +401,12 @@ export async function handleListenSocket(
       log.warn({ listenId: input.listenId }, 'Listener socket past its message rate — closing it');
       const rate = { code: AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, reason: LISTEN_MESSAGE_RATE_REASON };
       if (session) void session.end('listener_disconnected', undefined, false, rate);
-      else closeWith(ws, rate.code, rate.reason);
+      else closeThenTerminate(ws, rate.code, rate.reason);
       return;
     }
     tokens -= 1;
     if (!session || isBinary) return; // audio from the client is ignored
-    const bytes = Buffer.isBuffer(raw) ? raw : Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw);
+    const bytes = rawDataToBuffer(raw);
     if (bytes.length > LISTEN_MAX_CLIENT_MESSAGE_BYTES) return;
     const frame = parseListenClientFrame(bytes.toString('utf8'));
     if (frame) session.onClientFrame(frame);
@@ -447,51 +443,54 @@ export async function handleListenSocket(
     return null;
   }
 
+  /**
+   * Every refusal past the reservation: the slot given back first, then the session made for it
+   * ended (`end`), then the socket refused with `code` (null when the client is gone already).
+   */
+  const refuseAt = async (code: UpgradeRefusal | null, end?: () => Promise<void>): Promise<null> => {
+    deps.registry.release(reserved.reservation);
+    if (end) await end();
+    if (code) refuse(ws, code);
+    return null;
+  };
+
   // 4. May they still listen? Asked of the database, fail closed, and bounded (LS22 o).
   const stepMs = deps.upgradeStepTimeoutMs ?? LISTEN_UPGRADE_STEP_TIMEOUT_MS;
-  const access = await within(deps.registry.verify(grant), stepMs);
+  const access = await withTimeoutOr(deps.registry.verify(grant), stepMs, TIMED_OUT);
   // A client already closed for its message rate (1008) gets no row either.
-  if (access !== 'ok' || clientGone || abused) {
-    deps.registry.release(reserved.reservation);
-    if (clientGone || abused) return null;
+  if (clientGone || abused) return refuseAt(null);
+  if (access !== 'ok') {
     const why = access === TIMED_OUT ? 'timed_out' : access;
     log.info({ listenId: grant.listenId, callId: grant.callId, access: why }, 'Listen upgrade refused at the access check');
-    refuse(ws, access === 'revoked' ? 'permission_revoked' : 'listen_unavailable');
-    return null;
+    return refuseAt(access === 'revoked' ? 'permission_revoked' : 'listen_unavailable');
   }
 
   // 5. The row, awaited and bounded: no row, no audio.
   let wrote: unknown;
   try {
-    wrote = await within(deps.rows.open({
+    wrote = await withTimeoutOr(deps.rows.open({
       id: grant.listenId, tenantId: grant.tenantId, accountId: grant.accountId, callId: grant.callId,
       origin: grant.origin, campaignId: grant.campaignId, correlationId: grant.correlationId,
       agentSessionId: grant.sessionId, agentUserId: grant.agentUserId, listenerUserId: grant.listenerUserId,
       replicaId: deps.replicaId,
-    }), stepMs);
+    }), stepMs, TIMED_OUT);
   } catch (err) {
-    deps.registry.release(reserved.reservation);
     log.error({ err, listenId: grant.listenId, callId: grant.callId }, 'Could not write the listen session row — refusing the listen');
-    refuse(ws, 'listen_unavailable');
-    return null;
+    return refuseAt('listen_unavailable');
   }
   if (wrote === TIMED_OUT) {
     // Should the insert land later, nothing here holds its id: the rows' sweep closes it.
-    deps.registry.release(reserved.reservation);
     log.error({ listenId: grant.listenId, callId: grant.callId, timeoutMs: stepMs },
       'The listen session row\'s insert did not answer in time — refusing the listen');
-    refuse(ws, 'listen_unavailable');
-    return null;
+    return refuseAt('listen_unavailable');
   }
 
   const s = new ListenSocketSession(ws, grant, deps);
-  if (clientGone || abused || deps.registry.isStopping) {
-    deps.registry.release(reserved.reservation);
-    await s.end(clientGone || abused ? 'listener_disconnected' : 'server_shutdown', undefined, clientGone);
-    // A stopping process refuses as it does at the reservation (LS16 q): try again elsewhere.
-    if (!clientGone && !abused) refuse(ws, 'listen_unavailable');
-    return null;
+  if (clientGone || abused) {
+    return refuseAt(null, () => s.end('listener_disconnected', undefined, clientGone));
   }
+  // A stopping process refuses as it does at the reservation (LS16 q): try again elsewhere.
+  if (deps.registry.isStopping) return refuseAt('listen_unavailable', () => s.end('server_shutdown'));
 
   // 6. The tap.
   let opened: OpenListenTapResult;
@@ -501,24 +500,18 @@ export async function handleListenSocket(
     // Not the call's end: the bridge failed. The row says the tap failed; the bar retries (1011).
     log.error({ err, listenId: grant.listenId, callId: grant.callId }, 'Opening the listen tap threw');
     try { trackListenTapError('open'); } catch { /* a metric is never worth the refusal */ }
-    deps.registry.release(reserved.reservation);
-    await s.end('tap_error', undefined, true);
-    refuse(ws, 'listen_unavailable');
-    return null;
+    return refuseAt('listen_unavailable', () => s.end('tap_error', undefined, true));
   }
   // A tap that ended under the attach (it closed the sink at once and attached nothing: LS22 f) is
   // a call no longer live, as a refusal is.
   if ('refused' in opened || !opened.attached || s.isEnded) {
-    deps.registry.release(reserved.reservation);
     const why = 'refused' in opened ? opened.refused : 'ended_under_attach';
     log.info({ listenId: grant.listenId, callId: grant.callId, refused: why }, 'Listen upgrade: the call is not live here');
     if (!('refused' in opened)) {
       try { opened.detach(); } catch { /* already detached */ }
     }
     // The row says what happened to the listen: the call it was for had ended.
-    await s.end('call_ended', undefined, true);
-    refuse(ws, 'listen_call_not_live');
-    return null;
+    return refuseAt('listen_call_not_live', () => s.end('call_ended', undefined, true));
   }
   s.tap = opened;
 
