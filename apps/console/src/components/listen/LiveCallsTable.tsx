@@ -40,7 +40,7 @@ import {
   hasLiveCallFilters,
   isLiveCallOverrun,
   liveCallFilterOptions,
-  liveCallRowPagePath,
+  liveCallPagePath,
   nextLiveCallSort,
   sortLiveCalls,
   type LiveCallFilterOption,
@@ -364,7 +364,7 @@ function LiveCallRow({
   // Amber past twice the campaign's average handle time, which the row carries (null: not known).
   const overrun = !ended && isLiveCallOverrun(elapsed, call.aht_seconds);
   // The soft phone's call page is behind its flag: no link to a page that would say it is unavailable.
-  const pagePath = liveCallRowPagePath(call, useFeatureFlagEnabled(SOFTPHONE_FLAG));
+  const pagePath = liveCallPagePath(call, useFeatureFlagEnabled(SOFTPHONE_FLAG));
   const name = agentName(call);
   const customer = customerLabel(call);
   // A caller who withheld their number has none to show: "Withheld", and no Show (LS22 i).

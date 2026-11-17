@@ -102,7 +102,7 @@ export function listenHistoryAgent(entry: Pick<AgencyListenHistoryEntry, 'agent_
  */
 export function listenHistoryCallPath(entry: AgencyListenHistoryEntry, softphoneEnabled: boolean): string | null {
   if (callRowGone(entry)) return null;
-  return liveCallPagePath({ origin: entry.origin, campaignId: entry.campaign_id, correlationId: entry.correlation_id }, softphoneEnabled);
+  return liveCallPagePath(entry, softphoneEnabled);
 }
 
 export interface ListenHistoryOption {

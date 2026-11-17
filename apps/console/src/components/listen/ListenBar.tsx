@@ -196,7 +196,10 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
   const over = state.phase === 'ended';
   // The call's own page; an inbound call has none in the console, and a soft-phone call's is
   // behind the soft phone's flag, so nothing is offered then.
-  const pagePath = liveCallPagePath(target, useFeatureFlagEnabled(SOFTPHONE_FLAG));
+  const pagePath = liveCallPagePath(
+    { origin: target.origin, campaign_id: target.campaignId, correlation_id: target.correlationId },
+    useFeatureFlagEnabled(SOFTPHONE_FLAG),
+  );
   const openCall = pagePath ? (
     <Link className={styles.link} to={pagePath} data-testid="listen-open-call">
       {LISTEN_BAR_COPY.openCall}

@@ -452,7 +452,7 @@ export function activityTargetPath(
     case 'agency_call': {
       const origin = str(detail['origin']);
       if (!origin || !(AGENCY_CALL_ORIGINS as readonly string[]).includes(origin)) return null;
-      return liveCallPagePath({ origin: origin as AgencyCallOrigin, campaignId, correlationId: str(detail['correlation_id']) }, softphoneEnabled);
+      return liveCallPagePath({ origin: origin as AgencyCallOrigin, campaign_id: campaignId, correlation_id: str(detail['correlation_id']) }, softphoneEnabled);
     }
     case 'agency_attempt':
     case 'agency_disposition':
