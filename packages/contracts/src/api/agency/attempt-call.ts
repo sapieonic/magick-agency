@@ -7,6 +7,7 @@
  */
 
 import type { AgencyAttempt } from './agency-spine';
+import type { AgencyCallListenSession } from './live-calls';
 import type { WebRtcCallRecord } from './webrtc-call';
 
 /**
@@ -28,4 +29,10 @@ export interface AgencyAttemptCallDetail {
   /** Null whenever `call_availability` is not `available`. */
   call: WebRtcCallRecord | null;
   call_availability: AgencyCallAvailability;
+  /**
+   * Who listened to the call live ("Listened to by", docs/listening.md LS13, LS16 k): the sessions
+   * that went live, earliest first, added by the public API layer for an `agency.supervise` caller.
+   * Absent when there is no call or the read failed; the page then shows no section.
+   */
+  listen_sessions?: AgencyCallListenSession[];
 }

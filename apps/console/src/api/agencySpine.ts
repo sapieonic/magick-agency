@@ -1,4 +1,4 @@
-import type { AgencyCallListenSession } from '../types/live-calls';
+import type { AgencyAttemptCallDetail as WireAttemptCallDetail } from '@magick-agency/contracts/api/agency/attempt-call';
 import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
 import { buildAuthHeaders } from './authHeaders';
@@ -152,7 +152,7 @@ export interface AgencyAttemptCallDetail {
    * Who listened to the call live (`docs/listening.md` LS13), earliest first. Optional: a server
    * without listening answers the detail alone, and the page then shows no "Listened to by".
    */
-  listen_sessions?: AgencyCallListenSession[];
+  listen_sessions?: WireAttemptCallDetail['listen_sessions'];
 }
 
 /**

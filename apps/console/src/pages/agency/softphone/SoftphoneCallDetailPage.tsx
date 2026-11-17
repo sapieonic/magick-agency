@@ -11,7 +11,6 @@ import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
 import { fetchManualCallRecordingBlobUrl, getManualCall, getSoftphoneBootstrap } from '../../../api/softphone';
 import { ListenedToBy } from '../../../components/listen/ListenedToBy';
-import type { WithListenSessions } from '../../../types/live-calls';
 import { errorCode, errorStatus } from '../../../utils/agencyErrors';
 import { AGENCY_ANALYTICS_CAPABILITY, AGENCY_RECORDING_CAPABILITY } from '../../../utils/agencyCampaignRecording';
 import { CallDetailView, FactCard, type CallFact, type CallFactCard } from '../../../components/calls/CallDetailView';
@@ -213,7 +212,7 @@ export default function SoftphoneCallDetailPage() {
   const { tenantId, accountId } = useTenant();
   const { isEnabled } = useGovernance();
   // `listen_sessions`: who listened in live (LS13), when the server sends it.
-  const [detail, setDetail] = useState<WithListenSessions<AgencyManualCallDetail> | null>(null);
+  const [detail, setDetail] = useState<AgencyManualCallDetail | null>(null);
   const [bootstrap, setBootstrap] = useState<AgencySoftphoneBootstrap | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
