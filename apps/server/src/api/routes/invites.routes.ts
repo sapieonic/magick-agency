@@ -847,7 +847,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
     await invalidateUserCache(user.id, beforeBind?.firebase_uid ?? null);
     await redisCache.del(membershipCacheKey(user.id, invite.tenant_id));
     // The claim activates a seat that may shadow a wider one (an account-scoped seat over a
-    // tenant-wide admin, in that account): the claimant's listens are re-checked now (QA-L4, LS10).
+    // tenant-wide admin, in that account): the claimant's listens are re-checked now (LS22 l, LS10).
     await revokeListens(invite.tenant_id, user.id);
 
     // The same comparison the address rule above made, so the gate and the

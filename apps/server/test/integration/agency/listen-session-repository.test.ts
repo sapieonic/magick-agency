@@ -132,7 +132,7 @@ describe('agency listen session repository', () => {
     await repo.close(first.id, { reason: 'listener_stopped', framesSent: 50, framesDropped: 0, live: true });
     const second = await repo.open(input({ callId: call }));
     await repo.markLive(second.id);
-    // Written, then refused at the upgrade (QA-M2): never live, so nobody listened.
+    // Written, then refused at the upgrade (LS22 c): never live, so nobody listened.
     const refusedAtUpgrade = await repo.open(input({ callId: call }));
     await repo.close(refusedAtUpgrade.id, { reason: 'call_ended', framesSent: 0, framesDropped: 0 });
     // Between its row and its admission now: not live yet.

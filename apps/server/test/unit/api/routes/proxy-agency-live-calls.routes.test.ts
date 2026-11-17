@@ -154,7 +154,7 @@ describe('GET /live-calls', () => {
     expect(notListenableReason({ agent_user_id: AGENT, recording: true, listeners: [two[0]!, { ...two[1]!, user_id: ME }] }, ME, true, 2)).toBeNull();
   });
 
-  it('PM-minor9, QA-L2: an inbound caller who withheld their number is said so, not shown as a number', async () => {
+  it('LS22 i: an inbound caller who withheld their number is said so, not shown as a number', async () => {
     const other = '12121212-1212-4121-8121-121212121212';
     deps.live = [
       coreCall({ origin: 'inbound', campaign_id: null, campaign_name: null, inbound_route_name: 'Main line', customer_name: null, customer_phone: '' }),
@@ -186,7 +186,7 @@ describe('GET /live-calls/:callId/number', () => {
     expect(gone.json()).toEqual({ error: 'Not Found', code: 'listen_call_not_live', message: 'That call is not in progress.' });
   });
 
-  it('PM-minor9, QA-L2: a withheld number has nothing to reveal: 404 live_call_number_withheld, never an empty number', async () => {
+  it('LS22 i: a withheld number has nothing to reveal: 404 live_call_number_withheld, never an empty number', async () => {
     deps.live = [coreCall({ origin: 'inbound', customer_phone: '' })];
     const res = await get(`/proxy/agency/live-calls/${CALL}/number`);
     expect(res.statusCode).toBe(404);

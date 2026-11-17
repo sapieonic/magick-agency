@@ -347,7 +347,8 @@ export type ClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_fou
 
 /**
  * Why the bridge ended a listener's sink (`ListenSink.close`), a subset of the contract's end
- * reasons: `call_ended` (the session was destroyed), `tap_error` (the tap failed
+ * reasons: `call_ended` (the call started to settle: a VoiceLink hangup of ours entering `ending`,
+ * the top of `endCall`, or the session destroyed, LS15 f), `tap_error` (the tap failed
  * `AGENCY_LISTEN_FAULT_BUDGET` frames of one leg in a row and detached), `send_backlog` (the sink
  * answered `backlog`: its socket's unsent bytes passed the hard cap) and `listener_disconnected`
  * (the sink answered `closed`, or its `send` threw).

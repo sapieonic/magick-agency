@@ -23,7 +23,7 @@
 //    call and the listen ids only: no audio, no numbers.
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-// Deliberately the agency area's metric, emitted from voice (SWE-L2): `agency_listen_tap_errors_total`
+// Deliberately the agency area's metric, emitted from voice (LS22 j): `agency_listen_tap_errors_total`
 // sits with the other `agency_listen_*` series it is read beside, and the tap is the only place that
 // knows a frame failed. Nothing else in voice reads the agency area.
 import { trackListenTapError, type ListenTapErrorStage } from '@magick-agency/observability/metrics/agency';

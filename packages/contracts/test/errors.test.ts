@@ -369,7 +369,7 @@ const _notListenableIsACode: AgencyApi.AgencyLiveCallNotListenableReason extends
 // amber timer): present, and of these types.
 const _rowCorrelation: Equals<AgencyApi.AgencyLiveCall['correlation_id'], string> = true;
 const _rowAht: Equals<AgencyApi.AgencyLiveCall['aht_seconds'], number | null> = true;
-// A withheld number is said so, not shown as `****` (PM-minor9): additive, a boolean.
+// A withheld number is said so, not shown as `****` (LS22 i): additive, a boolean.
 const _rowWithheld: Equals<AgencyApi.AgencyLiveCall['customer_phone_withheld'], boolean | undefined> = true;
 const _numberExact: Equals<(typeof AGENCY_LIVE_CALL_NUMBER_ERROR_CODES)[number], AgencyLiveCallNumberErrorCode> = true;
 const _consoleNumberAgrees: Equals<AgencyApi.AgencyLiveCallNumberErrorCode, AgencyLiveCallNumberErrorCode> = true;

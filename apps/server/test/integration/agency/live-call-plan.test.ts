@@ -26,7 +26,7 @@ const { LIVE_CALLS_SQL, CAMPAIGN_AHT_SQL } = await import('../../../src/db/repos
  * The assertion is on the scan's index CONDITION too: the partial index can also be scanned whole
  * (every tenant's live attempts, no condition), which a name-only assertion would pass.
  *
- * The other two spines (QA-L6), seeded the same way (many ended rows, a few live): a soft-phone
+ * The other two spines, seeded the same way (many ended rows, a few live): a soft-phone
  * call on `idx_agency_manual_calls_live` by the account, an inbound call on
  * `idx_agency_inbound_calls_account_live` by the tenant and account. And the campaign AHT read
  * (`campaignAhtSeconds`, cached a minute per campaign): it reads one campaign's attempts by
@@ -138,7 +138,7 @@ describe('the live list\'s plan', () => {
     expect(inbound!.cond).toMatch(/tenant_id = .*account_id = /);
   });
 
-  it('QA-L6, SWE-L7: the campaign AHT read takes one campaign\'s attempts by campaign_id on an index, never the whole table', async () => {
+  it('LS16 i: the campaign AHT read takes one campaign\'s attempts by campaign_id on an index, never the whole table', async () => {
     const pool = getTestPool();
     const { rows: [one] } = await pool.query<{ campaign_id: string }>(
       `SELECT campaign_id FROM agency_call_attempts WHERE account_id = $1 LIMIT 1`, [A]);

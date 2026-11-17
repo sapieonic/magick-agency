@@ -366,7 +366,7 @@ describe('lease renewer killed (chaos, slow)', () => {
           || arg === 'LEADER_LEASE_MS'
           || arg === 'STATION_TOKEN_TTL_MS'
           || arg === 'ttlMs'
-          // Narrowed to its one file (QA-L7): a generic `this.tokenTtlMs` anywhere else is not it.
+          // Narrowed to its one file (the listen token store): a generic `this.tokenTtlMs` anywhere else is not it.
           || (arg === 'this.tokenTtlMs' && file === 'listen/listen-token.ts');
         if (!ok) offenders.push(`${file}: TTL from an unrecognised source — ${arg}`);
       }

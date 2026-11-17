@@ -163,7 +163,7 @@ interface CoreListenTapHandle {
 }
 type CoreListenTapRefusal = 'not_found' | 'not_bridged' | 'ending';
 type CoreOpenListenTapResult = CoreListenTapHandle | { refused: CoreListenTapRefusal };
-/** The caller's fault budget for the tap (SWE-L2: the voice area reads no agency config). */
+/** The caller's fault budget for the tap (LS22 j: the voice area reads no agency config). */
 interface CoreListenTapOpenOptions { faultBudget: number }
 type CoreRejectReason =
   | 'global_concurrency_limit'

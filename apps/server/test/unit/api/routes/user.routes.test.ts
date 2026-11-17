@@ -239,7 +239,7 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    // QA-L4: an account-scoped seat may shadow the invitee's tenant-wide one in that account.
+    // LS22 l: an account-scoped seat may shadow the invitee's tenant-wide one in that account.
     expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, expect.any(String));
     expect(mocks.accountRepository.findByIdInTenant).toHaveBeenCalledWith(ACCOUNT_OWN_TENANT, TENANT);
     expect(mocks.membershipRepository.create).toHaveBeenCalledWith(

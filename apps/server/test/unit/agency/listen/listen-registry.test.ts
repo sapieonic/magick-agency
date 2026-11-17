@@ -245,7 +245,7 @@ describe('ListenRegistry: revocation and the re-check (LS10, LS16 c, d)', () => 
     registry.stop();
   });
 
-  it('a tick still in flight is not stacked on (SWE-L8): the next ticks only apply the staleness cap', async () => {
+  it('a tick still in flight is not stacked on (LS22 k): the next ticks only apply the staleness cap', async () => {
     vi.useFakeTimers();
     const access = vi.fn(allPass);
     const maintainRows = vi.fn(() => new Promise<void>(() => {}));
@@ -287,7 +287,7 @@ describe('ListenRegistry: revocation and the re-check (LS10, LS16 c, d)', () => 
     expect(access).toHaveBeenCalledTimes(2);
   });
 
-  it('each tick hands the rows\' upkeep the ids it holds, read when asked: open sessions and reservations (SWE-M1)', async () => {
+  it('each tick hands the rows\' upkeep the ids it holds, read when asked: open sessions and reservations (LS22 k)', async () => {
     vi.useFakeTimers();
     const maintainRows = vi.fn(async (held: () => ReadonlySet<string>) => { void held; });
     const registry = registryWith(undefined, { maxPerProcess: 10 }, { maintainRows });
@@ -421,7 +421,7 @@ describe('listenAccessCheck', () => {
     expect(membershipMayListen([membership({ account_id: 'a1', status: 'revoked' })], 'a1')).toBe(false);
   });
 
-  it('membershipMayListen asks of the membership the tenant context would pick (SWE-L5: one rule, `selectMembership`)', () => {
+  it('membershipMayListen asks of the membership the tenant context would pick (LS22 l: one rule, `selectMembership`)', () => {
     const lists: MembershipRecord[][] = [
       [],
       [membership({ account_id: null, role: 'tenant_admin' })],

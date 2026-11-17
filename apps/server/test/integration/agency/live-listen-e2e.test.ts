@@ -250,7 +250,7 @@ async function closedRow(listenId: string, reason: string) {
 }
 
 async function auditActions(callId: string): Promise<string[]> {
-  // Flushed, not shut down: the logger keeps running for the rest of the file (QA-L8).
+  // Flushed, not shut down: the logger keeps running for the rest of the file (`platformAuditLogger.flush`).
   await platformAuditLogger.flush();
   const { rows } = await pool().query<{ action: string }>(
     `SELECT action FROM platform_audit_log WHERE resource_type = 'agency_call' AND resource_id = $1 ORDER BY created_at, action DESC`, [callId]);
@@ -579,7 +579,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     const detail = await http(supervisor, 'GET', `/proxy/agency/softphone/calls/${placed.call.id}`);
     expect(detail.statusCode, detail.body).toBe(200);
     expect(detail.json().listen_sessions).toEqual([expect.objectContaining({ listen_id: l.listenId, end_reason: 'call_ended' })]);
-    // QA-L2: the agent reads their own call, without agency.supervise: no `listen_sessions`.
+    // LS16 k: the agent reads their own call, without agency.supervise: no `listen_sessions`.
     const own = await http(agent, 'GET', `/proxy/agency/softphone/calls/${placed.call.id}`);
     expect(own.statusCode, own.body).toBe(200);
     expect(own.json()).not.toHaveProperty('listen_sessions');
@@ -620,7 +620,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect((await http(supervisor, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`)).json().code).toBe('listen_call_not_live');
   });
 
-  it('QA-L1, LS15 f: the agent hangs up: the listener is ended `call_ended` and hears nothing of the agent after `ended`', async () => {
+  it('LS15 f: the agent hangs up: the listener is ended `call_ended` and hears nothing of the agent after `ended`', async () => {
     const call = await liveCall();
     call.ctl.talk = true;
     talk(call.station);
@@ -646,7 +646,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     await closedRow(l.listenId, 'call_ended');
   });
 
-  it('QA-M2: a grant whose call ended before its upgrade is refused 4404; its row is not "Listened to by"', async () => {
+  it('LS22 c: a grant whose call ended before its upgrade is refused 4404; its row is not "Listened to by"', async () => {
     const call = await liveCall();
     const res = await http(supervisor, 'POST', `/proxy/agency/live-calls/${call.callId}/listen`);
     expect(res.statusCode, res.body).toBe(201);
@@ -664,7 +664,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     expect(detail.json().listen_sessions).toEqual([]);
   });
 
-  it('QA-L2: a super-admin\'s session reaches no live-call route', async () => {
+  it('LS3: a super-admin\'s session reaches no live-call route', async () => {
     const call = await liveCall();
     // A super-admin session token as its login signs one (`super-admin/login.ts`), for a real admin.
     const adminId = randomUUID();

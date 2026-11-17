@@ -34,7 +34,7 @@ const { cfg } = vi.hoisted(() => ({
     redis: { keyPrefix: '' },
     telephony: { voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' } },
     // No `agency` block: the bridge reads no agency config; the tap's budget comes through the
-    // seam (`openListenTap`'s options, SWE-L2). A read of `config.agency` would throw here.
+    // seam (`openListenTap`'s options, LS22 j). A read of `config.agency` would throw here.
   },
 }));
 vi.mock('../../../src/config/index.js', () => ({ config: cfg }));
@@ -985,7 +985,7 @@ describe('the fault budget', () => {
     await mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
   });
 
-  it('SWE-L2: the budget is the caller\'s, through the seam; with none the tap takes LISTEN_TAP_DEFAULT_FAULT_BUDGET', async () => {
+  it('LS22 j: the budget is the caller\'s, through the seam; with none the tap takes LISTEN_TAP_DEFAULT_FAULT_BUDGET', async () => {
     expect(LISTEN_TAP_DEFAULT_FAULT_BUDGET).toBe(50);
     const station = fakeStation('pcm16');
     const { mgr, pstn } = await bridged('generic', station);

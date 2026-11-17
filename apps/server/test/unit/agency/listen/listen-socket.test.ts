@@ -100,7 +100,7 @@ function harness(over: {
         if (over.tap === 'refused') return { refused: 'not_found' };
         if (over.tap === 'throws') throw new Error('bridge bug');
         if (over.tap === 'ended') {
-          // A tap that ended under the attach: the sink closed at once, the handle detached (SWE-L1).
+          // A tap that ended under the attach: the sink closed at once, the handle detached (LS22 f).
           sink.close('call_ended', { framesSent: 0, framesDropped: 0 });
           return { callId, listenId: sink.listenId, attached: false, stats: tap.stats, detach: tap.detach };
         }
@@ -213,7 +213,7 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.FORBIDDEN, reason: 'permission_revoked' });
     expect(h.ws.json().some((f) => f['event'] === 'ready')).toBe(false);
     expect(h.rows.close).toHaveBeenCalledWith(L, { reason: 'permission_revoked', framesSent: 7, framesDropped: 1, live: false });
-    // Never live: "Listened to by" leaves the row out (QA-M2).
+    // Never live: "Listened to by" leaves the row out (LS22 c).
     expect(h.rows.markLive).not.toHaveBeenCalled();
     expect(h.tap.detach).toHaveBeenCalledTimes(1);
     expect(h.audit).not.toHaveBeenCalled();
@@ -269,7 +269,7 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.rows.markLive).not.toHaveBeenCalled();
   });
 
-  it('SWE-L1: a tap that ended under the attach (the sink closed at once) is a call no longer live: 4404, no slot, no audit, no `ended` frame', async () => {
+  it('LS22 f: a tap that ended under the attach (the sink closed at once) is a call no longer live: 4404, no slot, no audit, no `ended` frame', async () => {
     const h = harness({ tap: 'ended' });
     expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
     await settle();
@@ -333,7 +333,7 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.registry.held().size).toBe(0);
   });
 
-  it('QA-L3: a token store that cannot be asked refuses 1011 listen_unavailable, not 4401 (re-mint)', async () => {
+  it('LS22 g: a token store that cannot be asked refuses 1011 listen_unavailable, not 4401 (re-mint)', async () => {
     const h = harness();
     h.deps.tokens = { consume: vi.fn(async () => { throw new ListenTokenUnavailableError(L); }) };
     expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
@@ -341,7 +341,7 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.rows.open).not.toHaveBeenCalled();
   });
 
-  it('the fault budget reaches the bridge through the seam (SWE-L2)', async () => {
+  it('the fault budget reaches the bridge through the seam (LS22 j)', async () => {
     const h = harness();
     h.deps.faultBudget = 7;
     await admitted(h);
@@ -430,7 +430,7 @@ describe('the session', () => {
     }
   });
 
-  it('SWE-M3: a socket that never completes the close is terminated after the station\'s grace; one that closes is not', async () => {
+  it('LS22 h: a socket that never completes the close is terminated after the station\'s grace; one that closes is not', async () => {
     vi.useFakeTimers();
     const h = harness();
     await admitted(h);
@@ -448,7 +448,7 @@ describe('the session', () => {
     expect(polite.ws.terminated).toBe(false);
   });
 
-  it('QA-M1: the server pings at the protocol level, and a pong keeps a listener that sends no JSON ping alive', async () => {
+  it('LS22 d: the server pings at the protocol level, and a pong keeps a listener that sends no JSON ping alive', async () => {
     vi.useFakeTimers();
     const h = harness();
     await admitted(h);
@@ -467,7 +467,7 @@ describe('the session', () => {
     expect(h.ws.pings).toBe(pings);
   });
 
-  it('QA-L5: past its message rate the socket is closed 1008 and the listen ends listener_disconnected; an honest client never gets near it', async () => {
+  it('LS22 e: past its message rate the socket is closed 1008 and the listen ends listener_disconnected; an honest client never gets near it', async () => {
     let now = 1_000_000;
     const h = harness();
     h.deps.now = () => now;

@@ -15,8 +15,8 @@ const log = createChildLogger({ component: 'agency-listen-registry' });
  * Per call (`maxPerCall`), per process (`maxPerProcess`), per supervisor (`maxPerUser`, a new
  * listen past it ends their oldest `superseded`). A call is relayed by one process, so the
  * per-call count here is the call's. The per-call and per-process caps count reservations too
- * (an upgrade between its admission and its row), so two upgrades racing one slot cannot both
- * pass. A supervisor's own sessions that the new one would supersede do not count against the
+ * (an upgrade between its reservation and its admission, across the access check, the row and the
+ * tap), so two upgrades racing one slot cannot both pass. A supervisor's own sessions that the new one would supersede do not count against the
  * per-call cap: a console reconnecting to the call it was on is not refused by its own stale
  * session.
  *
@@ -92,7 +92,7 @@ export interface ListenLimits {
   recheckMs: number;
 }
 
-/** A slot held for an upgrade between its admission and its row ({@link ListenRegistry.reserve}). */
+/** A slot held for an upgrade between its reservation and its admission ({@link ListenRegistry.reserve}). */
 export interface ListenReservation {
   readonly listenId: string;
   readonly callId: string;
@@ -183,8 +183,12 @@ export class ListenRegistry {
 
   private bumpGeneration(tenantId: string, userId: string): void {
     const key = `${tenantId}:${userId}`;
-    // Re-inserted so the map's order is the bump order; the oldest is forgotten past the bound
-    // (forgetting answers 0, which no outstanding grant of theirs recorded: refused, fail closed).
+    // Re-inserted so the map's order is the bump order; the oldest is forgotten past the bound.
+    // Forgetting answers 0 again, so a grant minted before that supervisor's FIRST revocation here
+    // (which recorded 0) would pass the generation check if the entry were forgotten within the
+    // token's TTL (10,000 other supervisors' revocations in 60 s). Not a hole: the upgrade's
+    // database check (`verify`, LS16 n) is the backstop and refuses a supervisor who may no longer
+    // listen; the generation only closes the window between the grant and that check.
     this.generations.delete(key);
     this.generations.set(key, ++this.generationCounter);
     if (this.generations.size > MAX_GENERATIONS) {

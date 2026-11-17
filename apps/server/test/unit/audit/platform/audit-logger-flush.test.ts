@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * `platformAuditLogger.flush()` (QA-L8): writes what is buffered and resolves once it is written,
+ * `platformAuditLogger.flush()`: writes what is buffered and resolves once it is written,
  * leaving the periodic flush armed, unlike `shutdown()`, which stops it. A test that reads the
  * audit table back mid-file flushes; it never shuts the logger down under the rest of the file.
  * Mutation-checked: `flush` calling the buffer's `forceFlush` (which stops the timer) reds the

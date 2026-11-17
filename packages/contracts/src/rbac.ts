@@ -311,7 +311,7 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // code change to this line, no route changes; floors are not per-tenant settings), and the
   // console then shows a supervisor who may watch but not listen the list without the Listen
   // action. Both floors are `account_admin` today, so that supervisor cannot occur yet and the
-  // console's footnote for them is unreachable (PM-minor10). Agents, viewers and operators cannot
+  // console's footnote for them is unreachable (LS3). Agents, viewers and operators cannot
   // listen, and neither can a super-admin (no
   // membership). The routes also refuse a listen to a call the caller is the agent on
   // (`listen_own_call`), and every one requires the `agency_live_listen_enabled` flag (the

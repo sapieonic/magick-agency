@@ -47,7 +47,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *
  * The timing bounds (`expectWithinQuiet`) are asserted with 4 or more CPUs, or when asked
  * (`LISTEN_LOAD_BOUNDS=on`, a `LOAD_SCALE` soak); on a smaller machine the readings are printed
- * instead (QA-M3: the wall-clock lane runs on every server PR, and two windows 20 s apart on a busy
+ * instead (LS22 m: the wall-clock lane runs on every server PR, and two windows 20 s apart on a busy
  * 2-core runner differ by more than the listeners). Everything else is asserted on every run.
  *
  * Wall-clock: the stream is paced in real time and the stalled listener's end is the real 10 s
@@ -745,7 +745,7 @@ function summariseRates(rates: RunResult['legRates']): { min: number; max: numbe
 }
 
 /**
- * Whether the timing bounds are asserted on this run (QA-M3). They compare two 15 s windows of
+ * Whether the timing bounds are asserted on this run (LS22 m). They compare two 15 s windows of
  * one floor, which a busy neighbour moves (another lane's files on a small runner): so they need
  * at least {@link TIMING_BOUNDS_MIN_CPUS} CPUs, unless asked for (`LISTEN_LOAD_BOUNDS=on`, or a
  * deliberate soak with `LOAD_SCALE`), or turned off (`LISTEN_LOAD_BOUNDS=off`). Without them the
@@ -862,7 +862,7 @@ afterAll(async () => {
 
 // ─── The suite ──────────────────────────────────────────────────────────────
 
-describe('the timing bounds\' gate (QA-M3)', () => {
+describe('the timing bounds\' gate (LS22 m)', () => {
   it('applies with 4 or more CPUs, or when asked; never on a smaller machine unasked', () => {
     expect(timingBoundsApply({}, 4).apply).toBe(true);
     expect(timingBoundsApply({}, 2).apply).toBe(false);

@@ -114,7 +114,7 @@ export class AgencyLiveCallRepository {
    * Its cost is each campaign's WHOLE history (every attempt it has made, by `campaign_id` on an
    * index: `live-call-plan.test.ts`), the same aggregate the campaign stats read computes. So the
    * internal handler caches it a minute per campaign per process (`LIVE_CALL_AHT_CACHE_MS`): the
-   * live list is polled every 5 s by every supervisor, the AHT read at most once a minute (SWE-L7).
+   * live list is polled every 5 s by every supervisor, the AHT read at most once a minute (LS16 i, u).
    */
   async campaignAhtSeconds(tenantId: string, campaignIds: readonly string[]): Promise<Map<string, number>> {
     if (campaignIds.length === 0) return new Map();

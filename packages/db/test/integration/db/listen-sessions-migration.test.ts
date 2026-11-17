@@ -192,7 +192,7 @@ describe('0047 — agency_listen_sessions', () => {
       ['SELECT * FROM agency_listen_sessions WHERE tenant_id = $1 AND account_id = $2 AND ended_at IS NULL', [TENANT, ACCOUNT]],
       ['SELECT * FROM agency_listen_sessions WHERE call_id = $1', [randomUUID()]],
       ['SELECT * FROM agency_listen_sessions WHERE tenant_id = $1 AND listener_user_id = $2 ORDER BY started_at DESC LIMIT 20', [TENANT, randomUUID()]],
-      // The live list's listeners (`listOpenForCalls`, QA-L6) and "Listened to by" (`listForCall`), as the repository spells them.
+      // The live list's listeners (`listOpenForCalls`) and "Listened to by" (`listForCall`), as the repository spells them.
       ['SELECT * FROM agency_listen_sessions WHERE call_id = ANY($2::uuid[]) AND tenant_id = $1 AND ended_at IS NULL ORDER BY started_at, id',
         [TENANT, [randomUUID(), randomUUID(), randomUUID()]]],
       ['SELECT * FROM agency_listen_sessions WHERE call_id = $3 AND tenant_id = $1 AND account_id = $2 AND live_at IS NOT NULL ORDER BY started_at, id',

@@ -20,9 +20,10 @@ const WALL_CLOCK_FILES = [
   'test/integration/telephony/inbound-mobile-wall-clock.test.ts',
   // Mode B: a ring expiring on the real 20 s window (AGENCY_INBOUND_RING_MS).
   'test/integration/telephony/inbound-ring-e2e.test.ts',
-  // Live listening's load check: three floors of real-time paced audio, about two minutes, and a
-  // stalled listener ended by the real 30 s idle bound (AGENCY_LISTEN_IDLE_TIMEOUT_MS). Its timing
-  // bounds also fare better in this lane, beside files that mostly wait, than in the busy rest.
+  // Live listening's load check: three floors of real-time paced audio, about three minutes, and a
+  // stalled listener ended `send_backlog` after the real 10 s of drops at its soft limit
+  // (LISTENER_SOFT_LIMIT_MAX_MS, LS17 b). Its timing bounds also fare better in this lane, beside
+  // files that mostly wait, than in the busy rest.
   'test/integration/load/listen-media-load.test.ts',
 ];
 

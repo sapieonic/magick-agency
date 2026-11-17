@@ -410,7 +410,7 @@ describe('POST /invites/:token/claim', () => {
     await app.close();
   });
 
-  it('QA-L4: re-checks the claimant\'s listens in the tenant: the seat it activates may shadow a wider one', async () => {
+  it('LS22 l: re-checks the claimant\'s listens in the tenant: the seat it activates may shadow a wider one', async () => {
     const app = await buildApp();
     mocks.revokeListens.mockClear();
     expect((await claim(app)).statusCode).toBe(200);

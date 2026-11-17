@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  *    listen `permission_revoked` (4403), with the periodic re-check held off (5 min), so it is the
  *    immediate path; and a grant whose supervisor is demoted before its upgrade is refused 4403 by
  *    the owning worker, with no row;
- *  - a media worker killed mid-listen (QA-M4): the primary's reap closes that worker's listen rows
+ *  - a media worker killed mid-listen: the primary's reap closes that worker's listen rows
  *    `server_restarted` (`closeOrphansExcept` with the live replicas), and leaves the other
  *    worker's open, its listener still hearing.
  */
@@ -284,7 +284,7 @@ describe('listening with media workers', () => {
   }, 60_000);
 
   // Last: it kills slot 0's worker, and its call with it.
-  it('QA-M4: a media worker killed mid-listen: its row closes `server_restarted` by the primary\'s reap; the other worker\'s listen stays open and keeps hearing', async () => {
+  it('a media worker killed mid-listen: its row closes `server_restarted` by the primary\'s reap; the other worker\'s listen stays open and keeps hearing', async () => {
     const onDoomed = await listen(await supervisor(), calls.get(0)!.callId);
     const onSurvivor = await listen(await supervisor(), calls.get(1)!.callId);
     expect((await row(onDoomed.listenId))?.replica_id).toMatch(/:mw0:/);

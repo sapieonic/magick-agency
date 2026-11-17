@@ -1954,7 +1954,7 @@ export class WebRtcBridgeManager {
     if (session.isTearingDown) return { refused: 'ending' };
     if (!session.bridged || !session.carrier) return { refused: 'not_bridged' };
     // The budget is the caller's setting (the agency's `AGENCY_LISTEN_FAULT_BUDGET`), passed in:
-    // the voice area reads no agency config (SWE-L2).
+    // the voice area reads no agency config (LS22 j).
     const handle = session.openListenTap(sink, options?.faultBudget ?? LISTEN_TAP_DEFAULT_FAULT_BUDGET);
     log.info({ callId, listenId: sink.listenId, listeners: session.listenTap?.sinkCount ?? 0 }, 'Listen tap attached');
     return handle;

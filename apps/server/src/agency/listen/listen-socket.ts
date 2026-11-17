@@ -58,13 +58,13 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  * sends no `ended` frame (only a session that went live does). A row written and then refused
  * stays not live (`live_at` NULL), so "Listened to by" leaves it out.
  *
- * ── Liveness (QA-M1) ─────────────────────────────────────────────────────────
+ * ── Liveness (LS22 d) ─────────────────────────────────────────────────────────
  * The server pings the socket at the protocol level every {@link AGENCY_LISTEN_PING_INTERVAL_MS}
  * and counts the pong, as it counts any client frame: a browser answers protocol pings itself,
  * so a hidden tab whose timers are throttled to once a minute (its JSON `ping`s late) is not ended
  * `listener_disconnected` while it is still reading. The client's JSON `ping` stays answered.
  * Client messages are rate-limited per socket ({@link LISTEN_CLIENT_MESSAGE_BURST}, refilled at
- * {@link LISTEN_CLIENT_MESSAGES_PER_SECOND}): past it the socket is closed 1008 (QA-L5).
+ * {@link LISTEN_CLIENT_MESSAGES_PER_SECOND}): past it the socket is closed 1008 (LS22 e).
  *
  * ── The end ──────────────────────────────────────────────────────────────────
  * Exactly once, whoever ends it (the client's `stop` or close, the idle bound, the tap, the
@@ -178,7 +178,7 @@ function sendJson(ws: WebSocket, frame: AgencyListenServerFrame): void {
   try { ws.send(JSON.stringify(frame)); } catch { /* the close follows */ }
 }
 
-/** Close, then terminate after 5 s if the peer never completes the handshake (SWE-M3). Never throws. */
+/** Close, then terminate after 5 s if the peer never completes the handshake (LS22 h). Never throws. */
 function closeWith(ws: WebSocket, code: number, reason: string): void {
   closeThenTerminate(ws, code, reason);
 }
@@ -244,7 +244,7 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
   // ── The session ─────────────────────────────────────────────────────────
   /**
    * Live from `ready`: control frames are answered, the idle bound runs, the server pings at the
-   * protocol level (a pong counts as liveness, QA-M1), and the row is stamped live (not awaited).
+   * protocol level (a pong counts as liveness, LS22 d), and the row is stamped live (not awaited).
    */
   goLive(): void {
     this.live = true;
@@ -310,7 +310,10 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
     }
     this.deps.registry.remove(this.listenId);
     // Only a session that went live says how it ended: one ended during its upgrade is a refusal,
-    // and the upgrade closes the socket with the refusal's own code (SWE-L1).
+    // and the upgrade closes the socket with the refusal's own code (LS22 f). `server_restarted`
+    // never reaches here today (only the reaps close a row with it, never a socket), but it has no
+    // close code in `AGENCY_LISTEN_END_CLOSE` (a reason never sent on a socket), so the type
+    // requires it to be left out.
     if (this.live && !clientClosed && reason !== 'server_restarted') {
       sendJson(this.ws, { event: 'ended', reason });
       if (closeCode) closeWith(this.ws, closeCode.code, closeCode.reason);
@@ -386,7 +389,7 @@ export async function handleListenSocket(
     clientGone = true;
     if (session) void session.end('listener_disconnected', undefined, true);
   });
-  // QA-L5: a token bucket per socket, every client message counted (binary and text, before or
+  // LS22 e: a token bucket per socket, every client message counted (binary and text, before or
   // after `ready`). Past it the socket is closed 1008: an honest console sends a ping every 10 s.
   const nowMs = deps.now ?? Date.now;
   let tokens = LISTEN_CLIENT_MESSAGE_BURST;
@@ -412,7 +415,7 @@ export async function handleListenSocket(
     const frame = parseListenClientFrame(bytes.toString('utf8'));
     if (frame) session.onClientFrame(frame);
   });
-  // A protocol pong (the browser answers the server's ping itself) is liveness too (QA-M1).
+  // A protocol pong (the browser answers the server's ping itself) is liveness too (LS22 d).
   ws.on('pong', () => { session?.touch(); });
 
   // 2. The token, spent once, and it must be this socket's.
@@ -420,7 +423,7 @@ export async function handleListenSocket(
   try {
     grant = await deps.tokens.consume(input.listenId, input.token);
   } catch (err) {
-    // The store could not be asked (QA-L3): not the token's fault, so not 4401 (re-mint).
+    // The store could not be asked (LS22 g): not the token's fault, so not 4401 (re-mint).
     if (!(err instanceof ListenTokenUnavailableError)) log.error({ err, listenId: input.listenId }, 'Listen token consume threw');
     if (!clientGone && !abused) refuse(ws, 'listen_unavailable');
     return null;
@@ -503,7 +506,7 @@ export async function handleListenSocket(
     refuse(ws, 'listen_unavailable');
     return null;
   }
-  // A tap that ended under the attach (it closed the sink at once and attached nothing: SWE-L1) is
+  // A tap that ended under the attach (it closed the sink at once and attached nothing: LS22 f) is
   // a call no longer live, as a refusal is.
   if ('refused' in opened || !opened.attached || s.isEnded) {
     deps.registry.release(reserved.reservation);

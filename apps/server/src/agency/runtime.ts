@@ -176,7 +176,7 @@ export class AgencyRuntime {
   readonly listenTokens: ListenTokenStore;
   /** The listen session rows: their opens and closes, a failed close retried, lost rows swept (`listen/listen-rows.ts`). */
   readonly listenRows: ListenRowKeeper;
-  /** `AGENCY_LISTEN_FAULT_BUDGET`, handed to the bridge's tap through the seam (SWE-L2). */
+  /** `AGENCY_LISTEN_FAULT_BUDGET`, handed to the bridge's tap through the seam (LS22 j). */
   private readonly listenFaultBudget: number;
   /** The bridge, for the listener socket's tap (the seam member `openListenTap`). */
   private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'getActiveCallIds'>;
@@ -291,7 +291,7 @@ export class AgencyRuntime {
     // The loaded config's, over the block's defaults. Deliberate, not drift: many unit tests mock
     // `config` without the `agency` block, so the typed config is read with optional chaining and
     // the schema's own defaults fill it. Only this runtime reads `agency.listen`; the bridge gets
-    // its fault budget from here through the seam (`openListenTap`'s options, SWE-L2).
+    // its fault budget from here through the seam (`openListenTap`'s options, LS22 j).
     const listen = { ...agencyConfigSchema.parse({}).agency.listen, ...config?.agency?.listen, ...options.listen };
     // The repository is read per call, not here: a runtime built over a mocked agency barrel that
     // has no listen repository must still construct.
