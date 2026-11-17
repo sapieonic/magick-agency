@@ -142,22 +142,21 @@ export const LISTEN_HISTORY_SQL = `
       FROM marked m
   ), visits AS (
     SELECT n.listener_user_id, n.call_id, n.visit_no,
-           (array_agg(n.id ORDER BY n.started_at, n.id))[1] AS id,
            array_agg(n.id ORDER BY n.started_at, n.id) AS listen_ids,
            min(n.started_at) AS started_at,
            bool_or(n.ended_at IS NULL) AS open,
            max(n.ended_at) AS last_ended_at,
            sum(n.share_seconds) AS listened_seconds,
-           (array_agg(n.end_reason ORDER BY n.ended_at DESC, n.id DESC))[1] AS last_end_reason,
-           (array_agg(n.origin ORDER BY n.started_at, n.id))[1] AS origin,
-           (array_agg(n.correlation_id ORDER BY n.started_at, n.id))[1] AS correlation_id,
-           (array_agg(n.campaign_id ORDER BY n.started_at, n.id))[1] AS campaign_id,
-           (array_agg(n.agent_user_id ORDER BY n.started_at, n.id))[1] AS agent_user_id
+           (array_agg(n.end_reason ORDER BY n.ended_at DESC, n.id DESC))[1] AS last_end_reason
       FROM numbered n
      GROUP BY n.listener_user_id, n.call_id, n.visit_no
   ), page AS (
-    SELECT v.* FROM visits v
-     WHERE v.id IN (SELECT st.id FROM starts st)
+    -- A visit is its first session's (the one that starts it, listen_ids[1]): its id, and the
+    -- call's facts from that row.
+    SELECT v.*, f.id, f.origin, f.correlation_id, f.campaign_id, f.agent_user_id
+      FROM visits v
+      JOIN starts st ON st.id = v.listen_ids[1]
+      JOIN s f ON f.id = st.id
   )
   SELECT p.id, p.listen_ids, p.call_id, p.origin, p.correlation_id, p.campaign_id,
          cam.name AS campaign_name, r.name AS inbound_route_name,
