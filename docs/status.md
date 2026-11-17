@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-16.
+"is it done". As of 2026-11-17.
 
 ## Summary
 
@@ -1957,7 +1957,7 @@ place of the notice (`inbound-standard-clips.test.ts`).
 
 ### Live call listening, the console and mobile review fixes 2026-11-16 ([`listening.md`](listening.md) §9)
 
-A review of the console and mobile side found twelve faults (K1–K12), all fixed. The listening
+A review of the console and mobile side found twelve faults, all fixed. The listening
 bar's audio no longer piles up against a stopped clock: while the browser will not run the
 context (autoplay, an interruption) frames are dropped and the queue stopped, only a gesture
 resumes it, and "Turn sound on" plays from now rather than in a heap; a burst past 600 ms stops
@@ -1985,7 +1985,7 @@ inside `<main>`.
 
 ### Live call listening, the console and mobile persona-review fixes 2026-11-16 ([`listening.md`](listening.md) §9)
 
-The product review's console and mobile items (PM-M2, PM-M4, PM-minor1–8, the polish list). The
+The product review's console and mobile items (its two major findings, its minor ones and the polish list). The
 agent: the standing line is on the standalone soft phone (`/dialer/phone`) and both mobile
 soft-phone surfaces too, behind an info button renamed "Monitoring and recording", and the first
 time an agent opens the station or a soft phone for an account while listening is on, a notice
@@ -2000,7 +2000,7 @@ bar's ended line is "Priya S. with ****4321 · you listened for 02:10" under "Ca
 has no Open call, a supersede names another tab or window, and the flag or the permission going
 away here ends the listen with "Listening has been turned off for this account." or "You no
 longer have access to listen to calls." (a re-grant refused `feature_disabled` says turned off)
-instead of the bar vanishing. QA-M1 needs nothing on the client: a browser answers the server's
+instead of the bar vanishing. The protocol-ping liveness (LS22 d) needs nothing on the client: a browser answers the server's
 protocol pings itself, and the JSON `ping` stays. Left for later (they need contract changes from
 the server side): withheld numbers, `access_unverified`, the history page, the Settings line.
 
@@ -2050,7 +2050,7 @@ caught by the load suite (the dwell moves within noise) and is pinned by
 
 ### Live call listening, the voice review fixes 2026-11-16 (LS15 f–g, LS17, [`listening.md`](listening.md) §2, §5, §8)
 
-A review of the bridge tap found seven faults (V1–V7), all fixed in `618108f`. A listener heard the
+A review of the bridge tap found seven faults, all fixed in `618108f`. A listener heard the
 agent's microphone after a hangup of ours while VoiceLink's confirmation wait ran (up to 45 s), and
 both legs briefly inside `endCall`'s awaits: the tap now ends `call_ended` as the call enters
 `ending` and at the top of `endCall` (LS15 f). The relay-dwell alert could not see the tap (fed
@@ -2062,7 +2062,8 @@ per-sample conversion, and transcoded legs are primed to a whole first frame so 
 soft limit for 10 s is ended `send_backlog` (LS17 b; the alert's comment now says 256 KiB ≈ 16 s). A
 failed message counts its 20 ms frames (LS17 c). The re-attach's reset and the Plivo leg's audio
 through the real module are pinned. The load check's stalled listener now expects `send_backlog`;
-`listen-media-load.test.ts` is updated and not yet re-run.
+`listen-media-load.test.ts` is updated and not yet re-run (re-run green since, on `a13635b`: the
+load check entry above).
 
 Mutation-checked (each red, then restored with `git checkout`), 14: no tap end at `ending`; none at
 the top of `endCall`; `resetAgentLeg` emptied, keeping the encoder, the framer's tail, the priming;
@@ -2104,8 +2105,8 @@ and in a media worker (the cluster suite).
 
 ### Live call listening, the server persona-review fixes 2026-11-16 (LS21, LS22, [`listening.md`](listening.md) "LS22 in full")
 
-The principal reviews' server, database and contract items (SWE-M1, M3, L1–L8, the nits and doc
-drift; QA-M1–M5, L1–L9; PM-minor9 and 10), in `b3114f9`. Manas's decision 4 (LS21): an access
+The principal reviews' server, database and contract items (the engineering review's, the QA
+review's and the product review's last two minor ones, the nits and doc drift), in `b3114f9`. Manas's decision 4 (LS21): an access
 re-check that cannot be made ends a listen after 2 × the re-check (60 s, was 2 min) as
 `access_unverified`, close 4503, not `permission_revoked` (`0048_listen_sessions_unverified.sql` extends the CHECK; the
 contract, the metric label). The rest are LS22: `live_at` (0048) so "Listened to by" shows only
@@ -2207,6 +2208,34 @@ retry, its `feature_disabled`, its truncation toast, its `ph-no-capture`, its cu
 with the draft filters; the util's purged-call link, its exclusive `to`, its "Withheld"; the
 client's truncation header and its filters; the Settings line's loading state and its unrecorded
 line; the nav entry's flag; the route inventory without the CSV path. Counts under "Test counts".
+
+### Live call listening, the final review fixes 2026-11-17 (LS17 a, LS22 l, n–u, [`listening.md`](listening.md) §10)
+
+A last review of the whole feature (server, data, clients, completeness), fixed in `756f997` to
+`3653072` (server, contracts, database), `afb49dd` (console) and `044427d` (mobile). Server: the
+super-admin's `POST /super-admin/tenants/:id/users` re-checks the user's listens, and the tenant
+context reads `X-Tenant-Id` and `X-Account-Id` lower-cased, so an upper-case header cannot miss an
+account seat (LS22 l); the live-call routes and the history's page answer `Cache-Control: no-store`
+(LS22 n); the upgrade's access check and row insert are each bounded to 10 s, refusing 1011
+`listen_unavailable` (LS22 o); `FF_AGENCY_LIVE_LISTEN=true` is documented dev and staging only and
+warned at boot (LS22 p); a tap that throws as it opens is counted `stage="open"`, and the
+tap-errors alert names the log component the code writes (LS22 q); a failed close of a dead
+process's rows is retried on the primary's re-check tick (LS22 r); a cross-process supersede reaches
+a listen still in its upgrade (LS22 s); the history reads one page's visits on an index of its own,
+`0049_listen_history_index.sql` (LS22 t); the μ-law table is pinned against G.711's own table
+written out as literals (LS17 a reworded: it differs on 44 codes by one A-law step, a scale
+convention, and is kept); the listener route's own refusals close then terminate; the in-process
+token store forgets lapsed grants; the session purge waits for a failed audit partition purge;
+`listen_sessions` is declared on the call detail contracts; code comments cite LS letters rather
+than review ids. Console: at phone width the bar says its state in words in a live region and its
+rows wrap; an ended reason wraps at every width; "turned off" is read only from a loaded flag map;
+the confirmation checks again; Try again leaves the stopped time out of "you listened for"; a late
+resume after the end suspends; soft-phone call links follow `agency_softphone_enabled`; the
+history's new filters drop the old cursor, a failed read clears the rows, only this account's
+people are offered as filters. Mobile: on a call the first-time notice says the line can be read
+again between calls, as the call's band has no button (LS22 u, which also records the one-time
+notice as a build call). Manas ratified every remaining LS build call on 2026-11-17. The
+`full-ci` wiring of `LISTEN_LOAD_BOUNDS` and the real-world checks are next steps (below).
 
 ## Test counts
 
@@ -3145,9 +3174,11 @@ image names it as its arbiter, a new migration drops it, and the same change del
 `agency_live_listen_enabled` (off by default): the bridge tap, the registry, token store, socket,
 routes, revocation and reaps, the console's Live calls and listening bar, the agent's standing
 line, the inbound notice's words and the load check, with the review fixes; the listening
-history and the consent gate's guard rails server side (LS19, LS20). Rulings marked "default,
-pending Manas" in `decisions.md` (LS14–LS17, the build's calls in LS19 and LS20, LS22) await
-sign-off. The agent's live "Supervisor listening" indicator is not built (LS2).
+history and the consent gate's guard rails (LS19, LS20), server and console; the final review's
+fixes (2026-11-17). Every LS ruling is decided (the build's calls ratified by Manas on
+2026-11-17). The agent's live "Supervisor listening" indicator is not built (LS2). Not yet run in
+a real browser, against a real carrier, on a phone or with the alerts applied (`listening.md` §10
+"Not yet verified").
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
@@ -3186,6 +3217,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Do Not Call scope (2026-11-15) | Ratify DS1–DS8, in particular DS3 (an account-scoped admin's station mark is never tenant-wide) and DS8 (a suppress outcome lists the number for its campaign, audited, the campaign's roster swept). Decide DS6's open question: should an account admin see every-campaign entries, and should their add over a tenant-wide entry be written anyway, so it outlives that entry's removal? |
 | Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
+| Live call listening (2026-11-16/17) | Every LS ruling is decided (2026-11-17). Record whether the consent and notice wording (LS1, LS2, LS18) had a legal check, or that it was waived, before the first tenant is enabled. Decide whether the Listening history stays gated by `agency_live_listen_enabled` (LS19), which closes the record of who listened when consent is withdrawn, or is gated by `agency.supervise` alone (`decisions.md` §5) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 
 ## Deployment invariants
@@ -3367,3 +3399,12 @@ account their browser last had open. Every signed-in console page is now served 
 5. **Parity check and dark pilot** on a staging copy and an internal tenant.
 6. **Launch:** write and rehearse the import gate queries and copy scripts, the DNC mirror, the
    link from the previous platform and the dashboards, then go live environment by environment.
+7. **Live call listening, before the first tenant** ([`listening.md`](listening.md) §10 "Not yet
+   verified"): record the consent wording's legal check (or its waiver) with Manas; a listen in a
+   real browser on staging (the autoplay policy and "Turn sound on", A-law playback, a 4503 and Try
+   again, a hidden tab kept alive by the server's pings) against a real carrier call; the agent's
+   notice on a phone; apply the `listen` alert group with the rest of `grafana/`; then the first
+   tenant's enablement through the checklist ([`operations.md`](operations.md) "Enabling live call
+   listening for a tenant"). In CI, set `LISTEN_LOAD_BOUNDS=on` for `full-ci` runs (a change to
+   `.github/workflows/ci.yml`) so the load check's timing bounds are asserted there whatever the
+   runner's CPUs; and add a mobile-station case to `live-listen-e2e.test.ts`.

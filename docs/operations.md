@@ -240,7 +240,7 @@ production.
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
 | `RETENTION_PURGE_INTERVAL_MS` | 1 day | Purge cadence (also runs 60 s after boot) |
-| `AUDIT_RETENTION_DAYS` | `85` (min 30) | Audit partitions older than this are dropped, and listen sessions (`agency_listen_sessions`, `docs/listening.md`) started before it are deleted |
+| `AUDIT_RETENTION_DAYS` | `85` (min 30) | Audit partitions older than this are dropped, and listen sessions (`agency_listen_sessions`) go with their month's audit partition: a session is deleted once it started before the first instant (UTC) of the cutoff's month, so it can outlive the cutoff by up to a month (`docs/listening.md` §6, LS16 s); a pass in which a partition drop failed deletes none, and the next pass does both |
 | `AUDIT_PARTITION_MAINTENANCE_ENABLED` | `true` | Creates partitions 3 months ahead and drops old ones, daily |
 | `INVITE_TOKEN_TTL_DAYS` | `7` (1–90) | Invite expiry |
 | `PLATFORM_BRAND_NAME`, `_ACCENT`, `_LOGO_URL` | `Magick Agency`, `#7c5cfc`, unset | Brand in mail (B17) |

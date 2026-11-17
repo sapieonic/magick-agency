@@ -287,6 +287,30 @@ generic outcome line, since the refusal's code is one it knows (PT8). The app do
 or inbound call's own saved promise (only the contact's and the prior attempts'), so its `ManualCall`
 and `InboundCall` do not read `promise_date` / `promise_amount`.
 
+## Live call listening: the agent's notice
+
+Supervisors listen to calls from the console only ([`listening.md`](listening.md); LS3 leaves
+mobile supervisors out of scope), so the app's part is the agent's half of LS2: telling the agent,
+while the account allows listening, that calls may be listened to. No wire type changes, and the
+app shows no live "Supervisor listening" indicator (none is built). All of it is behind the
+client-exposed flag `agency_live_listen_enabled`, read as `FeatureFlags.liveListenEnabled`
+(`agency_wire`, pinned against the contract's `platform.json` fixture) through
+`stationListenNoticeProvider` (`lib/features/station/station_providers.dart`):
+
+- A "Monitoring and recording" info button in the station header
+  (`lib/features/station/parts/banners.dart`: the idle, incoming and link screens; the on-call
+  band has none) and in the soft phone's header on both surfaces (the Phone tab and the station's),
+  opening a sheet with the standing line "Calls may be listened to by a supervisor for quality and
+  training." (`StationCopy.listenNotice`).
+- `ListenFirstNoticeCard` at the top of the station's idle and call layouts and of the soft phone,
+  shown the first time per agent and account on this phone until Got it (LS22 u):
+  `listenFirstNoticeProvider`, kept in the app's key-value store under
+  `listen.agent_notice_seen:<user:tenant:account>`. Between calls it says the line can be read again
+  under the button; on a call, where the band has no button, it says so "between calls"
+  (`StationCopy.listenFirstDetailOnCall`).
+
+Tests: `test/features/station/station_listen_notice_test.dart`. Not run on a phone (below).
+
 ## My contacts (contact assignment)
 
 Behind `agency_contact_assignment_enabled` (decisions CA1–CA15), which the app reads per
@@ -1276,6 +1300,7 @@ from the browser or file manager it was opened from.
   (R8-minified) build of the app has run anywhere, nor the upload. The first push to `main` after
   merging runs the release build; the first APK needs `MOBILE_ENV_STAGING` and the signing secrets,
   then a run by hand for `mobile-v0.12.0` or the next mobile release.
+- **The listening notice (2026-11-16/17) is widget-tested only**: the button, the sheet and `ListenFirstNoticeCard` have not been seen on a phone.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
   with the contract's sample frames and answers, played in the server's own frame order, not

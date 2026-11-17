@@ -13,8 +13,8 @@ run (§10 "Load check").
 Where things are: the socket's contract `packages/contracts/src/agency/listen.ts`, the console wire
 `packages/contracts/src/api/agency/live-calls.ts`, refusals `packages/contracts/src/errors.ts` §7,
 permission `agency.calls.listen` (`rbac.ts`), flags `agency_live_listen_enabled` and
-`agency_live_listen_unrecorded` (`flags.ts`), migrations `0047_listen_sessions.sql` and
-`0048_listen_sessions_unverified.sql`, repository
+`agency_live_listen_unrecorded` (`flags.ts`), migrations `0047_listen_sessions.sql`,
+`0048_listen_sessions_unverified.sql` and `0049_listen_history_index.sql`, repository
 `apps/server/src/db/repositories/agency/listen-session.repository.ts`, config `agency.listen`
 (`apps/server/src/config/blocks/agency.ts`), metrics in `packages/observability/src/metrics/agency.ts`
 and `voice.ts`, alert group `listen` (`grafana/terraform/alert-rules.tf`), the tap
@@ -31,12 +31,12 @@ live list's SQL `db/repositories/agency/live-call.repository.ts`, IPC `listen.re
 
 Status words as in [`decisions.md`](decisions.md). LS1–LS13 are the locked design (Manas,
 2026-11-16); LS14 collects the calls phase 1 made where the design was silent, LS15 phase 2's,
-LS16 phase 3's, LS17 the voice review's; LS18–LS20 record the product owner's decisions on the persona review (Manas, 2026-11-16), LS21 is Manas's decision on an outage of the access check, LS22 the persona review's server calls.
+LS16 phase 3's, LS17 the voice review's; LS18–LS20 record the product owner's decisions on the persona review (Manas, 2026-11-16), LS21 is Manas's decision on an outage of the access check, LS22 the persona review's server calls and the final review's. The build's own calls (LS14–LS17, those in LS19 and LS20, LS22) were ratified by Manas on 2026-11-17, so every LS ruling is decided.
 
 | ID | Decision | Status |
 |---|---|---|
 | LS1 | **Consent.** The flag `agency_live_listen_enabled` (scopes global, tenant, account; default **off**; client-exposed) is the consent gate: a super-admin turns it on for a tenant or an account once its callers are told calls may be monitored (under its handling policy and the enablement checklist, LS20). Inbound: the standard recording notice becomes "This call may be recorded or monitored for quality and training purposes.", its WAV regenerated (phase 6). Outbound: the agent's script says it; no product change. Every live-call route answers `403 feature_disabled` while it is off, and the periodic re-check ends listens open when it goes off (`permission_revoked`). | **Decided** (Manas, 2026-11-16) |
-| LS2 | **What the agent sees.** No live indicator in this build. While the flag is on, the agent station shows a standing line "Calls may be listened to by a supervisor for quality and training." on the console station (the header's info popover and the join screen) and on the mobile app's station info sheet (copy only, no wire change; the app reads the client-exposed flag). The live "Supervisor listening" pill is not built. | **Decided** (Manas, 2026-11-16) |
+| LS2 | **What the agent sees.** No live indicator in this build. While the flag is on, the agent station shows a standing line "Calls may be listened to by a supervisor for quality and training." on the console station (the header's info popover and the join screen) and on the mobile app's station info sheet (copy only, no wire change; the app reads the client-exposed flag). The live "Supervisor listening" pill is not built. The one-time notice that also shows the line the first time is a build call, LS22 (u). | **Decided** (Manas, 2026-11-16) |
 | LS3 | **Who.** A new permission `agency.calls.listen`, floor `account_admin` (tenant admins and owners pass by the hierarchy; an account admin in the accounts of their membership). The live list needs `agency.supervise`; a supervisor who may watch but not listen sees the list without the Listen action (both floors are `account_admin` today, so that supervisor cannot occur yet: raising this floor is a code change to `rbac.ts`, and the console's "You can see live calls but not listen to them." is for then). Agents, viewers, operators and super-admins cannot listen. Listening to a call you are the agent on is refused `listen_own_call`. Mobile supervisors are out of scope. | **Decided** (Manas, 2026-11-16) |
 | LS4 | **Calls that are not recorded.** The flag `agency_live_listen_unrecorded` (scopes global, tenant, account; default **on**; client-exposed since LS20, for the account's Settings line; the server still decides each row). On: an unrecorded call (`agency_calls.recording_requested` false, RC1) is listenable like any other, and its row shows "Recording off". Off for the call's tenant or account: the row shows "Recording off", Listen is disabled with "Listening is turned off for unrecorded calls", and the grant answers `409 listen_recording_off`. | **Decided** (Manas, 2026-11-16) |
 | LS5 | **Scale and placement.** At most 2 listeners per call (`AGENCY_LISTEN_MAX_PER_CALL`, 1–5), 1 listen per supervisor (a second ends the first `superseded`), 20 per process (`AGENCY_LISTEN_MAX_PER_PROCESS`). Expected peak: 100 calls at once, 5–6 supervisors. The tap runs in the process that owns the call (a media worker when `MEDIA_WORKERS >= 1`): no listen worker, no audio over IPC. | **Decided** (Manas, 2026-11-16) |
@@ -48,15 +48,15 @@ LS16 phase 3's, LS17 the voice review's; LS18–LS20 record the product owner's 
 | LS11 | **The wire.** A binary message is one tag byte (`0x01` customer, `0x02` agent) and 160 bytes of A-law (20 ms), built once per frame per call and sent to each listener. Text frames are control only. No mixing on the server: the browser mixes in WebAudio and never asks for the microphone. | **Decided** (Manas, 2026-11-16) |
 | LS12 | **Retention.** `agency_listen_sessions` follows the platform audit log: its rows are deleted by the audit maintenance at the same cutoff (`AUDIT_RETENTION_DAYS`, default 85 days). | **Decided** (Manas, 2026-11-16) |
 | LS13 | **Who listened, on the call.** The call detail pages get a "Listened to by" section (who, start–end, duration) read from `agency_listen_sessions` by call id, visible to `agency.supervise` holders like the rest of the call page. | **Decided** (Manas, 2026-11-16) |
-| LS14 | **Phase 1's own calls.** (a) Refusal statuses: `listen_call_not_live` 404 (uniform: an ended call and another account's look alike), `listen_recording_off`, `listen_limit_call`, `listen_own_call` 409, `listen_limit_server`, `listen_unavailable` 503. (b) The socket's close codes and the code each end reason closes with (§3). (c) The session table carries a CHECK that a listener is never the call's agent, a backstop under `listen_own_call`, and has no foreign keys (it outlives its call, campaign and users). (d) Its Down refuses while any row exists. (e) Retention ages a row by its start, open or not: an open row past 85 days can only be one a dead process left, which the boot reap closes long before. (f) The live row carries `inbound_route_name` for "Inbound: <route>", which the field list in the design did not name. (g) `AGENCY_LISTEN_MAX_PER_USER` is a setting (default 1, at most 5). (h) `webrtc_relay_dwell_seconds` samples one frame in 50 per call and direction. | **default, pending Manas** |
-| LS15 | **Phase 2's own calls.** (a) The fault budget counts each leg's failed frames in a row apart: a dead customer leg is not kept attached by the agent's good frames. (b) A sink whose `send` throws, or answers `closed`, is ended `listener_disconnected` (4408, the console reconnects); `tap_error` is the budget only. (c) A sink's `frames_dropped` counts the frames it did not get: dropped at its soft limit, and the frames the tap failed while it was attached. (d) A call is listenable once the bridge has been announced (`bridged`: both legs live, the carrier's media negotiated), and stays so through the agent's re-attach window; a parked inbound caller, answered but with no agent bound, is `not_bridged`. (e) The tail of the customer leg needs the carrier's media negotiated and drops a payload too big to relay, as the relay does; an agent message the relay would refuse (not whole 20 ms frames) is not the tap's either. (f) A call's listeners end `call_ended` as soon as the call starts to settle: when a hangup of ours starts VoiceLink's wait for the carrier's confirmation (`ending`, up to 45 s, through which the agent's socket stays bound and keeps sending its microphone) and at the top of the terminal teardown (`endCall`, before its awaits), so nothing either party says after the hangup reaches a listener; a new `openListenTap` is refused `ending` until the session is gone (`not_found`). Revised by the voice review: it first kept the listener attached through `ending`, and the agent's leg still fed it. (g) As on the station, media alone stops at the soft limit, so the hard cap (`send_backlog`) is reached only by other bytes queued on the listener's socket (its control frames); a listener whose every frame has been dropped at the soft limit for 10 s is ended `send_backlog` too (LS17 b), so one that stopped reading but keeps pinging is not kept for ever. | **default, pending Manas** |
-| LS16 | **Phase 3's own calls**, 22 of them, (a)–(v), listed one by one under the table ("LS16 in full"); the letters are stable, other docs and code comments cite them. In short: where the grant's handler sits and the upgrade's order (a, b, n, q); revocation, failing closed on the immediate path and open with a staleness cap on the periodic one (c, d, amended by LS21), the flags read strictly (d), the super-admin's routes (t); one listen per supervisor across processes (e, p, r); the list's `listenable` (f); shutdown (g); the client message bound (h); the live row's extra fields and the call reads (i, j, k, m, u); the counters (l); the rows' upkeep (o) and retention (s); the handoff's redacted URL (v). | **default, pending Manas** |
-| LS17 | **The voice review's calls.** (a) A μ-law customer (Plivo, `wireFormat: 'mulaw8'`) reaches the tap's listeners through a 256-entry μ-law → A-law table (`MULAW_TO_ALAW`: each code decoded to 16-bit linear and re-encoded as A-law, what the bridge's own μ-law path does for the agent without its resampling; G.711's own μ-law to A-law table differs on 44 codes by one A-law step each, a scale convention (G.711 puts the two laws' overload at the same level, a 16-bit decode puts μ-law at exactly half A-law's scale) plus the sign of μ-law's negative zero, inaudible, and the table is kept so a listener hears the agent's quantisation; the final review pinned both against G.711's table as literals), not through the tap's own carrier codec and A-law encoder as §2 first said: both are 8 kHz, so the codec path's two resampling filters only cost CPU and a frame of lag (its first output is 144 bytes) and soften the top of the band; the table's A-law is at least as close to what the caller sent on tones from 300 Hz to 3.4 kHz. A carrier with no G.711 law keeps the codec path. A transcoded leg's first output is led by A-law silence to a whole frame (8 bytes, 1 ms, for 20 ms of `pcm16`), so it runs carry-free. (b) A listener whose every frame has been dropped at the soft limit for `LISTENER_SOFT_LIMIT_MAX_MS` (10 s), with none sent between, is ended `send_backlog` (4408), counted `websocket_send_backpressure_total{socket="listener",action="closed"}`, its last frame counted dropped too; measured on `bufferedAmount` as `ws` sees it, a constant rather than a setting. (c) A failed message counts its 20 ms frames (a failed 1 s agent message is 50) in the sink's `frames_dropped` and the leg's fault budget; `agency_listen_tap_errors_total` counts failed steps. (d) The alert on the tap's cost is `agy-listen-loop-delay` (event-loop delay p99 above 40 ms for 10 min while listens are open), replacing `agy-listen-relay-dwell-regressed`: the dwell excludes the tap by construction, and the load check saw the tap's cost on the loop only. | **default, pending Manas** |
+| LS14 | **Phase 1's own calls.** (a) Refusal statuses: `listen_call_not_live` 404 (uniform: an ended call and another account's look alike), `listen_recording_off`, `listen_limit_call`, `listen_own_call` 409, `listen_limit_server`, `listen_unavailable` 503. (b) The socket's close codes and the code each end reason closes with (§3). (c) The session table carries a CHECK that a listener is never the call's agent, a backstop under `listen_own_call`, and has no foreign keys (it outlives its call, campaign and users). (d) Its Down refuses while any row exists. (e) Retention ages a row by its start, open or not: an open row past 85 days can only be one a dead process left, which the boot reap closes long before. (f) The live row carries `inbound_route_name` for "Inbound: <route>", which the field list in the design did not name. (g) `AGENCY_LISTEN_MAX_PER_USER` is a setting (default 1, at most 5). (h) `webrtc_relay_dwell_seconds` samples one frame in 50 per call and direction. | **Decided** (Manas, 2026-11-17) |
+| LS15 | **Phase 2's own calls.** (a) The fault budget counts each leg's failed frames in a row apart: a dead customer leg is not kept attached by the agent's good frames. (b) A sink whose `send` throws, or answers `closed`, is ended `listener_disconnected` (4408, the console reconnects); `tap_error` is the budget only. (c) A sink's `frames_dropped` counts the frames it did not get: dropped at its soft limit, and the frames the tap failed while it was attached. (d) A call is listenable once the bridge has been announced (`bridged`: both legs live, the carrier's media negotiated), and stays so through the agent's re-attach window; a parked inbound caller, answered but with no agent bound, is `not_bridged`. (e) The tail of the customer leg needs the carrier's media negotiated and drops a payload too big to relay, as the relay does; an agent message the relay would refuse (not whole 20 ms frames) is not the tap's either. (f) A call's listeners end `call_ended` as soon as the call starts to settle: when a hangup of ours starts VoiceLink's wait for the carrier's confirmation (`ending`, up to 45 s, through which the agent's socket stays bound and keeps sending its microphone) and at the top of the terminal teardown (`endCall`, before its awaits), so nothing either party says after the hangup reaches a listener; a new `openListenTap` is refused `ending` until the session is gone (`not_found`). Revised by the voice review: it first kept the listener attached through `ending`, and the agent's leg still fed it. (g) As on the station, media alone stops at the soft limit, so the hard cap (`send_backlog`) is reached only by other bytes queued on the listener's socket (its control frames); a listener whose every frame has been dropped at the soft limit for 10 s is ended `send_backlog` too (LS17 b), so one that stopped reading but keeps pinging is not kept for ever. | **Decided** (Manas, 2026-11-17) |
+| LS16 | **Phase 3's own calls**, 22 of them, (a)–(v), listed one by one under the table ("LS16 in full"); the letters are stable, other docs and code comments cite them. In short: where the grant's handler sits and the upgrade's order (a, b, n, q); revocation, failing closed on the immediate path and open with a staleness cap on the periodic one (c, d, amended by LS21), the flags read strictly (d), the super-admin's routes (t); one listen per supervisor across processes (e, p, r); the list's `listenable` (f); shutdown (g); the client message bound (h); the live row's extra fields and the call reads (i, j, k, m, u); the counters (l); the rows' upkeep (o) and retention (s); the handoff's redacted URL (v). | **Decided** (Manas, 2026-11-17) |
+| LS17 | **The voice review's calls.** (a) A μ-law customer (Plivo, `wireFormat: 'mulaw8'`) reaches the tap's listeners through a 256-entry μ-law → A-law table (`MULAW_TO_ALAW`: each code decoded to 16-bit linear and re-encoded as A-law, what the bridge's own μ-law path does for the agent without its resampling; G.711's own μ-law to A-law table differs on 44 codes by one A-law step each, a scale convention (G.711 puts the two laws' overload at the same level, a 16-bit decode puts μ-law at exactly half A-law's scale) plus the sign of μ-law's negative zero, inaudible, and the table is kept so a listener hears the agent's quantisation; the final review pinned both against G.711's table as literals), not through the tap's own carrier codec and A-law encoder as §2 first said: both are 8 kHz, so the codec path's two resampling filters only cost CPU and a frame of lag (its first output is 144 bytes) and soften the top of the band; the table's A-law is at least as close to what the caller sent on tones from 300 Hz to 3.4 kHz. A carrier with no G.711 law keeps the codec path. A transcoded leg's first output is led by A-law silence to a whole frame (8 bytes, 1 ms, for 20 ms of `pcm16`), so it runs carry-free. (b) A listener whose every frame has been dropped at the soft limit for `LISTENER_SOFT_LIMIT_MAX_MS` (10 s), with none sent between, is ended `send_backlog` (4408), counted `websocket_send_backpressure_total{socket="listener",action="closed"}`, its last frame counted dropped too; measured on `bufferedAmount` as `ws` sees it, a constant rather than a setting. (c) A failed message counts its 20 ms frames (a failed 1 s agent message is 50) in the sink's `frames_dropped` and the leg's fault budget; `agency_listen_tap_errors_total` counts failed steps. (d) The alert on the tap's cost is `agy-listen-loop-delay` (event-loop delay p99 above 40 ms for 10 min while listens are open), replacing `agy-listen-relay-dwell-regressed`: the dwell excludes the tap by construction, and the load check saw the tap's cost on the loop only. | **Decided** (Manas, 2026-11-17) |
 | LS18 | **The inbound consent gap is accepted, and closed by the checklist.** The inbound notice plays only on a recorded call (the route records and the account allows recording) whose route has its notice on, while an unrecorded call can be listened to by default (LS4): a caller on a route that does not record, has its notice off, or plays a custom notice clip that says only "recorded" is not told the call may be monitored. Left as it is: tenants own their route settings, and the product neither changes nor blocks them. The enablement checklist ([`operations.md`](operations.md) "Enabling live call listening for a tenant", item 2, with the query that lists such routes) makes it an explicit step before the flag goes on: every inbound route that should be monitorable plays a notice that mentions monitoring, or `agency_live_listen_unrecorded` is turned off for that tenant or account. | **Decided** (Manas, 2026-11-16) |
-| LS19 | **The account's listening history.** An account-level "Listening history" (who listened, the agent, the call type, the masked customer, start, time listened, how it ended in words, a link to the call where one exists; filters for supervisor, agent and date range; CSV), and readable listen rows on a campaign's History. Gate: `agency.supervise` and `agency_live_listen_enabled`. Built server side (§12): (a) `GET /proxy/agency/listen-history` and `.csv` through the internal `GET /api/v1/agency/listen-history` (owner `none`), account scoped, keyset-paged newest first; (b) a supervisor's sessions on one call are merged into one entry ON THE SERVER, in the history's SQL, while each starts at most `AGENCY_LISTEN_HISTORY_MERGE_GAP_MS` (30 s, twice the console's reconnect window) after every earlier one ended or while one is still open, so the page and the CSV show the same entries; the time listened counts overlaps once and gaps not at all; the date range filters sessions by their start before the merge; (c) the CSV carries masked numbers only ("Withheld" for a withheld caller) and is audited `agency_listen_sessions.exported` (the actor, the filters, the rows, any truncation; resource type `account`), as every bulk export here is; at most 10,000 entries and 30 s, past either cut and marked (`X-Export-Truncated`); (d) the words for each end reason are the contract's `AGENCY_LISTEN_END_REASON_LABELS`, shared by the page and the CSV; (e) a campaign History listen row carries `detail.agent_name`, resolved at the read in the page's one identity read (never written to the audit row). The console's page, the readable History rows and "Listened to by" merged by the same rule are in §12. | **Decided** (Manas, 2026-11-16); (a)–(e) are the build's calls, **default, pending Manas** |
-| LS20 | **Guard rails on the consent gate.** All three: (a) a handling policy on `agency_live_listen_enabled` in the super-admin flag routes (`feature-flags/flag-policies.ts`, served as the catalog's `policy` and enforced on every write): turning it on for a tenant or account needs a reason (`400 flag_reason_required`); the bulk rollout refuses it (`422 flag_bulk_not_allowed`), and so does a GLOBAL On, which is every tenant at once (a global Off, the kill switch, stays allowed; the super-admin registry says why instead of asking for a reason); the super-admin UI's warning, reason dialog and bulk list already read the policy; (b) the enablement checklist in [`operations.md`](operations.md) (LS18's inbound item included); (c) a read-only line in the account's Settings, "Live call listening: On / Off", whether calls that are not recorded are included, and "Ask your account manager to change this.": served by making `agency_live_listen_unrecorded` client-exposed, so the console reads both flags from the client flag map (`GET /feature-flags`) as it already reads `agency_live_listen_enabled` for the Live calls page and the agent's line, rather than a new settings read; the server still computes `listenable` and refuses the grant itself. The global-On refusal (a) and the choice in (c) are the build's calls. The env default `FF_AGENCY_LIVE_LISTEN` bypasses (a): dev and staging only, warned at boot (LS22 p). | **Decided** (Manas, 2026-11-16); the calls in (a) and (c) **default, pending Manas** |
+| LS19 | **The account's listening history.** An account-level "Listening history" (who listened, the agent, the call type, the masked customer, start, time listened, how it ended in words, a link to the call where one exists; filters for supervisor, agent and date range; CSV), and readable listen rows on a campaign's History. Gate: `agency.supervise` and `agency_live_listen_enabled`. Built server side (§12): (a) `GET /proxy/agency/listen-history` and `.csv` through the internal `GET /api/v1/agency/listen-history` (owner `none`), account scoped, keyset-paged newest first; (b) a supervisor's sessions on one call are merged into one entry ON THE SERVER, in the history's SQL, while each starts at most `AGENCY_LISTEN_HISTORY_MERGE_GAP_MS` (30 s, twice the console's reconnect window) after every earlier one ended or while one is still open, so the page and the CSV show the same entries; the time listened counts overlaps once and gaps not at all; the date range filters sessions by their start before the merge; (c) the CSV carries masked numbers only ("Withheld" for a withheld caller) and is audited `agency_listen_sessions.exported` (the actor, the filters, the rows, any truncation; resource type `account`), as every bulk export here is; at most 10,000 entries and 30 s, past either cut and marked (`X-Export-Truncated`); (d) the words for each end reason are the contract's `AGENCY_LISTEN_END_REASON_LABELS`, shared by the page and the CSV; (e) a campaign History listen row carries `detail.agent_name`, resolved at the read in the page's one identity read (never written to the audit row). The console's page, the readable History rows and "Listened to by" merged by the same rule are in §12. | **Decided** (Manas, 2026-11-16); (a)–(e) are the build's calls, **Decided** (Manas, 2026-11-17) |
+| LS20 | **Guard rails on the consent gate.** All three: (a) a handling policy on `agency_live_listen_enabled` in the super-admin flag routes (`feature-flags/flag-policies.ts`, served as the catalog's `policy` and enforced on every write): turning it on for a tenant or account needs a reason (`400 flag_reason_required`); the bulk rollout refuses it (`422 flag_bulk_not_allowed`), and so does a GLOBAL On, which is every tenant at once (a global Off, the kill switch, stays allowed; the super-admin registry says why instead of asking for a reason); the super-admin UI's warning, reason dialog and bulk list already read the policy; (b) the enablement checklist in [`operations.md`](operations.md) (LS18's inbound item included); (c) a read-only line in the account's Settings, "Live call listening: On / Off", whether calls that are not recorded are included, and "Ask your account manager to change this.": served by making `agency_live_listen_unrecorded` client-exposed, so the console reads both flags from the client flag map (`GET /feature-flags`) as it already reads `agency_live_listen_enabled` for the Live calls page and the agent's line, rather than a new settings read; the server still computes `listenable` and refuses the grant itself. The global-On refusal (a) and the choice in (c) are the build's calls. The env default `FF_AGENCY_LIVE_LISTEN` bypasses (a): dev and staging only, warned at boot (LS22 p). | **Decided** (Manas, 2026-11-16); the calls in (a) and (c) **Decided** (Manas, 2026-11-17) |
 | LS21 | **When access cannot be checked** (persona review, decision 4). The periodic re-check ends a session not verified for 2 × `AGENCY_LISTEN_RECHECK_MS` (60 s at the defaults; `STALE_AFTER_RECHECKS` was 4) with its own end reason, `access_unverified`, and close code 4503 (`AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED`), not `permission_revoked`: nothing said the supervisor may no longer listen, so the console says listening stopped because their access could not be checked and offers Try again (the grant checks afresh), never "You no longer have access to listen to calls.". A contract addition (`AGENCY_LISTEN_END_REASONS`, `AGENCY_LISTEN_CLOSE`, `AGENCY_LISTEN_END_CLOSE`; not mirrored in Dart), the metric's `reason` label, and migration `0048_listen_sessions_unverified.sql` extending the end reason's CHECK (0047 unchanged). | **Decided** (Manas, 2026-11-16) |
-| LS22 | **The persona review's server calls**, (a)–(m), and the final review's, (n)–(t), listed one by one under the table ("LS22 in full"): `access_unverified` on the immediate path too (a); its close code (b); `live_at` and "Listened to by" (c); protocol pings as liveness (d); the client message rate (e); a refusal sends no `ended` frame (f); the token store's outage (g); every close then terminated (h); withheld numbers (i); the fault budget through the seam (j); the rows' upkeep and the tick (k); seats added by an invite (l); the load check's timing bounds (m); and the final review's: no caching of live-call and history answers (n); the upgrade's database steps bounded (o); the env default `FF_AGENCY_LIVE_LISTEN` dev and staging only, warned at boot (p); a tap that fails to open counted (q); a dead process's rows closed on a retry, `server_restarted` counted for live rows only (r); a supersede reaching a listen mid-upgrade (s); the history's bounded read on its own index, 0049 (t). | **default, pending Manas** |
+| LS22 | **The persona review's server calls**, (a)–(m), and the final review's, (n)–(t), listed one by one under the table ("LS22 in full"): `access_unverified` on the immediate path too (a); its close code (b); `live_at` and "Listened to by" (c); protocol pings as liveness (d); the client message rate (e); a refusal sends no `ended` frame (f); the token store's outage (g); every close then terminated (h); withheld numbers (i); the fault budget through the seam (j); the rows' upkeep and the tick (k); seats added by an invite (l); the load check's timing bounds (m); and the final review's: no caching of live-call and history answers (n); the upgrade's database steps bounded (o); the env default `FF_AGENCY_LIVE_LISTEN` dev and staging only, warned at boot (p); a tap that fails to open counted (q); a dead process's rows closed on a retry, `server_restarted` counted for live rows only (r); a supersede reaching a listen mid-upgrade (s); the history's bounded read on its own index, 0049 (t); the agent's one-time notice (u). | **Decided** (Manas, 2026-11-17) |
 
 ### LS16 in full
 
@@ -149,8 +149,8 @@ comments and the other docs).
 
 ### LS22 in full
 
-The persona review's server calls (2026-11-16), beside the decided LS21; each a default, pending
-Manas.
+The persona review's server calls (2026-11-16), beside the decided LS21, and the final review's
+(n)–(u); each decided (Manas, 2026-11-17).
 
 - **(a)** The immediate path (`revokeUser`, a role change or a removal) still fails closed (LS16 c),
   but a session it could not check ends `access_unverified`, like the periodic pass's: no read said
@@ -276,6 +276,14 @@ Manas.
   the page, then windows only those calls' sessions. The entries are unchanged (the history's
   integration tests); the plan and the rows a page reads are pinned on 20,000 seeded sessions
   (`agency/listen-history-plan.test.ts`).
+- **(u)** The agent is also shown LS2's standing line once, unprompted: an agent with one campaign
+  is taken straight to the station and may never open the "Monitoring and recording" button, so
+  the first time an agent opens the station or a soft phone for an account while the flag is on, a
+  notice says it until they press Got it. The console's `StationListenFirstNotice` (a strip under
+  the header, remembered per browser) and the app's `ListenFirstNoticeCard` (remembered per phone;
+  on a call it says the line can be read again under "Monitoring and recording" between calls, as
+  the on-call band has no button). Agent-facing words beyond LS2's two places, the build's call
+  (§9 "The agent").
 
 ## 2. Architecture
 
@@ -572,16 +580,17 @@ it already kept.
 
 ## 6. Data
 
-**`agency_listen_sessions`** (`0047_listen_sessions.sql`, `0048_listen_sessions_unverified.sql`;
-`packages/db/BASELINE.md`): `id` (the
+**`agency_listen_sessions`** (`0047_listen_sessions.sql`, `0048_listen_sessions_unverified.sql`,
+`0049_listen_history_index.sql`; `packages/db/BASELINE.md`): `id` (the
 listen id), `tenant_id`, `account_id`, `call_id` (no FK), `origin` (`AGENCY_CALL_ORIGINS`, the
 same list as `ck_agency_calls_origin`), `campaign_id` (set for a dialler call), `correlation_id`
 (the spine row), `agent_session_id`, `agent_user_id`, `listener_user_id`, `started_at`, `ended_at`
 and `end_reason` (both or neither; `access_unverified` since 0048), `frames_sent`, `frames_dropped`,
 `replica_id`, and `live_at` (0048, LS22 c: when it went live; NULL for a row the upgrade refused).
 No foreign keys.
-Indexes: the open sessions per account (partial), by call, by supervisor newest first. The Down
-refuses while any row exists. The repository (`AgencyListenSessionRepository`, via the agency
+Indexes: the open sessions per account (partial), by call, by supervisor newest first, and (0049,
+LS22 t) an account's live sessions newest first for the history. 0047's Down refuses while any row
+exists. The repository (`AgencyListenSessionRepository`, via the agency
 barrel): `open`, `markLive`, `close` (an open row only: the first close wins; `live` fills
 `live_at` when its stamp was lost), `listOpenForCalls`, `listForCall` (live rows only), `listOpenForListener`, `closeOrphans(replicaId, { keep, minAgeMs })`
 (a live process's lost rows, LS16 o), `closeOrphansExcept(liveReplicaIds)`.
@@ -703,7 +712,8 @@ LS2.
   campaigns in the rows plus the one chosen, kept after its calls end, so a filter in force never
   reads as "All" (`liveCallFilterOptions`); Clear filters is offered beside the chips and under
   "No calls in progress match these filters." while any is in force. No "0 in progress" pill beside
-  the empty state; "Updated just now" under a second. While the supervisor's own listen on a row
+  the empty state; "Updated just now" under a second, and "Updated N s ago" keeps counting while
+  reads fail with no rows. While the supervisor's own listen on a row
   is connecting or reconnecting, the row says so beside a Stop. Every word is in
   `utils/listen/listenCopy.ts` (the page's intro, `LIVE_CALLS_PAGE_COPY`, included). Show/Hide calls
   `GET …/live-calls/:callId/number` per row and keeps the number in the table's state only, so
@@ -724,13 +734,16 @@ LS2.
   "Listening has been turned off for this account." (the flag, checked first) or "You no longer
   have access to listen to calls.", until dismissed, rather than vanishing as if the supervisor had
   stopped. The server records that end as `listener_stopped` (the client's `stop` carries no
-  reason).
+  reason). "Turned off" is read only from a flag map that has loaded (`ready`): while it loads, or
+  when it could not be read, the listen goes on (the server's re-check gates it, LS10); a lost
+  permission still ends it. The confirmation's Start listening checks again that this listen is
+  allowed. "You listened for" leaves out the time between a stop and Try again.
   A browser with no Web Audio, or one that will not make a context, is refused at the click with
   "This browser cannot play the call’s sound, so you cannot listen here." before any grant, so no
   session row or audit is written for a listen nobody could hear. When the listen ends (stopped,
   ended, lost) the provider releases the audio at once: the queued ~600 ms stops and the context
   is suspended, not left running for the shell's life; the Listen click and Try again, both
-  gestures, resume it.
+  gestures, resume it, and a resume that settles after the listen has ended suspends it again.
   `utils/listen/listenSessionReducer.ts` owns every state (idle, connecting, live, reconnecting,
   lost, ended with `call_ended` / `revoked` / `turned_off` / `superseded` / `refused`; the 15 s window opened by
   the first drop and closed only by `ready` or Try again; the first attach has the same 15 s from
@@ -758,12 +771,17 @@ LS2.
   from the agent" is the agent's leg sending nothing for over 2 s while live: a console agent who mutes
   sends no frames, so the bar does not claim a reconnect it cannot see; "sound blocked" is the
   context not running, lifted by the banner's button.
-- *The bar.* `components/listen/ListenBar.tsx`. At phone width (640 px) it is the live dot, the
-  timer and Stop, and keeps the LS6 notice under them (the notice is never dismissible, so it is
-  not dropped at any width). Esc anywhere inside the bar stops a listen (or dismisses an ended
+- *The bar.* `components/listen/ListenBar.tsx`. At phone width (640 px) it is the state in words
+  and its dot (Connecting…, Listening, Reconnecting… in the warning colour, Connection lost; a live
+  region, as at full width), the timer and Stop, its rows wrapping rather than squeezing, and keeps
+  the LS6 notice under them (the notice is never dismissible, so it is not dropped at any width).
+  An ended listen's reason wraps at every width and is read in full; only the live "who" lines are
+  cut with an ellipsis. Esc anywhere inside the bar stops a listen (or dismisses an ended
   one). **"Open call"** opens the call's own page, as the table's link does (`liveCallPagePath` over
   the listen target's `correlationId`); an inbound call, which has no call page in the console, has
-  none (a link to a list of other calls was a dead end). An ended call's head says "Call ended"
+  none (a link to a list of other calls was a dead end), and a soft-phone call's page is not
+  offered while `agency_softphone_enabled` is off for the account (the table, the bar and the
+  history alike: `liveCallPagePath` takes the soft phone's flag). An ended call's head says "Call ended"
   and the line under it "Priya S. with ****4321 · you listened for 02:10" (at phone width, with no
   head, "Call ended · you listened for 02:10"). "Connection lost" says "The call is not affected."
   and offers Try again and Close, which puts the bar away (a red Stop listening, with nothing left
@@ -787,7 +805,7 @@ LS2.
   inbound) and in the standalone soft phone's (`/dialer/phone`, `SoftphoneHeader`), opening the
   standing line; the line on the campaign screen an agent joins from (`AgentHomePage`, `/dialer`);
   and, because an agent with one campaign is taken straight to the station and may never open the
-  button, `StationListenFirstNotice`: a strip under the station's or the soft phone's header the
+  button, `StationListenFirstNotice` (LS22 u): a strip under the station's or the soft phone's header the
   first time this agent opens either in this browser for this account while listening is on, until
   Got it (`magick-agency.listen.agent-notice-seen:<user>:<tenant>:<account>`, try/catch storage;
   blocked storage shows it again next time). The mobile app: the same "Monitoring and recording"
@@ -795,7 +813,8 @@ LS2.
   link screens; the on-call band has none) and in the soft phone's header on both surfaces (the
   Phone tab and the station's), opening the sheet with the line; and `ListenFirstNoticeCard` at
   the top of the station's idle and call layouts and of the soft phone, the first time per agent
-  and account on the phone until Got it (`listenFirstNoticeProvider`, kept in the app's key-value
+  and account on the phone until Got it (on a call, whose band has no button, it says the line can
+  be read again under "Monitoring and recording" between calls; LS22 u) (`listenFirstNoticeProvider`, kept in the app's key-value
   store under `listen.agent_notice_seen:<user:tenant:account>`). All behind the client flag
   (`stationListenNoticeProvider` over `FeatureFlags.liveListenEnabled`, the key `agency_wire` keeps
   beside the other client flags and pins against the contract's `platform.json` fixture); no wire
@@ -810,7 +829,7 @@ LS2.
   answered 503 is retried within the window either way.
 - *Analytics.* `analytics/redact.ts` takes the listener socket's `token` out of any URL on its way
   to PostHog (`redactListenToken`).
-- *Liveness (QA-M1).* The console still sends its JSON `ping` every 10 s; the server also pings the
+- *Liveness (LS22 d).* The console still sends its JSON `ping` every 10 s; the server also pings the
   socket at the protocol level and counts the pong, which a browser sends by itself however its
   timers are throttled in a hidden tab. Nothing in the console answers it.
 
@@ -821,16 +840,40 @@ LS2.
 | 1 | Foundation: the permission, both flags, the socket and console contracts, the refusal codes, `0047_listen_sessions.sql` and its repository, the retention sweep, the audit actions and resource type, `agency.listen` config, the metric declarations, the alert group and dashboard row, this document | **Built** (2026-11-16) |
 | 2 | The tap and the bridge seam: `listen-tap.ts`, `openListenTap` with `docs/seams.md` §3.1 and the seam contract tests, `LISTENER_LIMITS`, the fault budget, the sampled relay dwell, fault-injection tests | **Built** (2026-11-16) |
 | 3 | The server side: `ListenRegistry`, `ListenTokenStore`, the listener socket, the four routes and two internal handlers with their guards (route tables, agent reach, owners, `wsOwner`, `ws-limits`, the rate-limit bucket, `token` redaction), revocation over IPC, the re-check, the boot and worker reaps, the audit writes, the call detail's `listen_sessions` | **Built** (2026-11-16): §4 "As built (phase 3)", LS16 |
-| 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | **Built** (2026-11-16), against the contracts (§9 "As built"); since phase 3, reads the live row's `correlation_id` ("Open call" to the call's page) and `aht_seconds` (amber on both pages), and is checked against the server's routes, frames, close codes and refusals; the review's console and mobile fixes (K1–K12: the audio on a stopped clock, bursts, retries across `ready`, the first attach's deadline, ordered reads, `ph-no-capture`, focus, the words) are in §9 |
+| 4 | The console: Live calls page and campaign view, `LiveCallsTable`, `ListenBar`, `useListenSession`, `useListenPlayback`, "Listened to by" on the call page | **Built** (2026-11-16), against the contracts (§9 "As built"); since phase 3, reads the live row's `correlation_id` ("Open call" to the call's page) and `aht_seconds` (amber on both pages), and is checked against the server's routes, frames, close codes and refusals; the review's console and mobile fixes (twelve: the audio on a stopped clock, bursts, retries across `ready`, the first attach's deadline, ordered reads, `ph-no-capture`, focus, the words) are in §9 |
 | 5 | The agent's standing line (LS2) on the console station and the mobile station info sheet | **Built** (2026-11-16) |
 | Persona review (console) | The account's Listening history page and its CSV (LS19), the Settings line (LS20 c), the campaign History's listen rows in words (LS19 e), a supervisor's reconnects merged in "Listened to by" and on the History, `access_unverified` with Try again (LS21, LS22 b), withheld numbers (LS22 i), the confirmation pointing at the history (LS6), the live list polling on through a `503` | **Built** (2026-11-16): §12 "The console"; counts in [`status.md`](status.md) "Test counts" |
 | 6 | The inbound notice's words and its regenerated WAV (LS1) | **Built** (2026-11-16): `AGENCY_INBOUND_STANDARD_WORDS.recording_notice` is "This call may be recorded or monitored for quality and training purposes." and `apps/server/assets/inbound/recording-notice.wav` is regenerated from it with `scripts/generate-inbound-clips.ts --only recording_notice` and the pinned voice (8 kHz mono PCM16, 5.0 s); the other six recordings are unchanged. The carrier never speaks the notice (its `<Speak>` covers closed, busy and call-back only), so the WAV is the only other copy of the words |
-
 | Load check | 100 calls with nobody listening, then 6 and 20 listeners (one stalled), on one build: `apps/server/test/integration/load/listen-media-load.test.ts` | **Run** (2026-11-16): below |
 | Voice review | The tap's review fixes: listeners ended as the call starts to settle (LS15 f), the μ-law customer by table and the transcoded legs primed (LS17 a), 10 s of drops ending a listener (LS17 b), failed frames counted in 20 ms frames (LS17 c), the loop-delay alert (LS17 d) | **Built** (2026-11-16): unit-tested; the load check's stalled listener expects `send_backlog`, re-run green since (`a13635b`: the wall-clock lane, 29 passed) |
 | Server review | The agency and API side's review fixes: the upgrade's own access check and the revocation generation (LS16 n), the immediate path failing closed and the periodic pass's staleness cap (LS16 c, d), the flags read strictly, the super-admin's revocation, failed row closes retried and lost rows swept (LS16 o), supersede of older rows only (LS16 p), a stopping process `listen_unavailable` (LS16 q), retention on the partitions' month boundary (LS16 s), the AHT cache bounded and the dialler spine's index (LS16 u), the handoff's redacted URL (LS16 v) | **Built** (2026-11-16): `9f32bc5`, `09053e6`; counts in [`status.md`](status.md) "Test counts" |
 | Persona review (server) | The principal reviews' server, database and contract items: `access_unverified` and the 60 s staleness cap (LS21), `live_at` and "Listened to by" live only, protocol pings, the message rate, refusals without `ended`, the token store's outage, close-then-terminate, withheld numbers, the fault budget through the seam, the upkeep's held ids and the tick, seats added by an invite (LS22), the dead code and the shared `selectMembership`, plan tests for the other spines, the AHT read and the session reads, a worker killed mid-listen, the agent's own hangup, the load check's timing bounds gated on CPUs (LS22 m) | **Built** (2026-11-16): `b3114f9`; counts in [`status.md`](status.md) "Test counts" |
 | Persona review: history and guard rails | The account's listening history and its CSV (LS19), the agent named on a campaign's listen rows, the consent gate's handling policy, the enablement checklist and the unrecorded flag client-exposed (LS20), the inbound consent gap recorded (LS18), the live list and the number answering a flag store outage `503` (§12) | **Built** (2026-11-16): the server in §12, the console in §12 "The console" |
+| Final review | The last review's fixes: the super-admin's add-user re-checking listens and the tenant context's lower-cased id headers (LS22 l), `Cache-Control: no-store` (LS22 n), the upgrade's database steps bounded (LS22 o), the env default warned at boot (LS22 p), a tap that fails to open counted (LS22 q), a dead process's rows retried (LS22 r), a supersede reaching a listen mid-upgrade (LS22 s), the history's bounded read on `0049_listen_history_index.sql` (LS22 t), the μ-law table pinned against G.711's own (LS17 a), the session purge waiting for a failed audit partition purge, `listen_sessions` on the call detail contract; in the console the phone-width bar's state in words, the ended reason wrapping, "turned off" only from a loaded flag map, soft-phone links behind their flag and the history's filters and failed reads (§9, §12); on mobile the on-call notice's words (LS22 u) | **Built** (2026-11-17): counts in [`status.md`](status.md) "Test counts". Every LS ruling ratified (Manas, 2026-11-17) |
+
+**Not yet verified.** Every check above ran in this repository's suites, against the mock carriers,
+in Node and jsdom. Not run yet:
+- in a real browser: every console listening test runs in jsdom with a faked Web Audio, so the
+  autoplay policy, A-law playback through a real `AudioContext`, the 4503 Try again and a hidden
+  tab answering the server's pings are untested there;
+- against a real carrier: VoiceLink and Plivo are the mock carriers here (the tap reads the bridge's
+  legs, so it inherits the bridge's own unverified live-carrier check, [`status.md`](status.md)
+  phase 5 and Plivo step 5);
+- on a phone: the app's "Monitoring and recording" button and `ListenFirstNoticeCard` are
+  widget-tested only;
+- with mobile stations: no end-to-end test listens to a call whose agent is on the app
+  (`client=mobile`). The end-to-end test's agent is a console station on `alaw8`, which is the
+  app's media too (`client=mobile&media=alaw8`), and neither the bridge nor the listen runtime
+  reads the station's client, so the tap sees the same leg; accepted as low risk, with a mobile
+  station case in `live-listen-e2e.test.ts` a follow-up;
+- in Grafana: the `listen` alert group and the dashboard row are validated (`pnpm test:grafana`)
+  but not applied to Grafana Cloud, like the rest of `grafana/`;
+- on CI's `full-ci` runs, the load check's timing bounds: CI does not set `LISTEN_LOAD_BOUNDS=on`
+  (LS22 m), so on a runner with fewer than 4 CPUs they are printed, not asserted.
+
+Before the first tenant: its enablement through the checklist ([`operations.md`](operations.md)
+"Enabling live call listening for a tenant"), a listen in a real browser on staging, and the open
+items in [`status.md`](status.md) "Open decisions and owners" (the consent wording's legal check).
 
 ### Load check
 
@@ -848,6 +891,13 @@ grant handler, the token, the upgrade, the row, the tap), two to a call, each a 
 their own, and live in a child process (`listen-load-clients.ts`), as browsers would be elsewhere:
 their own reading is not charged to the server's loop. One listener of each run stalls: it pauses
 its socket at `ready` and never reads or pings again.
+
+**What it does not run, and why.** The feature's first brief asked for a load check of one
+listener per live call at the expected peak. LS5 (decided) set that peak at 5–6 supervisors and the
+caps at 2 listeners per call and 20 per process, so 100 listeners on 100 calls cannot be reached
+at the defaults and that figure is superseded by LS5: the check measures the peak (6) and the
+process cap (20), two listeners to a call, on 100 calls. A soak past the cap would need
+`AGENCY_LISTEN_MAX_PER_PROCESS` raised and is not run.
 
 **How it is measured.** Each floor gets a 15 s window with nobody listening; (b) and (c) then attach
 their listeners and measure a second 15 s window on the same calls, compared with the first. The
@@ -1100,6 +1150,16 @@ before every listener send"), which goes red for it.
   On of a policy flag; the global Off kept; not in the bulk rollout), the flag exposure
   (`packages/contracts/test/flags.test.ts`, `test/unit/feature-flags/registry.test.ts`,
   `test/integration/feature-flags/feature-flag.service.test.ts`, the `platform.json` fixture).
+- The final review (§10): `apps/server/test/integration/agency/listen-history-plan.test.ts` (the
+  history's walk on its index, LS22 t), `packages/db/test/integration/db/listen-history-index-migration.test.ts`
+  (0049), `apps/server/test/unit/feature-flags/flag-policies.test.ts` (the boot warning, LS22 p),
+  `test/unit/api/middleware/tenant-context.middleware.test.ts` (the id headers lower-cased, LS22 l),
+  `test/unit/api/routes/super-admin-memberships.test.ts` (the add-user's revocation),
+  `test/unit/audit/audit-partition-maintenance.test.ts` (the session purge skipped after a failed
+  partition drop); in the console `listenBarWrapCss.test.ts` (the ended reason wraps) and
+  `listenHistory.timezone.test.ts` (the date range in the reader's zone); on mobile
+  `station_listen_notice_test.dart` (the on-call notice's words). Counts in
+  [`modules.md`](modules.md).
 
 ## 12. The listening history and the guard rails (persona review)
 
@@ -1177,10 +1237,14 @@ On with why, not the reason dialog; the tenant tab's dialog already shows the wa
   masked number or "Withheld"), Started, Time listened ("2m 10s", "Listening now" while open), How it
   ended (`AGENCY_LISTEN_END_REASON_LABELS`), and Call: "Open call" to the attempt or the soft-phone
   call (`liveCallPagePath`), none for an inbound call, and "Call no longer available" once the
-  call's row is gone (no number and not withheld). Filters for supervisor (the team's members who
-  may listen, plus the rows'), agent (every member, plus the rows') and a date range (the reader's
+  call's row is gone (no number and not withheld); a soft-phone call has no link while
+  `agency_softphone_enabled` is off. Filters for supervisor (the team's members in this account, a
+  tenant-wide seat or a seat in this account, who may listen, plus the rows'), agent (every such
+  member, plus the rows') and a date range (the reader's
   local days, `to` sent as the next day's start, the route's `to` being exclusive), applied with
-  Apply, a reversed range refused on the page; keyset paging ("Load older listens"); Export CSV
+  Apply, a reversed range refused on the page; keyset paging ("Load older listens", not offered
+  under new filters until they answer with a cursor of their own; a failed read under new filters
+  clears the rows and the count rather than leaving the old ones under the error); Export CSV
   with the applied filters (`api/listenHistory.ts`, a blob, the server's file name), a cut-short
   file said in a toast by its reason (`row_limit` with the ceiling, `deadline`). `403
   feature_disabled` says "Listening is turned off for this account." and is never asked again;

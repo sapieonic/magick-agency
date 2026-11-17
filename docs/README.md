@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-12.
+are as of 2026-11-17.
 
 ## What Magick Agency is
 
@@ -86,6 +86,17 @@ window or the app, across every tenant they belong to (`0035_one_station_per_age
 that lost its socket can no longer reconnect onto a station the agent moved elsewhere; only the
 agent's own "Use it here" / "Use this phone" moves it ([`status.md`](status.md)).
 
+Live call listening (2026-11-16/17, decisions LS1–LS22, every one decided by Manas): supervisors
+see an account's calls in progress and listen in silently from the console, through a tap on our
+own bridge in the process that owns the call. Built end to end behind the consent flag
+`agency_live_listen_enabled` (off by default, turned on per tenant through the enablement checklist
+in [`operations.md`](operations.md)): the tap, the listener socket, revocation, the console's Live
+calls and listening bar, "Listened to by", the account's Listening history and its CSV, the
+consent gate's guard rails, the agent's standing line on the console and the app, and the inbound
+notice's monitoring words; load-checked at 6 and 20 listeners on 100 calls, and its reviews fixed
+([`listening.md`](listening.md) §10; test counts in `status.md`). Not yet run in a real browser,
+against a real carrier, on a phone or with its alerts applied.
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
@@ -119,7 +130,7 @@ Details and next steps: [`status.md`](status.md).
 | [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH13, the number rule shared by console, server and app, the API (the number only in `POST` bodies, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
 | [`reports.md`](reports.md) | Reports: agent performance reviews, campaign and account reports as PDF and Excel, ad hoc or on a schedule; decisions RP1–RP16, the contracts and datasets (every figure the screens' own), the pipeline (assembler, SQS or in-process renderer, the signed callback, the tick), who may run what, config, S3 keys |
 | [`inbound.md`](inbound.md) | Inbound calls (2026-11-09; P1 and P2 built and reviewed, P3's mobile app frames built 2026-11-10, Mode B (ringing an away agent's phone) built on the server and Android 2026-11-12, P0's live Plivo checks open, the rest of P3 and P4 not built): answering customers who ring back on Plivo numbers linked to inbound, the sticky agent and its fallbacks, the queue and pacing priority, off hours, follow-ups (Missed inbound list, inbound callbacks), mobile stations, ringing an away phone (§6.1), who configures what, decisions IB1–IB8 (the build's rulings, the fix pass's, the mobile app's, the pilot's and Mode B's, IQ1–IQ74 and N1–N5, are in `decisions.md`), the phased build plan and its status |
-| [`listening.md`](listening.md) | Live call listening (2026-11-16; phases 1 (the foundation), 2 (the tap), 4 (the console) and 5 (the agent's line) built; 3 and 6 not yet): supervisors see an account's calls in progress and listen in silently from the console; decisions LS1–LS22, the architecture (a tap on our own bridge in the process that owns the call), the listener socket's wire format and close codes, the session lifecycle, revocation, the tap's error handling, the session table and its retention, permission, flags, config, metrics and alerts, the phase status |
+| [`listening.md`](listening.md) | Live call listening (2026-11-16/17; all six phases built, the load check run, its reviews fixed, every decision ratified; not yet run in a real browser, on a real carrier or a phone): supervisors see an account's calls in progress and listen in silently from the console; decisions LS1–LS22, the architecture (a tap on our own bridge in the process that owns the call), the listener socket's wire format and close codes, the session lifecycle, revocation, the tap's error handling, the session table and its retention, permission, flags, config, metrics and alerts, the console and the agent's line, the phase status and what is not verified, the Listening history and the consent gate's guard rails (§12) |
 | [`insights.md`](insights.md) | The campaign's analytic tabs (Overview, Calls, Agents, Callbacks, Health): decisions IN1–IN13, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |

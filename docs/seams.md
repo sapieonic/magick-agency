@@ -5,7 +5,7 @@ each module area owns, which config keys each declares, where shared infrastruct
 cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening).
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening); §4's listen revocation on 2026-11-17.
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -417,15 +417,19 @@ handler. The same lookup keys the routes' rate limit (per IP and ringing call). 
 Bearer) and `test/unit/api/agency-agent-reach.test.ts` (`TOKEN_ONLY_ROUTES`: the only agency HTTP
 routes without a session).
 
-**Platform's member routes reach agency's listen revocation.** The role-change and member-removal
-routes (`api/routes/user.routes.ts`, platform) call `revokeListens(tenantId, userId)`
-(`agency/listen/listen-revocation.ts`) after the membership cache is cleared, so a supervisor who
-may no longer listen is cut off at once (docs/listening.md LS10). It is a hook, not a reference to
+**Platform's member routes reach agency's listen revocation.** Every platform route that changes
+a membership calls `revokeListens(tenantId, userId)` (`agency/listen/listen-revocation.ts`) after
+the membership cache is cleared, so a supervisor who may no longer listen is cut off at once
+(docs/listening.md LS10): in `api/routes/user.routes.ts` the role change, the member removal and
+`POST /users/invite` (a seat added, LS22 l); in `api/routes/invites.routes.ts` the invite's claim
+(LS22 l); in `api/routes/super-admin/tenants.ts` the super-admin's add-user
+(`POST /super-admin/tenants/:id/users`, LS22 l), role change and member removal (LS16 t). It is a hook, not a reference to
 the runtime: the agency bootstrap registers the registry's `revokeUser` (`startAgency`) and the
 primary of a multi-process server its `listen.revoke` broadcast to the media workers
 (`startMediaWorkers`); with none registered it does nothing, and it never throws. Pinned through the
 real routes by `test/integration/agency/live-listen-e2e.test.ts` and, across processes,
-`test/integration/cluster/live-listen.test.ts`.
+`test/integration/cluster/live-listen.test.ts`; the super-admin's three by
+`test/unit/api/routes/super-admin-memberships.test.ts`.
 
 ## 5. Known gaps
 

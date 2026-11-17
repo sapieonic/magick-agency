@@ -107,14 +107,19 @@ unique.
    partition maintenance, cache-invalidation subscriber on `<REDIS_KEY_PREFIX>cache:invalidate:db<N>`,
    scoped to the Redis db because pub/sub is server-wide); `startVoice` (S3, clip cache and sweeper,
    decode scratch reap, guard host and bridge, startup self-heal); `startAgency` (ingest reaper, then
-   `AgencyRuntime.start()`, which runs the startup reaper before the pacing supervisor, then the
+   `AgencyRuntime.start()`, which runs the startup reaper, then closes every listen session row a
+   previous process left open (`server_restarted`, before any listener can attach; live call
+   listening, [`listening.md`](listening.md) §4) and arms the listen registry's re-check, before
+   the pacing supervisor; then the listen revocation hook (`onListenRevocation`), the
    insights rollup job, then the report pipeline: assembler and reports tick, `docs/reports.md`);
    `startAnalysis` (worker, retention purge). Voice starts before agency so the bridge's self-heal
    finishes before any pacing tick.
 6. `app.listen`, only after the bootstraps, so no request lands before the startup reap.
 
-Shutdown closes HTTP first (`app.close()`), then runs the stops in reverse: analysis; agency
-(the report pipeline first: the assembler's run in flight, the tick, the inline renderer's queue; then the insights rollup job's batch in flight; then pacing, waiting up to 5 s for ticks and owner sweeps in flight; then reaper, sweeps, dialer and wrap-up
+Shutdown closes HTTP first (`app.close()`; as it closes, the listener route's `preClose` hook,
+`proxy-agency-listen.routes.ts`, ends every listen this process holds `server_shutdown` with its
+row closed, after the WebSocket plugin has closed the sockets), then runs the stops in reverse:
+analysis; agency (the listen revocation hook unregistered at once; the report pipeline first: the assembler's run in flight, the tick, the inline renderer's queue; then the insights rollup job's batch in flight; then pacing, waiting up to 5 s for ticks and owner sweeps in flight; then any listen still held ends `server_shutdown`, its row closed while the bridge and the pool still run; then reaper, sweeps, dialer and wrap-up
 timers; completion notices drained up to 30 s); voice (the bridge ends live calls, then the guard host, then the PostHog flush); platform
 (both audit buffers flushed last). Then Redis and the pool close. Pinned by
 `apps/server/test/integration/agency/runtime-boot-order.test.ts`.
@@ -914,6 +919,14 @@ a rate-limit key and never an auth input.
   `/app` while the dialer is on, so neither the sidebar nor search offers them Settings then; the
   `/agency` pages send an agent to their own `/dialer/*` twin. PostHog's `product` stays
   `'agency'` on `/agency` and `'ai'` elsewhere (`productSurfaceForPath`).
+- **Live call listening** ([`listening.md`](listening.md) §9, §12). `ConsoleLayout` mounts
+  `ListenProvider` around the shell, keyed by the account, with the listening bar (`ListenBar`)
+  under `<main>`, so one listen persists across the shell's pages. The Campaigns section has "Live
+  calls" (`/agency/live`) and "Listening history" (`/agency/listening-history`), and a campaign's
+  Calls tab a "Summary | Live" control; Settings has a read-only "Live call listening" line; the
+  call pages show "Listened to by". All behind `agency.supervise` and the flag
+  `agency_live_listen_enabled`. The agent's station and soft phone show the "Monitoring and
+  recording" line while the flag is on.
 - **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
   switch lands there too; a dedicated agent lands on `/dialer`, a viewer or operator on the campaign
