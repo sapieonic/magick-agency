@@ -106,6 +106,11 @@ export interface CampaignTabDefinition {
   path: (campaignId: string) => string;
   /** A client-exposed flag that must also be on (the soft phone's tab). */
   flag?: string;
+  /**
+   * The bar tab marked current while this screen shows, when it is not the screen itself (absent):
+   * the tab a view belongs to, or `null` for a screen with none ({@link barTabFor}).
+   */
+  bar?: CampaignTabId | null;
 }
 
 export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
@@ -181,6 +186,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     permission: 'agency.supervise',
     path: (id) => `/agency/campaigns/${id}/manual-calls`,
     flag: SOFTPHONE_FLAG,
+    bar: 'attempts',
   },
   {
     id: 'live',
@@ -193,6 +199,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     permission: 'agency.supervise',
     path: (id) => `/agency/campaigns/${id}/calls/live`,
     flag: LIVE_LISTEN_FLAG,
+    bar: 'calls',
   },
   {
     // "Activity" until it became the header's History button; the id and the URL stay.
@@ -210,6 +217,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     */
     permission: 'audit.read',
     path: (id) => `/agency/campaigns/${id}/activity`,
+    bar: null,
   },
   {
     id: 'settings',
@@ -278,10 +286,17 @@ export function visibleCampaignTabGroups(role: Role | undefined): CampaignTabGro
  * which is the header's History and not a tab.
  */
 export function barTabFor(id: CampaignTabId): CampaignTabId | null {
-  if (id === 'manual') return 'attempts';
-  if (id === 'live') return 'calls';
-  if (id === 'activity') return null;
-  return id;
+  const bar = CAMPAIGN_TABS.find((tab) => tab.id === id)?.bar;
+  return bar === undefined ? id : bar;
+}
+
+/** The views of a screen a role can open, in segment order; each is gated as its screen (`CAMPAIGN_TABS`). */
+function visibleViews<Id extends CampaignTabId>(
+  views: readonly { id: Id; label: string }[],
+  role: Role | undefined,
+  isFlagEnabled: (flag: string) => boolean,
+): { id: Id; label: string }[] {
+  return views.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
 }
 
 /** Call log's two views, in segment order (decision IN14). */
@@ -297,7 +312,7 @@ export function visibleCallLogViews(
   role: Role | undefined,
   isFlagEnabled: (flag: string) => boolean = () => false,
 ): { id: CallLogViewId; label: string }[] {
-  return CALL_LOG_VIEWS.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
+  return visibleViews(CALL_LOG_VIEWS, role, isFlagEnabled);
 }
 
 /** The Calls tab's two views, in segment order: the analytic panel and the calls in progress. */
@@ -313,7 +328,7 @@ export function visibleCallsViews(
   role: Role | undefined,
   isFlagEnabled: (flag: string) => boolean = () => false,
 ): { id: CallsViewId; label: string }[] {
-  return CALLS_VIEWS.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
+  return visibleViews(CALLS_VIEWS, role, isFlagEnabled);
 }
 
 /**
