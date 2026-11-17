@@ -5,7 +5,7 @@
 // provider is `voicelink`. The members the dialer runtime calls (onLifecycle,
 // createBridgedCall, createUnboundBridgedCall, bindBorrowedBrowserLeg,
 // reattachBorrowedBrowserLeg, forceEndWithOutcome, playClipToCarrierThenHangUp,
-// getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
+// getActiveCallIds, hasActiveCall, gracefulShutdown) and the exported types are a fixed seam, pinned by
 // `test/unit/core/webrtc-bridge-seam-contract.test.ts`. The inbound members
 // (acceptInboundCall, playClipSequenceThenHangUp, playInboundHold, stopInboundHold,
 // recordInboundAudio: docs/inbound.md §3, §5) are part of that seam too, as is openListenTap
@@ -504,6 +504,11 @@ export class WebRtcBridgeManager {
   /** Call ids this replica is actively bridging — excluded from the stale-call sweep. */
   getActiveCallIds(): string[] {
     return Array.from(this.sessions.keys());
+  }
+
+  /** Whether this replica holds a bridge session for the call (`agency_calls.id`): the listen grant's check. */
+  hasActiveCall(callId: string): boolean {
+    return this.sessions.has(callId);
   }
 
   /**

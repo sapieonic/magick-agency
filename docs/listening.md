@@ -443,7 +443,7 @@ campaign AHT read costs each campaign's whole history (by `campaign_id` on an in
 aggregate as the campaign stats), so it is cached a minute per campaign per process (LS16 i, u). The grant reads the same internal list
 for the one call, refuses `listen_own_call` and `listen_recording_off` itself, then `callCore`s
 `POST /listen-grants`, which the media-worker injector forwards to the session's worker; that handler
-checks its bridge holds the call (`getActiveCallIds`), asks the registry (`check`) and mints the
+checks its bridge holds the call (`hasActiveCall`), asks the registry (`check`) and mints the
 token (`ListenTokenStore.mint`: `<token>|<grant JSON>` under `agency:listen-token:<listenId>`, PX the
 TTL). A refusal from the owning process keeps its status; anything else, or no answer, is `503
 listen_unavailable`.

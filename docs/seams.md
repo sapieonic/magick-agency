@@ -5,7 +5,7 @@ each module area owns, which config keys each declares, where shared infrastruct
 cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening); §4's listen revocation on 2026-11-17.
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening); §4's listen revocation and §3.1's `hasActiveCall` on 2026-11-17.
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -82,6 +82,7 @@ class WebRtcBridgeManager {
   playClipToCarrierThenHangUp(correlationId: string,
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
+  hasActiveCall(callId: string): boolean;
   gracefulShutdown(): Promise<void>;
   // Inbound calls (docs/inbound.md §3), P1:
   acceptInboundCall(params: WebRtcInboundCallParams): Promise<WebRtcInboundAcceptance>;
@@ -212,6 +213,9 @@ call's tap is made by its first sink) carries the agency's `AGENCY_LISTEN_FAULT_
 voice area reads no agency config; absent, `LISTEN_TAP_DEFAULT_FAULT_BUDGET` (50, the setting's
 default; LS22). On a tap that ended under the attach the handle comes back detached
 (`attached: false`) with the sink already closed, which the caller treats as the call gone.
+`hasActiveCall(callId)` answers whether this process holds a bridge session for the call (a lookup
+on the session map, never a copy of every id as `getActiveCallIds` makes): the listen grant asks it
+before it mints, so a grant names only a call this process bridges.
 `sendToListenerSocket(ws, message)` (`core/bridge/listen-tap.ts`) is the socket-backed `send`,
 under `LISTENER_LIMITS` (`utils/ws-backpressure.ts`). The types are in `bridge-types.ts`, pinned by
 the contract test, which also holds `ListenTapEndReason` inside the contract's

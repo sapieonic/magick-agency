@@ -56,6 +56,8 @@ interface BridgeSeam {
   playClipToCarrierThenHangUp(correlationId: string,
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
+  /** Whether this process bridges the call (`agency_calls.id`): the listen grant's check, O(1). */
+  hasActiveCall(callId: string): boolean;
   gracefulShutdown(): Promise<void>;
   /** Inbound calls (docs/inbound.md §3): the answer webhook's leg taken in, and its messages played. */
   acceptInboundCall(params: CoreInboundCallParams): Promise<CoreInboundAcceptance>;
@@ -188,6 +190,7 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcBridgeManager['forceEndWithOutcome']>().toEqualTypeOf<BridgeSeam['forceEndWithOutcome']>();
     expectTypeOf<WebRtcBridgeManager['playClipToCarrierThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipToCarrierThenHangUp']>();
     expectTypeOf<WebRtcBridgeManager['getActiveCallIds']>().toEqualTypeOf<BridgeSeam['getActiveCallIds']>();
+    expectTypeOf<WebRtcBridgeManager['hasActiveCall']>().toEqualTypeOf<BridgeSeam['hasActiveCall']>();
     expectTypeOf<WebRtcBridgeManager['gracefulShutdown']>().toEqualTypeOf<BridgeSeam['gracefulShutdown']>();
     expectTypeOf<WebRtcBridgeManager['acceptInboundCall']>().toEqualTypeOf<BridgeSeam['acceptInboundCall']>();
     expectTypeOf<WebRtcBridgeManager['playClipSequenceThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipSequenceThenHangUp']>();

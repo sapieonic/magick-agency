@@ -179,7 +179,7 @@ export class AgencyRuntime {
   /** `AGENCY_LISTEN_FAULT_BUDGET`, handed to the bridge's tap through the seam (LS22 j). */
   private readonly listenFaultBudget: number;
   /** The bridge, for the listener socket's tap (the seam member `openListenTap`). */
-  private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'getActiveCallIds'>;
+  private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'hasActiveCall'>;
   /**
    * Set by a multi-process server: end a supervisor's sessions held by OTHER processes past their
    * cap after an admission here (`listen.revoke` over IPC). Null in one process.
@@ -937,7 +937,7 @@ export class AgencyRuntime {
 
   /** Does the bridge in this process hold the call (`agency_calls.id`)? The grant's check. */
   holdsCall(callId: string): boolean {
-    return this.listenBridge.getActiveCallIds().includes(callId);
+    return this.listenBridge.hasActiveCall(callId);
   }
 
   /**

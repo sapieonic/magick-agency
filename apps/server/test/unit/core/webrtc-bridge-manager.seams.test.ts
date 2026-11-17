@@ -10,7 +10,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //     default (1800) on NULL or on a throw. The resolved value drives three things (slot TTL =
 //     value + 60, the carrier's `maxDuration`, the session's max-duration timer).
 //  3. `openListenTap` (docs/seams.md §3.1, docs/listening.md): its refusals and its handle; the
-//     tap itself is pinned in webrtc-bridge-listen-tap.test.ts.
+//     tap itself is pinned in webrtc-bridge-listen-tap.test.ts. `hasActiveCall`, the grant's check
+//     that this process bridges the call.
 // Harness copied from webrtc-bridge-manager.test.ts (project convention: no shared test utils).
 
 vi.mock('@magick-agency/observability', () => ({
@@ -338,6 +339,20 @@ describe('max duration from account settings', () => {
     expect(mockAdapter.initiateCall).toHaveBeenCalledTimes(1);
     expect(mgr.getSession('call-1')!.maxDurationSeconds).toBe(1800);
     await endByUser(mgr);
+  });
+});
+
+describe('hasActiveCall (docs/seams.md §3.1)', () => {
+  it('answers whether this process holds a session for the call, from dial to the session`s removal', async () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    expect(mgr.hasActiveCall('call-1')).toBe(false);
+    await dial(mgr);
+    expect(mgr.hasActiveCall('call-1')).toBe(true);
+    expect(mgr.hasActiveCall('call-2')).toBe(false);
+    expect(mgr.hasActiveCall('call-1')).toBe(mgr.getActiveCallIds().includes('call-1'));
+    await endByUser(mgr);
+    await carrierEnded(mgr);
+    expect(mgr.hasActiveCall('call-1')).toBe(false);
   });
 });
 
