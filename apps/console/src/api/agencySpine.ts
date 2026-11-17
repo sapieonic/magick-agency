@@ -3,6 +3,7 @@ import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
 import { buildAuthHeaders } from './authHeaders';
 import { captureApiError } from './error-analytics';
+import { fetchCsvExport, type CsvExport } from './csvExport';
 import { trackAgencyRecordingOutcome } from '../analytics/events';
 import type { RecordingOutcome, WebRtcCallRecord } from '../types/webrtc-call';
 import type {
@@ -260,30 +261,7 @@ export async function fetchAgencyAttemptRecordingBlobUrl(
   return { status: 'ready', url: URL.createObjectURL(blob), mimeType };
 }
 
-export interface SpineCsvDownload {
-  blob: Blob;
-  /** True when the export stopped early — at the row ceiling or on a deadline. */
-  truncated: boolean;
-  reason: string | null;
-  rowLimit: number | null;
-  rows: number | null;
-}
-
-/**
- * A header produced by the server is not a guarantee.
- *
- * `Number('abc')` is `NaN` and `NaN` is a `number`, so an unexpected header
- * would satisfy `rowLimit: number | null` and travel all the way to the toast as
- * "only the first NaN rows" — a truncation warning that reads as a bug and so
- * gets dismissed as one. Every non-finite or non-positive parse collapses to
- * `null`: "truncated, and the size is not known". The warning survives losing
- * the number, which is the property that matters.
- */
-function parseCount(header: string | null): number | null {
-  if (header === null) return null;
-  const parsed = Number(header);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
+export type SpineCsvDownload = CsvExport;
 
 /**
  * Download the filtered set as CSV.
@@ -303,26 +281,5 @@ export async function downloadSpineCsv(
   tenantId?: string,
   accountId?: string,
 ): Promise<SpineCsvDownload> {
-  const headers = await buildAuthHeaders(tenantId, accountId);
-  const url = `${AGENCY_BASE}/campaigns/${campaignId}/${kind}.csv${toQuery(filters)}`;
-  const res = await fetch(url, { headers });
-
-  if (!res.ok) {
-    let details: unknown;
-    try {
-      details = await res.json();
-    } catch {
-      details = undefined;
-    }
-    captureApiError(url, res);
-    throw new ApiError(res.status, details, res.headers.get('x-request-id') ?? undefined);
-  }
-
-  return {
-    blob: await res.blob(),
-    truncated: res.headers.get('x-export-truncated') === 'true',
-    reason: res.headers.get('x-export-truncated-reason'),
-    rowLimit: parseCount(res.headers.get('x-export-row-limit')),
-    rows: parseCount(res.headers.get('x-export-rows')),
-  };
+  return fetchCsvExport(`${AGENCY_BASE}/campaigns/${campaignId}/${kind}.csv${toQuery(filters)}`, tenantId, accountId);
 }
