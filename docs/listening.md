@@ -163,7 +163,11 @@ Manas.
   sent). Stamped as it goes live, not awaited (audio is never held for it), and written by the close
   as the start when that stamp did not land; NULL for a row the upgrade wrote and then refused (the
   call gone before the tap, a revocation before the admission, the client gone), which carried no
-  audio. "Listened to by" (`listForCall`) reads only live rows. Rows from before 0048 are backfilled
+  audio. "Listened to by" (`listForCall`) reads only live rows. Accepted (final review): a session
+  that went live whose stamp did not land before its process died is closed by a reap (LS16 o,
+  LS22 r), which cannot know it carried audio (its frame counters died with the process), so it
+  stays out of "Listened to by" and the history; its `agency_call.listen_started` audit row, if
+  written, still records the listen. Rows from before 0048 are backfilled
   with their start (they were all shown). The live list's listeners still read every open row: an
   upgrade between its row and its admission lasts milliseconds, and counting it keeps the list's
   per-call cap with the registry's reservations.
@@ -233,6 +237,15 @@ Manas.
 - **(q)** Opening the tap throwing (LS22 f) is counted `agency_listen_tap_errors_total{stage="open"}`,
   so `agy-listen-tap-errors` sees a bridge that cannot open a tap for anyone; the other refusals at
   the upgrade stay in the logs and the rows (LS16 l).
+- **(r)** The dead processes' close (at boot, and when the primary reaps a dead media worker:
+  `closeOrphansExcept` with this process and the media workers alive now) goes through
+  `ListenRowKeeper.closeDeadProcesses`; a close that fails (a database blip often comes with what
+  killed the worker) is run again on the primary's every re-check tick until it lands, with the live
+  processes read afresh, rather than leaving the rows open until the next boot: each live process
+  sweeps only its own `replica_id`, so nothing else would close them, and an open row reads
+  "Listening now" in the history and draws a supersede aimed at nothing. Every sweep counts
+  `agency_listen_sessions_ended_total{reason="server_restarted"}` only for the rows that went live
+  (`live_at` set), as the socket counts only live sessions.
 
 ## 2. Architecture
 
@@ -439,8 +452,9 @@ for those another replica holds past the cap, older than its own (LS16 p); the p
 **Sweeps and shutdown.** At boot (`AgencyRuntime.start`, before any listener can attach and before
 any media worker exists) every open row of another replica closes `server_restarted`; when the
 primary reaps a dead media worker, every open row of a replica not alive now does
-(`closeOrphansExcept`, pinned with a worker killed mid-listen by `cluster/live-listen.test.ts`).
-While a process runs, its re-check tick retries a failed row close and
+(`closeOrphansExcept`, pinned with a worker killed mid-listen by `cluster/live-listen.test.ts`);
+both go through `ListenRowKeeper.closeDeadProcesses`, and one that fails is run again on the
+primary's next re-check tick, with the live processes read afresh (LS22 r). While a process runs, its re-check tick retries a failed row close and
 closes its own rows it no longer holds (`closeOrphans`, LS16 o). Shutdown: the listener route's `preClose` (one process, LS16 g), the media
 worker's shutdown before its app closes, and `AgencyRuntime.stop` / `stopShard` as a backstop.
 

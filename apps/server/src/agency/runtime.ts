@@ -3,7 +3,7 @@ import { AsyncResource } from 'node:async_hooks';
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { trackAwayRingEnded, trackListenSessionEnded } from '@magick-agency/observability/metrics/agency';
+import { trackAwayRingEnded } from '@magick-agency/observability/metrics/agency';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
@@ -77,6 +77,12 @@ export interface AgencyRuntimeOptions {
   refusalCountShared?: boolean;
   /** Live call listening's caps and re-check (`agency.listen`); unset: the loaded config's. */
   listen?: Partial<ListenLimits & { tokenTtlMs: number }>;
+  /**
+   * The other processes running now whose listen rows are theirs (the primary's media workers,
+   * `StationDirectory.liveReplicaIds`): the dead processes' close keeps their rows. Unset (one
+   * process): none.
+   */
+  listenLiveReplicaIds?: () => readonly string[];
 }
 
 /** A registry entry, as the sweep sees it (`StationRegistry.silentSince`). */
@@ -293,8 +299,9 @@ export class AgencyRuntime {
       open: (input) => agencyListenSessionRepository.open(input),
       close: (id, input) => agencyListenSessionRepository.close(id, input),
       closeOrphans: (replicaId, opts) => agencyListenSessionRepository.closeOrphans(replicaId, opts),
+      closeOrphansExcept: (live) => agencyListenSessionRepository.closeOrphansExcept(live),
       markLive: (id) => agencyListenSessionRepository.markLive(id),
-    }, this.replicaId);
+    }, this.replicaId, options.listenLiveReplicaIds);
     this.listen = new ListenRegistry({
       limits: { maxPerCall: listen.maxPerCall, maxPerProcess: listen.maxPerProcess, maxPerUser: listen.maxPerUser, recheckMs: listen.recheckMs },
       access: listenAccessCheck(),
@@ -963,13 +970,9 @@ export class AgencyRuntime {
     await this.reaper.reapOnStartup();
     // Live call listening: every session a previous process left open is closed
     // `server_restarted` before any listener can attach (no media worker runs yet, so every
-    // open row is an orphan). Non-fatal: a row left open is closed by the next boot.
-    await Promise.resolve().then(() => agencyListenSessionRepository.closeOrphansExcept([this.replicaId]))
-      .then((rows) => {
-        for (let i = 0; i < rows.length; i++) trackListenSessionEnded('server_restarted');
-        if (rows.length > 0) log.warn({ closed: rows.length }, 'Closed listen sessions a restart left open');
-      })
-      .catch((err) => log.error({ err }, 'Could not close the listen sessions a restart left open'));
+    // open row is an orphan). Non-fatal: a close that fails is run again by the re-check's next
+    // tick, which the line below arms (LS22 r).
+    await this.listenRows.closeDeadProcesses();
     this.listen.start();
     this.reaper.start();
     this.pacing.start();

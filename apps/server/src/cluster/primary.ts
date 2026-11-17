@@ -34,8 +34,6 @@ import { forkServerChild } from './fork.js';
 import { probeSocketReadStop } from './socket-pause.js';
 import { slotFor } from './roles.js';
 import { onListenRevocation } from '../agency/listen/listen-revocation.js';
-import { agencyListenSessionRepository } from '../db/repositories/agency.repository.js';
-import { trackListenSessionEnded } from '@magick-agency/observability/metrics/agency';
 
 export interface PrepareMediaPrimaryOptions {
   /** Tests: how a media child is forked. */
@@ -103,6 +101,8 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
       unrecordedEnds: { entries: () => latest.unrecordedEnds, forget: (ids) => cluster.forgetUnrecorded(ids) },
       manual: { activeIds: () => latest.manualActiveIds, onClosed: (rows) => cluster.manualCallsClosed(rows) },
     },
+    // The workers' listen rows are theirs: the dead processes' close keeps them (LS22 r).
+    listenLiveReplicaIds: () => cluster.directory.liveReplicaIds(),
   });
   setCoreInjector(cluster.coreInjector);
   setVoicelinkWebhookForwarder(cluster.webhookForwarder);
@@ -226,12 +226,10 @@ export async function reapSlot(
     logger.warn({ slot, report, slotsReleased: held.length, callRowsFailed: callIds.length },
       'Reaped a dead media worker\'s calls, attempts and agents');
     // Its listens (docs/listening.md §4): every open row of a process not alive now closes
-    // `server_restarted` (the dead worker's incarnation is no longer among the live ones).
-    const listens = await agencyListenSessionRepository
-      .closeOrphansExcept([runtime.replicaId, ...cluster.directory.liveReplicaIds()])
-      .catch((err) => { logger.error({ err, slot }, 'Could not close the dead media worker\'s listen sessions'); return []; });
-    for (let i = 0; i < listens.length; i++) trackListenSessionEnded('server_restarted');
-    if (listens.length > 0) logger.warn({ slot, closed: listens.length }, 'Closed a dead media worker\'s listen sessions');
+    // `server_restarted` (the dead worker's incarnation is no longer among the live ones). A
+    // close that fails is run again by the primary's next re-check tick (LS22 r).
+    const listens = await runtime.listenRows.closeDeadProcesses();
+    if (listens) logger.warn({ slot, closed: listens }, 'Closed a dead media worker\'s listen sessions');
   }
   voice?.guardHost.wakeSelfHeal();
 }
