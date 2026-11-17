@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { closePool, initDbPool } from '@magick-agency/db';
 import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
+import { closedRow, listenRow, openListener, type ListenClient } from '../../helpers/listen-client.js';
 import { insertAccount, insertMembership, insertTenant, insertUser } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 import { flushTestRedis } from '../../helpers/test-redis.js';
 import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-factories.js';
@@ -86,19 +87,10 @@ async function api(who: Supervisor, method: 'GET' | 'POST' | 'PUT', path: string
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-interface Listener { ws: WebSocket; frames: Array<Record<string, unknown>>; legs: { customer: number; agent: number }; closed: { code: number; reason: string } | null; listenId: string }
-
-async function listen(who: Supervisor, callId: string): Promise<Listener> {
+async function listen(who: Supervisor, callId: string): Promise<ListenClient> {
   const res = await api(who, 'POST', `/proxy/agency/live-calls/${callId}/listen`);
   expect(res.status, JSON.stringify(res.body)).toBe(201);
-  const l: Listener = { ws: new WebSocket(`${server.origin.replace('http', 'ws')}${res.body.ws_url}`), frames: [], legs: { customer: 0, agent: 0 }, closed: null, listenId: res.body.listen_id };
-  l.ws.on('message', (raw: Buffer, isBinary) => {
-    if (!isBinary) { l.frames.push(JSON.parse(raw.toString()) as Record<string, unknown>); return; }
-    if (raw.length === 161 && raw[0] === 1) l.legs.customer++;
-    if (raw.length === 161 && raw[0] === 2) l.legs.agent++;
-  });
-  l.ws.on('close', (code, reason) => { l.closed = { code, reason: reason.toString() }; });
-  l.ws.on('error', () => undefined);
+  const l = openListener(server.origin, res.body);
   await until('ready', 15_000, () => l.frames.some((f) => f['event'] === 'ready'));
   return l;
 }
@@ -112,10 +104,7 @@ async function until(what: string, ms: number, check: () => Promise<boolean> | b
   }
 }
 
-async function row(listenId: string) {
-  const { rows } = await getTestPool().query('SELECT replica_id, end_reason, ended_at FROM agency_listen_sessions WHERE id = $1', [listenId]);
-  return rows[0] as { replica_id: string; end_reason: string | null; ended_at: Date | null } | undefined;
-}
+const row = (listenId: string) => listenRow(getTestPool(), { listenId });
 
 /** The live call of each slot: one agent on each worker, each bridged to its own customer. */
 const calls = new Map<number, { callId: string; agent: Station }>();
@@ -250,10 +239,10 @@ describe('listening with media workers', () => {
     // One listen per supervisor, across workers: the first ends `superseded`.
     await until('the first superseded', 10_000, () => first.closed !== null);
     expect(first.closed).toEqual({ code: 4409, reason: 'superseded' });
-    await until('its row closed', 10_000, async () => (await row(first.listenId))?.end_reason === 'superseded');
+    await closedRow(getTestPool(), { listenId: first.listenId }, 'superseded', 10_000);
     expect(second.closed).toBeNull();
     second.ws.close();
-    await until('second row closed', 10_000, async () => (await row(second.listenId))?.ended_at != null);
+    await closedRow(getTestPool(), { listenId: second.listenId }, undefined, 10_000);
   }, 90_000);
 
   it('a role change through the real route reaches the worker as `listen.revoke`: 4403 permission_revoked', async () => {
@@ -265,7 +254,7 @@ describe('listening with media workers', () => {
     expect(changed.status, JSON.stringify(changed.body)).toBe(200);
     await until('revoked', 10_000, () => l.closed !== null);
     expect(l.closed).toEqual({ code: 4403, reason: 'permission_revoked' });
-    await until('row closed', 10_000, async () => (await row(l.listenId))?.end_reason === 'permission_revoked');
+    await closedRow(getTestPool(), { listenId: l.listenId }, 'permission_revoked', 10_000);
   }, 60_000);
 
   it('a grant whose supervisor is demoted before the upgrade is refused 4403 by the owning worker, with no row', async () => {
@@ -293,12 +282,13 @@ describe('listening with media workers', () => {
     process.kill(deadPid, 'SIGKILL');
     const heardAtKill = onSurvivor.legs.customer;
 
-    await until('the dead worker\'s listen row closed by the reap', 30_000, async () => (await row(onDoomed.listenId))?.end_reason === 'server_restarted');
+    // The dead worker's listen row is closed by the reap.
+    await closedRow(getTestPool(), { listenId: onDoomed.listenId }, 'server_restarted', 30_000);
     // The survivor's: its process is alive, so the reap leaves it open, and it keeps hearing.
     await until('the survivor kept hearing its call', 15_000, () => onSurvivor.legs.customer - heardAtKill > 50);
     expect(await row(onSurvivor.listenId)).toMatchObject({ end_reason: null, ended_at: null });
     expect(onSurvivor.closed).toBeNull();
     onSurvivor.ws.close();
-    await until('the survivor\'s row closed', 10_000, async () => (await row(onSurvivor.listenId))?.end_reason === 'listener_disconnected');
+    await closedRow(getTestPool(), { listenId: onSurvivor.listenId }, 'listener_disconnected', 10_000);
   }, 90_000);
 });

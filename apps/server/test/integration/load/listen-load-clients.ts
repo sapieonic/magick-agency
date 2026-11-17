@@ -19,8 +19,9 @@
  * (the parent corks the server end: see the suite's `corkServerEnd`).
  */
 import WebSocket from 'ws';
+import { countLeg, type LegCounts } from '../../helpers/listen-client.js';
 
-interface Counts { customer: number; agent: number; odd: number; windowCustomer: number; windowAgent: number; events: string[] }
+interface Counts extends LegCounts { windowCustomer: number; windowAgent: number; events: string[] }
 
 const listeners = new Map<string, { ws: WebSocket; counts: Counts; pinger: NodeJS.Timeout | null }>();
 let counting = false;
@@ -55,8 +56,10 @@ function open(listenId: string, url: string, stalled: boolean, pingMs: number): 
       send({ op: 'ready', listenId, localPort: socket.localPort });
       return;
     }
-    if (raw.length !== 161 || (raw[0] !== 1 && raw[0] !== 2)) { counts.odd++; return; }
-    if (raw[0] === 1) { counts.customer++; if (counting) counts.windowCustomer++; } else { counts.agent++; if (counting) counts.windowAgent++; }
+    const leg = countLeg(counts, raw);
+    if (!counting) return;
+    if (leg === 'customer') counts.windowCustomer++;
+    else if (leg === 'agent') counts.windowAgent++;
   });
 }
 

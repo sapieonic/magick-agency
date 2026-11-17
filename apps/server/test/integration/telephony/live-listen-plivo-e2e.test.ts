@@ -29,8 +29,8 @@ const fb = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: fb.verifyIdToken }));
 
 import { randomUUID } from 'node:crypto';
-import WebSocket from 'ws';
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
+import { closedRow, openListener, type ListenClient } from '../../helpers/listen-client.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 import {
   ACCOUNT, PLIVO_E2E_ENV, TENANT, closePlivoDb, initPlivoDb, joinAgent as joinPlivoAgent, plivoCampaign, startPlivoRig, waitFor,
@@ -64,24 +64,10 @@ function http(who: User, method: 'GET' | 'POST', url: string) {
   return rig!.app.inject({ method, url, headers: { authorization: `Bearer tok:${who.uid}`, 'x-tenant-id': TENANT, 'x-account-id': ACCOUNT } });
 }
 
-interface Listener { ws: WebSocket; frames: Array<Record<string, unknown>>; legs: { customer: number; agent: number; odd: number }; closed: number | null }
-
-async function listen(who: User, callId: string): Promise<Listener> {
+async function listen(who: User, callId: string): Promise<ListenClient> {
   const res = await http(who, 'POST', `/proxy/agency/live-calls/${callId}/listen`);
   expect(res.statusCode, res.body).toBe(201);
-  const l: Listener = {
-    ws: new WebSocket(`${rig!.origin.replace('http', 'ws')}${(res.json() as { ws_url: string }).ws_url}`),
-    frames: [], legs: { customer: 0, agent: 0, odd: 0 }, closed: null,
-  };
-  l.ws.on('message', (raw: Buffer, isBinary) => {
-    if (!isBinary) { l.frames.push(JSON.parse(raw.toString()) as Record<string, unknown>); return; }
-    if (raw.length !== 161) l.legs.odd++;
-    else if (raw[0] === 1) l.legs.customer++;
-    else if (raw[0] === 2) l.legs.agent++;
-    else l.legs.odd++;
-  });
-  l.ws.on('close', (code) => { l.closed = code; });
-  l.ws.on('error', () => undefined);
+  const l = openListener(rig!.origin, res.json() as { listen_id: string; ws_url: string });
   await waitFor('ready', () => l.frames.some((f) => f['event'] === 'ready'));
   return l;
 }
@@ -149,7 +135,7 @@ describe('listening on Plivo: an outbound dialler call', () => {
     expect(l.legs.odd).toBe(0);
     hangUp = true;
     await waitFor('the listen ended', () => l.closed);
-    expect(l.closed).toBe(1000);
+    expect(l.closed?.code).toBe(1000);
     expect(l.frames.at(-1)).toEqual({ event: 'ended', reason: 'call_ended' });
     await station.close();
   }, 60_000);
@@ -204,13 +190,10 @@ describe('listening on Plivo: an inbound caller', () => {
     expect(l.legs.odd).toBe(0);
     hangUp = true;
     await waitFor('the listen ended', () => l.closed);
-    expect(l.closed).toBe(1000);
+    expect(l.closed?.code).toBe(1000);
     // The row is closed after the socket (the close write is not awaited before the close frame), so
     // wait for it rather than read it once.
-    const session = await waitFor('the row closed', async () => {
-      const { rows: [r] } = await pool().query('SELECT origin, correlation_id, end_reason FROM agency_listen_sessions WHERE call_id = $1', [leg!.id]);
-      return r?.end_reason ? r : undefined;
-    });
-    expect(session).toEqual({ origin: 'inbound', correlation_id: connected.id, end_reason: 'call_ended' });
+    const session = await closedRow(pool(), { callId: leg!.id });
+    expect(session).toMatchObject({ origin: 'inbound', correlation_id: connected.id, end_reason: 'call_ended' });
   }, 60_000);
 });

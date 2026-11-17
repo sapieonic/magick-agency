@@ -53,6 +53,7 @@ import WebSocket from 'ws';
 import { getPool } from '@magick-agency/db';
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { getTestRedis } from '../../helpers/test-redis.js';
+import { closedRow as waitClosedRow, listenRow as readListenRow, openListener, type ListenClient } from '../../helpers/listen-client.js';
 import { config } from '../../../src/config/index.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
@@ -208,46 +209,16 @@ const NO_RETRY = Object.fromEntries(
 
 // ─── A listener ─────────────────────────────────────────────────────────────
 
-interface Listener {
-  ws: WebSocket;
-  frames: Array<Record<string, unknown>>;
-  legs: { customer: number; agent: number; odd: number };
-  closed: { code: number; reason: string } | null;
-  listenId: string;
-}
-
-async function listen(who: User, callId: string): Promise<Listener> {
+async function listen(who: User, callId: string): Promise<ListenClient> {
   const res = await http(who, 'POST', `/proxy/agency/live-calls/${callId}/listen`);
   expect(res.statusCode, res.body).toBe(201);
-  const grant = res.json() as { listen_id: string; ws_url: string };
-  const l: Listener = {
-    ws: new WebSocket(`${rig!.origin.replace('http', 'ws')}${grant.ws_url}`), frames: [],
-    legs: { customer: 0, agent: 0, odd: 0 }, closed: null, listenId: grant.listen_id,
-  };
-  l.ws.on('message', (raw: Buffer, isBinary) => {
-    if (!isBinary) { l.frames.push(JSON.parse(raw.toString()) as Record<string, unknown>); return; }
-    if (raw.length !== 161) l.legs.odd++;
-    else if (raw[0] === 1) l.legs.customer++;
-    else if (raw[0] === 2) l.legs.agent++;
-    else l.legs.odd++;
-  });
-  l.ws.on('close', (code, reason) => { l.closed = { code, reason: reason.toString() }; });
-  l.ws.on('error', () => { /* the close follows */ });
+  const l = openListener(rig!.origin, res.json() as { listen_id: string; ws_url: string });
   await waitFor('ready', () => l.frames.some((f) => f['event'] === 'ready') || l.closed, 10_000);
   return l;
 }
 
-async function listenRow(listenId: string) {
-  const { rows } = await pool().query('SELECT * FROM agency_listen_sessions WHERE id = $1', [listenId]);
-  return rows[0] as { ended_at: Date | null; end_reason: string | null; frames_sent: number; frames_dropped: number; origin: string; correlation_id: string; campaign_id: string | null; listener_user_id: string; agent_user_id: string } | undefined;
-}
-
-async function closedRow(listenId: string, reason: string) {
-  return waitFor(`listen row closed ${reason}`, async () => {
-    const row = await listenRow(listenId);
-    return row?.ended_at && row.end_reason === reason ? row : null;
-  }, 15_000, async () => JSON.stringify(await listenRow(listenId)));
-}
+const listenRow = (listenId: string) => readListenRow(pool(), { listenId });
+const closedRow = (listenId: string, reason: string) => waitClosedRow(pool(), { listenId }, reason);
 
 async function auditActions(callId: string): Promise<string[]> {
   // Flushed, not shut down: the logger keeps running for the rest of the file (`platformAuditLogger.flush`).
