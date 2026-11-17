@@ -56,4 +56,12 @@ describe('agency flags', () => {
   it('is frozen', () => {
     expect(Object.isFrozen(AGENCY_FLAGS)).toBe(true);
   });
+
+  it('declares a handling policy only on boolean flags; the consent gate is never bulk and needs a reason', () => {
+    const withPolicy = Object.values(AGENCY_FLAGS).filter((f) => 'policy' in f);
+    expect(withPolicy.map((f) => f.key)).toEqual(['agency_live_listen_enabled']);
+    for (const f of withPolicy) expect(f.type).toBe('boolean');
+    expect(AGENCY_FLAGS.agency_live_listen_enabled.policy).toMatchObject({ bulk_allowed: false, reason_required_to_enable: true });
+    expect(AGENCY_FLAGS.agency_live_listen_enabled.policy.warning).toMatch(/monitored/);
+  });
 });

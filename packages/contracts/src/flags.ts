@@ -11,6 +11,7 @@
  */
 
 import type { AllListed } from './primitives';
+import type { FeatureFlagPolicy } from './api/platform/super-admin';
 
 export type FlagScope = 'global' | 'tenant' | 'account';
 export type FlagType = 'boolean' | 'number' | 'string' | 'json';
@@ -33,6 +34,12 @@ export interface FlagDefinition<T = unknown> {
   clientExposed?: boolean;
   /** Future: deterministic percentage bucketing by tenant. */
   rollout?: { percentByTenant?: boolean };
+  /**
+   * The flag's handling policy, for the few whose change needs more than a toggle (boolean flags
+   * only): the super-admin flag routes serve it on the catalog and enforce it on every write.
+   * Absent: an ordinary flag.
+   */
+  policy?: FeatureFlagPolicy;
 }
 
 /**
@@ -289,6 +296,17 @@ export const AGENCY_FLAGS = Object.freeze({
     clientExposed: true, // the console shows/hides Live calls, and the station's "Calls may be listened to" line
     owner: 'voice',
     description: 'Agency live call listening: supervisors see calls in progress and listen in silently from the console',
+    // The consent gate's guard rails (LS1, LS20): never rolled out to several tenants or turned on
+    // globally, and turning it on needs a reason.
+    policy: Object.freeze({
+      warning:
+        'Live call listening lets this tenant\'s supervisors hear calls in progress. Turn it on only for a '
+        + 'tenant whose callers are told calls may be monitored: every inbound route that can be listened to '
+        + 'plays a notice that mentions monitoring (or agency_live_listen_unrecorded is off), and its agents '
+        + 'know. Follow the enablement checklist in the operations runbook, one tenant or account at a time.',
+      bulk_allowed: false,
+      reason_required_to_enable: true,
+    }),
   },
 
   // ── Listening to calls that are not recorded (LS4) ───────────────────────────

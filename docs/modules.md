@@ -1069,7 +1069,7 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 
 Feature-flag service, registry and initialisation. Every reader degrades to the registry default on an outage except `strictSnapshot`, which rejects (`FlagReadError`): live listening's access check and grant read their flags through it (docs/listening.md LS16 d).
 
-`flag-policies.ts`: the handling policies of the few flags that need more than a toggle (today `agency_live_listen_enabled`: a reason to turn it on, never in a bulk rollout, no global On; LS20), served and enforced by the super-admin flag routes.
+`flag-policies.ts`: the handling policies of the few flags that need more than a toggle, read from each definition's `policy` (contracts `flags.ts`; today `agency_live_listen_enabled`: a reason to turn it on, never in a bulk rollout, no global On; LS20), served and enforced by the super-admin flag routes.
 
 Files: `feature-flag.service.ts`, `flag-policies.ts`, `index.ts`, `registry.ts`
 

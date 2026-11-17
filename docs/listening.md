@@ -1224,8 +1224,10 @@ reason and the call's ids are already in `detail`; the console words them.
 (through the error mask), as the grant does, never `403 feature_disabled`, which the console reads
 as final and stops polling on.
 
-**The consent gate's handling policy (LS20 a).** `apps/server/src/feature-flags/flag-policies.ts`
-(`flagPolicy`, `checkOverridePolicy`, `checkBulkPolicy`): the catalog and the detail read carry
+**The consent gate's handling policy (LS20 a).** Declared on the flag's definition
+(`FlagDefinition.policy`, `packages/contracts/src/flags.ts`) and read and enforced by
+`apps/server/src/feature-flags/flag-policies.ts` (`flagPolicy`, `checkOverridePolicy`,
+`checkBulkPolicy`): the catalog and the detail read carry
 `policy { warning, bulk_allowed: false, reason_required_to_enable: true }` for
 `agency_live_listen_enabled` and for no other flag; `PUT …/overrides` refuses an On without a reason
 (`400 flag_reason_required`) and a global On (`422 flag_bulk_not_allowed`); `POST …/overrides/bulk`

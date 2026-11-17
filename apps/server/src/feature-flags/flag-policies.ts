@@ -1,10 +1,11 @@
 import { logger } from '@magick-agency/observability';
 import type { FeatureFlagPolicy } from '@magick-agency/contracts/api/platform/super-admin';
-import { getFlag, resolveEnvDefault } from './registry.js';
+import { allFlags, getFlag, resolveEnvDefault } from './registry.js';
 
 /*
  * Flag handling policies: the few flags whose change needs more than a toggle on the super-admin
- * screens. The super-admin flag routes (`super-admin-feature-flags.routes.ts`) serve a flag's
+ * screens, declared on the flag's definition (`FlagDefinition.policy`, `packages/contracts/src/flags.ts`;
+ * today `agency_live_listen_enabled`, LS1, LS20). The super-admin flag routes (`super-admin-feature-flags.routes.ts`) serve a flag's
  * policy on the catalog and the detail read (`FeatureFlagCatalogEntry.policy`, which the
  * super-admin UI reads for its warning, its reason dialog and its bulk rollout list) and ENFORCE
  * it on every write:
@@ -14,7 +15,7 @@ import { getFlag, resolveEnvDefault } from './registry.js';
  *  - `bulk_allowed: false`: the cross-tenant bulk rollout refuses the flag whatever the value
  *    (`422 flag_bulk_not_allowed`), and so does a GLOBAL override that turns it on, which is every
  *    tenant at once. A global `false` (a kill switch) stays allowed.
- * A flag absent from this map is ordinary. Only boolean flags have policies.
+ * A flag without a policy is ordinary. Only boolean flags have policies.
  *
  * One path the routes cannot see: a flag's env default (`envVar`, the boot-time global default).
  * `FF_AGENCY_LIVE_LISTEN=true` turns the consent gate on for every tenant, with no reason and no
@@ -22,24 +23,9 @@ import { getFlag, resolveEnvDefault } from './registry.js';
  * staging, and boot says so in a warning ({@link warnOfEnvDefaultsPastPolicy}, LS22 p).
  */
 
-/** Live call listening's consent gate (LS1, the guard rails of LS20). */
-const LIVE_LISTEN_POLICY: FeatureFlagPolicy = Object.freeze({
-  warning:
-    'Live call listening lets this tenant\'s supervisors hear calls in progress. Turn it on only for a '
-    + 'tenant whose callers are told calls may be monitored: every inbound route that can be listened to '
-    + 'plays a notice that mentions monitoring (or agency_live_listen_unrecorded is off), and its agents '
-    + 'know. Follow the enablement checklist in the operations runbook, one tenant or account at a time.',
-  bulk_allowed: false,
-  reason_required_to_enable: true,
-});
-
-const FLAG_POLICIES: ReadonlyMap<string, FeatureFlagPolicy> = new Map([
-  ['agency_live_listen_enabled', LIVE_LISTEN_POLICY],
-]);
-
-/** The flag's handling policy, or undefined for an ordinary flag. */
+/** The flag's handling policy, or undefined for an ordinary (or unregistered) flag. */
 export function flagPolicy(flagKey: string): FeatureFlagPolicy | undefined {
-  return FLAG_POLICIES.get(flagKey);
+  return getFlag(flagKey)?.policy;
 }
 
 /**
@@ -48,11 +34,10 @@ export function flagPolicy(flagKey: string): FeatureFlagPolicy | undefined {
  */
 export function envDefaultsPastPolicy(): Array<{ flag: string; envVar: string }> {
   const past: Array<{ flag: string; envVar: string }> = [];
-  for (const [key, policy] of FLAG_POLICIES) {
-    if (policy.bulk_allowed) continue;
-    const def = getFlag(key);
-    if (!def?.envVar || resolveEnvDefault(def) !== true) continue;
-    past.push({ flag: key, envVar: def.envVar });
+  for (const def of allFlags()) {
+    if (!def.policy || def.policy.bulk_allowed) continue;
+    if (!def.envVar || resolveEnvDefault(def) !== true) continue;
+    past.push({ flag: def.key, envVar: def.envVar });
   }
   return past;
 }
