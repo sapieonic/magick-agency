@@ -2239,6 +2239,21 @@ notice as a build call). Manas ratified every remaining LS build call on 2026-11
 
 ## Test counts
 
+**Live call listening, the final review and the merge of `main`, 2026-11-17.** Branch
+`ccr-364c489c-zeoxwy`, on the tree of the merge of `main` (`25d1d81`: `main`'s console and web-ui
+insights change and its release), every suite run one after another on a 4-CPU machine. From the
+root: `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:release` 10, `pnpm test:tooling` 20;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps); `pnpm build` clean.
+Unit: `packages/contracts` 549 (16 files), `packages/domain` 278 (14), `packages/db` 457 (28),
+`packages/observability` 23 (5), `packages/web-ui` 244 (21), `apps/server` 10391 passed + 1
+expected fail (524 files), `apps/console` 7457 (396 files), `apps/super-admin` 509 (37 files),
+`apps/report-renderer` 94 passed + 2 skipped (12 files passed, 1 skipped). Integration:
+`packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3018 passed + 9 expected fail
++ 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files; the
+listen load check's timing bounds asserted, 4 CPUs). Mobile: `agency_wire` 688 (`dart test`),
+`apps/mobile` `flutter analyze` no issues, `flutter test` 1980. The listening files' own counts,
+run file by file before the merge, are in [`modules.md`](modules.md).
+
 **Live call listening, the persona review's console, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on
 the tree of this entry's commits. From the root: `pnpm lint` clean; `pnpm test:tooling` 20;
 `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `apps/console` `pnpm
