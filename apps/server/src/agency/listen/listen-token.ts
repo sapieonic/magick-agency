@@ -123,6 +123,14 @@ export class ListenTokenStore {
       }
       return { token, expiresAt };
     }
+    // Grants whose upgrade never came would otherwise stay for the life of the process: each mint
+    // forgets those that have lapsed (Map order is mint order, so the scan stops at the first live one).
+    const now = Date.now();
+    for (const [id, entry] of this.local) {
+      if (entry.expiresAt >= now) break;
+      this.local.delete(id);
+    }
+    this.local.delete(payload.listenId); // re-inserted at the end, keeping the order the scan relies on
     this.local.set(payload.listenId, { token, payload, expiresAt: expiresAt.getTime() });
     return { token, expiresAt };
   }
@@ -140,7 +148,7 @@ export class ListenTokenStore {
         raw = await this.redis.eval(CONSUME, 1, this.key(listenId), token);
       } catch (err) {
         // Not a token that failed to verify (4401, re-mint) but a store that could not be asked:
-        // the socket refuses it `listen_unavailable` (1011), as the grant answers 503 (QA-L3).
+        // the socket refuses it `listen_unavailable` (1011), as the grant answers 503 (LS22 g).
         log.error({ err, listenId }, 'Listen token verification failed — refusing the upgrade');
         throw new ListenTokenUnavailableError(listenId, { cause: err });
       }

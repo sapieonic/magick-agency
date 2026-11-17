@@ -68,7 +68,7 @@ describe('ListenTokenStore', () => {
     expect(await tokens.consume(L, 'tok')).toBeNull();
   });
 
-  it('fails closed both ways when Redis errors: no grant handed out, no upgrade accepted, and the upgrade told it is the store (QA-L3)', async () => {
+  it('fails closed both ways when Redis errors: no grant handed out, no upgrade accepted, and the upgrade told it is the store (LS22 g)', async () => {
     const redis = fakeRedis();
     redis.set.mockRejectedValueOnce(new Error('READONLY'));
     const tokens = new ListenTokenStore(redis as never, '', 60_000);
@@ -92,6 +92,21 @@ describe('ListenTokenStore', () => {
       expect(await tokens.consume(L, second.token)).toBeNull();
       const third = await tokens.mint(GRANT);
       expect(await tokens.consume(L, third.token)).toEqual(GRANT);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('without Redis a grant never upgraded is forgotten once it has lapsed: the next mint prunes it', async () => {
+    vi.useFakeTimers();
+    try {
+      const tokens = new ListenTokenStore(null, '', 5_000);
+      const local = (tokens as unknown as { local: Map<string, unknown> }).local;
+      for (let i = 0; i < 3; i++) await tokens.mint({ ...GRANT, listenId: `00000000-0000-4000-8000-00000000000${i}` });
+      expect(local.size).toBe(3);
+      vi.advanceTimersByTime(5_001);
+      await tokens.mint(GRANT);
+      expect([...local.keys()]).toEqual([L]);
     } finally {
       vi.useRealTimers();
     }
