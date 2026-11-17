@@ -142,14 +142,21 @@ export class AgencyListenSessionRepository {
     return rows[0] ?? null;
   }
 
-  /** The open sessions on these calls of the tenant, earliest first. No calls, no query. */
-  async listOpenForCalls(tenantId: string, callIds: readonly string[]): Promise<ListenSessionRecord[]> {
+  /**
+   * The open sessions on these calls of the account, earliest first: the live list's listeners,
+   * only the columns it shows. No calls, no query.
+   */
+  async listOpenForCalls(
+    tenantId: string,
+    accountId: string,
+    callIds: readonly string[],
+  ): Promise<Array<Pick<ListenSessionRecord, 'id' | 'call_id' | 'listener_user_id' | 'started_at'>>> {
     if (callIds.length === 0) return [];
-    const { rows } = await getPool().query<ListenSessionRecord>(
-      `SELECT * FROM agency_listen_sessions
-        WHERE call_id = ANY($2::uuid[]) AND tenant_id = $1 AND ended_at IS NULL
+    const { rows } = await getPool().query<Pick<ListenSessionRecord, 'id' | 'call_id' | 'listener_user_id' | 'started_at'>>(
+      `SELECT id, call_id, listener_user_id, started_at FROM agency_listen_sessions
+        WHERE call_id = ANY($3::uuid[]) AND tenant_id = $1 AND account_id = $2 AND ended_at IS NULL
         ORDER BY started_at, id`,
-      [tenantId, callIds],
+      [tenantId, accountId, callIds],
     );
     return rows;
   }

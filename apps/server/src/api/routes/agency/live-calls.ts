@@ -8,6 +8,7 @@ import {
   agencyListenSessionRepository,
   agencyLiveCallRepository,
 } from '../../../db/repositories/agency.repository.js';
+import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import { matchName } from '../../../agency/inbound/match-name.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { ListenTokenUnavailableError } from '../../../agency/listen/listen-token.js';
@@ -35,40 +36,28 @@ const log = createChildLogger({ component: 'agency-live-calls' });
 export const LIVE_CALL_AHT_CACHE_MS = 60_000;
 
 /**
- * At most this many campaigns' AHT are held per process. Entries past their minute are dropped as
- * misses are read, and past this bound the oldest go too, so the cache is bounded by what is live
- * now, not by every campaign the process has ever listed.
+ * At most this many campaigns' AHT are held per process (the least recently read go first), so
+ * the cache is bounded whatever the process has ever listed.
  */
 export const LIVE_CALL_AHT_CACHE_MAX = 1_000;
 
-const ahtCache = new Map<string, { at: number; value: number | null }>();
+/** Each campaign's AHT (null: none yet), keyed `<tenant>:<campaign>`. */
+const ahtCache = new TtlCache<number | null>({
+  ttlMs: LIVE_CALL_AHT_CACHE_MS, maxEntries: LIVE_CALL_AHT_CACHE_MAX, name: 'live-call-aht',
+});
 
 /** Tests only. */
 export function clearLiveCallAhtCacheForTests(): void {
   ahtCache.clear();
 }
 
-/** Tests only: how many campaigns' AHT are held. */
-export function liveCallAhtCacheSizeForTests(): number {
-  return ahtCache.size;
-}
-
-/** Drop the entries past their minute, then the oldest past {@link LIVE_CALL_AHT_CACHE_MAX}. */
-function pruneAhtCache(now: number): void {
-  for (const [key, hit] of ahtCache) if (now - hit.at >= LIVE_CALL_AHT_CACHE_MS) ahtCache.delete(key);
-  while (ahtCache.size > LIVE_CALL_AHT_CACHE_MAX) {
-    const oldest = ahtCache.keys().next().value;
-    if (oldest === undefined) break;
-    ahtCache.delete(oldest);
-  }
-}
-
-async function ahtFor(tenantId: string, campaignIds: string[], now: number): Promise<Map<string, number | null>> {
+/** The campaigns' AHT: cached ones as they are, the misses read in one query. Never rejects. */
+async function ahtFor(tenantId: string, campaignIds: string[]): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
   const missing: string[] = [];
   for (const id of new Set(campaignIds)) {
     const hit = ahtCache.get(`${tenantId}:${id}`);
-    if (hit && now - hit.at < LIVE_CALL_AHT_CACHE_MS) out.set(id, hit.value);
+    if (hit !== undefined) out.set(id, hit);
     else missing.push(id);
   }
   if (missing.length > 0) {
@@ -76,13 +65,9 @@ async function ahtFor(tenantId: string, campaignIds: string[], now: number): Pro
       const read = await agencyLiveCallRepository.campaignAhtSeconds(tenantId, missing);
       for (const id of missing) {
         const value = read.get(id) ?? null;
-        const key = `${tenantId}:${id}`;
-        // Re-inserted, so the map's order is the read order (the oldest first, for the bound).
-        ahtCache.delete(key);
-        ahtCache.set(key, { at: now, value });
+        ahtCache.set(`${tenantId}:${id}`, value);
         out.set(id, value);
       }
-      pruneAhtCache(now);
     } catch (err) {
       // The AHT colours a timer; it never fails the list.
       log.warn({ err, tenantId }, 'Could not read the live calls\' campaign AHT — answering null');
@@ -109,16 +94,26 @@ export type ListenGrantRequest = z.infer<typeof grantBodySchema>;
 export async function registerLiveCallRoutes(sub: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // ── GET /live-calls?campaign_id=&call_id= ────────────────────────────────
   sub.get('/live-calls', async (request: FastifyRequest<{ Querystring: { campaign_id?: string; call_id?: string } }>, reply: FastifyReply) => {
-    const tenantId = getTenantId(request).toLowerCase();
-    const accountId = getAccountId(request).toLowerCase();
-    const campaignId = request.query.campaign_id?.toLowerCase() || null;
-    const callId = request.query.call_id?.toLowerCase() || null;
+    // The public layer sends the tenant context's ids and the query's, lower-cased.
+    const tenantId = getTenantId(request);
+    const accountId = getAccountId(request);
+    const campaignId = request.query.campaign_id || null;
+    const callId = request.query.call_id || null;
     if ((campaignId && !isUuid(campaignId)) || (callId && !isUuid(callId)) || !isUuid(tenantId) || !isUuid(accountId)) {
       return reply.code(400).send({ error: 'Bad Request', message: 'campaign_id and call_id must be UUIDs.' });
     }
     const rows = await agencyLiveCallRepository.listLive({ tenantId, accountId, campaignId, callId });
-    const open = await agencyListenSessionRepository.listOpenForCalls(tenantId, rows.map((r) => r.call_id));
-    const aht = await ahtFor(tenantId, rows.map((r) => r.campaign_id).filter((id): id is string => id !== null), Date.now());
+    const [open, aht] = await Promise.all([
+      agencyListenSessionRepository.listOpenForCalls(tenantId, accountId, rows.map((r) => r.call_id)),
+      ahtFor(tenantId, rows.map((r) => r.campaign_id).filter((id): id is string => id !== null)),
+    ]);
+    const listeners = new Map<string, Array<{ listen_id: string; user_id: string; started_at: string }>>();
+    for (const o of open) {
+      const listener = { listen_id: o.id, user_id: o.listener_user_id, started_at: new Date(o.started_at).toISOString() };
+      const onCall = listeners.get(o.call_id);
+      if (onCall) onCall.push(listener);
+      else listeners.set(o.call_id, [listener]);
+    }
     return reply.send({
       calls: rows.map((r) => ({
         call_id: r.call_id,
@@ -135,9 +130,7 @@ export async function registerLiveCallRoutes(sub: FastifyInstance, runtime: Agen
         connected_at: new Date(r.connected_at).toISOString(),
         recording: r.recording,
         aht_seconds: r.campaign_id ? aht.get(r.campaign_id) ?? null : null,
-        listeners: open.filter((o) => o.call_id === r.call_id && o.account_id === accountId).map((o) => ({
-          listen_id: o.id, user_id: o.listener_user_id, started_at: new Date(o.started_at).toISOString(),
-        })),
+        listeners: listeners.get(r.call_id) ?? [],
       })),
       as_of: new Date().toISOString(),
     });
@@ -145,8 +138,8 @@ export async function registerLiveCallRoutes(sub: FastifyInstance, runtime: Agen
 
   // ── POST /listen-grants ───────────────────────────────────────────────────
   sub.post('/listen-grants', async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
-    const tenantId = getTenantId(request).toLowerCase();
-    const accountId = getAccountId(request).toLowerCase();
+    const tenantId = getTenantId(request);
+    const accountId = getAccountId(request);
     const parsed = grantBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Bad Request', message: 'A listen grant needs the call it is for.' });

@@ -108,7 +108,7 @@ describe('agency listen session repository', () => {
     expect(closed).toMatchObject({ frames_sent: 0, frames_dropped: 2 });
   });
 
-  it('listOpenForCalls: the tenant\'s open sessions on those calls; no calls, no rows', async () => {
+  it('listOpenForCalls: the account\'s open sessions on those calls; no calls, no rows', async () => {
     const call = randomUUID();
     const two = randomUUID();
     const a = await repo.open(input({ callId: call }));
@@ -120,8 +120,10 @@ describe('agency listen session repository', () => {
     await repo.open(input({ callId: call, tenantId: OTHER_TENANT }));
     await repo.open(input());
 
-    expect(ids(await repo.listOpenForCalls(T, [call, two])).sort()).toEqual([a.id, b.id, c.id].sort());
-    expect(await repo.listOpenForCalls(T, [])).toEqual([]);
+    // Another account's session on a call of the list is not this account's.
+    expect(ids(await repo.listOpenForCalls(T, DEFAULTS.accountId, [call, two])).sort()).toEqual([a.id, b.id].sort());
+    expect(ids(await repo.listOpenForCalls(T, OTHER_ACCOUNT, [call, two]))).toEqual([c.id]);
+    expect(await repo.listOpenForCalls(T, DEFAULTS.accountId, [])).toEqual([]);
   });
 
   it('listForCall: every session on the call in the account that went live, open or closed, earliest first', async () => {

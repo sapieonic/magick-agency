@@ -18,10 +18,9 @@ import {
   LIVE_CALL_AHT_CACHE_MAX,
   LIVE_CALL_AHT_CACHE_MS,
   clearLiveCallAhtCacheForTests,
-  liveCallAhtCacheSizeForTests,
   registerLiveCallRoutes,
 } from '../../../../src/api/routes/agency/live-calls.js';
-import { agencyLiveCallRepository } from '../../../../src/db/repositories/agency.repository.js';
+import { agencyListenSessionRepository, agencyLiveCallRepository } from '../../../../src/db/repositories/agency.repository.js';
 import { ListenTokenUnavailableError } from '../../../../src/agency/listen/listen-token.js';
 
 const TENANT = '33333333-3333-4333-8333-333333333333';
@@ -117,7 +116,27 @@ describe('GET /live-calls: the campaigns\' AHT cache', () => {
     method: 'GET', url: '/api/v1/agency/live-calls', headers: { 'x-mgkvc-tenant': TENANT, 'x-mgkvc-account': ACCOUNT },
   });
 
-  it('reads each campaign at most once a minute; entries past their minute are dropped; never more than the bound', async () => {
+  it('each call carries its own open sessions, earliest first, read for the account', async () => {
+    const one = '55555555-5555-4555-8555-555555555551';
+    const two = '55555555-5555-4555-8555-555555555552';
+    const openFor = agencyListenSessionRepository.listOpenForCalls as unknown as ReturnType<typeof vi.fn>;
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 16, 10, 0, s));
+    openFor.mockResolvedValueOnce([
+      { id: 'l1', call_id: two, listener_user_id: 'u1', started_at: at(1) },
+      { id: 'l2', call_id: one, listener_user_id: 'u2', started_at: at(2) },
+      { id: 'l3', call_id: two, listener_user_id: 'u3', started_at: at(3) },
+    ]);
+    listLive.mockResolvedValueOnce([{ ...liveRow(campaign(9)), call_id: one }, { ...liveRow(campaign(9)), call_id: two }, { ...liveRow(campaign(9)), call_id: BODY.call_id }]);
+    const app = await build(runtime());
+    const res = await list(app);
+    expect(openFor).toHaveBeenLastCalledWith(TENANT, ACCOUNT, [one, two, BODY.call_id]);
+    expect(res.json().calls.map((c: { listeners: Array<{ listen_id: string }> }) => c.listeners.map((l) => l.listen_id)))
+      .toEqual([['l2'], ['l1', 'l3'], []]);
+    expect(res.json().calls[1].listeners[0]).toEqual({ listen_id: 'l1', user_id: 'u1', started_at: '2026-11-16T10:00:01.000Z' });
+    await app.close();
+  });
+
+  it('reads each campaign at most once a minute, the misses in one read; never holds more than the bound', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       clearLiveCallAhtCacheForTests();
@@ -127,16 +146,19 @@ describe('GET /live-calls: the campaigns\' AHT cache', () => {
       expect((await list(app)).statusCode).toBe(200);
       await list(app);
       expect(ahtRead).toHaveBeenCalledTimes(1);
-      expect(liveCallAhtCacheSizeForTests()).toBe(2);
-      // A minute on, another campaign's read drops the two that lapsed.
+      expect(ahtRead).toHaveBeenLastCalledWith(TENANT, [campaign(1), campaign(2)]);
+      // A minute on, both are read again, with the new one, in one read.
       vi.setSystemTime(Date.now() + LIVE_CALL_AHT_CACHE_MS);
-      listLive.mockResolvedValue([liveRow(campaign(3))]);
+      listLive.mockResolvedValue([liveRow(campaign(1)), liveRow(campaign(2)), liveRow(campaign(3))]);
       await list(app);
-      expect(liveCallAhtCacheSizeForTests()).toBe(1);
-      // More live campaigns than the bound: the cache keeps at most the bound.
-      listLive.mockResolvedValue(Array.from({ length: LIVE_CALL_AHT_CACHE_MAX + 5 }, (_, i) => liveRow(campaign(100 + i))));
+      expect(ahtRead).toHaveBeenCalledTimes(2);
+      expect(ahtRead).toHaveBeenLastCalledWith(TENANT, [campaign(1), campaign(2), campaign(3)]);
+      // More live campaigns than the bound: the least recently read past it are not held.
+      const many = Array.from({ length: LIVE_CALL_AHT_CACHE_MAX + 5 }, (_, i) => campaign(100 + i));
+      listLive.mockResolvedValue(many.map(liveRow));
       await list(app);
-      expect(liveCallAhtCacheSizeForTests()).toBe(LIVE_CALL_AHT_CACHE_MAX);
+      await list(app);
+      expect(ahtRead).toHaveBeenLastCalledWith(TENANT, many.slice(0, 5));
       await app.close();
     } finally {
       vi.useRealTimers();

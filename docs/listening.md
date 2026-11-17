@@ -141,8 +141,8 @@ comments and the other docs).
   rows.
 - **(t)** The super-admin role change and member removal (`api/routes/super-admin/tenants.ts`) call
   `revokeListens` too, after their cache delete; so does its add-user route (LS22 l).
-- **(u)** The live list's AHT cache holds at most 1,000 campaigns per process, dropping entries past
-  their minute as it reads; the dialler spine reads the account's live attempts on
+- **(u)** The live list's AHT cache holds at most 1,000 campaigns per process (a `TtlCache`: an
+  entry past its minute is read again, the least recently read go past the bound); the dialler spine reads the account's live attempts on
   `idx_agency_attempts_account_live` (pinned by `test/integration/agency/live-call-plan.test.ts`).
 - **(v)** The handoff's refusal log lines carry the upgrade's URL redacted (`redactSpanUrl`): a
   station or listener token is unspent there.
@@ -430,7 +430,7 @@ cannot be read is `503 listen_unavailable` on every route, which the console ret
 (owner `none`; `?campaign_id=`, `?call_id=`): `AgencyLiveCallRepository.listLive`, the three spines
 on their live indexes joined to `agency_calls` (the spine's `webrtc_call_id`), the session, the
 campaign, the inbound route and the contact, tenant and account scoped in each spine and again on
-the leg; the open sessions of those calls (`listOpenForCalls`); each campaign's AHT. The public layer
+the leg; the account's open sessions of those calls (`listOpenForCalls`); each campaign's AHT, both read together. The public layer
 adds the agent's and the listeners' names (`agentNamesOrNone`), masks the number (`maskPhone`) and
 computes `listenable` / `not_listenable_reason` for the caller (`notListenableReason`: their own
 call, LS4, the per-call cap not counting their own listen), and says a withheld number so
