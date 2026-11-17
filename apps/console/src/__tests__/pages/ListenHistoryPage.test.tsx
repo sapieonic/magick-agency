@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
   downloadBlob: vi.fn(),
   role: 'account_admin' as string,
+  softphoneOn: true,
 }));
 
 vi.mock('../../api/listenHistory', () => ({
@@ -29,6 +30,9 @@ vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers
 vi.mock('../../utils/agency/insights/csv', () => ({ downloadBlob: mocks.downloadBlob }));
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({ tenantId: 't-1', accountId: 'a-1', role: mocks.role }),
+}));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (f: string) => mocks.softphoneOn && f === 'agency_softphone_enabled', status: 'ready' }),
 }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
@@ -69,10 +73,11 @@ const GONE = historyEntry({
   customer_phone_withheld: false,
   started_at: '2026-11-15T09:00:00.000Z',
 });
+const SOFTPHONE = historyEntry({ id: 'l-6', call_id: 'call-6', origin: 'manual', correlation_id: 'man-6', campaign_id: null, campaign_name: null });
 const OPEN = historyEntry({ id: 'l-5', call_id: 'call-5', ended_at: null, listened_seconds: null, end_reason: null, started_at: '2026-11-16T10:05:00.000Z' });
 
-function member(id: string, name: string, role: string) {
-  return { membership: { id: `m-${id}`, user_id: id, role, account_id: null, status: 'active' }, user: { id, email: `${id}@example.com`, display_name: name } };
+function member(id: string, name: string, role: string, accountId: string | null = null) {
+  return { membership: { id: `m-${id}`, user_id: id, role, account_id: accountId, status: 'active' }, user: { id, email: `${id}@example.com`, display_name: name } };
 }
 
 async function renderPage() {
@@ -92,12 +97,15 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-11-16T12:00:00Z'));
   Object.values(mocks).forEach((m) => typeof m === 'function' && m.mockReset());
   mocks.role = 'account_admin';
+  mocks.softphoneOn = true;
   mocks.listListenHistory.mockResolvedValue({ entries: [ANITA_PRIYA, WITHHELD, GONE], next_cursor: null });
   mocks.listTenantMembers.mockResolvedValue([
     member('sup-1', 'Anita Kapoor', 'account_admin'),
     member('sup-2', 'Rohan Shah', 'tenant_admin'),
     member('u-1', 'Priya Sharma', 'agent'),
     member('u-2', 'Arjun Nair', 'agent'),
+    // An account admin of another account: no listen of theirs is in this account's history.
+    member('sup-b', 'Bela Other', 'account_admin', 'a-2'),
   ]);
   mocks.downloadListenHistoryCsv.mockResolvedValue({
     blob: new Blob(['started_at\n']),
@@ -149,6 +157,24 @@ describe('/agency/listening-history', () => {
     expect(gone.getByText('Soft phone')).toBeTruthy();
     expect(gone.queryByRole('link')).toBeNull();
     expect(gone.getByText('Call no longer available')).toBeTruthy();
+  });
+
+  it('a soft-phone call opens its page while the soft phone is on, and has no link while it is off', async () => {
+    mocks.listListenHistory.mockResolvedValue({ entries: [SOFTPHONE], next_cursor: null });
+    await renderPage();
+    expect(rowOf('l-6').getByRole('link').getAttribute('href')).toBe('/agency/softphone/calls/man-6');
+    cleanup();
+    mocks.softphoneOn = false;
+    await renderPage();
+    expect(rowOf('l-6').queryByRole('link')).toBeNull();
+    // The call is still there: not "no longer available".
+    expect(rowOf('l-6').queryByText('Call no longer available')).toBeNull();
+  });
+
+  it('every column header is a column header to a screen reader (scope="col")', async () => {
+    await renderPage();
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers.map((h) => h.getAttribute('scope'))).toEqual(headers.map(() => 'col'));
   });
 
   it('a listen still open is "Listening now"', async () => {
@@ -217,6 +243,40 @@ describe('/agency/listening-history', () => {
     expect(screen.getByTestId('listen-history-row-l-1')).toBeTruthy();
     expect(screen.getByTestId('listen-history-row-l-2')).toBeTruthy();
     expect(screen.queryByTestId('listen-history-more')).toBeNull();
+  });
+
+  it('new filters whose read fails do not leave the last filters’ rows, or their count, under the error', async () => {
+    await renderPage();
+    expect(screen.getByTestId('listen-history-row-l-1')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('listen-history-agent'), { target: { value: 'u-2' } });
+    mocks.listListenHistory.mockRejectedValueOnce(Object.assign(new Error('boom'), { statusCode: 500 }));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('listen-history-apply'));
+    });
+    expect(screen.getByTestId('listen-history-error').textContent).toContain('Could not load the listening history.');
+    expect(screen.queryByTestId('listen-history-table')).toBeNull();
+    expect(screen.getByTestId('listen-history-count').textContent).toBe('');
+  });
+
+  it('while new filters are read, Load older is not offered: the last query’s cursor answers another question', async () => {
+    mocks.listListenHistory.mockResolvedValueOnce({ entries: [ANITA_PRIYA], next_cursor: 'cur-2' });
+    await renderPage();
+    expect(screen.getByTestId('listen-history-more')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('listen-history-agent'), { target: { value: 'u-2' } });
+    let answerNew: (page: unknown) => void = () => {};
+    mocks.listListenHistory.mockImplementationOnce(() => new Promise((done) => {
+      answerNew = done;
+    }));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('listen-history-apply'));
+    });
+    expect(screen.queryByTestId('listen-history-more')).toBeNull();
+    await act(async () => {
+      answerNew({ entries: [WITHHELD], next_cursor: null });
+    });
+    expect(screen.getByTestId('listen-history-row-l-2')).toBeTruthy();
+    expect(screen.queryByTestId('listen-history-row-l-1')).toBeNull();
+    expect(mocks.listListenHistory).not.toHaveBeenCalledWith(expect.objectContaining({ cursor: 'cur-2' }), 't-1', 'a-1');
   });
 
   it('empty: says what will appear; filtered: says how to widen', async () => {

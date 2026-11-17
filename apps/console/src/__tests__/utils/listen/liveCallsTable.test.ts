@@ -151,24 +151,30 @@ describe('what a listen starts with', () => {
   });
 
   it('Open call: the attempt for a dialler call, the soft-phone call page for a soft-phone call', () => {
-    expect(liveCallRowPagePath(A)).toBe('/agency/campaigns/c-1/attempts/att-a');
-    expect(liveCallRowPagePath(C)).toBe('/agency/softphone/calls/man-c');
+    expect(liveCallRowPagePath(A, true)).toBe('/agency/campaigns/c-1/attempts/att-a');
+    expect(liveCallRowPagePath(C, true)).toBe('/agency/softphone/calls/man-c');
     // A soft-phone call tagged to a campaign is still the soft phone's page.
-    expect(liveCallRowPagePath({ ...C, campaign_id: 'c-9' })).toBe('/agency/softphone/calls/man-c');
-    expect(liveCallPagePath(listenTargetFor(A, 0))).toBe('/agency/campaigns/c-1/attempts/att-a');
-    expect(liveCallPagePath(listenTargetFor(C, 0))).toBe('/agency/softphone/calls/man-c');
+    expect(liveCallRowPagePath({ ...C, campaign_id: 'c-9' }, true)).toBe('/agency/softphone/calls/man-c');
+    expect(liveCallPagePath(listenTargetFor(A, 0), true)).toBe('/agency/campaigns/c-1/attempts/att-a');
+    expect(liveCallPagePath(listenTargetFor(C, 0), true)).toBe('/agency/softphone/calls/man-c');
+  });
+
+  it('Open call: none for a soft-phone call while the soft phone is turned off (its page is behind the flag)', () => {
+    expect(liveCallRowPagePath(C, false)).toBeNull();
+    expect(liveCallPagePath(listenTargetFor(C, 0), false)).toBeNull();
+    expect(liveCallRowPagePath(A, false)).toBe('/agency/campaigns/c-1/attempts/att-a');
   });
 
   it('Open call: an inbound call has no page in the console, so neither the row nor the bar offers one', () => {
-    expect(liveCallRowPagePath(B)).toBeNull();
-    expect(liveCallRowPagePath({ ...B, campaign_id: 'c-1' })).toBeNull();
-    expect(liveCallPagePath(listenTargetFor(B, 0))).toBeNull();
+    expect(liveCallRowPagePath(B, true)).toBeNull();
+    expect(liveCallRowPagePath({ ...B, campaign_id: 'c-1' }, true)).toBeNull();
+    expect(liveCallPagePath(listenTargetFor(B, 0), true)).toBeNull();
   });
 
   it('Open call: no page without the ids it is keyed on', () => {
-    expect(liveCallPagePath({ origin: 'campaign', campaignId: null, correlationId: 'att-a' })).toBeNull();
-    expect(liveCallPagePath({ origin: 'campaign', campaignId: 'c-1', correlationId: '' })).toBeNull();
-    expect(liveCallPagePath({ origin: 'manual', campaignId: null, correlationId: undefined })).toBeNull();
+    expect(liveCallPagePath({ origin: 'campaign', campaignId: null, correlationId: 'att-a' }, true)).toBeNull();
+    expect(liveCallPagePath({ origin: 'campaign', campaignId: 'c-1', correlationId: '' }, true)).toBeNull();
+    expect(liveCallPagePath({ origin: 'manual', campaignId: null, correlationId: undefined }, true)).toBeNull();
   });
 });
 

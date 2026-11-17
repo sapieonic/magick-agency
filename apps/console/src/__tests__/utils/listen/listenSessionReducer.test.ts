@@ -452,6 +452,36 @@ describe('Try again', () => {
     });
   });
 
+  it('"you listened for" leaves out the time between "access could not be checked" and Try again', () => {
+    // Live from 1 s, stopped (4503) at 2 s, Try again at 30 s, live again at 31 s, ended at 41 s:
+    // heard for 1 s, then for 10 s (the 1 s attaching counted, as any reconnect's is).
+    const s = run(
+      [
+        { type: 'retry', now: 30_000 },
+        { type: 'granted', attempt: 2, listenId: 'l-2' },
+        { type: 'ready', attempt: 2, listenId: 'l-2', now: 31_000 },
+        { type: 'server_ended', attempt: 2, reason: 'call_ended', now: 41_000 },
+      ],
+      reduce(live(), { type: 'closed', attempt: 1, code: AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED, reason: 'access_unverified', now: 2_000 }),
+    );
+    expect(s.end).toMatchObject({ kind: 'call_ended', listenedMs: 12_000 });
+  });
+
+  it('…and the time between "Connection lost" and Try again', () => {
+    // Live from 1 s, dropped at 5 s, lost at 20 s, Try again at 60 s, live at 61 s, ended at 71 s.
+    const lostAt = 5_000 + AGENCY_LISTEN_RECONNECT_WINDOW_MS;
+    const s = run(
+      [
+        { type: 'retry', now: 60_000 },
+        { type: 'granted', attempt: 2, listenId: 'l-2' },
+        { type: 'ready', attempt: 2, listenId: 'l-2', now: 61_000 },
+        { type: 'server_ended', attempt: 2, reason: 'call_ended', now: 71_000 },
+      ],
+      lost(),
+    );
+    expect(s.end).toMatchObject({ kind: 'call_ended', listenedMs: lostAt - 1_000 + 11_000 });
+  });
+
   it('not from any other ended listen', () => {
     for (const reason of ['call_ended', 'permission_revoked', 'superseded'] as const) {
       const ended = reduce(live(), { type: 'server_ended', attempt: 1, reason, now: 2 });

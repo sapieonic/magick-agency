@@ -22,9 +22,9 @@ import type { TenantMember } from '../../../types/team';
  * route's query, each column's words, the link to the call, and the filter choices.
  */
 
-function member(id: string, name: string, role: TenantMember['membership']['role']): TenantMember {
+function member(id: string, name: string, role: TenantMember['membership']['role'], accountId: string | null = null): TenantMember {
   return {
-    membership: { id: `m-${id}`, tenant_id: 't-1', user_id: id, role, account_id: null, status: 'active' } as TenantMember['membership'],
+    membership: { id: `m-${id}`, tenant_id: 't-1', user_id: id, role, account_id: accountId, status: 'active' } as TenantMember['membership'],
     user: { id, email: `${id}@example.com`, display_name: name } as TenantMember['user'],
   };
 }
@@ -86,15 +86,20 @@ describe('a row’s words', () => {
 
 describe('the link to the call', () => {
   it('the attempt, the soft-phone call; an inbound call has none in the console', () => {
-    expect(listenHistoryCallPath(historyEntry())).toBe('/agency/campaigns/camp-1/attempts/att-1');
-    expect(listenHistoryCallPath(historyEntry({ origin: 'manual', correlation_id: 'man-1', campaign_id: null }))).toBe('/agency/softphone/calls/man-1');
-    expect(listenHistoryCallPath(historyEntry({ origin: 'inbound', correlation_id: 'in-1', campaign_id: null }))).toBeNull();
+    expect(listenHistoryCallPath(historyEntry(), true)).toBe('/agency/campaigns/camp-1/attempts/att-1');
+    expect(listenHistoryCallPath(historyEntry({ origin: 'manual', correlation_id: 'man-1', campaign_id: null }), true)).toBe('/agency/softphone/calls/man-1');
+    expect(listenHistoryCallPath(historyEntry({ origin: 'inbound', correlation_id: 'in-1', campaign_id: null }), true)).toBeNull();
+  });
+
+  it('none for a soft-phone call while the soft phone is turned off: its page would only say it is unavailable', () => {
+    expect(listenHistoryCallPath(historyEntry({ origin: 'manual', correlation_id: 'man-1', campaign_id: null }), false)).toBeNull();
+    expect(listenHistoryCallPath(historyEntry(), false)).toBe('/agency/campaigns/camp-1/attempts/att-1');
   });
 
   it('none once the call’s row is gone (no number and not withheld), whatever its type', () => {
-    expect(listenHistoryCallPath(historyEntry({ customer_phone_masked: null }))).toBeNull();
+    expect(listenHistoryCallPath(historyEntry({ customer_phone_masked: null }), true)).toBeNull();
     // A withheld caller's call is still there.
-    expect(listenHistoryCallPath(historyEntry({ origin: 'manual', correlation_id: 'man-1', customer_phone_masked: null, customer_phone_withheld: true })))
+    expect(listenHistoryCallPath(historyEntry({ origin: 'manual', correlation_id: 'man-1', customer_phone_masked: null, customer_phone_withheld: true }), true))
       .toBe('/agency/softphone/calls/man-1');
   });
 });
@@ -107,9 +112,20 @@ describe('the filter choices', () => {
   ];
 
   it('supervisors are the members who may listen; agents are every member; both by name', () => {
-    const { supervisors, agents } = listenHistoryFilterOptions(MEMBERS, [], {});
+    const { supervisors, agents } = listenHistoryFilterOptions(MEMBERS, [], {}, 'a-1');
     expect(supervisors).toEqual([{ id: 'sup-1', name: 'Anita Kapoor' }]);
     expect(agents.map((a) => a.name)).toEqual(['Anita Kapoor', 'Omar Pillai', 'Priya Sharma']);
+  });
+
+  it('only people in this account: a seat in another account is not offered', () => {
+    const { supervisors, agents } = listenHistoryFilterOptions(
+      [...MEMBERS, member('sup-b', 'Bela Other', 'account_admin', 'a-2'), member('u-b', 'Bilal Other', 'agent', 'a-2'), member('sup-a', 'Asha Here', 'account_admin', 'a-1')],
+      [],
+      {},
+      'a-1',
+    );
+    expect(supervisors.map((o) => o.name)).toEqual(['Anita Kapoor', 'Asha Here']);
+    expect(agents.map((o) => o.name)).toEqual(['Anita Kapoor', 'Asha Here', 'Omar Pillai', 'Priya Sharma']);
   });
 
   it('adds the people in the rows (a former member included) and keeps the one chosen', () => {
@@ -117,6 +133,7 @@ describe('the filter choices', () => {
       [],
       [historyEntry({ listener_user_id: 'sup-9', listener_name: 'Zoe Former', agent_user_id: 'u-9', agent_name: null })],
       { supervisor: { id: 'sup-2', name: 'Rohan Shah' } },
+      'a-1',
     );
     expect(supervisors).toEqual([{ id: 'sup-2', name: 'Rohan Shah' }, { id: 'sup-9', name: 'Zoe Former' }]);
     expect(agents).toHaveLength(1);

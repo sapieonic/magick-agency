@@ -1,7 +1,7 @@
 import { hasPermission } from '../permissions';
 import { durationWords } from '../format/duration';
 import { agentName, liveCallPagePath } from './liveCallsTable';
-import { LISTEN_HISTORY_COPY, LISTENED_TO_BY_COPY, LIVE_CALLS_COPY, ORIGIN_LABELS, customerLabel } from './listenCopy';
+import { LISTEN_HISTORY_COPY, LISTENED_TO_BY_COPY, LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel } from './listenCopy';
 import {
   AGENCY_LISTEN_END_REASON_LABELS,
   type AgencyListenHistoryEntry,
@@ -53,17 +53,17 @@ export function listenHistoryRangeReversed(draft: ListenHistoryDraft): boolean {
   return Boolean(draft.from && draft.to && draft.from > draft.to);
 }
 
-/** "Dialler", "Soft phone", or "Inbound: <route>". */
+/** "Dialler", "Soft phone", or "Inbound: <route>" (the live table's Campaign cell for an inbound call). */
 export function listenHistoryCallType(entry: Pick<AgencyListenHistoryEntry, 'origin' | 'inbound_route_name'>): string {
-  if (entry.origin === 'inbound' && entry.inbound_route_name) return `${LIVE_CALLS_COPY.inbound}: ${entry.inbound_route_name}`;
+  if (entry.origin === 'inbound') return campaignCellLabel({ origin: 'inbound', campaign_name: null, inbound_route_name: entry.inbound_route_name });
   return ORIGIN_LABELS[entry.origin];
 }
 
 /**
  * The call's row is gone (purged on its own horizon): the entry has neither a masked number nor
- * a withheld caller, and there is no call page to open.
+ * a withheld caller, and there is no call page to open ("Call no longer available").
  */
-function callRowGone(entry: Pick<AgencyListenHistoryEntry, 'customer_phone_masked' | 'customer_phone_withheld'>): boolean {
+export function callRowGone(entry: Pick<AgencyListenHistoryEntry, 'customer_phone_masked' | 'customer_phone_withheld'>): boolean {
   return entry.customer_phone_masked === null && !entry.customer_phone_withheld;
 }
 
@@ -98,12 +98,13 @@ export function listenHistoryAgent(entry: Pick<AgencyListenHistoryEntry, 'agent_
 
 /**
  * The call's own page, as the Live calls table opens it (`liveCallPagePath`): the attempt or the
- * soft-phone call; none for an inbound call (no call page in the console) or once the call's row
- * is gone.
+ * soft-phone call; none for an inbound call (no call page in the console), for a soft-phone call
+ * while the soft phone is turned off (`softphoneEnabled`: its page would only say it is
+ * unavailable, as the campaign History's listen rows rule), or once the call's row is gone.
  */
-export function listenHistoryCallPath(entry: AgencyListenHistoryEntry): string | null {
+export function listenHistoryCallPath(entry: AgencyListenHistoryEntry, softphoneEnabled: boolean): string | null {
   if (callRowGone(entry)) return null;
-  return liveCallPagePath({ origin: entry.origin, campaignId: entry.campaign_id, correlationId: entry.correlation_id });
+  return liveCallPagePath({ origin: entry.origin, campaignId: entry.campaign_id, correlationId: entry.correlation_id }, softphoneEnabled);
 }
 
 export interface ListenHistoryOption {
@@ -112,18 +113,22 @@ export interface ListenHistoryOption {
 }
 
 /**
- * The supervisor and agent choices: the team's members (supervisors are those who may listen,
- * `agency.calls.listen`; agents anyone), the people in the rows read so far (a former member
- * included), and the one chosen, so a filter in force always reads as itself. By name.
+ * The supervisor and agent choices: the team's members in this account (a tenant-wide seat, or a
+ * seat in `accountId`; supervisors are those who may listen, `agency.calls.listen`; agents
+ * anyone), the people in the rows read so far (a former member included), and the one chosen, so
+ * a filter in force always reads as itself. By name. A seat in another account is not offered: no
+ * listen of theirs is in this account's history.
  */
 export function listenHistoryFilterOptions(
   members: readonly TenantMember[],
   entries: readonly AgencyListenHistoryEntry[],
   keep: { supervisor?: ListenHistoryOption | null; agent?: ListenHistoryOption | null },
+  accountId: string | null,
 ): { supervisors: ListenHistoryOption[]; agents: ListenHistoryOption[] } {
   const supervisors = new Map<string, string>();
   const agents = new Map<string, string>();
   for (const m of members) {
+    if (m.membership.account_id !== null && accountId !== null && m.membership.account_id !== accountId) continue;
     const name = m.user.display_name?.trim() || m.user.email;
     agents.set(m.user.id, name);
     if (hasPermission(m.membership.role, 'agency.calls.listen')) supervisors.set(m.user.id, name);

@@ -8,6 +8,7 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { PageDescription } from '../../../components/common/PageDescription';
 import { FiltersCard } from '../../../components/agency/FiltersCard';
 import { useTenant } from '../../../contexts/TenantContext';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
 import { usePermission } from '../../../hooks/usePermission';
 import { downloadListenHistoryCsv, listListenHistory } from '../../../api/listenHistory';
 import { listTenantMembers } from '../../../api/tenants';
@@ -23,6 +24,7 @@ import {
 } from '../../../utils/listen/listenCopy';
 import {
   EMPTY_LISTEN_HISTORY_DRAFT,
+  callRowGone,
   listenHistoryAgent,
   listenHistoryCallPath,
   listenHistoryCallType,
@@ -106,6 +108,9 @@ export default function ListenHistoryPage() {
       const mine = ++seq.current;
       setLoading(true);
       setMoreError(false);
+      // The last query's cursor is a keyset position in another question: Load older is not
+      // offered until this query answers with its own.
+      setNextCursor(null);
       try {
         const page = await listListenHistory({ ...listenHistoryQuery(filters), limit: LISTEN_HISTORY_PAGE_SIZE }, tenantId, accountId);
         if (mine !== seq.current) return;
@@ -114,6 +119,8 @@ export default function ListenHistoryPage() {
         setFailure(null);
       } catch (err) {
         if (mine !== seq.current) return;
+        // The rows on show answer the filters before these: not left under the error.
+        setEntries([]);
         setFailure(failureOf(err));
       } finally {
         if (mine === seq.current) setLoading(false);
@@ -171,7 +178,11 @@ export default function ListenHistoryPage() {
     }
   }, [tenantId, accountId, applied, showToast, showErrorToast]);
 
-  const options = useMemo(() => listenHistoryFilterOptions(members, entries, chosen), [members, entries, chosen]);
+  const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const options = useMemo(
+    () => listenHistoryFilterOptions(members, entries, chosen, accountId ?? null),
+    [members, entries, chosen, accountId],
+  );
   const reversed = listenHistoryRangeReversed(draft);
   const active = listenHistoryFilterCount(applied);
   const set = (patch: Partial<ListenHistoryDraft>) => setDraft((current) => ({ ...current, ...patch }));
@@ -360,22 +371,22 @@ export default function ListenHistoryPage() {
           <>
             <div className={spine.tableWrap}>
               <table className={spine.table} data-testid="listen-history-table">
-                <caption className={styles.srOnly}>{LISTEN_HISTORY_COPY.caption}</caption>
+                <caption className="sr-only">{LISTEN_HISTORY_COPY.caption}</caption>
                 <thead>
                   <tr>
-                    <th>{LISTEN_HISTORY_COPY.columnSupervisor}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnAgent}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnType}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnCustomer}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnStarted}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnListened}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnEnded}</th>
-                    <th>{LISTEN_HISTORY_COPY.columnCall}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnSupervisor}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnAgent}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnType}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnCustomer}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnStarted}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnListened}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnEnded}</th>
+                    <th scope="col">{LISTEN_HISTORY_COPY.columnCall}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entries.map((entry) => (
-                    <HistoryRow key={entry.id} entry={entry} />
+                    <HistoryRow key={entry.id} entry={entry} softphoneEnabled={softphoneEnabled} />
                   ))}
                 </tbody>
               </table>
@@ -399,12 +410,12 @@ export default function ListenHistoryPage() {
   );
 }
 
-function HistoryRow({ entry }: { entry: AgencyListenHistoryEntry }) {
+function HistoryRow({ entry, softphoneEnabled }: { entry: AgencyListenHistoryEntry; softphoneEnabled: boolean }) {
   const supervisor = listenHistorySupervisor(entry);
   const agent = listenHistoryAgent(entry);
   const customer = listenHistoryCustomer(entry);
-  const path = listenHistoryCallPath(entry);
-  const gone = entry.customer_phone_masked === null && !entry.customer_phone_withheld;
+  const path = listenHistoryCallPath(entry, softphoneEnabled);
+  const gone = callRowGone(entry);
   return (
     <tr data-testid={`listen-history-row-${entry.id}`}>
       <td className={styles.person}>{supervisor}</td>

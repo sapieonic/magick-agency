@@ -348,6 +348,39 @@ describe('silence, blocking, reset and close', () => {
     expect(contexts).toHaveLength(1);
   });
 
+  it('a listen over before the gesture’s resume settles: the context is suspended once it does', async () => {
+    const e = engine();
+    e.ensure();
+    const ctx = contexts[0]!;
+    ctx.state = 'suspended';
+    let settle = () => {};
+    ctx.resume = () =>
+      new Promise<void>((done) => {
+        settle = () => {
+          ctx.state = 'running';
+          done();
+        };
+      });
+    const resuming = e.resume();
+    // The first grant failed at once (offline): released while the resume is still pending.
+    e.release();
+    expect(ctx.suspends).toBe(0);
+    settle();
+    await resuming;
+    expect(ctx.state).toBe('suspended');
+    expect(ctx.suspends).toBe(1);
+  });
+
+  it('a resume that settles with the listen still wanted is left running', async () => {
+    const e = engine();
+    e.ensure();
+    const ctx = contexts[0]!;
+    ctx.state = 'suspended';
+    await e.resume();
+    expect(ctx.state).toBe('running');
+    expect(ctx.suspends).toBe(0);
+  });
+
   it('a context the browser refuses to create is no audio, not a crash', () => {
     const e = new ListenPlaybackEngine(() => {
       throw new DOMException('too many contexts', 'NotSupportedError');

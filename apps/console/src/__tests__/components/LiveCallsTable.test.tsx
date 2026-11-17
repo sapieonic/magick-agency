@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   grantListen: vi.fn(),
   role: 'account_admin' as string,
   permissions: null as null | Record<string, boolean>,
-  flags: new Set<string>(['agency_live_listen_enabled']),
+  flags: new Set<string>(['agency_live_listen_enabled', 'agency_softphone_enabled']),
 }));
 
 vi.mock('../../api/liveCalls', () => ({
@@ -131,7 +131,7 @@ beforeEach(() => {
   mocks.grantListen.mockReset();
   mocks.role = 'account_admin';
   mocks.permissions = null;
-  mocks.flags = new Set(['agency_live_listen_enabled']);
+  mocks.flags = new Set(['agency_live_listen_enabled', 'agency_softphone_enabled']);
   mocks.listLiveCalls.mockResolvedValue(answer([VIKRAM, ARJUN, PRIYA, SNEHA]));
 });
 
@@ -434,6 +434,23 @@ describe('the poll', () => {
     expect(screen.queryByTestId('live-calls-error')).toBeNull();
   });
 
+  it('with no rows, "Updated N s ago" keeps counting while the reads keep failing', async () => {
+    mocks.listLiveCalls.mockResolvedValue(answer([]));
+    await renderTable();
+    expect(screen.getByTestId('live-calls-updated').textContent).toBe('Updated just now');
+    mocks.listLiveCalls.mockRejectedValue(Object.assign(new Error('boom'), { statusCode: 502 }));
+    const seen: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      seen.push(screen.getByTestId('live-calls-updated').textContent!);
+    }
+    // A second at a time, as a reader sees it: not stuck at the first failure's "5 s ago".
+    expect(seen.slice(5)).toEqual([6, 7, 8, 9, 10, 11, 12].map((n) => `Updated ${n} s ago`));
+    expect(screen.getByTestId('live-calls-error').textContent).toBe('Could not load live calls. Retrying…');
+  });
+
   it('says so, and stops reading, when the server refuses the reader', async () => {
     mocks.listLiveCalls.mockRejectedValue(Object.assign(new Error('no'), { statusCode: 403, details: { code: 'insufficient_permissions' } }));
     await renderTable();
@@ -488,6 +505,13 @@ describe('Open call', () => {
     expect(screen.getByTestId('live-call-open-c-sneha').getAttribute('href')).toBe('/agency/softphone/calls/man-sneha');
     expect(screen.queryByTestId('live-call-open-c-arjun')).toBeNull();
     expect(screen.getByTestId('live-call-open-c-priya').getAttribute('aria-label')).toBe('Open call: Priya Sharma with Rahul Mehta');
+  });
+
+  it('a soft-phone call with the soft phone turned off has none: its page would only say it is unavailable', async () => {
+    mocks.flags = new Set(['agency_live_listen_enabled']);
+    await renderTable();
+    expect(screen.queryByTestId('live-call-open-c-sneha')).toBeNull();
+    expect(screen.getByTestId('live-call-open-c-priya').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts/att-priya');
   });
 });
 

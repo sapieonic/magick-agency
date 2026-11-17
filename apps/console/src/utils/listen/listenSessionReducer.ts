@@ -69,8 +69,13 @@ export interface ListenSessionState {
   step: ListenStep | null;
   /** The session the current attach was granted (`ready` repeats it). */
   listenId: string | null;
-  /** Client ms of this listen's first `ready`: "you listened for". */
+  /**
+   * Client ms of this listen's first `ready`: "you listened for". Try again moves it on by the time
+   * the listen stood stopped ({@link stoppedAt}), so nothing unheard is counted.
+   */
   startedAt: number | null;
+  /** Client ms the listen stopped at, in `lost` and `ended`: Try again leaves the gap out. */
+  stoppedAt: number | null;
   /** While recovering from a drop: when the window closes. */
   retry: { deadline: number } | null;
   /**
@@ -129,6 +134,7 @@ export const INITIAL_LISTEN_STATE: ListenSessionState = {
   step: null,
   listenId: null,
   startedAt: null,
+  stoppedAt: null,
   retry: null,
   connectDeadline: null,
   internalErrors: 0,
@@ -162,6 +168,7 @@ function toEnded(state: ListenSessionState, kind: ListenEndKind, now: number, co
     step: null,
     retry: null,
     connectDeadline: null,
+    stoppedAt: now,
     end: { kind, listenedMs: state.startedAt === null ? 0 : Math.max(0, now - state.startedAt), code },
     agentSilent: false,
   };
@@ -171,8 +178,8 @@ function toIdle(state: ListenSessionState): ListenSessionState {
   return { ...INITIAL_LISTEN_STATE, attempt: state.attempt, refusal: state.refusal, refusalSeq: state.refusalSeq };
 }
 
-function toLost(state: ListenSessionState): ListenSessionState {
-  return { ...state, phase: 'lost', step: null, retry: null, connectDeadline: null, agentSilent: false };
+function toLost(state: ListenSessionState, now: number): ListenSessionState {
+  return { ...state, phase: 'lost', step: null, retry: null, connectDeadline: null, stoppedAt: now, agentSilent: false };
 }
 
 /**
@@ -188,7 +195,7 @@ function recover(state: ListenSessionState, now: number, internal: boolean): Lis
   const retry = state.retry ?? { deadline: state.connectDeadline ?? now + AGENCY_LISTEN_RECONNECT_WINDOW_MS };
   const settled = state.phase === 'live' && state.liveSince !== null && now - state.liveSince >= LISTEN_STABLE_MS;
   const internalErrors = (settled ? 0 : state.internalErrors) + (internal ? 1 : 0);
-  if (internalErrors >= LISTEN_MAX_INTERNAL_ERRORS || now >= retry.deadline) return toLost(state);
+  if (internalErrors >= LISTEN_MAX_INTERNAL_ERRORS || now >= retry.deadline) return toLost(state, now);
   return {
     ...state,
     phase: state.startedAt === null ? 'connecting' : 'reconnecting',
@@ -302,11 +309,11 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
 
     case 'reattach':
       if (!attaching(state) || state.step !== 'wait') return state;
-      if (pastDeadline(state, event.now)) return toLost(state);
+      if (pastDeadline(state, event.now)) return toLost(state, event.now);
       return { ...state, attempt: state.attempt + 1, step: 'grant', listenId: null };
 
     case 'tick':
-      if (attaching(state) && pastDeadline(state, event.now)) return toLost(state);
+      if (attaching(state) && pastDeadline(state, event.now)) return toLost(state, event.now);
       return state;
 
     case 'pong':
@@ -327,6 +334,9 @@ export function listenSessionReducer(state: ListenSessionState, event: ListenSes
       return {
         ...state,
         end: null,
+        // The time it stood stopped was not heard: "you listened for" leaves it out.
+        startedAt: state.startedAt === null ? null : state.startedAt + Math.max(0, event.now - (state.stoppedAt ?? event.now)),
+        stoppedAt: null,
         phase: state.startedAt === null ? 'connecting' : 'reconnecting',
         step: 'grant',
         attempt: state.attempt + 1,

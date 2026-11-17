@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act, fireEvent, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { liveCall } from '../helpers/liveCalls';
+import type { AgencyLiveCall } from '../../types/live-calls';
 
 /**
  * The listening bar with the shell's listen behind it (`docs/listening.md` §9, LS6): the first
@@ -18,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   audioState: 'running' as AudioContextState,
   audioThrows: false,
   flagOn: true,
+  /** The flag map's state (`FeatureFlagsContext`): only `ready` is an answer. */
+  flagStatus: 'ready' as 'loading' | 'ready' | 'error',
+  softphoneOn: true,
   role: 'account_admin' as string,
 }));
 
@@ -31,7 +35,13 @@ vi.mock('../../contexts/TenantContext', () => ({
 }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me' } }) }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ isEnabled: (f: string) => mocks.flagOn && f === 'agency_live_listen_enabled', status: 'ready' }),
+  // As the real context reads: every flag off unless the map is `ready`.
+  useFeatureFlags: () => ({
+    isEnabled: (f: string) =>
+      mocks.flagStatus === 'ready'
+      && ((mocks.flagOn && f === 'agency_live_listen_enabled') || (mocks.softphoneOn && f === 'agency_softphone_enabled')),
+    status: mocks.flagStatus,
+  }),
 }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
@@ -42,6 +52,7 @@ import { LiveCallsTable } from '../../components/listen/LiveCallsTable';
 import { ListenProvider, LISTEN_CONFIRMED_KEY } from '../../components/listen/ListenProvider';
 import { ListenBar } from '../../components/listen/ListenBar';
 import { LISTEN_VOLUME_KEY } from '../../hooks/listen/useListenPlayback';
+import barStyles from '../../components/listen/ListenBar.module.css';
 
 class FakeWs {
   static all: FakeWs[] = [];
@@ -178,6 +189,8 @@ beforeEach(() => {
   mocks.audioState = 'running';
   mocks.audioThrows = false;
   mocks.flagOn = true;
+  mocks.flagStatus = 'ready';
+  mocks.softphoneOn = true;
   mocks.role = 'account_admin';
   mocks.showToast.mockReset();
   mocks.listLiveCalls.mockReset().mockResolvedValue({ calls: [CALL, OTHER], as_of: new Date(NOW).toISOString() });
@@ -220,6 +233,33 @@ describe('the first listen in this browser', () => {
     expect(window.localStorage.getItem(LISTEN_CONFIRMED_KEY)).toBe('1');
   });
 
+  it.each([
+    ['the flag goes off', () => {
+      mocks.flagOn = false;
+    }],
+    ['the permission goes', () => {
+      mocks.role = 'agent';
+    }],
+  ])('%s while the confirmation is open: Start listening asks for nothing', async (_name, take) => {
+    const view = await renderApp();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('live-call-listen-c-1'));
+    });
+    expect(screen.getByText('Listening is logged')).toBeTruthy();
+    take();
+    view.rerender(<App />);
+    await flush();
+    const start = screen.queryByRole('button', { name: 'Start listening' });
+    if (start) {
+      await act(async () => {
+        fireEvent.click(start);
+      });
+    }
+    await flush();
+    expect(mocks.grantListen).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
   it('does not ask again in this browser', async () => {
     window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
     await renderApp();
@@ -260,8 +300,10 @@ describe('the bar', () => {
 
   it.each([
     ['a soft-phone call opens its call page', { origin: 'manual', correlation_id: 'man-3', campaign_id: null, campaign_name: null }, '/agency/softphone/calls/man-3'],
+    ['a soft-phone call with the soft phone turned off has none (its page would only say it is unavailable)', { origin: 'manual', correlation_id: 'man-3', campaign_id: null, campaign_name: null, softphoneOff: true }, null],
     ['an inbound call has no call page in the console, so none is offered', { origin: 'inbound', correlation_id: 'in-3', campaign_id: null, campaign_name: null, inbound_route_name: 'Support' }, null],
-  ] as const)('Open call: %s', async (_name, over, href) => {
+  ] as const)('Open call: %s', async (_name, { softphoneOff = false, ...over }: { softphoneOff?: boolean } & Partial<AgencyLiveCall>, href) => {
+    mocks.softphoneOn = !softphoneOff;
     const third = liveCall({ ...over, call_id: 'c-3', agent_user_id: 'u-3', agent_name: 'Sneha Iyer' });
     mocks.listLiveCalls.mockResolvedValue({ calls: [CALL, third], as_of: new Date(NOW).toISOString() });
     await renderApp();
@@ -497,6 +539,22 @@ describe('the bar', () => {
   });
 
   it.each([
+    ['full width', false],
+    ['phone width', true],
+  ])('an ended listen’s reason is set to wrap, never cut short (%s)', async (_name, compact) => {
+    // happy-dom lays nothing out: the line must carry the wrapping class, whose rule
+    // (`listenBarWrapCss.test.ts`) neither clips nor keeps to one line.
+    mocks.compact = compact;
+    await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    act(() => ws.serverClose(4503, 'access_unverified'));
+    const line = screen.getByTestId('listen-ended-line');
+    expect(line.classList.contains(barStyles.endedLine!)).toBe(true);
+    expect(line.classList.contains(barStyles.line!)).toBe(false);
+  });
+
+  it.each([
     [4403, 'permission_revoked', 'You no longer have access to listen to calls.'],
     [4409, 'superseded', 'You started listening in another tab or window, so it stopped here.'],
   ])('close %i: "%s" says so until dismissed', async (code, reason, words) => {
@@ -535,6 +593,39 @@ describe('the bar', () => {
     expect(screen.getByTestId('listen-bar')).toBeTruthy();
     fireEvent.click(screen.getByTestId('listen-dismiss'));
     expect(screen.queryByTestId('listen-bar')).toBeNull();
+  });
+
+  it.each([
+    ['still loading (an account list reloaded)', 'loading'],
+    ['unreadable (the read failed)', 'error'],
+  ] as const)('the flag map %s is no answer: the listen carries on', async (_name, status) => {
+    const view = await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    mocks.flagStatus = status;
+    view.rerender(<App />);
+    await flush();
+    expect(ws.sent).toEqual([]);
+    expect(ws.closed).toBeNull();
+    expect(bar().dataset.phase).toBe('live');
+    // The answer comes back on: nothing happened.
+    mocks.flagStatus = 'ready';
+    view.rerender(<App />);
+    await flush();
+    expect(ws.sent).toEqual([]);
+    expect(bar().dataset.phase).toBe('live');
+  });
+
+  it('the flag map unreadable while the permission goes: still ended, as access gone', async () => {
+    const view = await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    mocks.flagStatus = 'error';
+    mocks.role = 'agent';
+    view.rerender(<App />);
+    await flush();
+    expect(ws.sent).toEqual([{ event: 'stop' }]);
+    expect(screen.getByTestId('listen-ended-line').textContent).toBe('You no longer have access to listen to calls.');
   });
 
   it.each([
@@ -659,6 +750,31 @@ describe('the bar', () => {
     expect(FakeAudioContext.all[0]!.state).toBe('closed');
   });
 
+  it('at phone width the state is said in words, in a live region, as at full width', async () => {
+    mocks.compact = true;
+    mocks.grantListen.mockImplementation(async () => ({ ok: false, status: 503, code: 'listen_unavailable' }));
+    mocks.grantListen.mockImplementationOnce(async () => ({
+      ok: true,
+      grant: { listen_id: 'l-1', ws_url: '/proxy/agency/listen/s-1/l-1?token=tok', expires_at: 'x' },
+    }));
+    await renderApp();
+    const ws = await startListening();
+    const status = () => screen.getByTestId('listen-status');
+    expect(status().textContent).toBe('Connecting…');
+    expect(status().getAttribute('role')).toBe('status');
+    act(() => ws.ready());
+    expect(status().textContent).toBe('Listening');
+    act(() => ws.serverClose(1006));
+    // Not "Connecting…": the listen had audio and is getting it back.
+    expect(status().textContent).toBe('Reconnecting…');
+    expect(status().getAttribute('role')).toBe('status');
+    expect((status().querySelector('[aria-hidden="true"]') as HTMLElement).style.color).toBe('var(--warning)');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(16_000);
+    });
+    expect(status().textContent).toBe('Connection lost');
+  });
+
   it('at phone width: the dot, the timer and Stop, with the notice', async () => {
     mocks.compact = true;
     await renderApp();
@@ -675,7 +791,7 @@ describe('the bar', () => {
   });
 });
 
-describe('the audio when a listen ends (K7)', () => {
+describe('the audio when a listen ends', () => {
   beforeEach(() => {
     window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
   });
@@ -727,7 +843,7 @@ describe('the audio when a listen ends (K7)', () => {
   });
 });
 
-describe('focus and announcements (K9)', () => {
+describe('focus and announcements', () => {
   beforeEach(() => {
     window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
   });
@@ -803,7 +919,7 @@ describe('focus and announcements (K9)', () => {
   });
 });
 
-describe('analytics never see the call (K4, CH6)', () => {
+describe('analytics never see the call (CH6)', () => {
   it('the bar (agent, masked number, campaign) is inside a ph-no-capture boundary', async () => {
     window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
     await renderApp();

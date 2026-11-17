@@ -7,6 +7,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { formatPhone } from '@magick-agency/web-ui/format';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { usePermission } from '../../hooks/usePermission';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { useLiveCalls } from '../../hooks/listen/useLiveCalls';
@@ -82,7 +83,9 @@ export function LiveCallsTable({ campaignId, headingLevel = 'h1', onCount }: Liv
   const listen = useListen();
   const read = useLiveCalls({ tenantId, accountId, campaignId, enabled: supervise });
   const { rows, receivedAt, clockOffsetMs, failure } = read;
-  useRepaintTick(rows !== null && rows.length > 0);
+  // Every second while "Updated N s ago" shows: with no rows, a run of failed reads changes no
+  // state after the first, and the label would stop at its last value while the data ages.
+  useRepaintTick(receivedAt !== null);
 
   const [filters, setFilters] = useState<LiveCallFilters>(NO_LIVE_CALL_FILTERS);
   // The agent and campaign chosen, by name: kept on offer after their calls end, so the filter in
@@ -360,7 +363,8 @@ function LiveCallRow({
   const elapsed = elapsedSince(call.connected_at, clockOffsetMs, ended ? endedAt : now);
   // Amber past twice the campaign's average handle time, which the row carries (null: not known).
   const overrun = !ended && isLiveCallOverrun(elapsed, call.aht_seconds);
-  const pagePath = liveCallRowPagePath(call);
+  // The soft phone's call page is behind its flag: no link to a page that would say it is unavailable.
+  const pagePath = liveCallRowPagePath(call, useFeatureFlagEnabled(SOFTPHONE_FLAG));
   const name = agentName(call);
   const customer = customerLabel(call);
   // A caller who withheld their number has none to show: "Withheld", and no Show (LS22 i).

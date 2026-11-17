@@ -113,7 +113,8 @@ export function encodeListenClientFrame(frame: AgencyListenClientFrame): string 
  *    stopped, saying so, with Try again (a fresh grant checks afresh); neither "no longer have
  *    access" nor a reconnect loop;
  *  - `refused`: a cap or a malformed upgrade refused the attach; `code` says which;
- *  - `remint`: the token was refused: mint a fresh grant now;
+ *  - `remint`: the token was refused (expired or used): a fresh grant, after the same short wait
+ *    as any other drop (the reducer treats it as `reconnect`);
  *  - `reconnect`: any other drop: re-mint and reconnect within the window;
  *  - `internal`: the tap detached or the session could not open: reconnect, bounded.
  */

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useTenant } from '../../contexts/TenantContext';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { usePermission } from '../../hooks/usePermission';
 import { useListenPlayback, type ListenPlayback } from '../../hooks/listen/useListenPlayback';
@@ -78,6 +79,18 @@ function useOptionalToast(): ReturnType<typeof useToast>['showToast'] | null {
   }
 }
 
+/**
+ * The flag map holds an answer (`ready`). While it loads (an account list reloaded moves it) or
+ * after a failed read, every flag reads off, which is no answer at all; no provider is none either.
+ */
+function useFlagsAnswered(): boolean {
+  try {
+    return useFeatureFlags().status === 'ready';
+  } catch {
+    return false;
+  }
+}
+
 const ListenContext = createContext<ListenContextValue | null>(null);
 
 /** The shell's listen, or null outside it (a page rendered on its own, in a test). */
@@ -90,6 +103,7 @@ export function ListenProvider({ children }: { children: ReactNode }) {
   const flagOn = useFeatureFlagEnabled(LIVE_LISTEN_FLAG);
   const mayListen = usePermission('agency.calls.listen');
   const canListen = flagOn && mayListen;
+  const flagTurnedOff = useFlagsAnswered() && !flagOn;
   const showToast = useOptionalToast();
 
   const playback = useListenPlayback();
@@ -136,10 +150,13 @@ export function ListenProvider({ children }: { children: ReactNode }) {
   }, [audible, engine]);
 
   // The flag going off or the permission going away ends a listen here at once, and the bar says
-  // which: the flag first, as it is what a supervisor cannot change.
+  // which: the flag first, as it is what a supervisor cannot change. Only an answer turns the flag
+  // off here: a flag map loading or unread reads every flag off, and ending the listen on it would
+  // say "turned off" when nothing was (the server's re-check is the gate for that, LS10).
   useEffect(() => {
-    if (!canListen) controller.withdraw(flagOn ? 'revoked' : 'turned_off');
-  }, [canListen, flagOn, controller]);
+    if (flagTurnedOff) controller.withdraw('turned_off');
+    else if (!mayListen) controller.withdraw('revoked');
+  }, [flagTurnedOff, mayListen, controller]);
 
   // Leaving the shell or the account: the listen ends with the provider.
   useEffect(() => () => engine.close(), [engine]);
@@ -195,7 +212,8 @@ export function ListenProvider({ children }: { children: ReactNode }) {
         onConfirm={() => {
           const next = pending;
           setPending(null);
-          if (!next) return;
+          // The flag or the permission may have gone while the dialog was open.
+          if (!next || !canListen) return;
           rememberConfirmed();
           begin(next.call, next.offset);
         }}

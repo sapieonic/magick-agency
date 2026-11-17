@@ -48,6 +48,14 @@
   white-space: nowrap;
 }
 
+/* An ended listen's reason: wraps at every width, never cut short (it is why the bar is still
+   there). The one-line ellipsis stays on the live "who" lines only. */
+.endedLine {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .mono,
 .timer {
   font-family: var(--font-mono);
@@ -204,8 +212,10 @@
     padding-right: 16px;
   }
 
+  /* Wraps (the rows' own rule) with a narrower gap: the state, the timer and Stop share a line
+     when they fit; an ended reason too long to sit beside its buttons takes a line of its own. */
   .row {
-    flex-wrap: nowrap;
+    column-gap: 12px;
   }
 }
 

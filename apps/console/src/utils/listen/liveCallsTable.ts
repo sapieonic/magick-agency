@@ -1,5 +1,5 @@
 import { CALL_OVERRUN_AHT_MULTIPLE, agentDisplayName } from '../agencyAgentFloor';
-import { LIVE_CALLS_COPY, campaignCellLabel, customerLabel, maskedNumberLabel } from './listenCopy';
+import { LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel, maskedNumberLabel } from './listenCopy';
 import type { AgencyCallOrigin, AgencyLiveCall } from '../../types/live-calls';
 import type { ListenTarget } from './listenSessionReducer';
 
@@ -12,10 +12,10 @@ import type { ListenTarget } from './listenSessionReducer';
 export type LiveCallTypeFilter = 'all' | AgencyCallOrigin;
 
 export const LIVE_CALL_TYPE_FILTERS: readonly { id: LiveCallTypeFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'campaign', label: 'Dialler' },
-  { id: 'manual', label: 'Soft phone' },
-  { id: 'inbound', label: 'Inbound' },
+  { id: 'all', label: LIVE_CALLS_COPY.allTypes },
+  { id: 'campaign', label: ORIGIN_LABELS.campaign },
+  { id: 'manual', label: ORIGIN_LABELS.manual },
+  { id: 'inbound', label: ORIGIN_LABELS.inbound },
 ];
 
 export interface LiveCallFilters {
@@ -175,26 +175,32 @@ export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): Li
  * The call's own page, keyed on the live row's `correlation_id` (the spine row, by `origin`): a
  * dialler call opens its attempt (`/agency/campaigns/:id/attempts/:attemptId`), a soft-phone call
  * its call page (`/agency/softphone/calls/:id`). Null for an inbound call, which has no call page in
- * the console, and for a row missing the ids its page needs: neither the row nor the listening
- * bar offers "Open call" then (a link to a list of other calls would be a dead end).
+ * the console, for a soft-phone call while the soft phone is turned off (`softphoneEnabled`: its
+ * page is behind `agency_softphone_enabled` and would only say it is unavailable), and for a row
+ * missing the ids its page needs: "Open call" is not offered then (a link to a list of other
+ * calls, or to an unavailable page, would be a dead end).
  */
 export function liveCallPagePath(
   call: { origin: AgencyCallOrigin; campaignId: string | null; correlationId: string | null | undefined },
+  softphoneEnabled: boolean,
 ): string | null {
   if (!call.correlationId) return null;
   switch (call.origin) {
     case 'campaign':
       return call.campaignId ? `/agency/campaigns/${call.campaignId}/attempts/${call.correlationId}` : null;
     case 'manual':
-      return `/agency/softphone/calls/${call.correlationId}`;
+      return softphoneEnabled ? `/agency/softphone/calls/${call.correlationId}` : null;
     case 'inbound':
       return null;
   }
 }
 
 /** {@link liveCallPagePath} for a live row. */
-export function liveCallRowPagePath(call: Pick<AgencyLiveCall, 'origin' | 'campaign_id' | 'correlation_id'>): string | null {
-  return liveCallPagePath({ origin: call.origin, campaignId: call.campaign_id, correlationId: call.correlation_id });
+export function liveCallRowPagePath(
+  call: Pick<AgencyLiveCall, 'origin' | 'campaign_id' | 'correlation_id'>,
+  softphoneEnabled: boolean,
+): string | null {
+  return liveCallPagePath({ origin: call.origin, campaignId: call.campaign_id, correlationId: call.correlation_id }, softphoneEnabled);
 }
 
 /** The table's customer cell words (re-exported so the table reads one module). */

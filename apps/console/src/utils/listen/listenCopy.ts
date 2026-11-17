@@ -37,7 +37,6 @@ export const LISTEN_SESSION_NOTICE = 'This session is logged. Do not record or s
 export const LISTEN_CONFIRM = {
   title: 'Listening is logged',
   message: 'Each time you listen, your name, the call and the start and end times are recorded in the account’s Listening history.',
-  cancel: 'Cancel',
   confirm: 'Start listening',
 } as const;
 
@@ -61,6 +60,8 @@ export const LIVE_CALLS_COPY = {
   agentFilter: 'Agent',
   allAgents: 'All agents',
   typeFilter: 'Type',
+  /** The type chips' first: every type (the others are {@link ORIGIN_LABELS}). */
+  allTypes: 'All',
   captionCampaign: 'Calls in progress on this campaign, longest on call first',
   captionAccount: 'Calls in progress in this account, longest on call first',
   columnAgent: 'Agent',
@@ -79,7 +80,6 @@ export const LIVE_CALLS_COPY = {
   stop: 'Stop',
   connecting: 'Connecting…',
   reconnecting: 'Reconnecting…',
-  listening: 'Listening',
   show: 'Show',
   hide: 'Hide',
   numberFailed: 'Could not show the number. Try again.',
@@ -255,7 +255,12 @@ export function maskedNumberLabel(call: Pick<AgencyLiveCall, 'customer_phone_mas
 
 /** "Priya S. with ****4321": who the bar is listening to. */
 export function listenWhoLabel(agentName: string, customerMasked: string): string {
-  return `${shortName(agentName)} with ${customerMasked}`;
+  return `${listenWhoPrefix(agentName)}${customerMasked}`;
+}
+
+/** "Priya S. with ": {@link listenWhoLabel} up to the number, which the bar sets in mono. */
+export function listenWhoPrefix(agentName: string): string {
+  return `${shortName(agentName)} with `;
 }
 
 /** Mute toggle's accessible name. */

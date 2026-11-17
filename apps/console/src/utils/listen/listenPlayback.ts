@@ -35,8 +35,6 @@ export const LISTEN_MAX_AHEAD_MS = 600;
 /** The agent's leg silent this long while live: "Agent is silent". */
 export const LISTEN_AGENT_SILENCE_MS = 2_000;
 
-export const LISTEN_LEGS: readonly AgencyListenLeg[] = ['agent', 'customer'];
-
 /** The parts of the Web Audio API the engine uses (a fake in tests). */
 export type ListenAudioContextFactory = () => AudioContext | null;
 
@@ -72,6 +70,12 @@ export class ListenPlaybackEngine {
   private unavailable = false;
   /** Client ms of the last `reset()` (an attach): a leg silent since then is silent. */
   private attachedAt: number | null = null;
+  /**
+   * A gesture asked for the audio (`resume`) and no `release` has come since. A resume still
+   * pending when the listen ends (a first grant refused at once, offline) checks it when it
+   * settles, so the context is not left running for the shell's life.
+   */
+  private wanted = false;
 
   constructor(
     private readonly createContext: ListenAudioContextFactory = defaultAudioContextFactory,
@@ -121,7 +125,9 @@ export class ListenPlaybackEngine {
   async resume(): Promise<void> {
     const ctx = this.ensure();
     if (!ctx) return;
+    this.wanted = true;
     await ctx.resume().catch(() => {});
+    if (!this.wanted && this.ctx === ctx && ctx.state === 'running') void ctx.suspend().catch(() => {});
   }
 
   private leg(leg: AgencyListenLeg): LegGraph | null {
@@ -249,11 +255,13 @@ export class ListenPlaybackEngine {
 
   /**
    * The listen is over (stopped, ended, lost): silence at once, nothing left queued, and the
-   * context suspended rather than running for the shell's life. The next Listen click resumes it.
+   * context suspended rather than running for the shell's life (now, or when a gesture's resume
+   * still pending settles). The next Listen click resumes it.
    */
   release(): void {
     this.reset();
     this.attachedAt = null;
+    this.wanted = false;
     const ctx = this.ctx;
     if (ctx && ctx.state === 'running') void ctx.suspend().catch(() => {});
   }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Lock, Volume2, VolumeX } from 'lucide-react';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { useFeatureFlagEnabled, SOFTPHONE_FLAG } from '../../hooks/useFeatureFlagEnabled';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { elapsedSince } from '../../utils/agencyClock';
@@ -13,9 +14,9 @@ import {
   LISTEN_SESSION_NOTICE,
   formatClock,
   listenWhoLabel,
+  listenWhoPrefix,
   listenedForLabel,
   muteLabel,
-  shortName,
 } from '../../utils/listen/listenCopy';
 import { liveCallPagePath } from '../../utils/listen/liveCallsTable';
 import type { ListenSessionState, ListenTarget } from '../../utils/listen/listenSessionReducer';
@@ -29,7 +30,7 @@ import styles from './ListenBar.module.css';
  * content area while a listen is open, across every page of the shell. Who is on the call and
  * how long, a level meter and a mute for each leg, the volume, "Open call", "Stop listening"
  * (Esc while the bar has focus), and, whatever state it is in, the notice that the session is
- * logged. At phone width it is the live dot, the timer and Stop, with the notice under them.
+ * logged. At phone width it is the state, the timer and Stop, with the notice under them.
  *
  * Focus: the Listen button gives way to "Connecting…", so focus moves to the bar (where Esc
  * stops), and whenever what held it inside the bar goes; when the bar goes, it returns to the
@@ -194,8 +195,9 @@ function endedLine(state: ListenSessionState, compact: boolean): string {
 function FullRow({ state, target }: { state: ListenSessionState; target: ListenTarget }) {
   const listen = useListen()!;
   const over = state.phase === 'ended';
-  // The call's own page; an inbound call has none in the console, so nothing is offered.
-  const pagePath = liveCallPagePath(target);
+  // The call's own page; an inbound call has none in the console, and a soft-phone call's is
+  // behind the soft phone's flag, so nothing is offered then.
+  const pagePath = liveCallPagePath(target, useFeatureFlagEnabled(SOFTPHONE_FLAG));
   const openCall = pagePath ? (
     <Link className={styles.link} to={pagePath} data-testid="listen-open-call">
       {LISTEN_BAR_COPY.openCall}
@@ -209,7 +211,7 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
       <div className={styles.row}>
         <div className={styles.who} role="status">
           {unverified ? null : <Status state={state} region={false} />}
-          <span className={styles.line} data-testid="listen-ended-line">{endedLine(state, false)}</span>
+          <span className={styles.endedLine} data-testid="listen-ended-line">{endedLine(state, false)}</span>
         </div>
         <div className={styles.controls}>
           {state.end?.kind === 'call_ended' ? openCall : null}
@@ -227,7 +229,7 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
       <div className={styles.who}>
         <Status state={state} />
         <span className={styles.line}>
-          {shortName(target.agentName)} with <span className={styles.mono}>{target.customerMasked}</span>
+          {listenWhoPrefix(target.agentName)}<span className={styles.mono}>{target.customerMasked}</span>
         </span>
         <span className={styles.line}>
           {target.campaignLabel} · <CallTimer state={state} target={target} />
@@ -297,13 +299,16 @@ function RetryButton() {
   );
 }
 
-/** Phone width: the live dot, the timer and Stop. */
+/**
+ * Phone width: the state (its word and dot, a live region as at full width), the timer and Stop.
+ * The row wraps rather than squeezes: an ended listen's reason is read in full.
+ */
 function CompactRow({ state, target }: { state: ListenSessionState; target: ListenTarget }) {
   const listen = useListen()!;
   if (state.phase === 'ended') {
     return (
       <div className={styles.row}>
-        <span className={styles.line} role="status" data-testid="listen-ended-line">{endedLine(state, true)}</span>
+        <span className={styles.endedLine} role="status" data-testid="listen-ended-line">{endedLine(state, true)}</span>
         {state.end?.kind === 'unverified' ? <RetryButton /> : null}
         <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
           {LISTEN_BAR_COPY.dismiss}
@@ -314,8 +319,7 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
   return (
     <div className={styles.row}>
       <span className={styles.compactHead}>
-        <LiveDot live={state.phase === 'live'} size={8} />
-        <span className="sr-only">{state.phase === 'live' ? LISTEN_BAR_COPY.listening : state.phase === 'lost' ? LISTEN_BAR_COPY.lost : LISTEN_BAR_COPY.connecting}</span>
+        <Status state={state} />
         <CallTimer state={state} target={target} />
       </span>
       <StopOrLost state={state} compact />
