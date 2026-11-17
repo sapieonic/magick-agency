@@ -1,12 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import {
+  AGENCY_CALL_ORIGIN_LABELS,
   AGENCY_LISTEN_END_REASON_LABELS,
   AGENCY_LISTEN_HISTORY_EXPORT_MAX_ROWS,
   type AgencyListenHistoryEntry,
   type AgencyListenHistoryResponse,
 } from '@magick-agency/contracts/api/agency/listen-history';
-import type { AgencyCallOrigin } from '@magick-agency/contracts/agency';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { ACCOUNT_HEADER } from '../middleware/headers.js';
@@ -109,8 +109,6 @@ export function toHistoryEntry(e: CoreListenHistoryEntry, names: Map<string, str
   };
 }
 
-const CALL_TYPE_WORDS: Record<AgencyCallOrigin, string> = { campaign: 'Dialler', manual: 'Soft phone', inbound: 'Inbound' };
-
 /** The CSV's columns, in order. */
 export const LISTEN_HISTORY_CSV_COLUMNS = [
   'started_at', 'ended_at', 'listened_seconds', 'supervisor', 'supervisor_user_id', 'agent', 'agent_user_id',
@@ -128,7 +126,7 @@ export function listenHistoryCsvRow(e: AgencyListenHistoryEntry): string {
     e.listener_user_id,
     e.agent_name ?? '',
     e.agent_user_id,
-    CALL_TYPE_WORDS[e.origin] ?? e.origin,
+    AGENCY_CALL_ORIGIN_LABELS[e.origin] ?? e.origin,
     e.campaign_name ?? '',
     e.inbound_route_name ?? '',
     e.customer_name ?? '',

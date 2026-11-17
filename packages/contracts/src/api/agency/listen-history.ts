@@ -60,6 +60,16 @@ export const AGENCY_LISTEN_END_REASON_LABELS: Readonly<Record<AgencyListenEndRea
   server_restarted: 'The service restarted',
 };
 
+/**
+ * A call's origin in words: the live calls list's and the history's Type, and the CSV's
+ * `call_type` column. One entry per origin, as {@link AGENCY_LISTEN_END_REASON_LABELS}.
+ */
+export const AGENCY_CALL_ORIGIN_LABELS: Readonly<Record<AgencyCallOrigin, string>> = {
+  campaign: 'Dialler',
+  manual: 'Soft phone',
+  inbound: 'Inbound',
+};
+
 /** `GET /listen-history` query. Every field optional; unknown keys are refused (400). */
 export interface AgencyListenHistoryQuery {
   /** One supervisor's listens. */
