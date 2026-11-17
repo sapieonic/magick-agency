@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.26.0](https://github.com/sapieonic/magick-agency/compare/server-v0.25.0...server-v0.26.0) (2026-11-17)
+
+
+### Features
+
+* **server,console,mobile:** live call listening for supervisors ([#94](https://github.com/sapieonic/magick-agency/issues/94)) ([53dbadc](https://github.com/sapieonic/magick-agency/commit/53dbadcc931827421960f5dda7ae0968d747746c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.24.0
+    * @magick-agency/db bumped to 0.21.0
+    * @magick-agency/domain bumped to 0.12.1
+    * @magick-agency/observability bumped to 0.14.0
+  * devDependencies
+    * @magick-agency/report-renderer bumped to 0.4.1
+
 ## [0.25.0](https://github.com/sapieonic/magick-agency/compare/server-v0.24.0...server-v0.25.0) (2026-11-16)
 
 

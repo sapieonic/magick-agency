@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.14.0...mobile-v0.15.0) (2026-11-17)
+
+
+### Features
+
+* **server,console,mobile:** live call listening for supervisors ([#94](https://github.com/sapieonic/magick-agency/issues/94)) ([53dbadc](https://github.com/sapieonic/magick-agency/commit/53dbadcc931827421960f5dda7ae0968d747746c))
+
 ## [0.14.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.13.0...mobile-v0.14.0) (2026-11-16)
 
 

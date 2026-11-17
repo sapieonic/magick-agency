@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.8...super-admin-v0.6.0) (2026-11-17)
+
+
+### Features
+
+* **server,console,mobile:** live call listening for supervisors ([#94](https://github.com/sapieonic/magick-agency/issues/94)) ([53dbadc](https://github.com/sapieonic/magick-agency/commit/53dbadcc931827421960f5dda7ae0968d747746c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.24.0
+
 ## [0.5.8](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.7...super-admin-v0.5.8) (2026-11-16)
 
 
