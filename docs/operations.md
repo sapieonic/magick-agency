@@ -744,7 +744,10 @@ turning it on, with the tenant's administrator:
 
 To turn it off: set it Off for the tenant or account (no reason needed), or Off globally in an
 incident. Open listens end at the next re-check (at most `AGENCY_LISTEN_RECHECK_MS`, 30 s) with
-`permission_revoked`; their rows stay in the history.
+`permission_revoked`. Turning it off stops listening, not the record: the Listening history (page
+and CSV, `agency.supervise` alone, LS19 as amended 2026-11-17), each call's "Listened to by" and the
+campaign History's listen rows stay readable, so the account can still see and export who
+listened.
 
 ## Recordings
 

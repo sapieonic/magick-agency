@@ -2237,7 +2237,39 @@ again between calls, as the call's band has no button (LS22 u, which also record
 notice as a build call). Manas ratified every remaining LS build call on 2026-11-17. The
 `full-ci` wiring of `LISTEN_LOAD_BOUNDS` and the real-world checks are next steps (below).
 
+### Live call listening, the history without the flag and the legal check 2026-11-17 (LS1, LS19, [`listening.md`](listening.md) §12)
+
+Two decisions by Manas on 2026-11-17 close the feature's open questions. **The Listening history
+is gated by `agency.supervise` alone** (LS19 amended): turning listening off stops new listens, not
+the record of past ones. `GET /proxy/agency/listen-history` and `.csv` no longer read
+`agency_live_listen_enabled` (no `403 feature_disabled`, no `503` on a flag store outage); account
+scoping, masking, the CSV's audit row and its limits are unchanged. In the console the Campaigns
+section's "Listening history" tab, its search entry and its route (no `RequireFlag`) are offered
+for `agency.supervise` whatever the flag; with Live calls hidden the bar is Campaigns and Listening
+history (every supervisor has Campaigns, so the tab never stands alone). The page drops its "turned
+off" state and its flag-outage retry: a 401 or 403 says the history is for supervisors, anything
+else (a 503 included) offers Try again. Checked and unchanged, as never flag-gated: a call's
+"Listened to by" (`listen_sessions` on the attempt and soft-phone call details, `ListenedToBy`),
+the campaign History's listen rows (the activity service and page) and Settings → Live call
+listening (shown whether listening is on or off, LS20 c). **The consent and notice wording's legal
+check is done** (LS1, LS2, LS18), recorded on LS1; the open-questions row in `decisions.md` §5 and
+here is gone, nothing being left in it. Code in `1afa43e` and `4858093` (two navigation tests that
+counted the Campaigns bar with listening off). Mutation-checked (each red, then
+restored with `git checkout`), 5: the server's flag gate re-added
+(`proxy-agency-listen-history.routes.test.ts`, 9 red); the nav entry's flag re-added
+(`consoleNav.test.ts`, `consoleSearch.test.ts`, 3 red); `RequireFlag` back on the route
+(`ListenHistoryPage.test.tsx`); a 503 read as final; the page reading the flag itself (21 red).
+Counts under "Test counts".
+
 ## Test counts
+
+**Live call listening, the history without the flag, 2026-11-17.** Branch `ccr-364c489c-zeoxwy`,
+on the tree of `4858093`, every suite run one after another. From the root: `pnpm lint` clean;
+`pnpm test:tooling` 20; `pnpm --filter @magick-agency/console build` clean. `apps/server` unit
+10391 passed + 1 expected fail (524 files); `INTEGRATION_LANE=rest pnpm test:integration` 3018
+passed + 9 expected fail + 2 skipped (274 files passed, 2 skipped). `apps/console` `pnpm test`
+7459 (396 files). `packages/contracts` `pnpm test` 549 (16 files; a comment changed);
+`agency_wire` 688 (`dart test`). The wall-clock lane not rerun (no file in it changed).
 
 **Live call listening, the final review and the merge of `main`, 2026-11-17.** Branch
 `ccr-364c489c-zeoxwy`, on the tree of the merge of `main` (`25d1d81`: `main`'s console and web-ui
@@ -3232,7 +3264,6 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Do Not Call scope (2026-11-15) | Ratify DS1–DS8, in particular DS3 (an account-scoped admin's station mark is never tenant-wide) and DS8 (a suppress outcome lists the number for its campaign, audited, the campaign's roster swept). Decide DS6's open question: should an account admin see every-campaign entries, and should their add over a tenant-wide entry be written anyway, so it outlives that entry's removal? |
 | Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
-| Live call listening (2026-11-16/17) | Every LS ruling is decided (2026-11-17). Record whether the consent and notice wording (LS1, LS2, LS18) had a legal check, or that it was waived, before the first tenant is enabled. Decide whether the Listening history stays gated by `agency_live_listen_enabled` (LS19), which closes the record of who listened when consent is withdrawn, or is gated by `agency.supervise` alone (`decisions.md` §5) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 
 ## Deployment invariants
@@ -3415,7 +3446,7 @@ account their browser last had open. Every signed-in console page is now served 
 6. **Launch:** write and rehearse the import gate queries and copy scripts, the DNC mirror, the
    link from the previous platform and the dashboards, then go live environment by environment.
 7. **Live call listening, before the first tenant** ([`listening.md`](listening.md) §10 "Not yet
-   verified"): record the consent wording's legal check (or its waiver) with Manas; a listen in a
+   verified"; the consent wording's legal check is done, Manas, 2026-11-17): a listen in a
    real browser on staging (the autoplay policy and "Turn sound on", A-law playback, a 4503 and Try
    again, a hidden tab kept alive by the server's pings) against a real carrier call; the agent's
    notice on a phone; apply the `listen` alert group with the rest of `grafana/`; then the first
