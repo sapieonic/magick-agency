@@ -269,17 +269,21 @@ export const AGENCY_FLAGS = Object.freeze({
   // The CONSENT gate (LS1): supervisors may listen in to an account's calls only while this is
   // on, so a tenant turns it on once its callers are told calls may be monitored (the inbound
   // notice says so; outbound, the agent's script) and its agents know (the station's standing
-  // line, LS2). Gates every live-call route (`403 feature_disabled` when off), the console's Live
-  // calls page and the campaign's Live view, and the station's standing line. Switched off, the
-  // periodic re-check ends every open listen in the account (`permission_revoked`). Off by default:
-  // a tenant or account gets it by an override row a super-admin writes, scoped and attributed,
-  // with a reason and never in a bulk rollout or globally (its handling policy, LS20). Client-exposed:
-  // the console shows the page, the agent's line and the account's Settings line from it.
+  // line, LS2). Gates every live-call route and the Listening history's page and CSV (`403
+  // feature_disabled` when off, LS19), the console's Live calls page, the campaign's Live view and
+  // the Listening history page, the station's standing line and the account's Settings line (LS20
+  // c). Switched off, the periodic re-check ends every open listen in the account
+  // (`permission_revoked`). Off by default: a tenant or account gets it by an override row a
+  // super-admin writes, scoped and attributed, with a reason and never in a bulk rollout or
+  // globally (its handling policy, LS20). Client-exposed: the console shows those pages and lines
+  // from it.
   agency_live_listen_enabled: {
     key: 'agency_live_listen_enabled',
     type: 'boolean',
     default: false,
-    envVar: 'FF_AGENCY_LIVE_LISTEN', // staging: FF_AGENCY_LIVE_LISTEN=true
+    // Dev and staging only: true turns it on for every tenant, past its handling policy, with no
+    // reason and no audit row; the server logs a warning at boot while it is set (LS22 p).
+    envVar: 'FF_AGENCY_LIVE_LISTEN',
     scopes: ['global', 'tenant', 'account'],
     clientExposed: true, // the console shows/hides Live calls, and the station's "Calls may be listened to" line
     owner: 'voice',

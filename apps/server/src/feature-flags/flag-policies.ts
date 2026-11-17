@@ -1,4 +1,6 @@
+import { logger } from '@magick-agency/observability';
 import type { FeatureFlagPolicy } from '@magick-agency/contracts/api/platform/super-admin';
+import { getFlag, resolveEnvDefault } from './registry.js';
 
 /*
  * Flag handling policies: the few flags whose change needs more than a toggle on the super-admin
@@ -13,6 +15,11 @@ import type { FeatureFlagPolicy } from '@magick-agency/contracts/api/platform/su
  *    (`422 flag_bulk_not_allowed`), and so does a GLOBAL override that turns it on, which is every
  *    tenant at once. A global `false` (a kill switch) stays allowed.
  * A flag absent from this map is ordinary. Only boolean flags have policies.
+ *
+ * One path the routes cannot see: a flag's env default (`envVar`, the boot-time global default).
+ * `FF_AGENCY_LIVE_LISTEN=true` turns the consent gate on for every tenant, with no reason and no
+ * audit row, which is what a global On through the routes is refused for. It is kept for dev and
+ * staging, and boot says so in a warning ({@link warnOfEnvDefaultsPastPolicy}, LS22 p).
  */
 
 /** Live call listening's consent gate (LS1, the guard rails of LS20). */
@@ -35,9 +42,32 @@ export function flagPolicy(flagKey: string): FeatureFlagPolicy | undefined {
   return FLAG_POLICIES.get(flagKey);
 }
 
-/** The flag keys that have a policy (tests). */
-export function flagPolicyKeys(): string[] {
-  return [...FLAG_POLICIES.keys()];
+/**
+ * The flags with a policy that refuses a global On (`bulk_allowed: false`) whose env default turns
+ * them on for every tenant now.
+ */
+export function envDefaultsPastPolicy(): Array<{ flag: string; envVar: string }> {
+  const past: Array<{ flag: string; envVar: string }> = [];
+  for (const [key, policy] of FLAG_POLICIES) {
+    if (policy.bulk_allowed) continue;
+    const def = getFlag(key);
+    if (!def?.envVar || resolveEnvDefault(def) !== true) continue;
+    past.push({ flag: key, envVar: def.envVar });
+  }
+  return past;
+}
+
+/** At boot: one warning line for each of {@link envDefaultsPastPolicy}. Answers how many. */
+export function warnOfEnvDefaultsPastPolicy(
+  warn: (fields: Record<string, string>, msg: string) => void = (f, m) => logger.warn(f, m),
+): number {
+  const past = envDefaultsPastPolicy();
+  for (const p of past) {
+    warn(p, `${p.envVar} turns ${p.flag} on for every tenant, with no reason and no audit row, past the flag's `
+      + 'handling policy (it refuses a global On): dev and staging only. In production, unset it and turn the '
+      + 'flag on per tenant or account through the super-admin flag routes.');
+  }
+  return past.length;
 }
 
 /** A write the policy refuses: the status and the first-party body the route sends. */
