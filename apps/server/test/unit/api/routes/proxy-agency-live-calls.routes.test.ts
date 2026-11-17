@@ -141,6 +141,7 @@ describe('GET /live-calls', () => {
       listeners: [{ user_id: ME, name: 'Me Supervisor', started_at: '2026-11-16T10:01:00.000Z' }],
     });
     expect(body.calls[0]).not.toHaveProperty('customer_phone');
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(deps.calls[0]).toMatchObject({ method: 'GET', path: '/agency/live-calls', tenantId: TENANT, accountId: ACCOUNT, query: { campaign_id: '66666666-6666-4666-8666-666666666666' } });
   });
 
@@ -176,6 +177,8 @@ describe('GET /live-calls/:callId/number', () => {
   it('answers the full number of a live call in scope, and 404 for anything else', async () => {
     const res = await get(`/proxy/agency/live-calls/${CALL.toUpperCase()}/number`);
     expect(res.json()).toEqual({ call_id: CALL, customer_phone: '+919812345678' });
+    // The one answer with a customer's full number: never cached by a browser or a proxy (LS9).
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(deps.calls[0]!.query).toEqual({ call_id: CALL });
     deps.live = [];
     const gone = await get(`/proxy/agency/live-calls/${CALL}/number`);

@@ -136,6 +136,8 @@ describe('GET /listen-history', () => {
       query: { listener_user_id: ME, agent_user_id: AGENT, from: '2026-11-01T00:00:00Z', to: '2026-11-17T00:00:00+05:30', limit: '20', cursor: 'abc' },
     });
     expect(res.body).not.toContain('9812345678');
+    // It names customers (masked) and supervisors: never cached, as the export is not.
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(res.json()).toEqual({
       next_cursor: null,
       entries: [expect.objectContaining({

@@ -214,6 +214,10 @@ Manas.
   the leak check) is asserted on every run. The wall-clock lane runs on every server PR, and on a
   busy 2-core runner two windows 20 s apart differ by more than the listeners. CI does not set
   `LISTEN_LOAD_BOUNDS` (on a `full-ci` run the bounds apply only if the runner has 4 CPUs).
+- **(n)** The live-call routes and the history's page answer `Cache-Control: no-store`, refusals
+  included, as the export already did (final review): the number reveal is the one answer with a
+  customer's full number (LS9's "masked again on leaving the page" must not be undone by a browser or
+  proxy cache), and the list and the history name supervisors and customers (masked).
 
 ## 2. Architecture
 

@@ -155,6 +155,8 @@ export async function proxyAgencyListenHistoryRoutes(
   const deps = opts.deps ?? defaultListenHistoryRouteDeps;
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
+  // Never cached by a browser or a proxy, refusals included: the history names supervisors and customers (masked), the page as much as the export.
+  app.addHook('onRequest', async (_request, reply) => { void reply.header('Cache-Control', 'no-store'); });
 
   /** The account and the consent flag, or a reply. Runs after the permission. */
   async function gate(request: FastifyRequest, reply: FastifyReply): Promise<{ tenantId: string; accountId: string } | null> {

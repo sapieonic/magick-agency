@@ -120,6 +120,8 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
   const deps = opts.deps ?? defaultLiveCallRouteDeps;
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
+  // Never cached by a browser or a proxy, refusals included: the live list names supervisors and customers (masked), and the number reveal is the one answer with a full number (LS9).
+  app.addHook('onRequest', async (_request, reply) => { void reply.header('Cache-Control', 'no-store'); });
 
   /**
    * The account and the consent flag, or a reply. Runs after the permission. The flags are read
