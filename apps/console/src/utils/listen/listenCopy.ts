@@ -1,6 +1,6 @@
 import { durationWords } from '../format/duration';
+import { AGENCY_CALL_ORIGIN_LABELS } from '../../types/listen-history';
 import type {
-  AgencyCallOrigin,
   AgencyListenErrorCode,
   AgencyLiveCall,
   AgencyLiveCallNotListenableReason,
@@ -283,12 +283,8 @@ export function formatClock(ms: number | null | undefined): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-/** The Type badge's word. */
-export const ORIGIN_LABELS: Record<AgencyCallOrigin, string> = {
-  campaign: 'Dialler',
-  manual: 'Soft phone',
-  inbound: 'Inbound',
-};
+/** The Type badge's word: the contract's, which the history's CSV `call_type` column uses too. */
+export const ORIGIN_LABELS = AGENCY_CALL_ORIGIN_LABELS;
 
 /**
  * The Campaign column: the campaign's name; a soft-phone call not logged to one is "Soft phone";
