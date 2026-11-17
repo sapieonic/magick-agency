@@ -12,6 +12,7 @@ import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../../settings/a
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { enrichAttemptAgentName } from '../../agency/agency-spine.js';
 import { callListenSessions } from './helpers/listen.js';
+import { noStore } from './helpers/no-store.js';
 
 const log = createChildLogger({ component: 'proxy-agency-calls-routes' });
 
@@ -536,12 +537,18 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         });
       }
 
-      const body = await withAttemptAgentName(stripped.body, tenantId);
       // Who listened to the call live ("Listened to by", docs/listening.md LS13): this route is
-      // already `agency.supervise`. Absent when there is no call, or when the read failed.
-      const callId = isDetailEnvelope(body) && body.call && typeof body.call['id'] === 'string' ? body.call['id'] : null;
-      const listenSessions = callId && request.accountId ? await callListenSessions(tenantId, request.accountId, callId) : null;
-      return reply.send(listenSessions ? { ...(body as object), listen_sessions: listenSessions } : body);
+      // already `agency.supervise`. Absent when there is no call, or when the read failed. Read
+      // beside the agent's name; an answer that names the supervisors is never cached.
+      const detail = stripped.body;
+      const callId = isDetailEnvelope(detail) && detail.call && typeof detail.call['id'] === 'string' ? detail.call['id'] : null;
+      const [body, listenSessions] = await Promise.all([
+        withAttemptAgentName(detail, tenantId),
+        callId && request.accountId ? callListenSessions(tenantId, request.accountId, callId) : null,
+      ]);
+      if (!listenSessions) return reply.send(body);
+      noStore(reply);
+      return reply.send({ ...(body as object), listen_sessions: listenSessions });
     },
   );
 

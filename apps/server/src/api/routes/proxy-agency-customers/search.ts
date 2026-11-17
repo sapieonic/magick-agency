@@ -14,12 +14,12 @@ import { loadCustomerSummary, loadTimelinePage } from '../../../agency/customer-
 import {
   auditCustomerHistory,
   guardCustomerRoute,
-  noStore,
   parseBody,
   refusal,
   resolveDialerViewer,
   type CustomerRoutesDeps,
 } from './shared.js';
+import { noStore } from '../helpers/no-store.js';
 
 export async function registerCustomerSearchRoute(app: FastifyInstance, deps: CustomerRoutesDeps): Promise<void> {
   app.post('/customers/search', {

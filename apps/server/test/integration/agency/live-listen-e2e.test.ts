@@ -384,6 +384,8 @@ describe('live call listening, end to end on VoiceLink', () => {
       listen_id: l.listenId, listener_user_id: supervisor.id, end_reason: 'call_ended', duration_seconds: expect.any(Number),
       ended_at: expect.any(String), started_at: expect.any(String),
     })]);
+    // It names the supervisors who listened: never cached.
+    expect(detail.headers['cache-control']).toBe('no-store');
   });
 
   it('a listener that drops ends `listener_disconnected`; the call carries on, and it can listen again', async () => {
@@ -579,6 +581,7 @@ describe('live call listening, end to end on VoiceLink', () => {
     const detail = await http(supervisor, 'GET', `/proxy/agency/softphone/calls/${placed.call.id}`);
     expect(detail.statusCode, detail.body).toBe(200);
     expect(detail.json().listen_sessions).toEqual([expect.objectContaining({ listen_id: l.listenId, end_reason: 'call_ended' })]);
+    expect(detail.headers['cache-control']).toBe('no-store');
     // LS16 k: the agent reads their own call, without agency.supervise: no `listen_sessions`.
     const own = await http(agent, 'GET', `/proxy/agency/softphone/calls/${placed.call.id}`);
     expect(own.statusCode, own.body).toBe(200);

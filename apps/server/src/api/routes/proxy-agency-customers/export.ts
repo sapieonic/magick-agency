@@ -17,12 +17,12 @@ import { settledValue } from '../helpers/settled.js';
 import {
   auditCustomerHistory,
   guardCustomerRoute,
-  noStore,
   ownSearch,
   parseBody,
   resolveDialerViewer,
   type CustomerRoutesDeps,
 } from './shared.js';
+import { noStore } from '../helpers/no-store.js';
 
 /** `customer-history-2026-11-06`: the export's file name (no number in it, CH6). */
 function customerExportFileName(now: Date): string {

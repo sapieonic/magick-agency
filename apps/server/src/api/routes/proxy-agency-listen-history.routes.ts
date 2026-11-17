@@ -21,6 +21,7 @@ import { listenHistoryExportQuerySchema, listenHistoryQuerySchema } from './help
 import { definedQueryString } from './helpers/query-string.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 import { accountOrRefuse } from './helpers/account-scope.js';
+import { noStoreHook } from './helpers/no-store.js';
 import { drainPages } from './helpers/drain-pages.js';
 import { csvAttachmentHeader } from './helpers/csv-attachment.js';
 import type { CoreListenHistoryEntry, CoreListenHistoryPage } from './agency/listen-history.js';
@@ -149,7 +150,7 @@ export async function proxyAgencyListenHistoryRoutes(
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
   // Never cached by a browser or a proxy, refusals included: the history names supervisors and customers (masked), the page as much as the export.
-  app.addHook('onRequest', async (_request, reply) => { void reply.header('Cache-Control', 'no-store'); });
+  app.addHook('onRequest', noStoreHook);
 
   /** The account, or a reply. Runs after the permission; no flag (LS19, amended 2026-11-17). */
   function gate(request: FastifyRequest, reply: FastifyReply): { tenantId: string; accountId: string } | null {

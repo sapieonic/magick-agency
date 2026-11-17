@@ -20,6 +20,7 @@ import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { config } from '../../config/index.js';
 import { isUuid } from '../../utils/uuid.js';
 import { accountOrRefuse } from './helpers/account-scope.js';
+import { noStoreHook } from './helpers/no-store.js';
 import {
   LIVE_CALL_NUMBER_WITHHELD_BODY,
   LIVE_LISTEN_DISABLED_BODY,
@@ -122,7 +123,7 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
   // Never cached by a browser or a proxy, refusals included: the live list names supervisors and customers (masked), and the number reveal is the one answer with a full number (LS9).
-  app.addHook('onRequest', async (_request, reply) => { void reply.header('Cache-Control', 'no-store'); });
+  app.addHook('onRequest', noStoreHook);
 
   /**
    * The account and the consent flag, or a reply. Runs after the permission. The flags are read

@@ -227,7 +227,9 @@ The persona review's server calls (2026-11-16), beside the decided LS21, and the
 - **(n)** The live-call routes and the history's page answer `Cache-Control: no-store`, refusals
   included, as the export already did (final review): the number reveal is the one answer with a
   customer's full number (LS9's "masked again on leaving the page" must not be undone by a browser or
-  proxy cache), and the list and the history name supervisors and customers (masked).
+  proxy cache), and the list and the history name supervisors and customers (masked). A call
+  detail that carries `listen_sessions` ("Listened to by") answers it too (one `noStore` /
+  `noStoreHook`, `api/routes/helpers/no-store.ts`).
 - **(o)** Each of the upgrade's two database steps, the access check (LS16 n) and the row's insert,
   is bounded by `LISTEN_UPGRADE_STEP_TIMEOUT_MS` (10 s, a constant): past it the reservation is
   given back and the upgrade refused 1011 `listen_unavailable` (the console retries, bounded). A
