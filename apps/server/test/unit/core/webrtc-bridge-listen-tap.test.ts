@@ -790,7 +790,7 @@ describe('a failed message counts its 20 ms frames', () => {
     };
     vi.spyOn(AlawFramer.prototype, 'push').mockImplementation(() => { throw new Error('frame'); });
     const a = run(51);
-    a.tap.feedCustomer(bytes(480).toString('base64'));
+    a.tap.feedCustomer(bytes(480));
     // FALSIFIED by counting a failed message as one frame.
     expect(a.handle.stats()).toEqual({ framesSent: 0, framesDropped: 3 });
     a.tap.feedAgentAlaw(bytes(8000));
@@ -809,9 +809,9 @@ describe('a failed message counts its 20 ms frames', () => {
     const sink = recordingSink();
     const handle = tap.addSink(sink);
     vi.spyOn(VoicelinkTranscoder.prototype, 'pcm16kToAlaw').mockImplementation(() => { throw new Error('encode'); });
-    tap.feedAgentPcm16(pcm16kTone(320).toString('base64'));
+    tap.feedAgentPcm16(pcm16kTone(320));
     expect(handle.stats().framesDropped).toBe(1);
-    tap.feedAgentPcm16(pcm16kTone(960).toString('base64'));
+    tap.feedAgentPcm16(pcm16kTone(960));
     expect(handle.stats().framesDropped).toBe(4);
   });
 });
@@ -1359,6 +1359,19 @@ describe('the μ-law customer`s table (LS17)', () => {
 // ── The tap on its own ─────────────────────────────────────────────────────────
 
 describe('ListenTap', () => {
+  it('μ-law: a whole frame with nothing carried and a split one come out the same, mapped by the table', () => {
+    const tap = new ListenTap({ callId: 'c', carrierMedia: findCarrierModule('plivo')!.media, faultBudget: 50, onIdle: () => {} });
+    const sink = recordingSink();
+    tap.addSink(sink);
+    const wire = Buffer.concat([bytes(160, 1), bytes(160, 2), bytes(160, 3)]);
+    tap.feedCustomer(wire.subarray(0, 160)); // whole, nothing carried
+    tap.feedCustomer(wire.subarray(160, 260)); // a tail carried
+    tap.feedCustomer(wire.subarray(260, 420)); // 160 bytes, but behind a carry
+    tap.feedCustomer(wire.subarray(420)); // completes the third frame
+    expect(sink.messages).toHaveLength(3);
+    expect(legAudio(sink, 'customer')).toEqual(Buffer.from(wire.map((mu) => MULAW_TO_ALAW[mu]!)));
+  });
+
   const vlMedia = () => findCarrierModule('voicelink')!.media;
 
   it('a sink added to an ended tap is ended call_ended at once, its handle detached', () => {
@@ -1368,7 +1381,7 @@ describe('ListenTap', () => {
     const handle = tap.addSink(sink);
     expect(handle.attached).toBe(false);
     expect(sink.closed.map((c) => c.reason)).toEqual(['call_ended']);
-    tap.feedCustomer(bytes(160).toString('base64'));
+    tap.feedCustomer(bytes(160));
     expect(sink.messages).toHaveLength(0);
   });
 
@@ -1413,7 +1426,7 @@ describe('ListenTap', () => {
     vi.spyOn(AlawFramer.prototype, 'push').mockImplementation(() => { throw new Error('frame'); });
     expect(() => tap.feedAgentAlaw(bytes(160))).not.toThrow();
     expect(metrics.tapError).toHaveBeenCalledWith('frame');
-    expect(() => tap.feedCustomer(bytes(160).toString('base64'))).not.toThrow();
+    expect(() => tap.feedCustomer(bytes(160))).not.toThrow();
     expect(sink.close).not.toHaveBeenCalled();
     expect(() => tap.feedAgentAlaw(bytes(160))).not.toThrow();
     expect(sink.closed.map((c) => c.reason)).toEqual(['tap_error']);

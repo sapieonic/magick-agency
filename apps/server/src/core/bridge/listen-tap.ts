@@ -70,14 +70,19 @@ function framesIn(bytes: number, frameBytes: number): number {
   return Math.max(1, Math.ceil(bytes / frameBytes));
 }
 
-/** The decoded length of a base64 string, without decoding it. */
-function base64Bytes(b64: string): number {
-  const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((b64.length * 3) / 4) - pad);
-}
-
 type Leg = 'customer' | 'agent';
 type CustomerPath = 'passthrough' | 'mulaw' | 'codec';
+
+/** One leg's framing state. */
+interface LegState {
+  readonly framer: AlawFramer;
+  /** The leg's first transcoded output has been led to a whole frame (see `primed`). */
+  primed: boolean;
+  /** Failed frames in a row; reset by the leg's next frame that succeeds. */
+  failures: number;
+  /** Tags one framed 20 ms frame and broadcasts it: built once per leg, not per message. */
+  readonly emit: (frame: Buffer) => void;
+}
 
 interface SinkEntry {
   readonly sink: ListenSink;
@@ -119,15 +124,10 @@ export class ListenTap {
   private readonly customerEncoder: VoicelinkTranscoder | null;
   /** PCM16 16 kHz → A-law for a `pcm16` agent leg; made on its first frame. */
   private agentEncoder: VoicelinkTranscoder | null = null;
-  private readonly customerFramer = new AlawFramer();
-  private readonly agentFramer = new AlawFramer();
-  /** A transcoded leg's first output has been led to a whole frame (see {@link primed}). */
-  private customerPrimed = false;
-  private agentPrimed = false;
-
-  /** Failed frames in a row, per leg; reset by the leg's next frame that succeeds. */
-  private customerFailures = 0;
-  private agentFailures = 0;
+  private readonly legs: Readonly<Record<Leg, LegState>> = {
+    customer: this.makeLeg(AGENCY_LISTEN_LEG.customer),
+    agent: this.makeLeg(AGENCY_LISTEN_LEG.agent),
+  };
   private lastFaultLogAt = Number.NEGATIVE_INFINITY;
 
   constructor(opts: ListenTapOptions) {
@@ -162,18 +162,27 @@ export class ListenTap {
   }
 
   /**
-   * One carrier media frame (the customer), as the base64 payload the carrier sent. The caller has
-   * bounded its size. Never throws.
+   * One carrier media frame (the customer), its wire audio as the bridge decoded it once for every
+   * consumer: read, never written. The caller has bounded its size. Never throws.
    */
-  feedCustomer(payloadBase64: string): void {
+  feedCustomer(wire: Buffer): void {
     if (this.ended) return;
     let stage: ListenTapErrorStage = 'decode';
     try {
-      const wire = Buffer.from(payloadBase64, 'base64');
       let alaw: Buffer;
       if (this.customerPath === 'passthrough') {
         alaw = wire;
       } else if (this.customerPath === 'mulaw') {
+        const leg = this.legs.customer;
+        if (wire.length === ALAW8_FRAME_BYTES && leg.framer.pending === 0) {
+          // One whole frame and nothing carried: mapped straight into the message, no frame copy.
+          const message = Buffer.allocUnsafe(AGENCY_LISTEN_MESSAGE_BYTES);
+          message[0] = AGENCY_LISTEN_LEG.customer;
+          for (let i = 0; i < ALAW8_FRAME_BYTES; i++) message[i + 1] = MULAW_TO_ALAW[wire[i]!]!;
+          this.broadcast(message);
+          leg.failures = 0;
+          return;
+        }
         // A fresh Buffer the sinks may hold; one table read a byte.
         alaw = Buffer.allocUnsafe(wire.length);
         for (let i = 0; i < wire.length; i++) alaw[i] = MULAW_TO_ALAW[wire[i]!]!;
@@ -188,24 +197,25 @@ export class ListenTap {
       this.frameAndSend('customer', alaw);
     } catch (err) {
       // The carrier's wire audio is 8 kHz, a byte a sample (G.711): 160 bytes a frame.
-      this.fault('customer', stage, err, framesIn(base64Bytes(payloadBase64), ALAW8_FRAME_BYTES));
+      this.fault('customer', stage, err, framesIn(wire.length, ALAW8_FRAME_BYTES));
     }
   }
 
-  /** One `pcm16` agent frame (the base64 payload of PCM16 16 kHz). The caller has bounded its size. Never throws. */
-  feedAgentPcm16(payloadBase64: string): void {
+  /**
+   * One `pcm16` agent frame (PCM16 16 kHz, as the bridge decoded it once for the relay and the tap:
+   * read, never written). The caller has bounded its size. Never throws.
+   */
+  feedAgentPcm16(pcm: Buffer): void {
     if (this.ended) return;
-    let stage: ListenTapErrorStage = 'decode';
+    let stage: ListenTapErrorStage = 'encode';
     try {
-      const pcm = Buffer.from(payloadBase64, 'base64');
-      stage = 'encode';
       this.agentEncoder ??= new VoicelinkTranscoder();
       let alaw = this.agentEncoder.pcm16kToAlaw(pcm);
       stage = 'frame';
       alaw = this.primed('agent', alaw);
       this.frameAndSend('agent', alaw);
     } catch (err) {
-      this.fault('agent', stage, err, framesIn(base64Bytes(payloadBase64), PCM16_FRAME_BYTES));
+      this.fault('agent', stage, err, framesIn(pcm.length, PCM16_FRAME_BYTES));
     }
   }
 
@@ -225,10 +235,11 @@ export class ListenTap {
    */
   resetAgentLeg(): void {
     try {
-      this.agentFramer.reset();
+      const agent = this.legs.agent;
+      agent.framer.reset();
+      agent.primed = false;
+      agent.failures = 0;
       this.agentEncoder = null;
-      this.agentPrimed = false;
-      this.agentFailures = 0;
     } catch { /* nothing to undo */ }
   }
 
@@ -253,9 +264,9 @@ export class ListenTap {
    */
   private primed(leg: Leg, alaw: Buffer): Buffer {
     if (alaw.length === 0) return alaw;
-    if (leg === 'customer' ? this.customerPrimed : this.agentPrimed) return alaw;
-    if (leg === 'customer') this.customerPrimed = true;
-    else this.agentPrimed = true;
+    const state = this.legs[leg];
+    if (state.primed) return alaw;
+    state.primed = true;
     const short = alaw.length % ALAW8_FRAME_BYTES;
     if (short === 0) return alaw;
     const lead = ALAW8_FRAME_BYTES - short;
@@ -270,17 +281,24 @@ export class ListenTap {
    * framing or the message build (a sink is guarded on its own), which the caller counts `frame`.
    */
   private frameAndSend(leg: Leg, alaw: Buffer): void {
-    const framer = leg === 'customer' ? this.customerFramer : this.agentFramer;
-    const tag = leg === 'customer' ? AGENCY_LISTEN_LEG.customer : AGENCY_LISTEN_LEG.agent;
-    framer.push(alaw, (frame) => {
-      // Built once per frame and shared by every sink: `ws` queues the Buffer as is.
-      const message = Buffer.allocUnsafe(AGENCY_LISTEN_MESSAGE_BYTES);
-      message[0] = tag;
-      frame.copy(message, 1);
-      this.broadcast(message);
-    });
-    if (leg === 'customer') this.customerFailures = 0;
-    else this.agentFailures = 0;
+    const state = this.legs[leg];
+    state.framer.push(alaw, state.emit);
+    state.failures = 0;
+  }
+
+  private makeLeg(tag: number): LegState {
+    return {
+      framer: new AlawFramer(),
+      primed: false,
+      failures: 0,
+      emit: (frame) => {
+        // Built once per frame and shared by every sink: `ws` queues the Buffer as is.
+        const message = Buffer.allocUnsafe(AGENCY_LISTEN_MESSAGE_BYTES);
+        message[0] = tag;
+        frame.copy(message, 1);
+        this.broadcast(message);
+      },
+    };
   }
 
   /** Offer one message to every sink. Never throws. */
@@ -327,7 +345,7 @@ export class ListenTap {
     try {
       this.countError(stage);
       for (const entry of this.entries) entry.framesDropped += frames;
-      const failures = leg === 'customer' ? (this.customerFailures += frames) : (this.agentFailures += frames);
+      const failures = (this.legs[leg].failures += frames);
       const now = Date.now();
       if (now - this.lastFaultLogAt >= LISTEN_TAP_LOG_INTERVAL_MS) {
         this.lastFaultLogAt = now;

@@ -537,16 +537,18 @@ resets only the agent leg's framer, encoder and priming, so a socket that chose 
 taken up).
 
 **In the relay.** `onPstnMessage` (customer), `onBrowserMessage` (`pcm16` agent) and
-`onBrowserBinary` (`alaw8` agent) each call the relay (`relayPstnMedia`, `relayBrowserPcm16`,
-`relayBrowserAlaw`, the old bodies unchanged, `relayCarrierToAlawBrowser` inside the first) and then
-a tail: `const listen = session.listenTap; if (listen !== null && …) listen.feed…(…)`. The tail runs
-whether or not the relay wrote (the agent's socket inside its re-attach window, the carrier's
-socket gated), and only after `recordRelayFrame`, so the dwell excludes the tap. With nobody
-listening the tail is that one read: no codec, no tap call, no send.
+`onBrowserBinary` (`alaw8` agent) each bound the frame and, for the JSON legs, decode its base64
+once (only when the relay or a tap will take it), then call the relay (`relayPstnMedia`,
+`relayBrowserPcm16`, `relayBrowserAlaw`, `relayCarrierToAlawBrowser` inside the first) and then a
+tail: `const listen = session.listenTap; if (listen !== null) listen.feed…(buffer)`, the same
+decoded Buffer, which no consumer writes to. The tail runs whether or not the relay wrote (the
+agent's socket inside its re-attach window, the carrier's socket gated), and only after
+`recordRelayFrame`, so the dwell excludes the tap. With nobody listening the tail is that one read:
+no codec, no tap call, no send.
 
-**The legs.** Customer: the carrier's base64 payload decoded again by the tap; A-law on the wire
+**The legs.** Customer: the carrier's wire audio as the bridge decoded it; A-law on the wire
 (VoiceLink) is copied; μ-law (Plivo, `wireFormat: 'mulaw8'`) is mapped by the 256-entry
-`MULAW_TO_ALAW` (LS17 a); anything else goes through the tap's own `carrier.media.createCodec()` to
+`MULAW_TO_ALAW` (LS17 a), a whole 20 ms frame with nothing carried straight into its message; anything else goes through the tap's own `carrier.media.createCodec()` to
 PCM16 16 kHz and its own `VoicelinkTranscoder.pcm16kToAlaw`. Agent: a `pcm16` frame through the
 tap's own encoder; an `alaw8` message copied. Each leg has its own `AlawFramer`, so a 1 s agent
 message is 50 messages and a carrier frame that is not whole 20 ms frames carries its tail. A
@@ -566,8 +568,8 @@ socket-backed `send` phase 3's socket uses: `sendVerdict` under `LISTENER_LIMITS
 The handle's `stats()` and `close`'s second argument give `framesSent` and `framesDropped` for the
 session row.
 
-**Faults.** Every feed is one try/catch with its stage (`decode`: the base64, the μ-law table or
-the carrier codec; `encode`: the A-law encoder; `frame`: the priming, the framer and the message),
+**Faults.** Every feed is one try/catch with its stage (`decode`: the μ-law table or the carrier
+codec; `encode`: the A-law encoder; `frame`: the priming, the framer and the message),
 counted once in `agency_listen_tap_errors_total{stage}`. A failed message counts its 20 ms frames
 (LS17 c) in each sink's `frames_dropped` and in the leg's run of failed frames, which resets on its
 next good message; at `agency.listen.faultBudget` frames in a row every sink is ended `tap_error`
