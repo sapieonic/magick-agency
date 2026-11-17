@@ -62,4 +62,20 @@ describe('listenHistoryQuery in the reader’s zone', () => {
       to: '2026-03-29T23:00:00.000Z',
     });
   });
+
+  it('Asia/Beirut, whose clocks go back AT midnight (25 October 2026): the repeated last hour is kept', () => {
+    // The 25th begins at 00:00 EET (22:00Z on the 24th), after 23:00–24:00 local has happened twice.
+    expect(inZone('Asia/Beirut', () => range('2026-10-24', '2026-10-24'))).toEqual({
+      from: '2026-10-23T21:00:00.000Z',
+      to: '2026-10-24T22:00:00.000Z',
+    });
+  });
+
+  it('America/Havana, whose clocks go forward AT midnight (8 March 2026): the first instant that exists', () => {
+    // There is no 00:00 on the 8th: it begins at 01:00 CDT (05:00Z); the 9th at 00:00 CDT (04:00Z).
+    expect(inZone('America/Havana', () => range('2026-03-08', '2026-03-08'))).toEqual({
+      from: '2026-03-08T05:00:00.000Z',
+      to: '2026-03-09T04:00:00.000Z',
+    });
+  });
 });

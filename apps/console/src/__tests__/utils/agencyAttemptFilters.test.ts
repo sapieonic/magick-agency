@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ATTEMPT_RANGE_NOTE,
   attemptDateRange,
+  exclusiveDateRange,
   attemptFilterGroupCount,
   isAttemptFiltered,
   isInvertedDayRange,
@@ -270,5 +271,20 @@ describe('observedDispositionCodes — a suggestion list, never a catalog', () =
     expect(observedDispositionCodes([{ disposition_code: 'wrong number, do not call' }])).toEqual([
       'wrong number, do not call',
     ]);
+  });
+});
+
+describe('exclusiveDateRange — the exclusive end', () => {
+  it('ends at the first instant of the day after the last, one millisecond after attemptDateRange', () => {
+    expect(exclusiveDateRange('2026-08-01', '2026-08-03')).toEqual({
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-04T00:00:00.000Z',
+    });
+    expect(Date.parse(exclusiveDateRange('', '2026-08-03').to!) - 1).toBe(Date.parse(attemptDateRange('', '2026-08-03').to!));
+  });
+
+  it('leaves out an open end', () => {
+    expect(exclusiveDateRange('', '')).toEqual({});
+    expect(exclusiveDateRange('2026-08-01', '')).toEqual({ from: '2026-08-01T00:00:00.000Z' });
   });
 });

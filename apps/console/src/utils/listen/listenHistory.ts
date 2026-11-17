@@ -1,4 +1,5 @@
 import { hasPermission } from '../permissions';
+import { exclusiveDateRange } from '../agencyAttemptFilters';
 import { durationWords } from '../format/duration';
 import { agentName, liveCallPagePath } from './liveCallsTable';
 import { LISTEN_HISTORY_COPY, LISTENED_TO_BY_COPY, LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel } from './listenCopy';
@@ -34,12 +35,9 @@ export function listenHistoryQuery(draft: ListenHistoryDraft): AgencyListenHisto
   const query: AgencyListenHistoryQuery = {};
   if (draft.supervisor) query.listener_user_id = draft.supervisor;
   if (draft.agent) query.agent_user_id = draft.agent;
-  if (draft.from) query.from = new Date(`${draft.from}T00:00:00`).toISOString();
-  if (draft.to) {
-    const end = new Date(`${draft.to}T00:00:00`);
-    end.setDate(end.getDate() + 1);
-    query.to = end.toISOString();
-  }
+  const range = exclusiveDateRange(draft.from, draft.to);
+  if (range.from) query.from = range.from;
+  if (range.to) query.to = range.to;
   return query;
 }
 
