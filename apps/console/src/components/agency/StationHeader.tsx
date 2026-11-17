@@ -34,7 +34,6 @@ export function StationHeader({
   missedPings,
   extra,
   subline,
-  listenScope,
 }: {
   user: StationIdentityUser | null | undefined;
   /** Null while the bootstrap is still loading. */
@@ -59,11 +58,6 @@ export function StationHeader({
   extra?: ReactNode;
   /** Replaces the campaign name under the agent's name (the soft phone says so). */
   subline?: string;
-  /**
-   * Whose one-time listening notice this is (`agentListenScope`: the agent and the account):
-   * shown under the header until they dismiss it, while the account allows listening (LS2).
-   */
-  listenScope?: string | null;
 }) {
   return (
     <>
@@ -131,7 +125,7 @@ export function StationHeader({
           <AppVersion version={__APP_VERSION__} variant="inline" />
         </div>
       </header>
-      <StationListenFirstNotice scope={listenScope} />
+      <StationListenFirstNotice />
     </>
   );
 }

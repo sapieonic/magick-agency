@@ -37,7 +37,6 @@ export function SoftphoneHeader({
   connection,
   missedPings,
   actions,
-  listenScope,
 }: {
   user: StationIdentityUser | null | undefined;
   sp: SoftphoneState;
@@ -45,8 +44,6 @@ export function SoftphoneHeader({
   missedPings: number;
   /** The host's own controls (Close soft phone). */
   actions?: ReactNode;
-  /** Whose one-time listening notice this is (`agentListenScope`), as on the station (LS2). */
-  listenScope?: string | null;
 }) {
   return (
     <>
@@ -69,7 +66,7 @@ export function SoftphoneHeader({
           <AppVersion version={__APP_VERSION__} variant="inline" />
         </div>
       </header>
-      <StationListenFirstNotice scope={listenScope} />
+      <StationListenFirstNotice />
     </>
   );
 }

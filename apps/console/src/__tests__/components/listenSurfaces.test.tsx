@@ -11,6 +11,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const mocks = vi.hoisted(() => ({
   flags: new Set<string>(),
   useTenant: vi.fn(),
+  user: { id: 'u-1' } as { id: string } | null,
   getMyAssignments: vi.fn(),
 }));
 
@@ -18,6 +19,10 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ isEnabled: (f: string) => mocks.flags.has(f), status: 'ready' }),
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../contexts/AuthContext')>()),
+  useAuth: () => ({ user: mocks.user }),
+}));
 vi.mock('../../api/agency', () => ({ getMyAssignments: mocks.getMyAssignments }));
 
 import {
@@ -35,6 +40,7 @@ const LINE = 'Calls may be listened to by a supervisor for quality and training.
 
 beforeEach(() => {
   mocks.flags = new Set();
+  mocks.user = { id: 'u-1' };
   mocks.useTenant.mockReturnValue({ tenantId: 't-1', accountId: 'a-1', role: 'agent', accountResolution: 'ready', accountError: null, reloadAccounts: vi.fn() });
   mocks.getMyAssignments.mockResolvedValue([
     { campaign_id: 'c-1', campaign_name: 'Renewals', campaign_status: 'running', assigned_at: '2026-11-01T09:00:00Z' },
@@ -85,7 +91,10 @@ describe('the station header’s info popover (LS2)', () => {
 });
 
 describe('the one-time notice under the station’s or the soft phone’s header (LS2)', () => {
+  // The signed-in agent (u-1) and the URL's account (t-1, a-1), from the mocked contexts.
   const SCOPE = agentListenScope('u-1', 't-1', 'a-1')!;
+  const inAccount = (accountId: string) =>
+    mocks.useTenant.mockReturnValue({ ...mocks.useTenant(), accountId });
   const DETAIL = 'You can read this again at any time under Monitoring and recording, the i button at the top of the screen.';
 
   it('scopes to the agent and the account, and needs all three', () => {
@@ -97,7 +106,7 @@ describe('the one-time notice under the station’s or the soft phone’s header
 
   it('shows the standing line until the agent says Got it, then never again for them in this browser and account', () => {
     mocks.flags.add('agency_live_listen_enabled');
-    const { unmount } = render(<StationListenFirstNotice scope={SCOPE} />);
+    const { unmount } = render(<StationListenFirstNotice />);
     const notice = screen.getByTestId('listen-first-notice');
     expect(notice.textContent).toContain(LINE);
     expect(notice.textContent).toContain(DETAIL);
@@ -106,27 +115,30 @@ describe('the one-time notice under the station’s or the soft phone’s header
     expect(screen.queryByTestId('listen-first-notice')).toBeNull();
     expect(window.localStorage.getItem(`${LISTEN_AGENT_NOTICE_SEEN_KEY}:${SCOPE}`)).toBe('1');
     unmount();
-    render(<StationListenFirstNotice scope={SCOPE} />);
+    render(<StationListenFirstNotice />);
     expect(screen.queryByTestId('listen-first-notice')).toBeNull();
   });
 
   it('another agent on this browser, or this agent in another account, is told too', () => {
     mocks.flags.add('agency_live_listen_enabled');
     window.localStorage.setItem(`${LISTEN_AGENT_NOTICE_SEEN_KEY}:${SCOPE}`, '1');
-    render(
-      <>
-        <StationListenFirstNotice scope="u-2:t-1:a-1" />
-        <StationListenFirstNotice scope="u-1:t-1:a-2" />
-      </>,
-    );
-    expect(screen.getAllByTestId('listen-first-notice')).toHaveLength(2);
+    mocks.user = { id: 'u-2' };
+    const { unmount } = render(<StationListenFirstNotice />);
+    expect(screen.getByTestId('listen-first-notice')).toBeTruthy();
+    unmount();
+    mocks.user = { id: 'u-1' };
+    inAccount('a-2');
+    render(<StationListenFirstNotice />);
+    expect(screen.getByTestId('listen-first-notice')).toBeTruthy();
   });
 
   it('nothing while listening is off, or with nobody to remember it for', () => {
-    const { rerender } = render(<StationListenFirstNotice scope={SCOPE} />);
+    const { unmount } = render(<StationListenFirstNotice />);
     expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+    unmount();
     mocks.flags.add('agency_live_listen_enabled');
-    rerender(<StationListenFirstNotice scope={null} />);
+    mocks.user = null;
+    render(<StationListenFirstNotice />);
     expect(screen.queryByTestId('listen-first-notice')).toBeNull();
   });
 
@@ -138,7 +150,7 @@ describe('the one-time notice under the station’s or the soft phone’s header
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
-    render(<StationListenFirstNotice scope={SCOPE} />);
+    render(<StationListenFirstNotice />);
     fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
     expect(screen.queryByTestId('listen-first-notice')).toBeNull();
   });

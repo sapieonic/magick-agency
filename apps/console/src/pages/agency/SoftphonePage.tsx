@@ -29,7 +29,6 @@ import { SOFTPHONE_SURFACE } from '../../utils/agencyAgentSurfaces';
 import { StationEscape } from '../../components/agency/StationFatal';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { SoftphoneHeader, SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/softphone/SoftphoneHeader';
-import { agentListenScope } from '../../components/agency/StationListenNotice';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { useSoftphoneSession } from './softphone/useSoftphoneSession';
 import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
@@ -266,7 +265,6 @@ function SoftphoneConsole({
         sp={sp}
         connection={connection}
         missedPings={stationState.missedPings}
-        listenScope={agentListenScope(user?.id, tenantId, accountId)}
         actions={
           <button
             type="button"
