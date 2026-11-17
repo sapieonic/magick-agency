@@ -19,10 +19,10 @@ import { readListenFlags, type ListenFlags } from '../../agency/listen/listen-ac
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { config } from '../../config/index.js';
+import { isUuid } from '../../utils/uuid.js';
 import {
   LIVE_CALL_NUMBER_WITHHELD_BODY,
   LIVE_LISTEN_DISABLED_BODY,
-  isUuid,
   isWithheldNumber,
   listenRefusalCode,
   sendListenRefusal,

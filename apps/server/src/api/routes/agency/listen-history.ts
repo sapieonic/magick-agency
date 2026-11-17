@@ -10,7 +10,7 @@ import { agencyListenHistoryRepository } from '../../../db/repositories/agency.r
 import { matchName } from '../../../agency/inbound/match-name.js';
 import { listenHistoryQuerySchema } from '../helpers/listen-history-query.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
-import { isUuid } from '../helpers/listen.js';
+import { isUuid } from '../../../utils/uuid.js';
 
 /*
  * The listening history's internal handler (docs/listening.md §12, LS19), on the internal

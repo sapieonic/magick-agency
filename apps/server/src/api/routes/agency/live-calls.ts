@@ -11,7 +11,8 @@ import {
 import { matchName } from '../../../agency/inbound/match-name.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { ListenTokenUnavailableError } from '../../../agency/listen/listen-token.js';
-import { isUuid, sendListenRefusal } from '../helpers/listen.js';
+import { sendListenRefusal } from '../helpers/listen.js';
+import { isUuid } from '../../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'agency-live-calls' });
 

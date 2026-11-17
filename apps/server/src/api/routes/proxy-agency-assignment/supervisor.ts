@@ -32,7 +32,8 @@ import {
   zodDetails,
   type CanonicalAssignment,
 } from '../../../agency/assignment/operation.js';
-import { guardSupervisedCampaign, isUuid, refuse } from './shared.js';
+import { guardSupervisedCampaign, refuse } from './shared.js';
+import { isUuid } from '../../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'proxy-agency-assignment' });
 

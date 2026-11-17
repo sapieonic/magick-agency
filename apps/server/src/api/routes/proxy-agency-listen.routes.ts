@@ -5,7 +5,7 @@ import { disableNagle } from '../../utils/ws-nodelay.js';
 import { closeThenTerminate } from '../../utils/ws-backpressure.js';
 import { handleListenSocket, LISTEN_TOKEN_INVALID_REASON } from '../../agency/listen/listen-socket.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
-import { isUuid } from './helpers/listen.js';
+import { isUuid } from '../../utils/uuid.js';
 import '../../cluster/ws-handoff.plugin.js';
 
 /*

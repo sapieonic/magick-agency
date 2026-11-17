@@ -39,7 +39,8 @@ import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { rotationCallerIds, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { dialableCallerIds, withDialableCallerIds } from '../../../agency/campaign-dialability.js';
-import { guardSupervisedCampaign, isUuid, refuse } from './shared.js';
+import { guardSupervisedCampaign, refuse } from './shared.js';
+import { isUuid } from '../../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent-caller-ids' });
 

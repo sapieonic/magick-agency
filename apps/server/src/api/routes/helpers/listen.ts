@@ -10,7 +10,6 @@ import type { AgencyListenErrorCode } from '@magick-agency/contracts/errors';
 import type { AgencyCallListenSession, AgencyLiveCallNumberErrorResponse } from '@magick-agency/contracts/api/agency/live-calls';
 import { agencyListenSessionRepository } from '../../../db/repositories/agency.repository.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
-import { UUID_RE } from '../../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'agency-listen-routes' });
 
@@ -106,9 +105,4 @@ export async function callListenSessions(
     log.warn({ err, tenantId, callId }, 'Could not read the call\'s listen sessions — answering the detail without them');
     return null;
   }
-}
-
-/** Is `v` a UUID (either case, `utils/uuid.ts`)? Ids are checked at the edge: a non-UUID reaching a `uuid` cast is `22P02`. */
-export function isUuid(v: unknown): v is string {
-  return typeof v === 'string' && UUID_RE.test(v);
 }

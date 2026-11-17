@@ -63,7 +63,7 @@ import { contactPromiseWrite, promiseFollowUpAt } from '../promise-to-pay.js';
 import { todayIn } from '@magick-agency/domain/promise-to-pay';
 import type { ManualDialer } from './manual-dialer.js';
 import { onSoftphoneBreak, setAvailableGuarded } from './session-guard.js';
-import { UUID_RE } from '../../utils/uuid.js';
+import { isUuid } from '../../utils/uuid.js';
 import { withDialableCallerIds } from '../campaign-dialability.js';
 import type { SoftphoneActor, SoftphoneRefusal, SoftphoneResult } from './types.js';
 
@@ -879,8 +879,4 @@ export class SoftphoneService {
  */
 function dncMarkScope(row: AgencyManualCallRecord): { campaignId: string } | { accountScope: string } {
   return row.campaign_id ? { campaignId: row.campaign_id } : { accountScope: row.account_id };
-}
-
-function isUuid(value: unknown): value is string {
-  return typeof value === 'string' && UUID_RE.test(value);
 }
