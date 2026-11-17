@@ -356,8 +356,8 @@ export class ListenRegistry {
     const verdict = await this.ask(theirs, 'revoke');
     const unverified = new Set([...verdict.unchecked].filter((id) => !verdict.revoked.has(id)));
     const [revoked, unchecked] = await Promise.all([
-      this.endRevoked(theirs, verdict.revoked, 'revoke'),
-      this.endUnverified(theirs, unverified, 'revoke'),
+      this.endFor(theirs, verdict.revoked, 'permission_revoked', 'revoke'),
+      this.endFor(theirs, unverified, 'access_unverified', 'revoke'),
     ]);
     return revoked + unchecked;
   }
@@ -386,7 +386,7 @@ export class ListenRegistry {
           this.verifiedAt.set(s.listenId, at);
         }
       }
-      ended = await this.endRevoked(open, verdict.revoked, 'recheck');
+      ended = await this.endFor(open, verdict.revoked, 'permission_revoked', 'recheck');
       ended += await this.endStale();
     })();
     this.rechecking = pass;
@@ -416,16 +416,10 @@ export class ListenRegistry {
     return verdict;
   }
 
-  /** End `permission_revoked` those of `sessions` named in `ids` that are still open here. */
-  private async endRevoked(sessions: readonly ListenSessionHandle[], ids: ReadonlySet<string>, why: 'revoke' | 'recheck'): Promise<number> {
-    return this.endFor(sessions, ids, 'permission_revoked', why);
-  }
-
-  /** End `access_unverified` those of `sessions` named in `ids` that are still open here (LS21, LS22). */
-  private async endUnverified(sessions: readonly ListenSessionHandle[], ids: ReadonlySet<string>, why: 'revoke' | 'stale'): Promise<number> {
-    return this.endFor(sessions, ids, 'access_unverified', why);
-  }
-
+  /**
+   * End with `reason` those of `sessions` named in `ids` that are still open here:
+   * `permission_revoked`, or `access_unverified` when access could not be checked (LS21, LS22).
+   */
   private async endFor(
     sessions: readonly ListenSessionHandle[],
     ids: ReadonlySet<string>,
@@ -449,7 +443,7 @@ export class ListenRegistry {
     const stale = [...this.sessions.values()].filter((s) => at - (this.verifiedAt.get(s.listenId) ?? s.startedAt) >= cap);
     if (stale.length === 0) return 0;
     log.warn({ sessions: stale.length, capMs: cap }, 'Listen access unverified past the staleness cap — ending the sessions');
-    return this.endUnverified(stale, new Set(stale.map((s) => s.listenId)), 'stale');
+    return this.endFor(stale, new Set(stale.map((s) => s.listenId)), 'access_unverified', 'stale');
   }
 
   /**
