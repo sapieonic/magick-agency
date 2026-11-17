@@ -193,7 +193,9 @@ Manas.
   it.
 - **(h)** Every server close of a listener socket is close-then-terminate (`closeThenTerminate` in
   `utils/ws-backpressure.ts`, the station's backlog close generalised): a reader that stopped never
-  completes the close handshake, and `ws` would hold its buffers for its own 30 s.
+  completes the close handshake, and `ws` would hold its buffers for its own 30 s. The route's own
+  refusals before the token (`proxy-agency-listen.routes.ts`: a malformed id, no token, no runtime,
+  an upgrade that threw) are closed the same way.
 - **(i)** A withheld number (an inbound caller with no readable number: no digit at all) is said so:
   the live row gains `customer_phone_withheld` (optional in the type so the console's older fixtures
   still type; the server always sends it) beside the unchanged `customer_phone_masked` (`****`), and

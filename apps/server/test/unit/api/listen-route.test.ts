@@ -21,6 +21,19 @@ vi.mock('@magick-agency/observability', async (importOriginal) => {
   };
 });
 
+/** Every close-then-terminate (LS22 h), recorded, then done for real. */
+const closes = vi.hoisted(() => [] as Array<{ code: number; reason: string }>);
+vi.mock('../../../src/utils/ws-backpressure.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/utils/ws-backpressure.js')>();
+  return {
+    ...real,
+    closeThenTerminate: (ws: Parameters<typeof real.closeThenTerminate>[0], code: number, reason: string) => {
+      closes.push({ code, reason });
+      return real.closeThenTerminate(ws, code, reason);
+    },
+  };
+});
+
 import { buildApp } from '../../../src/app.js';
 import { budgetFor } from '../../../src/api/middleware/rate-limit.middleware.js';
 import { redactSpanUrl } from '../../../src/utils/redact-url.js';
@@ -56,15 +69,22 @@ describe('the listener socket route', () => {
     }]);
   });
 
-  it('refuses an id that is not a UUID 1008, a missing token 4401, and closes 1011 with no runtime', async () => {
+  it('refuses an id that is not a UUID 1008, a missing token 4401, and closes 1011 with no runtime, each close then terminated (LS22 h)', async () => {
     const app = await buildApp({ ctx: null });
     await app.ready();
+    closes.length = 0;
     try {
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/not-a-uuid/${L}?token=t`))).toEqual({ code: 1008, reason: 'invalid_upgrade' });
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/${S}/${L}`))).toEqual({ code: 4401, reason: 'listen_token_invalid' });
-      // SWE-NITS: a token given twice is a list, not a token: refused 4401 before anything reads it.
+      // LS22 g: a token given twice is a list, not a token: refused 4401 before anything reads it.
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/${S}/${L}?token=a&token=b`))).toEqual({ code: 4401, reason: 'listen_token_invalid' });
       expect(await closeOf(await app.injectWS(`/proxy/agency/listen/${S}/${L}?token=t`))).toEqual({ code: 1011, reason: 'listen_unavailable' });
+      expect(closes).toEqual([
+        { code: 1008, reason: 'invalid_upgrade' },
+        { code: 4401, reason: 'listen_token_invalid' },
+        { code: 4401, reason: 'listen_token_invalid' },
+        { code: 1011, reason: 'listen_unavailable' },
+      ]);
     } finally {
       await app.close();
     }

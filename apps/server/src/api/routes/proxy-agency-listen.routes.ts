@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { AGENCY_LISTEN_CLOSE } from '@magick-agency/contracts/agency';
 import { disableNagle } from '../../utils/ws-nodelay.js';
+import { closeThenTerminate } from '../../utils/ws-backpressure.js';
 import { handleListenSocket, LISTEN_TOKEN_INVALID_REASON } from '../../agency/listen/listen-socket.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
 import { isUuid } from './helpers/listen.js';
@@ -16,7 +17,9 @@ import '../../cluster/ws-handoff.plugin.js';
  * This route's own refusals, before the token is touched: an id that is not a UUID (1008
  * `INVALID_UPGRADE`; a corrected retry keeps its token), a missing token or one given more than
  * once (4401), no runtime (an app
- * built without a context, 1011). `disableNagle`: 20 ms frames, as on the station.
+ * built without a context, 1011). Each closes then terminates 5 s later if the peer never completes
+ * the close, as every server close of this socket does (LS22 h). `disableNagle`: 20 ms frames, as
+ * on the station.
  *
  * With media workers the primary hands the upgrade to the worker that owns the agent's session
  * (`wsOwner: { by: 'session', param: 'sessionId' }`, `docs/scaling.md` §2.1): the process whose
@@ -50,18 +53,18 @@ export async function proxyAgencyListenRoutes(app: FastifyInstance, opts: ProxyA
       const { sessionId, listenId } = request.params;
       if (!isUuid(sessionId) || !isUuid(listenId)) {
         log.warn('Listen upgrade refused: an id is not a UUID');
-        try { socket.close(AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, 'invalid_upgrade'); } catch { /* ignore */ }
+        closeThenTerminate(socket, AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, 'invalid_upgrade');
         return;
       }
-      // A string, once: `?token=a&token=b` parses to a list, which is no token (SWE-NITS).
+      // A string, once: `?token=a&token=b` parses to a list, which is no token (LS22 g).
       const token = request.query?.token;
       if (typeof token !== 'string' || token === '') {
-        try { socket.close(AGENCY_LISTEN_CLOSE.TOKEN_REJECTED, LISTEN_TOKEN_INVALID_REASON); } catch { /* ignore */ }
+        closeThenTerminate(socket, AGENCY_LISTEN_CLOSE.TOKEN_REJECTED, LISTEN_TOKEN_INVALID_REASON);
         return;
       }
       const runtime = opts.getRuntime();
       if (!runtime) {
-        try { socket.close(AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, 'listen_unavailable'); } catch { /* ignore */ }
+        closeThenTerminate(socket, AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, 'listen_unavailable');
         return;
       }
       disableNagle(socket, log, { sessionId: sessionId.toLowerCase(), leg: 'listener' });
@@ -71,7 +74,7 @@ export async function proxyAgencyListenRoutes(app: FastifyInstance, opts: ProxyA
         runtime.listenSocketDeps(),
       ).catch((err) => {
         log.error({ err, listenId }, 'Listen upgrade failed');
-        try { socket.close(AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, 'listen_unavailable'); } catch { /* ignore */ }
+        closeThenTerminate(socket, AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, 'listen_unavailable');
       });
     },
   );
