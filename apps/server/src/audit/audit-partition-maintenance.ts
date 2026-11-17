@@ -193,46 +193,23 @@ export async function purgeAuditPartitions(
     dropped.push(relname);
   }
 
-  let defaultRows = 0;
   const hasDefault = partitions.rows.some((r) => r.relname === `${spec.table}_default`);
-  if (hasDefault) {
-    if (dryRun) {
-      const result = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM ${spec.table}_default WHERE ${spec.tsColumn} < $1`,
-        [cutoff],
-      );
-      defaultRows = result.rows[0]?.n ?? 0;
-    } else {
-      let deleted: number;
-      do {
-        const result = await pool.query(
-          `DELETE FROM ${spec.table}_default WHERE id IN (
-            SELECT id FROM ${spec.table}_default WHERE ${spec.tsColumn} < $1 LIMIT $2)`,
-          [cutoff, BATCH_SIZE],
-        );
-        deleted = result.rowCount ?? 0;
-        defaultRows += deleted;
-      } while (deleted === BATCH_SIZE);
-    }
-  }
+  const defaultRows = hasDefault ? await purgeOlderThan(pool, `${spec.table}_default`, spec.tsColumn, cutoff, dryRun) : 0;
 
   return { dropped, defaultRows };
 }
 
 /**
- * Deletes `<table>` rows older than the cutoff, {@link BATCH_SIZE} at a time, each batch picked
- * by id in its own statement so no delete holds many row locks or runs long. A dry run counts
- * them. The table name and column are parameters, from {@link AUDIT_HORIZON_TABLES}.
+ * Deletes `table` rows whose `tsColumn` is older than `cutoff`, {@link BATCH_SIZE} at a time, each
+ * batch picked by id (MATERIALIZED, so never more than a batch) in its own statement so no delete
+ * holds many row locks or runs long; a dry run counts them. Returns the rows. The table name and
+ * column come from this module's specs, never from input. The audit DEFAULT partitions and the
+ * {@link AUDIT_HORIZON_TABLES} share it.
  */
-export async function purgeAuditHorizonRows(
-  spec: AuditHorizonTableSpec,
-  cutoff: Date,
-  dryRun: boolean,
-): Promise<number> {
-  const pool = getPool();
+async function purgeOlderThan(pool: pg.Pool, table: string, tsColumn: string, cutoff: Date, dryRun: boolean): Promise<number> {
   if (dryRun) {
     const result = await pool.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM ${spec.table} WHERE ${spec.tsColumn} < $1`,
+      `SELECT count(*)::int AS n FROM ${table} WHERE ${tsColumn} < $1`,
       [cutoff],
     );
     return result.rows[0]?.n ?? 0;
@@ -242,15 +219,25 @@ export async function purgeAuditHorizonRows(
   do {
     const result = await pool.query(
       `WITH picked AS MATERIALIZED (
-         SELECT id FROM ${spec.table} WHERE ${spec.tsColumn} < $1 LIMIT $2
+         SELECT id FROM ${table} WHERE ${tsColumn} < $1 LIMIT $2
        )
-       DELETE FROM ${spec.table} t USING picked WHERE t.id = picked.id`,
+       DELETE FROM ${table} t USING picked WHERE t.id = picked.id`,
       [cutoff, BATCH_SIZE],
     );
     deleted = result.rowCount ?? 0;
     total += deleted;
   } while (deleted === BATCH_SIZE);
-  if (total > 0) log.info({ table: spec.table, rows: total }, 'Rows past the audit horizon deleted');
+  return total;
+}
+
+/** Deletes (or, on a dry run, counts) one {@link AUDIT_HORIZON_TABLES} table's rows older than the cutoff. */
+export async function purgeAuditHorizonRows(
+  spec: AuditHorizonTableSpec,
+  cutoff: Date,
+  dryRun: boolean,
+): Promise<number> {
+  const total = await purgeOlderThan(getPool(), spec.table, spec.tsColumn, cutoff, dryRun);
+  if (total > 0 && !dryRun) log.info({ table: spec.table, rows: total }, 'Rows past the audit horizon deleted');
   return total;
 }
 

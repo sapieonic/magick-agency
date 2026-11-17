@@ -52,7 +52,7 @@ function mockQueries(table: string) {
     if (sql.trimStart().startsWith('SELECT count')) {
       return { rows: [{ n: 7 }], rowCount: 1 };
     }
-    if (sql.trimStart().startsWith('DELETE') || sql.trimStart().startsWith('DROP')) {
+    if (/^(DELETE|DROP|WITH picked)/.test(sql.trimStart())) {
       return { rows: [], rowCount: 3 };
     }
     throw new Error(`Unexpected query: ${sql}`);
@@ -90,7 +90,7 @@ describe.each(AUDIT_TABLES)('purgeAuditPartitions — $table', (spec) => {
 
     expect(report.dropped).toEqual([`${spec.table}_2026_02`]);
     expect(report.defaultRows).toBe(7);
-    expect(executedSql().some((s) => s.startsWith('DELETE') || s.startsWith('DROP'))).toBe(false);
+    expect(executedSql().some((s) => /^(DELETE|DROP|WITH picked)/.test(s))).toBe(false);
   });
 });
 
