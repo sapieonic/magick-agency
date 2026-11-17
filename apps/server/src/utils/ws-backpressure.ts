@@ -48,6 +48,11 @@ export interface BackpressureLimits {
   readonly mediaSoftLimitBytes: number;
   /** Above this many buffered bytes the socket is over its cap (station: closed). Null: no cap. */
   readonly hardCapBytes: number | null;
+  /**
+   * Past the soft limit this long with every media frame dropped, the socket is over its cap too
+   * (a {@link MediaDropRun} per socket measures it). Absent: no time bound (station, carrier).
+   */
+  readonly softLimitMaxMs?: number;
 }
 
 /**
@@ -97,10 +102,6 @@ export const CARRIER_MEDIA_LIMITS: BackpressureLimits = {
  * (its control frames): a listener that stops reading but keeps pinging would never reach it, so
  * {@link LISTENER_SOFT_LIMIT_MAX_MS} ends one that has been past the soft limit that long.
  */
-export const LISTENER_LIMITS: BackpressureLimits = {
-  mediaSoftLimitBytes: 48 * 1024,
-  hardCapBytes: 256 * 1024,
-};
 
 /**
  * A listener whose every frame has been dropped at the soft limit for this long (no frame sent in
@@ -112,6 +113,43 @@ export const LISTENER_LIMITS: BackpressureLimits = {
  * and starts the clock again: it hears what it can, and the idle bound does not apply to it.
  */
 export const LISTENER_SOFT_LIMIT_MAX_MS = 10_000;
+
+export const LISTENER_LIMITS: BackpressureLimits = {
+  mediaSoftLimitBytes: 48 * 1024,
+  hardCapBytes: 256 * 1024,
+  softLimitMaxMs: LISTENER_SOFT_LIMIT_MAX_MS,
+};
+
+/**
+ * One socket's current run of media frames dropped at the soft limit, for limits with a
+ * `softLimitMaxMs`: the run starts at its first drop and ends at the next frame sent. Held by
+ * whoever owns the socket (the listener's sink), one per socket. The clock is read only on a drop.
+ */
+export class MediaDropRun {
+  private since: number | null = null;
+  private readonly maxMs: number;
+
+  constructor(limits: Pick<BackpressureLimits, 'softLimitMaxMs'>) {
+    this.maxMs = limits.softLimitMaxMs ?? Number.POSITIVE_INFINITY;
+  }
+
+  /** A frame was dropped: true once every frame for `softLimitMaxMs` has been (the run then starts over). */
+  dropped(): boolean {
+    const now = Date.now();
+    if (this.since === null) {
+      this.since = now;
+      return false;
+    }
+    if (now - this.since < this.maxMs) return false;
+    this.since = null;
+    return true;
+  }
+
+  /** A frame was sent: the run is over. */
+  sent(): void {
+    if (this.since !== null) this.since = null;
+  }
+}
 
 /** How long a station closed for its backlog may take to close before it is terminated. */
 export const BACKLOG_CLOSE_TERMINATE_MS = 5_000;

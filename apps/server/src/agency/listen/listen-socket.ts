@@ -17,7 +17,7 @@ import type {
 } from '../../core/webrtc-bridge-manager.js';
 import { sendToListenerSocket } from '../../core/bridge/listen-tap.js';
 import { rawDataToBuffer } from '../../core/bridge/browser-leg-media.js';
-import { closeThenTerminate } from '../../utils/ws-backpressure.js';
+import { LISTENER_LIMITS, MediaDropRun, closeThenTerminate } from '../../utils/ws-backpressure.js';
 import { withTimeoutOr } from '../../utils/with-timeout.js';
 import { LISTEN_MAX_CLIENT_MESSAGE_BYTES } from '../../utils/ws-limits.js';
 import type { ListenSessionCloseInput, ListenSessionOpenInput } from '../../db/repositories/agency.repository.js';
@@ -205,6 +205,8 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
   private idle: NodeJS.Timeout | null = null;
   private pinger: NodeJS.Timeout | null = null;
   private live = false;
+  /** This socket's run of frames dropped at the soft limit (`sendToListenerSocket`). */
+  private readonly drops = new MediaDropRun(LISTENER_LIMITS);
 
   constructor(
     private readonly ws: WebSocket,
@@ -226,7 +228,7 @@ class ListenSocketSession implements ListenSessionHandle, ListenSink {
 
   // ── ListenSink ──────────────────────────────────────────────────────────
   send(message: Buffer) {
-    return sendToListenerSocket(this.ws, message);
+    return sendToListenerSocket(this.ws, message, this.drops);
   }
 
   close(reason: ListenTapEndReason, stats: ListenTapStats): void {

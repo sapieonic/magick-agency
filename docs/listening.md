@@ -559,8 +559,9 @@ sink.
 **Sinks.** `ListenSink { listenId, send(message): 'sent' | 'dropped' | 'backlog' | 'closed',
 close(reason, stats) }` (`bridge-types.ts`): `dropped` counts the frame against the sink, `backlog`
 ends it `send_backlog`, `closed` or a throw ends it `listener_disconnected` (counted
-`stage="send"`); the other sinks get the frame. `sendToListenerSocket(ws, message)` is the
-socket-backed `send` phase 3's socket uses: `sendVerdict` under `LISTENER_LIMITS`, counting
+`stage="send"`); the other sinks get the frame. `sendToListenerSocket(ws, message, drops)` is the
+socket-backed `send` phase 3's socket uses: `sendVerdict` under `LISTENER_LIMITS` (its
+`softLimitMaxMs` measured by the socket's own `MediaDropRun`, `utils/ws-backpressure.ts`), counting
 `websocket_send_backpressure_total{socket="listener"}`, a throwing `ws.send` answered `closed`.
 The handle's `stats()` and `close`'s second argument give `framesSent` and `framesDropped` for the
 session row.

@@ -130,7 +130,7 @@ import { LISTEN_TAP_DEFAULT_FAULT_BUDGET, ListenTap, MULAW_TO_ALAW, sendToListen
 import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
 import { MulawTranscoder, VoicelinkTranscoder } from '../../../src/utils/audio-fir.js';
 import { alawDecodeTable, alawEncodeTable, decodeMulaw, encodeMulaw } from '../../../src/utils/audio.js';
-import { LISTENER_LIMITS, LISTENER_SOFT_LIMIT_MAX_MS } from '../../../src/utils/ws-backpressure.js';
+import { LISTENER_LIMITS, LISTENER_SOFT_LIMIT_MAX_MS, MediaDropRun } from '../../../src/utils/ws-backpressure.js';
 import { AGENCY_LISTEN_LEG, AGENCY_LISTEN_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 
 // ── Fakes ───────────────────────────────────────────────────────────────────
@@ -221,6 +221,8 @@ function fakeListenerSocket(opts: { drains?: boolean; throwOnSend?: number } = {
     readyState: 1,
     bufferedAmount: 0,
     got: [] as Buffer[],
+    /** The socket's own run of drops, as the listener's sink holds it. */
+    drops: new MediaDropRun(LISTENER_LIMITS),
     send(data: Buffer) {
       sends++;
       if (opts.throwOnSend !== undefined && sends >= opts.throwOnSend) throw new Error('write EPIPE');
@@ -236,7 +238,7 @@ function socketSink(ws: ReturnType<typeof fakeListenerSocket>, listenId = 'liste
   const sink: ListenSink & { closed: string[] } = {
     listenId,
     closed,
-    send: (m) => sendToListenerSocket(ws as never, m),
+    send: (m) => sendToListenerSocket(ws as never, m, ws.drops),
     close: (reason) => { closed.push(reason); },
   };
   return sink;
@@ -631,8 +633,8 @@ describe('the tail runs after the relay`s write, and the dwell does not see it',
 // ── Back-pressure on the listener's own socket ─────────────────────────────────
 
 describe('back-pressure: the listener`s socket only', () => {
-  it('LISTENER_LIMITS: soft 48 KiB, hard 256 KiB', () => {
-    expect(LISTENER_LIMITS).toEqual({ mediaSoftLimitBytes: 48 * 1024, hardCapBytes: 256 * 1024 });
+  it('LISTENER_LIMITS: soft 48 KiB, hard 256 KiB, 10 s of drops', () => {
+    expect(LISTENER_LIMITS).toEqual({ mediaSoftLimitBytes: 48 * 1024, hardCapBytes: 256 * 1024, softLimitMaxMs: 10_000 });
   });
 
   it('past the soft limit a frame is dropped and counted, the legs and the other listener carry on', async () => {
@@ -694,33 +696,53 @@ describe('a listener held past the soft limit', () => {
     expect(LISTENER_SOFT_LIMIT_MAX_MS).toBe(10_000);
   });
 
+  it('MediaDropRun: true on the drop that ends softLimitMaxMs of drops, then starts over; a send ends the run; no bound without softLimitMaxMs', () => {
+    let now = 2_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    expect(LISTENER_LIMITS.softLimitMaxMs).toBe(LISTENER_SOFT_LIMIT_MAX_MS);
+    const run = new MediaDropRun({ softLimitMaxMs: 100 });
+    expect(run.dropped()).toBe(false);
+    now += 99;
+    expect(run.dropped()).toBe(false);
+    run.sent();
+    now += 1;
+    expect(run.dropped()).toBe(false);
+    now += 100;
+    expect(run.dropped()).toBe(true);
+    expect(run.dropped()).toBe(false);
+    const unbounded = new MediaDropRun({});
+    expect(unbounded.dropped()).toBe(false);
+    now += 1e9;
+    expect(unbounded.dropped()).toBe(false);
+  });
+
   it('sendToListenerSocket: dropped continuously for 10 s answers backlog (counted dropped and closed); a frame sent in between starts the clock again', () => {
     let now = 1_000_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const ws = fakeListenerSocket();
     const m = Buffer.alloc(161);
     ws.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
-    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('dropped');
     now += LISTENER_SOFT_LIMIT_MAX_MS - 1;
-    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('dropped');
     // It read a little: one frame goes, and the 10 s start again from the next drop.
     ws.bufferedAmount = 0;
-    expect(sendToListenerSocket(ws as never, m)).toBe('sent');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('sent');
     ws.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
     now += 1;
-    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('dropped');
     now += LISTENER_SOFT_LIMIT_MAX_MS - 1;
-    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('dropped');
     now += 1;
     // FALSIFIED by no time bound (a reader that pings but never drains is never ended: media
     // stops at the soft limit, so the hard cap is out of its reach).
-    expect(sendToListenerSocket(ws as never, m)).toBe('backlog');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('backlog');
     expect(metrics.backpressure.mock.calls.filter((c) => c[1] === 'closed')).toEqual([['listener', 'closed']]);
     expect(metrics.backpressure.mock.calls.filter((c) => c[1] === 'media_dropped')).toHaveLength(5);
     // Another socket keeps its own clock.
     const other = fakeListenerSocket();
     other.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
-    expect(sendToListenerSocket(other as never, m)).toBe('dropped');
+    expect(sendToListenerSocket(other as never, m, other.drops)).toBe('dropped');
   });
 
   it('through the tap: a listener that never drains is ended send_backlog 10 s after its first dropped frame; its row`s drops equal the counter`s; the call and the other listener carry on', async () => {
@@ -1400,17 +1422,17 @@ describe('ListenTap', () => {
   it('sendToListenerSocket: sent, dropped past the soft limit, backlog past the cap, closed when not open or when send throws', () => {
     const ws = fakeListenerSocket();
     const m = Buffer.alloc(161);
-    expect(sendToListenerSocket(ws as never, m)).toBe('sent');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('sent');
     expect(ws.got[0]).toBe(m);
     ws.bufferedAmount = LISTENER_LIMITS.mediaSoftLimitBytes + 1;
-    expect(sendToListenerSocket(ws as never, m)).toBe('dropped');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('dropped');
     ws.bufferedAmount = LISTENER_LIMITS.hardCapBytes! + 1;
-    expect(sendToListenerSocket(ws as never, m)).toBe('backlog');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('backlog');
     ws.bufferedAmount = 0;
     ws.readyState = 2;
-    expect(sendToListenerSocket(ws as never, m)).toBe('closed');
+    expect(sendToListenerSocket(ws as never, m, ws.drops)).toBe('closed');
     const throwing = fakeListenerSocket({ throwOnSend: 1 });
-    expect(sendToListenerSocket(throwing as never, m)).toBe('closed');
+    expect(sendToListenerSocket(throwing as never, m, throwing.drops)).toBe('closed');
     expect(metrics.tapError).toHaveBeenCalledWith('send');
     expect(metrics.backpressure.mock.calls).toEqual([['listener', 'media_dropped'], ['listener', 'closed']]);
   });

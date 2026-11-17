@@ -32,7 +32,7 @@ import { AGENCY_LISTEN_LEG, AGENCY_LISTEN_MESSAGE_BYTES } from '@magick-agency/c
 import type { CarrierMediaCodec, CarrierMediaProtocol } from '../../telephony/carrier-module.js';
 import { VoicelinkTranscoder } from '../../utils/audio-fir.js';
 import { alawEncodeTable, decodeMulaw } from '../../utils/audio.js';
-import { LISTENER_LIMITS, LISTENER_SOFT_LIMIT_MAX_MS, sendVerdict } from '../../utils/ws-backpressure.js';
+import { LISTENER_LIMITS, sendVerdict, type MediaDropRun } from '../../utils/ws-backpressure.js';
 import { ALAW8_FRAME_BYTES, AlawFramer } from './browser-leg-media.js';
 import type {
   ListenSendResult, ListenSink, ListenTapEndReason, ListenTapHandle,
@@ -412,51 +412,41 @@ export class ListenTap {
   }
 }
 
-/**
- * When each listener socket's current run of dropped frames began (`Date.now()`); absent while its
- * frames are being sent. Keyed weakly: a socket that goes takes its entry with it.
- */
-const droppingSince = new WeakMap<object, number>();
+const MEDIA_FRAME = { media: true } as const;
+const BINARY = { binary: true } as const;
 
 /**
  * Send one tap message on a listener's socket, under {@link LISTENER_LIMITS}: what a socket-backed
  * {@link ListenSink.send} does. Reads only this socket's `bufferedAmount`; counts what it drops
  * and the sockets it hands back for closing (`websocket_send_backpressure_total{socket="listener"}`).
- * `backlog` past the hard cap, or once every frame for {@link LISTENER_SOFT_LIMIT_MAX_MS} has been
- * dropped (that last one counted dropped too, so a row's `frames_dropped` matches the counter).
- * The clock is read only on a drop. Never throws: a `send` that throws is counted
+ * `backlog` past the hard cap, or once every frame for the limits' `softLimitMaxMs` has been
+ * dropped (`drops`, this socket's own run; that last one counted dropped too, so a row's
+ * `frames_dropped` matches the counter). Never throws: a `send` that throws is counted
  * (`agency_listen_tap_errors_total{stage="send"}`) and answers `closed`, which ends the sink
  * `listener_disconnected`.
  */
 export function sendToListenerSocket(
   ws: Pick<WebSocket, 'readyState' | 'bufferedAmount' | 'send'>,
   message: Buffer,
+  drops: MediaDropRun,
 ): ListenSendResult {
-  switch (sendVerdict(ws, { media: true }, LISTENER_LIMITS)) {
+  switch (sendVerdict(ws, MEDIA_FRAME, LISTENER_LIMITS)) {
     case 'not_open':
       return 'closed';
     case 'over_cap':
       trackWebsocketSendBackpressure('listener', 'closed');
       return 'backlog';
-    case 'drop': {
+    case 'drop':
       trackWebsocketSendBackpressure('listener', 'media_dropped');
-      const now = Date.now();
-      const since = droppingSince.get(ws);
-      if (since === undefined) {
-        droppingSince.set(ws, now);
-      } else if (now - since >= LISTENER_SOFT_LIMIT_MAX_MS) {
-        droppingSince.delete(ws);
-        trackWebsocketSendBackpressure('listener', 'closed');
-        return 'backlog';
-      }
-      return 'dropped';
-    }
+      if (!drops.dropped()) return 'dropped';
+      trackWebsocketSendBackpressure('listener', 'closed');
+      return 'backlog';
     case 'send':
       break;
   }
-  droppingSince.delete(ws);
+  drops.sent();
   try {
-    ws.send(message, { binary: true });
+    ws.send(message, BINARY);
     return 'sent';
   } catch {
     try {
