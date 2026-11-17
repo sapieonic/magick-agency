@@ -100,6 +100,7 @@ describe('the sub-nav', () => {
       '/settings/softphone',
       '/settings/inbound',
       '/settings/call-summaries',
+      '/settings/listening',
     ]);
     expect(screen.getByTestId('settings-nav-team').getAttribute('aria-current')).toBe('page');
   });
@@ -127,6 +128,7 @@ describe('the sub-nav', () => {
       'Soft phone',
       'Inbound routing',
       'Call summaries',
+      'Live call listening',
       'Team',
     ]);
     expect(within(people).getByRole('link', { name: 'Team' }).getAttribute('aria-current')).toBe('page');

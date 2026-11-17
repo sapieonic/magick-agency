@@ -178,6 +178,7 @@ const OPEN_TAB: Record<CampaignTabId, string> = {
   contacts: 'Open contacts',
   attempts: 'Open call attempts',
   manual: 'Open manual calls',
+  live: 'Open live calls',
   activity: 'Open activity',
   settings: 'Open settings',
 };

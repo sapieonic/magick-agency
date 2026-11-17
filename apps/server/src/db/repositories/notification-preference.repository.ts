@@ -1,16 +1,10 @@
 import { getPool } from '@magick-agency/db';
+import { isUuid } from '../../utils/uuid.js';
 import type {
   NotifiableMember,
   NotificationPreferenceRecord,
   UpsertNotificationPreferenceInput,
 } from '../models/notification.model.js';
-
-/** Guard before a value reaches a `::uuid` cast, so a bad id is empty not `22P02`. */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isUuid(value: unknown): value is string {
-  return typeof value === 'string' && UUID_RE.test(value);
-}
 
 class NotificationPreferenceRepository {
   /**

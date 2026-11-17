@@ -15,15 +15,17 @@ import {
   validateFlagValue,
 } from '../validators/super-admin-feature-flags.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { checkBulkPolicy, checkOverridePolicy, flagPolicy } from '../../feature-flags/flag-policies.js';
 
 const log = createChildLogger({ component: 'super-admin-feature-flags-routes' });
 
 /*
  * Super-admin feature-flag management: validation, the tenant check, the write on
  * the shared `featureFlagRepository`, cache invalidation through the flag service
- * singleton, and the audit rows. Deliberately absent:
- *  - flag policies (reason-required, bulk-refused) — no flag has a policy, so
- *    those branches would be unreachable;
+ * singleton, and the audit rows. A flag with a handling policy
+ * (`feature-flags/flag-policies.ts`; today `agency_live_listen_enabled`, LS20) has it served on
+ * the catalog and the detail read and enforced on every write: turning it on needs a reason, and
+ * neither the bulk rollout nor a global enable may touch it. Deliberately absent:
  *  - a broadcast-cap cache refresh after an override write — no broadcast
  *    campaigns;
  *  - flag-change analytics — no analytics module.
@@ -77,6 +79,12 @@ const auditFlagChange = (
   });
 };
 
+/** `{ policy }` for a flag with a handling policy, nothing for an ordinary one (the key is absent). */
+const policyField = (flagKey: string) => {
+  const policy = flagPolicy(flagKey);
+  return policy ? { policy } : {};
+};
+
 /**
  * Super-admin feature-flag management. There is no flag allow-list: every key
  * the registry declares is manageable. Writes record the authenticated
@@ -104,6 +112,7 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
         owner: f.owner,
         description: f.description,
         global_override: globalByKey.get(f.key)?.value ?? null,
+        ...policyField(f.key),
       })),
     });
   });
@@ -148,6 +157,7 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
         key: flag.key, type: flag.type, default: flag.default, env_default: resolveEnvDefault(flag),
         scopes: flag.scopes, client_exposed: flag.clientExposed === true, owner: flag.owner,
         description: flag.description,
+        ...policyField(flag.key),
       },
       overrides,
     });
@@ -174,6 +184,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
     if (valueError) {
       return reply.code(422).send({ error: 'Invalid Value', message: valueError });
     }
+    const refused = checkOverridePolicy(flag.key, body);
+    if (refused) return reply.code(refused.status).send(refused.body);
 
     // Capture the prior value for the old→new audit trail. Best-effort:
     // a failed prior-read must never block the write, so it falls back to undefined.
@@ -296,6 +308,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
     if (!flag.scopes.includes('tenant')) {
       return reply.code(422).send({ error: 'Invalid Scope', message: `Flag '${flag.key}' does not permit tenant scope` });
     }
+    const bulkRefused = checkBulkPolicy(flag.key);
+    if (bulkRefused) return reply.code(bulkRefused.status).send(bulkRefused.body);
     const valueError = validateFlagValue(flag, body.value);
     if (valueError) {
       return reply.code(422).send({ error: 'Invalid Value', message: valueError });

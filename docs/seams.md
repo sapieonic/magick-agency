@@ -5,7 +5,7 @@ each module area owns, which config keys each declares, where shared infrastruct
 cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
 Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
-(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B).
+(Plivo steps 3 and 4); §2 and §3.6 on 2026-11-12 (Mode B); §3.1 on 2026-11-16 (live call listening); §4's listen revocation and §3.1's `hasActiveCall` on 2026-11-17.
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -82,6 +82,7 @@ class WebRtcBridgeManager {
   playClipToCarrierThenHangUp(correlationId: string,
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
+  hasActiveCall(callId: string): boolean;
   gracefulShutdown(): Promise<void>;
   // Inbound calls (docs/inbound.md §3), P1:
   acceptInboundCall(params: WebRtcInboundCallParams): Promise<WebRtcInboundAcceptance>;
@@ -91,6 +92,8 @@ class WebRtcBridgeManager {
   playInboundHold(correlationId: string, opts: InboundHoldOptions): Promise<InboundHoldResult>;
   stopInboundHold(correlationId: string): void;
   recordInboundAudio(correlationId: string, opts: InboundRecordOptions): Promise<InboundAudioRecording>;
+  // Live call listening (docs/listening.md, LS8):
+  openListenTap(callId: string, sink: ListenSink, options?: ListenTapOpenOptions): OpenListenTapResult;
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
@@ -190,6 +193,33 @@ params and the Record API's alike); the hold is never recorded.
 
 `InboundHoldOptions`, `InboundHoldResult`, `InboundRecordOptions` and `InboundAudioRecording` are in
 `bridge-types.ts`, pinned by the contract test.
+
+`openListenTap` attaches a supervisor's sink to a call this process bridges, keyed on the call id
+(`agency_calls.id`, the bridge session's id), for live call listening ([`listening.md`](listening.md)
+§2, LS8). It is synchronous and never waits. It answers a `ListenTapHandle` (`callId`, `listenId`,
+`attached`, `stats()`, `detach()`) or `{ refused }`: `not_found` (no session for the call here),
+`ending` (it is settling), `not_bridged` (never bridged: still ringing, an inbound caller parked on
+hold with no agent bound, or a carrier the bridge relays no audio for). Once bridged a call stays
+listenable through an agent's dropped socket and its re-attach. The sink (`ListenSink`) is the
+agency's listener socket: `send(message)` takes one tagged 20 ms A-law message and answers
+`ListenSendResult` (`sent`, `dropped`, `backlog`, `closed`), and `close(reason, stats)` is called
+at most once when the bridge ends it, with a `ListenTapEndReason` (`call_ended`, `tap_error`,
+`send_backlog`, `listener_disconnected`) and the frames sent and dropped (`ListenTapStats`);
+neither may throw or wait, and the bridge guards both. `call_ended` comes as the call starts to
+settle (a VoiceLink hangup's `ending`, the top of the terminal teardown), before the session is
+gone (LS15 f). A sink detached by its owner is never closed by the bridge. The caps (per call, per process, per supervisor) are the caller's,
+and so is the tap's fault budget: `options` (`ListenTapOpenOptions { faultBudget }`, read when the
+call's tap is made by its first sink) carries the agency's `AGENCY_LISTEN_FAULT_BUDGET`, so the
+voice area reads no agency config; absent, `LISTEN_TAP_DEFAULT_FAULT_BUDGET` (50, the setting's
+default; LS22). On a tap that ended under the attach the handle comes back detached
+(`attached: false`) with the sink already closed, which the caller treats as the call gone.
+`hasActiveCall(callId)` answers whether this process holds a bridge session for the call (a lookup
+on the session map, never a copy of every id as `getActiveCallIds` makes): the listen grant asks it
+before it mints, so a grant names only a call this process bridges.
+`sendToListenerSocket(ws, message)` (`core/bridge/listen-tap.ts`) is the socket-backed `send`,
+under `LISTENER_LIMITS` (`utils/ws-backpressure.ts`). The types are in `bridge-types.ts`, pinned by
+the contract test, which also holds `ListenTapEndReason` inside the contract's
+`AgencyListenEndReason`.
 
 ### 3.2 Voice engine → analysis
 
@@ -390,6 +420,23 @@ handler. The same lookup keys the routes' rate limit (per IP and ringing call). 
 `test/unit/api/routes/proxy-agency-inbound-ring.routes.test.ts` (the lookup before `callCore`, no
 Bearer) and `test/unit/api/agency-agent-reach.test.ts` (`TOKEN_ONLY_ROUTES`: the only agency HTTP
 routes without a session).
+
+**Platform's member routes reach agency's listen revocation.** Every platform route that changes
+a membership calls `membershipAdded` or `membershipRevoked(tenantId, userId)`
+(`rbac/membership-changed.ts`), which clears the membership cache and then calls its subscribers
+without waiting for them (they run off the request path, LS22 w; each is told whether the change was
+`added` or `revoked`), so a supervisor who may no longer listen is cut off at once
+(docs/listening.md LS10): in `api/routes/user.routes.ts` the role change, the member removal and
+`POST /users/invite` (a seat added, LS22 l); in `api/routes/invites.routes.ts` the invite's claim
+(LS22 l); in `api/routes/super-admin/tenants.ts` the super-admin's add-user
+(`POST /super-admin/tenants/:id/users`, LS22 l), role change and member removal (LS16 t). It is a hook (`onMembershipChanged`), not a reference to
+the agency: the agency bootstrap subscribes the registry's `revokeUser` (`startAgency`) and the
+primary of a multi-process server its `listen.revoke` broadcast to the media workers
+(`startMediaWorkers`); with none subscribed only the cache is cleared, and a subscriber's failure
+is logged, never thrown. Tests wait for the subscribers with `membershipNotificationsSettled()`. Pinned through the
+real routes by `test/integration/agency/live-listen-e2e.test.ts` and, across processes,
+`test/integration/cluster/live-listen.test.ts`; the super-admin's three by
+`test/unit/api/routes/super-admin-memberships.test.ts`.
 
 ## 5. Known gaps
 

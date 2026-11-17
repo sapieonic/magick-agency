@@ -44,6 +44,14 @@
   color: var(--text-secondary);
 }
 
+/* The standing line that a supervisor may listen (docs/listening.md LS2). */
+.notice {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .list {
   list-style: none;
   margin: var(--space-2, 8px) 0 0;

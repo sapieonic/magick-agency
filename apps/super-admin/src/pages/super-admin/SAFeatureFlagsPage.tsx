@@ -17,7 +17,7 @@ import { NumberFlagDialog } from '../../components/super-admin/feature-flags/Num
 import { NumericFlagCell } from '../../components/super-admin/feature-flags/NumericFlagCell';
 import { BulkRolloutModal } from '../../components/super-admin/feature-flags/BulkRolloutModal';
 import { FlagPolicyWarning } from '../../components/super-admin/feature-flags/FlagPolicyWarning';
-import { humanize, asBool, canBulkRollOut, numericBoundsFor, toTriState, type TriState } from '../../components/super-admin/feature-flags/flagUtils';
+import { humanize, asBool, canBulkRollOut, canEnableGlobally, numericBoundsFor, toTriState, type TriState } from '../../components/super-admin/feature-flags/flagUtils';
 import styles from './SAFeatureFlagsPage.module.css';
 import flagStyles from '../../components/super-admin/feature-flags/featureFlags.module.css';
 
@@ -197,6 +197,11 @@ export default function SAFeatureFlagsPage() {
   const applySelection = useCallback((entry: FeatureFlagCatalogEntry, next: TriState) => {
     if (next === 'inherit') {
       void resetGlobal(entry.key);
+      return;
+    }
+    if (next === 'on' && !canEnableGlobally(entry)) {
+      // The server refuses it (422 flag_bulk_not_allowed): say why rather than ask for a reason.
+      setError(`${humanize(entry.key)} cannot be turned on for every tenant at once. Turn it on from a tenant's Feature flags tab, one tenant or account at a time.`);
       return;
     }
     setPending({ entry, value: next === 'on' });

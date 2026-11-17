@@ -138,11 +138,6 @@ export async function ownSearch(
   return record;
 }
 
-/** Answers that name a customer are never cached by a browser or a proxy. */
-export function noStore(reply: FastifyReply): void {
-  void reply.header('Cache-Control', 'no-store');
-}
-
 /**
  * The audit row of a search or an export (CH10): written on success, zero results included.
  * `resource_id` is the search id; `details.value` the E.164 searched (the audit trail is where the

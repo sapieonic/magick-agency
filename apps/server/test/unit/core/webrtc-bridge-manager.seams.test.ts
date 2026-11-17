@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// The two seam behaviours of the bridge:
+// The seam behaviours of the bridge:
 //
 //  1. docs/seams.md — the bridge calls `getBridgeAnalysisHooks().onCallFinalized(facts)`
 //     (endCall, fire-and-forget, after the terminal write) and `.onRecordingReady(callId)`
@@ -9,6 +9,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  2. Max duration is `account_settings.webrtc_max_duration_seconds`, falling back to the
 //     default (1800) on NULL or on a throw. The resolved value drives three things (slot TTL =
 //     value + 60, the carrier's `maxDuration`, the session's max-duration timer).
+//  3. `openListenTap` (docs/seams.md §3.1, docs/listening.md): its refusals and its handle; the
+//     tap itself is pinned in webrtc-bridge-listen-tap.test.ts. `hasActiveCall`, the grant's check
+//     that this process bridges the call.
 // Harness copied from webrtc-bridge-manager.test.ts (project convention: no shared test utils).
 
 vi.mock('@magick-agency/observability', () => ({
@@ -24,6 +27,7 @@ vi.mock('../../../src/config/index.js', () => ({
       voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
       plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
+    agency: { listen: { faultBudget: 50 } },
   },
 }));
 
@@ -335,6 +339,52 @@ describe('max duration from account settings', () => {
     expect(mockAdapter.initiateCall).toHaveBeenCalledTimes(1);
     expect(mgr.getSession('call-1')!.maxDurationSeconds).toBe(1800);
     await endByUser(mgr);
+  });
+});
+
+describe('hasActiveCall (docs/seams.md §3.1)', () => {
+  it('answers whether this process holds a session for the call, from dial to the session`s removal', async () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    expect(mgr.hasActiveCall('call-1')).toBe(false);
+    await dial(mgr);
+    expect(mgr.hasActiveCall('call-1')).toBe(true);
+    expect(mgr.hasActiveCall('call-2')).toBe(false);
+    expect(mgr.hasActiveCall('call-1')).toBe(mgr.getActiveCallIds().includes('call-1'));
+    await endByUser(mgr);
+    await carrierEnded(mgr);
+    expect(mgr.hasActiveCall('call-1')).toBe(false);
+  });
+});
+
+describe('openListenTap (docs/seams.md §3.1)', () => {
+  function sink() {
+    return { listenId: 'listen-1', send: vi.fn(() => 'sent' as const), close: vi.fn() };
+  }
+
+  it('refuses not_found, not_bridged and ending; attaches a bridged call and the hangup closes it call_ended as it starts', async () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'not_found' });
+    await dial(mgr);
+    expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'not_bridged' });
+
+    const pstn = fakeWs();
+    mgr.attachPstnLeg('call-1', pstn as any);
+    negotiateVoicelink(pstn);
+    const s = sink();
+    const handle = mgr.openListenTap('call-1', s);
+    expect(handle).toMatchObject({ callId: 'call-1', listenId: 'listen-1', attached: true });
+    if ('refused' in handle) throw new Error('refused');
+    expect(handle.stats()).toEqual({ framesSent: 0, framesDropped: 0 });
+
+    // VoiceLink's hangup waits for the carrier's confirmation; the listener does not (LS15 f).
+    await endByUser(mgr);
+    expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'ending' });
+    expect(s.close).toHaveBeenCalledTimes(1);
+    expect(s.close).toHaveBeenCalledWith('call_ended', { framesSent: 0, framesDropped: 0 });
+    expect(handle.attached).toBe(false);
+    await carrierEnded(mgr);
+    expect(s.close).toHaveBeenCalledTimes(1);
+    expect(mgr.openListenTap('call-1', sink())).toEqual({ refused: 'not_found' });
   });
 });
 

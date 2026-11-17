@@ -74,7 +74,7 @@ export type IpcResponseEnvelope =
 export interface WsHandoff {
   v: typeof IPC_PROTOCOL_VERSION;
   kind: 'handoff';
-  route: 'station' | 'pstn';
+  route: 'station' | 'pstn' | 'listen';
   method: 'GET';
   /** Path and query, verbatim. */
   url: string;
@@ -94,7 +94,7 @@ const MAX_HANDOFF_HEADERS = 256;
 export function parseWsHandoff(raw: unknown): WsHandoff | null {
   if (!isRecord(raw) || raw['v'] !== IPC_PROTOCOL_VERSION || raw['kind'] !== 'handoff') return null;
   const { route, method, url, httpVersion, rawHeaders, head, requestId } = raw;
-  if (route !== 'station' && route !== 'pstn') return null;
+  if (route !== 'station' && route !== 'pstn' && route !== 'listen') return null;
   if (method !== 'GET' || typeof url !== 'string' || !url.startsWith('/') || url.length > 8192) return null;
   if (typeof httpVersion !== 'string' || !/^1\.[01]$/.test(httpVersion)) return null;
   if (!Array.isArray(rawHeaders) || rawHeaders.length % 2 !== 0 || rawHeaders.length > MAX_HANDOFF_HEADERS * 2) return null;
@@ -260,6 +260,24 @@ export interface ReaperSnapshotBody {
   leases: CallLease[];
 }
 export interface ManualCallRowsBody { rows: AgencyManualCallRecord[] }
+/**
+ * Live call listening (`docs/listening.md` §4, LS10): end a supervisor's listens wherever they are.
+ * `permission_revoked`: their membership changed (the primary's member routes); each worker
+ * re-checks that supervisor's sessions against the database now and ends those that may no longer
+ * go on (`listenIds` null), and `change` says how the membership changed: `revoked` (a role change
+ * or a removal) fails closed, `added` (a seat added) leaves a check it could not make to the
+ * periodic pass (LS22 w). `superseded`: their new listen was admitted in another process; exactly
+ * `listenIds` end (no `change`; a worker sends this to the primary, which ends its own and relays
+ * it to the other workers).
+ */
+export interface ListenRevokeBody {
+  tenantId: string;
+  userId: string;
+  reason: 'permission_revoked' | 'superseded';
+  listenIds: string[] | null;
+  /** How the membership changed: on `permission_revoked` only. */
+  change?: 'added' | 'revoked';
+}
 /** A media worker took or gave back a call's slots (`docs/scaling.md` §6.1). */
 export type CallLeaseBody = { op: 'held'; lease: CallLease } | { op: 'released'; concurrencyKey: string };
 
@@ -414,6 +432,25 @@ export function parseCallLease(raw: unknown): CallLeaseBody | null {
   return snap ? { op: 'held', lease: snap.leases[0]! } : null;
 }
 
+const LISTEN_REVOKE_MAX_IDS = 100;
+export function parseListenRevoke(raw: unknown): ListenRevokeBody | null {
+  if (!isRecord(raw) || !isId(raw['tenantId']) || !isId(raw['userId'])) return null;
+  const reason = raw['reason'];
+  if (reason !== 'permission_revoked' && reason !== 'superseded') return null;
+  const ids = raw['listenIds'];
+  if (ids !== null && !isIdList(ids, LISTEN_REVOKE_MAX_IDS)) return null;
+  // A supersede names what it ends; a revocation re-checks the supervisor, and says how their
+  // membership changed.
+  if ((reason === 'superseded') !== (ids !== null)) return null;
+  const change = raw['change'];
+  if (reason === 'superseded') {
+    if (change !== undefined) return null;
+    return { tenantId: raw['tenantId'], userId: raw['userId'], reason, listenIds: ids === null ? null : [...ids] };
+  }
+  if (change !== 'added' && change !== 'revoked') return null;
+  return { tenantId: raw['tenantId'], userId: raw['userId'], reason, listenIds: null, change };
+}
+
 export function parseManualCallRows(raw: unknown): ManualCallRowsBody | null {
   if (!isRecord(raw) || !Array.isArray(raw['rows'])) return null;
   const rows: AgencyManualCallRecord[] = [];
@@ -447,6 +484,8 @@ export interface IpcEventMap {
   'reaper.forget_unrecorded': AttemptIdsBody;
   'voice.wake_self_heal': EmptyBody;
   'call.lease': CallLeaseBody;
+  /** Either way: end a supervisor's listens (revoked, or superseded by a listen elsewhere). */
+  'listen.revoke': ListenRevokeBody;
 }
 
 /** Request and response bodies, by request type. */
@@ -484,6 +523,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'reaper.forget_unrecorded': parseAttemptIds,
   'voice.wake_self_heal': parseEmptyBody,
   'call.lease': parseCallLease,
+  'listen.revoke': parseListenRevoke,
 };
 
 export const IPC_REQUEST_DECODERS: {

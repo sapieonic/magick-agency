@@ -680,3 +680,77 @@ const _allInboundCodesListed: AllListed<
   typeof AGENCY_INBOUND_ERROR_CODES
 > = true;
 void _allInboundCodesListed;
+
+// ─── 7. Live call listening refusals ────────────────────────────────────────
+//
+// The codes of the live-call routes (`/proxy/agency/live-calls*`, docs/listening.md; shapes in
+// `./api/agency/live-calls`) and the reason a listener socket is refused at its upgrade (the close
+// `reason`, `./agency/listen.ts`). The body is `{ error, code, message }`. HTTP status beside each
+// code. The flag gate (`agency_live_listen_enabled` off) answers the dialer gate's
+// `403 feature_disabled`, not one of these, as the reports routes do. Three of them double as a
+// live row's `not_listenable_reason` (`AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS`), so the row and
+// the grant say the same thing.
+
+/** Why a listen was refused. */
+export type AgencyListenErrorCode =
+  /**
+   * 404. No call the caller may see is live and bridged under that id now: it ended, it never
+   * reached an agent, or it is in another account (uniform, so the answer never says a call
+   * exists elsewhere). At the upgrade (close 4404): the bridge no longer has the call.
+   */
+  | 'listen_call_not_live'
+  /**
+   * 409. The call is not being recorded (`agency_calls.recording_requested` false) and
+   * `agency_live_listen_unrecorded` is off for its tenant or account (LS4).
+   */
+  | 'listen_recording_off'
+  /** 409. The call already has `AGENCY_LISTEN_MAX_PER_CALL` listeners (2 by default). Close 4429 at the upgrade. */
+  | 'listen_limit_call'
+  /** 503. The process that owns the call already carries `AGENCY_LISTEN_MAX_PER_PROCESS` listeners (20 by default). Close 4429 at the upgrade. */
+  | 'listen_limit_server'
+  /** 409. The caller is the agent on this call (LS3). */
+  | 'listen_own_call'
+  /**
+   * 503. The listen could not be opened for a reason that is not the caller's: the grant could
+   * not be stored, the process that owns the call did not answer, or the session row could not be
+   * written (no row, no audio: close 1011 at the upgrade). Nothing was opened; try again.
+   */
+  | 'listen_unavailable';
+
+/** Runtime list of {@link AgencyListenErrorCode}, in declaration order. */
+export const AGENCY_LISTEN_ERROR_CODES = [
+  'listen_call_not_live',
+  'listen_recording_off',
+  'listen_limit_call',
+  'listen_limit_server',
+  'listen_own_call',
+  'listen_unavailable',
+] as const satisfies readonly AgencyListenErrorCode[];
+
+const _allListenCodesListed: AllListed<
+  AgencyListenErrorCode,
+  typeof AGENCY_LISTEN_ERROR_CODES
+> = true;
+void _allListenCodesListed;
+
+/**
+ * Why the number reveal (`GET /live-calls/:callId/number`) has no number to show, apart from the
+ * listen codes (a call not live there is still `listen_call_not_live`):
+ *  - `live_call_number_withheld`: 404. The caller withheld their number (an inbound caller with no
+ *    readable number). The live row says so first (`customer_phone_withheld`), so the console
+ *    offers no Show for it; this answers a reveal asked for anyway.
+ * Its own union rather than a listen code, so the listen codes (the grant's refusals, a live row's
+ * reasons, the console's copy for each) are unchanged by it.
+ */
+export type AgencyLiveCallNumberErrorCode = 'live_call_number_withheld';
+
+/** Runtime list of {@link AgencyLiveCallNumberErrorCode}. */
+export const AGENCY_LIVE_CALL_NUMBER_ERROR_CODES = [
+  'live_call_number_withheld',
+] as const satisfies readonly AgencyLiveCallNumberErrorCode[];
+
+const _allLiveCallNumberCodesListed: AllListed<
+  AgencyLiveCallNumberErrorCode,
+  typeof AGENCY_LIVE_CALL_NUMBER_ERROR_CODES
+> = true;
+void _allLiveCallNumberCodesListed;

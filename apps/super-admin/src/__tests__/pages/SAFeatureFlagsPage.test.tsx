@@ -548,3 +548,46 @@ describe('SAFeatureFlagsPage — policy flag (ai_turn_transcript_logging)', () =
     expect(screen.getAllByRole('button', { name: /roll out/i })).toHaveLength(2);
   });
 });
+
+// The consent gate of live call listening: its scopes include global (a global Off is the kill
+// switch), but its policy bars rollouts, and a global On is every tenant at once (LS20).
+describe('SAFeatureFlagsPage — policy flag with a global scope (agency_live_listen_enabled)', () => {
+  const listen = flag({
+    key: 'agency_live_listen_enabled', scopes: ['global', 'tenant', 'account'], owner: 'voice',
+    description: 'Agency live call listening',
+    policy: { warning: 'Turn it on only once callers are told calls may be monitored.', bulk_allowed: false, reason_required_to_enable: true },
+  });
+
+  it('a global On is not offered a reason dialog: it says why and writes nothing', async () => {
+    mocks.getCatalog.mockResolvedValue(catalog(listen));
+    render(<SAFeatureFlagsPage />);
+    await waitFor(() => screen.getByRole('radio', { name: 'On' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'On' }));
+    await waitFor(() => expect(screen.getByText(/cannot be turned on for every tenant at once/i)).toBeTruthy());
+    expect(screen.queryByLabelText(/reason \(required\)/i)).toBeNull();
+    expect(mocks.put).not.toHaveBeenCalled();
+    expect(screen.getByRole('note').textContent).toContain('monitored');
+  });
+
+  it('a global Off (the kill switch) still goes through the reason dialog', async () => {
+    mocks.getCatalog.mockResolvedValue(catalog(listen));
+    render(<SAFeatureFlagsPage />);
+    await waitFor(() => screen.getByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Off' }));
+    await waitFor(() => screen.getByLabelText(/reason \(required\)/i));
+    fireEvent.change(screen.getByLabelText(/reason \(required\)/i), { target: { value: 'incident' } });
+    fireEvent.click(screen.getByRole('button', { name: /save override/i }));
+    await waitFor(() => expect(mocks.put).toHaveBeenCalledWith(
+      'agency_live_listen_enabled', expect.objectContaining({ scope_type: 'global', value: false, reason: 'incident' }),
+    ));
+  });
+
+  it('is not offered in the bulk rollout', async () => {
+    mocks.getCatalog.mockResolvedValue(catalog(listen));
+    render(<SAFeatureFlagsPage />);
+    await waitFor(() => screen.getByRole('radio', { name: 'On' }));
+    const rollOut = screen.getAllByRole('button', { name: /roll out/i });
+    expect(rollOut).toHaveLength(1);
+    expect((rollOut[0] as HTMLButtonElement).disabled).toBe(true);
+  });
+});

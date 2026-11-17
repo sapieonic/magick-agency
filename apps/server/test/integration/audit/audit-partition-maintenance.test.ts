@@ -11,7 +11,8 @@ import {
 /**
  * The partition job on the REAL baseline (Postgres 5436): the create half and the drop half
  * (`purgeAuditPartitions`), including "leaves the audit
- * partitions alone when the cutoff predates all of them".
+ * partitions alone when the cutoff predates all of them", and the row purge of the tables kept for
+ * the same horizon (`purgeAuditHorizonRows`: the listen sessions).
  *
  * The suite drops and creates partitions of its worker's test database, so
  * `afterAll` puts the baseline's 2026-01..2027-12 window back and drops the
@@ -181,5 +182,37 @@ describe('audit partition maintenance against the baseline (integration)', () =>
       expect(parts).toContain(`${spec.table}_2026_03`); // ends 04-01 > cutoff: kept
       expect(await rowsIn(`${spec.table}_2026_05`)).toBe(1);
     }
+  });
+
+  it('deletes listen sessions with their month\'s audit partition, closed or not, and keeps the rest (LS12)', async () => {
+    const at = (iso: string, ended: boolean) => getPool().query<{ id: string }>(
+      `INSERT INTO agency_listen_sessions
+         (tenant_id, account_id, call_id, origin, campaign_id, correlation_id, agent_session_id, agent_user_id,
+          listener_user_id, started_at, ended_at, end_reason, replica_id)
+       VALUES ($1, $2, $3, 'campaign', $4, $5, $6, $7, $8, $9, $10, $11, 'replica-1') RETURNING id`,
+      [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(),
+        new Date(iso), ended ? new Date(iso) : null, ended ? 'call_ended' : null],
+    ).then((r) => r.rows[0]!.id);
+    // The cutoff (2026-03-22) falls in March: the February partitions go, March's is kept.
+    await at('2026-02-28T23:59:59Z', true); // February: deleted with February's audit rows
+    await at('2026-02-10T00:00:00Z', false); // February, left open by a dead process: deleted
+    const marchFirst = await at('2026-03-01T00:00:00Z', true); // March: kept, as March's audit rows are
+    const beforeCutoff = await at('2026-03-20T00:00:00Z', true); // before the cutoff, but in March: kept
+    const kept = await at('2026-03-23T00:00:00Z', true); // after the cutoff: kept
+
+    // now = 2026-06-15, 85 days back = 2026-03-22. A dry run counts and deletes nothing.
+    const dry = await runAuditPartitionMaintenance({
+      retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'), dryRun: true,
+    });
+    expect(dry.horizonRowsDeleted).toEqual({ agency_listen_sessions: 2 });
+    expect(await rowsIn('agency_listen_sessions')).toBe(5);
+
+    const report = await runAuditPartitionMaintenance({
+      retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'),
+    });
+    expect(report.errors).toEqual({});
+    expect(report.horizonRowsDeleted).toEqual({ agency_listen_sessions: 2 });
+    const { rows } = await getPool().query<{ id: string }>('SELECT id FROM agency_listen_sessions');
+    expect(rows.map((r) => r.id).sort()).toEqual([marchFirst, beforeCutoff, kept].sort());
   });
 });

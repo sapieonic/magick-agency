@@ -356,12 +356,18 @@ describe('lease renewer killed (chaos, slow)', () => {
         //                        shift. It gates neither dialing nor agent
         //                        liveness, so the invariant does not reach
         //                        it; it is listed so the scan stays strict.
+        //   this.tokenTtlMs    — ONLY in `listen/listen-token.ts`: a live-listen grant's token
+        //                        (`AGENCY_LISTEN_TOKEN_TTL_MS`):
+        //                        authenticates ONE listener socket upgrade, as the
+        //                        station token does one station upgrade.
         const ok = arg.startsWith('AGENT_LEASE_MS.')
           || arg === 'OWNERSHIP_TTL_MS'
           || arg === 'leaseMs'
           || arg === 'LEADER_LEASE_MS'
           || arg === 'STATION_TOKEN_TTL_MS'
-          || arg === 'ttlMs';
+          || arg === 'ttlMs'
+          // Narrowed to its one file (the listen token store): a generic `this.tokenTtlMs` anywhere else is not it.
+          || (arg === 'this.tokenTtlMs' && file === 'listen/listen-token.ts');
         if (!ok) offenders.push(`${file}: TTL from an unrecognised source — ${arg}`);
       }
     }

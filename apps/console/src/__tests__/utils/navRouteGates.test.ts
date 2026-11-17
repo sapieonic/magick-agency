@@ -38,6 +38,7 @@ const FLAGS = [
   'agency_reports_enabled',
   'agency_call_analysis',
   'agency_contact_assignment_enabled',
+  'agency_live_listen_enabled',
 ] as const;
 const CAPABILITIES = ['agency', 'agency.analytics'] as const;
 const ROLES: (Role | undefined)[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent', undefined];
@@ -90,6 +91,10 @@ const ROUTES: RouteRule[] = [
   [new RegExp(`^/agency/campaigns/${ID}/activity$`), (r) => dialer(r) && can(r, 'audit.read')],
   [new RegExp(`^/agency/campaigns/${ID}/manual-calls$`), (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
   [new RegExp(`^/agency/campaigns/${ID}$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
+  [new RegExp(`^/agency/campaigns/${ID}/calls/live$`), (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
+  [/^\/agency\/live$/, (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
+  // Not behind the listening flag (LS19, amended 2026-11-17): past listens stay visible.
+  [/^\/agency\/listening-history$/, (r) => dialer(r) && can(r, 'agency.supervise')],
   [/^\/agency\/softphone$/, (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
   [/^\/agency\/inbound\/missed$/, (r) => dialer(r) && r.missed && can(r, 'agency.campaigns.read')],
   [/^\/agency\/inbound\/summary$/, (r) => dialer(r) && r.missed && can(r, 'agency.supervise')],
@@ -104,6 +109,8 @@ const ROUTES: RouteRule[] = [
   [/^\/settings\/(profile|notifications|team|accounts)$/, keptInShell],
   [/^\/settings\/softphone$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_softphone_enabled') && can(r, 'agency.softphone.dial')],
   [/^\/settings\/inbound$/, (r) => keptInShell(r) && r.caps.has('agency') && r.flags.has('agency_inbound_enabled') && can(r, 'agency.inbound.write')],
+  // Read-only, so shown whether listening is on or off (it says which).
+  [/^\/settings\/listening$/, (r) => keptInShell(r) && r.caps.has('agency') && can(r, 'agency.supervise')],
   [/^\/settings\/call-summaries$/, (r) => keptInShell(r) && r.caps.has('agency.analytics') && r.flags.has('agency_call_analysis') && can(r, 'agency.analysis_profiles.read')],
 ];
 
@@ -196,8 +203,8 @@ describe('every offer passes the gate of the route it opens', () => {
       '/agency/home', '/agency/campaigns', '/agency/campaigns/new', '/agency/softphone', '/agency/inbound/missed',
       '/agency/inbound/summary', '/agency/analytics', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/manual-calls',
-      '/agency/campaigns/c-1/settings', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
-      '/settings/call-summaries', '/settings/team', '/settings/accounts',
+      '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
+      '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
     ]) {
       expect(targets, path).toContain(path);
     }

@@ -112,6 +112,13 @@ package root.
   closed-call lines read the dialer contract's `AGENCY_INBOUND_CLOSED_CAUSES`, `AGENCY_INBOUND_MISSED_COUNT_CAP`,
   `AGENCY_INBOUND_SUMMARY_MAX_DAYS`), the supervisor's `AgencyInboundQueueTile` /
   `AgencyInboundQueueResponse`, `AgencyInboundCallLiveRefusal` and the request bodies (§5).
+- `live-calls.ts` (`docs/listening.md`): the listener socket's vocabularies, wire format and frames
+  from `../../agency/listen.ts` (`AGENCY_CALL_ORIGINS` / `AgencyCallOrigin`,
+  `AGENCY_LISTEN_END_REASONS`, `AGENCY_LISTEN_CLOSE`, `AGENCY_LISTEN_END_CLOSE`, `AGENCY_LISTEN_LEG`,
+  the frame and timing constants, the ready / ended / pong and ping / stop frames), and
+  `AgencyListenErrorCode` with `AGENCY_LISTEN_ERROR_CODES` and the number reveal's
+  `AgencyLiveCallNumberErrorCode` with `AGENCY_LIVE_CALL_NUMBER_ERROR_CODES` from `../../errors`.
+  Console-only there: §4.
 - `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the
   manual call and its vocabularies, call fields, settings, bootstrap, session response, list query,
   disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —
@@ -180,6 +187,24 @@ subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 re-exported, like the soft-phone codes. The report DATASET (`../../reports/`, its own subpath)
 embeds console wire types from this directory (the Insights objects, `AgencyAgentStatsTotals`,
 the roster row with its name and `AgencyRosterBenchmark`), never their dialer twins.
+
+Live calls (`live-calls.ts`, docs/listening.md) are console-side too: the live list
+(`AgencyLiveCall`, `AgencyLiveCallsResponse`, `AgencyLiveCallsQuery`, the listeners), the number
+reveal (`AgencyLiveCallNumberResponse`, its refusal `AgencyLiveCallNumberErrorResponse`), the
+grant (`AgencyListenGrant`), the refusal body (`AgencyListenErrorResponse`) and a call's listen
+sessions (`AgencyCallListenSession`, carried as `listen_sessions` on the attempt detail
+`AgencyAttemptCallDetail` and the soft-phone detail `AgencyManualCallDetail`) are what the public API layer serves after enrichment (names
+from `users`, the masked number and `customer_phone_withheld`, `listenable` computed for the
+caller; the row's `correlation_id`, the spine row the call pages are keyed on, and the campaign's
+`aht_seconds`, added with the server side), so none has a dialer twin; `AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS` is a
+subset of the dialer contract's `AgencyListenErrorCode`, so a row and the grant say the same thing.
+
+The listening history (`listen-history.ts`, docs/listening.md §12) is console-side too:
+`AgencyListenHistoryEntry` (a supervisor's merged sessions on one call, with the names and the
+masked number the public layer adds, and `customer_phone_withheld`), `AgencyListenHistoryResponse`,
+`AgencyListenHistoryQuery`, the merge gap, the page and export limits and
+`AGENCY_LISTEN_END_REASON_LABELS` (keyed by the dialer contract's `AgencyListenEndReason`). The
+internal handler answers the same visits with the full number and no names; it has no dialer twin.
 
 ## 5. Request fields the server sets itself
 

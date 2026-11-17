@@ -177,6 +177,11 @@ export class MediaCluster implements WsHandoffTarget {
     channel.onEvent('cache.invalidate', (ev) => deliverCacheInvalidation(ev));
     channel.onEvent('voice.wake_self_heal', () => this.wakeSelfHeal());
     channel.onEvent('analysis.wake', () => getDialerAnalysisWorker()?.wake());
+    // A supersede decided in this worker (docs/listening.md, LS5): relayed to the other workers,
+    // which end exactly the listens it names. The primary holds no listen while workers run.
+    channel.onEvent('listen.revoke', (body) => {
+      if (body.reason === 'superseded') this.supervisor.broadcast('listen.revoke', body, slot);
+    });
     channel.onEvent('call.lease', (change) => {
       let held = this.leases.get(slot);
       if (!held) { held = new Map(); this.leases.set(slot, held); }
@@ -375,6 +380,14 @@ export class MediaCluster implements WsHandoffTarget {
   /** The workers' live call ids as last reported (for the stale-call sweep's exclusion and B13). */
   activeCallIds(): string[] {
     return mergeSnapshots([...this.snapshots.values()]).activeCallIds;
+  }
+
+  /**
+   * A supervisor's membership changed (LS10): every worker re-checks that supervisor's listens
+   * against the database now, failing closed on a `revoked` change, not on an `added` one (LS22 w).
+   */
+  revokeListens(tenantId: string, userId: string, change: 'added' | 'revoked'): void {
+    this.supervisor.broadcast('listen.revoke', { tenantId, userId, reason: 'permission_revoked', listenIds: null, change });
   }
 
   /** Forget unrecorded ends in every worker once the reaper wrote them. */

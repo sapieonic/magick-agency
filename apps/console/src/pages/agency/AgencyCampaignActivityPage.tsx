@@ -6,6 +6,7 @@ import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
+import { mergeListenActivityRows } from '../../utils/listen/listenActivityRows';
 import { ApiError } from '../../api/client';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
@@ -369,6 +370,8 @@ function ActivitySection({ id, campaign }: { id: string; campaign: AgencyCampaig
    * stores, neither a dependency of this console. The server knows both stores' vocabularies, so
    * it serves them and nothing here is transcribed.
    */
+  // A supervisor's reconnects on one call read as the one listen they were (LS19 b, e).
+  const shownRows = useMemo(() => mergeListenActivityRows(rows), [rows]);
   const actionGroups = useMemo(() => groupActivityActions(page?.available_actions), [page]);
   const actionLabels = useMemo(() => activityActionLabels(page?.available_actions), [page]);
 
@@ -652,7 +655,7 @@ function ActivitySection({ id, campaign }: { id: string; campaign: AgencyCampaig
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {shownRows.map((row) => {
                 const summary = activityDetailSummary(row);
                 return (
                   <tr key={row.id} data-testid={`activity-row-${row.id}`}>
@@ -662,7 +665,7 @@ function ActivitySection({ id, campaign }: { id: string; campaign: AgencyCampaig
                       <ActorCell row={row} />
                     </td>
                     <td className={styles.target}>
-                      {id ? <TargetCell target={row.target} campaignId={id} /> : '—'}
+                      {id ? <TargetCell target={row.target} detail={row.detail} campaignId={id} /> : '—'}
                     </td>
                     <td className={styles.detail}>
                       {summary ?? <RawDetail detail={row.detail} />}
@@ -849,9 +852,12 @@ function RawDetail({ detail }: { detail: Record<string, unknown> }) {
  */
 function TargetCell({
   target,
+  detail,
   campaignId,
 }: {
   target: ActivityRow['target'];
+  /** A listen row's call opens by its `detail` (`origin`, `correlation_id`). */
+  detail: ActivityRow['detail'];
   campaignId: string;
 }) {
   // The soft-phone call page's own gate: off, its rows show the id instead of a dead link.
@@ -859,7 +865,7 @@ function TargetCell({
   if (!target.id) return <>—</>;
   if (target.type === 'agency_campaign' && target.id === campaignId) return <>This campaign</>;
   const label = activityTargetLabel(target.type);
-  const path = activityTargetPath(target, campaignId, softphoneEnabled);
+  const path = activityTargetPath(target, campaignId, softphoneEnabled, detail ?? {});
   if (path) {
     return (
       <Link to={path} className={styles.targetLink} title={target.id}>

@@ -42,6 +42,15 @@ export function canBulkRollOut(flag: FeatureFlagCatalogEntry): boolean {
 }
 
 /**
+ * May this flag be turned ON at global scope? A global On is every tenant at once, so a flag
+ * whose policy bars bulk rollouts (live call listening's consent gate) is refused there by the
+ * server (422) whatever the reason; a global Off (a kill switch) stays allowed.
+ */
+export function canEnableGlobally(flag: FeatureFlagCatalogEntry): boolean {
+  return flag.policy?.bulk_allowed !== false;
+}
+
+/**
  * Is turning this flag ON the guarded direction? True for flags whose policy
  * asks for a reason to enable (e.g. transcript logging): there, OFF is the safe
  * state, so a "turn it off?" confirm — written for capabilities a tenant loses —

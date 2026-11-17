@@ -149,6 +149,9 @@ socket and webhooks are routed by a hint the worker writes into the URLs it hand
    `config.wsOwner` on every WebSocket route:
    - station: `{ by: 'session', param: 'sessionId' }`
    - pstn: `{ by: 'carrier_hint', param: 'id' }`
+   - listen (a supervisor's listener socket, docs/listening.md): `{ by: 'session', param:
+     'sessionId', route: 'listen' }`, handed to the worker that owns the agent's session, whose
+     bridge relays the call; `route` names it in the handoff and `ws_handoff_total{route}`
 4. **Failure answers are HTTP, before the handshake.** If the owning slot is down or
    restarting: `503` with `retry-after: 2`. The console's reconnect ladder re-mints and retries.
    The carrier's media connect for a call on a dead worker is moot, because that call died
@@ -201,7 +204,7 @@ runtime for their sessions.
 // src/cluster/ipc-protocol.ts
 interface WsHandoff {
   kind: 'handoff';
-  route: 'station' | 'pstn';
+  route: 'station' | 'pstn' | 'listen';   // the route's wsOwner.route, else by its `by`
   method: 'GET';
   url: string;             // path + query, verbatim (token, client=, media=, w=)
   httpVersion: string;     // '1.1'
@@ -537,6 +540,7 @@ runs. The worker trusts a command only from its parent channel.
 | `station.broadcast` | event | `{campaignId, frame}` | — |
 | `concurrency.invalidate` | event | `{tenantId, accountId}`: drop the provider guard's 5 s `limitCache` and the degraded-mode local cache, as the seam does in P | — |
 | `dialable.invalidate` | event | `{}`: drop the worker's 15 s dialable caller-ID cache (PL13, `campaign-dialability.ts`), sent on every `invalidateDialableCallerIds` in P (a number synced, retired, deleted or unassigned) | — |
+| `listen.revoke` | event | `{tenantId, userId, reason, listenIds}` (docs/listening.md LS10, LS5): `permission_revoked` with `listenIds: null` after a role change or a member's removal in P (the worker bumps that supervisor's revocation generation, so a grant or reservation of theirs from before it is refused, and re-checks their listens against the database, ending those that fail and, failing closed, those it cannot check: LS16 c, n); `superseded` with the listen ids, relayed from the worker that admitted the supervisor's newer listen to every other worker (each ends exactly those) | — |
 | `reaper.snapshot` | req | `{}` → `{activeAttemptIds, unrecordedEnds: [{attemptId, dialOutcomeUnknown}], manualActiveIds, activeCallIds}` | 5 s, then **skip the sweep** (fail closed) |
 | `reaper.forget_unrecorded` | event | `{attemptIds}` | — |
 | `softphone.closed_by_sweep` | req | `{rows}` (sent to each row's session slot) | 10 s |
@@ -554,6 +558,7 @@ runs. The worker trusts a command only from its parent channel.
 | `cache.invalidate` | event | `{cache, key}`: an in-process cache entry on the primary that the worker's write made stale (`cache/cache-invalidation.ts`; today `agency-campaign-stats`, a force-available's campaign), delivered to the primary's listeners and never sent back |
 | `voice.wake_self_heal` | event | `{}` (the guard host's `wakeSelfHeal` in shard mode) |
 | `analysis.wake` | event | `{}` |
+| `listen.revoke` | event | `{tenantId, userId, reason: 'superseded', listenIds}`: a listen admitted here supersedes the supervisor's listens other replicas hold (their open rows past `maxPerUser`, only those older than its own row, so two listens admitted at once in two workers end one, not both: LS16 p); P relays it to the other workers |
 
 **Primary ↔ analysis worker:** `ready`, `analysis.wake` (P → all),
 `analysis.rate_paused {untilMs}` (one worker → P → all others, so one vendor 429 pauses the

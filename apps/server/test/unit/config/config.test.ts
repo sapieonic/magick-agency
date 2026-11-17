@@ -56,6 +56,39 @@ describe('parseConfig', () => {
     expect(history({ AGENCY_CUSTOMER_EXPORT_MAX_ROWS: 'all' })).toBeNull();
   });
 
+  it('agency.listen (docs/listening.md "Config"): the caps, re-check, token and fault budget by default, read from the env, bounded', () => {
+    const listen = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? result.config.agency.listen : null;
+    };
+    expect(listen({})).toEqual({
+      maxPerCall: 2, maxPerProcess: 20, maxPerUser: 1, recheckMs: 30_000, tokenTtlMs: 60_000, faultBudget: 50,
+    });
+    expect(listen({
+      AGENCY_LISTEN_MAX_PER_CALL: '5',
+      AGENCY_LISTEN_MAX_PER_PROCESS: '40',
+      AGENCY_LISTEN_MAX_PER_USER: '2',
+      AGENCY_LISTEN_RECHECK_MS: '10000',
+      AGENCY_LISTEN_TOKEN_TTL_MS: '30000',
+      AGENCY_LISTEN_FAULT_BUDGET: '100',
+    })).toEqual({ maxPerCall: 5, maxPerProcess: 40, maxPerUser: 2, recheckMs: 10_000, tokenTtlMs: 30_000, faultBudget: 100 });
+    // Two listeners per call by default, at most five (LS5).
+    expect(listen({ AGENCY_LISTEN_MAX_PER_CALL: '1' })?.maxPerCall).toBe(1);
+    expect(listen({ AGENCY_LISTEN_MAX_PER_CALL: '0' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_MAX_PER_CALL: '6' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_MAX_PER_CALL: '2.5' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_MAX_PER_PROCESS: '0' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_MAX_PER_PROCESS: '201' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_MAX_PER_USER: '0' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_MAX_PER_USER: '6' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_RECHECK_MS: '4999' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_RECHECK_MS: '300001' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_TOKEN_TTL_MS: '4999' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_TOKEN_TTL_MS: 'forever' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_FAULT_BUDGET: '0' })).toBeNull();
+    expect(listen({ AGENCY_LISTEN_FAULT_BUDGET: '1001' })).toBeNull();
+  });
+
   it('agency.campaignStatsCacheMs: 2 s by default, read from the env, 0 allowed, at most the 10 s poll', () => {
     const ttl = (env: Record<string, string>) => {
       const result = parseConfig({ ...valid, ...env });

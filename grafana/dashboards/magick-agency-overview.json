@@ -2470,6 +2470,397 @@
         "x": 0,
         "y": 140
       },
+      "id": 146,
+      "title": "Live call listening",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Listen sessions open now (agency_listen_sessions_active, summed over the processes that own the calls) and listen grants per minute by result: granted, or the refusal (listen_call_not_live, listen_recording_off, listen_limit_call, listen_limit_server, listen_own_call, listen_unavailable). listen_limit_server is agy-listen-grants-server-limit; the per-process limit is AGENCY_LISTEN_MAX_PER_PROCESS (20).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 141
+      },
+      "id": 147,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Listening \u2014 Sessions Open and Grants by Result (per min)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(agency_listen_sessions_active{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "sessions open",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (rate(agency_listen_grants_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "grants {{result}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Listen sessions ended per minute, by why: call_ended and listener_stopped are the ordinary ends; listener_disconnected (a dropped socket or no ping for 30 s), send_backlog (agy-listen-backlog-closes), tap_error (agy-listen-tap-errors), permission_revoked, superseded (the supervisor started another listen), server_shutdown, server_restarted (closed by the reap after a process died) and access_unverified (the access re-check could not reach the database or the flag store for 60 s).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 141
+      },
+      "id": 148,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Listening \u2014 Sessions Ended by Reason (per min)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(agency_listen_sessions_ended_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "How long a listen session lasted, from its row written to its end. Sessions closed by the reap after a restart are not in it.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 149
+      },
+      "id": 149,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Listening \u2014 Session Length (p50 / p90)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(agency_listen_session_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(agency_listen_session_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p90",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Frames the listener tap failed and dropped per minute, by stage (decode, encode, frame, send, open; agy-listen-tap-errors), and listener sockets' back-pressure by action: media_dropped (a frame past the 48 KiB soft limit, dropped for that listener) and closed (past the 256 KiB hard cap, or 10 s of nothing but drops: the listen ended send_backlog). None of these touches the call's own audio.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 149
+      },
+      "id": 150,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Listening \u2014 Tap Errors by Stage and Listener Back-pressure (per min)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (stage) (rate(agency_listen_tap_errors_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "tap {{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (action) (rate(websocket_send_backpressure_total{socket=\"listener\", deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "listener {{action}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Seconds one relayed media frame spends in the bridge, from its arrival on one leg to the write to the other, sampled one frame in 50 per call and direction: b2p is the agent's voice to the customer, p2b the customer's to the agent. Frames arrive every 20 ms. The relay's own health: the listener tap runs after the relay write and is not in this span, so what listening costs shows on the event loop instead (Event-Loop Delay and Event-Loop Utilization by Process beside Sessions Open; agy-listen-loop-delay).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 157
+      },
+      "id": 151,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Media Relay Dwell (p50 / p99) by Direction",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, direction) (rate(webrtc_relay_dwell_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50 {{direction}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, direction) (rate(webrtc_relay_dwell_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p99 {{direction}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Listener socket upgrades the primary handed to the media worker that owns the agent's session (route listen), by result. Present only with MEDIA_WORKERS above 0; no_owner means the agent's session had no live worker (the call ended between the grant and the upgrade).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 157
+      },
+      "id": 152,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "WebSocket Handoffs to Media Workers: Listener Sockets",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(ws_handoff_total{route=\"listen\", deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 165
+      },
       "id": 2,
       "title": "Voice, capacity and storage",
       "type": "row",
@@ -2505,7 +2896,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 141
+        "y": 166
       },
       "id": 10,
       "options": {
@@ -2594,7 +2985,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 141
+        "y": 166
       },
       "id": 73,
       "options": {
@@ -2683,7 +3074,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 141
+        "y": 166
       },
       "id": 67,
       "options": {
@@ -2742,7 +3133,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 149
+        "y": 174
       },
       "id": 102,
       "options": {
@@ -2830,7 +3221,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 149
+        "y": 174
       },
       "id": 76,
       "options": {
@@ -2927,7 +3318,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 157
+        "y": 182
       },
       "id": 122,
       "options": {
@@ -3014,7 +3405,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 157
+        "y": 182
       },
       "id": 123,
       "options": {
@@ -3048,7 +3439,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 165
+        "y": 190
       },
       "id": 143,
       "title": "Recordings",
@@ -3117,7 +3508,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 166
+        "y": 191
       },
       "id": 144,
       "options": {
@@ -3192,7 +3583,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 166
+        "y": 191
       },
       "id": 145,
       "options": {
@@ -3226,7 +3617,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 174
+        "y": 199
       },
       "id": 3,
       "title": "Identity and mail",
@@ -3263,7 +3654,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 175
+        "y": 200
       },
       "id": 103,
       "options": {
@@ -3321,7 +3712,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 175
+        "y": 200
       },
       "id": 104,
       "options": {
@@ -3361,7 +3752,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 183
+        "y": 208
       },
       "id": 4,
       "title": "Analysis",
@@ -3429,7 +3820,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 184
+        "y": 209
       },
       "id": 68,
       "options": {
@@ -3493,7 +3884,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 184
+        "y": 209
       },
       "id": 69,
       "options": {
@@ -3569,7 +3960,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 192
+        "y": 217
       },
       "options": {
         "legend": {
@@ -3651,7 +4042,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 192
+        "y": 217
       },
       "options": {
         "legend": {
@@ -3698,7 +4089,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 200
+        "y": 225
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -3735,7 +4126,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 201
+        "y": 226
       },
       "id": 106,
       "options": {
@@ -3799,7 +4190,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 201
+        "y": 226
       },
       "id": 107,
       "options": {
@@ -3857,7 +4248,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 201
+        "y": 226
       },
       "id": 108,
       "options": {
@@ -3917,7 +4308,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 209
+        "y": 234
       },
       "id": 87,
       "options": {
@@ -3974,7 +4365,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 209
+        "y": 234
       },
       "id": 74,
       "options": {
@@ -4032,7 +4423,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 217
+        "y": 242
       },
       "id": 50,
       "options": {
@@ -4070,7 +4461,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 225
+        "y": 250
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -4107,7 +4498,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 226
+        "y": 251
       },
       "id": 112,
       "options": {
@@ -4165,7 +4556,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 226
+        "y": 251
       },
       "id": 113,
       "options": {
@@ -4223,7 +4614,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 234
+        "y": 259
       },
       "id": 114,
       "options": {
@@ -4281,7 +4672,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 234
+        "y": 259
       },
       "id": 115,
       "options": {

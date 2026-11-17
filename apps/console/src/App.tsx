@@ -85,9 +85,13 @@ const AgencyAttemptCallPage = lazy(() => import('./pages/agency/AgencyAttemptCal
 const AgencyContactDetailPage = lazy(() => import('./pages/agency/AgencyContactDetailPage'));
 const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampaignActivityPage'));
 const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCampaignManualCallsPage'));
+const AgencyCampaignLiveCallsPage = lazy(() => import('./pages/agency/AgencyCampaignLiveCallsPage'));
+const LiveCallsPage = lazy(() => import('./pages/agency/live/LiveCallsPage'));
+const ListenHistoryPage = lazy(() => import('./pages/agency/live/ListenHistoryPage'));
 const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
+const ListeningSettingsPage = lazy(() => import('./pages/settings/ListeningSettingsPage'));
 const CustomerHistoryPage = lazy(() => import('./pages/agency/CustomerHistoryPage'));
 const AgentCustomerHistoryPage = lazy(() =>
   import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
@@ -701,6 +705,28 @@ export default function App() {
                     path="campaigns/:id/manual-calls"
                     element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
                   />
+                  {/*
+                    Live calls (`docs/listening.md` §9): the account's calls in progress, and a
+                    campaign's (the Calls tab's Live view), behind `agency_live_listen_enabled`
+                    (the consent gate, LS1) on top of the subtree's gates. The server floors the
+                    list at `agency.supervise`, as the sidebar entry and the Calls tab do; the
+                    table says so to anyone below it.
+                  */}
+                  <Route
+                    path="live"
+                    element={<RequireFlag flag="agency_live_listen_enabled"><LiveCallsPage /></RequireFlag>}
+                  />
+                  {/* The account's Listening history (`docs/listening.md` §12, LS19): `agency.supervise`
+                      (the page checks; the server refuses below it) and NOT the listening flag
+                      (LS19, amended 2026-11-17): turning listening off does not hide past listens. */}
+                  <Route
+                    path="listening-history"
+                    element={<ListenHistoryPage />}
+                  />
+                  <Route
+                    path="campaigns/:id/calls/live"
+                    element={<RequireFlag flag="agency_live_listen_enabled"><AgencyCampaignLiveCallsPage /></RequireFlag>}
+                  />
                   {/* Missed inbound calls (`docs/inbound.md` §7): the account's for a supervisor,
                       the caller's own otherwise (the server's rule). Not behind `agency_inbound_enabled`
                       here: with it off the page stays readable while there are rows (the kill switch
@@ -738,6 +764,9 @@ export default function App() {
                   <Route path="inbound/new" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRouteEditorPage /></RequireGate>} />
                   <Route path="inbound/:routeId" element={<RequireGate gate={settingsEntry('inbound').gate}><InboundRouteEditorPage /></RequireGate>} />
                   <Route path="call-summaries" element={<RequireGate gate={settingsEntry('call-summaries').gate}><AnalysisProfilesPage /></RequireGate>} />
+                  {/* Live call listening (`docs/listening.md` §12, LS20 c): a read-only line from the
+                      client flags, on or off; supervisors (`agency.supervise`, which the page checks). */}
+                  <Route path="listening" element={<RequireGate gate={settingsEntry('listening').gate}><ListeningSettingsPage /></RequireGate>} />
                   <Route path="team" element={<TeamPage />} />
                   {/* The tenant's accounts. Linked for `account.create` only; the route itself
                       is ungated (the list is `account.read`, which the server enforces), and

@@ -11,7 +11,7 @@ import '../../app/theme/tokens.dart';
 import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
 import '../../ui/primitives.dart';
-import '../station/parts/banners.dart' show BusyLabel;
+import '../station/parts/banners.dart' show BusyLabel, ListenFirstNoticeCard, ListenInfoButton;
 import '../station/station_copy.dart';
 import '../station/station_providers.dart';
 import 'parts/call_controls.dart';
@@ -158,6 +158,7 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     final callKey = callId ?? 'idle';
     final body = <Widget>[
       _Header(surface: widget.surface),
+      const ListenFirstNoticeCard(),
       const _BootstrapError(),
       const _MicProblem(),
       if (ready) ..._ready(finishOnly) else ..._onCall(phase, callKey),
@@ -251,8 +252,8 @@ class _DialHead extends StatelessWidget {
   }
 }
 
-/// The title, what is disclosed (recording, muted, where the call is logged),
-/// and the way out: Close soft phone on the Phone tab, Return to campaign on
+/// The title, what is disclosed (recording, muted, where the call is logged,
+/// that a supervisor may listen), and the way out: Close soft phone on the Phone tab, Return to campaign on
 /// the station, each disabled with its reason while a call is live or owed.
 class _Header extends ConsumerWidget {
   const _Header({required this.surface});
@@ -275,6 +276,7 @@ class _Header extends ConsumerWidget {
         ),
       ),
     );
+    final listenNotice = ref.watch(stationListenNoticeProvider);
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     final phone = surface == SoftphoneSurface.phone;
@@ -296,7 +298,14 @@ class _Header extends ConsumerWidget {
             spacing: Space.sm,
             runSpacing: Space.xs,
             children: [
-              Semantics(header: true, child: Text(SoftphoneCopy.title, style: text.titleLarge)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(child: Semantics(header: true, child: Text(SoftphoneCopy.title, style: text.titleLarge))),
+                  // That a supervisor may listen (docs/listening.md LS2), as on the station.
+                  if (listenNotice) const ListenInfoButton(key: Key('softphone-listen-info')),
+                ],
+              ),
               // Merged, so the reason is the button's own hint, read with it.
               MergeSemantics(
                 child: Semantics(

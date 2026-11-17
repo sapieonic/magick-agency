@@ -130,7 +130,9 @@ export type Permission =
   | 'agency.customer_history.read'
   // Inbound calls (docs/inbound.md §8.1): the Missed inbound list, and the account's routes.
   | 'agency.inbound.read'
-  | 'agency.inbound.write';
+  | 'agency.inbound.write'
+  // Live call listening (docs/listening.md, LS3): listen in silently to a call in progress.
+  | 'agency.calls.listen';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
@@ -300,6 +302,21 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // service's operators do that (IB6), from the super-admin console.
   'agency.inbound.read': 'agent',
   'agency.inbound.write': 'account_admin',
+  // ── Live call listening (docs/listening.md, LS3) ─────────────────────────
+  // Floors at `account_admin`: hearing a call in progress is a supervisory act on somebody else's
+  // call, as `agency.supervise` is, and the same seat. Tenant admins and owners pass by the
+  // hierarchy; an account admin only in the accounts they belong to (the membership scopes it, as
+  // every account route). Its own permission rather than riding on `agency.supervise`, which
+  // also gates the live LIST: who may listen can later be raised by changing this one floor (a
+  // code change to this line, no route changes; floors are not per-tenant settings), and the
+  // console then shows a supervisor who may watch but not listen the list without the Listen
+  // action. Both floors are `account_admin` today, so that supervisor cannot occur yet and the
+  // console's footnote for them is unreachable (LS3). Agents, viewers and operators cannot
+  // listen, and neither can a super-admin (no
+  // membership). The routes also refuse a listen to a call the caller is the agent on
+  // (`listen_own_call`), and every one requires the `agency_live_listen_enabled` flag (the
+  // consent gate, LS1). Each listen is a session row and two audit rows (LS6).
+  'agency.calls.listen': 'account_admin',
 };
 
 /** Every permission, for enumeration (tests, route tables, admin screens). */

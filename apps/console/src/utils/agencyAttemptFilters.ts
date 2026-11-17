@@ -131,9 +131,26 @@ export function attemptDateRange(
   from: DayString,
   to: DayString,
 ): { from?: string; to?: string } {
+  const range = exclusiveDateRange(from, to);
+  return {
+    ...(range.from ? { from: range.from } : {}),
+    ...(range.to ? { to: new Date(Date.parse(range.to) - 1).toISOString() } : {}),
+  };
+}
+
+/**
+ * The same local days for a route whose `to` is EXCLUSIVE (the listening history's): `from` the
+ * first instant of the first day, `to` the first instant of the day after the last, so "to 16
+ * November" keeps the whole of the 16th. Anchored on noon like {@link attemptDateRange}, for the
+ * same reasons: a midnight that does not exist, or happens twice, has no second reading here.
+ */
+export function exclusiveDateRange(
+  from: DayString,
+  to: DayString,
+): { from?: string; to?: string } {
   return {
     ...(from ? { from: startOfDay(noon(from)).toISOString() } : {}),
-    ...(to ? { to: new Date(startOfDay(addDays(noon(to), 1)).getTime() - 1).toISOString() } : {}),
+    ...(to ? { to: startOfDay(addDays(noon(to), 1)).toISOString() } : {}),
   };
 }
 

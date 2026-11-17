@@ -10,6 +10,9 @@ import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from '../../u
 import { assignmentEntry } from '../../utils/agencyAssignmentEntry';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
 import type { AgencyAssignment } from '../../types/agency-campaign';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
+import { LISTEN_AGENT_NOTICE } from '../../utils/listen/listenCopy';
 import styles from './AgentHomePage.module.css';
 
 /**
@@ -75,6 +78,8 @@ export function AgentHomePage() {
   const canLeaveDialer = !isDedicatedAgent(role) && persona === 'agent';
   /** `null` for an ordinary visit; otherwise why the auto-redirect must not fire. */
   const arrival = agentLandingArrival(params.get(AGENT_LANDING_PARAM));
+  /** The standing line of `docs/listening.md` LS2, while the account allows listening. */
+  const listenNotice = useFeatureFlagEnabled(LIVE_LISTEN_FLAG);
 
   const [state, setState] = useState<HomeState>({ status: 'loading' });
 
@@ -206,6 +211,11 @@ export function AgentHomePage() {
       <div className={styles.card}>
         <h1 className={styles.title}>{headingFor(arrival, assignments.length)}</h1>
         <p className={styles.body}>{bodyFor(arrival, assignments.length)}</p>
+        {listenNotice ? (
+          <p className={styles.notice} data-testid="listen-agent-notice">
+            {LISTEN_AGENT_NOTICE}
+          </p>
+        ) : null}
 
         <ul className={styles.list}>
           {assignments.map((assignment) => (

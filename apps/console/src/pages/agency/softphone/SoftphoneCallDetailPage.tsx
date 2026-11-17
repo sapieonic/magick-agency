@@ -10,6 +10,7 @@ import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
 import { fetchManualCallRecordingBlobUrl, getManualCall, getSoftphoneBootstrap } from '../../../api/softphone';
+import { ListenedToBy } from '../../../components/listen/ListenedToBy';
 import { errorCode, errorStatus } from '../../../utils/agencyErrors';
 import { AGENCY_ANALYTICS_CAPABILITY, AGENCY_RECORDING_CAPABILITY } from '../../../utils/agencyCampaignRecording';
 import { CallDetailView, FactCard, type CallFact, type CallFactCard } from '../../../components/calls/CallDetailView';
@@ -210,6 +211,7 @@ export default function SoftphoneCallDetailPage() {
   const { callId } = useParams<{ callId: string }>();
   const { tenantId, accountId } = useTenant();
   const { isEnabled } = useGovernance();
+  // `listen_sessions`: who listened in live (LS13), when the server sends it.
   const [detail, setDetail] = useState<AgencyManualCallDetail | null>(null);
   const [bootstrap, setBootstrap] = useState<AgencySoftphoneBootstrap | null>(null);
   const [loading, setLoading] = useState(true);
@@ -310,12 +312,14 @@ export default function SoftphoneCallDetailPage() {
           {cards.map((card) => (
             <FactCard key={card.title} card={card} icon={<MessageSquare size={16} />} />
           ))}
+          <ListenedToBy sessions={detail.listen_sessions} />
         </div>
       </div>
     );
   }
 
   return (
+    <>
     <CallDetailView
       call={media}
       subtitle={`Soft phone · ${loggedToLabel(call)}`}
@@ -332,5 +336,8 @@ export default function SoftphoneCallDetailPage() {
       onRetryAnalysis={undefined}
       onReload={() => void load()}
     />
+    {/* Supervisors who listened in live (`docs/listening.md` LS13). */}
+    <ListenedToBy sessions={detail.listen_sessions} />
+    </>
   );
 }

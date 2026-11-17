@@ -4,6 +4,9 @@
 // run against the bound production uses.
 import { AGENCY_STATION_ALAW8_MAX_FRAME_BYTES, AGENCY_WS_MAX_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 
+/** The listener socket's largest client message (`agency/listen/listen-socket.ts`, which enforces it). */
+export const LISTEN_MAX_CLIENT_MESSAGE_BYTES = 256;
+
 /** Characters of base64 for `bytes` bytes (padded). */
 function base64Length(bytes: number): number {
   return Math.ceil(bytes / 3) * 4;
@@ -43,6 +46,9 @@ const ALAW_8K_ONE_SECOND_BYTES = 8_000;
  *    Twilio-shaped JSON, A-law 8 kHz, sent in 20 ms chunks (216 base64 characters), or
  *    Plivo's JSON, μ-law 8 kHz (one byte a sample too, so the same size). Sized for one
  *    second of audio in one frame plus metadata, far above anything observed.
+ *  - **Supervisor's listener socket**, `/proxy/agency/listen/:sessionId/:listenId`: control frames
+ *    only (`ping`, `stop`), tens of bytes; the audio flows the other way. The socket reads at most
+ *    `LISTEN_MAX_CLIENT_MESSAGE_BYTES` (256) and ignores anything longer (`listen-socket.ts`).
  */
 export const WS_ROUTE_LARGEST_MESSAGE_BYTES: Readonly<Record<string, number>> = {
   '/proxy/agency/station/:sessionId': Math.max(
@@ -50,6 +56,7 @@ export const WS_ROUTE_LARGEST_MESSAGE_BYTES: Readonly<Record<string, number>> = 
     AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
   ),
   '/api/v1/webrtc-call/:id/pstn-stream': base64Length(ALAW_8K_ONE_SECOND_BYTES) + CARRIER_FRAME_METADATA_BYTES,
+  '/proxy/agency/listen/:sessionId/:listenId': LISTEN_MAX_CLIENT_MESSAGE_BYTES,
 };
 
 /** The largest legitimate inbound message on any route: 42 708 bytes (a 1 s `pcm16` station frame). */

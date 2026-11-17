@@ -11,8 +11,8 @@ import { randomUUID } from 'node:crypto';
  *
  *  1. the per-user rate holds under concurrent requests: it is counted inside the insert's
  *     transaction under the tenant's lock, so a burst cannot all read the same count;
- *  2. `X-Account-Id` in upper case (the tenant middleware keeps it as sent, and a tenant-wide member
- *     passes it; an upper-case `X-Tenant-Id` with an account it refuses itself): the campaign probe, a supervisor's review of an
+ *  2. `X-Account-Id` in upper case (the tenant middleware reads both id headers lower-cased, so an
+ *     upper-case `X-Tenant-Id` is the same tenant too): the campaign probe, a supervisor's review of an
  *     account-scoped agent, the campaign download and the campaign subscription all work;
  *  3. re-enabling a subscription resolves its subject as POST does (a deleted campaign is
  *     `report_subject_not_found`) and cuts `next_run_at` in the campaign's CURRENT zone, which it
@@ -134,10 +134,10 @@ describe('the per-user rate under concurrent requests', () => {
 });
 
 describe('the account header in upper case (a tenant-wide supervisor)', () => {
-  it('the tenant header in upper case never reaches the routes with an account: the tenant middleware refuses it', async () => {
+  it('the tenant header in upper case is the same tenant: the middleware reads the ids lower-cased, and the run names them so', async () => {
     const res = await callUpper('POST', '/proxy/agency/reports', tenantWide[0]!, campaignReport(floor.campaigns[0]!), true);
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toMatchObject({ message: 'X-Account-Id does not belong to this tenant' });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.json()).toMatchObject({ kind: 'campaign', account_id: floor.account, subject: { id: floor.campaigns[0] } });
   });
 
   it('a campaign report is created, and its download answers; a review of an account-scoped agent is created', async () => {

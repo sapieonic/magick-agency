@@ -8,8 +8,9 @@
  *  - the client log context hook, the error handler and the 5xx mask;
  *  - `@fastify/websocket`, with the same `maxPayload` (`utils/ws-limits.ts`), which
  *    completes the handshake and bounds every frame here, where the frames are;
- *  - the two WebSocket routes, unchanged: the station socket (`proxyAgencyStationRoutes`,
- *    which verifies and spends the single-use token) and the carrier's PSTN stream
+ *  - the three WebSocket routes, unchanged: the station socket (`proxyAgencyStationRoutes`,
+ *    which verifies and spends the single-use token), the supervisor's listener socket
+ *    (`proxyAgencyListenRoutes`, the same for its grant's token) and the carrier's PSTN stream
  *    (`webrtcCallRoutes`, which verifies the provider token).
  *
  * No rate limiter: the primary charged every upgrade once, before handing it over.
@@ -24,6 +25,7 @@ import { agencyErrorHandler } from '../api/middleware/agency-error-handler.js';
 import { errorMaskHook } from '../api/middleware/error-mask.middleware.js';
 import { websocketPluginOptions } from '../utils/ws-limits.js';
 import { proxyAgencyStationRoutes } from '../api/routes/proxy-agency-station.routes.js';
+import { proxyAgencyListenRoutes } from '../api/routes/proxy-agency-listen.routes.js';
 import { webrtcCallRoutes } from '../api/routes/webrtc-call.routes.js';
 import { AGENCY_ROUTE_PREFIXES } from '../api/agency.plugin.js';
 import type { AgencyRuntime } from '../agency/runtime.js';
@@ -46,6 +48,10 @@ export async function buildWorkerApp(input: {
   await app.register(websocket, websocketPluginOptions(input.config.server.wsMaxPayloadBytes));
   await app.register(proxyAgencyStationRoutes, {
     prefix: AGENCY_ROUTE_PREFIXES.proxyAgencyStation,
+    getRuntime: () => input.runtime,
+  });
+  await app.register(proxyAgencyListenRoutes, {
+    prefix: AGENCY_ROUTE_PREFIXES.proxyAgencyListen,
     getRuntime: () => input.runtime,
   });
   await app.register(webrtcCallRoutes, { prefix: '/api/v1/webrtc-call', bridge: input.bridge });

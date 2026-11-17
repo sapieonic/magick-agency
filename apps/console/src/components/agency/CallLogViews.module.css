@@ -41,6 +41,12 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* A view's count beside its label (the Calls tab's "Live 3"). */
+.count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .view {
     transition: none;

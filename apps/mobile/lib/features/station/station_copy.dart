@@ -45,6 +45,20 @@ abstract final class StationCopy {
   static const paused = 'Paused';
   static const weakConnection = 'Weak connection';
 
+  // ── Monitoring and recording (docs/listening.md LS2) ──
+  // While the account allows listening, the agent is told so: a standing line behind the info
+  // button on the station and the soft phone, and once, in place, the first time on this phone
+  // for an account. The console's words (`LISTEN_AGENT_NOTICE`, `LISTEN_AGENT_INFO_LABEL`,
+  // `LISTEN_AGENT_FIRST_NOTICE`). Not a live indicator.
+  static const listenInfo = 'Monitoring and recording';
+  static const listenNotice = 'Calls may be listened to by a supervisor for quality and training.';
+  static const listenFirstDetail = 'You can read this again at any time under $listenInfo, the i button at the top of the screen.';
+  // On a call the band has no info button (the header's is on the waiting, incoming and link
+  // screens), so the notice says where it is between calls. The app's own: the console's station
+  // header has the button on every view.
+  static const listenFirstDetailOnCall = 'You can read this again under $listenInfo, the i button at the top of the screen between calls.';
+  static const listenFirstDismiss = 'Got it';
+
   // ── Waiting ──
   static const waitingHeadline = 'Waiting for a call';
   // Says nothing about when the customer's details appear: on a late-binding account they

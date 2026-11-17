@@ -14,8 +14,7 @@ import {
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
-import { redisCache } from '../../cache/redis-cache.js';
-import { membershipCacheKey } from '../middleware/membership-cache-key.js';
+import { membershipAdded } from '../../rbac/membership-changed.js';
 import { hashInviteToken, isInviteExpired } from '../../notifications/invite-token.js';
 import { inviteProductName } from '../../notifications/templates/invite-email.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
@@ -844,7 +843,10 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * underneath it.
      */
     await invalidateUserCache(user.id, beforeBind?.firebase_uid ?? null);
-    await redisCache.del(membershipCacheKey(user.id, invite.tenant_id));
+    // The claim activates a seat that may shadow a wider one (an account-scoped seat over a
+    // tenant-wide admin, in that account): the subscribers are told too (the claimant's listens
+    // re-checked now, LS22 l, LS10).
+    await membershipAdded(invite.tenant_id, user.id);
 
     // The same comparison the address rule above made, so the gate and the
     // audit flag cannot disagree about one claim.

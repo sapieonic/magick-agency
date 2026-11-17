@@ -112,6 +112,14 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'PATCH /push-devices/:id': 'none',
   'DELETE /push-devices/:id': 'none',
   'POST /push-devices/:id/test-ring': 'none',
+  // Live call listening (`agency/live-calls.ts`, docs/listening.md): the live list is SQL only; a
+  // grant checks the bridge and the caps of the process that relays the call, the one that owns
+  // the agent's session (`session_id`), and mints the token its listener socket, handed to that
+  // same process, spends.
+  'GET /live-calls': 'none',
+  'POST /listen-grants': 'body_session',
+  // The account's listening history (`agency/listen-history.ts`, docs/listening.md §12): SQL only.
+  'GET /listen-history': 'none',
 };
 
 /** A matched internal route: its owner kind and the path's `:id`, if it has one. */

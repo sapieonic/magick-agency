@@ -783,6 +783,17 @@ rung for an inbound caller while they are away from the app. It needs inbound ca
    `agency_inbound_enabled`), then follow `docs/operations.md`, "Setting up inbound calls for a
    tenant", step 6. `AGENCY_AWAY_RING_MAX_MS` (default 4 h) bounds one absence.
 
+### 8.8 Live call listening (optional)
+
+Supervisors listening in to live calls from the console ([`docs/listening.md`](docs/listening.md)).
+No infrastructure of its own: the listener socket rides `/proxy` like the station's, which
+`docker/nginx.conf` already upgrades, and the tap runs in the server. It stays off until a
+super-admin turns the consent flag `agency_live_listen_enabled` on for a tenant or an account,
+through `docs/operations.md`, "Enabling live call listening for a tenant" (the checklist, the
+inbound notice's routes included). Never set `FF_AGENCY_LIVE_LISTEN=true` in production: it turns
+listening on for every tenant with no reason and no audit row (dev and staging only; boot warns
+while it is set).
+
 ## 9. Verify the deployment
 
 Run through this once before letting agents in. With the API on its own host, step 7.3 says
@@ -895,6 +906,23 @@ on `agency_calls` and `agency_inbound_calls`: if `agency_calls` holds more than 
 rows, build them `CONCURRENTLY` first with the server running ([`db-hygiene.md`](db-hygiene.md)
 §2). `0038_table_storage_settings.sql` to `0040_drop_duplicate_indexes.sql` change storage
 settings and indexes only, so going back past them needs no `migrate:down`.
+
+**Going back past live call listening** (`0047_listen_sessions.sql`,
+`0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is
+needed, and none should be run: an image from before them has no listen routes and never reads or
+writes `agency_listen_sessions`, `live_at` is nullable, the CHECKs bind only what this release
+writes, and 0049 is an index. Listens open at the deploy end with the shutdown. The table is left
+as it is: the older image's audit maintenance does not purge it, so its rows outlive the audit
+horizon until the release is rolled forward again, whose maintenance then catches up. The downs
+are deliberate refusals: 0047's while any session row exists (the record of who listened), 0048's
+while any row ended `access_unverified`; 0049's only drops the index. If an image that knows 0047
+but not 0048 ever runs on this schema, every session it writes has `live_at` NULL, so after
+rolling forward those listens, though they carried audio, are missing from "Listened to by" and
+the Listening history; restore them with
+
+```sql
+UPDATE agency_listen_sessions SET live_at = started_at WHERE live_at IS NULL AND frames_sent > 0;
+```
 
 **A migration that fails on its lock timeout.** Migrations that lock a busy table give up after
 10 s (`SET LOCAL lock_timeout`) rather than queue every query behind them; the server then does

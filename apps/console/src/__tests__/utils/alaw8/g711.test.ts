@@ -437,6 +437,19 @@ describe('AlawDownlinkDecoder (playback: A-law frames -> 16 kHz floats)', () => 
     expect(dec.decode(frame)).toEqual(first);
   });
 
+  it('decodeInto writes exactly what decode returns, frame after frame, and nothing past it', () => {
+    const bytes = Uint8Array.from(tone(1000, 8000, 1600), alawEncodeSample);
+    const fresh = new AlawDownlinkDecoder();
+    const into = new AlawDownlinkDecoder();
+    for (let i = 0; i < bytes.length; i += 160) {
+      const frame = bytes.subarray(i, i + 160);
+      const out = new Float32Array(330).fill(7);
+      expect(into.decodeInto(frame, out)).toBe(320);
+      expect(out.subarray(0, 320)).toEqual(fresh.decode(frame));
+      expect(Array.from(out.subarray(320))).toEqual(new Array(10).fill(7));
+    }
+  });
+
   it('decodes a message of any length', () => {
     expect(new AlawDownlinkDecoder().decode(new Uint8Array(1))).toHaveLength(2);
     expect(new AlawDownlinkDecoder().decode(new Uint8Array(8000))).toHaveLength(16000);

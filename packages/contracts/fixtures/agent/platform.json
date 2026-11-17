@@ -115,7 +115,9 @@
     "agency_console_alaw8": true,
     "agency_contact_assignment_enabled": true,
     "agency_reports_enabled": false,
-    "agency_inbound_enabled": false
+    "agency_inbound_enabled": false,
+    "agency_live_listen_enabled": false,
+    "agency_live_listen_unrecorded": true
   },
   "notification_preferences": {
     "events": [

@@ -1,14 +1,9 @@
 import { getPool } from '@magick-agency/db';
+import { isUuid } from '../../utils/uuid.js';
 import type {
   NotificationDeliveryClaim,
   NotificationDeliveryStatus,
 } from '../models/notification.model.js';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isUuid(value: unknown): value is string {
-  return typeof value === 'string' && UUID_RE.test(value);
-}
 
 /** `notification_deliveries.error` is free text from a transport. Bound it. */
 const MAX_ERROR_LENGTH = 500;

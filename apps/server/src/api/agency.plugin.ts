@@ -5,6 +5,9 @@ import { ensureAgencyRuntime, getAgencyRuntime } from '../bootstrap/agency.js';
 import type { AgencyRuntime } from '../agency/runtime.js';
 import { proxyAgencyAgentRoutes } from './routes/proxy-agency-agent.routes.js';
 import { proxyAgencyStationRoutes } from './routes/proxy-agency-station.routes.js';
+import { proxyAgencyListenRoutes } from './routes/proxy-agency-listen.routes.js';
+import { proxyAgencyLiveCallsRoutes } from './routes/proxy-agency-live-calls.routes.js';
+import { proxyAgencyListenHistoryRoutes } from './routes/proxy-agency-listen-history.routes.js';
 import { dncAvailabilityProbe } from '../agency/dnc-availability.js';
 import { buildCoreHandlers } from './core-handlers.js';
 import { getCoreHandlers, setCoreHandlers } from './core-dispatch.js';
@@ -42,6 +45,8 @@ export const AGENCY_ROUTE_PREFIXES = {
   proxyAgencySoftphone: '/proxy/agency/softphone',
   /** The station socket (`proxy-agency-station.routes.ts`). */
   proxyAgencyStation: '/proxy/agency/station',
+  /** The supervisor's listener socket (`proxy-agency-listen.routes.ts`, docs/listening.md). */
+  proxyAgencyListen: '/proxy/agency/listen',
   /** The DNC list. */
   dnc: '/dnc',
   /** Call-analysis profiles (the console's `ENDPOINTS.proxy.callAnalysisProfiles`). */
@@ -204,6 +209,17 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(proxyAgencyInboundRoutes, { prefix: P.proxyAgency });
   });
 
+  // ── Live calls and listening (`proxy-agency-live-calls.routes.ts`, docs/listening.md) ─────
+  // Its own refusals for ids: a malformed call id is the uniform `404 listen_call_not_live`.
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyLiveCallsRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── The account's listening history (`proxy-agency-listen-history.routes.ts`, docs/listening.md §12) ──
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyListenHistoryRoutes, { prefix: P.proxyAgency });
+  });
+
   // ── The ring of an away agent's phone (Mode B; `proxy-agency-inbound-ring.routes.ts`) ─────
   // Its own scope: `answering` and `decline` carry only the offer token (no Firebase session), and
   // every refusal there, a malformed id included, is the uniform 404 `ring_not_offered`.
@@ -272,6 +288,13 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // `handleStationSocket`. `/api/v1/agency/station` is not registered (see the route).
   await app.register(proxyAgencyStationRoutes, {
     prefix: P.proxyAgencyStation,
+    getRuntime: () => (ctx ? getAgencyRuntime() : null),
+  });
+
+  // ── The supervisor's listener socket (docs/listening.md §3) ─────────────────────────
+  // Authenticated by the grant's single-use token, like the station by its own.
+  await app.register(proxyAgencyListenRoutes, {
+    prefix: P.proxyAgencyListen,
     getRuntime: () => (ctx ? getAgencyRuntime() : null),
   });
 };

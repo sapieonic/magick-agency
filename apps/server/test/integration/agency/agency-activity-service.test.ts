@@ -182,4 +182,38 @@ describe('fetchActivityPage on real Postgres', () => {
     expect(page.rows.find((r) => r.actor.user_id === ghost)!.actor.display).toBeNull();
     expect(page.rows.find((r) => r.actor.type === 'system')!.actor).toMatchObject({ system: true, display: 'system' });
   });
+
+  // Live call listening (docs/listening.md §12, LS19): a listen row names the agent whose call it
+  // was (`detail.agent_name`), resolved in the page's one identity read; null when it does not resolve.
+  it('names the agent on a listen row, resolved like the actor; other rows are untouched', async () => {
+    const agent = await insertUser({ display_name: 'Ravi Kulkarni' });
+    await getTestPool().query(
+      `INSERT INTO memberships (user_id, tenant_id, account_id, role) VALUES ($1, $2, $3, 'agent')`,
+      [agent.id, tenantId, accountId],
+    );
+    const ghost = (await insertUser()).id;
+    const listen = async (minutes: number, action: string, agentUserId: string) => {
+      await getTestPool().query(
+        `INSERT INTO platform_audit_log (id, tenant_id, account_id, user_id, actor_type, action, resource_type, resource_id, campaign_id, details, created_at)
+         VALUES ($1, $2, $3, $4, 'human', $5, 'agency_call', $6, $7, $8::jsonb, $9)`,
+        [randomUUID(), tenantId, accountId, userId, action, randomUUID(), campaignId,
+          JSON.stringify({ listen_id: randomUUID(), agent_user_id: agentUserId, end_reason: 'listener_stopped', duration_seconds: 130 }), at(minutes)],
+      );
+    };
+    await listen(1, 'agency_call.listen_started', agent.id);
+    await listen(2, 'agency_call.listen_ended', agent.id);
+    await listen(3, 'agency_call.listen_ended', ghost);
+    await console_({ minutes: 4 });
+
+    const page = await fetchActivityPage(query());
+
+    expect(page.rows.map((r) => [r.action, r.detail['agent_name']])).toEqual([
+      ['agency_campaign.paused', undefined],
+      ['agency_call.listen_ended', null],
+      ['agency_call.listen_ended', 'Ravi Kulkarni'],
+      ['agency_call.listen_started', 'Ravi Kulkarni'],
+    ]);
+    expect(page.rows[2]!.detail).toMatchObject({ agent_user_id: agent.id, end_reason: 'listener_stopped', duration_seconds: 130 });
+    expect(page.rows[2]!.actor.display).toBe('Sam Patel');
+  });
 });

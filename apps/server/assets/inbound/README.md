@@ -8,7 +8,7 @@ What an inbound caller hears when the route has no recording of its own for a me
 | File | Played | Words |
 |---|---|---|
 | `please-hold.wav` | to a caller who will wait for an agent, when the route has no greeting (then the hold sound) | Thank you for calling. Please hold and we’ll put you through to the next person available. |
-| `recording-notice.wav` | before an agent joins a recorded call, when the route tells callers and has no notice recording | This call may be recorded for quality and training purposes. |
+| `recording-notice.wav` | before an agent joins a recorded call, when the route tells callers and has no notice recording | This call may be recorded or monitored for quality and training purposes. |
 | `closed.wav` | out of hours | Thank you for calling. We’re closed at the moment. Please call again during our opening hours. Goodbye. |
 | `busy.wav` | when the route or the lines are full; and, in opening hours, instead of the call-back message to a caller who withheld their number or is on DNC | Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye. |
 | `callback.wav` | to a caller who waited and reached nobody | Thank you for calling. Everyone is busy at the moment, so we’ll call you back as soon as we can. Goodbye. |

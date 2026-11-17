@@ -88,4 +88,10 @@ describe('the standard recordings', () => {
     expect(words).toMatch(/your number/);
     expect(words).not.toMatch(/call you back|closed|busy/i);
   });
+
+  it('the recording notice tells callers they may be monitored (live listening\'s consent, LS1), word for word as its WAV says it', () => {
+    expect(AGENCY_INBOUND_STANDARD_WORDS.recording_notice).toBe(
+      'This call may be recorded or monitored for quality and training purposes.',
+    );
+  });
 });

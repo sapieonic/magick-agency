@@ -32,6 +32,14 @@ const log = createChildLogger({ component: 'audit-partition-maintenance' });
  *    tables differ only in name and timestamp column, so one function serves
  *    both. The cutoff is `config.auditPartitions.retentionDays` (default 85,
  *    floor 30).
+ *
+ * 3. **Delete** the rows of the unpartitioned tables kept for the audit log's
+ *    horizon ({@link AUDIT_HORIZON_TABLES}, {@link purgeAuditHorizonRows}) older
+ *    than the first instant of the cutoff's month, in batches: the boundary below
+ *    which step 2 has dropped every partition, so these rows go on the same day as
+ *    their month's audit rows. Today one: `agency_listen_sessions`, the record of
+ *    who listened to which call (docs/listening.md, LS12), which is kept exactly as
+ *    long as the audit rows about it.
  */
 
 /** Rows per DEFAULT-partition delete batch. */
@@ -47,6 +55,23 @@ export interface AuditTableSpec {
 export const AUDIT_TABLES: readonly AuditTableSpec[] = [
   { table: 'audit_logs', tsColumn: 'timestamp' },
   { table: 'platform_audit_log', tsColumn: 'created_at' },
+];
+
+/** An unpartitioned table whose rows are kept for the audit log's horizon, and deleted past it. */
+export interface AuditHorizonTableSpec {
+  table: 'agency_listen_sessions';
+  /** The row's age: a row is deleted once this is older than the cutoff. */
+  tsColumn: 'started_at';
+}
+
+/**
+ * The tables purged at the audit log's horizon by row: a row goes when the audit partition of its
+ * month does (older than the first instant of the cutoff's UTC month, {@link runAuditPartitionMaintenance}).
+ * A listen session is aged by its start, so an open row (a session in progress) is never near the
+ * cutoff; one left open by a process that died is closed by the next boot long before it is.
+ */
+export const AUDIT_HORIZON_TABLES: readonly AuditHorizonTableSpec[] = [
+  { table: 'agency_listen_sessions', tsColumn: 'started_at' },
 ];
 
 /** First instant of the UTC month containing `d`, plus `add` months. */
@@ -168,30 +193,52 @@ export async function purgeAuditPartitions(
     dropped.push(relname);
   }
 
-  let defaultRows = 0;
   const hasDefault = partitions.rows.some((r) => r.relname === `${spec.table}_default`);
-  if (hasDefault) {
-    if (dryRun) {
-      const result = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM ${spec.table}_default WHERE ${spec.tsColumn} < $1`,
-        [cutoff],
-      );
-      defaultRows = result.rows[0]?.n ?? 0;
-    } else {
-      let deleted: number;
-      do {
-        const result = await pool.query(
-          `DELETE FROM ${spec.table}_default WHERE id IN (
-            SELECT id FROM ${spec.table}_default WHERE ${spec.tsColumn} < $1 LIMIT $2)`,
-          [cutoff, BATCH_SIZE],
-        );
-        deleted = result.rowCount ?? 0;
-        defaultRows += deleted;
-      } while (deleted === BATCH_SIZE);
-    }
-  }
+  const defaultRows = hasDefault ? await purgeOlderThan(pool, `${spec.table}_default`, spec.tsColumn, cutoff, dryRun) : 0;
 
   return { dropped, defaultRows };
+}
+
+/**
+ * Deletes `table` rows whose `tsColumn` is older than `cutoff`, {@link BATCH_SIZE} at a time, each
+ * batch picked by id (MATERIALIZED, so never more than a batch) in its own statement so no delete
+ * holds many row locks or runs long; a dry run counts them. Returns the rows. The table name and
+ * column come from this module's specs, never from input. The audit DEFAULT partitions and the
+ * {@link AUDIT_HORIZON_TABLES} share it.
+ */
+async function purgeOlderThan(pool: pg.Pool, table: string, tsColumn: string, cutoff: Date, dryRun: boolean): Promise<number> {
+  if (dryRun) {
+    const result = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM ${table} WHERE ${tsColumn} < $1`,
+      [cutoff],
+    );
+    return result.rows[0]?.n ?? 0;
+  }
+  let total = 0;
+  let deleted: number;
+  do {
+    const result = await pool.query(
+      `WITH picked AS MATERIALIZED (
+         SELECT id FROM ${table} WHERE ${tsColumn} < $1 LIMIT $2
+       )
+       DELETE FROM ${table} t USING picked WHERE t.id = picked.id`,
+      [cutoff, BATCH_SIZE],
+    );
+    deleted = result.rowCount ?? 0;
+    total += deleted;
+  } while (deleted === BATCH_SIZE);
+  return total;
+}
+
+/** Deletes (or, on a dry run, counts) one {@link AUDIT_HORIZON_TABLES} table's rows older than the cutoff. */
+export async function purgeAuditHorizonRows(
+  spec: AuditHorizonTableSpec,
+  cutoff: Date,
+  dryRun: boolean,
+): Promise<number> {
+  const total = await purgeOlderThan(getPool(), spec.table, spec.tsColumn, cutoff, dryRun);
+  if (total > 0 && !dryRun) log.info({ table: spec.table, rows: total }, 'Rows past the audit horizon deleted');
+  return total;
 }
 
 export interface AuditPartitionMaintenanceOptions {
@@ -205,22 +252,32 @@ export interface AuditPartitionMaintenanceReport {
   created: Record<string, string[]>;
   dropped: Record<string, string[]>;
   defaultRowsDeleted: Record<string, number>;
+  /** Rows deleted (or, on a dry run, that would be) from each {@link AUDIT_HORIZON_TABLES} table. */
+  horizonRowsDeleted: Record<string, number>;
+  /**
+   * The horizon tables were left for the next pass: an audit partition purge failed in this one,
+   * and their rows must not go before their month's audit rows (LS12).
+   */
+  horizonSkipped: boolean;
   errors: Record<string, string>;
 }
 
 /**
- * One pass over both tables. Each table, and each HALF per table (create, then
- * drop), is attempted independently, and a failure is recorded rather than
- * thrown, so neither one table's fault nor a persistent create failure can stop
- * the rest of the maintenance (the retention purges' per-target posture).
- * `errors` is keyed `<table>.create` / `<table>.purge`.
+ * One pass over both tables, then the horizon tables. Each table, and each HALF
+ * per partitioned table (create, then drop), is attempted independently, and a
+ * failure is recorded rather than thrown, so neither one table's fault nor a
+ * persistent create failure can stop the rest of the maintenance (the retention
+ * purges' per-target posture). `errors` is keyed `<table>.create` /
+ * `<table>.purge`.
  */
 export async function runAuditPartitionMaintenance(
   opts: AuditPartitionMaintenanceOptions,
 ): Promise<AuditPartitionMaintenanceReport> {
   const now = opts.now ?? new Date();
   const cutoff = new Date(now.getTime() - opts.retentionDays * 24 * 60 * 60 * 1000);
-  const report: AuditPartitionMaintenanceReport = { created: {}, dropped: {}, defaultRowsDeleted: {}, errors: {} };
+  const report: AuditPartitionMaintenanceReport = {
+    created: {}, dropped: {}, defaultRowsDeleted: {}, horizonRowsDeleted: {}, horizonSkipped: false, errors: {},
+  };
 
   for (const spec of AUDIT_TABLES) {
     try {
@@ -236,6 +293,25 @@ export async function runAuditPartitionMaintenance(
     } catch (err) {
       report.errors[`${spec.table}.purge`] = err instanceof Error ? err.message : String(err);
       log.error({ err, table: spec.table }, 'Audit partition purge failed for table');
+    }
+  }
+  // The horizon tables follow the partitions, not the exact cutoff: a partition goes once its
+  // whole month is past the cutoff, so a row goes once it is older than the first instant of the
+  // cutoff's month — the same day its month's audit rows go (LS12). Never before them: a pass
+  // whose partition purge failed leaves the horizon tables to the next, which retries both.
+  if (AUDIT_TABLES.some((spec) => report.errors[`${spec.table}.purge`] !== undefined)) {
+    report.horizonSkipped = true;
+    log.warn({ tables: AUDIT_HORIZON_TABLES.map((s) => s.table) },
+      'Audit partition purge failed — the horizon tables wait for the next pass, so no row goes before its audit rows');
+    return report;
+  }
+  const horizonCutoff = utcMonthStart(cutoff);
+  for (const spec of AUDIT_HORIZON_TABLES) {
+    try {
+      report.horizonRowsDeleted[spec.table] = await purgeAuditHorizonRows(spec, horizonCutoff, opts.dryRun ?? false);
+    } catch (err) {
+      report.errors[`${spec.table}.purge`] = err instanceof Error ? err.message : String(err);
+      log.error({ err, table: spec.table }, 'Audit horizon purge failed for table');
     }
   }
   return report;

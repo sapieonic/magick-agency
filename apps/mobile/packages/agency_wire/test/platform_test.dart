@@ -77,6 +77,14 @@ void main() {
       expect(FeatureFlags.fromJson(const {}).isOn(FeatureFlags.contactAssignmentEnabled), isFalse);
     });
 
+    test('live call listening has its key, the contract fixture\'s', () {
+      final map = fixture('platform.json', 'feature_flags');
+      expect(FeatureFlags.liveListenEnabled, 'agency_live_listen_enabled');
+      expect(map.containsKey(FeatureFlags.liveListenEnabled), isTrue);
+      expect(FeatureFlags.fromJson({FeatureFlags.liveListenEnabled: true}).isOn(FeatureFlags.liveListenEnabled), isTrue);
+      expect(FeatureFlags.fromJson(const {}).isOn(FeatureFlags.liveListenEnabled), isFalse);
+    });
+
     test('values are booleans, numbers or strings', () {
       expect(FeatureFlags.fromJson({'a': 3, 'b': 'x'}).values, {'a': 3, 'b': 'x'});
       expect(() => FeatureFlags.fromJson({'a': null}), throwsA(isA<WireFormatException>()));

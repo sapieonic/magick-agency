@@ -93,8 +93,9 @@ export function resolveEnvDefault(def: FlagDefinition): unknown {
 
 /**
  * Declared flags. Add new flags here; the override table never needs a schema
- * change. Defaults are prod-safe (gated capabilities default off; the one default-on
- * flag, `agency_console_alaw8`, is a way back rather than a capability).
+ * change. Defaults are prod-safe (gated capabilities default off; the two default-on
+ * flags, `agency_console_alaw8` and `agency_live_listen_unrecorded`, are a way back and a
+ * narrowing rather than capabilities).
  *
  * The rationale comments for each entry live beside the definitions in
  * `packages/contracts/src/flags.ts`.
@@ -117,4 +118,8 @@ export const FLAGS = {
   agency_inbound_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_inbound_enabled),
 
   agency_inbound_ring_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_inbound_ring_enabled),
+
+  agency_live_listen_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_live_listen_enabled),
+
+  agency_live_listen_unrecorded: defineFlag<boolean>(AGENCY_FLAGS.agency_live_listen_unrecorded),
 } as const;

@@ -122,6 +122,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // Tenant-wide reads, never campaign-scoped.
   'agency_customer_history.searched',
   'agency_customer_history.exported',
+  // ── Listening history (docs/listening.md §12) ─────────────────────────────────
+  // The account's listening history exported as CSV (who listened to which call). `resource_id` is
+  // the account; `details` carry the rows written, the filters and any truncation. Account-wide,
+  // never campaign-scoped.
+  'agency_listen_sessions.exported',
   // ── Reports (docs/reports.md) ─────────────────────────────────────────────────
   // A report run asked for (`details.via`: `request`, `retry` or `run_now`; kind, subject,
   // window, zone, formats, audience) and one file of it downloaded (`details.format`). Filed under
@@ -175,6 +180,16 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // (`agency_push_devices.id`). Never a push token.
   'agency_push_device.ring_opt_in_changed',
   'agency_push_device.revoked',
+  // ── Live call listening (docs/listening.md, LS6) ─────────────────────────────
+  // A supervisor started listening to a call in progress, and stopped (however it ended). Filed
+  // under the call (`agency_calls.id`), the supervisor the actor on both, whoever ended it (the end
+  // reason says: the supervisor, the call, a revocation, a restart). `campaign_id` the call's campaign, so
+  // they show on the campaign's History. `details` ids and counts only: the listen id, the call's
+  // origin and spine row (`correlation_id`), the agent's user id; `_ended` adds the duration, the
+  // end reason and the frames dropped. Never audio, never a number. The session row
+  // (`agency_listen_sessions`) is the record; these can be lost with the audit buffer.
+  'agency_call.listen_started',
+  'agency_call.listen_ended',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -227,6 +242,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_inbound_clip',
   // One of an agent's push devices (`agency_push_devices.id`; Mode B).
   'agency_push_device',
+  // One call (`agency_calls.id`), whatever its origin: a supervisor listening to it.
+  'agency_call',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

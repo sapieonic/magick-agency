@@ -223,7 +223,7 @@ export const AGENCY_INBOUND_STANDARD_RECORDINGS = [
 /** The exact words of each standard recording, and of the carrier's spoken stand-in for it. */
 export const AGENCY_INBOUND_STANDARD_WORDS: Readonly<Record<AgencyInboundStandardRecording, string>> = Object.freeze({
   please_hold: 'Thank you for calling. Please hold and we’ll put you through to the next person available.',
-  recording_notice: 'This call may be recorded for quality and training purposes.',
+  recording_notice: 'This call may be recorded or monitored for quality and training purposes.',
   closed: 'Thank you for calling. We’re closed at the moment. Please call again during our opening hours. Goodbye.',
   busy: 'Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye.',
   callback: 'Thank you for calling. Everyone is busy at the moment, so we’ll call you back as soon as we can. Goodbye.',

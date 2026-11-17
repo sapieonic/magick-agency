@@ -44,6 +44,15 @@ import { queuedBreakReleaseOf } from './reserved-agent.js';
 import type { InboundConnector } from './inbound/inbound-connector.js';
 import { InboundCallService } from './inbound/inbound-disposition.js';
 import { AwayRingService, returnFromAwayRing } from './away-ring.js';
+import { config } from '../config/index.js';
+import { agencyConfigSchema } from '../config/blocks/agency.js';
+import { agencyListenSessionRepository } from '../db/repositories/agency.repository.js';
+import { platformAuditLogger } from '../audit/platform/audit-logger.js';
+import { ListenRegistry, type ListenLimits, type ListenSessionHandle } from './listen/listen-registry.js';
+import { ListenTokenStore } from './listen/listen-token.js';
+import { ListenRowKeeper } from './listen/listen-rows.js';
+import { listenAccessCheck } from './listen/listen-access.js';
+import type { ListenSocketDeps } from './listen/listen-socket.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -66,6 +75,14 @@ export interface AgencyRuntimeOptions {
    * moot (`carrier-refusal-breaker.ts`).
    */
   refusalCountShared?: boolean;
+  /** Live call listening's caps and re-check (`agency.listen`); unset: the loaded config's. */
+  listen?: Partial<ListenLimits & { tokenTtlMs: number }>;
+  /**
+   * The other processes running now whose listen rows are theirs (the primary's media workers,
+   * `StationDirectory.liveReplicaIds`): the dead processes' close keeps their rows. Unset (one
+   * process): none.
+   */
+  listenLiveReplicaIds?: () => readonly string[];
 }
 
 /** A registry entry, as the sweep sees it (`StationRegistry.silentSince`). */
@@ -151,6 +168,23 @@ export class AgencyRuntime {
    * (`releaseInbound`), and the reconcile the agency bootstrap runs.
    */
   readonly awayRing: AwayRingService;
+  /**
+   * Live call listening (docs/listening.md): the listen sessions this process carries, their caps
+   * and re-check (`listen/listen-registry.ts`), and the listener sockets' single-use tokens.
+   */
+  readonly listen: ListenRegistry;
+  readonly listenTokens: ListenTokenStore;
+  /** The listen session rows: their opens and closes, a failed close retried, lost rows swept (`listen/listen-rows.ts`). */
+  readonly listenRows: ListenRowKeeper;
+  /** `AGENCY_LISTEN_FAULT_BUDGET`, handed to the bridge's tap through the seam (LS22 j). */
+  private readonly listenFaultBudget: number;
+  /** The bridge, for the listener socket's tap (the seam member `openListenTap`). */
+  private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'hasActiveCall'>;
+  /**
+   * Set by a multi-process server: end a supervisor's sessions held by OTHER processes past their
+   * cap after an admission here (`listen.revoke` over IPC). Null in one process.
+   */
+  supersedeListensElsewhere: ((session: ListenSessionHandle) => void) | null = null;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -254,6 +288,28 @@ export class AgencyRuntime {
       if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
     this.awayRing = new AwayRingService({ agents: this.agents, stations: this.stations, inbound: () => this.inbound, breaks: this.breaks });
+    // The loaded config's, over the block's defaults. Deliberate, not drift: many unit tests mock
+    // `config` without the `agency` block, so the typed config is read with optional chaining and
+    // the schema's own defaults fill it. Only this runtime reads `agency.listen`; the bridge gets
+    // its fault budget from here through the seam (`openListenTap`'s options, LS22 j).
+    const listen = { ...agencyConfigSchema.parse({}).agency.listen, ...config?.agency?.listen, ...options.listen };
+    // The repository is read per call, not here: a runtime built over a mocked agency barrel that
+    // has no listen repository must still construct.
+    this.listenRows = new ListenRowKeeper({
+      open: (input) => agencyListenSessionRepository.open(input),
+      close: (id, input) => agencyListenSessionRepository.close(id, input),
+      closeOrphans: (replicaId, opts) => agencyListenSessionRepository.closeOrphans(replicaId, opts),
+      closeOrphansExcept: (live) => agencyListenSessionRepository.closeOrphansExcept(live),
+      markLive: (id) => agencyListenSessionRepository.markLive(id),
+    }, this.replicaId, options.listenLiveReplicaIds);
+    this.listen = new ListenRegistry({
+      limits: listen,
+      access: listenAccessCheck(),
+      maintainRows: (held) => this.listenRows.maintain(held),
+    });
+    this.listenTokens = new ListenTokenStore(redis, keyPrefix, listen.tokenTtlMs);
+    this.listenFaultBudget = listen.faultBudget;
+    this.listenBridge = bridge;
     // A queued `away_ring` applied by the one release path (a break asked for while hidden during a
     // call or wrap-up, IQ72), with or without a station socket.
     this.dialer.registerAwayRing({ applyQueued: (sessionId) => this.awayRing.applyQueued(sessionId) });
@@ -865,6 +921,25 @@ export class AgencyRuntime {
     return this.stationSweepTimer !== null;
   }
 
+  /** What a listener socket needs from this process (`listen/listen-socket.ts`). */
+  listenSocketDeps(): ListenSocketDeps {
+    return {
+      tokens: this.listenTokens,
+      registry: this.listen,
+      bridge: this.listenBridge,
+      faultBudget: this.listenFaultBudget,
+      rows: this.listenRows,
+      audit: (entry) => platformAuditLogger.log(entry),
+      replicaId: this.replicaId,
+      supersedeElsewhere: this.supersedeListensElsewhere,
+    };
+  }
+
+  /** Does the bridge in this process hold the call (`agency_calls.id`)? The grant's check. */
+  holdsCall(callId: string): boolean {
+    return this.listenBridge.hasActiveCall(callId);
+  }
+
   /**
    * A media worker's start (`docs/scaling.md` §1.3): the dialer and the soft phone's
    * dialer listen to the bridge, and nothing else starts. No startup reap (the primary
@@ -874,11 +949,14 @@ export class AgencyRuntime {
   startShard(): void {
     this.dialer.start();
     this.manualDialer.start();
+    this.listen.start();
     log.info({ replicaId: this.replicaId }, 'Agency dialer runtime started as a media worker shard');
   }
 
   /** A media worker's stop: the shard's timers only (agents are not returned to the pool). */
   async stopShard(): Promise<void> {
+    // The listens first (each ends `server_shutdown`, its row closed) while the bridge still runs.
+    await this.listen.shutdown();
     this.stopStationSweep();
     this.dialer.stop();
     this.manualDialer.stop();
@@ -890,6 +968,12 @@ export class AgencyRuntime {
     this.dialer.start();
     this.manualDialer.start();
     await this.reaper.reapOnStartup();
+    // Live call listening: every session a previous process left open is closed
+    // `server_restarted` before any listener can attach (no media worker runs yet, so every
+    // open row is an orphan). Non-fatal: a close that fails is run again by the re-check's next
+    // tick, which the line below arms (LS22 r).
+    await this.listenRows.closeDeadProcesses();
+    this.listen.start();
     this.reaper.start();
     this.pacing.start();
     // The compliance window. Published on a timer because it is
@@ -919,6 +1003,9 @@ export class AgencyRuntime {
     // dials, so no tick dials while the rest of the runtime is coming down; a tick
     // that outlives the bound is logged and can only finalize, never dial.
     await this.pacing.stop();
+    // Live listens end `server_shutdown` (rows closed) while the bridge and the pool still run.
+    // Usually done already: the listener route ends them as HTTP closes (`proxy-agency-listen.routes.ts`).
+    await this.listen.shutdown();
     this.reaper.stop();
     this.stopStationSweep();
     this.abandonmentMetrics?.stop();

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-15.
+"is it done". As of 2026-11-17.
 
 ## Summary
 
@@ -1802,7 +1802,634 @@ picker reaches today + 31, and a test holds its two constants to the contract (P
 CA4 ownership is the station's only. Each fix mutation-checked (the test named in its commit goes
 red without it).
 
+### Live call listening, phase 1: the foundation 2026-11-16 (LS1–LS14, [`listening.md`](listening.md))
+
+Supervisors will see an account's calls in progress and listen in silently from the console (the
+locked design: `listening.md`, `decisions.md` "Rulings of 2026-11-16"). Phase 1 lays what the
+later phases build on, with no runtime behaviour yet:
+
+- **Contracts.** Permission `agency.calls.listen` (floor `account_admin`); flags
+  `agency_live_listen_enabled` (default off, client-exposed: the consent gate) and
+  `agency_live_listen_unrecorded` (default on); the listener socket's contract
+  (`agency/listen.ts`: call origins, leg tags, wire sizes, frames, end reasons, close codes and
+  each reason's code); the console wire (`api/agency/live-calls.ts`: the live row, the number
+  reveal, the grant, a call's listen sessions); the listen refusal codes (`errors.ts` §7).
+- **Data.** `0047_listen_sessions.sql`, `agency_listen_sessions` (CHECKs pinned to the contract's lists, a
+  backstop against listening to one's own call, a Down that refuses while rows exist), its
+  repository with real-Postgres tests, and its rows deleted at the audit log's horizon by the audit
+  maintenance (LS12).
+- **Audit.** `agency_call.listen_started` / `_ended`, resource type `agency_call`, on the Audit Log
+  and the campaign's History.
+- **Config, metrics, alerts.** `agency.listen` (the caps, the re-check, the token, the fault
+  budget); `agency_listen_*`, `webrtc_relay_dwell_seconds{direction}`, the `listener` socket and
+  `listen` handoff labels; the `agy-listen-*` alert group and the dashboard's *Live call listening*
+  row.
+
+Not built yet at phase 1: the tap and the bridge seam (phase 2, since built: below), the registry,
+socket, routes and revocation (phase 3), the console (phase 4), the agent's standing line (phase 5), the inbound notice's words
+(phase 6). Mutation-checked (each red, then restored): the permission's floor at `operator`; the
+listen codes' order against their snapshot; the unrecorded flag exposed to clients or defaulted
+off; a close code moved; an end reason dropped from the contract (its close map fails `tsc`) or
+from the metric labels (the server's type pin fails `tsc`); the live flag left unregistered; a
+listen action dropped from the campaign History or from the audit catalog; `agency.listen`'s
+per-call cap widened to 6; the retention sweep's listen delete skipped; the repository's
+once-only close, its tenant scope on the open calls' read, its account scope on a call's sessions,
+the `NOT` in the boot reap, and its never-before-the-start end; the end-reason, origin and
+own-call CHECKs; the Down's refusal.
+
+### Live call listening, phase 2: the tap in the bridge 2026-11-16 (LS8, LS15, [`listening.md`](listening.md) §5)
+
+The voice side, with no route or socket yet (phase 3): `core/bridge/listen-tap.ts` fans a bridged
+call's two legs out to supervisors' sinks as one tag byte and 160 bytes of A-law, fed after the
+relay's write in a guarded tail at the three hot-path sites (one field read with nobody listening),
+on its own codecs and framers, every entry guarded, a per-leg fault budget ending its sinks
+`tap_error`, one bad sink ended alone (`listener_disconnected`, `send_backlog`). The seam member
+`WebRtcBridgeManager.openListenTap(callId, sink)` (refusals `not_found`, `not_bridged`, `ending`)
+with `docs/seams.md` §3.1 and the seam contract tests; `LISTENER_LIMITS` and
+`sendToListenerSocket` for phase 3's socket; `webrtc_relay_dwell_seconds` sampled one frame in 50
+from `recordRelayFrame`. The calls the design left open are LS15.
+
+Mutation-checked (each red, then restored with `git checkout`): the tap fed before the relay (the
+dwell would include it); the tap sharing the session's codec; the session keeping the field after
+the last sink; the budget off by one; no reset on a good frame; one run for both legs; a throwing
+sink ending every sink; the sink's send unguarded; the soft limit widened; the hard cap treated as
+a drop; a closed sink kept; `destroy` leaving the tap open; the re-attach ending it; the tail
+skipped when the agent's leg is gated; "bridged" read as "answered" (a parked inbound caller
+listenable); `ending` not refused; the dwell sampled every frame; the customer feed's catch
+removed; `sendToListenerSocket`'s catch removed; the fault log not rate-limited; a widened
+`ListenTapRefusal` (the seam contract fails `tsc`).
+
+### Live call listening, phase 3: the server side 2026-11-16 (LS5, LS7, LS9, LS10, LS13, LS16, [`listening.md`](listening.md) §4 "As built")
+
+The routes, the listener socket and the runtime behind them. `GET /proxy/agency/live-calls`
+(`agency.supervise`, the consent flag, numbers masked, names, `listenable` computed for the caller),
+`GET …/:callId/number`, `POST …/:callId/listen` (`agency.calls.listen`; the call in scope, live and
+bridged, LS4, the own-call rule, then `callCore` to the owning process's grant handler, internal
+`POST /listen-grants`, owner `body_session`), and the socket `/proxy/agency/listen/:sessionId/:listenId`
+(`wsOwner` by the agent's session, labelled `listen`; the station rate-limit bucket): token, caps,
+row (awaited), tap, `ready`, the audit pair, every end once with its close code, row counters and
+metrics. `ListenRegistry` (the three caps, supersede, `revokeUser` and the 30 s re-check from the
+database, shutdown), `ListenTokenStore`, revocation from the role-change and removal routes, IPC
+`listen.revoke` (revocation primary → workers, supersede worker → primary → workers), the boot
+and worker-reap sweeps (`server_restarted`), shutdown (`server_shutdown`). The call details answer
+`listen_sessions`. Contracts (additive, for the console): `AgencyLiveCall.correlation_id` and
+`aht_seconds`. The calls the design left open are LS16.
+
+Mutation-checked (each red, then restored with `git checkout`): the per-call, per-process and
+reservation counts; supersede; a supervisor's own listen counted against the cap; `revokeUser`
+ending nothing, or every supervisor's; an outage treated as a revocation; the re-check timer; the
+shutdown; the access check's floor, flag and LS4; the token's single use, listen id, and both
+fail-closed paths; the socket's session check, row-before-tap (no row, no audio), cap at the
+upgrade, idle bound, close code per reason, end-once, strict frame keys, the error handler, the tap's
+counters on the row; the grant's own-call and LS4 refusals, the flag gate, the masking, the
+`agency.calls.listen` floor, the UUID check; the grant handler's bridge check; the station bucket,
+the `ws-limits` entry, the owner-table entry, the handoff label; `listen.revoke`'s shape check, the
+worker's handler and its shutdown order, the primary's revoke broadcast and supersede relay (the
+cluster suite); the revocation hook's catch and the remote supersede's own-replica filter; the role
+change's and the removal's revocation (end to end); the boot sweep; the account scope of the live
+list (both of its layers together: each alone stays green, by design); the call detail's
+`listen_sessions`; the listener route's `preClose`.
+
+### Live call listening, phases 4 and 5: the console and the agent's line 2026-11-16 (LS2, LS6, LS9, LS13, [`listening.md`](listening.md) §9)
+
+Built against the contracts while the server's routes (phase 3) are not there yet, so nothing is
+live until they are. **Live calls** at `/agency/live` (Campaigns, beside Soft-phone calls) and a
+campaign's Calls tab "Summary | Live" (`…/calls/live`), behind `agency.supervise` and
+`agency_live_listen_enabled`, Listen behind `agency.calls.listen`; the navigation, search, campaign
+tab and route-gate tables with their guards. `LiveCallsTable` (every column, sort, filters, row
+states, the number's Show/Hide on demand, the 5 s poll, the server clock), the shell's one listen
+(`ListenProvider` in `ConsoleLayout`, ended by leaving the shell or the account; the first-use
+confirmation; the refused grant's toast), `ListenBar` (every state, the LS6 notice always, Esc,
+mutes, remembered volume, phone width), the session as a pure reducer with its controller (grant,
+socket, ping every 10 s, a fresh grant per reconnect for 15 s) and the playback (one context, per
+leg a decoder, a 120 ms queue, a meter and a mute; no microphone). "Listened to by" on the dialler
+and soft-phone call pages. The agent's standing line (LS2) behind an info button in the station
+header and on the campaign screen they join from, and in the mobile app's station info sheet
+behind the client flag (copy only). The two gaps this phase left (amber on the campaign view only,
+"Open call" to the live view) are closed by the follow-up below.
+
+Mutation-checked (each red, then restored with `git checkout`): the Live calls tab or the campaign
+Live screen without the flag (`navRouteGates`); a close from an older attempt applied; the
+reconnect window renewed by every drop; a refused first grant opening the bar instead of a toast;
+the three-failure bound raised or its check removed (raising it first stayed green: the test
+counted with the constant, now fixed); no ping; Stop without the `stop` frame; audio played before
+`ready`; no stop on unmount (leaving the shell, switching account); Esc not stopping; the LS6
+notice dropped once ended; the first-use confirmation skipped; Hide not masking again; the Action
+column without `agency.calls.listen`; a microphone API named in a listening module; mute leaving the
+leg audible; no cushion on an underrun; an unknown leg tag accepted; the listener token not
+redacted at the analytics boundary; the station's line shown with the flag off; and on the mobile
+app the info button shown with the flag off and a wrong flag key.
+
+### Live call listening, the console against the server 2026-11-16 ([`listening.md`](listening.md) §9)
+
+The console reads what phase 3 added to the live row. **"Open call"**, in each table row and in the
+listening bar, opens the call's own page from `correlation_id`: a dialler call's attempt, a
+soft-phone call's page; an inbound call has no call page in the console, so its row has no link
+and the bar opens its live view. **Amber** past twice the AHT reads the row's own `aht_seconds` on
+the account page and the campaign view alike (the campaign view's stats workaround is gone).
+Checked field by field and message by message against the server (the routes, the grant's `ws_url`
+and `token`, `ready` / `ended` / `pong`, `ping` / `stop`, every close code and reason, the refusal
+statuses, the call details' `listen_sessions`): it matches, except that the server's error mask
+strips the grant's own 503 bodies (`listen_limit_server`, `listen_unavailable`), so the console now
+reads a 503 without a listen code as `listen_unavailable`. A shutdown's close with no `ended`
+frame (1005, LS16 g) is pinned as a reconnect. The route-path guard
+(`apps/server/test/unit/api/agency-route-table.test.ts`, `console-paths.json`) has the four paths
+and passes (9).
+
+Counts: `apps/console` 7274 (386 files), lint clean; `pnpm test:tooling` 20. Mutation-checked
+(each red, then restored with `git checkout`): a soft-phone call opening an attempt path; an inbound
+call given a page; amber ignoring the row's AHT; the bar back to the live view for every call; a
+503 without a code not read as unavailable; a close with no code (1005) taken as the call's end;
+"Open call" dropped from a row fading as ended.
+
+### Live call listening, phase 6: the notice's monitoring words 2026-11-16 (LS1, [`listening.md`](listening.md) §10)
+
+An inbound caller told the call is recorded is now told it may be monitored too: the standard
+recording notice (`AGENCY_INBOUND_STANDARD_WORDS.recording_notice`) is "This call may be recorded
+or monitored for quality and training purposes.", and `apps/server/assets/inbound/recording-notice.wav`
+is regenerated from those words with `scripts/generate-inbound-clips.ts --only recording_notice` and
+the pinned voice (8 kHz mono PCM16, a plain 44-byte header, 5.0 s, peak −3 dB); the other six
+recordings are byte for byte as before. A route's own notice recording is the account's to re-record.
+The words are quoted in `assets/inbound/README.md`, `inbound.md` §3.4 and the route editor (from the
+contract). Mutation-checked (each red, then restored with `git checkout`): the old sentence in the
+contract (the contracts pin and the route editor's test), and a 16 kHz WAV with a metadata chunk in
+place of the notice (`inbound-standard-clips.test.ts`).
+
+### Live call listening, the console and mobile review fixes 2026-11-16 ([`listening.md`](listening.md) §9)
+
+A review of the console and mobile side found twelve faults, all fixed. The listening
+bar's audio no longer piles up against a stopped clock: while the browser will not run the
+context (autoplay, an interruption) frames are dropped and the queue stopped, only a gesture
+resumes it, and "Turn sound on" plays from now rather than in a heap; a burst past 600 ms stops
+the leg's queue before re-basing, so the call never talks over itself; a listen that ends
+silences at once and suspends the context; a browser that cannot play sound is refused before
+any grant. Server failures are counted across `ready`s (a tap failing after every `ready` ends
+in "Connection lost" instead of looping), and the first attach has its own 15 s. Overlapping
+live-list reads land in order. The table and the bar are `ph-no-capture` (CH6). Focus moves to
+the bar on Listen and back to the row's Listen; the ended reason is announced; "The call ended
+before you joined." on a first-attach 4404. "Agent is silent" replaces "Agent reconnecting…" (a
+muted console agent sends nothing). The per-call limit's words name no count. The grant's 503s
+are read by their code (the server route now marks them reviewed). `ConsoleLayout`'s listen
+wiring and teardown are pinned. On mobile the flag key is `agency_wire`'s
+`FeatureFlags.liveListenEnabled`, pinned against the contract's fixture.
+
+Mutation-checked (each red, then restored with `git checkout`), 22 in all: playback without the
+drop while not running, without the flush on `statechange`, without the flush before re-basing,
+`release` without suspending, an unguarded context factory; the failure count reset by `ready`,
+and never reset; no first-attach deadline in the reducer, and none in the controller's timer;
+the live list without its sequence; the table's and the bar's `ph-no-capture`; the provider not
+releasing, not refusing a browser without sound, Try again not resuming; focus not moved to the
+bar, not returned to the row, returned even when moved elsewhere; the ended reason outside the
+live region; "you listened for 00:00" back; `ListenProvider` not keyed by the account; the bar
+inside `<main>`.
+
+### Live call listening, the console and mobile persona-review fixes 2026-11-16 ([`listening.md`](listening.md) §9)
+
+The product review's console and mobile items (its two major findings, its minor ones and the polish list). The
+agent: the standing line is on the standalone soft phone (`/dialer/phone`) and both mobile
+soft-phone surfaces too, behind an info button renamed "Monitoring and recording", and the first
+time an agent opens the station or a soft phone for an account while listening is on, a notice
+under the header says it until Got it (per agent and account; browser storage on the console, the
+app's key-value store on mobile). The supervisor: the first-use confirmation says the times "are
+recorded and can be seen by your account’s admins"; the table keeps a chosen agent or campaign on
+offer after its calls end and offers Clear filters, hides "0 in progress", says "Updated just now",
+"No name" for a dialled number, counts a full call's listeners ("2 supervisors are already
+listening") and "+N" past three avatars, and offers Stop beside Connecting and Reconnecting; the
+bar's ended line is "Priya S. with ****4321 · you listened for 02:10" under "Call ended",
+"Connection lost" says the call is not affected and offers Try again and Close, an inbound call
+has no Open call, a supersede names another tab or window, and the flag or the permission going
+away here ends the listen with "Listening has been turned off for this account." or "You no
+longer have access to listen to calls." (a re-grant refused `feature_disabled` says turned off)
+instead of the bar vanishing. The protocol-ping liveness (LS22 d) needs nothing on the client: a browser answers the server's
+protocol pings itself, and the JSON `ping` stays. Left for later (they need contract changes from
+the server side): withheld numbers, `access_unverified`, the history page, the Settings line.
+
+Mutation-checked (each red, then restored with `git checkout`), 16 in all: the provider stopping
+instead of withdrawing; no `turned_off` for a `feature_disabled` re-grant; a withdrawal ignoring
+"Connection lost"; the chosen agent not kept; Got it not remembered; the soft phone header without
+the info button; the row's Stop doing nothing; the bar offering a fallback link for inbound; no
+"+N"; on mobile, Got it not stored, a stored dismissal ignored, the flag not gating the notice, the
+soft phone's info button and notice and the call layout's notice each removed, and the soft phone
+title not flexible at 200% text.
+
+### Live call listening, the load check 2026-11-16 ([`listening.md`](listening.md) §10 "Load check")
+
+`apps/server/test/integration/load/listen-media-load.test.ts` (wall-clock lane, about 3 minutes):
+100 bridged calls at 50 frames a second each way (mock VoiceLink carrier, real agent sockets, half
+`alaw8`, half `pcm16`) with nobody listening, then 6 listeners (the expected peak) and 20 (the
+process cap, a 21st refused `503 listen_limit_server`), one stalled each time, through the real
+grant and upgrade, the listeners in a child process (`listen-load-clients.ts`). Zero frames lost on
+either leg in every run; against the same floor's quiet window, 20 listeners cost at most about
++0.07 of loop utilisation and nothing measurable in loop delay p99 or frame latency (the bounds and
+the numbers are in `listening.md`); every reading listener gets 50 messages a second per leg; the
+stalled one is dropped at its soft limit, then ended by the 30 s idle bound with its call untouched
+(since the voice review, `send_backlog` after 10 s of drops, LS17 b; re-run green on `a13635b`).
+The proof is the loop and the latency, not the relay dwell, which excludes the tap by construction.
+Found and fixed: the grant's 503 refusals were masked by the app-wide error mask (`7b1c92a`), so
+the console could not say why a Listen was refused. Found: on loopback a stalled listener is ended
+by the idle bound before the soft limit is reached (the kernel absorbs about 4 MB); the suite corks
+the stalled listener's server end to model a real path.
+
+The media load suite's start-negotiation flake (`load/voicelink-media-ws-load.test.ts`, the
+`media_before_bad_start` case ending `provider_start_timeout`, seen in phase 3's counts below and
+before it): not the listen tap (with nobody listening the tap is one null read, and nothing it does
+runs before a leg is attached). The case sent 25 media frames then its bad `start`; when Redis
+answered the provider-token check late, all of them landed inside the check, past the 16 frames the
+bridge holds meanwhile (`PSTN_EARLY_FRAME_CAP`, pinned by its unit test), so the `start` was dropped
+by design and the call timed out instead of failing `unsupported_media_format`. Reproduced 3 of 3
+by pausing Redis clients 25 ms in every 75; the case now sends one frame fewer than the cap
+(`626404c`) and passes 3 of 3 under the same pauses. A real carrier sends `start` first, so the cap
+is not changed.
+
+Mutation-checked (each red, then restored with `git checkout`): a 1 ms busy wait in the tap (every
+primary bound red; the dwell unchanged); the listener's soft limit removed (the stalled listener
+closed `send_backlog`); a listened call's relay dropping one frame in 500 (zero-loss red); the error
+mask on the grant's 503 (the route test red before the fix). The tap fed before the relay is not
+caught by the load suite (the dwell moves within noise) and is pinned by
+`webrtc-bridge-listen-tap.test.ts`, which goes red for it.
+
+### Live call listening, the voice review fixes 2026-11-16 (LS15 f–g, LS17, [`listening.md`](listening.md) §2, §5, §8)
+
+A review of the bridge tap found seven faults, all fixed in `618108f`. A listener heard the
+agent's microphone after a hangup of ours while VoiceLink's confirmation wait ran (up to 45 s), and
+both legs briefly inside `endCall`'s awaits: the tap now ends `call_ended` as the call enters
+`ending` and at the top of `endCall` (LS15 f). The relay-dwell alert could not see the tap (fed
+after the write): `agy-listen-loop-delay` (event-loop delay p99 above 40 ms for 10 min while listens
+are open) replaces it, with the metric's comment and the runbook (LS17 d). Plivo's μ-law customer
+reaches listeners through a 256-entry μ-law → A-law table (`wireFormat: 'mulaw8'`), bit for bit the
+per-sample conversion, and transcoded legs are primed to a whole first frame so they run carry-free
+(LS17 a: a deviation from the locked codec-pair path). A listener with every frame dropped at the
+soft limit for 10 s is ended `send_backlog` (LS17 b; the alert's comment now says 256 KiB ≈ 16 s). A
+failed message counts its 20 ms frames (LS17 c). The re-attach's reset and the Plivo leg's audio
+through the real module are pinned. The load check's stalled listener now expects `send_backlog`;
+`listen-media-load.test.ts` is updated and not yet re-run (re-run green since, on `a13635b`: the
+load check entry above).
+
+Mutation-checked (each red, then restored with `git checkout`), 14: no tap end at `ending`; none at
+the top of `endCall`; `resetAgentLeg` emptied, keeping the encoder, the framer's tail, the priming;
+μ-law through the codec path; no priming; no 10 s bound; a sent frame not restarting the clock; the
+timed close not counted dropped; a failed message counted as one frame; an undeclared metric in the
+new alert (`pnpm test:grafana` red).
+
+### Live call listening, the server review fixes 2026-11-16 (LS16 c–d, n–v, [`listening.md`](listening.md) §4, §6)
+
+A review of the agency and API side found nine faults (S1, S3–S10; S2, the masked 503s, was already
+fixed in `7b1c92a`), fixed in `9f32bc5`. The upgrade never re-checked access, so a supervisor
+demoted (or a tenant turning the flag off) after a grant could attach within its 60 s and listen
+until the next pass: it now asks the database before the row (4403, or 1011 when it cannot say), and
+a per-supervisor revocation generation, bumped by every `revokeUser`, goes from the grant's token
+into the reservation, so a revocation between grant and admission refuses it. The immediate path
+fails closed; the periodic pass fails open but ends a session not verified for 4 × the re-check
+interval (LS16 c, d). The flags fell back to registry defaults on a flag-store outage (every listen
+ended; LS4 opened): they are read through `FeatureFlagService.strictSnapshot`, an outage being
+"cannot check" (the grant 503 `listen_unavailable`). The super-admin role change and removal now
+revoke. A failed row close was dropped (a phantom listener): it is retried on the re-check tick,
+and a live process sweeps its own rows it no longer holds. The handoff logged an unspent token's URL
+raw. Two listens admitted at once in two workers could end each other (only older rows now). A
+stopping process answered the server's limit (now `listen_unavailable`). The "at once" revocation
+suites could pass on the periodic pass (it is held off to 5 min there). Nits: retention on the
+partitions' month boundary, the AHT cache bounded, the dialler spine on
+`idx_agency_attempts_account_live` (plan test), `maxPerUser` per tenant documented. The load check's
+expectations now allow its stalled listener to end during the window (`e0bf526`).
+
+Mutation-checked (each red, then restored with `git checkout`), 25: no access check at the upgrade;
+admission ignoring the generation; the reservation ignoring the grant's; the immediate path failing
+open; no staleness cap; a good check not refreshing it; `strictSnapshot` degrading like `snapshot`;
+an unreadable flag read as passed; a failed close not queued; the sweep forgetting closes in flight;
+the tick's held ids without reservations; a supersede of newer rows; stopping as the server's limit;
+the handoff's raw URL; the super-admin role change's and removal's revocation; the grant's flag
+outage as 403; the AHT cache unpruned; the grant's generation not recorded; the old campaign-join
+spine and the `reserved_agent_id` predicate (the plan test); the sweep's keep list and its age floor
+(real Postgres); retention at the exact cutoff; the immediate path off in one process (end to end)
+and in a media worker (the cluster suite).
+
+### Live call listening, the server persona-review fixes 2026-11-16 (LS21, LS22, [`listening.md`](listening.md) "LS22 in full")
+
+The principal reviews' server, database and contract items (the engineering review's, the QA
+review's and the product review's last two minor ones, the nits and doc drift), in `b3114f9`. Manas's decision 4 (LS21): an access
+re-check that cannot be made ends a listen after 2 × the re-check (60 s, was 2 min) as
+`access_unverified`, close 4503, not `permission_revoked` (`0048_listen_sessions_unverified.sql` extends the CHECK; the
+contract, the metric label). The rest are LS22: `live_at` (0048) so "Listened to by" shows only
+sessions that went live; protocol pings with the pong as liveness (a hidden tab's throttled timers
+no longer end it every minute); a per-socket message rate (1008); refusals with no `ended` frame (a
+tap that ended under the attach 4404, one that threw 1011); a token store outage 1011, not 4401;
+every listener close then terminated after 5 s (as the station's backlog close); the upkeep reading
+its held ids at the sweep (a slow retry could sweep a session admitted meanwhile) and a hung tick not
+stacked on; the tap's fault budget through the seam (`openListenTap`'s options; the voice area reads
+no agency config); withheld numbers said so (`customer_phone_withheld`, `404
+live_call_number_withheld`); an invite or its claim re-checking listens; `selectMembership` moved
+to `rbac/` and shared; `listOpenInAccount` and `ListenRegistry.all` removed; the live SQL ordered by
+name; the audit logger's `flush` for the e2e's reads. New coverage: the soft-phone and inbound
+spines' plans and the AHT read's (the inbound spine needs many tenants' rows to choose its account
+index: with two accounts the planner scanned every tenant's open inbound calls), a media worker
+killed mid-listen, the agent's own hangup, a grant whose call ended before its upgrade, the agent's
+own soft-phone read, a super-admin's session. The load check asserts its timing bounds only with 4
+or more CPUs or when asked. Not done here: wiring `full-ci` to `LISTEN_LOAD_BOUNDS=on` (a CI
+change), and the console's use of the new end reason, close code and withheld flag (the console
+pass after this one).
+
+Mutation-checked (each red, then restored with `git checkout`), 27: the staleness cap back to 4; its
+reason `permission_revoked`; the immediate path's unchecked as `permission_revoked`; the tick guard
+off; the held ids snapshotted at the tick; a tap ended under the attach admitted; the pong not
+counted; the message rate off; a plain close; a throwing tap as the call's end; a token store outage
+as 4401; the token store answering null; no live stamp; every close marked live; the bridge reading
+the budget from config; the socket not passing it; the claim's and the invite's revocation; the
+withheld rule; the token query's type guard; the logger's flush stopping it; the membership pick
+reversed; "Listened to by" without `live_at`; 0048's CHECK without the reason; its Down's refusal;
+the worker reap closing every open row; the worker reap closing none.
+
+### Live call listening, the persona review: history and guard rails 2026-11-16 (LS18–LS20, [`listening.md`](listening.md) §12)
+
+The product owner's decisions on the persona review, server side (the console's pages are a later
+step). **The listening history (LS19):** `GET /proxy/agency/listen-history` and `.csv`
+(`agency.supervise` and the consent flag), through the internal `GET /api/v1/agency/listen-history`;
+a supervisor's sessions on one call merged on the server into one entry (30 s gap, or while one is
+open; overlaps counted once); the CSV masked and audited `agency_listen_sessions.exported`;
+contracts `api/agency/listen-history.ts`. A campaign's listen History rows name the agent
+(`detail.agent_name`, at the read). **Guard rails (LS20):** `agency_live_listen_enabled` has a
+handling policy in the super-admin flag routes (`feature-flags/flag-policies.ts`: a reason to turn
+it on, no bulk rollout, no global On); the super-admin registry says why a global On is refused;
+`agency_live_listen_unrecorded` is client-exposed for the Settings line; the enablement checklist
+is in [`operations.md`](operations.md), with LS18's inbound item. **The live list and the number**
+answer a flag store outage `503 listen_unavailable`, not the `403 feature_disabled` the console
+stops polling on. Mutation-checked: the history's merge gap, its open-session merge, its time
+counted once, its account scope and its cursor's id tiebreak (`listen-history.test.ts`); the
+public layer's masking, its export audit row and its outage answer
+(`proxy-agency-listen-history.routes.test.ts`); the listen row's agent name
+(`agency-activity-service.test.ts`); the live list's and number's outage 403 and an unmasked 503
+(`proxy-agency-live-calls.routes.test.ts`); the policy's override check, bulk check, global
+refusal and blank reason (`super-admin-feature-flags.test.ts`); the registry's global-On guard
+(`SAFeatureFlagsPage.test.tsx`). Counts under "Test counts".
+
+### Live call listening, the two persona-review branches merged 2026-11-16 (LS18–LS22)
+
+The history and guard rails branch (LS18–LS20) merged into the server persona-review fixes (LS21,
+LS22) in `74eaeaa`; the docs keep both sides (rulings LS18–LS22 in order, the pending rows
+together). The live list's flag gate answers an outage `503 listen_unavailable` on every route
+(LS20's branch) with the withheld-number changes (LS22 i) kept. Integration fixes in the commit after the merge:
+`AGENCY_LISTEN_END_REASON_LABELS` has words for `access_unverified` ("Access could not be
+checked"); `LISTEN_HISTORY_SQL` reads only sessions that went live (`live_at IS NOT NULL`, as
+"Listened to by"), so a row refused at the upgrade neither shows in the history nor bridges two
+visits (the history test seeds `live_at`); the history's withheld flag uses the live list's rule
+(`isWithheldNumber`, no digit at all; a null number is still a purged call row). Two lines of the
+LS21 docs named the migration by the word and its number, which the self-containment guard
+(`no-external-references.test.ts`) reads as another repository's migration number: they name the
+file instead. Mutation-checked (each red, then restored with `git checkout`), 3: the label removed
+(`listen-history.test.ts` in contracts, and the lint); `live_at IS NOT NULL` dropped (the history
+integration test); withheld back to `''` only (`proxy-agency-listen-history.routes.test.ts`). The
+console does not yet word `access_unverified` (its `terminalEndReason` falls to the close code):
+the console pass after this one.
+
+### Live call listening, the persona review's console 2026-11-16 (LS6, LS19–LS22, [`listening.md`](listening.md) §12 "The console")
+
+The console side of the product owner's persona-review decisions. **The account's Listening
+history** (`/agency/listening-history`, a Campaigns tab beside Live calls, `agency.supervise` and
+the consent flag): supervisor, agent, call type, the masked customer or "Withheld", start, time
+listened, how it ended in the contract's words, "Open call" where the call has a page; filters for
+supervisor, agent and date range, keyset paging, Export CSV with the applied filters and its
+truncation said; `403 feature_disabled` final, `503 listen_unavailable` read again after 5 s;
+`ph-no-capture`. The two history routes moved from the route-table guard's server-only list into
+`console-paths.json` with `api/listenHistory.ts`. **Settings → Live call listening**: "Live call
+listening: On / Off", whether unrecorded calls are included, "Ask your account manager to change
+this.", from the client flag map. **Readable History rows**: "Listened to Priya S.’s call for 2m
+10s · ended: stopped by the supervisor", the call linked by the row's origin. **Merging**
+(`mergeListenVisits`, the server's 30 s rule) on the History and in "Listened to by".
+**`access_unverified`** (4503 or the `ended` frame): "Listening stopped because your access could
+not be checked. Try again." with Try again, no reconnect loop. **Withheld numbers**: "Withheld", no
+Show, the reveal's 404 handled. **The confirmation** now says the listen is "recorded in the
+account’s Listening history." **The live list** keeps its rows and polls on through a 503. No
+server source or contract change (the contract's `customer_phone_withheld` stays optional). The
+self-containment guard's one hit at `78d58a7` (this file naming a migration by the word and its
+number) is reworded. Mutation-checked (each red, then restored with `git checkout`), 26: 4503's
+close outcome; Try again from an `unverified` end; a withheld row's flag, the reveal's 404, the
+bar's target; the live list's 503 read as final; the merge's gap at its edge and its overlap;
+"Listened to by" unmerged; the History unmerged and its summary dropped; the history page's 503
+retry, its `feature_disabled`, its truncation toast, its `ph-no-capture`, its cursor, its export
+with the draft filters; the util's purged-call link, its exclusive `to`, its "Withheld"; the
+client's truncation header and its filters; the Settings line's loading state and its unrecorded
+line; the nav entry's flag; the route inventory without the CSV path. Counts under "Test counts".
+
+### Live call listening, the final review fixes 2026-11-17 (LS17 a, LS22 l, n–u, [`listening.md`](listening.md) §10)
+
+A last review of the whole feature (server, data, clients, completeness), fixed in `756f997` to
+`3653072` (server, contracts, database), `afb49dd` (console) and `044427d` (mobile). Server: the
+super-admin's `POST /super-admin/tenants/:id/users` re-checks the user's listens, and the tenant
+context reads `X-Tenant-Id` and `X-Account-Id` lower-cased, so an upper-case header cannot miss an
+account seat (LS22 l); the live-call routes and the history's page answer `Cache-Control: no-store`
+(LS22 n); the upgrade's access check and row insert are each bounded to 10 s, refusing 1011
+`listen_unavailable` (LS22 o); `FF_AGENCY_LIVE_LISTEN=true` is documented dev and staging only and
+warned at boot (LS22 p); a tap that throws as it opens is counted `stage="open"`, and the
+tap-errors alert names the log component the code writes (LS22 q); a failed close of a dead
+process's rows is retried on the primary's re-check tick (LS22 r); a cross-process supersede reaches
+a listen still in its upgrade (LS22 s); the history reads one page's visits on an index of its own,
+`0049_listen_history_index.sql` (LS22 t); the μ-law table is pinned against G.711's own table
+written out as literals (LS17 a reworded: it differs on 44 codes by one A-law step, a scale
+convention, and is kept); the listener route's own refusals close then terminate; the in-process
+token store forgets lapsed grants; the session purge waits for a failed audit partition purge;
+`listen_sessions` is declared on the call detail contracts; code comments cite LS letters rather
+than review ids. Console: at phone width the bar says its state in words in a live region and its
+rows wrap; an ended reason wraps at every width; "turned off" is read only from a loaded flag map;
+the confirmation checks again; Try again leaves the stopped time out of "you listened for"; a late
+resume after the end suspends; soft-phone call links follow `agency_softphone_enabled`; the
+history's new filters drop the old cursor, a failed read clears the rows, only this account's
+people are offered as filters. Mobile: on a call the first-time notice says the line can be read
+again between calls, as the call's band has no button (LS22 u, which also records the one-time
+notice as a build call). Manas ratified every remaining LS build call on 2026-11-17. The
+`full-ci` wiring of `LISTEN_LOAD_BOUNDS` and the real-world checks are next steps (below).
+
+### Live call listening, the history without the flag and the legal check 2026-11-17 (LS1, LS19, [`listening.md`](listening.md) §12)
+
+Two decisions by Manas on 2026-11-17 close the feature's open questions. **The Listening history
+is gated by `agency.supervise` alone** (LS19 amended): turning listening off stops new listens, not
+the record of past ones. `GET /proxy/agency/listen-history` and `.csv` no longer read
+`agency_live_listen_enabled` (no `403 feature_disabled`, no `503` on a flag store outage); account
+scoping, masking, the CSV's audit row and its limits are unchanged. In the console the Campaigns
+section's "Listening history" tab, its search entry and its route (no `RequireFlag`) are offered
+for `agency.supervise` whatever the flag; with Live calls hidden the bar is Campaigns and Listening
+history (every supervisor has Campaigns, so the tab never stands alone). The page drops its "turned
+off" state and its flag-outage retry: a 401 or 403 says the history is for supervisors, anything
+else (a 503 included) offers Try again. Checked and unchanged, as never flag-gated: a call's
+"Listened to by" (`listen_sessions` on the attempt and soft-phone call details, `ListenedToBy`),
+the campaign History's listen rows (the activity service and page) and Settings → Live call
+listening (shown whether listening is on or off, LS20 c). **The consent and notice wording's legal
+check is done** (LS1, LS2, LS18), recorded on LS1; the open-questions row in `decisions.md` §5 and
+here is gone, nothing being left in it. Code in `1afa43e` and `4858093` (two navigation tests that
+counted the Campaigns bar with listening off). Mutation-checked (each red, then
+restored with `git checkout`), 5: the server's flag gate re-added
+(`proxy-agency-listen-history.routes.test.ts`, 9 red); the nav entry's flag re-added
+(`consoleNav.test.ts`, `consoleSearch.test.ts`, 3 red); `RequireFlag` back on the route
+(`ListenHistoryPage.test.tsx`); a 503 read as final; the page reading the flag itself (21 red).
+Counts under "Test counts".
+
 ## Test counts
+
+**Live call listening, the history without the flag, 2026-11-17.** Branch `ccr-364c489c-zeoxwy`,
+on the tree of `4858093`, every suite run one after another. From the root: `pnpm lint` clean;
+`pnpm test:tooling` 20; `pnpm --filter @magick-agency/console build` clean. `apps/server` unit
+10391 passed + 1 expected fail (524 files); `INTEGRATION_LANE=rest pnpm test:integration` 3018
+passed + 9 expected fail + 2 skipped (274 files passed, 2 skipped). `apps/console` `pnpm test`
+7459 (396 files). `packages/contracts` `pnpm test` 549 (16 files; a comment changed);
+`agency_wire` 688 (`dart test`). The wall-clock lane not rerun (no file in it changed).
+
+**Live call listening, the final review and the merge of `main`, 2026-11-17.** Branch
+`ccr-364c489c-zeoxwy`, on the tree of the merge of `main` (`25d1d81`: `main`'s console and web-ui
+insights change and its release), every suite run one after another on a 4-CPU machine. From the
+root: `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:release` 10, `pnpm test:tooling` 20;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps); `pnpm build` clean.
+Unit: `packages/contracts` 549 (16 files), `packages/domain` 278 (14), `packages/db` 457 (28),
+`packages/observability` 23 (5), `packages/web-ui` 244 (21), `apps/server` 10391 passed + 1
+expected fail (524 files), `apps/console` 7457 (396 files), `apps/super-admin` 509 (37 files),
+`apps/report-renderer` 94 passed + 2 skipped (12 files passed, 1 skipped). Integration:
+`packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3018 passed + 9 expected fail
++ 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files; the
+listen load check's timing bounds asserted, 4 CPUs). Mobile: `agency_wire` 688 (`dart test`),
+`apps/mobile` `flutter analyze` no issues, `flutter test` 1980. The listening files' own counts,
+run file by file before the merge, are in [`modules.md`](modules.md).
+
+**Live call listening, the persona review's console, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on
+the tree of this entry's commits. From the root: `pnpm lint` clean; `pnpm test:tooling` 20;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `apps/console` `pnpm
+test` 7426 (393 files), `pnpm --filter @magick-agency/console build` clean; `apps/server` unit
+10375 passed + 1 expected fail (523 files; `agency-route-table.test.ts` 9). `packages/contracts`
+not touched (not rerun); integration not run (no server source, SQL or contract change).
+
+**Live call listening, the two persona-review branches merged, 2026-11-16.** Branch
+`ccr-364c489c-zeoxwy`, on the tree of the merge's integration-fix commit (its code and tests as run). From the
+root: `pnpm lint` clean; `pnpm test:grafana` 33, `pnpm test:tooling` 20; `contracts-literals.mjs
+--check` up to date (71 vocabularies, 3 label maps). `packages/contracts` `pnpm test` 549 (16
+files). `apps/server` unit 10375 passed + 1 expected fail (523 files); `INTEGRATION_LANE=rest pnpm
+test:integration` 3015 passed + 9 expected fail + 2 skipped (273 files passed, 2 skipped);
+`INTEGRATION_LANE=wall-clock pnpm test:integration` 30 passed (7 files; 4 CPUs, the load check's
+timing bounds asserted). `apps/console` `pnpm test` 7340 (387 files); `apps/super-admin` `pnpm test`
+509 (37 files); `packages/db` `pnpm test:integration` 826 (90 files); `agency_wire` 688 (`dart
+test`).
+
+**Live call listening, the server persona-review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`,
+on the tree of `b3114f9`. From `apps/server`: `pnpm lint` clean; unit 10355 passed + 1 expected fail
+(522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3005 passed + 9 expected fail + 2 skipped
+(272 files passed, 2 skipped); `INTEGRATION_LANE=wall-clock pnpm test:integration` 30 passed (7
+files; the listen load check's timing bounds asserted, the machine has 4 CPUs). A first rest-lane
+run was stopped and is not counted: a `vitest list` of the db package's integration files, run
+beside it to count tests, ran that package's global setup, which drops and re-migrates the shared
+test database under a running suite (dozens of unrelated reds followed). `packages/db` `pnpm test`
+457 (28 files), `pnpm test:integration` 826 (90 files); `packages/contracts` `pnpm test` 546 (15
+files) and lint clean; `packages/observability` 23 (5 files); `contracts-literals.mjs --check` up to
+date (71 vocabularies, 3 label maps); `agency_wire` 688 (`dart test`). From the root: `pnpm
+test:grafana` 33, `pnpm test:tooling` 20. `apps/console` lint clean against the contract changes.
+
+**Live call listening, the persona review's history and guard rails, 2026-11-16.** Worktree branch
+`worktree-agent-a316307ab48001ee7` (on `ccr-364c489c-zeoxwy` at `a13635b`), run on the tree of
+`3538f66` with its own test database. From `apps/server`: `pnpm lint` clean; unit 10357 passed + 1
+expected fail (522 files); `INTEGRATION_LANE=rest pnpm test:integration` 3008 passed + 9 expected
+fail + 2 skipped (273 files passed, 2 skipped); the wall-clock lane not run here (its load check is
+the coordinator's). `apps/super-admin` `pnpm lint` clean, `pnpm test` 509 (37 files);
+`packages/contracts` `pnpm lint` clean, `pnpm test` 548 (16 files), the literal extractor's check up
+to date; `apps/console` `pnpm lint` clean (tests not rerun: no console file changed);
+`agency_wire` 688 (`dart test`); `apps/mobile` `station_listen_notice_test.dart` 4. From the root:
+`pnpm test:grafana` 33, `pnpm test:tooling` 20.
+
+**Live call listening, the server review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, on the
+tree of `e0bf526`. From `apps/server`: `pnpm lint` clean; unit 10337 passed + 1 expected fail (521
+files); `INTEGRATION_LANE=rest pnpm test:integration` 2999 passed + 9 expected fail + 2 skipped (272
+files passed, 2 skipped; run on `09053e6`, before the load suite's fix, which is outside that lane);
+`INTEGRATION_LANE=wall-clock pnpm test:integration` 29 passed (7 files, the listen load check among
+them). From the root: `pnpm test:tooling` 20 passed.
+
+**Live call listening, the voice review fixes, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on a
+clean checkout of `618108f` (this worktree also held another agent's work in progress). From
+`apps/server`: `pnpm lint` clean; unit 10309 passed + 1 expected fail (520 files); the bridge files
+alone: `webrtc-bridge-listen-tap.test.ts` 46, `webrtc-bridge-manager.seams.test.ts` 13,
+`webrtc-bridge-inbound-connect.test.ts` 29, `carrier-modules.test.ts` 30. `packages/observability`
+23 (5 files). From the root: `pnpm test:grafana` 33. Integration not run (another agent held it).
+
+**Live call listening, the load check, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree
+of `626404c` (the mask fix, the load suite, the media suite's flake fix). From `apps/server`: `pnpm
+lint` clean; unit 10296 passed + 1 expected fail (520 files); `INTEGRATION_LANE=rest pnpm
+test:integration` 2995 passed + 9 expected fail + 2 skipped (271 files passed, 2 skipped);
+`INTEGRATION_LANE=wall-clock pnpm test:integration` 29 passed (7 files, the load check now among
+them). `listen-media-load.test.ts` as committed (listeners out of process, paired windows): 4 of 4 green
+(three alone, one in the lane), the last after its p95 slack went from 20 to 30 ms (the last commit;
+the earlier designs, compared across runs or with the listeners in process, failed their timing
+bounds 3 times in 10 while another worktree's Flutter tests loaded the machine, `listening.md` §10);
+`voicelink-media-ws-load.test.ts` alone 9 of 9, three times. From the root: `pnpm test:tooling` 20
+passed.
+
+**Live call listening, console and mobile review fixes, 2026-11-16.** Branch
+`ccr-364c489c-zeoxwy`, run on `2da9910` (the console fixes; the mobile and docs commits beside it
+change no console file). From inside each directory: `apps/console` `pnpm lint` clean, `pnpm test`
+7311 (387 files); `apps/mobile` `flutter analyze` clean, `flutter test` 1968;
+`agency_wire` 688 (`dart test`); `pnpm test:tooling` 20. Not rerun (untouched): the server and
+the other packages (the server's own fix round runs in this worktree beside it).
+
+**Live call listening, console and mobile persona-review fixes, 2026-11-16.** Branch
+`ccr-364c489c-zeoxwy`, on `b6e2cb1` (console) and `3760eae` (mobile). From inside each directory:
+`apps/console` `pnpm lint` clean, `pnpm test` 7340 (387 files); `apps/mobile` `flutter analyze`
+clean, `flutter test` 1979; from the root `pnpm test:tooling` 20. Not rerun: `agency_wire` (no wire
+change), the server and the other packages (the server's own fix round runs in this worktree).
+
+**Live call listening, phase 3, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
+`5bf78f5` (the server side and its fixes). From `apps/server`: `pnpm lint` clean; unit 10296 passed +
+1 expected fail (520 files); `INTEGRATION_LANE=rest pnpm test:integration` 2995 passed + 9 expected
+fail + 2 skipped (271 files passed, 2 skipped); `INTEGRATION_LANE=wall-clock pnpm test:integration`
+26 passed (6 files). From the root: `pnpm test:grafana` 33 passed, `pnpm test:tooling` 20 passed.
+`packages/contracts` `pnpm test` 545 (15 files) and its lint clean; `contracts-literals.mjs --check`
+up to date (71 vocabularies, 3 label maps); `agency_wire` 687 (`dart test`). The first rest-lane run
+(on `9de8c3b`) had two reds: the chaos suite's lease-provenance scan named the listen token's TTL
+(fixed in `5bf78f5`, the token's window allow-listed by name beside the station token's), and
+`load/voicelink-media-ws-load.test.ts`'s bad-codec case settled `provider_start_timeout` once under
+the parallel run (green alone, 9 of 9, and green in the run above; the same case failed once in an
+earlier run on this branch, before phase 3: a timing flake under load, not filed as fixed). The
+console's `lint` fails only in its test helper `src/__tests__/helpers/liveCalls.ts`, which builds an
+`AgencyLiveCall` without the two fields phase 3 added (`correlation_id`, `aht_seconds`); the console
+is the console phase's to wire.
+
+**Live call listening, phase 6, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on the tree of
+`554eebd` (the notice's words and WAV), with phase 3's server work in progress beside it in the same
+worktree (uncommitted, its own tests not yet there). From inside each directory: `packages/contracts`
+`pnpm test` 545 (15 files), `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label
+maps), `pnpm --filter @magick-agency/contracts lint` clean. `apps/server` unit 10222 passed + 1
+expected fail (513 files); `pnpm vitest run test/unit -t inbound` 228 passed (49 files). `apps/console`
+`pnpm test` 7265 (386 files). `agency_wire` 687 (`dart test`). The server's and the console's `lint`
+fail only in phase 3's uncommitted files (`src/agency/listen/`, and the console's live-call test
+helper against its in-progress `live-calls.ts` contract), none of which this phase touches. Not run
+here (phase 3 holds the integration runs in this worktree): the server's integration files that
+read the standard recordings, `inbound-clips-routes`, `inbound-call-router`,
+`inbound-connector-review-fixes`, `inbound-routes`, `inbound-connect-e2e`,
+`inbound-clash-voicemail-e2e` and `inbound-mobile-e2e` (all in the rest lane).
+
+**Live call listening, phases 4 and 5, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on
+`f81879b` (the console and mobile commits; no server file touched). From inside each directory:
+`apps/console` `pnpm lint` clean, `pnpm test` 7265 (386 files); the run before this phase, on
+`d3335a8` with none of its changes, had 7054 passed and 1 failed of 7055 (`AgencyCampaignSettingsPage.test.tsx` "highlights the
+section scrolled into view", which passed alone, 77 of 77: a timing flake under the full run's load,
+not this phase's). `apps/mobile` `flutter analyze` clean, `flutter test` 1968. Not rerun
+(untouched): `agency_wire` (no wire change), `packages/web-ui`, the server and the other packages.
+`pnpm test:tooling` 20 (the CI scope rules over the new tests' reads).
+
+**Live call listening, phase 2, 2026-11-16.** Branch `ccr-364c489c-zeoxwy`, run on `9a40de3` (this
+phase's later commit changes docs only; the console's commits beside it touch no server file), from
+inside `apps/server`, on a local Postgres 16 and Redis on the
+agency ports with no other run sharing them; the integration as two lanes run one after the other.
+`pnpm --filter @magick-agency/server lint` clean; `pnpm test:grafana` 33. `apps/server`: unit
+10222 passed + 1 expected fail (513 files); rest lane 2978 passed, 9 expected fail, 2 skipped (268
+files passed, 2 skipped); wall-clock lane 26 (6 files). A first rest-lane run had one failure,
+`load/voicelink-media-ws-load.test.ts` "start negotiation failures" (a `media_before_bad_start`
+call ended `provider_start_timeout` under the run's load); the file passed alone three times
+(9 each) and the lane passed in full on the rerun above. Not rerun (untouched): the other
+packages and apps.
+
+**Live call listening, phase 1, 2026-11-16.** Branch `ccr-364c489c-zeoxwy` on `e229e06`, run on
+`b7a59d8` (later commits change docs and one test comment only). Each package from inside its
+directory, one suite at a time, on a local Postgres 16 and Redis on the agency ports with no other
+run sharing them; the server's integration as two lanes run one after the other. `pnpm lint`
+clean; `pnpm test:grafana` 33, `pnpm test:release` 10 and `pnpm test:tooling` 20 pass;
+`contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). `packages/contracts`
+544 (15 files); `packages/db` unit 457 (28 files), integration 822 (89 files);
+`packages/observability` 23 (5 files). `apps/server`: unit 10186 passed + 1 expected fail (512
+files); rest lane 2978 passed, 9 expected fail, 2 skipped (268 files passed, 2 skipped); wall-clock
+lane 26 (6 files). `apps/console` 7055 (376 files). `agency_wire` 687 (`dart test`). Not rerun
+(untouched): `packages/domain`, `packages/web-ui`, `apps/super-admin`, `apps/report-renderer`,
+the app's `flutter test`.
 
 **Reshma's feedback: recording, promise to pay, Do Not Call scope, soft-phone results, import check, navigation labels, 2026-11-15 (after the fresh-context review and its fix round).** Branch
 `ccr-bfd860dd-nhdhej` on `1c4c2bd`, run on `7ee887b` (later commits change docs only). Each
@@ -2590,6 +3217,16 @@ image names it as its arbiter, a new migration drops it, and the same change del
 23505 catch on that index (`upsertLiveSession` in
 `apps/server/src/db/repositories/agency/agent-session.repository.ts`).
 
+**Live call listening** ([`listening.md`](listening.md) §10): built end to end behind the flag
+`agency_live_listen_enabled` (off by default): the bridge tap, the registry, token store, socket,
+routes, revocation and reaps, the console's Live calls and listening bar, the agent's standing
+line, the inbound notice's words and the load check, with the review fixes; the listening
+history and the consent gate's guard rails (LS19, LS20), server and console; the final review's
+fixes (2026-11-17). Every LS ruling is decided (the build's calls ratified by Manas on
+2026-11-17). The agent's live "Supervisor listening" indicator is not built (LS2). Not yet run in
+a real browser, against a real carrier, on a phone or with the alerts applied (`listening.md` §10
+"Not yet verified").
+
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
 
@@ -2808,3 +3445,12 @@ account their browser last had open. Every signed-in console page is now served 
 5. **Parity check and dark pilot** on a staging copy and an internal tenant.
 6. **Launch:** write and rehearse the import gate queries and copy scripts, the DNC mirror, the
    link from the previous platform and the dashboards, then go live environment by environment.
+7. **Live call listening, before the first tenant** ([`listening.md`](listening.md) §10 "Not yet
+   verified"; the consent wording's legal check is done, Manas, 2026-11-17): a listen in a
+   real browser on staging (the autoplay policy and "Turn sound on", A-law playback, a 4503 and Try
+   again, a hidden tab kept alive by the server's pings) against a real carrier call; the agent's
+   notice on a phone; apply the `listen` alert group with the rest of `grafana/`; then the first
+   tenant's enablement through the checklist ([`operations.md`](operations.md) "Enabling live call
+   listening for a tenant"). In CI, set `LISTEN_LOAD_BOUNDS=on` for `full-ci` runs (a change to
+   `.github/workflows/ci.yml`) so the load check's timing bounds are asserted there whatever the
+   runner's CPUs; and add a mobile-station case to `live-listen-e2e.test.ts`.

@@ -86,12 +86,13 @@ describe('the console navigation', () => {
     visibleSettingsGroups(gates(role, flagOn)).flatMap((g) => g.entries.map((e) => e.label));
 
   it('adds Soft-phone calls beside Campaigns and the Soft phone setting for an account admin with the flag on', () => {
-    expect(campaignTabs('account_admin', true)).toEqual(['Campaigns', 'Soft-phone calls']);
+    // The Listening history is a supervisor's whatever the listening flag (off here; LS19 as amended).
+    expect(campaignTabs('account_admin', true)).toEqual(['Campaigns', 'Soft-phone calls', 'Listening history']);
     expect(settings('account_admin', true)).toContain('Soft phone');
   });
 
   it('adds nothing with the flag off', () => {
-    expect(campaignTabs('account_admin', false)).toEqual([]);
+    expect(campaignTabs('account_admin', false)).not.toContain('Soft-phone calls');
     expect(settings('account_admin', false)).not.toContain('Soft phone');
   });
 

@@ -25,5 +25,7 @@ export * from './insights';
 export * from './customer-history';
 export * from './reports';
 export * from './inbound';
+export * from './live-calls';
+export * from './listen-history';
 export * from './home';
 export * from './shared';

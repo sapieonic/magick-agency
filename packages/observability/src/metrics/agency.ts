@@ -1079,3 +1079,77 @@ export function trackInboundConnectAvailable(available: boolean): void {
 export function trackInboundApplicationHealth(counts: Readonly<Record<InboundApplicationHealth, number>>): void {
   for (const health of INBOUND_APPLICATION_HEALTHS) agencyInboundApplications.set({ health }, counts[health]);
 }
+
+// ─── Live call listening (docs/listening.md) ─────────────────────────────────
+//
+// A supervisor listening in silently to a call in progress. Set and counted by the process that
+// owns the call (the primary, or a media worker), so with workers on every series is per process:
+// sum them. No tenant, account, call, listen or user ids as labels: the logs and the session rows
+// (`agency_listen_sessions`) name them; these say how many and why.
+
+/**
+ * How a listen grant (`POST /proxy/agency/live-calls/:callId/listen`) ended
+ * (`agency_listen_grants_total`): `granted`, or the refusal's code (the contract's
+ * `AgencyListenErrorCode`).
+ */
+export type ListenGrantResult =
+  | 'granted'
+  | 'listen_call_not_live' | 'listen_recording_off' | 'listen_limit_call' | 'listen_limit_server'
+  | 'listen_own_call' | 'listen_unavailable';
+
+/** Why a listen session ended (`agency_listen_sessions_ended_total`): the contract's `AgencyListenEndReason`. */
+export type ListenEndMetricReason =
+  | 'call_ended' | 'listener_stopped' | 'listener_disconnected' | 'permission_revoked' | 'superseded'
+  | 'send_backlog' | 'tap_error' | 'server_shutdown' | 'server_restarted' | 'access_unverified';
+
+/**
+ * Where the listener tap failed a frame or a send (`agency_listen_tap_errors_total`): `decode`
+ * (the carrier's audio to PCM16), `encode` (PCM16 to A-law), `frame` (cutting an agent's A-law
+ * into 20 ms frames, or building the tagged message), `send` (one listener's socket threw), `open`
+ * (opening the tap for a listener threw: that listen is refused). Each failure drops that frame for
+ * its listeners (or that listener, or that listen), never the call's audio.
+ */
+export type ListenTapErrorStage = 'decode' | 'encode' | 'frame' | 'send' | 'open';
+
+export const agencyListenSessionsActive = gauge(meter, 'agency_listen_sessions_active', {
+  description: 'Listen sessions open in this process now (a supervisor listening to a call it owns)',
+}, 0);
+
+export const agencyListenGrantsTotal = counter<'result'>(meter, 'agency_listen_grants_total', {
+  description: 'Listen grants asked for, by result: granted, or the refusal (listen_call_not_live, listen_recording_off, listen_limit_call, listen_limit_server, listen_own_call, listen_unavailable)',
+});
+
+export const agencyListenSessionsEndedTotal = counter<'reason'>(meter, 'agency_listen_sessions_ended_total', {
+  description: 'Listen sessions ended, by why: call_ended, listener_stopped, listener_disconnected, permission_revoked, superseded, send_backlog, tap_error, server_shutdown, server_restarted (closed by the reap after a process died) or access_unverified (the access re-check could not be made for too long)',
+});
+
+export const agencyListenSessionSeconds = histogram(meter, 'agency_listen_session_seconds', {
+  description: 'How long one listen session lasted, from its row written to its end (server_restarted sessions excluded: their end is the reap, not the listen)',
+  unit: 's',
+  buckets: [5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600],
+});
+
+export const agencyListenTapErrorsTotal = counter<'stage'>(meter, 'agency_listen_tap_errors_total', {
+  description: 'Frames or sends the listener tap failed and dropped, by stage: decode, encode, frame, send, or open (opening the tap for a listener threw; that listen is refused). The call\'s own audio is never affected',
+});
+
+/** The listen sessions this process holds now (set as they open and close). */
+export function trackListenSessionsActive(count: number): void {
+  agencyListenSessionsActive.set(Math.max(0, count));
+}
+
+/** One grant answered. */
+export function trackListenGrant(result: ListenGrantResult): void {
+  agencyListenGrantsTotal.inc({ result });
+}
+
+/** One session ended, once per session: why, and how long it lasted (not for a reaped session). */
+export function trackListenSessionEnded(reason: ListenEndMetricReason, seconds?: number): void {
+  agencyListenSessionsEndedTotal.inc({ reason });
+  if (seconds !== undefined && reason !== 'server_restarted') agencyListenSessionSeconds.observe(Math.max(0, seconds));
+}
+
+/** One failed tap step (a frame dropped, or one listener's send). */
+export function trackListenTapError(stage: ListenTapErrorStage): void {
+  agencyListenTapErrorsTotal.inc({ stage });
+}

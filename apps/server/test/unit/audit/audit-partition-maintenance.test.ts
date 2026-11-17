@@ -25,8 +25,10 @@ vi.mock('@magick-agency/db', () => ({
 }));
 
 import {
+  AUDIT_HORIZON_TABLES,
   AUDIT_TABLES,
   partitionName,
+  purgeAuditHorizonRows,
   purgeAuditPartitions,
   runAuditPartitionMaintenance,
   utcMonthStart,
@@ -50,7 +52,7 @@ function mockQueries(table: string) {
     if (sql.trimStart().startsWith('SELECT count')) {
       return { rows: [{ n: 7 }], rowCount: 1 };
     }
-    if (sql.trimStart().startsWith('DELETE') || sql.trimStart().startsWith('DROP')) {
+    if (/^(DELETE|DROP|WITH picked)/.test(sql.trimStart())) {
       return { rows: [], rowCount: 3 };
     }
     throw new Error(`Unexpected query: ${sql}`);
@@ -88,7 +90,7 @@ describe.each(AUDIT_TABLES)('purgeAuditPartitions — $table', (spec) => {
 
     expect(report.dropped).toEqual([`${spec.table}_2026_02`]);
     expect(report.defaultRows).toBe(7);
-    expect(executedSql().some((s) => s.startsWith('DELETE') || s.startsWith('DROP'))).toBe(false);
+    expect(executedSql().some((s) => /^(DELETE|DROP|WITH picked)/.test(s))).toBe(false);
   });
 });
 
@@ -111,7 +113,7 @@ describe('runAuditPartitionMaintenance: the two halves fail independently (NEW)'
     mocks.query.mockReset().mockImplementation(async (_sql: string, params?: unknown[]) => {
       // `existingPartitions` (create half) binds the table name; the purge's
       // partition read does not.
-      if (params !== undefined) throw new Error('permission denied for schema public');
+      if (params !== undefined && _sql.includes('pg_inherits')) throw new Error('permission denied for schema public');
       return { rows: [], rowCount: 0 };
     });
 
@@ -126,8 +128,83 @@ describe('runAuditPartitionMaintenance: the two halves fail independently (NEW)'
     // The purge still ran for both tables.
     expect(report.dropped).toEqual({ audit_logs: [], platform_audit_log: [] });
     expect(report.defaultRowsDeleted).toEqual({ audit_logs: 0, platform_audit_log: 0 });
+    // And so did the horizon tables' purge.
+    expect(report.horizonRowsDeleted).toEqual({ agency_listen_sessions: 0 });
     expect(mocks.logMock.error).toHaveBeenCalledWith(
       expect.objectContaining({ table: 'audit_logs' }), 'Audit partition create failed for table',
     );
+  });
+
+  it('a horizon table\'s failed purge is recorded and stops nothing before it', async () => {
+    mocks.query.mockReset().mockImplementation(async (sql: string) => {
+      if (sql.includes('agency_listen_sessions')) throw new Error('relation "agency_listen_sessions" does not exist');
+      return { rows: [], rowCount: 0 };
+    });
+
+    const report = await runAuditPartitionMaintenance({
+      retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'), dryRun: true,
+    });
+
+    expect(report.errors).toEqual({ 'agency_listen_sessions.purge': 'relation "agency_listen_sessions" does not exist' });
+    expect(report.dropped).toEqual({ audit_logs: [], platform_audit_log: [] });
+    expect(report.horizonRowsDeleted).toEqual({});
+  });
+});
+
+describe('the horizon tables wait for the audit partitions (LS12: never before their audit rows)', () => {
+  it('a failed partition purge in the pass skips the horizon tables, so no session row goes before its audit rows', async () => {
+    mocks.query.mockReset().mockImplementation(async (sql: string) => {
+      if (sql.trimStart().startsWith('DROP')) throw new Error('canceling statement due to lock timeout');
+      if (sql.includes('pg_inherits')) {
+        const rows = partitionRows('platform_audit_log');
+        return { rows, rowCount: rows.length };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const report = await runAuditPartitionMaintenance({
+      retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'),
+    });
+
+    expect(Object.keys(report.errors).filter((k) => k.endsWith('.purge')).length).toBeGreaterThan(0);
+    expect(report.horizonSkipped).toBe(true);
+    expect(report.horizonRowsDeleted).toEqual({});
+    expect(executedSql().some((q) => q.includes('agency_listen_sessions'))).toBe(false);
+  });
+
+  it('a pass whose partitions all purged runs them', async () => {
+    mocks.query.mockReset().mockImplementation(async () => ({ rows: [], rowCount: 0 }));
+    const report = await runAuditPartitionMaintenance({ retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z') });
+    expect(report.horizonSkipped).toBe(false);
+    expect(report.horizonRowsDeleted).toEqual({ agency_listen_sessions: 0 });
+  });
+});
+
+describe('purgeAuditHorizonRows: the unpartitioned tables kept for the audit horizon (docs/listening.md, LS12)', () => {
+  it('purges the listen sessions, by their start', () => {
+    expect(AUDIT_HORIZON_TABLES).toEqual([{ table: 'agency_listen_sessions', tsColumn: 'started_at' }]);
+  });
+
+  it('deletes in batches of 5000 until a short batch, each picked by age at the cutoff', async () => {
+    const batches = [5000, 5000, 12];
+    mocks.query.mockReset().mockImplementation(async () => ({ rows: [], rowCount: batches.shift() ?? 0 }));
+
+    const deleted = await purgeAuditHorizonRows(AUDIT_HORIZON_TABLES[0]!, CUTOFF, false);
+
+    expect(deleted).toBe(10_012);
+    expect(mocks.query).toHaveBeenCalledTimes(3);
+    for (const [sql, params] of mocks.query.mock.calls) {
+      expect(String(sql)).toMatch(/SELECT id FROM agency_listen_sessions WHERE started_at < \$1 LIMIT \$2/);
+      expect(String(sql)).toMatch(/DELETE FROM agency_listen_sessions/);
+      expect(params).toEqual([CUTOFF, 5000]);
+    }
+  });
+
+  it('a dry run counts and deletes nothing', async () => {
+    mockQueries('agency_listen_sessions');
+
+    expect(await purgeAuditHorizonRows(AUDIT_HORIZON_TABLES[0]!, CUTOFF, true)).toBe(7);
+    expect(executedSql()).toHaveLength(1);
+    expect(executedSql()[0]).toMatch(/^SELECT count\(\*\)::int AS n FROM agency_listen_sessions WHERE started_at < \$1/);
   });
 });

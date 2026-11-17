@@ -197,12 +197,43 @@ export function agencyCrossBlockIssues(config: {
  */
 export const AGENCY_AWAY_RING_MAX_MS_DEFAULT = 4 * 60 * 60 * 1000;
 
+/**
+ * `listen`: live call listening (docs/listening.md "Config"; decisions LS5, LS8, LS10).
+ *  - `maxPerCall` (`AGENCY_LISTEN_MAX_PER_CALL`, default 2, 1–5): supervisors listening to one call
+ *    at once; past it the grant answers `listen_limit_call` and the live row says why.
+ *  - `maxPerProcess` (`AGENCY_LISTEN_MAX_PER_PROCESS`, default 20, 1–200): listeners one process
+ *    (the primary, or each media worker) carries at once, across its calls; past it the grant
+ *    answers `listen_limit_server`. Each listener costs one socket and, for a Plivo call or a
+ *    `pcm16` agent, a transcode per frame while it listens, on the process that relays the call.
+ *  - `maxPerUser` (`AGENCY_LISTEN_MAX_PER_USER`, default 1, 1–5): listens one supervisor holds at
+ *    once; a new one past it ends their oldest (`superseded`).
+ *  - `recheckMs` (`AGENCY_LISTEN_RECHECK_MS`, default 30 s, 5 s–5 min): how often each open session
+ *    re-reads the supervisor's membership (from the database, not the cache) and the flags; a
+ *    session that fails it ends `permission_revoked`. The longest a revocation that missed the
+ *    immediate path takes to bite (LS10).
+ *  - `tokenTtlMs` (`AGENCY_LISTEN_TOKEN_TTL_MS`, default 60 s, 5 s–5 min): how long a grant's
+ *    single-use socket token stays valid.
+ *  - `faultBudget` (`AGENCY_LISTEN_FAULT_BUDGET`, default 50, 1–1000): consecutive frames the tap may
+ *    fail (decode, encode, framing) before it detaches and ends its sessions `tap_error`: 50 frames
+ *    is one second of one leg. A failed frame is dropped and counted either way; the call is never
+ *    touched.
+ */
+const listenSchema = z.object({
+  maxPerCall: z.coerce.number().int().min(1).max(5).default(2),
+  maxPerProcess: z.coerce.number().int().min(1).max(200).default(20),
+  maxPerUser: z.coerce.number().int().min(1).max(5).default(1),
+  recheckMs: z.coerce.number().int().min(5_000).max(300_000).default(30_000),
+  tokenTtlMs: z.coerce.number().int().min(5_000).max(300_000).default(60_000),
+  faultBudget: z.coerce.number().int().min(1).max(1_000).default(50),
+});
+
 const agencySchema = z.object({
   rosterReplaceEnabled: envBoolean.default(false),
   awayRingMaxMs: z.coerce.number().int().min(60_000).max(24 * 3_600_000).default(AGENCY_AWAY_RING_MAX_MS_DEFAULT),
   insightsRollup: insightsRollupSchema.default({}),
   customerHistory: customerHistorySchema.default({}),
   reports: reportsSchema.default({}),
+  listen: listenSchema.default({}),
   campaignStatsCacheMs,
 });
 
@@ -240,6 +271,14 @@ export function readAgencyEnv(env: Env): Record<string, unknown> {
         retentionDays: env['AGENCY_REPORTS_RETENTION_DAYS'],
         tenantPendingLimit: env['AGENCY_REPORTS_TENANT_PENDING_LIMIT'],
         userPerMinute: env['AGENCY_REPORTS_USER_PER_MINUTE'],
+      },
+      listen: {
+        maxPerCall: env['AGENCY_LISTEN_MAX_PER_CALL'],
+        maxPerProcess: env['AGENCY_LISTEN_MAX_PER_PROCESS'],
+        maxPerUser: env['AGENCY_LISTEN_MAX_PER_USER'],
+        recheckMs: env['AGENCY_LISTEN_RECHECK_MS'],
+        tokenTtlMs: env['AGENCY_LISTEN_TOKEN_TTL_MS'],
+        faultBudget: env['AGENCY_LISTEN_FAULT_BUDGET'],
       },
     },
   };

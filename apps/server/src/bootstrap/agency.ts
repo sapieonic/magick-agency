@@ -13,6 +13,7 @@ import { startInboundCalls } from '../agency/inbound/start.js';
 import { DncRegistry } from '../agency/dnc-registry.js';
 import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 import { AWAY_RING_RECONCILE_MS } from '../agency/away-ring.js';
+import { onMembershipChanged } from '../rbac/membership-changed.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -122,6 +123,11 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // against the tick's occupancy — a supervisor started first would compute a fabricated
   // occupancy from dead rows and quietly dial nothing forever.
   await agencyRuntime.start();
+  // Live call listening (LS10): a membership change (a seat added, a role changed, a member
+  // removed) re-checks the supervisor's listens in this process's registry now, failing closed on a
+  // revocation, not on a seat added (LS22 w); with media workers it holds none (the primary's relay
+  // to the workers is registered by `startMediaWorkers`).
+  const offListenRevocation = onMembershipChanged((tenantId, userId, change) => agencyRuntime.listen.revokeUser(tenantId, userId, change));
 
   // Inbound calls (docs/inbound.md): the startup sweep ends calls a restart left open, then
   // the router takes the inbound answer and hangup webhooks (`seams/inbound-call-router.ts`).
@@ -155,6 +161,7 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
 
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
+    offListenRevocation();
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
     // Mode B: no new reconcile pass from here (its timer stops before any await).
     const awayRingStopped = agencyRuntime.awayRing.stop();

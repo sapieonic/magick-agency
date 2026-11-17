@@ -5,6 +5,11 @@ import { carrierAccountPauseCopy } from './agencyCarriers';
 import { dedupeKeyName } from '../types/agency-campaign';
 import { dateFormatter } from './format/date';
 import { AUDIT_RESOURCE_TYPE_LABELS } from '@magick-agency/contracts/api/platform/audit';
+import { AGENCY_LISTEN_END_REASON_LABELS } from '../types/listen-history';
+import { AGENCY_CALL_ORIGINS, type AgencyCallOrigin, type AgencyListenEndReason } from '../types/live-calls';
+import { durationWords } from './format/duration';
+import { shortName } from './listen/listenCopy';
+import { liveCallPagePath } from './listen/liveCallsTable';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -237,6 +242,30 @@ function configChangedSummary(detail: Record<string, unknown>): string | null {
   return `Changed ${listSentence(parts)}.`;
 }
 
+/** "Priya S.’s call", or "an agent’s call" when the read could not name the agent. */
+function listenedCallLabel(detail: Record<string, unknown>): string {
+  const name = str(detail['agent_name']);
+  return name ? `${shortName(name)}’s call` : 'an agent’s call';
+}
+
+/**
+ * `agency_call.listen_started` / `_ended` (docs/listening.md LS19 e): whose call the supervisor
+ * (the row's actor) listened to, for how long and how it ended, in the Listening history's words
+ * (`AGENCY_LISTEN_END_REASON_LABELS`). The page merges a supervisor's reconnects into one row first
+ * (`mergeListenActivityRows`), so an ended row's duration is the whole listen's.
+ */
+function listenSummary(action: string, detail: Record<string, unknown>): string {
+  const call = listenedCallLabel(detail);
+  if (action === 'agency_call.listen_started') return `Started listening to ${call}.`;
+  const seconds = num(detail['duration_seconds']);
+  const reason = str(detail['end_reason']);
+  const words = reason && reason in AGENCY_LISTEN_END_REASON_LABELS
+    ? AGENCY_LISTEN_END_REASON_LABELS[reason as AgencyListenEndReason]
+    : null;
+  const how = words ? ` · ended: ${words.charAt(0).toLowerCase()}${words.slice(1)}` : '';
+  return seconds === null ? `Listened to ${call}` : `Listened to ${call} for ${durationWords(seconds)}${how}`;
+}
+
 /**
  * A one-line summary of a row's detail, or `null` to fall back to the raw
  * key/value list.
@@ -277,6 +306,10 @@ export function activityDetailSummary(row: ActivityRow): string | null {
   }
 
   if (row.action === 'agency_campaign.config_changed') return configChangedSummary(detail);
+
+  if (row.action === 'agency_call.listen_started' || row.action === 'agency_call.listen_ended') {
+    return listenSummary(row.action, detail);
+  }
 
   if (row.action === 'agency_campaign.roster_upload_started') {
     const file = str(detail['file_name']);
@@ -400,7 +433,9 @@ export function activityTargetLabel(type: string | null): string {
 
 /**
  * Where a row's target opens in the console, or `null` when it has no page of its own
- * (then the id is shown short, copyable). Routes are written without the URL scope.
+ * (then the id is shown short, copyable). A listen row's call (`agency_call`) opens by the
+ * `origin` and `correlation_id` in its `detail`: the attempt, or the soft-phone call; an inbound
+ * call has no page in the console. Routes are written without the URL scope.
  * A soft-phone call's page is behind `agency_softphone_enabled` (`softphoneEnabled`); its
  * rows stay in the history after the soft phone is turned off, and then are not linked to a
  * page that would only say it is unavailable.
@@ -409,9 +444,16 @@ export function activityTargetPath(
   target: { type: string | null; id: string | null },
   campaignId: string,
   softphoneEnabled: boolean,
+  detail: Record<string, unknown> = {},
 ): string | null {
   if (!target.id) return null;
   switch (target.type) {
+    // A listen row (LS19 e): the call is opened by its spine row, as the Live calls table opens it.
+    case 'agency_call': {
+      const origin = str(detail['origin']);
+      if (!origin || !(AGENCY_CALL_ORIGINS as readonly string[]).includes(origin)) return null;
+      return liveCallPagePath({ origin: origin as AgencyCallOrigin, campaign_id: campaignId, correlation_id: str(detail['correlation_id']) }, softphoneEnabled);
+    }
     case 'agency_attempt':
     case 'agency_disposition':
       return `/agency/campaigns/${campaignId}/attempts/${target.id}`;

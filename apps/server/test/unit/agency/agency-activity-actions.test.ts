@@ -37,6 +37,8 @@ const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_softphone_settings.updated',
   'agency_customer_history.searched',
   'agency_customer_history.exported',
+  // The account's listening history exported (docs/listening.md §12).
+  'agency_listen_sessions.exported',
   'agency_report.requested',
   'agency_report.downloaded',
   'agency_report_subscription.created',

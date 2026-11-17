@@ -41,6 +41,7 @@ const ALL_ON = new Set([
   'agency_reports_enabled',
   'agency_inbound_enabled',
   'agency_call_analysis',
+  'agency_live_listen_enabled',
 ]);
 
 function input(
@@ -116,15 +117,27 @@ describe('the work sections', () => {
 describe('the tab bar of a grouped page', () => {
   it('shows Campaigns and Soft-phone calls to a supervisor with the soft phone on', () => {
     const bar = tabBarFor('/agency/campaigns', input('account_admin'));
-    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls']);
+    expect(bar?.tabs.map((t) => t.label)).toEqual(['Campaigns', 'Soft-phone calls', 'Live calls', 'Listening history']);
     expect(bar?.activeId).toBe('campaigns');
     expect(tabBarFor('/agency/softphone', input('account_admin'))?.activeId).toBe('softphone');
+    expect(tabBarFor('/agency/live', input('account_admin'))?.activeId).toBe('live');
+    expect(tabBarFor('/agency/listening-history', input('account_admin'))?.activeId).toBe('listen-history');
+  });
+
+  it('offers Live calls beside Soft-phone calls only to a supervisor with the listening flag on', () => {
+    const labels = (i: GateInput) => tabBarFor('/agency/campaigns', i)?.tabs.map((t) => t.label) ?? [];
+    // The Listening history stays with the flag off (LS19, amended 2026-11-17): past listens are not hidden.
+    expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'Soft-phone calls', 'Listening history']);
+    expect(labels(input('viewer'))).toEqual([]);
+    expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'Live calls', 'Listening history']);
   });
 
   it('is not shown when only one tab is left', () => {
     // Soft-phone calls floors at agency.supervise and needs its flag.
     expect(tabBarFor('/agency/campaigns', input('viewer'))).toBeNull();
-    expect(tabBarFor('/agency/campaigns', input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toBeNull();
+    // With both flags off, Campaigns and the Listening history are left: still a bar of two.
+    expect(tabBarFor('/agency/listening-history', input('account_admin', { flagsOff: ['agency_softphone_enabled', 'agency_live_listen_enabled'] }))?.tabs.map((t) => t.label))
+      .toEqual(['Campaigns', 'Listening history']);
     // The summary floors at agency.supervise.
     expect(tabBarFor('/agency/inbound/missed', input('viewer'))).toBeNull();
     expect(tabBarFor('/agency/analytics', input('account_admin', { flagsOff: ['agency_reports_enabled'] }))).toBeNull();
@@ -159,6 +172,8 @@ describe('the active sidebar entry', () => {
     ['/agency/campaigns/c-1/agents', 'campaigns'],
     ['/agency/softphone', 'campaigns'],
     ['/agency/softphone/calls/x', 'campaigns'],
+    ['/agency/live', 'campaigns'],
+    ['/agency/listening-history', 'campaigns'],
     ['/agency/inbound/missed', 'inbound'],
     ['/agency/inbound/summary', 'inbound'],
     ['/agency/analytics', 'reports'],
@@ -190,6 +205,15 @@ describe('the breadcrumb', () => {
       { label: 'Campaign' },
     ]);
     expect(breadcrumbFor('/agency/campaigns/new')[1]).toEqual({ label: 'New campaign' });
+    expect(breadcrumbFor('/agency/live')).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Live calls' },
+    ]);
+    expect(breadcrumbFor('/agency/listening-history')).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Listening history' },
+    ]);
+    expect(breadcrumbFor('/settings/listening')).toEqual([{ label: 'Settings' }, { label: 'Live call listening' }]);
   });
 
   it('puts the crumbs a page supplies after its section, in place of the generic one', () => {
@@ -391,7 +415,7 @@ describe('the Settings hub', () => {
     const groups = visibleSettingsGroups(input('account_admin'));
     expect(groups.map((g) => [g.scope, g.entries.map((e) => e.label)])).toEqual([
       ['you', ['Profile and appearance', 'Email notifications']],
-      ['account', ['Soft phone', 'Inbound routing', 'Call summaries']],
+      ['account', ['Soft phone', 'Inbound routing', 'Call summaries', 'Live call listening']],
       ['tenant', ['Team']],
     ]);
   });

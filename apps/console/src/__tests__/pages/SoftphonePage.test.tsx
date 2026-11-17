@@ -103,6 +103,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('/dialer/phone: that a supervisor may listen (LS2)', () => {
+  it('with listening on: the Monitoring and recording button, and the one-time notice until Got it', async () => {
+    mocks.flags.add('agency_live_listen_enabled');
+    window.localStorage.clear();
+    await mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Monitoring and recording' }));
+    expect(screen.getByTestId('station-info-popover').textContent).toBe('Calls may be listened to by a supervisor for quality and training.');
+    expect(screen.getByTestId('listen-first-notice').textContent).toContain('Calls may be listened to by a supervisor for quality and training.');
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+    window.localStorage.clear();
+  });
+
+  it('with listening off: neither', async () => {
+    await mount();
+    expect(screen.queryByTestId('station-info')).toBeNull();
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+  });
+});
+
 describe('/dialer/phone', () => {
   it('opens a soft-phone session and connects its station socket', async () => {
     await mount();

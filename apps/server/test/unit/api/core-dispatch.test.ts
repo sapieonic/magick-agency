@@ -175,6 +175,8 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-inbound/missed.ts',
       'api/routes/proxy-agency-inbound/routes.ts',
       'api/routes/proxy-agency-inbound/shared.ts', // the `CoreCallResult` type only; calls nothing
+      'api/routes/proxy-agency-listen-history.routes.ts', // the listening history (docs/listening.md §12)
+      'api/routes/proxy-agency-live-calls.routes.ts', // live calls and the listen grant (docs/listening.md)
       'api/routes/proxy-agency-performance/floor.ts',
       'api/routes/proxy-agency-performance/per-agent.ts',
       'api/routes/proxy-agency-push-devices.routes.ts', // Mode B: the agent app's push devices

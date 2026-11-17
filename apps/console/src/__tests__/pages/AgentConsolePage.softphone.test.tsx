@@ -125,6 +125,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('that a supervisor may listen (LS2)', () => {
+  it('the station and its soft phone carry the Monitoring and recording button and the one-time notice', async () => {
+    mocks.flags.add('agency_live_listen_enabled');
+    window.localStorage.clear();
+    mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'break', break_reason: 'soft_phone' } });
+    await mounted();
+    await frame({ event: 'agent_state', state: 'available', since: SINCE });
+    expect(screen.getByRole('button', { name: 'Monitoring and recording' })).toBeTruthy();
+    expect(screen.getByTestId('listen-first-notice')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('switch-to-softphone'));
+    });
+    await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
+    expect(screen.getByTestId('station-softphone')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Monitoring and recording' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(screen.queryByTestId('listen-first-notice')).toBeNull();
+    window.localStorage.clear();
+  });
+});
+
 describe('Switch to soft phone', () => {
   it('is offered in the action bar and as the break menu’s last entry, with the flag on', async () => {
     await mounted();

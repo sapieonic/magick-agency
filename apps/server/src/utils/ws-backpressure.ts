@@ -29,6 +29,12 @@
 //
 // The carrier's socket has a soft limit and no hard cap: closing VoiceLink's media stream is
 // its hang-up, so a slow carrier loses stale audio, never the call.
+//
+// A supervisor's listener socket (docs/listening.md, LS8) has both, {@link LISTENER_LIMITS}: past
+// the soft limit a frame is dropped for that listener and counted; past the hard cap, or after
+// {@link LISTENER_SOFT_LIMIT_MAX_MS} of nothing but drops, the listener is ended `send_backlog`
+// (4408). Only the listener's own `bufferedAmount` is read: nothing about a listener reaches the
+// call's two sockets (`core/bridge/listen-tap.ts`).
 import type WebSocket from 'ws';
 import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 
@@ -42,6 +48,11 @@ export interface BackpressureLimits {
   readonly mediaSoftLimitBytes: number;
   /** Above this many buffered bytes the socket is over its cap (station: closed). Null: no cap. */
   readonly hardCapBytes: number | null;
+  /**
+   * Past the soft limit this long with every media frame dropped, the socket is over its cap too
+   * (a {@link MediaDropRun} per socket measures it). Absent: no time bound (station, carrier).
+   */
+  readonly softLimitMaxMs?: number;
 }
 
 /**
@@ -81,6 +92,65 @@ export const CARRIER_MEDIA_LIMITS: BackpressureLimits = {
   hardCapBytes: null,
 };
 
+/**
+ * A supervisor's listener socket (`core/bridge/listen-tap.ts`): soft 48 KiB, about 3 s of audio;
+ * hard cap 256 KiB, about 16 s. One message is a tag byte and a 20 ms A-law frame, 161 bytes plus
+ * a 2-byte header, 50 a second per leg and two legs: ~16.3 KB/s. Media past the soft limit is
+ * dropped and counted (`websocket_send_backpressure_total{socket="listener", action="media_dropped"}`);
+ * past the hard cap the listener is ended `send_backlog` and closed 4408. As on the station, media
+ * alone stops at the soft limit, so the cap is reached only by what else is queued on the socket
+ * (its control frames): a listener that stops reading but keeps pinging would never reach it, so
+ * {@link LISTENER_SOFT_LIMIT_MAX_MS} ends one that has been past the soft limit that long.
+ */
+
+/**
+ * A listener whose every frame has been dropped at the soft limit for this long (no frame sent in
+ * between) is ended `send_backlog`, as one past the hard cap is: 10 s, after the ~3 s the soft
+ * limit already holds. It is not reading (its pings, the other way, may still arrive), and what it
+ * would hear on resuming is gaps. Measured on `bufferedAmount` as `ws` sees it: what the kernel
+ * absorbs first (a few tens of KiB on a real path; about 4 MB on loopback, docs/listening.md §10
+ * "Load check") comes before the clock starts. A reader that drains even a little sends a frame
+ * and starts the clock again: it hears what it can, and the idle bound does not apply to it.
+ */
+export const LISTENER_SOFT_LIMIT_MAX_MS = 10_000;
+
+export const LISTENER_LIMITS: BackpressureLimits = {
+  mediaSoftLimitBytes: 48 * 1024,
+  hardCapBytes: 256 * 1024,
+  softLimitMaxMs: LISTENER_SOFT_LIMIT_MAX_MS,
+};
+
+/**
+ * One socket's current run of media frames dropped at the soft limit, for limits with a
+ * `softLimitMaxMs`: the run starts at its first drop and ends at the next frame sent. Held by
+ * whoever owns the socket (the listener's sink), one per socket. The clock is read only on a drop.
+ */
+export class MediaDropRun {
+  private since: number | null = null;
+  private readonly maxMs: number;
+
+  constructor(limits: Pick<BackpressureLimits, 'softLimitMaxMs'>) {
+    this.maxMs = limits.softLimitMaxMs ?? Number.POSITIVE_INFINITY;
+  }
+
+  /** A frame was dropped: true once every frame for `softLimitMaxMs` has been (the run then starts over). */
+  dropped(): boolean {
+    const now = Date.now();
+    if (this.since === null) {
+      this.since = now;
+      return false;
+    }
+    if (now - this.since < this.maxMs) return false;
+    this.since = null;
+    return true;
+  }
+
+  /** A frame was sent: the run is over. */
+  sent(): void {
+    if (this.since !== null) this.since = null;
+  }
+}
+
 /** How long a station closed for its backlog may take to close before it is terminated. */
 export const BACKLOG_CLOSE_TERMINATE_MS = 5_000;
 
@@ -119,9 +189,21 @@ export function sendVerdict(
  * path is already closing it), so a caller counts each close once. Never throws.
  */
 export function closeForSendBacklog(ws: WebSocket): boolean {
+  return closeThenTerminate(ws, AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, STATION_SEND_BACKLOG_REASON);
+}
+
+/**
+ * Close `ws` with `code` and `reason`, then `terminate` it if it has not closed within
+ * {@link BACKLOG_CLOSE_TERMINATE_MS}: a peer that has stopped reading never completes the close
+ * handshake, and `ws` would hold its unsent buffers until its own 30 s close timeout. The
+ * station's backlog close ({@link closeForSendBacklog}) and every close of a listener socket
+ * (`agency/listen/listen-socket.ts`). Returns false when the socket was not open (another path is
+ * already closing it). Never throws.
+ */
+export function closeThenTerminate(ws: Pick<WebSocket, 'readyState' | 'close' | 'terminate'>, code: number, reason: string): boolean {
   if (ws.readyState !== OPEN) return false;
   try {
-    ws.close(AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, STATION_SEND_BACKLOG_REASON);
+    ws.close(code, reason);
   } catch {
     // Fall through to the terminate.
   }

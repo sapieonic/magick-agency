@@ -7,6 +7,7 @@ import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { createPushSender } from '../notifications/push/push-sender.js';
 import { getPushSender, setPushSender } from '../seams/push-sender.js';
+import { warnOfEnvDefaultsPastPolicy } from '../feature-flags/flag-policies.js';
 
 /**
  * The platform's background work:
@@ -32,6 +33,8 @@ import { getPushSender, setPushSender } from '../seams/push-sender.js';
  *     `unconfigured`, `away_ring` refused). Boot logs which platforms can be rung (no secrets), and
  *     starts FCM's access token refresh (not awaited).
  *     Cleared and closed in this stop, after every other area has stopped ringing.
+ *  5. A warning line for a flag's env default that turns it on for every tenant past its handling
+ *     policy (`FF_AGENCY_LIVE_LISTEN=true`, dev and staging only: `feature-flags/flag-policies.ts`).
  *
  * Returns a stop function the process awaits on shutdown.
  */
@@ -39,6 +42,7 @@ export async function startPlatform(ctx: AppContext): Promise<() => Promise<void
   const { config } = ctx;
   platformAuditLogger.start();
   auditLogger.start();
+  warnOfEnvDefaultsPastPolicy();
   let subscriber: Redis | null = null;
 
   const push = createPushSender(config.push);

@@ -14,6 +14,7 @@ import type * as Core from '../../agency';
 import type { AgencyManualCall, AgencyManualCallOverrides } from '../../agency';
 import type { AgencyKeysetPage } from '../../agency';
 import type { AgencyCallAvailability } from './attempt-call';
+import type { AgencyCallListenSession } from './live-calls';
 import type { DialerAnalysisStatus, WebRtcCallRecord } from './webrtc-call';
 
 export type {
@@ -142,4 +143,10 @@ export interface AgencyManualCallDetail {
   media: WebRtcCallRecord | null;
   /** `never_placed`: refused or failed before the media leg was created. */
   call_availability: AgencyCallAvailability;
+  /**
+   * Who listened to the call live ("Listened to by", docs/listening.md LS13, LS16 k): the sessions
+   * that went live on the media leg, earliest first. Only with the media leg (`agency.supervise`);
+   * absent without one or when the read failed.
+   */
+  listen_sessions?: AgencyCallListenSession[];
 }

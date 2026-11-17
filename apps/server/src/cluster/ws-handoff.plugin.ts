@@ -24,6 +24,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { trackWsHandoff } from '@magick-agency/observability/metrics/voice';
 import { IPC_PROTOCOL_VERSION, type WsHandoff } from './ipc-protocol.js';
 import { detachFromServer, stopSocketReads } from './socket-pause.js';
+import { redactSpanUrl } from '../utils/redact-url.js';
 
 const log = createChildLogger({ component: 'ws-handoff' });
 
@@ -33,6 +34,12 @@ export interface WsOwnerConfig {
   by: 'session' | 'carrier_hint';
   /** The path param that keys the owner (`sessionId`, `id`). */
   param: string;
+  /**
+   * The upgraded socket's name in the handoff and its metric (`ws_handoff_total{route}`), when it
+   * is not the default for `by` (`session`: `station`, `carrier_hint`: `pstn`). The supervisor's
+   * listener socket is owned by the agent's session too, and is `listen`.
+   */
+  route?: 'listen';
 }
 
 declare module 'fastify' {
@@ -120,7 +127,7 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
         (request.params ?? {}) as Record<string, string | undefined>,
         (request.query ?? {}) as Record<string, unknown>,
       ) ?? null;
-      const route = owner.by === 'session' ? 'station' : 'pstn';
+      const route = owner.route ?? (owner.by === 'session' ? 'station' : 'pstn');
       if (!target || slot === null) {
         trackWsHandoff(route, 'no_owner');
         refuse(socket, 503, 2);
@@ -129,7 +136,7 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
       if (socket.readableLength > 0) {
         // Should be unreachable with reads stopped at the upgrade: refuse rather than
         // hand off a socket whose bytes would stay behind.
-        log.warn({ url: request.url, buffered: socket.readableLength }, 'Upgrade socket has bytes buffered in the primary — refusing');
+        log.warn({ url: redactSpanUrl(request.url), buffered: socket.readableLength }, 'Upgrade socket has bytes buffered in the primary — refusing');
         trackWsHandoff(route, 'buffered');
         refuse(socket, 503, 1);
         return;
@@ -152,7 +159,9 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
       }
       raw[kHandedOff] = true;
       if (!target.handoff(slot, msg, socket)) {
-        log.warn({ slot, url: request.url }, 'Upgrade handoff could not be sent — closing the socket');
+        // The URL is logged redacted: an unspent single-use token (`?token=` on the station and
+        // listener upgrades) is a bearer to the socket for its TTL.
+        log.warn({ slot, url: redactSpanUrl(request.url) }, 'Upgrade handoff could not be sent — closing the socket');
         trackWsHandoff(route, 'not_sent');
         socket.destroy();
         return;

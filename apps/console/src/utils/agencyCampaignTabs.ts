@@ -1,6 +1,7 @@
 import type { Permission } from './permissions';
 import { hasPermission } from './permissions';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
+import { LIVE_LISTEN_FLAG } from './listen/liveListenFlag';
 import type { Role } from '../types/auth';
 
 /**
@@ -64,6 +65,7 @@ export type CampaignTabId =
   | 'contacts'
   | 'attempts'
   | 'manual'
+  | 'live'
   | 'activity'
   | 'settings';
 
@@ -104,6 +106,11 @@ export interface CampaignTabDefinition {
   path: (campaignId: string) => string;
   /** A client-exposed flag that must also be on (the soft phone's tab). */
   flag?: string;
+  /**
+   * The bar tab marked current while this screen shows, when it is not the screen itself (absent):
+   * the tab a view belongs to, or `null` for a screen with none ({@link barTabFor}).
+   */
+  bar?: CampaignTabId | null;
 }
 
 export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
@@ -179,6 +186,20 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     permission: 'agency.supervise',
     path: (id) => `/agency/campaigns/${id}/manual-calls`,
     flag: SOFTPHONE_FLAG,
+    bar: 'attempts',
+  },
+  {
+    id: 'live',
+    group: null,
+    label: 'Live calls',
+    hint: 'The calls in progress on this campaign, to listen in to',
+    // The account's live list, campaign-filtered (`docs/listening.md` §9): floored at
+    // `agency.supervise` like the Calls tab it is the second view of ("Summary | Live"),
+    // behind the listening flag (LS1). Listening itself needs `agency.calls.listen` too.
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/calls/live`,
+    flag: LIVE_LISTEN_FLAG,
+    bar: 'calls',
   },
   {
     // "Activity" until it became the header's History button; the id and the URL stay.
@@ -196,6 +217,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     */
     permission: 'audit.read',
     path: (id) => `/agency/campaigns/${id}/activity`,
+    bar: null,
   },
   {
     id: 'settings',
@@ -260,12 +282,21 @@ export function visibleCampaignTabGroups(role: Role | undefined): CampaignTabGro
 
 /**
  * The bar tab marked current while a screen shows: Call log for both of its
- * views, and none for Activity, which is the header's History and not a tab.
+ * views, Calls for both of its (Summary and Live), and none for Activity,
+ * which is the header's History and not a tab.
  */
 export function barTabFor(id: CampaignTabId): CampaignTabId | null {
-  if (id === 'manual') return 'attempts';
-  if (id === 'activity') return null;
-  return id;
+  const bar = CAMPAIGN_TABS.find((tab) => tab.id === id)?.bar;
+  return bar === undefined ? id : bar;
+}
+
+/** The views of a screen a role can open, in segment order; each is gated as its screen (`CAMPAIGN_TABS`). */
+function visibleViews<Id extends CampaignTabId>(
+  views: readonly { id: Id; label: string }[],
+  role: Role | undefined,
+  isFlagEnabled: (flag: string) => boolean,
+): { id: Id; label: string }[] {
+  return views.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
 }
 
 /** Call log's two views, in segment order (decision IN14). */
@@ -281,7 +312,23 @@ export function visibleCallLogViews(
   role: Role | undefined,
   isFlagEnabled: (flag: string) => boolean = () => false,
 ): { id: CallLogViewId; label: string }[] {
-  return CALL_LOG_VIEWS.filter((view) => canOpenCampaignScreen(view.id, role, isFlagEnabled));
+  return visibleViews(CALL_LOG_VIEWS, role, isFlagEnabled);
+}
+
+/** The Calls tab's two views, in segment order: the analytic panel and the calls in progress. */
+export type CallsViewId = 'calls' | 'live';
+
+export const CALLS_VIEWS: readonly { id: CallsViewId; label: string }[] = [
+  { id: 'calls', label: 'Summary' },
+  { id: 'live', label: 'Live' },
+];
+
+/** The Calls views a role can open; each is gated as its screen (`CAMPAIGN_TABS`), Live by its flag too. */
+export function visibleCallsViews(
+  role: Role | undefined,
+  isFlagEnabled: (flag: string) => boolean = () => false,
+): { id: CallsViewId; label: string }[] {
+  return visibleViews(CALLS_VIEWS, role, isFlagEnabled);
 }
 
 /**

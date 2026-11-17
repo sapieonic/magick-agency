@@ -5,8 +5,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PENDING_UID_PREFIX } from '../../../auth/firebase-identity.js';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
-import { redisCache } from '../../../cache/redis-cache.js';
-import { membershipCacheKey } from '../../middleware/membership-cache-key.js';
 import { sendRevocationCacheUnavailable } from '../../../cache/revocation-unavailable.js';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import { getPool } from '@magick-agency/db';
@@ -35,6 +33,7 @@ import { createAccountSchema } from '../../validators/account.validator.js';
 import type { CreateAccountErrorCode } from '@magick-agency/contracts/api/platform/auth';
 import { returnContactsOnUnstaff } from '../../../agency/assignment/unstaff.js';
 import { SYSTEM_AUDIT_ACTOR } from '../../../audit/platform/audit-actor.js';
+import { membershipAdded, membershipRevoked } from '../../../rbac/membership-changed.js';
 
 const log = createChildLogger({ component: 'super-admin-routes' });
 
@@ -363,9 +362,10 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     }
     const { membership, userId } = added;
 
-    // Same key `tenantContextMiddleware` reads — a re-added user must not keep
-    // serving the empty/revoked snapshot from before the write.
-    await redisCache.del(membershipCacheKey(userId, tenantId));
+    // The key `tenantContextMiddleware` reads is dropped — a re-added user must not keep serving
+    // the empty/revoked snapshot from before the write — and the subscribers told (live call
+    // listening, LS22 l: an account-scoped seat can shadow a tenant-wide admin's).
+    await membershipAdded(tenantId, userId);
 
     /**
      * Super-admin add creates a `pending_` stub plus membership and sends an
@@ -462,7 +462,8 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     // after every other effect (staffing, audit) if it still failed. Idempotent on retry:
     // the membership is re-read with its new role, the same role is re-applied, the key is
     // deleted again, and the demotion's staffing close has nothing left to do.
-    const membershipCacheCleared = await redisCache.delForRevocation(membershipCacheKey(target.user_id, tenantId));
+    // The subscribers are told too (live call listening, LS10: their open listens re-checked now).
+    const membershipCacheCleared = await membershipRevoked(tenantId, target.user_id);
 
     let staffingClosed: Array<{ id: string; campaign_id: string; account_id: string | null }> = [];
     if (isDemotionFromAgent(target.role, role as MembershipRole)) {
@@ -535,7 +536,9 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     // Q5 (Manas, 2026-10-09): retried delete with an ERROR log on final failure; the 2xx is
     // KEPT because a re-sent revoke is not idempotent — `findByIdInTenant` reads active rows
     // only, so the retry 404s before reaching this line. The TTL (30 min) bounds it.
-    await redisCache.delForRevocation(membershipCacheKey(target.user_id, tenantId));
+    // The subscribers are told too (live call listening, LS10: their open listens end now, unless
+    // another membership they keep in the tenant still clears the floor).
+    await membershipRevoked(tenantId, target.user_id);
 
     const staffingClosed = await closeStaffingTenantWide(tenantId, target.user_id, 'membership_removed');
 

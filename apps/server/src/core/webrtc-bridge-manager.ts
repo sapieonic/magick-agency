@@ -5,10 +5,11 @@
 // provider is `voicelink`. The members the dialer runtime calls (onLifecycle,
 // createBridgedCall, createUnboundBridgedCall, bindBorrowedBrowserLeg,
 // reattachBorrowedBrowserLeg, forceEndWithOutcome, playClipToCarrierThenHangUp,
-// getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
+// getActiveCallIds, hasActiveCall, gracefulShutdown) and the exported types are a fixed seam, pinned by
 // `test/unit/core/webrtc-bridge-seam-contract.test.ts`. The inbound members
 // (acceptInboundCall, playClipSequenceThenHangUp, playInboundHold, stopInboundHold,
-// recordInboundAudio: docs/inbound.md §3, §5) are part of that seam too.
+// recordInboundAudio: docs/inbound.md §3, §5) are part of that seam too, as is openListenTap
+// (a supervisor listening in: docs/listening.md).
 import crypto from 'node:crypto';
 import { releaseTelephonyLease } from './telephony-release.js';
 import type Redis from 'ioredis';
@@ -43,6 +44,9 @@ import {
   type InboundHoldOptions,
   type InboundHoldResult,
   type InboundRecordOptions,
+  type ListenSink,
+  type OpenListenTapResult,
+  type ListenTapOpenOptions,
   type WebRtcBridgedCallParams,
   type WebRtcCallCorrelation,
   type WebRtcInboundAcceptance,
@@ -55,7 +59,10 @@ import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { UnrequestedRecordings } from './bridge/unrequested-recording.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
-import { trackCarrierDialRefusal, trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import { LISTEN_TAP_DEFAULT_FAULT_BUDGET } from './bridge/listen-tap.js';
+import {
+  RELAY_DWELL_SAMPLE_EVERY, trackCarrierDialRefusal, trackRelayDwell, trackWebsocketSendBackpressure,
+} from '@magick-agency/observability/metrics/voice';
 import {
   CarrierDialNotSentError, carrierAuthRejectionReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isCarrierDialAborted, isDialOutcomeUnknown,
 } from '../telephony/carrier-errors.js';
@@ -110,6 +117,14 @@ export {
   type InboundHoldOptions,
   type InboundHoldResult,
   type InboundRecordOptions,
+  type ListenSendResult,
+  type ListenSink,
+  type ListenTapEndReason,
+  type ListenTapHandle,
+  type ListenTapOpenOptions,
+  type ListenTapRefusal,
+  type ListenTapStats,
+  type OpenListenTapResult,
   type WebRtcInboundAcceptance,
   type WebRtcInboundCallParams,
   type WebRtcBridgedCallParams,
@@ -489,6 +504,11 @@ export class WebRtcBridgeManager {
   /** Call ids this replica is actively bridging — excluded from the stale-call sweep. */
   getActiveCallIds(): string[] {
     return Array.from(this.sessions.keys());
+  }
+
+  /** Whether this replica holds a bridge session for the call (`agency_calls.id`): the listen grant's check. */
+  hasActiveCall(callId: string): boolean {
+    return this.sessions.has(callId);
   }
 
   /**
@@ -1742,14 +1762,13 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Feed one carrier media frame to the session's tap. An oversized frame is dropped (as the
-   * relay drops it), and one that will not decode is dropped and logged: never thrown out of the
+   * Feed one carrier media frame (decoded once by `onPstnMessage`, which dropped an oversized one)
+   * to the session's tap. One the tap cannot take is dropped and logged: never thrown out of the
    * socket listener.
    */
-  private feedCarrierTap(session: WebRtcBridgeSession, tap: CarrierTap, payloadBase64: string): void {
-    if (isOversizedMediaPayload(payloadBase64)) return;
+  private feedCarrierTap(session: WebRtcBridgeSession, tap: CarrierTap, wire: Buffer): void {
     try {
-      tap.feed(Buffer.from(payloadBase64, 'base64'));
+      tap.feed(wire);
     } catch (err) {
       log.warn({ err, callId: session.callId }, 'Dropped a carrier media frame the recording could not take');
     }
@@ -1916,6 +1935,33 @@ export class WebRtcBridgeManager {
   /** Give back an inbound callback's nonce whose processing failed, so the carrier's retry is not a replay. */
   releaseInboundCallbackNonce(credentialId: string, nonce: string): Promise<void> {
     return this.tokens.releaseCredentialCallbackNonce(credentialId, nonce);
+  }
+
+  // ─── Live call listening (docs/listening.md, LS8) ────────────────────────
+
+  /**
+   * Attach a supervisor's sink to a call this process bridges: from now on it gets both legs as
+   * tagged 20 ms A-law messages (`bridge/listen-tap.ts`), until its owner detaches it or the
+   * bridge ends it (`ListenSink.close`: `call_ended`, `tap_error`, `send_backlog`,
+   * `listener_disconnected`). Keyed on the call id (`agency_calls.id`). Synchronous, never waits.
+   *
+   * Refused `not_found` (no session for the call here), `ending` (it is settling) or
+   * `not_bridged` (never bridged: still ringing, or an inbound caller parked on hold with no
+   * agent bound; or a carrier the bridge relays no audio for). Once bridged, an agent's dropped
+   * socket inside its re-attach window is still listenable: the customer is still on the line.
+   * The caps (per call, per process, per supervisor) are the caller's, and so is the tap's fault
+   * budget (`options`, read when the call's tap is made by its first sink).
+   */
+  openListenTap(callId: string, sink: ListenSink, options?: ListenTapOpenOptions): OpenListenTapResult {
+    const session = this.sessions.get(callId);
+    if (!session) return { refused: 'not_found' };
+    if (session.isTearingDown) return { refused: 'ending' };
+    if (!session.bridged || !session.carrier) return { refused: 'not_bridged' };
+    // The budget is the caller's setting (the agency's `AGENCY_LISTEN_FAULT_BUDGET`), passed in:
+    // the voice area reads no agency config (LS22 j).
+    const handle = session.openListenTap(sink, options?.faultBudget ?? LISTEN_TAP_DEFAULT_FAULT_BUDGET);
+    log.info({ callId, listenId: sink.listenId, listeners: session.listenTap?.sinkCount ?? 0 }, 'Listen tap attached');
+    return handle;
   }
 
   /**
@@ -2179,35 +2225,48 @@ export class WebRtcBridgeManager {
         this.noteIgnoredBrowserMedia(session, 'json media frame on an alaw8 leg');
         return;
       }
-      // Drop until both legs are live AND the provider stream is negotiated — no
-      // one to hear it yet (avoids buffering / sending before VoiceLink `start`).
-      if (session.pstnWs?.readyState !== 1 || !session.providerMediaReady) return;
-      // Bound the frame: reject an oversized base64 payload before decoding so a
-      // compromised browser token can't drive unbounded allocation on the loop.
-      if (isOversizedMediaPayload(data.media.payload)) {
-        log.warn({ callId: session.callId, len: data.media.payload.length }, 'Dropped oversized browser media frame');
+      const payload: string = data.media.payload;
+      // Relayed only once both legs are live AND the provider stream is negotiated: no one to hear
+      // it before (avoids buffering / sending before VoiceLink `start`).
+      const relays = session.pstnWs?.readyState === 1 && session.providerMediaReady;
+      if (!relays && session.listenTap === null) return;
+      // Bound the frame: reject an oversized base64 payload before decoding so a compromised
+      // browser token can't drive unbounded allocation on the loop. Not the tap's either.
+      if (isOversizedMediaPayload(payload)) {
+        if (relays) log.warn({ callId: session.callId, len: payload.length }, 'Dropped oversized browser media frame');
         return;
       }
-      // Guard the decode/transcode: Buffer.from(payload,'base64') throws on a
-      // non-string payload, and this runs in a ws 'message' listener — an uncaught
-      // throw here would crash the replica (there is no global uncaughtException
-      // handler). Drop the bad frame instead.
-      try {
-        if (session.carrier && session.codec) {
-          // Browser PCM16 16kHz → carrier wire audio (stateful transcode), framed
-          // the way the carrier expects.
-          const pcm = Buffer.from(data.media.payload, 'base64');
-          const wire = session.codec.pcm16kToCarrier(pcm);
-          if (this.mayRelayToPstn(session)) {
-            this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
-            this.recordRelayFrame(session, 'b2p', t0);
-          }
-        }
-      } catch (err) {
-        log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
-      }
+      // Decoded once, for the relay and the listen tap; neither writes to it.
+      const pcm = Buffer.from(payload, 'base64');
+      if (relays) this.relayBrowserPcm16(session, pcm, t0);
+      // The listen tap, after the relay's write and whether or not it relayed (one field read
+      // with nobody listening; the tap never throws).
+      const listen = session.listenTap;
+      if (listen !== null) listen.feedAgentPcm16(pcm);
     }
     // 'start'/'connected'/'stop' from the browser are informational here.
+  }
+
+  /**
+   * A `pcm16` agent's media frame (decoded, bounded) → the carrier. The caller has checked the
+   * leg's format and that both legs are live with the provider stream negotiated.
+   */
+  private relayBrowserPcm16(session: WebRtcBridgeSession, pcm: Buffer, t0: bigint): void {
+    // Guard the transcode: this runs in a ws 'message' listener, and an uncaught throw here would
+    // crash the replica (there is no global uncaughtException handler). Drop the bad frame instead.
+    try {
+      if (session.carrier && session.codec) {
+        // Browser PCM16 16kHz → carrier wire audio (stateful transcode), framed
+        // the way the carrier expects.
+        const wire = session.codec.pcm16kToCarrier(pcm);
+        if (session.pstnWs && this.mayRelayToPstn(session)) {
+          this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
+          this.recordRelayFrame(session, 'b2p', t0);
+        }
+      }
+    } catch (err) {
+      log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
+    }
   }
 
   /**
@@ -2227,6 +2286,15 @@ export class WebRtcBridgeManager {
       this.noteIgnoredBrowserMedia(session, 'binary frame on a pcm16 leg');
       return;
     }
+    this.relayBrowserAlaw(session, alaw, t0);
+    // The listen tap, after the relay's write and whether or not it relayed (one field read with
+    // nobody listening; the tap never throws). A message the relay would refuse is not the tap's.
+    const listen = session.listenTap;
+    if (listen !== null && isAcceptableAlawMessage(alaw.length)) listen.feedAgentAlaw(alaw);
+  }
+
+  /** An `alaw8` agent's message → the carrier. The caller has checked the leg's format. */
+  private relayBrowserAlaw(session: WebRtcBridgeSession, alaw: Buffer, t0: bigint): void {
     if (session.pstnWs?.readyState !== 1 || !session.providerMediaReady) return;
     if (!isAcceptableAlawMessage(alaw.length)) {
       this.noteIgnoredBrowserMedia(session, 'alaw8 frame not a whole number of 20 ms frames, or over 1 s', alaw.length);
@@ -2253,10 +2321,9 @@ export class WebRtcBridgeManager {
    * carrier codec to PCM16 16 kHz, then A-law. The caller has already gated on both legs
    * being live and bounded the payload.
    */
-  private relayCarrierToAlawBrowser(session: WebRtcBridgeSession, payloadBase64: string, t0: bigint): void {
+  private relayCarrierToAlawBrowser(session: WebRtcBridgeSession, wire: Buffer, t0: bigint): void {
     const browserWs = session.browserWs;
     if (!browserWs) return;
-    const wire = Buffer.from(payloadBase64, 'base64');
     let alaw: Buffer;
     if (session.browserMediaPassthrough) {
       alaw = wire;
@@ -2304,29 +2371,25 @@ export class WebRtcBridgeManager {
     if (data?.event === 'media' && typeof data.media?.payload === 'string') {
       // The carrier tap (an inbound recording) is fed BEFORE the browser-leg check: it records the
       // caller while nobody is bound. Installed only while recording, so otherwise this is one read.
-      if (session.carrierTap && session.providerMediaReady) this.feedCarrierTap(session, session.carrierTap, data.media.payload);
-      if (session.browserWs?.readyState !== 1 || !session.providerMediaReady) return;
-      if (isOversizedMediaPayload(data.media.payload)) {
-        log.warn({ callId: session.callId, len: data.media.payload.length }, 'Dropped oversized PSTN media frame');
+      const payload: string = data.media.payload;
+      // Nothing takes carrier audio before the stream is negotiated.
+      if (!session.providerMediaReady) return;
+      const relays = session.browserWs?.readyState === 1;
+      if (!relays && !session.carrierTap && session.listenTap === null) return;
+      // Bound the frame before decoding; too big for the relay is too big for every tap too.
+      if (isOversizedMediaPayload(payload)) {
+        if (relays) log.warn({ callId: session.callId, len: payload.length }, 'Dropped oversized PSTN media frame');
         return;
       }
-      // Guard the decode/transcode (see onBrowserMessage): a malformed payload from
-      // the PSTN leg must never throw out of this ws listener and crash the replica.
-      try {
-        if (session.browserMediaFormat === 'alaw8') {
-          this.relayCarrierToAlawBrowser(session, data.media.payload, t0);
-        } else if (session.codec) {
-          // Carrier wire audio → browser PCM16 16kHz (stateful transcode).
-          const wire = Buffer.from(data.media.payload, 'base64');
-          const pcm = session.codec.carrierToPcm16k(wire);
-          if (this.mayRelayToBrowser(session, session.browserWs)) {
-            this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
-            this.recordRelayFrame(session, 'p2b', t0);
-          }
-        }
-      } catch (err) {
-        log.warn({ err, callId: session.callId }, 'Dropped malformed PSTN media frame');
-      }
+      // Decoded once, for the recording, the relay and the listen tap; none writes to it.
+      const wire = Buffer.from(payload, 'base64');
+      if (session.carrierTap) this.feedCarrierTap(session, session.carrierTap, wire);
+      if (relays) this.relayPstnMedia(session, wire, t0);
+      // The listen tap, after the relay's write and whether or not it relayed: a supervisor still
+      // hears the customer while the agent's socket is inside its re-attach window. One field read
+      // with nobody listening; the tap never throws.
+      const listen = session.listenTap;
+      if (listen !== null) listen.feedCustomer(wire);
     } else if (data?.event === 'stop') {
       this.inBackground(this.endCall(session.callId, {
         status: session.remoteEndStatus(),
@@ -2335,6 +2398,27 @@ export class WebRtcBridgeManager {
       }), session.callId, 'Error ending call on PSTN stop');
     }
     // 'playedStream'/'clearedAudio' are acks — ignored.
+  }
+
+  /** A carrier media frame → the agent's socket, in the leg's format. */
+  private relayPstnMedia(session: WebRtcBridgeSession, wire: Buffer, t0: bigint): void {
+    if (session.browserWs?.readyState !== 1) return;
+    // Guard the transcode (see relayBrowserPcm16): a malformed frame from the PSTN leg must never
+    // throw out of this ws listener and crash the replica.
+    try {
+      if (session.browserMediaFormat === 'alaw8') {
+        this.relayCarrierToAlawBrowser(session, wire, t0);
+      } else if (session.codec) {
+        // Carrier wire audio → browser PCM16 16kHz (stateful transcode).
+        const pcm = session.codec.carrierToPcm16k(wire);
+        if (this.mayRelayToBrowser(session, session.browserWs)) {
+          this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
+          this.recordRelayFrame(session, 'p2b', t0);
+        }
+      }
+    } catch (err) {
+      log.warn({ err, callId: session.callId }, 'Dropped malformed PSTN media frame');
+    }
   }
 
   /**
@@ -2911,6 +2995,10 @@ export class WebRtcBridgeManager {
     // VoiceLink, answered → deferred, carrier-confirmed teardown.
     if (session.ending) return; // already awaiting confirmation
     session.ending = true;
+    // A supervisor listening hears the call end now, not when the carrier confirms (up to
+    // CARRIER_END_CONFIRM_TIMEOUT_SECONDS): the agent's socket stays bound through the wait and
+    // keeps sending its microphone, which nobody on the call hears any more (LS15 f).
+    session.endListenTap('call_ended');
     session.pendingEnd = intent;
     session.clearMaxDurationTimer();
     log.info({ callId, intent: intent.outcome }, 'VoiceLink local hangup — closing WS, awaiting call.ended');
@@ -3179,6 +3267,9 @@ export class WebRtcBridgeManager {
     if (!session) return;
     if (session.endHandled) return;
     session.endHandled = true;
+    // Listeners end before the awaits below (the carrier's hangup, the terminal write): frames
+    // still arriving on either leg meanwhile are not theirs to hear (LS15 f).
+    session.endListenTap('call_ended');
     session.clearMaxDurationTimer();
     session.clearRingDeadlineTimer();
     // A dial still waiting to be sent is called off (`OutboundCallRequest.signal`).
@@ -3367,12 +3458,17 @@ export class WebRtcBridgeManager {
     }
   }
 
-  /** Tally a relayed media frame and track the worst-case in-process dwell. */
+  /**
+   * Tally a relayed media frame and track the worst-case in-process dwell; one frame in
+   * `RELAY_DWELL_SAMPLE_EVERY` per call and direction also goes to `webrtc_relay_dwell_seconds`.
+   * Called right after the relay's write and before the listen tap is fed, so the dwell never
+   * includes the tap (docs/listening.md, LS8).
+   */
   private recordRelayFrame(session: WebRtcBridgeSession, dir: 'b2p' | 'p2b', startedAt: bigint): void {
-    if (dir === 'b2p') session.browserToPstnFrames++;
-    else session.pstnToBrowserFrames++;
+    const frames = dir === 'b2p' ? ++session.browserToPstnFrames : ++session.pstnToBrowserFrames;
     const dwellMicros = Number(process.hrtime.bigint() - startedAt) / 1000;
     if (dwellMicros > session.maxRelayDwellMicros) session.maxRelayDwellMicros = dwellMicros;
+    if (frames % RELAY_DWELL_SAMPLE_EVERY === 0) trackRelayDwell(dir, dwellMicros / 1_000_000);
   }
 
   /**

@@ -3,12 +3,16 @@ import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
   AGENCY_INBOUND_ERROR_CODES,
+  AGENCY_LISTEN_ERROR_CODES,
+  AGENCY_LIVE_CALL_NUMBER_ERROR_CODES,
   AGENCY_REPORT_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
   AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
   type AgencyInboundErrorCode,
+  type AgencyListenErrorCode,
+  type AgencyLiveCallNumberErrorCode,
   type AgencyReportErrorCode,
   type AgencyRosterRefusalCode,
   type AgencySoftphoneErrorCode,
@@ -353,5 +357,66 @@ describe('away-ring refusal codes', () => {
       ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES,
     ]);
     for (const code of AGENCY_AWAY_RING_REFUSAL_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Live call listening (src/errors.ts §7, re-exported by src/api/agency/live-calls.ts; docs/listening.md).
+const _listenExact: Equals<(typeof AGENCY_LISTEN_ERROR_CODES)[number], AgencyListenErrorCode> = true;
+const _consoleListenAgrees: Equals<AgencyApi.AgencyListenErrorCode, AgencyListenErrorCode> = true;
+// A live row's reason is the refusal its grant would answer.
+const _notListenableIsACode: AgencyApi.AgencyLiveCallNotListenableReason extends AgencyListenErrorCode ? true : false = true;
+// The row's spine id and its campaign's AHT (added with the server side, for "Open call" and the
+// amber timer): present, and of these types.
+const _rowCorrelation: Equals<AgencyApi.AgencyLiveCall['correlation_id'], string> = true;
+const _rowAht: Equals<AgencyApi.AgencyLiveCall['aht_seconds'], number | null> = true;
+// A withheld number is said so, not shown as `****` (LS22 i): additive, a boolean.
+const _rowWithheld: Equals<AgencyApi.AgencyLiveCall['customer_phone_withheld'], boolean | undefined> = true;
+const _numberExact: Equals<(typeof AGENCY_LIVE_CALL_NUMBER_ERROR_CODES)[number], AgencyLiveCallNumberErrorCode> = true;
+const _consoleNumberAgrees: Equals<AgencyApi.AgencyLiveCallNumberErrorCode, AgencyLiveCallNumberErrorCode> = true;
+void [_listenExact, _consoleListenAgrees, _notListenableIsACode, _rowCorrelation, _rowAht, _rowWithheld, _numberExact, _consoleNumberAgrees];
+
+describe('listen codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_LISTEN_ERROR_CODES]).toEqual([
+      'listen_call_not_live',
+      'listen_recording_off',
+      'listen_limit_call',
+      'listen_limit_server',
+      'listen_own_call',
+      'listen_unavailable',
+    ]);
+    expectUnique(AGENCY_LISTEN_ERROR_CODES);
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_LISTEN_ERROR_CODES).toBe(AGENCY_LISTEN_ERROR_CODES);
+  });
+
+  it('a live row\'s not-listenable reasons are three of them (SNAPSHOT, written out by hand)', () => {
+    expect([...AgencyApi.AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS]).toEqual([
+      'listen_recording_off',
+      'listen_limit_call',
+      'listen_own_call',
+    ]);
+    for (const reason of AgencyApi.AGENCY_LIVE_CALL_NOT_LISTENABLE_REASONS) {
+      expect(AGENCY_LISTEN_ERROR_CODES as readonly string[], reason).toContain(reason);
+    }
+  });
+
+  it('do not overlap the action, soft-phone, report or inbound unions', () => {
+    const others = new Set<string>([
+      ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_LISTEN_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+
+  it('the number reveal\'s own refusal is one code, apart from the listen codes (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_LIVE_CALL_NUMBER_ERROR_CODES]).toEqual(['live_call_number_withheld']);
+    expect(AgencyApi.AGENCY_LIVE_CALL_NUMBER_ERROR_CODES).toBe(AGENCY_LIVE_CALL_NUMBER_ERROR_CODES);
+    const others = new Set<string>([
+      ...AGENCY_LISTEN_ERROR_CODES, ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES,
+      ...AGENCY_INBOUND_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_LIVE_CALL_NUMBER_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

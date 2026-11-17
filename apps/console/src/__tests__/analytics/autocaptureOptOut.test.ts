@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * That posthog-js still honours `ph-no-capture`, in the version this repo pins.
@@ -67,5 +68,25 @@ describe('posthog-js still honours ph-no-capture', () => {
 
   it('is the version the lockfile pins, so this says something about what ships', () => {
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
+/**
+ * The surfaces whose PII posture rests on that class, so a refactor that drops it from one of
+ * them reds here as well as in the surface's own test. Each holds a customer's number or name
+ * (or a person's details on an invitation): the customer-history search box and its results,
+ * the global search, the invitation card, and live call listening's table and bar (CH6).
+ */
+describe('the surfaces that rely on ph-no-capture still carry it', () => {
+  const src = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+  it.each([
+    'components/agency/customers/CustomerSearchBox.tsx',
+    'pages/agency/CustomerHistoryPage.tsx',
+    'components/common/GlobalSearch.tsx',
+    'components/agency/join/InviteJoinScreen.tsx',
+    'components/listen/LiveCallsTable.tsx',
+    'components/listen/ListenBar.tsx',
+  ])('%s', (file) => {
+    expect(readFileSync(join(src, file), 'utf-8')).toMatch(/className=\{?[`'"][^`'"]*ph-no-capture/);
   });
 });

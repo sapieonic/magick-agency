@@ -8,6 +8,7 @@ import {
   parseRatePausedBody,
   parseReadyBody,
   parseShutdownBody,
+  parseWsHandoff,
 } from '../../../src/cluster/ipc-protocol.js';
 
 const roundTrip = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
@@ -189,11 +190,43 @@ describe('body decoders', () => {
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},
       'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' } },
+      'listen.revoke': { tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['l1'] },
     };
     for (const [type, decode] of Object.entries(IPC_EVENT_DECODERS)) {
       const sample = samples[type];
       expect(sample, `a sample for ${type}`).toBeDefined();
       expect((decode as (r: unknown) => unknown)(roundTrip(sample))).toEqual(sample);
     }
+  });
+});
+
+describe('listen.revoke (docs/listening.md, LS10)', () => {
+  const decode = IPC_EVENT_DECODERS['listen.revoke'];
+  it('a revocation names the supervisor, no listens and how the membership changed; a supersede names exactly what it ends', () => {
+    for (const change of ['added', 'revoked'] as const) {
+      expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null, change }))
+        .toEqual({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null, change });
+    }
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['a', 'b'] }))
+      .toEqual({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['a', 'b'] });
+  });
+  it('refuses the mixed shapes, another reason, a missing id, an oversized list and a missing or stray change', () => {
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: ['a'], change: 'revoked' })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: null })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'call_ended', listenIds: null, change: 'revoked' })).toBeNull();
+    expect(decode({ tenantId: 't', reason: 'permission_revoked', listenIds: null, change: 'revoked' })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: Array.from({ length: 101 }, (_, i) => `l${i}`) })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: [42] })).toBeNull();
+    // A revocation says how the membership changed (LS22 w); a supersede carries nothing of it.
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null, change: null })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null, change: 'grown' })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['a'], change: 'revoked' })).toBeNull();
+    expect(decode({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['a'], change: null })).toBeNull();
+  });
+  it('a handoff may name the listener socket', () => {
+    const msg = { v: 1, kind: 'handoff', route: 'listen', method: 'GET', url: '/proxy/agency/listen/s/l?token=x', httpVersion: '1.1', rawHeaders: [], head: '', requestId: 'r' };
+    expect(parseWsHandoff(msg)?.route).toBe('listen');
+    expect(parseWsHandoff({ ...msg, route: 'audio' })).toBeNull();
   });
 });

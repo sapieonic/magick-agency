@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
       findAnyByUserAndTenant: vi.fn(),
     },
     closeAllForUser: vi.fn(),
+    revokeListens: vi.fn(async () => {}),
     redisDel: vi.fn(),
     // Q5: what the revocation delete reports (true unless a case says the Redis DEL failed).
     revocation: { cleared: true },
@@ -102,7 +103,25 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
 import { superAdminRoutes } from '../../../../src/api/routes/super-admin.routes.js';
+import { membershipNotificationsSettled, onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
 import { UNVERIFIED_ADDRESS_HOLDER } from '../../../../src/auth/firebase-identity.js';
+
+// Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
+onMembershipChanged(mocks.revokeListens);
+
+/**
+ * The listen re-check held open (LS22 w): the route must answer without waiting for it. Answers the
+ * release, which also waits for the notification to finish.
+ */
+function holdListenRecheck(): () => Promise<void> {
+  let release: (() => void) | undefined;
+  mocks.revokeListens.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+  return async () => {
+    expect(release).toBeDefined();
+    release!();
+    await membershipNotificationsSettled();
+  };
+}
 
 const SECRET = 'test-super-admin-secret-at-least-16';
 const ADMIN = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'root@magick.test', name: 'Root', status: 'active' };
@@ -353,6 +372,24 @@ describe('POST /super-admin/tenants/:id/users', () => {
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({ error: 'Conflict', message: 'User is already a member of this account' });
     expect(indexOfSql('INSERT INTO memberships')).toBe(-1);
+  });
+
+  it('LS22 l: re-checks the user\'s open listens in the tenant at once, after the cache delete; a refused add does not', async () => {
+    // A tenant-wide admin listening in ACCOUNT, given an agent seat there: the seat is the membership
+    // the tenant context picks in that account, so their listen there must be re-checked now.
+    mocks.userRepository.resolveByProvenEmail.mockResolvedValue({ status: 'found', user: { id: USER } });
+    db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: null, status: 'active' }];
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
+    expect((await post({ email: 'known@acme.test', role: 'agent', account_id: ACCOUNT })).statusCode).toBe(201);
+    expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER, 'added');
+    expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    await release();
+    mocks.revokeListens.mockClear();
+    db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: ACCOUNT, status: 'active' }];
+    expect((await post({ email: 'known@acme.test', role: 'agent', account_id: ACCOUNT })).statusCode).toBe(409);
+    expect(mocks.revokeListens).not.toHaveBeenCalled();
   });
 
   it('account context: an active TENANT-WIDE membership does not block an account-scoped add', async () => {
@@ -617,6 +654,21 @@ describe('PUT /super-admin/tenants/:id/memberships/:membershipId/role', () => {
     expect(res.json().membership).toMatchObject({ id: MEMBERSHIP, role: 'viewer' });
   });
 
+  it('LS10: re-checks the user\'s open listens in the tenant at once, after the cache delete; a refused change does not', async () => {
+    mocks.membershipRepository.findByIdInTenant.mockResolvedValue(target('account_admin'));
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
+    expect((await put({ role: 'viewer' })).statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER, 'revoked');
+    expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    await release();
+    mocks.revokeListens.mockClear();
+    mocks.membershipRepository.updateRoleGuardingLastOwner.mockResolvedValueOnce({ ok: false, reason: 'role_changed' });
+    expect((await put({ role: 'viewer' })).statusCode).toBe(409);
+    expect(mocks.revokeListens).not.toHaveBeenCalled();
+  });
+
   it('closes staffing tenant-wide on a demotion out of agent when no other agent membership remains', async () => {
     mocks.closeAllForUser.mockResolvedValue([
       { id: 'asg-1', campaign_id: 'camp-1', account_id: ACCOUNT },
@@ -789,6 +841,20 @@ describe('DELETE /super-admin/tenants/:id/memberships/:membershipId', () => {
         ],
       },
     });
+  });
+
+  it('LS10: ends the user\'s open listens in the tenant at once, after the cache delete; a refused removal does not', async () => {
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
+    expect((await del()).statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER, 'revoked');
+    expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    await release();
+    mocks.revokeListens.mockClear();
+    mocks.membershipRepository.removeGuardingLastOwner.mockResolvedValueOnce({ ok: false, reason: 'last_owner' });
+    expect((await del()).statusCode).toBe(400);
+    expect(mocks.revokeListens).not.toHaveBeenCalled();
   });
 
   it('a staffing close failure does not fail the revoke: 200, staffing_closed 0', async () => {

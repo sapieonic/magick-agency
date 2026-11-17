@@ -88,17 +88,43 @@ observableGauge<'type'>(meter, 'websocket_connections_active', {
 
 // ── WebSocket send back-pressure ───────────────────────────────────────
 // `socket` is `station` (an agent's station socket, written by the station registry and
-// by the bridge's borrowed browser leg) or `carrier` (the carrier's media stream).
-// `action` is `media_dropped` (a media frame past the soft backlog limit) or `closed` (a
-// station socket closed 4408 `station_send_backlog` past the hard cap). Both closed sets,
-// code-owned (`apps/server/src/utils/ws-backpressure.ts`). No session or call ids.
+// by the bridge's borrowed browser leg), `carrier` (the carrier's media stream) or
+// `listener` (a supervisor's listener socket, docs/listening.md). `action` is
+// `media_dropped` (a media frame past the soft backlog limit) or `closed` (a station socket
+// closed 4408 `station_send_backlog`, or a listener closed 4408 `send_backlog`, past the hard
+// cap). Both closed sets, code-owned (`apps/server/src/utils/ws-backpressure.ts`). No session,
+// call or listen ids.
 const websocketSendBackpressureTotal = counter<'socket' | 'action'>(meter, 'websocket_send_backpressure_total', {
-  description: 'WebSocket frames dropped, and station sockets closed, because the peer stopped reading',
+  description: 'WebSocket frames dropped, and station and listener sockets closed, because the peer stopped reading, by socket (station, carrier, listener) and action (media_dropped, closed)',
 });
 
 /** Record one back-pressure action. Guarded: it runs on the media relay's hot path. */
-export function trackWebsocketSendBackpressure(socket: 'station' | 'carrier', action: 'media_dropped' | 'closed'): void {
+export function trackWebsocketSendBackpressure(socket: 'station' | 'carrier' | 'listener', action: 'media_dropped' | 'closed'): void {
   safeEmit('websocket-send-backpressure', () => websocketSendBackpressureTotal.inc({ socket, action }));
+}
+
+// ── Media relay dwell (docs/listening.md, LS8) ───────────────────────────
+// How long one relayed frame spent in the bridge, from its arrival on one leg to the write to the
+// other (the same span as each call's `maxRelayDwellMicros`, which logs only the worst). Sampled:
+// one frame in {@link RELAY_DWELL_SAMPLE_EVERY} per call and direction, so the relay pays a counter
+// increment per frame and a histogram record per second of a call. It is the relay's own health
+// (its codecs and writes), on the dashboard. It does NOT see the listener tap: the tap is fed
+// after the relay write, so this span excludes it by construction (LS8) and its cost shows as
+// event-loop time before the next frame instead (`agy-listen-loop-delay`; docs/listening.md §10).
+// `direction` is `b2p` (the agent's browser to the carrier: the agent's voice) or `p2b` (the
+// carrier to the browser: the customer's).
+const webrtcRelayDwellSeconds = histogram<'direction'>(meter, 'webrtc_relay_dwell_seconds', {
+  description: 'Seconds one relayed media frame spent in the bridge, from its arrival to the write to the other leg, sampled one frame in 50 per call and direction, by direction (b2p: the agent to the customer, p2b: the customer to the agent)',
+  unit: 's',
+  buckets: [0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05],
+});
+
+/** One frame in this many, per call and direction, is recorded in `webrtc_relay_dwell_seconds`. */
+export const RELAY_DWELL_SAMPLE_EVERY = 50;
+
+/** Record one sampled frame's dwell. Guarded: it runs on the media relay's hot path. */
+export function trackRelayDwell(direction: 'b2p' | 'p2b', seconds: number): void {
+  safeEmit('relay-dwell', () => webrtcRelayDwellSeconds.observe({ direction }, Math.max(0, seconds)));
 }
 
 // ── Rate limiter rejections ────────────────────────────────────────────
@@ -180,7 +206,7 @@ const ipcMessagesDroppedTotal = counter<'reason'>(meter, 'ipc_messages_dropped_t
   description: 'IPC messages dropped or flagged on receipt: malformed, unsupported, late (answer after its deadline), backlogged (send past Node\'s backlog threshold, still delivered)',
 });
 const wsHandoffTotal = counter<'route' | 'result'>(meter, 'ws_handoff_total', {
-  description: 'WebSocket upgrades the primary handed to a media worker, or refused instead, by route (station, pstn) and result',
+  description: 'WebSocket upgrades the primary handed to a media worker, or refused instead, by route (station, pstn, listen) and result',
 });
 const clusterChildExitsTotal = counter<'role' | 'expected'>(meter, 'cluster_child_exits_total', {
   description: 'Child process exits seen by the primary, by role (media, analysis) and whether the primary asked for it (a stop) or not (a crash)',
@@ -197,7 +223,12 @@ export function trackIpcDropped(reason: 'malformed' | 'unsupported' | 'late' | '
   safeEmit('ipc-dropped', () => ipcMessagesDroppedTotal.inc({ reason }));
 }
 
-export function trackWsHandoff(route: 'station' | 'pstn' | 'unknown', result: 'handed_off' | 'no_owner' | 'buffered' | 'not_sent' | 'unsupported'): void {
+/**
+ * `route` is the upgraded socket: `station`, `pstn` (the carrier's media stream), `listen` (a
+ * supervisor's listener socket, handed to the worker that owns the agent's session, as the
+ * station is: docs/listening.md) or `unknown`.
+ */
+export function trackWsHandoff(route: 'station' | 'pstn' | 'listen' | 'unknown', result: 'handed_off' | 'no_owner' | 'buffered' | 'not_sent' | 'unsupported'): void {
   safeEmit('ws-handoff', () => wsHandoffTotal.inc({ route, result }));
 }
 

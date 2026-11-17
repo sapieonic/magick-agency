@@ -12,9 +12,9 @@
  * Its IPC surface (`ipc-protocol.ts`): it serves `dial.execute`, `core.inject`,
  * `carrier.webhook`, `carrier.plivo_callback`, `agent.return_reserved`, `reaper.snapshot`,
  * `softphone.closed_by_sweep`, `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
- * `concurrency.invalidate`, `dialable.invalidate` and `reaper.forget_unrecorded`, and tells the primary
+ * `concurrency.invalidate`, `dialable.invalidate`, `reaper.forget_unrecorded` and `listen.revoke`, and tells the primary
  * `ready`, `station.attached` / `.detached` / `.snapshot`, `pacing.invalidate`,
- * `cache.invalidate`, `voice.wake_self_heal` and `analysis.wake`.
+ * `cache.invalidate`, `voice.wake_self_heal`, `analysis.wake` and `listen.revoke` (a supersede).
  */
 import type net from 'node:net';
 import type { FastifyInstance } from 'fastify';
@@ -34,6 +34,7 @@ import type { HealthBody } from './ipc-protocol.js';
 import { DialGrants } from './ipc-dial-dispatcher.js';
 import { adoptUpgrade } from './ws-adopt.js';
 import { createLoopSampler } from './loop-sampler.js';
+import { supersedeTargets } from '../agency/listen/listen-revocation.js';
 
 const log = createChildLogger({ component: 'media-child' });
 
@@ -174,6 +175,24 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     void guardHost.accountConcurrencyGuard.invalidateLimit(tenantId, accountId).catch(() => {});
     void guardHost.providerConcurrencyGuard.invalidateLimits(tenantId, accountId).catch(() => {});
   });
+  // ── Live call listening (docs/listening.md, LS10, LS5) ──────────────────────
+  // A supervisor's membership changed: re-check their sessions here against the database, failing
+  // closed on a revocation, not on a seat added (LS22 w). Or their newer listen elsewhere
+  // supersedes these: end exactly those.
+  channel.onEvent('listen.revoke', ({ tenantId, userId, reason, listenIds, change }) => {
+    if (reason === 'superseded') void runtime.listen.endSessions(listenIds ?? [], 'superseded');
+    else void runtime.listen.revokeUser(tenantId, userId, change ?? 'revoked');
+  });
+  // A listen admitted here ends the supervisor's older listens past the cap, ranked across every
+  // worker (LS22 v): those this worker holds here, the others' through the primary.
+  runtime.supersedeListensElsewhere = (session) => {
+    void supersedeTargets(session, runtime.listen, runtime.replicaId).then(({ here, elsewhere }) => {
+      if (here.length > 0) void runtime.listen.endSessions(here, 'superseded');
+      if (elsewhere.length === 0) return;
+      channel.emit('listen.revoke', { tenantId: session.tenantId, userId: session.listenerUserId, reason: 'superseded', listenIds: elsewhere });
+    }).catch((err) => log.warn({ err, listenId: session.listenId }, 'Could not look for the supervisor\'s listens elsewhere'));
+  };
+
   // A number synced, retired or unassigned in the primary: the dials that run here (the
   // agent's own call, the wrap-up redial, the tagged soft phone) must not use it from this
   // process's cache (PL13).
@@ -196,6 +215,9 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     shuttingDown = (async () => {
       // As one process stops (HTTP first, then agency, then voice): the sockets close,
       // the shard's timers stop, the bridge ends the live calls and releases their slots.
+      // The listens first, while their sockets are open: each gets `ended { server_shutdown }`
+      // and 1001, and its row is closed.
+      await runtime.listen.shutdown().catch((err) => log.error({ err, slot }, 'listen shutdown failed'));
       await app.close().catch((err) => log.error({ err, slot }, 'worker app close failed'));
       await runtime.stopShard();
       await bridge.gracefulShutdown().catch((err) => log.error({ err, slot }, 'webrtc-bridge shutdown failed'));

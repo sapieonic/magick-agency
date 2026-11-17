@@ -33,6 +33,7 @@ import type { CallLease, ReaperSnapshotBody } from './ipc-protocol.js';
 import { forkServerChild } from './fork.js';
 import { probeSocketReadStop } from './socket-pause.js';
 import { slotFor } from './roles.js';
+import { onMembershipChanged } from '../rbac/membership-changed.js';
 
 export interface PrepareMediaPrimaryOptions {
   /** Tests: how a media child is forked. */
@@ -100,6 +101,8 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
       unrecordedEnds: { entries: () => latest.unrecordedEnds, forget: (ids) => cluster.forgetUnrecorded(ids) },
       manual: { activeIds: () => latest.manualActiveIds, onClosed: (rows) => cluster.manualCallsClosed(rows) },
     },
+    // The workers' listen rows are theirs: the dead processes' close keeps them (LS22 r).
+    listenLiveReplicaIds: () => cluster.directory.liveReplicaIds(),
   });
   setCoreInjector(cluster.coreInjector);
   setVoicelinkWebhookForwarder(cluster.webhookForwarder);
@@ -163,6 +166,8 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
   setConcurrencyControl(broadcasting);
   // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
   const offDialable = relayDialableInvalidations(cluster);
+  // A membership change re-checks the supervisor's listens in every worker (LS10).
+  const offListen = onMembershipChanged((tenantId, userId, change) => cluster.revokeListens(tenantId, userId, change));
 
   await cluster.start();
   logger.info({ mediaWorkers: cluster.count }, 'Media worker processes started');
@@ -178,6 +183,7 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
     ]);
     offRevoke();
     offDialable();
+    offListen();
     if (getConcurrencyControl() === broadcasting) setConcurrencyControl(inner);
   };
 }
@@ -219,6 +225,11 @@ export async function reapSlot(
     }
     logger.warn({ slot, report, slotsReleased: held.length, callRowsFailed: callIds.length },
       'Reaped a dead media worker\'s calls, attempts and agents');
+    // Its listens (docs/listening.md §4): every open row of a process not alive now closes
+    // `server_restarted` (the dead worker's incarnation is no longer among the live ones). A
+    // close that fails is run again by the primary's next re-check tick (LS22 r).
+    const listens = await runtime.listenRows.closeDeadProcesses();
+    if (listens) logger.warn({ slot, closed: listens }, 'Closed a dead media worker\'s listen sessions');
   }
   voice?.guardHost.wakeSelfHeal();
 }

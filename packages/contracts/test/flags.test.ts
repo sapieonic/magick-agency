@@ -7,19 +7,24 @@ const EXPECTED = {
   agency_late_binding: { default: false, envVar: 'FF_AGENCY_LATE_BINDING', clientExposed: undefined },
   agency_call_analysis: { default: false, envVar: 'FF_AGENCY_CALL_ANALYSIS', clientExposed: true },
   agency_softphone_enabled: { default: false, envVar: 'FF_AGENCY_SOFTPHONE', clientExposed: true },
-  // The one default-on flag: the way back to pcm16, not a capability (see flags.ts).
+  // Default on: the way back to pcm16, not a capability (see flags.ts).
   agency_console_alaw8: { default: true, envVar: 'FF_AGENCY_CONSOLE_ALAW8', clientExposed: true },
   agency_contact_assignment_enabled: { default: false, envVar: 'FF_AGENCY_CONTACT_ASSIGNMENT', clientExposed: true },
   agency_reports_enabled: { default: false, envVar: 'FF_AGENCY_REPORTS', clientExposed: true },
   agency_inbound_enabled: { default: false, envVar: 'FF_AGENCY_INBOUND', clientExposed: true },
   // Not client-exposed: the app reads `account_allows_ring` from its push device's status.
   agency_inbound_ring_enabled: { default: false, envVar: 'FF_AGENCY_INBOUND_RING', clientExposed: undefined },
+  // Live call listening (LS1): the consent gate, off until a tenant turns it on.
+  agency_live_listen_enabled: { default: false, envVar: 'FF_AGENCY_LIVE_LISTEN', clientExposed: true },
+  // On by default: a narrowing of listening (recorded calls only when off), not a capability (LS4).
+  // Client-exposed since LS20: the account's Settings says whether unrecorded calls are included.
+  agency_live_listen_unrecorded: { default: true, envVar: 'FF_AGENCY_LIVE_LISTEN_UNRECORDED', clientExposed: true },
 } as const;
 
 describe('agency flags', () => {
-  it('are exactly the nine keys', () => {
+  it('are exactly the eleven keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(9);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(11);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
@@ -42,11 +47,21 @@ describe('agency flags', () => {
       agency_contact_assignment_enabled: false,
       agency_reports_enabled: false,
       agency_inbound_enabled: false,
+      agency_live_listen_enabled: false,
+      agency_live_listen_unrecorded: true,
     };
     expect(Object.keys(map)).not.toContain('agency_late_binding');
   });
 
   it('is frozen', () => {
     expect(Object.isFrozen(AGENCY_FLAGS)).toBe(true);
+  });
+
+  it('declares a handling policy only on boolean flags; the consent gate is never bulk and needs a reason', () => {
+    const withPolicy = Object.values(AGENCY_FLAGS).filter((f) => 'policy' in f);
+    expect(withPolicy.map((f) => f.key)).toEqual(['agency_live_listen_enabled']);
+    for (const f of withPolicy) expect(f.type).toBe('boolean');
+    expect(AGENCY_FLAGS.agency_live_listen_enabled.policy).toMatchObject({ bulk_allowed: false, reason_required_to_enable: true });
+    expect(AGENCY_FLAGS.agency_live_listen_enabled.policy.warning).toMatch(/monitored/);
   });
 });

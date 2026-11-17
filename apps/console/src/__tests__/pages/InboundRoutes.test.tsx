@@ -158,7 +158,7 @@ describe('the route editor', () => {
     expect(noneOf('Hold music')).toBe('Built-in hold tone');
     const clipsCard = screen.getByTestId('inbound-route-clips').textContent!;
     expect(clipsCard).toMatch(/Thank you for calling\. We’re closed at the moment/);
-    expect(clipsCard).toMatch(/This call may be recorded for quality and training purposes\./);
+    expect(clipsCard).toMatch(/This call may be recorded or monitored for quality and training purposes\./);
     expect(clipsCard).not.toMatch(/plays nothing|hear nothing|standard voice|Standard spoken|Contact support to add|No hold music/);
     // A new route opens Monday to Friday, 09:00–17:30: no "closed at all times" warning.
     expect(document.querySelectorAll('[data-testid^="inbound-hours-"]')).toHaveLength(5);

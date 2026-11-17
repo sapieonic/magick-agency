@@ -7,6 +7,7 @@ import {
   campaignPanelFromPath,
   canOpenCampaignScreen,
   visibleCallLogViews,
+  visibleCallsViews,
   visibleCampaignTabGroups,
   visibleCampaignTabs,
 } from '../../utils/agencyCampaignTabs';
@@ -193,6 +194,7 @@ describe('campaign tabs — the groups', () => {
   it('keeps Soft-phone calls and History out of the bar', () => {
     const ids = visibleCampaignTabs('tenant_owner').map((t) => t.id);
     expect(ids).not.toContain('manual');
+    expect(ids).not.toContain('live');
     expect(ids).not.toContain('activity');
     // The bar reads no flags: a flagged screen stays out of it.
     expect(CAMPAIGN_TABS.filter((t) => t.group !== null && t.flag)).toEqual([]);
@@ -201,6 +203,7 @@ describe('campaign tabs — the groups', () => {
   it('marks Call log on both its views, and no tab on History', () => {
     expect(barTabFor('attempts')).toBe('attempts');
     expect(barTabFor('manual')).toBe('attempts');
+    expect(barTabFor('live')).toBe('calls');
     expect(barTabFor('activity')).toBeNull();
     expect(barTabFor('settings')).toBe('settings');
   });
@@ -227,6 +230,28 @@ describe('Call log’s views', () => {
     for (const role of ['agent', 'viewer', 'operator'] as Role[]) {
       expect(visibleCallLogViews(role, flagOn)).toEqual([]);
     }
+  });
+});
+
+describe('the Calls tab’s views (Summary | Live)', () => {
+  const listenOn = (flag: string) => flag === 'agency_live_listen_enabled';
+
+  it('offers Live after Summary only with the listening flag on', () => {
+    expect(visibleCallsViews('account_admin').map((v) => v.label)).toEqual(['Summary']);
+    expect(visibleCallsViews('account_admin', listenOn).map((v) => v.label)).toEqual(['Summary', 'Live']);
+  });
+
+  it('offers neither below `agency.supervise`, flag or not', () => {
+    for (const role of ['agent', 'viewer', 'operator'] as Role[]) {
+      expect(visibleCallsViews(role, listenOn)).toEqual([]);
+    }
+  });
+
+  it('opens Live at …/calls/live with no range, and Summary at …/calls with it', () => {
+    expect(campaignTabHref('live', 'camp-1', '?range=7d')).toBe('/agency/campaigns/camp-1/calls/live');
+    expect(campaignTabHref('calls', 'camp-1', '?range=7d')).toBe('/agency/campaigns/camp-1/calls?range=7d');
+    expect(canOpenCampaignScreen('live', 'account_admin')).toBe(false);
+    expect(canOpenCampaignScreen('live', 'account_admin', listenOn)).toBe(true);
   });
 });
 

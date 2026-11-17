@@ -13,7 +13,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  - the carrier tap: bounded, installed only while recording, fed with nobody bound, with a
 //    prompt and beep before it, ended by the caller leaving or the wall clock;
 //  - the recording at the bind: the Record API only after `bridged`, with a webhook token minted
-//    for its callback; never for a call that did not ask, or on a carrier that cannot.
+//    for its callback; never for a call that did not ask, or on a carrier that cannot;
+//  - a supervisor's listen tap (docs/listening.md): refused `not_bridged` while the caller is
+//    parked on hold, attached once an agent is bound; the caller heard as the tap's table maps
+//    Plivo's μ-law (LS17) and the agent as the tap's own encoder gives it, byte for byte.
 //
 // Mock harness mirrors webrtc-bridge-inbound.test.ts (project convention: no shared test utilities).
 // ---------------------------------------------------------------------------
@@ -29,6 +32,7 @@ vi.mock('../../../src/config/index.js', () => ({
       plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
     telephonyCredentials: { keyring: '', activeKeyId: '' },
+    agency: { listen: { faultBudget: 50 } },
   },
 }));
 
@@ -85,7 +89,9 @@ vi.mock('../../../src/tts/tts-file-cache.js', () => ({ readTtsPcm: (hash: string
 import {
   WebRtcBridgeManager, INBOUND_MEDIA_DEADLINE_SECONDS, type WebRtcInboundCallParams,
 } from '../../../src/core/webrtc-bridge-manager.js';
-import { pcmToMulaw } from '../../../src/utils/audio.js';
+import { alawEncodeTable, pcmToMulaw } from '../../../src/utils/audio.js';
+import { VoicelinkTranscoder } from '../../../src/utils/audio-fir.js';
+import { MULAW_TO_ALAW } from '../../../src/core/bridge/listen-tap.js';
 import { holdTonePcm16, recordBeepPcm16 } from '../../../src/core/bridge/hold-tone.js';
 
 function fakeWs() {
@@ -602,5 +608,52 @@ describe('recording at the bind', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(mgr.getSession(LEG)).toBeDefined();
     expect(lifecycle.filter((e) => e.phase === 'bridged')).toHaveLength(1);
+  });
+});
+
+describe('a supervisor listening to an inbound call (docs/listening.md)', () => {
+  function sink() {
+    const messages: Buffer[] = [];
+    return { listenId: 'listen-1', messages, send: vi.fn((m: Buffer) => { messages.push(m); return 'sent' as const; }), close: vi.fn() };
+  }
+
+  it('a caller parked on hold is not_bridged; once an agent is bound the tap attaches and hears both legs', async () => {
+    const { mgr } = bridge();
+    await mgr.acceptInboundCall(PARAMS);
+    const carrier = connectStream(mgr);
+    const hold = mgr.playInboundHold(INBOUND, { preambleClipHashes: [], holdClipHash: 'hold' });
+    callerSays(carrier, 2);
+    const s = sink();
+    // FALSIFIED by keying `not_bridged` on the answer alone: a parked inbound call is answered.
+    expect(mgr.getSession(LEG)!.answeredAt).not.toBeNull();
+    expect(mgr.openListenTap(LEG, s)).toEqual({ refused: 'not_bridged' });
+    expect(mgr.getSession(LEG)!.listenTap).toBeNull();
+
+    const station = fakeWs();
+    expect(mgr.bindBorrowedBrowserLeg(INBOUND, station as any)).toBe(true);
+    expect(await hold).toBe('released');
+    expect(mgr.openListenTap(LEG, s)).toMatchObject({ callId: LEG, attached: true });
+    callerSays(carrier, 5);
+    // 20 ms frames of a 1 kHz tone, PCM16 16 kHz, as a pcm16 station sends them.
+    const agentPcm = Array.from({ length: 3 }, (_, f) => {
+      const pcm = new Int16Array(320);
+      for (let i = 0; i < 320; i++) pcm[i] = Math.round(8000 * Math.sin((2 * Math.PI * 1000 * (f * 320 + i)) / 16000));
+      return Buffer.from(pcm.buffer);
+    });
+    for (const pcm of agentPcm) station.emit('message', JSON.stringify({ event: 'media', media: { payload: pcm.toString('base64') } }));
+    for (const m of s.messages) expect(m.length).toBe(161);
+    const leg = (tag: number) => Buffer.concat(s.messages.filter((m) => m[0] === tag).map((m) => m.subarray(1)));
+    // The caller: Plivo's μ-law through the tap's table, a frame out per frame in. FALSIFIED by a
+    // tap that does not hear the real Plivo leg, or hears it through another path.
+    expect(leg(1)).toEqual(Buffer.alloc(5 * 160, MULAW_TO_ALAW[0x10]!));
+    // The agent: the tap's own encoder (a fresh one), led to a whole first frame by silence.
+    const enc = new VoicelinkTranscoder();
+    const encoded = Buffer.concat(agentPcm.map((p) => enc.pcm16kToAlaw(p)));
+    const lead = (160 - (encoded.length % 160)) % 160;
+    expect(lead).toBe(8);
+    expect(leg(2)).toEqual(Buffer.concat([Buffer.alloc(lead, alawEncodeTable[32768]!), encoded]));
+    // The agent heard every caller frame since the bind, through the session's own codec.
+    expect(station.sent.filter((m) => m.event === 'media')).toHaveLength(5);
+    expect(s.close).not.toHaveBeenCalled();
   });
 });

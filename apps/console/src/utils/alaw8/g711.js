@@ -342,6 +342,15 @@ export class AlawDownlinkDecoder {
   /** Decode `bytes` (a Uint8Array) into a new Float32Array of `2 * bytes.length` samples. */
   decode(bytes) {
     const out = new Float32Array(bytes.length * 2);
+    this.decodeInto(bytes, out);
+    return out;
+  }
+
+  /**
+   * Decode `bytes` into the start of `out` (a Float32Array of at least `2 * bytes.length`
+   * samples, such as an AudioBuffer's channel), with no allocation; returns the samples written.
+   */
+  decodeInto(bytes, out) {
     const block = HalfBandInterpolator.MAX_BLOCK;
     for (let off = 0; off < bytes.length; off += block) {
       const n = Math.min(block, bytes.length - off);
@@ -350,6 +359,6 @@ export class AlawDownlinkDecoder {
       const base = off * 2;
       for (let k = 0; k < 2 * n; k++) out[base + k] = pcm16ToFloat(this.pcm16[k]);
     }
-    return out;
+    return bytes.length * 2;
   }
 }

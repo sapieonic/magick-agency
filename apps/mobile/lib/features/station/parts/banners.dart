@@ -21,6 +21,7 @@ class StationHeader extends ConsumerWidget {
     final name = ref.watch(stationViewProvider.select((v) => v?.campaignName ?? ''));
     final dialing = ref.watch(stationViewProvider.select((v) => v?.campaignDialing ?? true));
     final weak = ref.watch(stationViewProvider.select((v) => v != null && v.weakConnection && v.link == StationLink.open));
+    final listenNotice = ref.watch(stationListenNoticeProvider);
     final text = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.sm),
@@ -50,10 +51,113 @@ class StationHeader extends ConsumerWidget {
               ],
             ),
           ),
+          if (listenNotice) const ListenInfoButton(key: Key('station-info')),
         ],
       ),
     );
   }
+}
+
+/// "Monitoring and recording": the info button on the station's header and the soft phone's,
+/// opening [showStationInfoSheet]. Its host shows it only while listening is on
+/// ([stationListenNoticeProvider]).
+class ListenInfoButton extends StatelessWidget {
+  const ListenInfoButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: StationCopy.listenInfo,
+      icon: const Icon(Icons.info_outline),
+      onPressed: () => showStationInfoSheet(context),
+    );
+  }
+}
+
+/// The standing line said once, in place (docs/listening.md LS2): the first time this agent
+/// opens the station or the soft phone on this phone for an account while listening is on, until
+/// they tap Got it ([listenFirstNoticeProvider]). An agent who never opens the info button is
+/// still told. Copy only; it says nothing about any call. [onCall]: the call's band has no info
+/// button, so the notice says where to find it between calls rather than "at the top of the screen".
+class ListenFirstNoticeCard extends ConsumerWidget {
+  const ListenFirstNoticeCard({super.key, this.onCall = false});
+
+  final bool onCall;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(listenFirstNoticeProvider)) return const SizedBox.shrink();
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: AppCard(
+        key: const Key('listen-first-notice'),
+        color: t.accentSubtle,
+        borderColor: t.accent.withValues(alpha: 0.4),
+        padding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.md, Space.xs),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(Icons.headset_mic_outlined, size: 18, color: t.accentHover),
+                ),
+                const SizedBox(width: Space.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(StationCopy.listenNotice, style: text.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(onCall ? StationCopy.listenFirstDetailOnCall : StationCopy.listenFirstDetail, style: text.bodySmall),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton(
+                onPressed: () => ref.read(listenFirstNoticeProvider.notifier).dismiss(),
+                child: const Text(StationCopy.listenFirstDismiss),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The "Monitoring and recording" sheet: the standing line that a supervisor may listen
+/// (docs/listening.md LS2), the console's words. Copy only; it reads no call and changes nothing.
+Future<void> showStationInfoSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    builder: (context) {
+      final text = Theme.of(context).textTheme;
+      return Padding(
+        key: const Key('station-info-sheet'),
+        padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Semantics(header: true, child: Text(StationCopy.listenInfo, style: text.titleLarge)),
+            const SizedBox(height: Space.sm),
+            Text(StationCopy.listenNotice, style: text.bodyMedium),
+          ],
+        ),
+      );
+    },
+  );
 }
 
 /// Reconnecting / disconnected while no call is on screen: a slim banner

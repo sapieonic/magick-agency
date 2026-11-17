@@ -14,10 +14,10 @@ import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
-import { UUID_RE } from '../../../utils/uuid.js';
 import { MY_CONTACT_CALL_MESSAGES } from '../../../agency/my-contact-call.js';
 import { sendRefusal } from '../helpers/refusal.js';
 import { settledValue } from '../helpers/settled.js';
+import { isUuid } from '../../../utils/uuid.js';
 
 /** The repo-wide refusal shape: `{ error: <title>, code, message, details? }` ({@link sendRefusal}). */
 export function refuse(
@@ -29,8 +29,6 @@ export function refuse(
 ): FastifyReply {
   return sendRefusal(reply, status, code, message, { details });
 }
-
-export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_RE.test(value);
 
 /**
  * The statuses an agent's reopen is useful in: something will dial the contact (now, or on

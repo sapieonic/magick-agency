@@ -75,6 +75,8 @@ type CampaignScopedAuditAction = Exclude<
   // A customer-history search or export reads one number across the tenant (CH10): no campaign.
   | 'agency_customer_history.searched'
   | 'agency_customer_history.exported'
+  // The account's listening history exported (docs/listening.md §12): account-wide, no campaign.
+  | 'agency_listen_sessions.exported'
   // Reports and their schedules are account-wide (docs/reports.md): no row carries a campaign.
   | 'agency_report.requested'
   | 'agency_report.downloaded'
@@ -206,6 +208,10 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls' },
   { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls' },
   { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls' },
+  // Live call listening (docs/listening.md): a supervisor listened to a call of this campaign
+  // (the rows carry the call's campaign as `campaign_id`; a call with none is not on this trail).
+  { value: 'agency_call.listen_started', label: 'Supervisor started listening', group: 'Calls' },
+  { value: 'agency_call.listen_ended', label: 'Supervisor stopped listening', group: 'Calls' },
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },

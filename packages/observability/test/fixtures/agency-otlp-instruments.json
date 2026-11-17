@@ -380,6 +380,57 @@
     "attributes": []
   },
   {
+    "name": "agency_listen_grants_total",
+    "kind": "Counter",
+    "description": "Listen grants asked for, by result: granted, or the refusal (listen_call_not_live, listen_recording_off, listen_limit_call, listen_limit_server, listen_own_call, listen_unavailable)",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_listen_session_seconds",
+    "kind": "Histogram",
+    "description": "How long one listen session lasted, from its row written to its end (server_restarted sessions excluded: their end is the reap, not the listen)",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        5,
+        15,
+        30,
+        60,
+        120,
+        300,
+        600,
+        1200,
+        1800,
+        3600
+      ]
+    },
+    "attributes": []
+  },
+  {
+    "name": "agency_listen_sessions_active",
+    "kind": "ObservableGauge",
+    "description": "Listen sessions open in this process now (a supervisor listening to a call it owns)",
+    "attributes": []
+  },
+  {
+    "name": "agency_listen_sessions_ended_total",
+    "kind": "Counter",
+    "description": "Listen sessions ended, by why: call_ended, listener_stopped, listener_disconnected, permission_revoked, superseded, send_backlog, tap_error, server_shutdown, server_restarted (closed by the reap after a process died) or access_unverified (the access re-check could not be made for too long)",
+    "attributes": [
+      "reason"
+    ]
+  },
+  {
+    "name": "agency_listen_tap_errors_total",
+    "kind": "Counter",
+    "description": "Frames or sends the listener tap failed and dropped, by stage: decode, encode, frame, send, or open (opening the tap for a listener threw; that listen is refused). The call's own audio is never affected",
+    "attributes": [
+      "stage"
+    ]
+  },
+  {
     "name": "agency_live_attempts_current",
     "kind": "ObservableGauge",
     "description": "Agency dialer attempts that have not reached `ended`, by attempt state",

@@ -1529,6 +1529,67 @@ first run clears the rows from before RC1 it holds none. The predicate is spelle
 the purge's batch read on it in its keyset order, the invalid-index refusal, down then up) and the
 down → up inventory suite.
 
+### 0047 — `migrations/0047_listen_sessions.sql`
+
+Live call listening (`docs/listening.md`, LS1–LS14). **`agency_listen_sessions`** (new): one row per
+listen session, a supervisor listening in to a call in progress, written before any audio flows
+(LS7) and closed when it ends; the record of who listened, kept for the audit log's horizon (LS12,
+LS16 s: the audit maintenance deletes rows started before the first instant of the UTC month of
+the `AUDIT_RETENTION_DAYS` cutoff, the boundary below which it has dropped every audit partition,
+so a row goes the same day as its month's audit rows). `id` (the listen id,
+minted with the grant), `tenant_id`, `account_id`, `call_id` (`agency_calls.id`), `origin`
+`VARCHAR(16)` (`AGENCY_CALL_ORIGINS`, the same list as `ck_agency_calls_origin`), `campaign_id`,
+`correlation_id` (the spine row: attempt, manual call or inbound call), `agent_session_id`,
+`agent_user_id`, `listener_user_id`, `started_at` (default now), `ended_at` and `end_reason`
+`VARCHAR(32)` (`AGENCY_LISTEN_END_REASONS`, both or neither), `frames_sent` and `frames_dropped`
+`INTEGER` (default 0), `replica_id` `VARCHAR(100)` (the process that owns the session; the reaps
+close a dead process's open rows `server_restarted` by it). **No foreign keys**: the row outlives
+its call, campaign and users. CHECKs `ck_agency_listen_sessions_origin`, `_end_reason`, `_ended`
+(both or neither, never before the start), `_campaign` (a dialler call names its campaign),
+`_frames` (never negative), `_not_own_call` (`listener_user_id <> agent_user_id`, LS3).
+**`idx_agency_listen_sessions_open`** `(tenant_id, account_id) WHERE ended_at IS NULL` (the live
+list, the caps, the reaps), **`idx_agency_listen_sessions_call`** `(call_id)` ("Listened to by"),
+**`idx_agency_listen_sessions_listener`** `(tenant_id, listener_user_id, started_at DESC)`. The
+retention delete has no index of its own (a daily scan of a small table). **Down** refuses while
+any row exists (the record of who listened), else drops the table. Repository
+`apps/server/src/db/repositories/agency/listen-session.repository.ts`. **Tests**:
+`test/integration/db/listen-sessions-migration.test.ts` (the shape, every CHECK both ways, each
+stored list against the contract's and `ck_agency_calls_origin`, the indexes and the plans that read
+them on analysed data, the Down's refusal, down then up), `baseline.test.ts` and the down → up
+inventory suite.
+
+### 0048 — `migrations/0048_listen_sessions_unverified.sql`
+
+Live call listening's review fixes (`docs/listening.md`, LS21, LS22). **`agency_listen_sessions`**:
+`ck_agency_listen_sessions_end_reason` re-created with `access_unverified` appended (the periodic
+re-check could not verify a session for 2 × `AGENCY_LISTEN_RECHECK_MS`, or a revocation's immediate
+re-check could not read it: not "no longer allowed", LS21); **`live_at`** `TIMESTAMPTZ` (new,
+nullable, no default): when the session went live (admitted, `ready` sent), NULL for a row the
+upgrade wrote and then refused, which "Listened to by" leaves out (LS22); CHECK
+`ck_agency_listen_sessions_live` (never before the start). Rows written before it are backfilled
+with their start. The Up starts with `SET LOCAL lock_timeout = '10s'` (ACCESS EXCLUSIVE on a table
+the live server writes; small, so the CHECKs validate in place). **Down** refuses while any row
+ended `access_unverified` (0047's CHECK cannot hold it), else drops `live_at` and its CHECK and
+restores 0047's CHECK. **Tests**: `test/integration/db/listen-sessions-unverified-migration.test.ts`
+(the CHECK equal to the contract's list both ways, `live_at` and its CHECK, the backfill of rows
+from before it, the Down's refusal, down then up), `listen-sessions-migration.test.ts` (the column
+set) and the down → up inventory suite.
+
+### 0049 — `migrations/0049_listen_history_index.sql`
+
+Live call listening's account history (`docs/listening.md` §12, LS19, LS22 t).
+**`idx_agency_listen_sessions_account_started`** `(tenant_id, account_id, started_at DESC, id DESC)
+WHERE live_at IS NOT NULL` on `agency_listen_sessions`: an account's live sessions newest first, in
+the history's keyset order, which `LISTEN_HISTORY_SQL` walks from the cursor to find one page's
+visits (before it, every page windowed every session the account had kept). `CREATE INDEX IF NOT
+EXISTS` after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it `CONCURRENTLY` first;
+an invalid index left under the name by a failed concurrent build fails the migration. **Down**
+drops it. **Tests**: `test/integration/db/listen-history-index-migration.test.ts` (the definition,
+the invalid-index refusal, down then up), the server's
+`test/integration/agency/listen-history-plan.test.ts` (the walk on the index by tenant and account,
+no sequential scan, a page reading under 1,000 rows of 20,000 seeded sessions, first page and from a
+cursor) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

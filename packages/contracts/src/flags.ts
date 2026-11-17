@@ -11,6 +11,7 @@
  */
 
 import type { AllListed } from './primitives';
+import type { FeatureFlagPolicy } from './api/platform/super-admin';
 
 export type FlagScope = 'global' | 'tenant' | 'account';
 export type FlagType = 'boolean' | 'number' | 'string' | 'json';
@@ -33,6 +34,12 @@ export interface FlagDefinition<T = unknown> {
   clientExposed?: boolean;
   /** Future: deterministic percentage bucketing by tenant. */
   rollout?: { percentByTenant?: boolean };
+  /**
+   * The flag's handling policy, for the few whose change needs more than a toggle (boolean flags
+   * only): the super-admin flag routes serve it on the catalog and enforce it on every write.
+   * Absent: an ordinary flag.
+   */
+  policy?: FeatureFlagPolicy;
 }
 
 /**
@@ -263,9 +270,69 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency inbound ringing: an agent who opts in has their phone rung for inbound callers while the app is in the background',
   },
+
+  // ── Live call listening (docs/listening.md) ──────────────────────────────────
+  //
+  // The CONSENT gate (LS1): supervisors may listen in to an account's calls only while this is
+  // on, so a tenant turns it on once its callers are told calls may be monitored (the inbound
+  // notice says so; outbound, the agent's script) and its agents know (the station's standing
+  // line, LS2). Gates every live-call route (`403 feature_disabled` when off), the console's Live
+  // calls page, the campaign's Live view, the station's standing line and the account's Settings
+  // line (LS20 c). It does NOT gate the record of past listens: the Listening history (page and
+  // CSV) and a call's "Listened to by" stay for `agency.supervise` whether it is on or off (LS19,
+  // amended 2026-11-17). Switched off, the periodic re-check ends every open listen in the account
+  // (`permission_revoked`). Off by default: a tenant or account gets it by an override row a
+  // super-admin writes, scoped and attributed, with a reason and never in a bulk rollout or
+  // globally (its handling policy, LS20). Client-exposed: the console shows those pages and lines
+  // from it.
+  agency_live_listen_enabled: {
+    key: 'agency_live_listen_enabled',
+    type: 'boolean',
+    default: false,
+    // Dev and staging only: true turns it on for every tenant, past its handling policy, with no
+    // reason and no audit row; the server logs a warning at boot while it is set (LS22 p).
+    envVar: 'FF_AGENCY_LIVE_LISTEN',
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console shows/hides Live calls, and the station's "Calls may be listened to" line
+    owner: 'voice',
+    description: 'Agency live call listening: supervisors see calls in progress and listen in silently from the console',
+    // The consent gate's guard rails (LS1, LS20): never rolled out to several tenants or turned on
+    // globally, and turning it on needs a reason.
+    policy: Object.freeze({
+      warning:
+        'Live call listening lets this tenant\'s supervisors hear calls in progress. Turn it on only for a '
+        + 'tenant whose callers are told calls may be monitored: every inbound route that can be listened to '
+        + 'plays a notice that mentions monitoring (or agency_live_listen_unrecorded is off), and its agents '
+        + 'know. Follow the enablement checklist in the operations runbook, one tenant or account at a time.',
+      bulk_allowed: false,
+      reason_required_to_enable: true,
+    }),
+  },
+
+  // ── Listening to calls that are not recorded (LS4) ───────────────────────────
+  //
+  // `default: true`: with listening on, an unrecorded call (`agency_calls.recording_requested`
+  // false) can be listened to like any other; its row says "Recording off". A tenant whose policy
+  // ties monitoring to recording turns it off (an override row, `false`), and an unrecorded call's
+  // Listen is then disabled ("Listening is turned off for unrecorded calls") and its grant refused
+  // `409 listen_recording_off`; the re-check ends a listen already open on one. Not a capability
+  // being granted (`agency_live_listen_enabled` is that), a narrowing of it, hence on by default.
+  // Client-exposed (LS20): the account's Settings shows, read-only, whether listening is on and
+  // whether unrecorded calls are included. The server still computes each live row's `listenable`
+  // and refuses the grant itself; the console never decides from this value.
+  agency_live_listen_unrecorded: {
+    key: 'agency_live_listen_unrecorded',
+    type: 'boolean',
+    default: true,
+    envVar: 'FF_AGENCY_LIVE_LISTEN_UNRECORDED', // FF_AGENCY_LIVE_LISTEN_UNRECORDED=false: only recorded calls, everywhere
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the account's Settings line: "Calls that are not recorded: included / not included"
+    owner: 'voice',
+    description: 'Agency live call listening: whether calls that are not being recorded may be listened to (off: recorded calls only)',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The nine agency flag keys. */
+/** The eleven agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -278,6 +345,8 @@ export const AGENCY_FLAG_KEYS = [
   'agency_reports_enabled',
   'agency_inbound_enabled',
   'agency_inbound_ring_enabled',
+  'agency_live_listen_enabled',
+  'agency_live_listen_unrecorded',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;
@@ -291,6 +360,7 @@ export type ClientExposedAgencyFlagKey = {
 /**
  * The client-exposed flag map the console reads (the agency successor of
  * `GET /proxy/feature-flags` → the console `FeatureFlagMap`), narrowed to agency's
- * exposed keys. `agency_late_binding` is deliberately absent — see its comment.
+ * exposed keys. `agency_late_binding` is deliberately absent — see its comment — and so is
+ * `agency_inbound_ring_enabled`.
  */
 export type AgencyClientFlagMap = Record<ClientExposedAgencyFlagKey, boolean>;

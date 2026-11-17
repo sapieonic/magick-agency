@@ -11,6 +11,7 @@
 import { successDispositionSql } from '@magick-agency/domain/success-disposition';
 import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
+import { INBOUND_MATCH_NAME_COLUMNS } from '../../../agency/inbound/match-name.js';
 
 /**
  * "This roster row's number, digits only" — the PREFILTER for
@@ -569,3 +570,29 @@ export const CAMPAIGN_INSERT_COLUMNS_SQL = `tenant_id, account_id, name, caller_
           assignment_mode, on_unstaff, callback_owner_grace_minutes, callback_fallback,
           allow_agent_retry, agent_retry_rounds, agent_retry_cooldown_minutes, telephony_credential_id,
           outcome_dispositions, inbound_sticky_enabled`;
+
+/**
+ * A campaign's average handle time in seconds over its attempts (unqualified columns of
+ * `agency_call_attempts`): the agent's leg, `ended_at - bridged_at`, of its ended, bridged
+ * attempts, orphans and voicemails (the code bound at `voicemailCodeParam`) left out. The one
+ * definition of the campaign stats' `aht_seconds` (`campaign-stats.ts`, where the choices are
+ * argued) and the live list's (`live-call.repository.ts`), so the two never disagree.
+ */
+export function ahtSecondsSql(voicemailCodeParam: string): string {
+  return `AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FILTER (
+                  WHERE state = 'ended'
+                    AND bridged_at IS NOT NULL
+                    AND outcome IS DISTINCT FROM 'orphaned'
+                    AND disposition_code IS DISTINCT FROM ${voicemailCodeParam})`;
+}
+
+/**
+ * A roster contact's name columns ({@link INBOUND_MATCH_NAME_COLUMNS}) from its `context`, as one
+ * JSONB object (NULL when the join found no contact): what `matchName` reads in TypeScript. Only
+ * those keys leave the database, never the rest of the row's CSV columns. `alias` is the
+ * `agency_contacts` row's alias in the caller's query; the caller names the column.
+ */
+export function contactNameContextSql(alias: string): string {
+  const pairs = INBOUND_MATCH_NAME_COLUMNS.map((k) => `'${k}', ${alias}.context->'${k}'`).join(', ');
+  return `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE jsonb_build_object(${pairs}) END`;
+}

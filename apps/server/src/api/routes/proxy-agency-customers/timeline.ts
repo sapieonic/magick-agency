@@ -14,12 +14,12 @@ import { settledValue } from '../helpers/settled.js';
 import {
   guardCustomerRoute,
   INVALID_CURSOR_BODY,
-  noStore,
   ownSearch,
   parseBody,
   resolveDialerViewer,
   type CustomerRoutesDeps,
 } from './shared.js';
+import { noStore } from '../helpers/no-store.js';
 
 export async function registerCustomerTimelineRoute(app: FastifyInstance, deps: CustomerRoutesDeps): Promise<void> {
   app.post('/customers/timeline', {

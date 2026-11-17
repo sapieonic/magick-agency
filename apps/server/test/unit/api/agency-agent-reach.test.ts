@@ -218,10 +218,12 @@ const TOKEN_ONLY_ROUTES = [
  * WebSocket routes are not HTTP surfaces: a browser `WebSocket` cannot send the Firebase
  * bearer, so the station socket is authenticated by the single-use station token minted at
  * the authenticated `POST /sessions` / `/station-token` (`station-token.ts`; refusals in
- * `agency-station-route.test.ts` and the station route suite). It is excluded from the two
- * HTTP sweeps below and pinned here instead.
+ * `agency-station-route.test.ts` and the station route suite). The supervisor's listener socket
+ * likewise, by the single-use token of the grant minted at the authenticated
+ * `POST /live-calls/:callId/listen` (`agency.calls.listen`, which an agent never holds; refusals in
+ * `listen-route.test.ts`). Both are excluded from the two HTTP sweeps below and pinned here instead.
  */
-const WEBSOCKET_ROUTES = ['GET /proxy/agency/station/:sessionId'];
+const WEBSOCKET_ROUTES = ['GET /proxy/agency/station/:sessionId', 'GET /proxy/agency/listen/:sessionId/:listenId'];
 
 let app: FastifyInstance;
 const routes: Array<{ method: string; url: string }> = [];

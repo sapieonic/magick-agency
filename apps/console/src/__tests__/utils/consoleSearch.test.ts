@@ -52,6 +52,8 @@ describe('the pages', () => {
       'Campaigns',
       'New campaign',
       'Soft-phone calls',
+      'Live calls',
+      'Listening history',
       'Missed calls',
       'Inbound summary',
       'Analytics',
@@ -63,7 +65,7 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(10);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(12);
   });
 
   it('offers nothing under /agency without the dialer flag or the agency capability', () => {
@@ -82,6 +84,30 @@ describe('the pages', () => {
     const noMissed = titles(pageResults([], ALL_ON('account_admin', { missedAvailable: false })));
     expect(noMissed).not.toContain('Missed calls');
     expect(noMissed).not.toContain('Inbound summary');
+  });
+
+  it('offers Live calls to a supervisor with the listening flag on, found by "listen" and "live"', () => {
+    const off = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_live_listen_enabled' });
+    expect(titles(pageResults([], off))).not.toContain('Live calls');
+    expect(titles(pageResults([], ALL_ON('viewer')))).not.toContain('Live calls');
+    for (const q of ['listen', 'live', 'in progress', 'monitor']) {
+      expect(titles(pageResults(searchTokens(q), ALL_ON('account_admin'))), q).toContain('Live calls');
+    }
+    const live = pageResults(searchTokens('live calls'), ALL_ON('account_admin')).find((r) => r.title === 'Live calls');
+    expect(live?.target).toEqual({ type: 'path', to: '/agency/live' });
+    expect(live?.detail).toBe('Campaigns');
+  });
+
+  it('offers the Listening history to a supervisor whether listening is on or off, found by "listened" and "monitoring"', () => {
+    // LS19, amended 2026-11-17: turning listening off does not hide past listens.
+    const off = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_live_listen_enabled' });
+    expect(titles(pageResults([], off))).toContain('Listening history');
+    expect(titles(pageResults([], ALL_ON('viewer')))).not.toContain('Listening history');
+    for (const q of ['listening history', 'who listened', 'listened', 'monitoring log']) {
+      expect(titles(pageResults(searchTokens(q), ALL_ON('account_admin'))), q).toContain('Listening history');
+    }
+    const history = pageResults(searchTokens('listening history'), ALL_ON('account_admin')).find((r) => r.title === 'Listening history');
+    expect(history?.target).toEqual({ type: 'path', to: '/agency/listening-history' });
   });
 
   it('offers New campaign only with agency.campaigns.write', () => {
@@ -131,6 +157,10 @@ describe('the settings', () => {
     ['dark mode', 'profile', 'Theme'],
     ['profile', 'profile', 'Profile and appearance'],
     ['call summaries', 'call-summaries', 'Call summaries'],
+    ['listening', 'listening', 'Live call listening'],
+    ['listen in', 'listening', 'Live call listening'],
+    ['monitoring', 'listening', 'Live call listening'],
+    ['unrecorded calls', 'listening', 'Calls that are not recorded'],
     ['new account', 'accounts', 'Accounts'],
   ];
 
@@ -315,6 +345,12 @@ describe('a campaign’s own pages', () => {
     const noSoftphone = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_softphone_enabled' });
     expect(campaignPageResults(CAMPAIGNS, 'diwali manual calls', noSoftphone)).toEqual([]);
     expect(campaignPageResults(CAMPAIGNS, 'diwali manual calls', supervisor).map((r) => r.title)).toEqual(['Diwali renewals › Soft-phone calls']);
+    // The Calls tab's Live view: a supervisor, with the listening flag on.
+    const noListen = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_live_listen_enabled' });
+    expect(campaignPageResults(CAMPAIGNS, 'diwali listen', noListen)).toEqual([]);
+    expect(campaignPageResults(CAMPAIGNS, 'diwali listen', supervisor).map((r) => [r.title, r.target])).toEqual([
+      ['Diwali renewals › Live calls', { type: 'path', to: '/agency/campaigns/c-1/calls/live' }],
+    ]);
   });
 });
 

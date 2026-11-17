@@ -71,6 +71,7 @@ const mocks = vi.hoisted(() => ({
   issueInvite: vi.fn(),
   auditLog: vi.fn(),
   claimsCounted: vi.fn(),
+  revokeListens: vi.fn(async () => {}),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
@@ -151,9 +152,27 @@ import Fastify from 'fastify';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { inviteRoutes } from '../../../../src/api/routes/invites.routes.js';
+import { membershipNotificationsSettled, onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
 import { LiveInviteConflictError } from '../../../../src/db/repositories/membership-invite.repository.js';
 import { hashInviteToken } from '../../../../src/notifications/invite-token.js';
 import { ROLES } from '@magick-agency/contracts/rbac';
+
+// Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
+onMembershipChanged(mocks.revokeListens);
+
+/**
+ * The listen re-check held open (LS22 w): the route must answer without waiting for it. Answers the
+ * release, which also waits for the notification to finish.
+ */
+function holdListenRecheck(): () => Promise<void> {
+  let release: (() => void) | undefined;
+  mocks.revokeListens.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+  return async () => {
+    expect(release).toBeDefined();
+    release!();
+    await membershipNotificationsSettled();
+  };
+}
 
 const HOUR = 60 * 60 * 1000;
 
@@ -405,6 +424,17 @@ describe('POST /invites/:token/claim', () => {
       user: BOUND_USER, tenants: [], memberships: [], governance: {}, is_new: false,
     });
     expect(mocks.buildSessionPayload).toHaveBeenCalledWith(BOUND_USER, STUB_USER);
+    await app.close();
+  });
+
+  it('LS22 l: re-checks the claimant\'s listens in the tenant: the seat it activates may shadow a wider one', async () => {
+    const app = await buildApp();
+    mocks.revokeListens.mockClear();
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
+    expect((await claim(app)).statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, BOUND_USER.id, 'added');
+    await release();
     await app.close();
   });
 
