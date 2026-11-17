@@ -77,9 +77,12 @@ class ListenInfoButton extends StatelessWidget {
 /// The standing line said once, in place (docs/listening.md LS2): the first time this agent
 /// opens the station or the soft phone on this phone for an account while listening is on, until
 /// they tap Got it ([listenFirstNoticeProvider]). An agent who never opens the info button is
-/// still told. Copy only; it says nothing about any call.
+/// still told. Copy only; it says nothing about any call. [onCall]: the call's band has no info
+/// button, so the notice says where to find it between calls rather than "at the top of the screen".
 class ListenFirstNoticeCard extends ConsumerWidget {
-  const ListenFirstNoticeCard({super.key});
+  const ListenFirstNoticeCard({super.key, this.onCall = false});
+
+  final bool onCall;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -112,7 +115,7 @@ class ListenFirstNoticeCard extends ConsumerWidget {
                     children: [
                       Text(StationCopy.listenNotice, style: text.titleSmall),
                       const SizedBox(height: 2),
-                      Text(StationCopy.listenFirstDetail, style: text.bodySmall),
+                      Text(onCall ? StationCopy.listenFirstDetailOnCall : StationCopy.listenFirstDetail, style: text.bodySmall),
                     ],
                   ),
                 ),

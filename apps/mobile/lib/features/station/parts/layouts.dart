@@ -62,7 +62,7 @@ class CallLayout extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [const ListenFirstNoticeCard(), const StationTopNotices(), const MicProblemBanner(), const MissedReleaseCard(), ...body],
+              children: [const ListenFirstNoticeCard(onCall: true), const StationTopNotices(), const MicProblemBanner(), const MissedReleaseCard(), ...body],
             ),
           ),
         ),

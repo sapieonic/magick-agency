@@ -53,6 +53,10 @@ abstract final class StationCopy {
   static const listenInfo = 'Monitoring and recording';
   static const listenNotice = 'Calls may be listened to by a supervisor for quality and training.';
   static const listenFirstDetail = 'You can read this again at any time under $listenInfo, the i button at the top of the screen.';
+  // On a call the band has no info button (the header's is on the waiting, incoming and link
+  // screens), so the notice says where it is between calls. The app's own: the console's station
+  // header has the button on every view.
+  static const listenFirstDetailOnCall = 'You can read this again under $listenInfo, the i button at the top of the screen between calls.';
   static const listenFirstDismiss = 'Got it';
 
   // ── Waiting ──

@@ -21,6 +21,8 @@ void main() {
   const line = 'Calls may be listened to by a supervisor for quality and training.';
   const scope = 'u-1:t-1:a-1';
   const seenKey = 'listen.agent_notice_seen:$scope';
+  const firstDetail = 'You can read this again at any time under Monitoring and recording, the i button at the top of the screen.';
+  const firstDetailOnCall = 'You can read this again under Monitoring and recording, the i button at the top of the screen between calls.';
 
   test('follows the contract’s client flag', () {
     // The key is agency_wire's, pinned there against the contract's platform.json fixture.
@@ -71,9 +73,20 @@ void main() {
       expect(store.values[seenKey], true);
     });
 
-    testWidgets('on a call too, the first time', (tester) async {
+    testWidgets('on a call too, the first time, without sending the agent to a button the call has not got', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.onCall), listenNotice: true, listenScope: scope);
-      expect(find.byKey(const Key('listen-first-notice')), findsOneWidget);
+      final notice = find.byKey(const Key('listen-first-notice'));
+      expect(notice, findsOneWidget);
+      // The call's band has no info button: the notice says where it is between calls.
+      expect(find.byKey(const Key('station-info')), findsNothing);
+      expect(find.descendant(of: notice, matching: find.text(firstDetailOnCall)), findsOneWidget);
+      expect(find.descendant(of: notice, matching: find.text(firstDetail)), findsNothing);
+    });
+
+    testWidgets('waiting, it points at the button the header has', (tester) async {
+      await pumpStation(tester, station(), listenNotice: true, listenScope: scope);
+      expect(find.byKey(const Key('station-info')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('listen-first-notice')), matching: find.text(firstDetail)), findsOneWidget);
     });
 
     testWidgets('not again once seen', (tester) async {
@@ -84,10 +97,11 @@ void main() {
     });
 
     testWidgets('at 200% text on 360×640 it lays out with no overflow, waiting and on a call', (tester) async {
-      for (final phase in [AgentPhase.available, AgentPhase.onCall]) {
+      for (final (phase, detail) in [(AgentPhase.available, firstDetail), (AgentPhase.onCall, firstDetailOnCall)]) {
         await pumpStation(tester, station(phase: phase), textScale: 2, size: const Size(360, 640), listenNotice: true, listenScope: scope);
         expect(tester.takeException(), isNull, reason: phase.name);
         expect(find.byKey(const Key('listen-first-notice')), findsOneWidget);
+        expect(find.text(detail), findsOneWidget, reason: phase.name);
       }
     });
 
