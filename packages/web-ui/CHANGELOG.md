@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/sapieonic/magick-agency/compare/web-ui-v0.3.0...web-ui-v0.3.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **console,web-ui:** distinguish the two Connected counts on campaign insights ([#92](https://github.com/sapieonic/magick-agency/issues/92)) ([32ab7f1](https://github.com/sapieonic/magick-agency/commit/32ab7f175b64ad14a7d5a605548030e6a2133e80))
+
 ## [0.3.0](https://github.com/sapieonic/magick-agency/compare/web-ui-v0.2.0...web-ui-v0.3.0) (2026-11-09)
 
 

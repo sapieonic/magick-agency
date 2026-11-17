@@ -132,6 +132,14 @@ describe('connectRateReadout', () => {
       }),
     );
     expect(readout.denominator).toEqual({ lead: '1,509', rest: 'people answered, of 6,737 first dials placed' });
+    expect(
+      connectRateReadout(stats({
+        connect_rate_pct: 4,
+        human_connects: 1,
+        first_dials_placed: 25,
+        attempts_total: 25,
+      })).denominator,
+    ).toEqual({ lead: '1', rest: 'person answered, of 25 first dials placed' });
     expect(JSON.stringify(readout.denominator)).not.toContain('6,742');
     // A server that does not send the denominator: the numerator alone, never `attempts_total`.
     expect(

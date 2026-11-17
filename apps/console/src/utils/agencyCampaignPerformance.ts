@@ -1,3 +1,4 @@
+import { peopleAnsweredRest } from './agency/insights/copy';
 import { statClock } from './format/duration';
 import { clampPercent, formatCount, pct, plural } from './format/number';
 import type { AgencyCampaignStats } from '../types/agency-campaign';
@@ -329,8 +330,8 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
       + 'so they don’t count towards this rate.';
   }
 
-  const answeredOf = typeof firstDials === 'number'
-    ? `people answered, of ${plural(firstDials, 'first dial')} placed`
+  const answeredOf = typeof humans === 'number' && typeof firstDials === 'number'
+    ? peopleAnsweredRest(humans, firstDials)
     : 'people answered';
 
   return {
