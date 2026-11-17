@@ -205,7 +205,12 @@ describe('listening on Plivo: an inbound caller', () => {
     hangUp = true;
     await waitFor('the listen ended', () => l.closed);
     expect(l.closed).toBe(1000);
-    const { rows: [session] } = await pool().query('SELECT origin, correlation_id, end_reason FROM agency_listen_sessions WHERE call_id = $1', [leg!.id]);
+    // The row is closed after the socket (the close write is not awaited before the close frame), so
+    // wait for it rather than read it once.
+    const session = await waitFor('the row closed', async () => {
+      const { rows: [r] } = await pool().query('SELECT origin, correlation_id, end_reason FROM agency_listen_sessions WHERE call_id = $1', [leg!.id]);
+      return r?.end_reason ? r : undefined;
+    });
     expect(session).toEqual({ origin: 'inbound', correlation_id: connected.id, end_reason: 'call_ended' });
   }, 60_000);
 });
