@@ -83,18 +83,29 @@ describe('ListenTokenStore', () => {
     vi.useFakeTimers();
     try {
       const tokens = new ListenTokenStore(null, '', 5_000);
+      const local = (tokens as unknown as { local: Map<string, unknown> }).local;
       const first = await tokens.mint(GRANT);
-      expect(await tokens.consume(L, 'wrong')).toBeNull();
-      // Single-use whatever the outcome: the wrong try spent it.
+      expect(await tokens.consume(L, first.token)).toEqual(GRANT);
       expect(await tokens.consume(L, first.token)).toBeNull();
+      // Expiry removes the grant, even for its own token.
       const second = await tokens.mint(GRANT);
       vi.advanceTimersByTime(5_001);
       expect(await tokens.consume(L, second.token)).toBeNull();
+      expect(local.has(L)).toBe(false);
       const third = await tokens.mint(GRANT);
       expect(await tokens.consume(L, third.token)).toEqual(GRANT);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('without Redis a wrong token does not spend the grant: compared first, deleted only on a match or expiry, as the Lua script does', async () => {
+    const tokens = new ListenTokenStore(null, '', 60_000);
+    const { token } = await tokens.mint(GRANT);
+    expect(await tokens.consume(L, 'wrong')).toBeNull();
+    expect(await tokens.consume(L, `${token.slice(0, -1)}x`)).toBeNull(); // same length, wrong
+    expect(await tokens.consume(L, token)).toEqual(GRANT);
+    expect(await tokens.consume(L, token)).toBeNull();
   });
 
   it('without Redis a grant never upgraded is forgotten once it has lapsed: the next mint prunes it', async () => {

@@ -160,10 +160,16 @@ export class ListenTokenStore {
     }
     const entry = this.local.get(listenId);
     if (!entry) return null;
-    this.local.delete(listenId); // single-use whatever the outcome
-    if (entry.expiresAt < Date.now()) return null;
+    if (entry.expiresAt < Date.now()) {
+      this.local.delete(listenId);
+      return null;
+    }
+    // Compared before it is spent, as the Lua script does: a wrong token leaves the grant for the
+    // right one, a match spends it.
     const a = Buffer.from(entry.token);
     const b = Buffer.from(token);
-    return a.length === b.length && crypto.timingSafeEqual(a, b) ? entry.payload : null;
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    this.local.delete(listenId);
+    return entry.payload;
   }
 }
