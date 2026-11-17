@@ -303,7 +303,7 @@ export class AgencyRuntime {
       markLive: (id) => agencyListenSessionRepository.markLive(id),
     }, this.replicaId, options.listenLiveReplicaIds);
     this.listen = new ListenRegistry({
-      limits: { maxPerCall: listen.maxPerCall, maxPerProcess: listen.maxPerProcess, maxPerUser: listen.maxPerUser, recheckMs: listen.recheckMs },
+      limits: listen,
       access: listenAccessCheck(),
       maintainRows: (held) => this.listenRows.maintain(held),
     });

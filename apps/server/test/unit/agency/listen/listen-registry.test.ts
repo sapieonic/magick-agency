@@ -6,7 +6,7 @@ import {
 import { listenAccessCheck, membershipMayListen, type ListenAccessDeps } from '../../../../src/agency/listen/listen-access.js';
 import type { MembershipRecord } from '@magick-agency/db/models/membership.model';
 import { hasPermission } from '@magick-agency/contracts/rbac';
-import { selectMembership } from '../../../../src/api/middleware/tenant-context.middleware.js';
+import { selectMembership } from '../../../../src/rbac/select-membership.js';
 
 /*
  * The listen registry (docs/listening.md §4, LS5, LS10, LS16): the three caps, the supersede, the

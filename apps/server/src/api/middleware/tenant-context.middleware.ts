@@ -44,12 +44,6 @@ function isInvalidUuidError(err: unknown): boolean {
 }
 
 /**
- * Which of a user's memberships in this tenant a request acts under: `rbac/select-membership.ts`
- * (beside RBAC, so the listen re-check, which must pick the same membership, shares it).
- */
-export { selectMembership };
-
-/**
  * Does `accountId` actually belong to `tenantId`?
  *
  * ── The hole this closes ────────────────────────────────────────────────────
