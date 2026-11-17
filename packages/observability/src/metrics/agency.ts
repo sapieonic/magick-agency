@@ -1105,10 +1105,11 @@ export type ListenEndMetricReason =
 /**
  * Where the listener tap failed a frame or a send (`agency_listen_tap_errors_total`): `decode`
  * (the carrier's audio to PCM16), `encode` (PCM16 to A-law), `frame` (cutting an agent's A-law
- * into 20 ms frames, or building the tagged message), `send` (one listener's socket threw). Each
- * failure drops that frame for its listeners (or that listener), never the call's audio.
+ * into 20 ms frames, or building the tagged message), `send` (one listener's socket threw), `open`
+ * (opening the tap for a listener threw: that listen is refused). Each failure drops that frame for
+ * its listeners (or that listener, or that listen), never the call's audio.
  */
-export type ListenTapErrorStage = 'decode' | 'encode' | 'frame' | 'send';
+export type ListenTapErrorStage = 'decode' | 'encode' | 'frame' | 'send' | 'open';
 
 export const agencyListenSessionsActive = gauge(meter, 'agency_listen_sessions_active', {
   description: 'Listen sessions open in this process now (a supervisor listening to a call it owns)',
@@ -1129,7 +1130,7 @@ export const agencyListenSessionSeconds = histogram(meter, 'agency_listen_sessio
 });
 
 export const agencyListenTapErrorsTotal = counter<'stage'>(meter, 'agency_listen_tap_errors_total', {
-  description: 'Frames or sends the listener tap failed and dropped, by stage: decode, encode, frame or send (the call\'s own audio is never affected)',
+  description: 'Frames or sends the listener tap failed and dropped, by stage: decode, encode, frame, send, or open (opening the tap for a listener threw; that listen is refused). The call\'s own audio is never affected',
 });
 
 /** The listen sessions this process holds now (set as they open and close). */

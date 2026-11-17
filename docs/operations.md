@@ -1314,7 +1314,7 @@ dropped for 10 s (`LISTENER_SOFT_LIMIT_MAX_MS`) has stopped reading, pings or no
   20 on 100 calls at about +0.07 of loop utilisation; a `pcm16` agent's listener costs an encode per
   frame on top; a Plivo customer is a table lookup a byte, LS17), or spread the calls over media workers.
 - **`agy-listen-tap-errors`**. **Means:** the tap has failed frames for 10 minutes (decode, encode,
-  frame or send; the counter counts failed steps, a row's `frames_dropped` and the budget count
+  frame or send), or failed to open for listeners (`open`; the counter counts failed steps, a row's `frames_dropped` and the budget count
   20 ms frames). Each failed frame is dropped for the listeners only; 50 in a row
   (`AGENCY_LISTEN_FAULT_BUDGET`) detach the tap and end its listens `tap_error` (1011: the console
   reconnects, bounded). **Check:** *Tap Errors by Stage* and the logs `component=listen-tap` (one
@@ -1322,7 +1322,10 @@ dropped for 10 s (`LISTENER_SOFT_LIMIT_MAX_MS`) has stopped reading, pings or no
   `agency_listen_sessions_ended_total{reason="tap_error"}`. **Do:** `decode` or `encode` on one
   carrier is a codec fault (a carrier sending a payload its codec refuses: compare the call's
   carrier and the relay's own logs for that call); `frame` is a bug in the tap; `send` is a
-  listener socket throwing on write (a socket gone under it: it ends that listener only). If
+  listener socket throwing on write (a socket gone under it: it ends that listener only); `open` is
+  the bridge throwing as a listen starts (every such listen is refused 1011 and its row closed
+  `tap_error`: the logs `component=agency-listen-socket`, "Opening the listen tap threw", carry the
+  stack). If
   supervisors cannot listen at all, switch the flag off for the tenant while it is fixed; calls are
   unaffected either way.
 

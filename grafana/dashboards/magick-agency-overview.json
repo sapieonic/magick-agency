@@ -2669,7 +2669,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Frames the listener tap failed and dropped per minute, by stage (decode, encode, frame, send; agy-listen-tap-errors), and listener sockets' back-pressure by action: media_dropped (a frame past the 48 KiB soft limit, dropped for that listener) and closed (past the 256 KiB hard cap, or 10 s of nothing but drops: the listen ended send_backlog). None of these touches the call's own audio.",
+      "description": "Frames the listener tap failed and dropped per minute, by stage (decode, encode, frame, send, open; agy-listen-tap-errors), and listener sockets' back-pressure by action: media_dropped (a frame past the 48 KiB soft limit, dropped for that listener) and closed (past the 256 KiB hard cap, or 10 s of nothing but drops: the listen ended send_backlog). None of these touches the call's own audio.",
       "fieldConfig": {
         "defaults": {
           "color": {

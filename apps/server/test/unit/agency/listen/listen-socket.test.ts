@@ -18,6 +18,12 @@ import { ListenRegistry, type ListenAccessCheck } from '../../../../src/agency/l
 import type { ListenGrantPayload } from '../../../../src/agency/listen/listen-token.js';
 import type { ListenSink, ListenTapStats, OpenListenTapResult } from '../../../../src/core/webrtc-bridge-manager.js';
 
+const { metrics } = vi.hoisted(() => ({ metrics: { tapError: vi.fn() } }));
+vi.mock('@magick-agency/observability/metrics/agency', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  trackListenTapError: metrics.tapError,
+}));
+
 /*
  * The listener socket (docs/listening.md §3, §4): the upgrade's fail-closed order (token, caps,
  * the access check, row, tap, admission — a revocation anywhere between the grant and the
@@ -262,13 +268,54 @@ describe('the upgrade, fail closed (LS7)', () => {
     expect(h.registry.held().size).toBe(0);
   });
 
-  it('SWE-NITS: opening the tap throwing is the server\'s failure, not the call\'s end: 1011 listen_unavailable, the row closed tap_error', async () => {
+  it('LS22 f: opening the tap throwing is the server\'s failure, not the call\'s end: 1011 listen_unavailable, the row closed tap_error, counted', async () => {
+    metrics.tapError.mockClear();
     const h = harness({ tap: 'throws' });
     expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
     await settle();
     expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, reason: 'listen_unavailable' });
     expect(h.rows.close).toHaveBeenCalledWith(L, { reason: 'tap_error', framesSent: 0, framesDropped: 0, live: false });
     expect(h.audit).not.toHaveBeenCalled();
+    expect(h.registry.held().size).toBe(0);
+    // A bridge that cannot open a tap would fail every listen on it: counted where the tap's own
+    // failures are, so agy-listen-tap-errors sees it (LS22 q).
+    expect(metrics.tapError).toHaveBeenCalledTimes(1);
+    expect(metrics.tapError).toHaveBeenCalledWith('open');
+  });
+
+  it('LS22 o: an access check that never answers is bounded: the slot is given back, 1011 listen_unavailable, no row', async () => {
+    const h = harness({ access: () => new Promise(() => {}) });
+    h.deps.upgradeStepTimeoutMs = 20;
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, reason: 'listen_unavailable' });
+    expect(h.rows.open).not.toHaveBeenCalled();
+    expect(h.registry.held().size).toBe(0);
+  });
+
+  it('LS22 o: a row insert that never answers is bounded: the slot is given back, 1011 listen_unavailable, no tap (a late insert is the sweep\'s)', async () => {
+    const h = harness({ open: () => new Promise(() => {}) });
+    h.deps.upgradeStepTimeoutMs = 20;
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.INTERNAL_ERROR, reason: 'listen_unavailable' });
+    expect(h.deps.bridge.openListenTap).not.toHaveBeenCalled();
+    expect(h.registry.held().size).toBe(0);
+    // Its id is not held, so the rows' sweep closes the row should the insert land later.
+    expect(h.registry.check(GRANT.callId, GRANT.tenantId, 'x')).toBeNull();
+  });
+
+  it('a client closed 1008 for its message rate during the access check gets no row', async () => {
+    const h = harness();
+    h.registry = new ListenRegistry({
+      limits: { maxPerCall: 2, maxPerProcess: 20, maxPerUser: 1, recheckMs: 30_000 },
+      access: async () => {
+        for (let i = 0; i <= LISTEN_CLIENT_MESSAGE_BURST; i++) h.ws.say({ event: 'ping' });
+        return { revoked: new Set(), unchecked: new Set() };
+      },
+    });
+    h.deps.registry = h.registry;
+    expect(await handleListenSocket(h.ws as never, { sessionId: S, listenId: L, token: 'tok' }, h.deps)).toBeNull();
+    expect(h.ws.closed).toEqual({ code: AGENCY_LISTEN_CLOSE.INVALID_UPGRADE, reason: LISTEN_MESSAGE_RATE_REASON });
+    expect(h.rows.open).not.toHaveBeenCalled();
     expect(h.registry.held().size).toBe(0);
   });
 

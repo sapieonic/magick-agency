@@ -108,7 +108,8 @@ comments and the other docs).
   pages with "Listened to by"), absent when it could not be read; the inbound call read is
   unchanged. Since LS22 (c), only the sessions that went live (`live_at` set).
 - **(l)** `agency_listen_grants_total` counts the HTTP grant's outcomes; refusals at the upgrade are
-  in the logs and the rows, not that counter.
+  in the logs and the rows, not that counter (one exception, the server's own failure: a tap that
+  throws as it opens is counted `agency_listen_tap_errors_total{stage="open"}`, LS22 q).
 - **(m)** `AgencyLiveCall` gained `correlation_id` (the spine row, for "Open call") and
   `aht_seconds` (additive, asked for by the console phase).
 - **(n)** The upgrade asks the database too, after the reservation and before the row
@@ -220,6 +221,18 @@ Manas.
   included, as the export already did (final review): the number reveal is the one answer with a
   customer's full number (LS9's "masked again on leaving the page" must not be undone by a browser or
   proxy cache), and the list and the history name supervisors and customers (masked).
+- **(o)** Each of the upgrade's two database steps, the access check (LS16 n) and the row's insert,
+  is bounded by `LISTEN_UPGRADE_STEP_TIMEOUT_MS` (10 s, a constant): past it the reservation is
+  given back and the upgrade refused 1011 `listen_unavailable` (the console retries, bounded). A
+  connection that hangs without an error (the pool sets no `statement_timeout`) would otherwise
+  hold the slot as long as it hung, until the call's cap (`listen_limit_call`) and then the
+  process's (`listen_limit_server`, and its alert) refused everyone. An insert that lands after its
+  upgrade gave up is a row this process does not hold: its sweep (LS16 o) closes it
+  `server_restarted` once it is 60 s old. A client closed 1008 for its message rate while the
+  access check ran gets no row.
+- **(q)** Opening the tap throwing (LS22 f) is counted `agency_listen_tap_errors_total{stage="open"}`,
+  so `agy-listen-tap-errors` sees a bridge that cannot open a tap for anyone; the other refusals at
+  the upgrade stay in the logs and the rows (LS16 l).
 
 ## 2. Architecture
 
@@ -297,7 +310,7 @@ the microphone.
 | 4409 | `SUPERSEDED` | `superseded` | stop ("You started listening in another tab or window, so it stopped here.": the console stops its own first listen before a second, so a supersede it hears of came from elsewhere) |
 | 4429 | `LIMIT` | at the upgrade: `listen_limit_call`, `listen_limit_server` | stop, with the reason |
 | 1008 | `INVALID_UPGRADE` | a malformed upgrade; past the client message rate (`listen_message_rate`, LS22 e) | stop |
-| 1011 | `INTERNAL_ERROR` | `tap_error`; at the upgrade, `listen_unavailable` (no row, no audio; the token store, the tap or the process failing, LS22 f, g) | reconnect, bounded |
+| 1011 | `INTERNAL_ERROR` | `tap_error`; at the upgrade, `listen_unavailable` (no row, no audio; the token store, the tap or the process failing, LS22 f, g; the access check or the row's insert not answering within 10 s, LS22 o) | reconnect, bounded |
 | 4503 | `ACCESS_UNVERIFIED` | `access_unverified` (LS21) | stop, "your access could not be checked", Try again (an older console: reconnect) |
 
 `AGENCY_LISTEN_END_CLOSE` maps every reason sent on a socket to its code. A refusal at the upgrade
@@ -575,7 +588,7 @@ grant series by `listen-socket.ts`, the grant route and the sweeps).
 | `agency_listen_grants_total` | counter | `result` (`granted` or the refusal code) | grants and why they were refused |
 | `agency_listen_sessions_ended_total` | counter | `reason` (the end reasons, `access_unverified` included) | how sessions end |
 | `agency_listen_session_seconds` | histogram | | how long a listen lasts (reaped sessions excluded) |
-| `agency_listen_tap_errors_total` | counter | `stage` (`decode`, `encode`, `frame`, `send`) | frames the tap dropped |
+| `agency_listen_tap_errors_total` | counter | `stage` (`decode`, `encode`, `frame`, `send`, `open`) | frames the tap dropped; `open`: opening the tap for a listener threw (LS22 q) |
 | `websocket_send_backpressure_total` | counter | `socket="listener"`, `action` | listener frames dropped, sockets closed |
 | `ws_handoff_total` | counter | `route="listen"`, `result` | listener upgrades handed to media workers |
 | `webrtc_relay_dwell_seconds` | histogram, sampled 1 in 50 | `direction` (`b2p`, `p2b`) | the relay's own per-frame dwell; it excludes the tap by construction, so the tap's cost is read on the loop (`nodejs_eventloop_delay_p99_seconds`, `nodejs_eventloop_utilization_ratio`) |

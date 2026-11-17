@@ -1,6 +1,6 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { trackListenSessionEnded } from '@magick-agency/observability/metrics/agency';
+import { trackListenSessionEnded, trackListenTapError } from '@magick-agency/observability/metrics/agency';
 import {
   AGENCY_LISTEN_CLOSE,
   AGENCY_LISTEN_END_CLOSE,
@@ -41,12 +41,15 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  *     generation; a grant minted before their latest revocation here is refused 4403
  *     `permission_revoked`.
  *  4. Ask the database whether they may still listen (LS16 n: the grant's checks are up to a token
- *     TTL old): 4403 `permission_revoked` if not, 1011 `listen_unavailable` if it cannot say.
+ *     TTL old): 4403 `permission_revoked` if not, 1011 `listen_unavailable` if it cannot say, or
+ *     has not said within {@link LISTEN_UPGRADE_STEP_TIMEOUT_MS} (LS22 o).
  *  5. Write the `agency_listen_sessions` row and AWAIT it (1011 `listen_unavailable` if it
- *     fails: nothing was opened).
+ *     fails, or has not answered within {@link LISTEN_UPGRADE_STEP_TIMEOUT_MS}: nothing was
+ *     opened; an insert that lands later is a row nothing holds, closed by the rows' sweep).
  *  6. Attach the bridge's tap (4404 `listen_call_not_live` if the bridge no longer has the call
  *     bridged, or attached nothing; the row just written closes `call_ended`; 1011
- *     `listen_unavailable` if opening it threw, the row closed `tap_error`).
+ *     `listen_unavailable` if opening it threw, the row closed `tap_error`, counted
+ *     `agency_listen_tap_errors_total{stage="open"}`).
  *  7. Admit the session (the supervisor's older listen ends `superseded`), send `ready`, stamp the
  *     row live (not awaited), audit `agency_call.listen_started`. A revocation since step 3 refuses
  *     it instead: the row closes `permission_revoked`, 4403, no audit pair.
@@ -72,6 +75,30 @@ const log = createChildLogger({ component: 'agency-listen-socket' });
  * close is logged and retried by the rows' upkeep (`listen-rows.ts`); a failed audit write is
  * logged; neither touches the call.
  */
+
+/**
+ * How long each of the upgrade's two database steps (the access check, the row's insert) may take
+ * before the upgrade gives up (LS22 o): its reservation counts against the caps, and a connection
+ * that hangs without an error (no `statement_timeout` on the pool) would otherwise hold the slot
+ * for as long as it hangs, until the call's and the process's caps refuse everyone.
+ */
+export const LISTEN_UPGRADE_STEP_TIMEOUT_MS = 10_000;
+
+const TIMED_OUT: unique symbol = Symbol('listen_upgrade_step_timed_out');
+
+/** `work`, or {@link TIMED_OUT} once `ms` have passed (a late rejection of `work` is handled by the race). */
+async function within<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Sent as the close reason when the upgrade's token does not verify. */
 export const LISTEN_TOKEN_INVALID_REASON = 'listen_token_invalid';
@@ -135,8 +162,10 @@ export interface ListenSocketDeps {
    */
   supersedeElsewhere?: ((session: ListenSessionHandle) => void) | null;
   idleTimeoutMs?: number;
-  /** How often the server pings the socket at the protocol level (QA-M1); default the client's ping interval. */
+  /** How often the server pings the socket at the protocol level (LS22 d); default the client's ping interval. */
   pingIntervalMs?: number;
+  /** The bound on each of the upgrade's database steps; default {@link LISTEN_UPGRADE_STEP_TIMEOUT_MS}. */
+  upgradeStepTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -412,27 +441,39 @@ export async function handleListenSocket(
     return null;
   }
 
-  // 4. May they still listen? Asked of the database, fail closed.
-  const access = await deps.registry.verify(grant);
-  if (access !== 'ok' || clientGone) {
+  // 4. May they still listen? Asked of the database, fail closed, and bounded (LS22 o).
+  const stepMs = deps.upgradeStepTimeoutMs ?? LISTEN_UPGRADE_STEP_TIMEOUT_MS;
+  const access = await within(deps.registry.verify(grant), stepMs);
+  // A client already closed for its message rate (1008) gets no row either.
+  if (access !== 'ok' || clientGone || abused) {
     deps.registry.release(reserved.reservation);
-    if (clientGone) return null;
-    log.info({ listenId: grant.listenId, callId: grant.callId, access }, 'Listen upgrade refused at the access check');
+    if (clientGone || abused) return null;
+    const why = access === TIMED_OUT ? 'timed_out' : access;
+    log.info({ listenId: grant.listenId, callId: grant.callId, access: why }, 'Listen upgrade refused at the access check');
     refuse(ws, access === 'revoked' ? 'permission_revoked' : 'listen_unavailable');
     return null;
   }
 
-  // 5. The row, awaited: no row, no audio.
+  // 5. The row, awaited and bounded: no row, no audio.
+  let wrote: unknown;
   try {
-    await deps.rows.open({
+    wrote = await within(deps.rows.open({
       id: grant.listenId, tenantId: grant.tenantId, accountId: grant.accountId, callId: grant.callId,
       origin: grant.origin, campaignId: grant.campaignId, correlationId: grant.correlationId,
       agentSessionId: grant.sessionId, agentUserId: grant.agentUserId, listenerUserId: grant.listenerUserId,
       replicaId: deps.replicaId,
-    });
+    }), stepMs);
   } catch (err) {
     deps.registry.release(reserved.reservation);
     log.error({ err, listenId: grant.listenId, callId: grant.callId }, 'Could not write the listen session row — refusing the listen');
+    refuse(ws, 'listen_unavailable');
+    return null;
+  }
+  if (wrote === TIMED_OUT) {
+    // Should the insert land later, nothing here holds its id: the rows' sweep closes it.
+    deps.registry.release(reserved.reservation);
+    log.error({ listenId: grant.listenId, callId: grant.callId, timeoutMs: stepMs },
+      'The listen session row\'s insert did not answer in time — refusing the listen');
     refuse(ws, 'listen_unavailable');
     return null;
   }
@@ -453,6 +494,7 @@ export async function handleListenSocket(
   } catch (err) {
     // Not the call's end: the bridge failed. The row says the tap failed; the bar retries (1011).
     log.error({ err, listenId: grant.listenId, callId: grant.callId }, 'Opening the listen tap threw');
+    try { trackListenTapError('open'); } catch { /* a metric is never worth the refusal */ }
     deps.registry.release(reserved.reservation);
     await s.end('tap_error', undefined, true);
     refuse(ws, 'listen_unavailable');

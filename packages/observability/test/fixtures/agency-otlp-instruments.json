@@ -425,7 +425,7 @@
   {
     "name": "agency_listen_tap_errors_total",
     "kind": "Counter",
-    "description": "Frames or sends the listener tap failed and dropped, by stage: decode, encode, frame or send (the call's own audio is never affected)",
+    "description": "Frames or sends the listener tap failed and dropped, by stage: decode, encode, frame, send, or open (opening the tap for a listener threw; that listen is refused). The call's own audio is never affected",
     "attributes": [
       "stage"
     ]
