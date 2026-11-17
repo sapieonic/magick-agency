@@ -4,7 +4,7 @@ import {
   normaliseUrlScope,
   redactAnalyticsProperties,
   redactInviteToken,
-  redactListenToken,
+  redactTokenQuery,
   stripJoinPageElements,
 } from '../../analytics/redact';
 import { safeAnalyticsPath } from '../../api/error-analytics';
@@ -85,20 +85,22 @@ describe('redactInviteToken', () => {
   });
 });
 
-describe('redactListenToken', () => {
+describe('redactTokenQuery', () => {
   const TOKEN = 'q9Zt-Lw3xYb_4Nc8';
 
   it('takes the single-use token out of a listener socket URL, keeping the rest', () => {
-    expect(redactListenToken(`/proxy/agency/listen/s-1/l-1?token=${TOKEN}`)).toBe('/proxy/agency/listen/s-1/l-1?token=:token');
-    expect(redactListenToken(`wss://api.example/proxy/agency/listen/s-1/l-1?a=1&token=${TOKEN}&b=2`)).toBe(
+    expect(redactTokenQuery(`/proxy/agency/listen/s-1/l-1?token=${TOKEN}`)).toBe('/proxy/agency/listen/s-1/l-1?token=:token');
+    expect(redactTokenQuery(`wss://api.example/proxy/agency/listen/s-1/l-1?a=1&token=${TOKEN}&b=2`)).toBe(
       'wss://api.example/proxy/agency/listen/s-1/l-1?a=1&token=:token&b=2',
     );
-    expect(redactListenToken(`opening "/proxy/agency/listen/s/l?token=${TOKEN}" failed`)).toBe('opening "/proxy/agency/listen/s/l?token=:token" failed');
+    expect(redactTokenQuery(`opening "/proxy/agency/listen/s/l?token=${TOKEN}" failed`)).toBe('opening "/proxy/agency/listen/s/l?token=:token" failed');
   });
 
-  it('leaves every other URL alone, a token parameter elsewhere included', () => {
-    expect(redactListenToken('/proxy/agency/live-calls/c-1/listen')).toBe('/proxy/agency/live-calls/c-1/listen');
-    expect(redactListenToken('/proxy/agency/station?token=abc')).toBe('/proxy/agency/station?token=abc');
+  it('takes a token parameter out of any URL, and leaves one without it alone', () => {
+    expect(redactTokenQuery('/proxy/agency/station?token=abc')).toBe('/proxy/agency/station?token=:token');
+    expect(redactTokenQuery('/x?TOKEN=abc&mytoken=keep')).toBe('/x?TOKEN=:token&mytoken=keep');
+    expect(redactTokenQuery('/proxy/agency/live-calls/c-1/listen')).toBe('/proxy/agency/live-calls/c-1/listen');
+    expect(redactTokenQuery('a token=abc in prose')).toBe('a token=abc in prose');
   });
 
   it('is applied at the PostHog boundary', () => {

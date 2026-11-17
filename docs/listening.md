@@ -831,8 +831,8 @@ LS2.
   ("Listening is not available right now. Try again."): a worker restarting answers
   `worker_unavailable`, and a 503 from in front of the server has no body to read. A re-grant
   answered 503 is retried within the window either way.
-- *Analytics.* `analytics/redact.ts` takes the listener socket's `token` out of any URL on its way
-  to PostHog (`redactListenToken`).
+- *Analytics.* `analytics/redact.ts` takes any `token` query value, the listener socket's among
+  them, out of a URL on its way to PostHog (`redactTokenQuery`).
 - *Liveness (LS22 d).* The console still sends its JSON `ping` every 10 s; the server also pings the
   socket at the protocol level and counts the pong, which a browser sends by itself however its
   timers are throttled in a hidden tab. Nothing in the console answers it.
