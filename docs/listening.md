@@ -265,6 +265,17 @@ Manas.
   supervisor's rows across processes but ends only the other processes' (its own registry keeps
   its own count), so a supervisor can hold one listen over the cap across processes; at the
   default 1 every older listen is ended, here and elsewhere.
+- **(t)** The listening history reads one page's visits, not the account's history (final
+  review): every page used to window every session the filters kept in the account (the whole
+  tenant's, without a supervisor filter, to find them), and the CSV drains up to 100 pages. A
+  visit's start is the session no earlier kept session of the same supervisor on the same call
+  is open or within the gap of (the merge's own rule, asked of one session), so `LISTEN_HISTORY_SQL`
+  first walks the account's live sessions newest first from the cursor on
+  `idx_agency_listen_sessions_account_started` (`0049_listen_history_index.sql`, `(tenant_id,
+  account_id, started_at DESC, id DESC) WHERE live_at IS NOT NULL`), each probed on its call, cut at
+  the page, then windows only those calls' sessions. The entries are unchanged (the history's
+  integration tests); the plan and the rows a page reads are pinned on 20,000 seeded sessions
+  (`agency/listen-history-plan.test.ts`).
 
 ## 2. Architecture
 
@@ -1109,10 +1120,10 @@ time listened, the reason of the session that ended last (null while open), the 
 spine row (`correlation_id`, for the link: the campaign's attempt page, the soft-phone call page,
 the inbound call), the campaign, the inbound route and the roster contact's name. Newest first by
 the visit's start and first id, keyset-paged (`next_cursor`, the domain package's keyset cursor; a
-cursor this API did not issue is `400 malformed_cursor`). Each page windows the account's sessions
-the filters keep: a few rows a day per supervisor, purged at the audit horizon, so no index was
-added for the account and start together (a supervisor filter uses
-`idx_agency_listen_sessions_listener`).
+cursor this API did not issue is `400 malformed_cursor`). Each page reads its own visits, not the
+account's history (LS22 t): the sessions that start a visit are walked newest first from the
+cursor on `idx_agency_listen_sessions_account_started` (0049) and cut at the page, and only their
+calls' sessions are windowed and merged.
 
 `GET /proxy/agency/listen-history.csv` takes the same filters (no `limit`, no `cursor`), drains the
 pages (100 at a time, `drainPages`) up to 10,000 entries and 30 s, and answers `text/csv`
@@ -1126,7 +1137,7 @@ on success only: one `agency_listen_sessions.exported` audit row (resource `acco
 the rows, any truncation).
 
 Sessions that never went live (a row written, then closed at the upgrade without admission) are
-in the table too, with `live_at` null (LS22 c). `LISTEN_HISTORY_SQL`'s first CTE keeps only rows
+in the table too, with `live_at` null (LS22 c). `LISTEN_HISTORY_SQL` keeps only rows
 with `live_at` set, as "Listened to by" does, so the two agree: a refused row neither shows nor
 bridges two visits.
 

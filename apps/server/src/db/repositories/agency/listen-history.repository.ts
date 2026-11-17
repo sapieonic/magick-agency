@@ -22,11 +22,14 @@
  * start and first id never change once written (a later session can only join it), so a page
  * boundary does not move under a reader.
  *
- * ── Cost ────────────────────────────────────────────────────────────────────
- * Each page windows every session the filters keep in the account (no index serves the account
- * and start together; a supervisor filter uses `idx_agency_listen_sessions_listener`). The table
- * holds a few rows a day per supervisor and is purged at the audit horizon (85 days by default),
- * so this is thousands of rows, not millions; an index can follow if a tenant's volume says so.
+ * ── Cost: one page's sessions, not the account's (LS22 t) ────────────────────
+ * A visit's start is the session that starts it: no earlier session of the same supervisor on the
+ * same call (among those the filters keep) is open, or ended within the gap, when it starts, which
+ * is the window's own rule (`starts_visit`) asked of one session. So the page's visits are found
+ * first (`starts`): the account's live sessions walked newest first from the cursor on
+ * `idx_agency_listen_sessions_account_started` (0049), each probed on its call, cut at the page.
+ * Only then are their calls' sessions windowed and merged. A page reads its visits and their
+ * reconnects, whatever the account has kept; the CSV's 100 pages read the file's rows once.
  *
  * The call's row (`agency_calls`, no foreign key: it purges on its own horizon), the campaign, the
  * inbound route and the roster contact are LEFT joins: a session outlives them, and its entry
@@ -78,20 +81,47 @@ export interface ListenHistoryVisitRow {
   end_reason: AgencyListenEndReason | null;
 }
 
+/**
+ * The sessions the filters keep (`ls`): the tenant, the account, live only, the supervisor, the
+ * agent and the start's range. Shared by the walk, its probe and the window, so they agree.
+ */
+const keptBy = (ls: string) => `${ls}.tenant_id = $1::uuid AND ${ls}.account_id = $2::uuid
+       AND ${ls}.live_at IS NOT NULL
+       AND ($3::uuid IS NULL OR ${ls}.listener_user_id = $3::uuid)
+       AND ($4::uuid IS NULL OR ${ls}.agent_user_id = $4::uuid)
+       AND ($5::timestamptz IS NULL OR ${ls}.started_at >= $5::timestamptz)
+       AND ($6::timestamptz IS NULL OR ${ls}.started_at < $6::timestamptz)`;
+
 /** The history's statement; exported for its tests. `$1` tenant … `$9` limit (+1 read ahead). */
 export const LISTEN_HISTORY_SQL = `
-  WITH s AS (
+  WITH starts AS MATERIALIZED (
+    -- The page's visits, by the session that starts each: no earlier kept session of the same
+    -- supervisor on the same call is open, or ended within the gap, when it starts. Walked newest
+    -- first from the cursor on idx_agency_listen_sessions_account_started (0049), each probed on
+    -- its call (idx_agency_listen_sessions_call), and cut at the page.
+    SELECT ls.id, ls.listener_user_id, ls.call_id
+      FROM agency_listen_sessions ls
+     WHERE ${keptBy('ls')}
+       AND ($8::timestamptz IS NULL OR (ls.started_at, ls.id) < ($8::timestamptz, $10::uuid))
+       AND NOT EXISTS (
+         SELECT 1 FROM agency_listen_sessions e
+          WHERE e.call_id = ls.call_id AND e.listener_user_id = ls.listener_user_id
+            AND ${keptBy('e')}
+            AND (e.started_at, e.id) < (ls.started_at, ls.id)
+            AND (e.ended_at IS NULL OR ls.started_at <= e.ended_at + make_interval(secs => $7::double precision / 1000)))
+     ORDER BY ls.started_at DESC, ls.id DESC
+     LIMIT $9
+  ), s AS (
+    -- Every kept session of those supervisors on those calls: the visits' members (one call's
+    -- sessions, a handful), merged below exactly as before.
     SELECT ls.*,
            max(ls.ended_at) OVER earlier AS earlier_ended_at,
            bool_or(ls.ended_at IS NULL) OVER earlier AS earlier_open,
            count(*) OVER earlier AS earlier_count
       FROM agency_listen_sessions ls
-     WHERE ls.tenant_id = $1::uuid AND ls.account_id = $2::uuid
-       AND ls.live_at IS NOT NULL
-       AND ($3::uuid IS NULL OR ls.listener_user_id = $3::uuid)
-       AND ($4::uuid IS NULL OR ls.agent_user_id = $4::uuid)
-       AND ($5::timestamptz IS NULL OR ls.started_at >= $5::timestamptz)
-       AND ($6::timestamptz IS NULL OR ls.started_at < $6::timestamptz)
+     WHERE ${keptBy('ls')}
+       AND ls.call_id IN (SELECT st.call_id FROM starts st)
+       AND (ls.listener_user_id, ls.call_id) IN (SELECT st.listener_user_id, st.call_id FROM starts st)
     WINDOW earlier AS (PARTITION BY ls.listener_user_id, ls.call_id ORDER BY ls.started_at, ls.id
                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
   ), marked AS (
@@ -126,9 +156,7 @@ export const LISTEN_HISTORY_SQL = `
      GROUP BY n.listener_user_id, n.call_id, n.visit_no
   ), page AS (
     SELECT v.* FROM visits v
-     WHERE ($8::timestamptz IS NULL OR (v.started_at, v.id) < ($8::timestamptz, $10::uuid))
-     ORDER BY v.started_at DESC, v.id DESC
-     LIMIT $9
+     WHERE v.id IN (SELECT st.id FROM starts st)
   )
   SELECT p.id, p.listen_ids, p.call_id, p.origin, p.correlation_id, p.campaign_id,
          cam.name AS campaign_name, r.name AS inbound_route_name,

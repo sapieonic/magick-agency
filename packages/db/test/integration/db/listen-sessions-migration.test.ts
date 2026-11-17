@@ -83,13 +83,15 @@ async function plans(statements: Array<[sql: string, values: unknown[]]>): Promi
     await client.query(
       `INSERT INTO agency_listen_sessions
          (tenant_id, account_id, call_id, origin, campaign_id, correlation_id, agent_session_id, agent_user_id,
-          listener_user_id, started_at, ended_at, end_reason, replica_id)
+          listener_user_id, started_at, ended_at, end_reason, replica_id, live_at)
        SELECT CASE WHEN g % 4 = 0 THEN $1::uuid ELSE gen_random_uuid() END,
               CASE WHEN g % 8 = 0 THEN $2::uuid ELSE gen_random_uuid() END,
               gen_random_uuid(), 'campaign', gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
               gen_random_uuid(), gen_random_uuid(),
               now() - make_interval(mins => g), now() - make_interval(mins => g) + interval '30 seconds',
-              'listener_stopped', 'replica-1'
+              'listener_stopped', 'replica-1',
+              -- Sessions that went live (0048), as nearly all do: "Listened to by" and the history read them.
+              now() - make_interval(mins => g)
          FROM generate_series(1, 5000) g`,
       [TENANT, ACCOUNT]);
     await client.query(

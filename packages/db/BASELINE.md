@@ -1533,8 +1533,10 @@ down → up inventory suite.
 
 Live call listening (`docs/listening.md`, LS1–LS14). **`agency_listen_sessions`** (new): one row per
 listen session, a supervisor listening in to a call in progress, written before any audio flows
-(LS7) and closed when it ends; the record of who listened, kept for the audit log's horizon (LS12:
-the audit maintenance deletes rows started before `AUDIT_RETENTION_DAYS`). `id` (the listen id,
+(LS7) and closed when it ends; the record of who listened, kept for the audit log's horizon (LS12,
+LS16 s: the audit maintenance deletes rows started before the first instant of the UTC month of
+the `AUDIT_RETENTION_DAYS` cutoff, the boundary below which it has dropped every audit partition,
+so a row goes the same day as its month's audit rows). `id` (the listen id,
 minted with the grant), `tenant_id`, `account_id`, `call_id` (`agency_calls.id`), `origin`
 `VARCHAR(16)` (`AGENCY_CALL_ORIGINS`, the same list as `ck_agency_calls_origin`), `campaign_id`,
 `correlation_id` (the spine row: attempt, manual call or inbound call), `agent_session_id`,
@@ -1572,6 +1574,21 @@ restores 0047's CHECK. **Tests**: `test/integration/db/listen-sessions-unverifie
 (the CHECK equal to the contract's list both ways, `live_at` and its CHECK, the backfill of rows
 from before it, the Down's refusal, down then up), `listen-sessions-migration.test.ts` (the column
 set) and the down → up inventory suite.
+
+### 0049 — `migrations/0049_listen_history_index.sql`
+
+Live call listening's account history (`docs/listening.md` §12, LS19, LS22 t).
+**`idx_agency_listen_sessions_account_started`** `(tenant_id, account_id, started_at DESC, id DESC)
+WHERE live_at IS NOT NULL` on `agency_listen_sessions`: an account's live sessions newest first, in
+the history's keyset order, which `LISTEN_HISTORY_SQL` walks from the cursor to find one page's
+visits (before it, every page windowed every session the account had kept). `CREATE INDEX IF NOT
+EXISTS` after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it `CONCURRENTLY` first;
+an invalid index left under the name by a failed concurrent build fails the migration. **Down**
+drops it. **Tests**: `test/integration/db/listen-history-index-migration.test.ts` (the definition,
+the invalid-index refusal, down then up), the server's
+`test/integration/agency/listen-history-plan.test.ts` (the walk on the index by tenant and account,
+no sequential scan, a page reading under 1,000 rows of 20,000 seeded sessions, first page and from a
+cursor) and the down → up inventory suite.
 
 ## Tests
 
