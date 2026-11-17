@@ -15,8 +15,8 @@ import { isUuid } from '../helpers/listen.js';
 /*
  * The listening history's internal handler (docs/listening.md §12, LS19), on the internal
  * instance behind `callCore` (B16). The public layer (`proxy-agency-listen-history.routes.ts`) has
- * run the session, the tenant context, `agency.supervise` and the flag; this answers the account's
- * visits, newest first, one keyset page at a time.
+ * run the session, the tenant context and `agency.supervise` (no flag: LS19, amended
+ * 2026-11-17); this answers the account's visits, newest first, one keyset page at a time.
  *
  *  - `GET /listen-history` (owner `none`, SQL only): `?listener_user_id=&agent_user_id=&from=&to=
  *    &limit=&cursor=` → `{ entries, next_cursor }`. Full numbers (`customer_phone`: E.164, `''`

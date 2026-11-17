@@ -233,7 +233,6 @@ describe('the listening history routes on this database', () => {
     await core.ready();
     audit = vi.fn();
     const deps: Deps = {
-      listenFlags: async () => ({ enabled: true, unrecordedAllowed: true }),
       callCore: async (req) => {
         const res = await core.inject({
           method: req.method as 'GET', url: `/api/v1${req.path}`, query: req.query ?? {},

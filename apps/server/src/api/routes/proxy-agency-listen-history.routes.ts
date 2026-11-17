@@ -12,13 +12,12 @@ import { tenantContextMiddleware } from '../middleware/tenant-context.middleware
 import { ACCOUNT_HEADER } from '../middleware/headers.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore, type CoreCallRequest, type CoreCallResult } from '../core-dispatch.js';
-import { readListenFlags, type ListenFlags } from '../../agency/listen/listen-access.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { toCsvLine } from '../../agency/agency-csv.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
-import { LIVE_LISTEN_DISABLED_BODY, isWithheldNumber, sendListenRefusal } from './helpers/listen.js';
+import { isWithheldNumber } from './helpers/listen.js';
 import {
   listenHistoryExportQuerySchema,
   listenHistoryFilterQuery,
@@ -34,10 +33,11 @@ const log = createChildLogger({ component: 'proxy-agency-listen-history' });
 /*
  * The account's listening history (docs/listening.md §12, LS19; contracts
  * `api/agency/listen-history.ts`), the public layer of B16: the session, the tenant context,
- * `agency.supervise`, then the consent flag `agency_live_listen_enabled` for the request's account
- * (`403 feature_disabled` when off; `503 listen_unavailable` when it cannot be read, which the
- * console retries), an account (`X-Account-Id`), the query validated at the edge. Every read is the
- * internal handler's (`GET /listen-history`, owner `none`) for the request's tenant and account.
+ * `agency.supervise`, an account (`X-Account-Id`), the query validated at the edge. Every read is
+ * the internal handler's (`GET /listen-history`, owner `none`) for the request's tenant and account.
+ * The listening flag `agency_live_listen_enabled` is NOT read (LS19, amended 2026-11-17): turning
+ * listening off stops new listens, not the record of past ones, so neither a flag that is off nor
+ * a flag store outage refuses the history.
  *
  *  - `GET /listen-history`: one page of visits (a supervisor's merged sessions on one call), with
  *    the supervisor's and the agent's names and the customer's number masked.
@@ -54,15 +54,12 @@ export const LISTEN_HISTORY_EXPORT_TIME_BUDGET_MS = 30_000;
 
 /** What the routes read besides the request. Tests replace it. */
 export interface ListenHistoryRouteDeps {
-  /** Both listening flags for the account; REJECTS when they cannot be read (`readListenFlags`). */
-  listenFlags(tenantId: string, accountId: string): Promise<ListenFlags>;
   callCore(req: CoreCallRequest): Promise<CoreCallResult>;
   names(ids: Iterable<string | null>, tenantId: string): Promise<Map<string, string | null>>;
   audit: typeof platformAuditLogger.log;
 }
 
 export const defaultListenHistoryRouteDeps: ListenHistoryRouteDeps = {
-  listenFlags: readListenFlags,
   callCore,
   names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'listening history'),
   audit: (input) => platformAuditLogger.log(input),
@@ -158,28 +155,13 @@ export async function proxyAgencyListenHistoryRoutes(
   // Never cached by a browser or a proxy, refusals included: the history names supervisors and customers (masked), the page as much as the export.
   app.addHook('onRequest', async (_request, reply) => { void reply.header('Cache-Control', 'no-store'); });
 
-  /** The account and the consent flag, or a reply. Runs after the permission. */
+  /** The account, or a reply. Runs after the permission; no flag (LS19, amended 2026-11-17). */
   async function gate(request: FastifyRequest, reply: FastifyReply): Promise<{ tenantId: string; accountId: string } | null> {
     if (!request.accountId) {
       await reply.code(400).send({ error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` });
       return null;
     }
-    const tenantId = request.tenantId!.toLowerCase();
-    const accountId = request.accountId.toLowerCase();
-    let flags: ListenFlags;
-    try {
-      flags = await deps.listenFlags(tenantId, accountId);
-    } catch (err) {
-      // Not "off": the console retries a 503 and stops on the 403.
-      log.warn({ err, tenantId }, 'listening history: the listening flags could not be read');
-      sendListenRefusal(reply, 'listen_unavailable');
-      return null;
-    }
-    if (!flags.enabled) {
-      await reply.code(403).send(LIVE_LISTEN_DISABLED_BODY);
-      return null;
-    }
-    return { tenantId, accountId };
+    return { tenantId: request.tenantId!.toLowerCase(), accountId: request.accountId.toLowerCase() };
   }
 
   /** One page from the internal handler, named and masked. Throws {@link HistoryReadRefused}. */

@@ -404,8 +404,6 @@ export const LISTEN_HISTORY_COPY = {
   noMatchTitle: 'Nothing matches those filters',
   noMatchBody: 'Widen the date range or clear the filters to see every listen.',
   failed: 'Could not load the listening history.',
-  /** A 503 `listen_unavailable` (the flag could not be read): read again on its own. */
-  unavailable: 'Could not load the listening history. Retrying…',
   forbidden: 'The listening history is for supervisors. Ask an account admin if you need to see it.',
 } as const;
 

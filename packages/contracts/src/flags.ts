@@ -269,10 +269,11 @@ export const AGENCY_FLAGS = Object.freeze({
   // The CONSENT gate (LS1): supervisors may listen in to an account's calls only while this is
   // on, so a tenant turns it on once its callers are told calls may be monitored (the inbound
   // notice says so; outbound, the agent's script) and its agents know (the station's standing
-  // line, LS2). Gates every live-call route and the Listening history's page and CSV (`403
-  // feature_disabled` when off, LS19), the console's Live calls page, the campaign's Live view and
-  // the Listening history page, the station's standing line and the account's Settings line (LS20
-  // c). Switched off, the periodic re-check ends every open listen in the account
+  // line, LS2). Gates every live-call route (`403 feature_disabled` when off), the console's Live
+  // calls page, the campaign's Live view, the station's standing line and the account's Settings
+  // line (LS20 c). It does NOT gate the record of past listens: the Listening history (page and
+  // CSV) and a call's "Listened to by" stay for `agency.supervise` whether it is on or off (LS19,
+  // amended 2026-11-17). Switched off, the periodic re-check ends every open listen in the account
   // (`permission_revoked`). Off by default: a tenant or account gets it by an override row a
   // super-admin writes, scoped and attributed, with a reason and never in a bulk rollout or
   // globally (its handling policy, LS20). Client-exposed: the console shows those pages and lines

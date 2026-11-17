@@ -126,7 +126,8 @@ describe('the tab bar of a grouped page', () => {
 
   it('offers Live calls beside Soft-phone calls only to a supervisor with the listening flag on', () => {
     const labels = (i: GateInput) => tabBarFor('/agency/campaigns', i)?.tabs.map((t) => t.label) ?? [];
-    expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'Soft-phone calls']);
+    // The Listening history stays with the flag off (LS19, amended 2026-11-17): past listens are not hidden.
+    expect(labels(input('account_admin', { flagsOff: ['agency_live_listen_enabled'] }))).toEqual(['Campaigns', 'Soft-phone calls', 'Listening history']);
     expect(labels(input('viewer'))).toEqual([]);
     expect(labels(input('account_admin', { flagsOff: ['agency_softphone_enabled'] }))).toEqual(['Campaigns', 'Live calls', 'Listening history']);
   });
@@ -134,7 +135,9 @@ describe('the tab bar of a grouped page', () => {
   it('is not shown when only one tab is left', () => {
     // Soft-phone calls floors at agency.supervise and needs its flag.
     expect(tabBarFor('/agency/campaigns', input('viewer'))).toBeNull();
-    expect(tabBarFor('/agency/campaigns', input('account_admin', { flagsOff: ['agency_softphone_enabled', 'agency_live_listen_enabled'] }))).toBeNull();
+    // With both flags off, Campaigns and the Listening history are left: still a bar of two.
+    expect(tabBarFor('/agency/listening-history', input('account_admin', { flagsOff: ['agency_softphone_enabled', 'agency_live_listen_enabled'] }))?.tabs.map((t) => t.label))
+      .toEqual(['Campaigns', 'Listening history']);
     // The summary floors at agency.supervise.
     expect(tabBarFor('/agency/inbound/missed', input('viewer'))).toBeNull();
     expect(tabBarFor('/agency/analytics', input('account_admin', { flagsOff: ['agency_reports_enabled'] }))).toBeNull();

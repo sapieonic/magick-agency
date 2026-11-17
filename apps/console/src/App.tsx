@@ -717,10 +717,11 @@ export default function App() {
                     element={<RequireFlag flag="agency_live_listen_enabled"><LiveCallsPage /></RequireFlag>}
                   />
                   {/* The account's Listening history (`docs/listening.md` §12, LS19): `agency.supervise`
-                      (the page checks; the server refuses below it) behind the listening flag. */}
+                      (the page checks; the server refuses below it) and NOT the listening flag
+                      (LS19, amended 2026-11-17): turning listening off does not hide past listens. */}
                   <Route
                     path="listening-history"
-                    element={<RequireFlag flag="agency_live_listen_enabled"><ListenHistoryPage /></RequireFlag>}
+                    element={<ListenHistoryPage />}
                   />
                   <Route
                     path="campaigns/:id/calls/live"

@@ -93,7 +93,8 @@ const ROUTES: RouteRule[] = [
   [new RegExp(`^/agency/campaigns/${ID}$`), (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   [new RegExp(`^/agency/campaigns/${ID}/calls/live$`), (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
   [/^\/agency\/live$/, (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
-  [/^\/agency\/listening-history$/, (r) => dialer(r) && r.flags.has('agency_live_listen_enabled') && can(r, 'agency.supervise')],
+  // Not behind the listening flag (LS19, amended 2026-11-17): past listens stay visible.
+  [/^\/agency\/listening-history$/, (r) => dialer(r) && can(r, 'agency.supervise')],
   [/^\/agency\/softphone$/, (r) => dialer(r) && r.flags.has('agency_softphone_enabled') && can(r, 'agency.supervise')],
   [/^\/agency\/inbound\/missed$/, (r) => dialer(r) && r.missed && can(r, 'agency.campaigns.read')],
   [/^\/agency\/inbound\/summary$/, (r) => dialer(r) && r.missed && can(r, 'agency.supervise')],

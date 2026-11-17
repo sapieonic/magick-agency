@@ -98,9 +98,10 @@ describe('the pages', () => {
     expect(live?.detail).toBe('Campaigns');
   });
 
-  it('offers the Listening history to a supervisor with the listening flag on, found by "listened" and "monitoring"', () => {
+  it('offers the Listening history to a supervisor whether listening is on or off, found by "listened" and "monitoring"', () => {
+    // LS19, amended 2026-11-17: turning listening off does not hide past listens.
     const off = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_live_listen_enabled' });
-    expect(titles(pageResults([], off))).not.toContain('Listening history');
+    expect(titles(pageResults([], off))).toContain('Listening history');
     expect(titles(pageResults([], ALL_ON('viewer')))).not.toContain('Listening history');
     for (const q of ['listening history', 'who listened', 'listened', 'monitoring log']) {
       expect(titles(pageResults(searchTokens(q), ALL_ON('account_admin'))), q).toContain('Listening history');

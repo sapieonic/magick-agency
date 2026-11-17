@@ -7,9 +7,9 @@ import type { AgencyListenHistoryQuery, AgencyListenHistoryResponse } from '../t
 
 /**
  * The account's listening history (`docs/listening.md` §12, LS19; contracts
- * `api/agency/listen-history.ts`), under `/proxy/agency` with the tenant and account headers. Both
- * routes answer `403 feature_disabled` while `agency_live_listen_enabled` is off for the account
- * (final) and `503 listen_unavailable` when the flag cannot be read (worth asking again).
+ * `api/agency/listen-history.ts`), under `/proxy/agency` with the tenant and account headers.
+ * Gated by `agency.supervise` alone: neither route reads the listening flag (LS19, amended
+ * 2026-11-17), so turning listening off does not hide past listens.
  */
 
 const LISTEN_HISTORY_BASE = `${API_BASE}/proxy/agency/listen-history`;

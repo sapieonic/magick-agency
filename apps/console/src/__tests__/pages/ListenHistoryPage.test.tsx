@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { render, screen, act, fireEvent, cleanup, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { historyEntry } from '../helpers/listenHistory';
@@ -6,9 +9,11 @@ import { historyEntry } from '../helpers/listenHistory';
 /**
  * The account's Listening history (`docs/listening.md` §12, LS19) at `/agency/listening-history`:
  * every column in words, the link to the call where there is one, the filters as the route's
- * query, keyset paging, the CSV with the same filters and its truncation, and the states: a
- * refusal that is final (`feature_disabled`), one that is not (`503 listen_unavailable`, read
- * again on its own), empty, loading and a reader below `agency.supervise`.
+ * query, keyset paging, the CSV with the same filters and its truncation, and the states: a 403
+ * (the permission lost) said and not asked again, any other failure with Try again, empty, loading
+ * and a reader below `agency.supervise`. The listening flag is off throughout (the flags mock turns
+ * on only the soft phone's): the history does not depend on it (LS19, amended 2026-11-17), and
+ * its route in `App.tsx` is not behind it.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -299,10 +304,10 @@ describe('/agency/listening-history', () => {
 });
 
 describe('refusals', () => {
-  it('listening turned off for the account (403 feature_disabled) is final: said, not asked again', async () => {
-    mocks.listListenHistory.mockRejectedValue(Object.assign(new Error('off'), { statusCode: 403, details: { code: 'feature_disabled' } }));
+  it('a 403 (the permission was taken away) says the history is for supervisors: final, not asked again', async () => {
+    mocks.listListenHistory.mockRejectedValue(Object.assign(new Error('no'), { statusCode: 403, details: { message: 'Insufficient permissions' } }));
     await renderPage();
-    expect(screen.getByText('Listening is turned off for this account.')).toBeTruthy();
+    expect(screen.getByText('The listening history is for supervisors. Ask an account admin if you need to see it.')).toBeTruthy();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
@@ -310,34 +315,28 @@ describe('refusals', () => {
     expect(screen.queryByTestId('listen-history-export')).toBeNull();
   });
 
-  it('the flag could not be read (503 listen_unavailable): says so and asks again by itself', async () => {
-    mocks.listListenHistory.mockRejectedValueOnce(
-      Object.assign(new Error('unavailable'), { statusCode: 503, details: { code: 'listen_unavailable' } }),
-    );
+  it('there is no "listening is turned off" state: the history never depends on the flag', async () => {
     await renderPage();
-    expect(screen.getByTestId('listen-history-error').textContent).toContain('Could not load the listening history. Retrying…');
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    expect(mocks.listListenHistory).toHaveBeenCalledTimes(2);
-    expect(screen.queryByTestId('listen-history-error')).toBeNull();
+    expect(screen.queryByText('Listening is turned off for this account.')).toBeNull();
     expect(screen.getByTestId('listen-history-row-l-1')).toBeTruthy();
   });
 
-  it('any other failure says so with Try again, and does not loop', async () => {
-    mocks.listListenHistory.mockRejectedValueOnce(Object.assign(new Error('boom'), { statusCode: 500 }));
-    await renderPage();
-    expect(screen.getByTestId('listen-history-error').textContent).toContain('Could not load the listening history.');
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
+  for (const status of [500, 503]) {
+    it(`any other failure (${status}) says so with Try again, and does not loop`, async () => {
+      mocks.listListenHistory.mockRejectedValueOnce(Object.assign(new Error('boom'), { statusCode: status }));
+      await renderPage();
+      expect(screen.getByTestId('listen-history-error').textContent).toContain('Could not load the listening history.');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(mocks.listListenHistory).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.click(within(screen.getByTestId('listen-history-error')).getByRole('button'));
+      });
+      expect(mocks.listListenHistory).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId('listen-history-row-l-1')).toBeTruthy();
     });
-    expect(mocks.listListenHistory).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      fireEvent.click(within(screen.getByTestId('listen-history-error')).getByRole('button'));
-    });
-    expect(mocks.listListenHistory).toHaveBeenCalledTimes(2);
-    expect(screen.getByTestId('listen-history-row-l-1')).toBeTruthy();
-  });
+  }
 
   it('a reader below agency.supervise reads nothing', async () => {
     mocks.role = 'operator';
@@ -388,5 +387,16 @@ describe('the CSV', () => {
     });
     expect(mocks.downloadBlob).not.toHaveBeenCalled();
     expect(mocks.showErrorToast).toHaveBeenCalledWith(refusal, 'Could not export the listening history.');
+  });
+});
+
+describe('the route', () => {
+  it('is not behind the listening flag in App.tsx (LS19, amended 2026-11-17)', () => {
+    const srcRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+    const app = readFileSync(join(srcRoot, 'App.tsx'), 'utf8');
+    const route = /<Route\s+path="listening-history"[\s\S]*?\/>/.exec(app)?.[0];
+    expect(route).toBeDefined();
+    expect(route).toContain('<ListenHistoryPage />');
+    expect(route).not.toContain('RequireFlag');
   });
 });

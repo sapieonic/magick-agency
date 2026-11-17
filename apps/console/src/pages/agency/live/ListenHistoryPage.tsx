@@ -13,11 +13,10 @@ import { usePermission } from '../../../hooks/usePermission';
 import { downloadListenHistoryCsv, listListenHistory } from '../../../api/listenHistory';
 import { listTenantMembers } from '../../../api/tenants';
 import { downloadBlob } from '../../../utils/agency/insights/csv';
-import { errorCode, errorStatus } from '../../../utils/agencyErrors';
+import { errorStatus } from '../../../utils/agencyErrors';
 import { formatSpineTimestamp } from '../../../utils/agencySpineCopy';
 import {
   LISTEN_HISTORY_COPY,
-  LISTEN_REFUSAL_FALLBACK,
   listenHistoryCountLabel,
   listenHistoryOpenLabel,
   listenHistoryTruncatedNotice,
@@ -47,21 +46,16 @@ import styles from './ListenHistoryPage.module.css';
 /** One page of visits. */
 export const LISTEN_HISTORY_PAGE_SIZE = 50;
 
-/** How long after a `503 listen_unavailable` (the flag could not be read) the page asks again. */
-export const LISTEN_HISTORY_RETRY_MS = 5_000;
-
 /**
- * `final`: listening is turned off for the account (`403 feature_disabled`), or the reader may
- * not read it (another 403): said, never asked again. `unavailable`: the flag could not be read
- * (`503 listen_unavailable`), asked again on its own. `failed`: anything else, with Try again.
+ * `forbidden`: the reader may not read it (a 401 or 403: the permission was taken away), said,
+ * never asked again. `failed`: anything else, with Try again. There is no "listening is off"
+ * state: the history does not depend on the listening flag (LS19, amended 2026-11-17).
  */
-type Failure = { kind: 'feature_disabled' } | { kind: 'forbidden' } | { kind: 'unavailable' } | { kind: 'failed' };
+type Failure = { kind: 'forbidden' } | { kind: 'failed' };
 
 function failureOf(err: unknown): Failure {
   const status = errorStatus(err);
-  if (status === 403 && errorCode(err) === 'feature_disabled') return { kind: 'feature_disabled' };
   if (status === 401 || status === 403) return { kind: 'forbidden' };
-  if (status === 503) return { kind: 'unavailable' };
   return { kind: 'failed' };
 }
 
@@ -72,8 +66,9 @@ function failureOf(err: unknown): Failure {
  * "Withheld"), when, for how long, how it ended in words, and the call's page where it has one.
  * Filters for supervisor, agent and date range; keyset paging; the CSV with the same filters.
  *
- * Behind the listening flag (the route's `RequireFlag`, LS1) on top of the `/agency` subtree's
- * gates; a reader below `agency.supervise` reads nothing (the server refuses them too).
+ * Not behind the listening flag (LS19, amended 2026-11-17): past listens stay visible when listening
+ * is turned off. On top of the `/agency` subtree's gates, a reader below `agency.supervise` reads
+ * nothing (the server refuses them too).
  */
 export default function ListenHistoryPage() {
   const { tenantId, accountId } = useTenant();
@@ -132,14 +127,6 @@ export default function ListenHistoryPage() {
   useEffect(() => {
     void load(applied);
   }, [load, applied]);
-
-  // `503 listen_unavailable` is an outage of the flag store, not an answer: ask again shortly.
-  const unavailable = failure?.kind === 'unavailable';
-  useEffect(() => {
-    if (!unavailable) return;
-    const timer = setTimeout(() => void load(applied), LISTEN_HISTORY_RETRY_MS);
-    return () => clearTimeout(timer);
-  }, [unavailable, load, applied]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore || !tenantId || !accountId) return;
@@ -228,16 +215,7 @@ export default function ListenHistoryPage() {
       </div>
     );
   }
-  if (failure?.kind === 'feature_disabled') {
-    return (
-      <div className={styles.page}>
-        {header(false)}
-        <EmptyState icon={<Headphones size={22} />} title={LISTEN_HISTORY_COPY.title} description={LISTEN_REFUSAL_FALLBACK.featureDisabled} />
-      </div>
-    );
-  }
-
-  const failed = failure?.kind === 'failed' || unavailable;
+  const failed = failure?.kind === 'failed';
 
   return (
     <div className={styles.page}>
@@ -336,10 +314,7 @@ export default function ListenHistoryPage() {
 
       {failed ? (
         <div data-testid="listen-history-error">
-          <ErrorAlert
-            message={unavailable ? LISTEN_HISTORY_COPY.unavailable : LISTEN_HISTORY_COPY.failed}
-            onRetry={unavailable ? undefined : () => void load(applied)}
-          />
+          <ErrorAlert message={LISTEN_HISTORY_COPY.failed} onRetry={() => void load(applied)} />
         </div>
       ) : null}
 

@@ -5,9 +5,10 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 /**
  * The listening history's public layer (`proxy-agency-listen-history.routes.ts`,
  * docs/listening.md §12): the REAL `requirePermission` over the real matrix and the app-wide error
- * mask, every dependency faked through `deps`. The guard order (permission, then the consent
- * flag's `403 feature_disabled`, a flag store outage `503 listen_unavailable` that keeps its code
- * through the mask), the query refused at the edge (malformed ids, unknown keys, an inverted
+ * mask, every dependency faked through `deps`. The guard is the permission alone (LS19 as amended
+ * 2026-11-17): the listening flag is never read, so listening off or a flag store outage still
+ * answers the history (the flag reader is mocked off and failing to prove it; re-adding the gate goes
+ * red). The query refused at the edge (malformed ids, unknown keys, an inverted
  * range) before anything is read, the scope and filters forwarded, names and masking, the CSV's
  * drain across pages, its row ceiling and its audit row, and a refused page answering its own
  * status with no file and no audit row. The SQL is pinned on Postgres by
@@ -16,6 +17,12 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 
 vi.mock('../../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: async () => {} }));
 vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({ tenantContextMiddleware: async () => {} }));
+// The listening flags, as the live list reads them: the history must not (LS19, amended 2026-11-17).
+const flags = vi.hoisted(() => ({ read: vi.fn() }));
+vi.mock('../../../../src/agency/listen/listen-access.js', async (orig) => ({
+  ...(await orig<typeof import('../../../../src/agency/listen/listen-access.js')>()),
+  readListenFlags: flags.read,
+}));
 vi.mock('@magick-agency/contracts/api/agency/listen-history', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/contracts/api/agency/listen-history')>()),
   // A small ceiling, so the truncation case drains a few pages, not ten thousand rows.
@@ -52,14 +59,14 @@ let role: MembershipRole;
 let app: FastifyInstance;
 let calls: CoreCallRequest[];
 let pages: CoreCallResult[];
-let deps: ListenHistoryRouteDeps & { audit: ReturnType<typeof vi.fn>; listenFlags: ReturnType<typeof vi.fn> };
+let deps: ListenHistoryRouteDeps & { audit: ReturnType<typeof vi.fn> };
 
 beforeEach(async () => {
   role = 'account_admin';
   calls = [];
   pages = [json(200, { entries: [entry()], next_cursor: null })];
+  flags.read.mockReset().mockResolvedValue({ enabled: false, unrecordedAllowed: false });
   deps = {
-    listenFlags: vi.fn(async () => ({ enabled: true, unrecordedAllowed: true })),
     callCore: vi.fn(async (req: CoreCallRequest) => {
       calls.push(req);
       return pages.length > 1 ? pages.shift()! : pages[0]!;
@@ -86,7 +93,7 @@ const get = (url: string) => app.inject({ method: 'GET', url });
 const BOTH = ['/proxy/agency/listen-history', '/proxy/agency/listen-history.csv'];
 
 describe('the guards', () => {
-  it('agents, operators and viewers are refused by RBAC; the flag is not read', async () => {
+  it('agents, operators and viewers are refused by RBAC; nothing is read', async () => {
     for (const r of ['agent', 'operator', 'viewer'] as MembershipRole[]) {
       role = r;
       for (const url of BOTH) {
@@ -95,22 +102,20 @@ describe('the guards', () => {
         expect(res.json().message).toMatch(/^Insufficient permissions/);
       }
     }
-    expect(deps.listenFlags).not.toHaveBeenCalled();
-  });
-
-  it('the consent flag off: 403 feature_disabled; nothing read', async () => {
-    deps.listenFlags.mockResolvedValue({ enabled: false, unrecordedAllowed: true });
-    for (const url of BOTH) expect((await get(url)).json().code).toBe('feature_disabled');
     expect(calls).toEqual([]);
   });
 
-  it('the flags cannot be read: 503 listen_unavailable through the mask (the console retries), nothing read', async () => {
-    deps.listenFlags.mockRejectedValue(new Error('flag store down'));
-    for (const url of BOTH) {
-      const res = await get(url);
-      expect([res.statusCode, res.json().code]).toEqual([503, 'listen_unavailable']);
-    }
-    expect(calls).toEqual([]);
+  it('listening turned off for the account: the history still answers, and the flag is never read (LS19, amended)', async () => {
+    // beforeEach has the flag off.
+    for (const url of BOTH) expect((await get(url)).statusCode, url).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(flags.read).not.toHaveBeenCalled();
+  });
+
+  it('a flag store outage does not touch the history: 200, not 503', async () => {
+    flags.read.mockRejectedValue(new Error('flag store down'));
+    for (const url of BOTH) expect((await get(url)).statusCode, url).toBe(200);
+    expect(flags.read).not.toHaveBeenCalled();
   });
 
   it('a malformed id, an unknown key, an inverted range or an oversize page is a 400 before anything is read', async () => {

@@ -225,13 +225,15 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         to: '/agency/live',
         gate: agencyGate({ permission: 'agency.supervise', flags: [LIVE_LISTEN_FLAG] }),
       },
-      /* `docs/listening.md` §12 (LS19): the account's listens, gated as the history's routes are
-         (`agency.supervise` and the listening flag). */
+      /* `docs/listening.md` §12 (LS19): the account's listens, gated as the history's routes are:
+         `agency.supervise` alone, whether listening is on or off (LS19, amended 2026-11-17), so
+         turning listening off does not hide past listens. With Live calls hidden it sits beside
+         Campaigns, which every supervisor has. */
       {
         id: 'listen-history',
         label: 'Listening history',
         to: '/agency/listening-history',
-        gate: agencyGate({ permission: 'agency.supervise', flags: [LIVE_LISTEN_FLAG] }),
+        gate: agencyGate({ permission: 'agency.supervise' }),
       },
     ],
   },
