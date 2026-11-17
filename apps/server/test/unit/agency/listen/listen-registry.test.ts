@@ -377,6 +377,22 @@ describe('listenAccessCheck', () => {
     expect(await listenAccessCheck(deps())([s({})])).toEqual(none);
   });
 
+  it('starts every distinct read before awaiting any, and reads each once', async () => {
+    const pending: Array<() => void> = [];
+    const memberships = vi.fn(() => new Promise<MembershipRecord[]>((resolve) => {
+      pending.push(() => resolve([membership({ account_id: 'a1' })]));
+    }));
+    const d = deps({ memberships });
+    const checked = listenAccessCheck(d)([s({ listenId: 'l1' }), s({ listenId: 'l2', listenerUserId: 'u2' }), s({ listenId: 'l3' })]);
+    await Promise.resolve();
+    await Promise.resolve();
+    // FALSIFIED by awaiting each subject's reads before starting the next's.
+    expect(memberships).toHaveBeenCalledTimes(2);
+    expect(d.flags).toHaveBeenCalledTimes(1);
+    for (const release of pending) release();
+    expect(await checked).toEqual(none);
+  });
+
   it('ends a listen whose supervisor fell below account_admin, lost the membership, or holds only another account', async () => {
     const revoked = verdict(['l']);
     expect(await listenAccessCheck(deps({ memberships: async () => [membership({ account_id: 'a1', role: 'operator' })] }))([s({})])).toEqual(revoked);

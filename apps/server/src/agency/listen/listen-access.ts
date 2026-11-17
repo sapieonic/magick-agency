@@ -78,12 +78,14 @@ export function listenAccessCheck(deps: ListenAccessDeps = defaultListenAccessDe
       }
       return hit;
     };
+    // Every distinct read starts at once; then each subject is decided in order.
+    const reads = subjects.map((s) => Promise.allSettled([
+      once(members, `${s.listenerUserId}:${s.tenantId}`, () => deps.memberships(s.listenerUserId, s.tenantId)),
+      once(flags, `${s.tenantId}:${s.accountId}`, () => deps.flags(s.tenantId, s.accountId)),
+    ]));
     const verdict: ListenAccessVerdict = { revoked: new Set(), unchecked: new Set() };
-    for (const s of subjects) {
-      const [mine, on] = await Promise.allSettled([
-        once(members, `${s.listenerUserId}:${s.tenantId}`, () => deps.memberships(s.listenerUserId, s.tenantId)),
-        once(flags, `${s.tenantId}:${s.accountId}`, () => deps.flags(s.tenantId, s.accountId)),
-      ]);
+    for (const [i, s] of subjects.entries()) {
+      const [mine, on] = await reads[i]!;
       // What could be read and says no is a revocation, whatever could not be read.
       const refused = (mine.status === 'fulfilled' && !membershipMayListen(mine.value, s.accountId))
         || (on.status === 'fulfilled' && (!on.value.enabled || (!s.recording && !on.value.unrecordedAllowed)));

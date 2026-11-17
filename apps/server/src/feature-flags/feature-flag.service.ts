@@ -246,17 +246,7 @@ export class FeatureFlagService {
       }
     };
 
-    return {
-      isEnabled: (flag: FlagDefinition): boolean => {
-        if (flag.type !== 'boolean') {
-          throw new Error(
-            `isEnabled called on non-boolean flag '${flag.key}' (type ${flag.type}); use getValue`,
-          );
-        }
-        return resolve(flag) === true;
-      },
-      getValue: <T,>(flag: FlagDefinition<T>): T => resolve(flag) as T,
-    };
+    return this.snapshotFrom(resolve);
   }
 
   /**
@@ -289,6 +279,11 @@ export class FeatureFlagService {
       this.recordEval(flag, resolved.value, resolved.source);
       return resolved.value;
     };
+    return this.snapshotFrom(resolve);
+  }
+
+  /** The reader over one snapshot's `resolve` ({@link snapshot}'s and {@link strictSnapshot}'s). */
+  private snapshotFrom(resolve: (flag: FlagDefinition) => unknown): FlagSnapshot {
     return {
       isEnabled: (flag: FlagDefinition): boolean => {
         if (flag.type !== 'boolean') {
