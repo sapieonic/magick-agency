@@ -7,8 +7,8 @@
 // The tap never touches the call:
 //  - it owns its codecs (the session's keep FIR history and are called once per frame, by the
 //    relay only). A-law in (a VoiceLink customer, an `alaw8` agent) is copied behind the tag
-//    byte; a μ-law customer (Plivo) is mapped to A-law one byte at a time by a 256-entry table
-//    (both 8 kHz, so nothing to resample: LS17); any other carrier goes through its own carrier
+//    byte; a μ-law customer (Plivo) is mapped to A-law one byte at a time by a 256-entry table,
+//    each code decoded and re-encoded (both 8 kHz, so nothing to resample: LS17); any other carrier goes through its own carrier
 //    codec to PCM16 16 kHz and its own A-law encoder; a `pcm16` agent through its own A-law
 //    encoder. Each leg is cut into 20 ms frames by its own `AlawFramer`. A transcoded leg's first
 //    output is short of a whole frame by the resampler's look-ahead (152 bytes for 20 ms of
@@ -44,9 +44,13 @@ const log = createChildLogger({ component: 'listen-tap' });
 export const LISTEN_TAP_LOG_INTERVAL_MS = 10_000;
 
 /**
- * G.711 μ-law → A-law, one code to one (LS17): each μ-law code decoded to its linear sample and
- * encoded as A-law by the bridge's own encoder, exactly what the codec path would do to that
- * sample without its two resampling filters. Built once at load; read-only.
+ * μ-law → A-law, one code to one (LS17 a): each μ-law code decoded to its 16-bit linear sample and
+ * re-encoded as A-law by the bridge's own encoder, exactly what the bridge's μ-law path does to
+ * that sample (for the agent) without its two resampling filters. Not G.711's own conversion table
+ * bit for bit: that one differs on 44 codes by one A-law step (it puts the two laws' overload at
+ * the same level, where a 16-bit decode puts μ-law at exactly half A-law's scale) and keeps the
+ * sign of μ-law's negative zero (0x7F → 0x55, here 0xD5). Inaudible, and a listener hears the
+ * agent's quantisation (`webrtc-bridge-listen-tap.test.ts` pins both). Built once at load; read-only.
  */
 export const MULAW_TO_ALAW: Uint8Array = (() => {
   const linear = decodeMulaw(Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
