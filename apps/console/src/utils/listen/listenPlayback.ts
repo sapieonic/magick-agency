@@ -55,6 +55,8 @@ interface LegGraph {
   /** Context time the next buffer starts at. 0: nothing queued (the next frame re-bases). */
   nextTime: number;
   sources: Set<AudioBufferSourceNode>;
+  /** Every queued source's `onended`: it leaves {@link sources}. One per leg, not one per frame. */
+  ended: (event: Event) => void;
   /** Client ms of the leg's last frame; null before its first. */
   lastFrameAt: number | null;
   /** Scratch for the meter. */
@@ -142,12 +144,16 @@ export class ListenPlaybackEngine {
       // The meter reads before the mute, so a muted leg still shows that someone is talking.
       analyser.connect(gain);
       gain.connect(this.master);
+      const sources = new Set<AudioBufferSourceNode>();
       graph = {
         decoder: new AlawDownlinkDecoder(),
         analyser,
         gain,
         nextTime: 0,
-        sources: new Set(),
+        sources,
+        ended: (event) => {
+          sources.delete(event.target as AudioBufferSourceNode);
+        },
         lastFrameAt: null,
         scratch: new Float32Array(analyser.fftSize),
       };
@@ -172,9 +178,8 @@ export class ListenPlaybackEngine {
     // Too far ahead (a burst after a stall): drop what is queued rather than play the call late,
     // and never schedule over it, so two moments of the call are never heard at once.
     if (graph.nextTime - t > LISTEN_MAX_AHEAD_MS / 1000) this.flushLeg(graph, false);
-    const samples = graph.decoder.decode(frame);
-    const buffer = ctx.createBuffer(1, samples.length, LISTEN_PLAYBACK_RATE);
-    buffer.getChannelData(0).set(samples);
+    const buffer = ctx.createBuffer(1, frame.length * 2, LISTEN_PLAYBACK_RATE);
+    graph.decoder.decodeInto(frame, buffer.getChannelData(0));
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(graph.analyser);
@@ -183,19 +188,13 @@ export class ListenPlaybackEngine {
     source.start(start);
     graph.nextTime = start + buffer.duration;
     graph.sources.add(source);
-    source.onended = () => {
-      graph.sources.delete(source);
-    };
+    source.onended = graph.ended;
   }
 
   setMuted(leg: AgencyListenLeg, muted: boolean): void {
     this.muted[leg] = muted;
     const graph = this.legs[leg];
     if (graph) graph.gain.gain.value = muted ? 0 : 1;
-  }
-
-  isMuted(leg: AgencyListenLeg): boolean {
-    return this.muted[leg];
   }
 
   /** The master volume, 0–1. */

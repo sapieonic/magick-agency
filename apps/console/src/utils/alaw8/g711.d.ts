@@ -42,4 +42,5 @@ export class Pcm16UplinkFramer {
 export class AlawDownlinkDecoder {
   reset(): void;
   decode(bytes: Uint8Array): Float32Array;
+  decodeInto(bytes: Uint8Array, out: Float32Array): number;
 }

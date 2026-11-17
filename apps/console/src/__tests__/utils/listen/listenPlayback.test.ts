@@ -30,7 +30,7 @@ class FakeContext {
   currentTime = 0;
   destination: FakeNode = node('destination');
   gains: FakeNode[] = [];
-  started: { at: number; samples: Float32Array; target: FakeNode; duration: number; stoppedAt: number | null }[] = [];
+  started: { at: number; samples: Float32Array; target: FakeNode; duration: number; stoppedAt: number | null; end: () => void }[] = [];
   stopped = 0;
   resumes = 0;
   suspends = 0;
@@ -64,11 +64,19 @@ class FakeContext {
     const source = {
       ...node('source'),
       buffer: null as null | { getChannelData: () => Float32Array },
-      onended: null as null | (() => void),
+      onended: null as null | ((event: Event) => void),
       entry: null as null | FakeContext['started'][number],
       start(at: number) {
         const samples = source.buffer!.getChannelData();
-        source.entry = { at, samples, target: source.connections[0]!, duration: samples.length / LISTEN_PLAYBACK_RATE, stoppedAt: null };
+        source.entry = {
+          at,
+          samples,
+          target: source.connections[0]!,
+          duration: samples.length / LISTEN_PLAYBACK_RATE,
+          stoppedAt: null,
+          // The browser firing `ended` once the buffer has played out.
+          end: () => source.onended?.({ target: source } as unknown as Event),
+        };
         ctx.started.push(source.entry);
       },
       stop() {
@@ -217,7 +225,6 @@ describe('the graph: meter before mute, both legs into one master', () => {
     const legGain = (i: number) => ctx.started[i]!.target.connections[0]!.gain!.value;
     expect(legGain(0)).toBe(0);
     expect(legGain(1)).toBe(1);
-    expect(e.isMuted('agent')).toBe(true);
     e.setMuted('agent', false);
     expect(legGain(0)).toBe(1);
   });
@@ -405,6 +412,17 @@ describe('silence, blocking, reset and close', () => {
     expect(ctx.stopped).toBe(3);
     e.push('customer', tone(1)[0]!);
     expect(ctx.started[3]!.at).toBeCloseTo(LISTEN_CUSHION_MS / 1000, 9);
+  });
+
+  it('a buffer that played out leaves the queue: a reset stops only what is still queued', () => {
+    const e = engine();
+    tone(3).forEach((f) => e.push('customer', f));
+    const ctx = contexts[0]!;
+    ctx.started[0]!.end();
+    ctx.started[1]!.end();
+    e.reset();
+    expect(ctx.stopped).toBe(1);
+    expect(ctx.started[2]!.stoppedAt).not.toBeNull();
   });
 
   it('close releases the context; the engine can start again', () => {
