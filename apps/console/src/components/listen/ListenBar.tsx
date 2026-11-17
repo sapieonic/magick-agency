@@ -19,8 +19,7 @@ import {
   muteLabel,
 } from '../../utils/listen/listenCopy';
 import { liveCallPagePath } from '../../utils/listen/liveCallsTable';
-import type { ListenSessionState, ListenTarget } from '../../utils/listen/listenSessionReducer';
-import type { ListenPlaybackEngine } from '../../utils/listen/listenPlayback';
+import { listenBarVisible, type ListenSessionState, type ListenTarget } from '../../utils/listen/listenSessionReducer';
 import type { AgencyListenLeg } from '../../types/live-calls';
 import { useListen } from './ListenProvider';
 import styles from './ListenBar.module.css';
@@ -43,7 +42,7 @@ export function ListenBar() {
   const compact = useMediaQuery('(max-width: 640px)');
   const barRef = useRef<HTMLElement>(null);
   const state = listen?.state ?? null;
-  const visible = Boolean(state && state.phase !== 'idle' && state.target);
+  const visible = state !== null && listenBarVisible(state);
   const phase = state?.phase ?? 'idle';
   const callId = state?.target?.callId ?? null;
   const lastCallId = useRef<string | null>(null);
@@ -216,9 +215,7 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
         <div className={styles.controls}>
           {state.end?.kind === 'call_ended' ? openCall : null}
           {unverified ? <RetryButton /> : null}
-          <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
-            {LISTEN_BAR_COPY.dismiss}
-          </button>
+          <DismissButton />
         </div>
       </div>
     );
@@ -236,8 +233,8 @@ function FullRow({ state, target }: { state: ListenSessionState; target: ListenT
         </span>
       </div>
       <div className={styles.meters} aria-label={LISTEN_BAR_COPY.levels} role="group">
-        <Meter leg="agent" engine={listen.playback.engine} live={state.phase === 'live'} silent={state.agentSilent} />
-        <Meter leg="customer" engine={listen.playback.engine} live={state.phase === 'live'} silent={false} />
+        <Meter leg="agent" live={state.phase === 'live'} silent={state.agentSilent} />
+        <Meter leg="customer" live={state.phase === 'live'} silent={false} />
       </div>
       <div className={styles.controls}>
         <label className={styles.volume}>
@@ -289,6 +286,16 @@ function StopOrLost({ state, compact = false }: { state: ListenSessionState; com
   );
 }
 
+/** Dismiss: puts away the bar of a listen that has ended. */
+function DismissButton() {
+  const listen = useListen()!;
+  return (
+    <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
+      {LISTEN_BAR_COPY.dismiss}
+    </button>
+  );
+}
+
 /** Try again: after "Connection lost", and after a listen whose access could not be checked (LS21). */
 function RetryButton() {
   const listen = useListen()!;
@@ -304,15 +311,12 @@ function RetryButton() {
  * The row wraps rather than squeezes: an ended listen's reason is read in full.
  */
 function CompactRow({ state, target }: { state: ListenSessionState; target: ListenTarget }) {
-  const listen = useListen()!;
   if (state.phase === 'ended') {
     return (
       <div className={styles.row}>
         <span className={styles.endedLine} role="status" data-testid="listen-ended-line">{endedLine(state, true)}</span>
         {state.end?.kind === 'unverified' ? <RetryButton /> : null}
-        <button type="button" className="btn-secondary" onClick={() => listen.controller.dismiss()} data-testid="listen-dismiss">
-          {LISTEN_BAR_COPY.dismiss}
-        </button>
+        <DismissButton />
       </div>
     );
   }
@@ -327,9 +331,17 @@ function CompactRow({ state, target }: { state: ListenSessionState; target: List
   );
 }
 
-/** A leg's level meter and its mute. The fill is moved by a timer, never by React state. */
-function Meter({ leg, engine, live, silent }: { leg: AgencyListenLeg; engine: ListenPlaybackEngine; live: boolean; silent: boolean }) {
+/** How often a meter reads its leg's level while live (ms). */
+const METER_INTERVAL_MS = 100;
+
+/**
+ * A leg's level meter and its mute. The fill is moved on animation frames (so not at all in a
+ * hidden tab), at most every {@link METER_INTERVAL_MS} and only when its width changes, never by
+ * React state.
+ */
+function Meter({ leg, live, silent }: { leg: AgencyListenLeg; live: boolean; silent: boolean }) {
   const listen = useListen()!;
+  const { engine } = listen.playback;
   const fillRef = useRef<HTMLSpanElement>(null);
   const muted = listen.playback.muted[leg];
 
@@ -340,10 +352,16 @@ function Meter({ leg, engine, live, silent }: { leg: AgencyListenLeg; engine: Li
       fill.style.width = '0%';
       return;
     }
-    const timer = setInterval(() => {
-      fill.style.width = `${Math.round(engine.level(leg) * 100)}%`;
-    }, 100);
-    return () => clearInterval(timer);
+    let readAt = -Infinity;
+    let frame = requestAnimationFrame(function paint(now) {
+      if (now - readAt >= METER_INTERVAL_MS) {
+        readAt = now;
+        const width = `${Math.round(engine.level(leg) * 100)}%`;
+        if (fill.style.width !== width) fill.style.width = width;
+      }
+      frame = requestAnimationFrame(paint);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [engine, leg, live]);
 
   const label = leg === 'agent' ? LISTEN_BAR_COPY.agent : LISTEN_BAR_COPY.customer;
