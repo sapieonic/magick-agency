@@ -992,7 +992,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-borrowed-socket-soak.test.ts` | 2 |
 | `apps/server/test/unit/core/webrtc-bridge-credential-hangup.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
-| `apps/server/test/unit/core/webrtc-bridge-listen-tap.test.ts` (the listen tap, docs/listening.md LS8, LS17: both legs byte for byte and framed; the μ-law customer by table, a frame out per frame in, the table bit for bit and against the codec path; the tap's own codecs, the session's once per frame, transcoded legs primed carry-free; no listener, no extra call; the tail after the relay's write and the dwell unchanged; the listener's soft and hard limits and 10 s of drops; fault injection (codec, encoder, framer, sink, close, a socket that errors or never drains); the fault budget, failed messages counted in 20 ms frames; `call_ended` as the hangup starts and nothing from either leg after it (LS15 f); the re-attach keeping the tap and starting the agent's leg afresh; the refusals; the budget through the seam, the default without it, no agency config read) | 48 |
+| `apps/server/test/unit/core/webrtc-bridge-listen-tap.test.ts` (the listen tap, docs/listening.md LS8, LS17: both legs byte for byte and framed; the μ-law customer by table, a frame out per frame in, the table bit for bit and against the codec path; the tap's own codecs, the session's once per frame, transcoded legs primed carry-free; no listener, no extra call; the tail after the relay's write and the dwell unchanged; the listener's soft and hard limits and 10 s of drops; fault injection (codec, encoder, framer, sink, close, a socket that errors or never drains); the fault budget, failed messages counted in 20 ms frames; `call_ended` as the hangup starts and nothing from either leg after it (LS15 f); the re-attach keeping the tap and starting the agent's leg afresh; the refusals; the budget through the seam, the default without it, no agency config read) | 50 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` (with `openListenTap`'s refusals and handle through a VoiceLink call's life, closed as the hangup starts) | 13 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline, a `no_capacity` call recording nothing; `playClipSequenceThenHangUp`) | 13 |
@@ -1045,6 +1045,7 @@ Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/no
 | `apps/server/test/unit/db/repositories/notification-preference.repository.test.ts` | 27 |
 | `apps/server/test/unit/db/repositories/telephony-provider.repository.test.ts` | 6 |
 | `apps/server/test/unit/db/agency-repository-sibling-imports.test.ts` (no file in `repositories/agency/` imports a sibling `*.repository.js`: SQL two files share lives in a leaf such as `contact-unclaim-sql.ts`) | 3 |
+| `apps/server/test/unit/db/contact-name-context-sql.test.ts` (`contactNameContextSql`: the one SQL spelling of a contact's name columns, exactly `matchName`'s) | 2 |
 
 ### `apps/server/src/dnc/`
 
@@ -1308,6 +1309,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/trace-context.test.ts` | 4 |
 | `apps/server/test/unit/utils/redact-url.test.ts` | 23 |
 | `apps/server/test/unit/utils/retry.test.ts` | 9 |
+| `apps/server/test/unit/utils/uuid.test.ts` (`isUuid`) | 1 |
 
 ### Cross-cutting tests (`apps/server`)
 
@@ -1459,8 +1461,8 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` (the customer-history, report, inbound and listen code lists: a hand-written snapshot and a two-way type guard; a live row's not-listenable reasons a subset of the listen codes; the number reveal's own code and `customer_phone_withheld`) | 26 |
 | `packages/contracts/test/exports.test.ts` (live listening's vocabularies, wire sizes, close codes (`access_unverified`'s 4503 among them) and their re-exports among the rest) | 15 |
-| `packages/contracts/test/listen-history.test.ts` (the listening history: words for exactly the end reasons, the merge gap twice the reconnect window, the page ceiling) | 3 |
-| `packages/contracts/test/flags.test.ts` (with `agency_live_listen_unrecorded` client-exposed, LS20) | 14 |
+| `packages/contracts/test/listen-history.test.ts` (the listening history: words for exactly the end reasons, the merge gap twice the reconnect window, the page ceiling; words for exactly the call origins) | 4 |
+| `packages/contracts/test/flags.test.ts` (with `agency_live_listen_unrecorded` client-exposed, LS20; a handling policy on the consent gate alone) | 15 |
 | `packages/contracts/test/rbac.test.ts` | 74 |
 | `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
 | `packages/contracts/test/inbound-route-warnings.test.ts` (`inboundRouteWarnings`: no opening hours, a deployment that cannot connect, a call recorded unannounced; the actions offered; the standard recordings' words and slots, only call-back and voicemail promising a call back; the `connect_unavailable` words naming the call-back message) | 10 |
