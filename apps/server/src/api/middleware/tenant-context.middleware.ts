@@ -95,8 +95,12 @@ async function accountBelongsToTenant(accountId: string, tenantId: string): Prom
  * and attaches tenantId, accountId, and membership to the request.
  */
 export async function tenantContextMiddleware(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const tenantId = request.headers['x-tenant-id'] as string | undefined;
-  const accountId = request.headers['x-account-id'] as string | undefined;
+  // Lower-cased once, here: the ids are compared as strings below (`selectMembership`'s account
+  // seat, the account's tenant) and form the membership cache key, while Postgres reads a uuid in
+  // any case. An upper-case X-Account-Id must not miss an account seat and fall back to a wider
+  // tenant-wide role, nor cache under a key the invalidation never deletes.
+  const tenantId = lowerHeader(request.headers['x-tenant-id']);
+  const accountId = lowerHeader(request.headers['x-account-id']);
 
   if (!tenantId) {
     return reply.code(400).send({ error: 'Bad Request', message: 'X-Tenant-Id header is required' });
@@ -151,6 +155,12 @@ export async function tenantContextMiddleware(request: FastifyRequest, reply: Fa
   request.accountId = accountId;
   request.membership = membership;
   await attachTenantAccountNames(request, tenantId, accountId);
+}
+
+/** A header's value lower-cased; undefined when absent or empty. */
+function lowerHeader(value: string | string[] | undefined): string | undefined {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v ? v.toLowerCase() : undefined;
 }
 
 /**

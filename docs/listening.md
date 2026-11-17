@@ -207,7 +207,9 @@ Manas.
 - **(l)** Adding a seat re-checks the invitee's listens: `POST /users/invite`, the invite's
   claim and the super-admin's `POST /super-admin/tenants/:id/users` call `revokeListens` too, since an account-scoped seat is the membership the tenant context
   picks in that account and can shadow a tenant-wide admin's (the access check shares the tenant
-  context's `selectMembership`, now `rbac/select-membership.ts`).
+  context's `selectMembership`, now `rbac/select-membership.ts`). The tenant context reads
+  `X-Tenant-Id` and `X-Account-Id` lower-cased, as the access check reads the account, so an
+  upper-case header cannot miss the account seat and act under the wider tenant-wide role.
 - **(m)** The load check's timing bounds (§10 "Load check") are asserted with 4 or more CPUs, or
   when asked (`LISTEN_LOAD_BOUNDS=on`, a `LOAD_SCALE` soak), and printed otherwise; everything else
   in it (zero frames lost, every listener's rate, ends and rows, the stalled listener, the metrics,

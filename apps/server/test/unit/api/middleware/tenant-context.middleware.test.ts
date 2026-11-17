@@ -368,6 +368,34 @@ describe('tenantContextMiddleware', () => {
       expect(req.membership).toEqual(m);
     });
   });
+
+  describe('header case', () => {
+    const TENANT = '11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const ACCOUNT = '22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+    it('reads the ids lower-cased: an upper-case X-Account-Id still picks the account seat over the tenant-wide one', async () => {
+      // A tenant-wide admin who also holds a viewer seat in ACCOUNT: in that account the seat is
+      // the membership they act under (live call listening's access check picks the same, LS22 l).
+      const tenantWide = activeMembership({ id: 'm-admin', tenant_id: TENANT, account_id: null, role: 'tenant_admin' });
+      const seat = activeMembership({ id: 'm-seat', tenant_id: TENANT, account_id: ACCOUNT, role: 'viewer' });
+      mocks.cacheGet.mockResolvedValue(null);
+      mocks.findByUserAndTenant.mockResolvedValue([tenantWide, seat]);
+      mocks.getCachedAccountRecord.mockResolvedValue({ id: ACCOUNT, tenant_id: TENANT, name: 'Acct' });
+
+      const req = makeRequest({
+        headers: { 'x-tenant-id': TENANT.toUpperCase(), 'x-account-id': ACCOUNT.toUpperCase() },
+        user: { id: 'u-1' },
+      });
+      await tenantContextMiddleware(req, makeReply());
+
+      expect(req.membership.id).toBe('m-seat');
+      expect(req.tenantId).toBe(TENANT);
+      expect(req.accountId).toBe(ACCOUNT);
+      // One cache key per member, whatever case the client sent: the invalidation deletes this one.
+      expect(mocks.cacheGet).toHaveBeenCalledWith(`cache:membership:u-1:${TENANT}`);
+      expect(mocks.findByUserAndTenant).toHaveBeenCalledWith('u-1', TENANT);
+    });
+  });
 });
 
 describe('invalidateTenantMembershipCache', () => {
