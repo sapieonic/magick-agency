@@ -194,6 +194,10 @@ describe('GET /listen-history.csv', () => {
     expect(lines[3]).toContain('Access to listen was removed');
     // The formula guard: a campaign name that starts a formula is never a live cell.
     expect(lines[3]).not.toMatch(/,=HYPERLINK/);
+    // Each user is looked up once for the whole export: page 2's were page 1's.
+    expect(deps.names).toHaveBeenCalledTimes(1);
+    expect(lines[3]).toContain('Meera S');
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(deps.audit).toHaveBeenCalledTimes(1);
     expect(deps.audit.mock.calls[0]![0]).toMatchObject({
       tenant_id: TENANT, account_id: ACCOUNT, action: 'agency_listen_sessions.exported', resource_type: 'account',

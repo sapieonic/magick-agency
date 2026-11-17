@@ -12,7 +12,6 @@ import type {
 import type { AgencyCallOrigin, AgencyClientKind } from '@magick-agency/contracts/agency';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
-import { ACCOUNT_HEADER } from '../middleware/headers.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore, type CoreCallRequest, type CoreCallResult } from '../core-dispatch.js';
 import { readListenFlags, type ListenFlags } from '../../agency/listen/listen-access.js';
@@ -20,6 +19,7 @@ import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { maskPhone } from '../../agency/reports/datasets/shared.js';
 import { config } from '../../config/index.js';
 import { isUuid } from '../../utils/uuid.js';
+import { accountOrRefuse } from './helpers/account-scope.js';
 import {
   LIVE_CALL_NUMBER_WITHHELD_BODY,
   LIVE_LISTEN_DISABLED_BODY,
@@ -50,7 +50,8 @@ const log = createChildLogger({ component: 'proxy-agency-live-calls' });
  *    rule (LS3); then `callCore` to the grant handler of the process that owns the agent's session,
  *    which checks its bridge and caps and mints the socket token. Every outcome is counted in
  *    `agency_listen_grants_total{result}`.
- * The routes need an account (`X-Account-Id`): the live list is an account's.
+ * The routes need an account (`X-Account-Id`, else `400 account_scope_required`): the live list is
+ * an account's.
  */
 
 /** What the routes read besides the request. Tests replace it. */
@@ -136,12 +137,10 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     reply: FastifyReply,
     route: 'read' | 'grant',
   ): Promise<{ tenantId: string; accountId: string; flags: ListenFlags } | null> {
-    if (!request.accountId) {
-      await reply.code(400).send({ error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` });
-      return null;
-    }
-    const tenantId = request.tenantId!.toLowerCase();
-    const accountId = request.accountId.toLowerCase();
+    // The tenant context middleware has lower-cased both ids.
+    const accountId = accountOrRefuse(request.accountId, reply);
+    if (!accountId) return null;
+    const tenantId = request.tenantId!;
     let flags: ListenFlags;
     try {
       flags = await deps.listenFlags(tenantId, accountId);
@@ -164,11 +163,10 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
     query: Record<string, string>,
   ): Promise<{ calls: CoreLiveCall[]; as_of: string } | { status: number; body: unknown }> {
     const result = await deps.callCore({ method: 'GET', path: '/agency/live-calls', query, tenantId: scope.tenantId, accountId: scope.accountId });
-    if (result.status !== 200 || !isCoreLiveCalls(result.body)) {
-      if (result.status === 200) log.error({ tenantId: scope.tenantId }, 'live calls: the internal handler answered an unrecognised body');
-      return { status: result.status === 200 ? 502 : result.status, body: result.status === 200 ? { error: 'Bad Gateway', message: 'Live calls could not be read.' } : result.body };
-    }
-    return result.body;
+    if (result.status !== 200) return { status: result.status, body: result.body };
+    if (isCoreLiveCalls(result.body)) return result.body;
+    log.error({ tenantId: scope.tenantId }, 'live calls: the internal handler answered an unrecognised body');
+    return { status: 502, body: { error: 'Bad Gateway', message: 'Live calls could not be read.' } };
   }
 
   // ── GET /live-calls ───────────────────────────────────────────────────────
@@ -264,8 +262,9 @@ export async function proxyAgencyLiveCallsRoutes(app: FastifyInstance, opts: Pro
       if ('status' in live) return refuse(live.status >= 500 ? 'listen_unavailable' : 'listen_call_not_live');
       const call = live.calls[0];
       if (!call) return refuse('listen_call_not_live');
-      if (call.agent_user_id === me) return refuse('listen_own_call');
-      if (!call.recording && !flags.unrecordedAllowed) return refuse('listen_recording_off');
+      // The list's own rules, but the cap: the owning process counts its listeners itself.
+      const notListenable = notListenableReason(call, me, flags.unrecordedAllowed, Number.POSITIVE_INFINITY);
+      if (notListenable) return refuse(notListenable);
 
       const grantBody: ListenGrantRequest = {
         session_id: call.agent_session_id, call_id: call.call_id, origin: call.origin, campaign_id: call.campaign_id, correlation_id: call.correlation_id,

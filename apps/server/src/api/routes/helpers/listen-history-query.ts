@@ -1,20 +1,21 @@
 import { z } from 'zod';
-import {
-  AGENCY_LISTEN_HISTORY_MAX_LIMIT,
-  type AgencyListenHistoryQuery,
-} from '@magick-agency/contracts/api/agency/listen-history';
+import { AGENCY_LISTEN_HISTORY_MAX_LIMIT } from '@magick-agency/contracts/api/agency/listen-history';
 
 /*
  * The listening history's query (`AgencyListenHistoryQuery`, docs/listening.md §12), validated
- * at the public edge and again by the internal handler, from these schemas. Ids are UUIDs before
+ * at the public edge and again by the internal handler, from these schemas (a parsed query goes to
+ * the internal handler as `definedQueryString(query)`). Ids are UUIDs, lower-cased, before
  * they reach a `::uuid` cast (22P02 otherwise); `from` / `to` are ISO instants with an offset,
  * `to` exclusive and not before `from` (an inverted range is the caller's mistake, never an empty
  * history). Unknown keys are refused: a misspelt filter must not read as "no filter".
  */
 
+/** A UUID in either case, lower-cased: the form Postgres returns, so every id compared below matches. */
+const userId = z.string().uuid().transform((id) => id.toLowerCase()).optional();
+
 const filters = {
-  listener_user_id: z.string().uuid().optional(),
-  agent_user_id: z.string().uuid().optional(),
+  listener_user_id: userId,
+  agent_user_id: userId,
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
 };
@@ -31,15 +32,3 @@ export const listenHistoryQuerySchema = z.object({
 
 /** `GET /listen-history.csv`: the filters only (the export walks every page itself). */
 export const listenHistoryExportQuerySchema = z.object(filters).strict().refine(ordered, ORDERED_ISSUE);
-
-export type ListenHistoryFilters = Pick<AgencyListenHistoryQuery, 'listener_user_id' | 'agent_user_id' | 'from' | 'to'>;
-
-/** The filters as the internal handler's query string (lower-cased ids; absent keys omitted). */
-export function listenHistoryFilterQuery(f: ListenHistoryFilters): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (f.listener_user_id) out['listener_user_id'] = f.listener_user_id.toLowerCase();
-  if (f.agent_user_id) out['agent_user_id'] = f.agent_user_id.toLowerCase();
-  if (f.from) out['from'] = f.from;
-  if (f.to) out['to'] = f.to;
-  return out;
-}

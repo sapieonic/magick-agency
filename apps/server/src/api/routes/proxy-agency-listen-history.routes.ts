@@ -9,7 +9,6 @@ import {
 } from '@magick-agency/contracts/api/agency/listen-history';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
-import { ACCOUNT_HEADER } from '../middleware/headers.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore, type CoreCallRequest, type CoreCallResult } from '../core-dispatch.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
@@ -18,12 +17,10 @@ import { toCsvLine } from '../../agency/agency-csv.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
 import { isWithheldNumber } from './helpers/listen.js';
-import {
-  listenHistoryExportQuerySchema,
-  listenHistoryFilterQuery,
-  listenHistoryQuerySchema,
-  type ListenHistoryFilters,
-} from './helpers/listen-history-query.js';
+import { listenHistoryExportQuerySchema, listenHistoryQuerySchema } from './helpers/listen-history-query.js';
+import { definedQueryString } from './helpers/query-string.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
+import { accountOrRefuse } from './helpers/account-scope.js';
 import { drainPages } from './helpers/drain-pages.js';
 import { csvAttachmentHeader } from './helpers/csv-attachment.js';
 import type { CoreListenHistoryEntry, CoreListenHistoryPage } from './agency/listen-history.js';
@@ -33,7 +30,8 @@ const log = createChildLogger({ component: 'proxy-agency-listen-history' });
 /*
  * The account's listening history (docs/listening.md §12, LS19; contracts
  * `api/agency/listen-history.ts`), the public layer of B16: the session, the tenant context,
- * `agency.supervise`, an account (`X-Account-Id`), the query validated at the edge. Every read is
+ * `agency.supervise`, an account (`X-Account-Id`, else `400 account_scope_required`), the query
+ * validated at the edge (`400 { error: 'Validation Error', details }`). Every read is
  * the internal handler's (`GET /listen-history`, owner `none`) for the request's tenant and account.
  * The listening flag `agency_live_listen_enabled` is NOT read (LS19, amended 2026-11-17): turning
  * listening off stops new listens, not the record of past ones, so neither a flag that is off nor
@@ -154,18 +152,21 @@ export async function proxyAgencyListenHistoryRoutes(
   app.addHook('onRequest', async (_request, reply) => { void reply.header('Cache-Control', 'no-store'); });
 
   /** The account, or a reply. Runs after the permission; no flag (LS19, amended 2026-11-17). */
-  async function gate(request: FastifyRequest, reply: FastifyReply): Promise<{ tenantId: string; accountId: string } | null> {
-    if (!request.accountId) {
-      await reply.code(400).send({ error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` });
-      return null;
-    }
-    return { tenantId: request.tenantId!.toLowerCase(), accountId: request.accountId.toLowerCase() };
+  function gate(request: FastifyRequest, reply: FastifyReply): { tenantId: string; accountId: string } | null {
+    // The tenant context middleware has lower-cased both ids.
+    const accountId = accountOrRefuse(request.accountId, reply);
+    return accountId ? { tenantId: request.tenantId!, accountId } : null;
   }
 
-  /** One page from the internal handler, named and masked. Throws {@link HistoryReadRefused}. */
+  /**
+   * One page from the internal handler, named and masked. Throws {@link HistoryReadRefused}.
+   * `names` holds the names resolved so far (the export's pages share one), so each user is
+   * looked up once.
+   */
   async function readPage(
     scope: { tenantId: string; accountId: string },
     query: Record<string, string>,
+    names = new Map<string, string | null>(),
   ): Promise<AgencyListenHistoryResponse> {
     const result = await deps.callCore({ method: 'GET', path: '/agency/listen-history', query, ...scope });
     if (result.status !== 200) throw new HistoryReadRefused(result.status, result.body);
@@ -174,28 +175,22 @@ export async function proxyAgencyListenHistoryRoutes(
       throw new HistoryReadRefused(502, { error: 'Bad Gateway', message: 'The listening history could not be read.' });
     }
     const page = result.body;
-    const names = await deps.names(page.entries.flatMap((e) => [e.listener_user_id, e.agent_user_id]), scope.tenantId);
+    const unnamed = page.entries.flatMap((e) => [e.listener_user_id, e.agent_user_id]).filter((id) => !names.has(id));
+    if (unnamed.length > 0) {
+      const found = await deps.names(unnamed, scope.tenantId);
+      for (const id of unnamed) names.set(id, found.get(id) ?? null);
+    }
     return { entries: page.entries.map((e) => toHistoryEntry(e, names)), next_cursor: page.next_cursor };
-  }
-
-  function validationError(reply: FastifyReply, message: string | undefined): FastifyReply {
-    return reply.code(400).send({ error: 'Validation Error', message: message ?? 'Invalid query' });
   }
 
   // ── GET /listen-history ───────────────────────────────────────────────────
   app.get('/listen-history', { preHandler: [requirePermission('agency.supervise')] }, async (request, reply) => {
-    const scope = await gate(request, reply);
+    const scope = gate(request, reply);
     if (!scope) return reply;
-    const parsed = listenHistoryQuerySchema.safeParse(request.query ?? {});
-    if (!parsed.success) return validationError(reply, parsed.error.issues[0]?.message);
-    const q = parsed.data;
-    const query = {
-      ...listenHistoryFilterQuery(q),
-      ...(q.limit !== undefined ? { limit: String(q.limit) } : {}),
-      ...(q.cursor ? { cursor: q.cursor } : {}),
-    };
+    const parsed = parseOr400(listenHistoryQuerySchema, request.query ?? {}, reply, 'agency');
+    if (!parsed) return reply;
     try {
-      return reply.send(await readPage(scope, query));
+      return reply.send(await readPage(scope, definedQueryString(parsed.data)));
     } catch (err) {
       if (err instanceof HistoryReadRefused) return reply.code(err.status).send(err.body);
       throw err;
@@ -204,12 +199,12 @@ export async function proxyAgencyListenHistoryRoutes(
 
   // ── GET /listen-history.csv ───────────────────────────────────────────────
   app.get('/listen-history.csv', { preHandler: [requirePermission('agency.supervise')] }, async (request, reply) => {
-    const scope = await gate(request, reply);
+    const scope = gate(request, reply);
     if (!scope) return reply;
-    const parsed = listenHistoryExportQuerySchema.safeParse(request.query ?? {});
-    if (!parsed.success) return validationError(reply, parsed.error.issues[0]?.message);
-    const filters: ListenHistoryFilters = parsed.data;
-    const base = listenHistoryFilterQuery(filters);
+    const parsed = parseOr400(listenHistoryExportQuerySchema, request.query ?? {}, reply, 'agency');
+    if (!parsed) return reply;
+    const base = definedQueryString(parsed.data);
+    const names = new Map<string, string | null>();
 
     let drained: Awaited<ReturnType<typeof drainPages<string, AgencyListenHistoryEntry, 'deadline'>>>;
     try {
@@ -218,7 +213,7 @@ export async function proxyAgencyListenHistoryRoutes(
         fetchPage: async (cursor) => {
           const page = await readPage(scope, {
             ...base, limit: String(LISTEN_HISTORY_EXPORT_PAGE_SIZE), ...(cursor ? { cursor } : {}),
-          });
+          }, names);
           return { rows: page.entries, next: page.next_cursor };
         },
         header: toCsvLine([...LISTEN_HISTORY_CSV_COLUMNS]),
@@ -247,13 +242,12 @@ export async function proxyAgencyListenHistoryRoutes(
       resource_id: scope.accountId,
       details: {
         rows: drained.rowCount,
-        filters: { ...base },
+        filters: base,
         ...(drained.truncated ? { truncated: drained.truncated } : {}),
       },
     });
 
     reply.header('Content-Type', 'text/csv; charset=utf-8');
-    reply.header('Cache-Control', 'no-store');
     reply.header('Content-Disposition', csvAttachmentHeader(`listening-history-${new Date().toISOString().slice(0, 10)}`));
     reply.header('X-Export-Rows', String(drained.rowCount));
     if (drained.truncated) {

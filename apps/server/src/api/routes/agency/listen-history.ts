@@ -10,6 +10,7 @@ import { agencyListenHistoryRepository } from '../../../db/repositories/agency.r
 import { matchName } from '../../../agency/inbound/match-name.js';
 import { listenHistoryQuerySchema } from '../helpers/listen-history-query.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
+import { parseOr400 } from '../helpers/parse-or-400.js';
 import { isUuid } from '../../../utils/uuid.js';
 
 /*
@@ -51,15 +52,14 @@ export interface CoreListenHistoryPage {
 
 export async function registerListenHistoryRoutes(sub: FastifyInstance): Promise<void> {
   sub.get('/listen-history', async (request: FastifyRequest, reply: FastifyReply) => {
-    const tenantId = getTenantId(request).toLowerCase();
-    const accountId = getAccountId(request).toLowerCase();
+    // The public layer sends the tenant context's ids, lower-cased.
+    const tenantId = getTenantId(request);
+    const accountId = getAccountId(request);
     if (!isUuid(tenantId) || !isUuid(accountId)) {
       return reply.code(400).send({ error: 'Bad Request', message: 'The listening history needs an account.' });
     }
-    const parsed = listenHistoryQuerySchema.safeParse(request.query ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', message: parsed.error.issues[0]?.message ?? 'Invalid query' });
-    }
+    const parsed = parseOr400(listenHistoryQuerySchema, request.query ?? {}, reply, 'agency');
+    if (!parsed) return reply;
     const before = readKeysetCursor(request, reply);
     if (before === null) return reply;
     const q = parsed.data;
@@ -67,8 +67,8 @@ export async function registerListenHistoryRoutes(sub: FastifyInstance): Promise
     const { rows, hasMore } = await agencyListenHistoryRepository.listVisits({
       tenantId,
       accountId,
-      listenerUserId: q.listener_user_id?.toLowerCase() ?? null,
-      agentUserId: q.agent_user_id?.toLowerCase() ?? null,
+      listenerUserId: q.listener_user_id ?? null,
+      agentUserId: q.agent_user_id ?? null,
       from: q.from ? new Date(q.from) : null,
       to: q.to ? new Date(q.to) : null,
       before: before ?? null,

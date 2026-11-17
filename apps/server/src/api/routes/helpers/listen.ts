@@ -10,6 +10,7 @@ import type { AgencyListenErrorCode } from '@magick-agency/contracts/errors';
 import type { AgencyCallListenSession, AgencyLiveCallNumberErrorResponse } from '@magick-agency/contracts/api/agency/live-calls';
 import { agencyListenSessionRepository } from '../../../db/repositories/agency.repository.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
+import { sendRefusal } from './refusal.js';
 
 const log = createChildLogger({ component: 'agency-listen-routes' });
 
@@ -33,23 +34,17 @@ export const LISTEN_ERROR_MESSAGES: Record<AgencyListenErrorCode, string> = {
   listen_unavailable: 'Listening could not be started. Try again.',
 };
 
-const ERROR_LABEL: Record<number, string> = { 404: 'Not Found', 409: 'Conflict', 503: 'Service Unavailable' };
-
-/** The refusal body for `code`, without sending it. */
-export function listenRefusalBody(code: AgencyListenErrorCode): { error: string; code: AgencyListenErrorCode; message: string } {
-  return { error: ERROR_LABEL[LISTEN_ERROR_STATUS[code]] ?? 'Error', code, message: LISTEN_ERROR_MESSAGES[code] };
-}
-
 /**
- * `{ error, code, message }` with the code's status (or `status`, the owning process's answer).
- * The 503s (`listen_limit_server`, `listen_unavailable`) are reviewed fixed-shape bodies the
- * console reads by code (the refused grant's toast says why), so they are let through the
- * app-wide error mask (`error-mask.middleware.ts`) as the soft phone's reviewed 503s are; the body
- * is always {@link listenRefusalBody}'s, never forwarded text.
+ * `{ error, code, message }` (`sendRefusal`) with the code's status (or `status`, the owning
+ * process's answer, which is the code's own). The 503s (`listen_limit_server`,
+ * `listen_unavailable`) are reviewed fixed-shape bodies the console reads by code (the refused
+ * grant's toast says why), so they are let through the app-wide error mask
+ * (`error-mask.middleware.ts`) as the soft phone's reviewed 503s are; the message is always
+ * {@link LISTEN_ERROR_MESSAGES}'s, never forwarded text.
  */
 export function sendListenRefusal(reply: FastifyReply, code: AgencyListenErrorCode, status = LISTEN_ERROR_STATUS[code]): FastifyReply {
   if (status >= 500) reply.request.preserveReviewedUpstreamError = true;
-  return reply.code(status).send(listenRefusalBody(code));
+  return sendRefusal(reply, status, code, LISTEN_ERROR_MESSAGES[code]);
 }
 
 /** Is this a listen refusal body (`{ code }` one of §7's)? */
