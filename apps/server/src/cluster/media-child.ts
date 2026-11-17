@@ -176,11 +176,12 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     void guardHost.providerConcurrencyGuard.invalidateLimits(tenantId, accountId).catch(() => {});
   });
   // ── Live call listening (docs/listening.md, LS10, LS5) ──────────────────────
-  // A supervisor's role changed or they were removed: re-check their sessions here against the
-  // database. Or their newer listen elsewhere supersedes these: end exactly those.
-  channel.onEvent('listen.revoke', ({ tenantId, userId, reason, listenIds }) => {
+  // A supervisor's membership changed: re-check their sessions here against the database, failing
+  // closed on a revocation, not on a seat added (LS22 w). Or their newer listen elsewhere
+  // supersedes these: end exactly those.
+  channel.onEvent('listen.revoke', ({ tenantId, userId, reason, listenIds, change }) => {
     if (reason === 'superseded') void runtime.listen.endSessions(listenIds ?? [], 'superseded');
-    else void runtime.listen.revokeUser(tenantId, userId);
+    else void runtime.listen.revokeUser(tenantId, userId, change ?? 'revoked');
   });
   // A listen admitted here ends the supervisor's older listens past the cap, ranked across every
   // worker (LS22 v): those this worker holds here, the others' through the primary.

@@ -517,9 +517,9 @@ Files: `listen-access.ts`, `listen-registry.ts`, `listen-revocation.ts`, `listen
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/listen/listen-registry.test.ts` (the caps and reservations, a supervisor's own listen not counted, supersede (LS22 v: with `maxPerUser` 2 the same call's listen ends and its re-grant is not refused; `supersededBy`), `endSessions`, `revokeUser` scoped, re-checked and failing closed (`access_unverified` for what it could not read), the periodic pass failing open up to the 2 × staleness cap (`access_unverified`) and a hung pass, a tick in flight not stacked on, the periodic re-check on fake timers, the rows' upkeep on the tick with its held ids read when asked, a stopping process `listen_unavailable`, the revocation generation between grant, reservation and admission, shutdown; `listenAccessCheck`'s floor, flag and LS4, a failed read unchecked, one read per supervisor and account, every read started before any is awaited, the pick shared with `selectMembership`) | 37 |
+| `apps/server/test/unit/agency/listen/listen-registry.test.ts` (the caps and reservations, a supervisor's own listen not counted, supersede (LS22 v: with `maxPerUser` 2 the same call's listen ends and its re-grant is not refused; `supersededBy`), `endSessions`, `revokeUser` scoped, re-checked and failing closed (`access_unverified` for what it could not read), a seat added leaving an unreadable check to the pass (LS22 w), the periodic pass failing open up to the 2 × staleness cap (`access_unverified`) and a hung pass, a tick in flight not stacked on, the periodic re-check on fake timers, the rows' upkeep on the tick with its held ids read when asked, a stopping process `listen_unavailable`, the revocation generation between grant, reservation and admission, shutdown; `listenAccessCheck`'s floor, flag and LS4, a failed read unchecked, one read per supervisor and account, every read started before any is awaited, the pick shared with `selectMembership`) | 38 |
 | `apps/server/test/unit/agency/listen/listen-socket.test.ts` (the frame parser; the upgrade's order and each refusal's close, with no `ended` frame; `ready`, the live stamp and the started audit; pong; every end's frame, close code, row and audit, `access_unverified`'s 4503; the tap's own ends; close then terminate; the client's close; the idle bound and protocol pongs keeping it off; the message rate; a tap ended under the attach or throwing; a token store outage; the fault budget through the seam; ends once; a throwing row close or audit; supersede) | 39 |
-| `apps/server/test/unit/agency/listen/listen-token.test.ts` (with a Redis outage at the upgrade rejecting, not answering null) | 7 |
+| `apps/server/test/unit/agency/listen/listen-token.test.ts` (with a Redis outage at the upgrade rejecting, not answering null; in-process, a wrong token leaving the grant) | 8 |
 | `apps/server/test/unit/agency/listen/listen-revocation.test.ts` (the cross-worker supersede, older rows only; LS22 v: this process's rows and the others' ranked together, the same call's, a listen ended under the read ranking nothing) | 7 |
 | `apps/server/test/unit/agency/listen/listen-client-helper.test.ts` (the integration suites' listener, `test/helpers/listen-client.ts`: `openListener`, `countLeg`, `listenRow` / `closedRow` shared by the live-listen e2e, cluster, Plivo and load suites; its leg count) | 1 |
 | `apps/server/test/unit/agency/listen/listen-rows.test.ts` (a failed close retried with its reason, the sweep's keep set and age floor, the held ids read after a slow retry, `markLive`, the queue bound) | 9 |
@@ -683,7 +683,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/path-params.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/helpers/refusal.test.ts` | 3 |
-| `apps/server/test/unit/api/routes/invites.routes.test.ts` (with the claim re-checking the claimant's listens, LS22 l) | 141 |
+| `apps/server/test/unit/api/routes/invites.routes.test.ts` (with the claim re-checking the claimant's listens, LS22 l, without waiting for it, LS22 w) | 141 |
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/phone-numbers-byoc-merge.test.ts` | 6 |
@@ -695,7 +695,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 46 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` (with `agency_live_listen_enabled`'s handling policy: on the catalog and the detail read, a reason to turn it on, the bulk and global refusals, LS20) | 31 |
-| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` (with the role change and removal re-checking listens, LS10) | 65 |
+| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` (with the role change and removal re-checking listens, LS10, without waiting for it, LS22 w) | 65 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 78 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 23 |
@@ -703,7 +703,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/user-cache-invalidation.wiring.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/user-invite-mailer-isolation.test.ts` | 6 |
 | `apps/server/test/unit/api/routes/user-offboarding-staffing.test.ts` | 30 |
-| `apps/server/test/unit/api/routes/user.routes.test.ts` (with an invite re-checking the invitee's listens, LS22 l) | 47 |
+| `apps/server/test/unit/api/routes/user.routes.test.ts` (with an invite, a role change and a removal re-checking listens, LS22 l, without waiting for it, LS22 w) | 47 |
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
@@ -905,7 +905,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 16 |
-| `apps/server/test/unit/cluster/ipc-protocol.test.ts` (with `listen.revoke`'s two shapes and the `listen` handoff) | 17 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` (with `listen.revoke`'s two shapes, a revocation's `change`, and the `listen` handoff) | 17 |
 | `apps/server/test/unit/cluster/lease-snapshot-window.test.ts` | 2 |
 | `apps/server/test/unit/cluster/loop-sampler.test.ts` | 5 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 15 |
@@ -994,7 +994,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-listen-tap.test.ts` (the listen tap, docs/listening.md LS8, LS17: both legs byte for byte and framed; the μ-law customer by table, a frame out per frame in, the table bit for bit and against the codec path; the tap's own codecs, the session's once per frame, transcoded legs primed carry-free; no listener, no extra call; the tail after the relay's write and the dwell unchanged; the listener's soft and hard limits and 10 s of drops; fault injection (codec, encoder, framer, sink, close, a socket that errors or never drains); the fault budget, failed messages counted in 20 ms frames; `call_ended` as the hangup starts and nothing from either leg after it (LS15 f); the re-attach keeping the tap and starting the agent's leg afresh; the refusals; the budget through the seam, the default without it, no agency config read) | 50 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
-| `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` (with `openListenTap`'s refusals and handle through a VoiceLink call's life, closed as the hangup starts) | 13 |
+| `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` (with `openListenTap`'s refusals and handle through a VoiceLink call's life, closed as the hangup starts; `hasActiveCall`) | 14 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline, a `no_capacity` call recording nothing; `playClipSequenceThenHangUp`) | 13 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind (the playback already stopped when the bind returns), the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token, `onPreambleDone`; a non-connectable call's `parkedSeconds` as a budget floor; `isCallEnding`; a parked caller `not_bridged` for a listen tap, both legs heard after the bind, byte for byte: the caller by the μ-law table, the agent by the tap's encoder) | 29 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
@@ -1002,7 +1002,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 63 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
-| `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` (with `openListenTap`, its options and its types) | 5 |
+| `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` (with `openListenTap`, its options and its types, and `hasActiveCall`) | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 34 |
 | `apps/server/test/unit/core/webrtc-scenarios.test.ts` | 13 |
 
@@ -1154,13 +1154,14 @@ Files: `safe-core-path.ts`
 by the tenant context (`api/middleware/tenant-context.middleware.ts`) and live listening's access
 check (`agency/listen/listen-access.ts`), and `membership-changed.ts` (`membershipAdded` /
 `membershipRevoked`: the member routes' cached membership dropped, then the subscribers the
-bootstraps register with `onMembershipChanged` told; live listening's re-check, docs/seams.md §4).
+bootstraps register with `onMembershipChanged` told, `added` or `revoked`, without waiting for them;
+live listening's re-check, docs/seams.md §4, LS22 w).
 
 Files: `membership-changed.ts`, `rbac.middleware.ts`, `select-membership.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/rbac/membership-changed.test.ts` | 2 |
+| `apps/server/test/unit/rbac/membership-changed.test.ts` (with the change answering before a held subscriber, its kind, and a late rejection logged, LS22 w) | 4 |
 | `apps/server/test/unit/rbac/rbac-middleware.test.ts` | 7 |
 | `apps/server/test/unit/rbac/roles.agent.test.ts` | 18 |
 | `apps/server/test/unit/rbac/roles.test.ts` | 19 |

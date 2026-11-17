@@ -262,17 +262,21 @@ export interface ReaperSnapshotBody {
 export interface ManualCallRowsBody { rows: AgencyManualCallRecord[] }
 /**
  * Live call listening (`docs/listening.md` §4, LS10): end a supervisor's listens wherever they are.
- * `permission_revoked`: their role changed or their membership was removed (the primary's user
- * routes); each worker re-checks that supervisor's sessions against the database now and ends those
- * that may no longer go on (`listenIds` null). `superseded`: their new listen was admitted in
- * another process; exactly `listenIds` end (a worker sends this to the primary, which ends its own
- * and relays it to the other workers).
+ * `permission_revoked`: their membership changed (the primary's member routes); each worker
+ * re-checks that supervisor's sessions against the database now and ends those that may no longer
+ * go on (`listenIds` null), and `change` says how the membership changed: `revoked` (a role change
+ * or a removal) fails closed, `added` (a seat added) leaves a check it could not make to the
+ * periodic pass (LS22 w). `superseded`: their new listen was admitted in another process; exactly
+ * `listenIds` end (no `change`; a worker sends this to the primary, which ends its own and relays
+ * it to the other workers).
  */
 export interface ListenRevokeBody {
   tenantId: string;
   userId: string;
   reason: 'permission_revoked' | 'superseded';
   listenIds: string[] | null;
+  /** How the membership changed: on `permission_revoked` only. */
+  change?: 'added' | 'revoked';
 }
 /** A media worker took or gave back a call's slots (`docs/scaling.md` §6.1). */
 export type CallLeaseBody = { op: 'held'; lease: CallLease } | { op: 'released'; concurrencyKey: string };
@@ -435,9 +439,16 @@ export function parseListenRevoke(raw: unknown): ListenRevokeBody | null {
   if (reason !== 'permission_revoked' && reason !== 'superseded') return null;
   const ids = raw['listenIds'];
   if (ids !== null && !isIdList(ids, LISTEN_REVOKE_MAX_IDS)) return null;
-  // A supersede names what it ends; a revocation re-checks the supervisor.
+  // A supersede names what it ends; a revocation re-checks the supervisor, and says how their
+  // membership changed.
   if ((reason === 'superseded') !== (ids !== null)) return null;
-  return { tenantId: raw['tenantId'], userId: raw['userId'], reason, listenIds: ids === null ? null : [...ids] };
+  const change = raw['change'];
+  if (reason === 'superseded') {
+    if (change !== undefined) return null;
+    return { tenantId: raw['tenantId'], userId: raw['userId'], reason, listenIds: ids === null ? null : [...ids] };
+  }
+  if (change !== 'added' && change !== 'revoked') return null;
+  return { tenantId: raw['tenantId'], userId: raw['userId'], reason, listenIds: null, change };
 }
 
 export function parseManualCallRows(raw: unknown): ManualCallRowsBody | null {

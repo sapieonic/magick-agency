@@ -240,6 +240,39 @@ describe('ListenRegistry: revocation and the re-check (LS10, LS16 c, d)', () => 
     expect(c.ended).toEqual(['permission_revoked']);
   });
 
+  it('a seat ADDED (LS22 w): a check it cannot make is left to the periodic pass, whose staleness cap still ends it; a read that says no still ends it permission_revoked', async () => {
+    vi.useFakeTimers();
+    let down = true;
+    const access = vi.fn(async (subjects: readonly ListenAccessSubject[]) => {
+      if (down) return verdict(subjects.filter((x) => x.listenId === 'no').map((x) => x.listenId), subjects.filter((x) => x.listenId !== 'no').map((x) => x.listenId));
+      throw new Error('down');
+    });
+    const registry = registryWith(access, { maxPerUser: 3 });
+    const kept = open(registry, session({ listenId: 'kept' }, registry));
+    const no = open(registry, session({ listenId: 'no', callId: 'c2' }, registry));
+    const before = registry.generation('t1', 'u1');
+    expect(await registry.revokeUser('t1', 'u1', 'added')).toBe(1);
+    expect(no.ended).toEqual(['permission_revoked']);
+    expect(kept.ended).toEqual([]);
+    // The generation still moves: a grant from before the change is checked again.
+    expect(registry.generation('t1', 'u1')).not.toBe(before);
+    // The same unreadable check on a revocation ends it at once (LS16 c).
+    const throwing = registryWith(vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
+    const t = open(throwing, session({ listenId: 'a' }, throwing));
+    expect(await throwing.revokeUser('t1', 'u1', 'added')).toBe(0);
+    expect(t.ended).toEqual([]);
+    expect(await throwing.revokeUser('t1', 'u1', 'revoked')).toBe(1);
+    expect(t.ended).toEqual(['access_unverified']);
+    // `kept` stays unverified: the periodic pass ends it once the cap has passed since its admission.
+    down = false;
+    registry.start();
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs * (STALE_AFTER_RECHECKS - 1));
+    expect(kept.ended).toEqual([]);
+    await vi.advanceTimersByTimeAsync(LIMITS.recheckMs);
+    expect(kept.ended).toEqual(['access_unverified']);
+    registry.stop();
+  });
+
   it('the periodic pass fails OPEN: a check that cannot be made ends nothing, short of the staleness cap', async () => {
     const registry = registryWith(vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
     const s = open(registry, session({ listenId: 'l1' }, registry));

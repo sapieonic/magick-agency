@@ -124,9 +124,10 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // occupancy from dead rows and quietly dial nothing forever.
   await agencyRuntime.start();
   // Live call listening (LS10): a membership change (a seat added, a role changed, a member
-  // removed) re-checks the supervisor's listens in this process's registry now (with media workers
-  // it holds none; the primary's relay to the workers is registered by `startMediaWorkers`).
-  const offListenRevocation = onMembershipChanged((tenantId, userId) => agencyRuntime.listen.revokeUser(tenantId, userId));
+  // removed) re-checks the supervisor's listens in this process's registry now, failing closed on a
+  // revocation, not on a seat added (LS22 w); with media workers it holds none (the primary's relay
+  // to the workers is registered by `startMediaWorkers`).
+  const offListenRevocation = onMembershipChanged((tenantId, userId, change) => agencyRuntime.listen.revokeUser(tenantId, userId, change));
 
   // Inbound calls (docs/inbound.md): the startup sweep ends calls a restart left open, then
   // the router takes the inbound answer and hangup webhooks (`seams/inbound-call-router.ts`).

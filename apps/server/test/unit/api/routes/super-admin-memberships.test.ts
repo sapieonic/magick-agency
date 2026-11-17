@@ -103,11 +103,25 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
 import { superAdminRoutes } from '../../../../src/api/routes/super-admin.routes.js';
-import { onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
+import { membershipNotificationsSettled, onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
 import { UNVERIFIED_ADDRESS_HOLDER } from '../../../../src/auth/firebase-identity.js';
 
 // Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
 onMembershipChanged(mocks.revokeListens);
+
+/**
+ * The listen re-check held open (LS22 w): the route must answer without waiting for it. Answers the
+ * release, which also waits for the notification to finish.
+ */
+function holdListenRecheck(): () => Promise<void> {
+  let release: (() => void) | undefined;
+  mocks.revokeListens.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+  return async () => {
+    expect(release).toBeDefined();
+    release!();
+    await membershipNotificationsSettled();
+  };
+}
 
 const SECRET = 'test-super-admin-secret-at-least-16';
 const ADMIN = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'root@magick.test', name: 'Root', status: 'active' };
@@ -365,10 +379,13 @@ describe('POST /super-admin/tenants/:id/users', () => {
     // the tenant context picks in that account, so their listen there must be re-checked now.
     mocks.userRepository.resolveByProvenEmail.mockResolvedValue({ status: 'found', user: { id: USER } });
     db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: null, status: 'active' }];
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
     expect((await post({ email: 'known@acme.test', role: 'agent', account_id: ACCOUNT })).statusCode).toBe(201);
     expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
-    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER, 'added');
     expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    await release();
     mocks.revokeListens.mockClear();
     db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: ACCOUNT, status: 'active' }];
     expect((await post({ email: 'known@acme.test', role: 'agent', account_id: ACCOUNT })).statusCode).toBe(409);
@@ -639,10 +656,13 @@ describe('PUT /super-admin/tenants/:id/memberships/:membershipId/role', () => {
 
   it('LS10: re-checks the user\'s open listens in the tenant at once, after the cache delete; a refused change does not', async () => {
     mocks.membershipRepository.findByIdInTenant.mockResolvedValue(target('account_admin'));
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
     expect((await put({ role: 'viewer' })).statusCode).toBe(200);
     expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
-    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER, 'revoked');
     expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    await release();
     mocks.revokeListens.mockClear();
     mocks.membershipRepository.updateRoleGuardingLastOwner.mockResolvedValueOnce({ ok: false, reason: 'role_changed' });
     expect((await put({ role: 'viewer' })).statusCode).toBe(409);
@@ -824,10 +844,13 @@ describe('DELETE /super-admin/tenants/:id/memberships/:membershipId', () => {
   });
 
   it('LS10: ends the user\'s open listens in the tenant at once, after the cache delete; a refused removal does not', async () => {
+    const release = holdListenRecheck();
+    // Answered while the re-check is still held (LS22 w).
     expect((await del()).statusCode).toBe(200);
     expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
-    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER, 'revoked');
     expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    await release();
     mocks.revokeListens.mockClear();
     mocks.membershipRepository.removeGuardingLastOwner.mockResolvedValueOnce({ ok: false, reason: 'last_owner' });
     expect((await del()).statusCode).toBe(400);

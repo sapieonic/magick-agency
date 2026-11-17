@@ -167,7 +167,7 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
   // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
   const offDialable = relayDialableInvalidations(cluster);
   // A membership change re-checks the supervisor's listens in every worker (LS10).
-  const offListen = onMembershipChanged((tenantId, userId) => cluster.revokeListens(tenantId, userId));
+  const offListen = onMembershipChanged((tenantId, userId, change) => cluster.revokeListens(tenantId, userId, change));
 
   await cluster.start();
   logger.info({ mediaWorkers: cluster.count }, 'Media worker processes started');

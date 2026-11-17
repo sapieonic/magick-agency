@@ -383,11 +383,11 @@ export class MediaCluster implements WsHandoffTarget {
   }
 
   /**
-   * A supervisor's role changed or their membership was removed (LS10): every worker re-checks
-   * that supervisor's listens against the database now.
+   * A supervisor's membership changed (LS10): every worker re-checks that supervisor's listens
+   * against the database now, failing closed on a `revoked` change, not on an `added` one (LS22 w).
    */
-  revokeListens(tenantId: string, userId: string): void {
-    this.supervisor.broadcast('listen.revoke', { tenantId, userId, reason: 'permission_revoked', listenIds: null });
+  revokeListens(tenantId: string, userId: string, change: 'added' | 'revoked'): void {
+    this.supervisor.broadcast('listen.revoke', { tenantId, userId, reason: 'permission_revoked', listenIds: null, change });
   }
 
   /** Forget unrecorded ends in every worker once the reaper wrote them. */

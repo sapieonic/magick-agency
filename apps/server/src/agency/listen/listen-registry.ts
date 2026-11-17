@@ -32,7 +32,7 @@ const log = createChildLogger({ component: 'agency-listen-registry' });
  * `access_unverified` (the console says access could not be checked and offers Try again):
  *  - the immediate path ({@link revokeUser}, a role change or a removal) fails CLOSED: what it
  *    could not check ends at once (the supervisor can ask again; the grant and the upgrade check
- *    again);
+ *    again); on a seat added it leaves what it could not check to the periodic pass (LS22 w);
  *  - the periodic pass fails OPEN, under a staleness cap: a session keeps going while its checks
  *    fail, until it has gone {@link STALE_AFTER_RECHECKS} × `recheckMs` without a successful one.
  * The upgrade asks too, before the row ({@link verify}: no answer, no listen), and a per-supervisor
@@ -363,16 +363,21 @@ export class ListenRegistry {
    * database, and end those that fail `permission_revoked`. A role change that leaves them able
    * to listen (a promotion, another membership that still clears the floor) ends nothing. Fails
    * CLOSED (LS16 c): a session the check could not decide ends too, `access_unverified` (LS22: no
-   * read said they may not listen). Bumps the supervisor's
-   * revocation generation first, so a grant or a reservation of theirs from before this call is
-   * refused, whatever the database answers. Answers how many it ended.
+   * read said they may not listen). On a seat `added` (LS22 w, an addition can narrow access too,
+   * LS22 l) a session it could not decide keeps going instead, left to the periodic pass, whose
+   * staleness cap still ends it unverified; what a read says no to ends either way. Bumps the
+   * supervisor's revocation generation first, so a grant or a reservation of theirs from before
+   * this call is refused, whatever the database answers. Answers how many it ended.
    */
-  async revokeUser(tenantId: string, userId: string): Promise<number> {
+  async revokeUser(tenantId: string, userId: string, change: 'added' | 'revoked' = 'revoked'): Promise<number> {
     this.bumpGeneration(tenantId, userId);
     const theirs = [...this.sessions.values()].filter((s) => s.tenantId === tenantId && s.listenerUserId === userId);
     if (theirs.length === 0) return 0;
     const verdict = await this.ask(theirs, 'revoke');
-    const unverified = new Set([...verdict.unchecked].filter((id) => !verdict.revoked.has(id)));
+    // On an addition nothing said they lost access: the periodic pass keeps re-checking them.
+    const unverified = change === 'added'
+      ? new Set<string>()
+      : new Set([...verdict.unchecked].filter((id) => !verdict.revoked.has(id)));
     const [revoked, unchecked] = await Promise.all([
       this.endFor(theirs, verdict.revoked, 'permission_revoked', 'revoke'),
       this.endFor(theirs, unverified, 'access_unverified', 'revoke'),

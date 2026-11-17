@@ -74,8 +74,11 @@ describe('a media worker applies the primary\'s invalidations', () => {
 
   it('`listen.revoke` re-checks the supervisor (a revocation) or ends exactly the named listens (a supersede); shutdown ends the listens before the app closes', async () => {
     const { channel, child, runtime, app } = start();
-    channel.events.get('listen.revoke')!({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null });
-    expect(runtime.listen.revokeUser).toHaveBeenCalledWith('t', 'u');
+    channel.events.get('listen.revoke')!({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null, change: 'revoked' });
+    expect(runtime.listen.revokeUser).toHaveBeenLastCalledWith('t', 'u', 'revoked');
+    // A seat added carries its kind through (LS22 w: an unreadable check is left to the pass).
+    channel.events.get('listen.revoke')!({ tenantId: 't', userId: 'u', reason: 'permission_revoked', listenIds: null, change: 'added' });
+    expect(runtime.listen.revokeUser).toHaveBeenLastCalledWith('t', 'u', 'added');
     expect(runtime.listen.endSessions).not.toHaveBeenCalled();
     channel.events.get('listen.revoke')!({ tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['l1', 'l2'] });
     expect(runtime.listen.endSessions).toHaveBeenCalledWith(['l1', 'l2'], 'superseded');

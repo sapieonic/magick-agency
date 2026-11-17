@@ -84,10 +84,24 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
 
 import Fastify from 'fastify';
 import { userRoutes } from '../../../../src/api/routes/user.routes.js';
-import { onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
+import { membershipNotificationsSettled, onMembershipChanged } from '../../../../src/rbac/membership-changed.js';
 
 // Live call listening's re-check (LS10) subscribes to membership changes at boot; here, the mock.
 onMembershipChanged(mocks.revokeListens);
+
+/**
+ * The listen re-check held open (LS22 w): the route must answer without waiting for it. Answers the
+ * release, which also waits for the notification to finish.
+ */
+function holdListenRecheck(): () => Promise<void> {
+  let release: (() => void) | undefined;
+  mocks.revokeListens.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+  return async () => {
+    expect(release).toBeDefined();
+    release!();
+    await membershipNotificationsSettled();
+  };
+}
 
 // The validator requires `account_id: z.string().uuid()`, so every fixture
 // below has to be UUID-shaped or the request 400s at schema validation —
@@ -233,6 +247,7 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
 
   it('accepts an account_id that genuinely belongs to the caller\'s own tenant', async () => {
     mocks.accountRepository.findByIdInTenant.mockResolvedValue(account({ id: ACCOUNT_OWN_TENANT, tenant_id: TENANT }));
+    const release = holdListenRecheck();
 
     const app = await buildApp();
     const res = await app.inject({
@@ -241,9 +256,11 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
       payload: { email: 'new@test.com', role: 'viewer', account_id: ACCOUNT_OWN_TENANT },
     });
 
+    // Answered while the re-check is still held (LS22 w).
     expect(res.statusCode).toBe(201);
     // LS22 l: an account-scoped seat may shadow the invitee's tenant-wide one in that account.
-    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, expect.any(String));
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, expect.any(String), 'added');
+    await release();
     expect(mocks.accountRepository.findByIdInTenant).toHaveBeenCalledWith(ACCOUNT_OWN_TENANT, TENANT);
     expect(mocks.membershipRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({ account_id: ACCOUNT_OWN_TENANT, tenant_id: TENANT }),
@@ -630,6 +647,7 @@ describe('user.routes — PUT /:id/role current-role check', () => {
     mocks.membershipRepository.findByUserAndTenant.mockResolvedValue([targetMembership('tenant_admin')]);
     mocks.membershipRepository.updateRoleGuardingLastOwner
       .mockResolvedValue({ ok: true, value: targetMembership('operator') });
+    const release = holdListenRecheck();
 
     const app = await buildApp('tenant_owner');
     const res = await app.inject({
@@ -638,7 +656,10 @@ describe('user.routes — PUT /:id/role current-role check', () => {
       payload: { role: 'operator' },
     });
 
+    // Answered while the listen re-check (LS10) is still held (LS22 w).
     expect(res.statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, TARGET_USER, 'revoked');
+    await release();
     // The role read for the RBAC check is passed back in as the expected role,
     // so the write is a compare-and-swap rather than a blind UPDATE.
     expect(mocks.membershipRepository.updateRoleGuardingLastOwner)
@@ -747,6 +768,7 @@ describe('user.routes — DELETE /:id/membership current-role check', () => {
 
   it('lets a tenant_owner remove a tenant_admin', async () => {
     mocks.membershipRepository.findByUserAndTenant.mockResolvedValue([targetMembership('tenant_admin')]);
+    const release = holdListenRecheck();
 
     const app = await buildApp('tenant_owner');
     const res = await app.inject({
@@ -754,7 +776,10 @@ describe('user.routes — DELETE /:id/membership current-role check', () => {
       url: `/users/${TARGET_USER}/membership`,
     });
 
+    // Answered while the listen re-check (LS10) is still held (LS22 w).
     expect(res.statusCode).toBe(200);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, TARGET_USER, 'revoked');
+    await release();
     expect(mocks.membershipRepository.removeGuardingLastOwner)
       .toHaveBeenCalledWith(TARGET_MEMBERSHIP, TENANT, 'tenant_admin');
   });
