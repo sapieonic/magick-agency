@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.23.0...contracts-v0.24.0) (2026-11-17)
+
+
+### Features
+
+* **server,console,mobile:** live call listening for supervisors ([#94](https://github.com/sapieonic/magick-agency/issues/94)) ([53dbadc](https://github.com/sapieonic/magick-agency/commit/53dbadcc931827421960f5dda7ae0968d747746c))
+
 ## [0.23.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.22.0...contracts-v0.23.0) (2026-11-16)
 
 
