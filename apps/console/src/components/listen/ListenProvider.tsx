@@ -158,9 +158,6 @@ export function ListenProvider({ children }: { children: ReactNode }) {
     else if (!mayListen) controller.withdraw('revoked');
   }, [flagTurnedOff, mayListen, controller]);
 
-  // Leaving the shell or the account: the listen ends with the provider.
-  useEffect(() => () => engine.close(), [engine]);
-
   const [pending, setPending] = useState<{ call: AgencyLiveCall; offset: number } | null>(null);
 
   const begin = useCallback(

@@ -208,21 +208,16 @@ function recover(state: ListenSessionState, now: number, internal: boolean): Lis
 
 function applyOutcome(state: ListenSessionState, outcome: ListenCloseOutcome, now: number): ListenSessionState {
   switch (outcome.kind) {
-    case 'call_ended':
-      return toEnded(state, 'call_ended', now);
     case 'stopped':
       return toIdle(state);
+    case 'call_ended':
     case 'revoked':
-      return toEnded(state, 'revoked', now);
     case 'turned_off':
-      return toEnded(state, 'turned_off', now);
     case 'superseded':
-      return toEnded(state, 'superseded', now);
     case 'unverified':
-      return toEnded(state, 'unverified', now);
+      return toEnded(state, outcome.kind, now);
     case 'refused':
       return toEnded(state, 'refused', now, outcome.code);
-    case 'remint':
     case 'reconnect':
       return recover(state, now, false);
     case 'internal':

@@ -113,9 +113,8 @@ export function encodeListenClientFrame(frame: AgencyListenClientFrame): string 
  *    stopped, saying so, with Try again (a fresh grant checks afresh); neither "no longer have
  *    access" nor a reconnect loop;
  *  - `refused`: a cap or a malformed upgrade refused the attach; `code` says which;
- *  - `remint`: the token was refused (expired or used): a fresh grant, after the same short wait
- *    as any other drop (the reducer treats it as `reconnect`);
- *  - `reconnect`: any other drop: re-mint and reconnect within the window;
+ *  - `reconnect`: any other drop, a refused token (4401: expired or used) among them: re-mint and
+ *    reconnect within the window, after the same short wait;
  *  - `internal`: the tap detached or the session could not open: reconnect, bounded.
  */
 export type ListenCloseOutcome =
@@ -126,7 +125,6 @@ export type ListenCloseOutcome =
   | { kind: 'superseded' }
   | { kind: 'unverified' }
   | { kind: 'refused'; code: AgencyListenErrorCode | null }
-  | { kind: 'remint' }
   | { kind: 'reconnect' }
   | { kind: 'internal' };
 
@@ -148,11 +146,10 @@ export function listenCloseOutcome(code: number, reason: string): ListenCloseOut
       return { kind: 'refused', code: errorCode };
     case AGENCY_LISTEN_CLOSE.INVALID_UPGRADE:
       return { kind: 'refused', code: null };
-    case AGENCY_LISTEN_CLOSE.TOKEN_REJECTED:
-      return { kind: 'remint' };
     case AGENCY_LISTEN_CLOSE.INTERNAL_ERROR:
       return { kind: 'internal' };
     default:
+      // TOKEN_REJECTED (4401) included: a fresh grant, like any other drop.
       return { kind: 'reconnect' };
   }
 }

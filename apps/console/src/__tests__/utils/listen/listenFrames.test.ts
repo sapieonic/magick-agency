@@ -109,7 +109,7 @@ describe('what a close means', () => {
     [AGENCY_LISTEN_CLOSE.NORMAL, '', { kind: 'call_ended' }],
     [AGENCY_LISTEN_CLOSE.NORMAL, 'listener_stopped', { kind: 'stopped' }],
     [AGENCY_LISTEN_CLOSE.GOING_AWAY, 'server_shutdown', { kind: 'reconnect' }],
-    [AGENCY_LISTEN_CLOSE.TOKEN_REJECTED, '', { kind: 'remint' }],
+    [AGENCY_LISTEN_CLOSE.TOKEN_REJECTED, '', { kind: 'reconnect' }],
     [AGENCY_LISTEN_CLOSE.FORBIDDEN, 'permission_revoked', { kind: 'revoked' }],
     [AGENCY_LISTEN_CLOSE.CALL_GONE, 'listen_call_not_live', { kind: 'call_ended' }],
     [AGENCY_LISTEN_CLOSE.HEARTBEAT_TIMEOUT, 'send_backlog', { kind: 'reconnect' }],
