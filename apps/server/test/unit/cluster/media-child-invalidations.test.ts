@@ -11,6 +11,7 @@ vi.mock('../../../src/agency/campaign-dialability.js', () => dialability);
 
 const { installIpcCacheInvalidation, startMediaChild } = await import('../../../src/cluster/media-child.js');
 const cacheChannel = await import('../../../src/cache/cache-invalidation.js');
+const { agencyListenSessionRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
 /** Just what `startMediaChild` registers on, with each event handler kept. */
 function fakeChannel() {
@@ -36,7 +37,10 @@ function start() {
       replicaId: 'h:mw0:1',
       stations: { onAttached: vi.fn(), onDetached: vi.fn(), all: () => [] },
       stopShard: vi.fn(async () => {}),
-      listen: { shutdown: vi.fn(async () => {}), revokeUser: vi.fn(async () => 0), endSessions: vi.fn(async () => 0), limits: { maxPerUser: 1 }, get: () => undefined },
+      listen: {
+        shutdown: vi.fn(async () => {}), revokeUser: vi.fn(async () => 0), endSessions: vi.fn(async (_ids: string[], _reason: string) => 0),
+        limits: { maxPerUser: 1 }, get: (_id: string): unknown => undefined,
+      },
       supersedeListensElsewhere: null as null | ((session: unknown) => void),
   };
   const child = startMediaChild({
@@ -82,6 +86,41 @@ describe('a media worker applies the primary\'s invalidations', () => {
     await child.shutdown();
     expect(order).toEqual(['listen', 'app']);
     expect(runtime.listen.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('LS22 v: a listen admitted here ends the supervisor\'s listens past the cap ranked across workers: its own here, the others\' through the primary', async () => {
+    const { channel, child, runtime } = start();
+    const n = { listenId: 'N', callId: 'c0', tenantId: 't', listenerUserId: 'u' };
+    runtime.listen.limits.maxPerUser = 2;
+    runtime.listen.get = ((id: string) => (id === 'N' ? n : undefined)) as any;
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 16, 10, 0, s));
+    const read = vi.spyOn(agencyListenSessionRepository, 'listOpenForListener');
+    try {
+      // A here, then B (newer) on the other worker, then N here: A is the one past the cap.
+      read.mockResolvedValueOnce([
+        { id: 'N', replica_id: 'h:mw0:1', call_id: 'c0', started_at: at(30) },
+        { id: 'B', replica_id: 'h:mw1:1', call_id: 'c1', started_at: at(20) },
+        { id: 'A', replica_id: 'h:mw0:1', call_id: 'c2', started_at: at(10) },
+      ] as any);
+      runtime.supersedeListensElsewhere!(n);
+      await vi.waitFor(() => expect(runtime.listen.endSessions).toHaveBeenCalledWith(['A'], 'superseded'));
+      expect(channel.emit).not.toHaveBeenCalledWith('listen.revoke', expect.anything());
+      // The other way about: the other worker's is the oldest, and goes to the primary.
+      runtime.listen.endSessions.mockClear();
+      read.mockResolvedValueOnce([
+        { id: 'N', replica_id: 'h:mw0:1', call_id: 'c0', started_at: at(30) },
+        { id: 'A', replica_id: 'h:mw0:1', call_id: 'c2', started_at: at(20) },
+        { id: 'B', replica_id: 'h:mw1:1', call_id: 'c1', started_at: at(10) },
+      ] as any);
+      runtime.supersedeListensElsewhere!(n);
+      await vi.waitFor(() => expect(channel.emit).toHaveBeenCalledWith('listen.revoke', {
+        tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['B'],
+      }));
+      expect(runtime.listen.endSessions).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+      await child.shutdown();
+    }
   });
 
   it('a cache invalidation published here goes to the primary as `cache.invalidate`, and to this process too', () => {

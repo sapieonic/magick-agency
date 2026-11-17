@@ -31,7 +31,7 @@ live list's SQL `db/repositories/agency/live-call.repository.ts`, IPC `listen.re
 
 Status words as in [`decisions.md`](decisions.md). LS1–LS13 are the locked design (Manas,
 2026-11-16); LS14 collects the calls phase 1 made where the design was silent, LS15 phase 2's,
-LS16 phase 3's, LS17 the voice review's; LS18–LS20 record the product owner's decisions on the persona review (Manas, 2026-11-16), LS21 is Manas's decision on an outage of the access check, LS22 the persona review's server calls and the final review's. The build's own calls (LS14–LS17, those in LS19 and LS20, LS22) were ratified by Manas on 2026-11-17, so every LS ruling is decided.
+LS16 phase 3's, LS17 the voice review's; LS18–LS20 record the product owner's decisions on the persona review (Manas, 2026-11-16), LS21 is Manas's decision on an outage of the access check, LS22 the persona review's server calls and the final review's. The build's own calls (LS14–LS17, those in LS19 and LS20, LS22 (a)–(u)) were ratified by Manas on 2026-11-17, so every LS ruling is decided but LS22 (v), the build's fix on the PR review (2026-11-17).
 
 | ID | Decision | Status |
 |---|---|---|
@@ -56,7 +56,7 @@ LS16 phase 3's, LS17 the voice review's; LS18–LS20 record the product owner's 
 | LS19 | **The account's listening history.** An account-level "Listening history" (who listened, the agent, the call type, the masked customer, start, time listened, how it ended in words, a link to the call where one exists; filters for supervisor, agent and date range; CSV), and readable listen rows on a campaign's History. Gate: `agency.supervise` alone (amended 2026-11-17; it was `agency.supervise` and `agency_live_listen_enabled`): turning listening off stops new listens, not the record of past ones, so the history's routes never read the flag (no `403 feature_disabled`, no `503` on a flag store outage) and the console offers the page whether the flag is on or off. Built server side (§12): (a) `GET /proxy/agency/listen-history` and `.csv` through the internal `GET /api/v1/agency/listen-history` (owner `none`), account scoped, keyset-paged newest first; (b) a supervisor's sessions on one call are merged into one entry ON THE SERVER, in the history's SQL, while each starts at most `AGENCY_LISTEN_HISTORY_MERGE_GAP_MS` (30 s, twice the console's reconnect window) after every earlier one ended or while one is still open, so the page and the CSV show the same entries; the time listened counts overlaps once and gaps not at all; the date range filters sessions by their start before the merge; (c) the CSV carries masked numbers only ("Withheld" for a withheld caller) and is audited `agency_listen_sessions.exported` (the actor, the filters, the rows, any truncation; resource type `account`), as every bulk export here is; at most 10,000 entries and 30 s, past either cut and marked (`X-Export-Truncated`); (d) the words for each end reason are the contract's `AGENCY_LISTEN_END_REASON_LABELS`, shared by the page and the CSV; (e) a campaign History listen row carries `detail.agent_name`, resolved at the read in the page's one identity read (never written to the audit row). The console's page, the readable History rows and "Listened to by" merged by the same rule are in §12. | **Decided** (Manas, 2026-11-16); amended 2026-11-17: the history is gated by `agency.supervise` alone, so turning listening off does not hide past listens; (a)–(e) are the build's calls, **Decided** (Manas, 2026-11-17) |
 | LS20 | **Guard rails on the consent gate.** All three: (a) a handling policy on `agency_live_listen_enabled` in the super-admin flag routes (`feature-flags/flag-policies.ts`, served as the catalog's `policy` and enforced on every write): turning it on for a tenant or account needs a reason (`400 flag_reason_required`); the bulk rollout refuses it (`422 flag_bulk_not_allowed`), and so does a GLOBAL On, which is every tenant at once (a global Off, the kill switch, stays allowed; the super-admin registry says why instead of asking for a reason); the super-admin UI's warning, reason dialog and bulk list already read the policy; (b) the enablement checklist in [`operations.md`](operations.md) (LS18's inbound item included); (c) a read-only line in the account's Settings, "Live call listening: On / Off", whether calls that are not recorded are included, and "Ask your account manager to change this.": served by making `agency_live_listen_unrecorded` client-exposed, so the console reads both flags from the client flag map (`GET /feature-flags`) as it already reads `agency_live_listen_enabled` for the Live calls page and the agent's line, rather than a new settings read; the server still computes `listenable` and refuses the grant itself. The global-On refusal (a) and the choice in (c) are the build's calls. The env default `FF_AGENCY_LIVE_LISTEN` bypasses (a): dev and staging only, warned at boot (LS22 p). | **Decided** (Manas, 2026-11-16); the calls in (a) and (c) **Decided** (Manas, 2026-11-17) |
 | LS21 | **When access cannot be checked** (persona review, decision 4). The periodic re-check ends a session not verified for 2 × `AGENCY_LISTEN_RECHECK_MS` (60 s at the defaults; `STALE_AFTER_RECHECKS` was 4) with its own end reason, `access_unverified`, and close code 4503 (`AGENCY_LISTEN_CLOSE.ACCESS_UNVERIFIED`), not `permission_revoked`: nothing said the supervisor may no longer listen, so the console says listening stopped because their access could not be checked and offers Try again (the grant checks afresh), never "You no longer have access to listen to calls.". A contract addition (`AGENCY_LISTEN_END_REASONS`, `AGENCY_LISTEN_CLOSE`, `AGENCY_LISTEN_END_CLOSE`; not mirrored in Dart), the metric's `reason` label, and migration `0048_listen_sessions_unverified.sql` extending the end reason's CHECK (0047 unchanged). | **Decided** (Manas, 2026-11-16) |
-| LS22 | **The persona review's server calls**, (a)–(m), and the final review's, (n)–(t), listed one by one under the table ("LS22 in full"): `access_unverified` on the immediate path too (a); its close code (b); `live_at` and "Listened to by" (c); protocol pings as liveness (d); the client message rate (e); a refusal sends no `ended` frame (f); the token store's outage (g); every close then terminated (h); withheld numbers (i); the fault budget through the seam (j); the rows' upkeep and the tick (k); seats added by an invite (l); the load check's timing bounds (m); and the final review's: no caching of live-call and history answers (n); the upgrade's database steps bounded (o); the env default `FF_AGENCY_LIVE_LISTEN` dev and staging only, warned at boot (p); a tap that fails to open counted (q); a dead process's rows closed on a retry, `server_restarted` counted for live rows only (r); a supersede reaching a listen mid-upgrade (s); the history's bounded read on its own index, 0049 (t); the agent's one-time notice (u). | **Decided** (Manas, 2026-11-17) |
+| LS22 | **The persona review's server calls**, (a)–(m), and the final review's, (n)–(t), listed one by one under the table ("LS22 in full"): `access_unverified` on the immediate path too (a); its close code (b); `live_at` and "Listened to by" (c); protocol pings as liveness (d); the client message rate (e); a refusal sends no `ended` frame (f); the token store's outage (g); every close then terminated (h); withheld numbers (i); the fault budget through the seam (j); the rows' upkeep and the tick (k); seats added by an invite (l); the load check's timing bounds (m); and the final review's: no caching of live-call and history answers (n); the upgrade's database steps bounded (o); the env default `FF_AGENCY_LIVE_LISTEN` dev and staging only, warned at boot (p); a tap that fails to open counted (q); a dead process's rows closed on a retry, `server_restarted` counted for live rows only (r); a supersede reaching a listen mid-upgrade (s); the history's bounded read on its own index, 0049 (t); the agent's one-time notice (u); and the PR review's: the supersede's ranking for any `AGENCY_LISTEN_MAX_PER_USER`, never two listens on one call (v). | **Decided** (Manas, 2026-11-17); (v) the build's call on the PR review (2026-11-17) |
 
 ### LS16 in full
 
@@ -151,7 +151,8 @@ comments and the other docs).
 ### LS22 in full
 
 The persona review's server calls (2026-11-16), beside the decided LS21, and the final review's
-(n)–(u); each decided (Manas, 2026-11-17).
+(n)–(u); each decided (Manas, 2026-11-17). (v) is the build's call on the PR review's two comments
+(2026-11-17).
 
 - **(a)** The immediate path (`revokeUser`, a role change or a removal) still fails closed (LS16 c),
   but a session it could not check ends `access_unverified`, like the periodic pass's: no read said
@@ -263,11 +264,9 @@ The persona review's server calls (2026-11-16), beside the decided LS21, and the
   names may hold it as a reservation (its row written, which is how the other worker read it, not
   yet admitted), and `endSessions` marks it, so its admission is refused `superseded` (the row
   closes `superseded`, 4409 as a live session's supersede, no `ready`, no audit pair) instead of
-  being admitted after the supersede passed it by, which left the supervisor two listens. Accepted:
-  with `AGENCY_LISTEN_MAX_PER_USER` 2 or more, a supersede decided in one worker counts the
-  supervisor's rows across processes but ends only the other processes' (its own registry keeps
-  its own count), so a supervisor can hold one listen over the cap across processes; at the
-  default 1 every older listen is ended, here and elsewhere.
+  being admitted after the supersede passed it by, which left the supervisor two listens. (This
+  letter used to accept that with `AGENCY_LISTEN_MAX_PER_USER` 2 or more a supervisor could hold
+  one listen over the cap across processes; (v) closes it.)
 - **(t)** The listening history reads one page's visits, not the account's history (final
   review): every page used to window every session the filters kept in the account (the whole
   tenant's, without a supervisor filter, to find them), and the CSV drains up to 100 pages. A
@@ -287,6 +286,24 @@ The persona review's server calls (2026-11-16), beside the decided LS21, and the
   on a call it says the line can be read again under "Monitoring and recording" between calls, as
   the on-call band has no button). Agent-facing words beyond LS2's two places, the build's call
   (§9 "The agent").
+- **(v)** The supersede, for any `AGENCY_LISTEN_MAX_PER_USER` (the PR review): one rule
+  (`supersededBy`, `listen-registry.ts`) ranks a supervisor's other listens newest first and ends,
+  `superseded`, every one on the new listen's call (a supervisor never holds two listens on one
+  call, and those take no place under the cap) and, of the rest, those past the newest
+  `maxPerUser - 1`. The registry applies it to its own sessions at the admission, and its grant
+  and reservation check (`check`) leave what the listen would end out of both counts, so the
+  caller's own listens on the call never count against the per-call cap, as the live list's
+  `notListenableReason` already said: a console re-granting the call it was on before the server
+  noticed its socket drop is not refused `listen_limit_call` by its own stale session. With media
+  workers, the admitting worker then applies it to the supervisor's open rows OLDER than its own
+  (LS16 p), this process's and the others' ranked together (`supersedeTargets`,
+  `listen-revocation.ts`), and ends what falls past it wherever it is: its own sessions (or
+  reservations, LS22 s) here, the others' through the primary. Before, that pass dropped the local
+  rows, and the admission had ranked only the local sessions, so with a cap of 2 a listen newer
+  than a kept local one but held elsewhere was never ended (holds A on worker 1, B on worker 2,
+  starts N on worker 1: N, A and B). The pass ranks nothing once its listen has left the registry
+  under the read (a listen with an older row admitted after it ended it there: ranking it then
+  would end that one too). At the default 1 every other listen ends, as before.
 
 ## 2. Architecture
 
@@ -489,8 +506,9 @@ and admits nothing more (`listen_unavailable`).
 the super-admin's `POST /super-admin/tenants/:id/users`; LS22 l) `membershipAdded`, whose subscribers are the runtime's `revokeUser` (registered by
 `startAgency`) and, with media workers, the primary's broadcast of `listen.revoke { reason:
 'permission_revoked', listenIds: null }` (registered by `startMediaWorkers`). A worker that admits a
-listen reads the supervisor's open rows and sends `listen.revoke { reason: 'superseded', listenIds }`
-for those another replica holds past the cap, older than its own (LS16 p); the primary relays it to the other workers
+listen reads the supervisor's open rows, ranks those older than its own (LS16 p) across every replica
+(LS22 v), ends its own past the cap and sends `listen.revoke { reason: 'superseded', listenIds }`
+for those another replica holds; the primary relays it to the other workers
 (`media-cluster.ts`), which end exactly those.
 
 **Sweeps and shutdown.** At boot (`AgencyRuntime.start`, before any listener can attach and before
@@ -1034,7 +1052,8 @@ before every listener send"), which goes red for it.
   `not_bridged`; after the bind, both legs through the tap on the real Plivo module, byte for byte),
   `test/unit/telephony/carrier-modules.test.ts` (Plivo's `wireFormat: 'mulaw8'`).
 - The server side (phase 3): `test/unit/agency/listen/listen-registry.test.ts` (the three caps,
-  reservations, a supervisor's own listen not counted, supersede, `endSessions`, `revokeUser` scoped
+  reservations, a supervisor's own listen not counted, supersede (LS22 v: with `maxPerUser` 2 the
+  same call's listen ends and a re-grant of it is not refused; `supersededBy`), `endSessions`, `revokeUser` scoped
   and re-checked and failing closed, the periodic pass failing open up to the staleness cap (and a
   hung pass), the periodic re-check on fake timers, the rows' upkeep on the tick, a stopping process
   `listen_unavailable`, the revocation generation between grant and reservation and between
@@ -1050,8 +1069,9 @@ before every listener send"), which goes red for it.
   tap ended under the attach or throwing, the token store's outage, the fault budget through the
   seam, `access_unverified`'s 4503), `listen-token.test.ts` (single use, the listen id, a stored
   value that is not a grant, fail closed both ways and a store outage rejecting, the in-process
-  store), `listen-revocation.test.ts` (the hook; the cross-process supersede: past the
-  cap, older rows only, two listens admitted at once ending one), `listen-rows.test.ts` (a failed
+  store), `listen-revocation.test.ts` (the cross-process supersede: past the
+  cap, older rows only, two listens admitted at once ending one; LS22 v: this process's rows and
+  the others' ranked together, the same call's, a listen ended under the read ranking nothing), `listen-rows.test.ts` (a failed
   close retried with its reason, the sweep's keep set and age floor, the held ids read after a slow
   retry, `markLive`, the queue bound),
   `test/unit/feature-flags/flag-snapshot.test.ts` (`strictSnapshot`: an outage rejects),

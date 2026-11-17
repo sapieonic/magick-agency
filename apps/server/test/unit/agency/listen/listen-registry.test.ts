@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgencyListenEndReason } from '@magick-agency/contracts/agency';
 import {
-  ListenRegistry, STALE_AFTER_RECHECKS, type ListenAccessCheck, type ListenAccessSubject, type ListenAccessVerdict, type ListenLimits, type ListenSessionHandle,
+  ListenRegistry, STALE_AFTER_RECHECKS, supersededBy, type ListenAccessCheck, type ListenAccessSubject, type ListenAccessVerdict, type ListenLimits, type ListenSessionHandle,
 } from '../../../../src/agency/listen/listen-registry.js';
 import { listenAccessCheck, membershipMayListen, type ListenAccessDeps } from '../../../../src/agency/listen/listen-access.js';
 import type { MembershipRecord } from '@magick-agency/db/models/membership.model';
@@ -116,6 +116,50 @@ describe('ListenRegistry: supersede', () => {
     expect(a.ended).toEqual(['superseded']);
     expect(b.ended).toEqual([]);
     expect(elsewhere.ended).toEqual([]);
+  });
+
+  it('LS22 v: with maxPerUser 2 a new listen on a call ends the supervisor\'s own listen on that call, not their oldest elsewhere', () => {
+    const registry = registryWith(undefined, { maxPerUser: 2, maxPerProcess: 10 });
+    const onOther = open(registry, session({ listenId: 'b', callId: 'c2' }, registry));
+    const stale = open(registry, session({ listenId: 'a', callId: 'c1' }, registry));
+    const again = open(registry, session({ listenId: 'a2', callId: 'c1' }, registry));
+    expect(stale.ended).toEqual(['superseded']);
+    expect(onOther.ended).toEqual([]);
+    expect(again.ended).toEqual([]);
+    expect([...registry.held()].sort()).toEqual(['a2', 'b']);
+  });
+
+  it('LS22 v: with maxPerUser 2 a console re-granting the call it was on is not refused by its own stale session, and never holds two on it', () => {
+    const registry = registryWith(undefined, { maxPerUser: 2, maxPerCall: 2, maxPerProcess: 10 });
+    const stale = open(registry, session({ listenId: 's1', callId: 'c1', listenerUserId: 'S' }, registry));
+    const other = open(registry, session({ listenId: 't1', callId: 'c1', listenerUserId: 'T' }, registry));
+    // As the live list says (`notListenableReason` leaves out the caller's own listeners).
+    expect(registry.check('c1', 't1', 'S')).toBeNull();
+    expect(registry.check('c1', 't1', 'U')).toBe('listen_limit_call');
+    const fresh = open(registry, session({ listenId: 's2', callId: 'c1', listenerUserId: 'S' }, registry));
+    expect(stale.ended).toEqual(['superseded']);
+    expect(other.ended).toEqual([]);
+    expect(fresh.ended).toEqual([]);
+    expect([...registry.held()].sort()).toEqual(['s2', 't1']);
+  });
+
+  it('LS22 v: at the default maxPerUser 1 the same call and another call alike end the first (unchanged)', () => {
+    const registry = registryWith();
+    const a = open(registry, session({ listenId: 'a', callId: 'c1' }, registry));
+    const b = open(registry, session({ listenId: 'b', callId: 'c1' }, registry));
+    expect(a.ended).toEqual(['superseded']);
+    open(registry, session({ listenId: 'c', callId: 'c2' }, registry));
+    expect(b.ended).toEqual(['superseded']);
+    expect([...registry.held()]).toEqual(['c']);
+  });
+
+  it('supersededBy: every other listen on the same call, then those past the newest maxPerUser - 1 of the rest', () => {
+    const others = [{ id: 'n1', call: 'c2' }, { id: 'n2', call: 'c1' }, { id: 'n3', call: 'c3' }, { id: 'n4', call: 'c4' }];
+    const ids = (max: number) => supersededBy(others, (o) => o.call === 'c1', max).map((o) => o.id);
+    expect(ids(1)).toEqual(['n1', 'n2', 'n3', 'n4']);
+    expect(ids(2)).toEqual(['n2', 'n3', 'n4']);
+    expect(ids(3)).toEqual(['n2', 'n4']);
+    expect(ids(5)).toEqual(['n2']);
   });
 
   it('endSessions ends exactly the named sessions held here (a supersede decided in another process)', async () => {

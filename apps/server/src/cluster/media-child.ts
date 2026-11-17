@@ -34,7 +34,7 @@ import type { HealthBody } from './ipc-protocol.js';
 import { DialGrants } from './ipc-dial-dispatcher.js';
 import { adoptUpgrade } from './ws-adopt.js';
 import { createLoopSampler } from './loop-sampler.js';
-import { remoteSupersedeTargets } from '../agency/listen/listen-revocation.js';
+import { supersedeTargets } from '../agency/listen/listen-revocation.js';
 
 const log = createChildLogger({ component: 'media-child' });
 
@@ -182,11 +182,13 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     if (reason === 'superseded') void runtime.listen.endSessions(listenIds ?? [], 'superseded');
     else void runtime.listen.revokeUser(tenantId, userId);
   });
-  // A listen admitted here ends the supervisor's older listens held by the other workers.
+  // A listen admitted here ends the supervisor's older listens past the cap, ranked across every
+  // worker (LS22 v): those this worker holds here, the others' through the primary.
   runtime.supersedeListensElsewhere = (session) => {
-    void remoteSupersedeTargets(session, runtime.listen, runtime.replicaId).then((listenIds) => {
-      if (listenIds.length === 0) return;
-      channel.emit('listen.revoke', { tenantId: session.tenantId, userId: session.listenerUserId, reason: 'superseded', listenIds });
+    void supersedeTargets(session, runtime.listen, runtime.replicaId).then(({ here, elsewhere }) => {
+      if (here.length > 0) void runtime.listen.endSessions(here, 'superseded');
+      if (elsewhere.length === 0) return;
+      channel.emit('listen.revoke', { tenantId: session.tenantId, userId: session.listenerUserId, reason: 'superseded', listenIds: elsewhere });
     }).catch((err) => log.warn({ err, listenId: session.listenId }, 'Could not look for the supervisor\'s listens elsewhere'));
   };
 

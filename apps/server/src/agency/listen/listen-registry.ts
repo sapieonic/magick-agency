@@ -16,9 +16,13 @@ const log = createChildLogger({ component: 'agency-listen-registry' });
  * listen past it ends their oldest `superseded`). A call is relayed by one process, so the
  * per-call count here is the call's. The per-call and per-process caps count reservations too
  * (an upgrade between its reservation and its admission, across the access check, the row and the
- * tap), so two upgrades racing one slot cannot both pass. A supervisor's own sessions that the new one would supersede do not count against the
- * per-call cap: a console reconnecting to the call it was on is not refused by its own stale
- * session.
+ * tap), so two upgrades racing one slot cannot both pass. A supervisor never holds two listens on
+ * one call (LS22 v): a new listen ends their own older ones on its call whatever `maxPerUser`, and
+ * those take no place under it; so their own sessions on the call never count against its cap (as
+ * the live list's `notListenableReason`): a console reconnecting to the call it was on is not
+ * refused by its own stale session. With media workers this process sees only its own sessions;
+ * the per-supervisor cap across processes is `supersedeTargets`' (`listen-revocation.ts`), which
+ * ranks every open row of the supervisor by the same rule ({@link supersededBy}).
  *
  * ── Revocation (LS10, LS16 c, d, LS21, LS22) ─────────────────────────────────
  * {@link revokeUser} re-checks one supervisor's sessions now; {@link recheck} re-checks every
@@ -84,6 +88,19 @@ export const STALE_AFTER_RECHECKS = 2;
 
 /** How many supervisors' revocation generations a registry remembers (the oldest are forgotten). */
 const MAX_GENERATIONS = 10_000;
+
+/**
+ * Of a supervisor's other listens, ranked NEWEST first, those a new listen on its call ends
+ * (`superseded`), in that order: every one on the same call (LS22 v: never two on one call, and
+ * they take no place under the cap), and of the rest those past the newest `maxPerUser - 1` (the
+ * new listen is the cap's first). One rule for the registry's own sessions and for the rows of
+ * every process (`supersedeTargets`).
+ */
+export function supersededBy<T>(othersNewestFirst: readonly T[], onSameCall: (other: T) => boolean, maxPerUser: number): T[] {
+  const keep = Math.max(0, maxPerUser - 1);
+  const past = new Set(othersNewestFirst.filter((o) => !onSameCall(o)).slice(keep));
+  return othersNewestFirst.filter((o) => onSameCall(o) || past.has(o));
+}
 
 export interface ListenLimits {
   maxPerCall: number;
@@ -203,15 +220,15 @@ export class ListenRegistry {
   }
 
   /**
-   * The supervisor's sessions a new one would end (`superseded`): their oldest, past
-   * `maxPerUser - 1`. In the tenant: a user id is global, but a listen belongs to its tenant.
+   * The supervisor's sessions here a new one on `callId` would end (`superseded`, {@link supersededBy}):
+   * their own on that call, and their oldest past `maxPerUser - 1`. In the tenant: a user id is
+   * global, but a listen belongs to its tenant.
    */
-  private toSupersede(tenantId: string, listenerUserId: string): ListenSessionHandle[] {
-    const mine = [...this.sessions.values()]
+  private toSupersede(tenantId: string, listenerUserId: string, callId: string): ListenSessionHandle[] {
+    const theirs = [...this.sessions.values()]
       .filter((s) => s.tenantId === tenantId && s.listenerUserId === listenerUserId)
-      .sort((a, b) => a.startedAt - b.startedAt);
-    const keep = Math.max(0, this.deps.limits.maxPerUser - 1);
-    return mine.slice(0, Math.max(0, mine.length - keep));
+      .sort((a, b) => b.startedAt - a.startedAt);
+    return supersededBy(theirs, (s) => s.callId === callId, this.deps.limits.maxPerUser);
   }
 
   /**
@@ -220,7 +237,8 @@ export class ListenRegistry {
    */
   check(callId: string, tenantId: string, listenerUserId: string): ListenAdmissionRefusal | null {
     if (this.stopping) return 'listen_unavailable';
-    const leaving = new Set(this.toSupersede(tenantId, listenerUserId).map((s) => s.listenId));
+    // What the listen would end takes no place: the caller's own sessions on this call among them.
+    const leaving = new Set(this.toSupersede(tenantId, listenerUserId, callId).map((s) => s.listenId));
     let onCall = 0;
     let inProcess = 0;
     for (const s of this.sessions.values()) {
@@ -283,8 +301,8 @@ export class ListenRegistry {
   }
 
   /**
-   * Turn a reservation into an open session, ending the supervisor's older sessions past
-   * `maxPerUser` (`superseded`). Refused (the slot given back, nothing ended) when the supervisor
+   * Turn a reservation into an open session, ending the supervisor's older sessions on the same
+   * call and past `maxPerUser` (`superseded`, {@link supersededBy}). Refused (the slot given back, nothing ended) when the supervisor
    * was revoked here since the reservation (`permission_revoked`), or when another process
    * superseded it while it was being admitted (`superseded`, LS22 s): the caller ends the session
    * for that reason.
@@ -303,7 +321,7 @@ export class ListenRegistry {
       log.info({ listenId: session.listenId }, 'Listen upgrade refused: the supervisor\'s newer listen elsewhere superseded it while it was admitted');
       return { ok: false, reason: 'superseded' };
     }
-    const superseded = this.toSupersede(session.tenantId, session.listenerUserId);
+    const superseded = this.toSupersede(session.tenantId, session.listenerUserId, session.callId);
     this.sessions.set(session.listenId, session);
     this.verifiedAt.set(session.listenId, this.now());
     trackListenSessionsActive(this.sessions.size);
