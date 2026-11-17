@@ -39,6 +39,7 @@
 import { getPool } from '@magick-agency/db';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import type { AgencyCallOrigin, AgencyListenEndReason } from '@magick-agency/contracts/agency';
+import { contactNameContextSql } from './sql-fragments.js';
 
 export interface ListenHistoryQuery {
   tenantId: string;
@@ -162,9 +163,7 @@ export const LISTEN_HISTORY_SQL = `
          cam.name AS campaign_name, r.name AS inbound_route_name,
          p.listener_user_id, p.agent_user_id,
          c.destination_phone AS customer_phone,
-         CASE WHEN ct.id IS NULL THEN NULL ELSE jsonb_build_object(
-           'name', ct.context->'name', 'full_name', ct.context->'full_name',
-           'customer_name', ct.context->'customer_name', 'first_name', ct.context->'first_name') END AS contact_context,
+         ${contactNameContextSql('ct')} AS contact_context,
          p.started_at, ${keysetAtSql('p.started_at')} AS started_at_key,
          CASE WHEN p.open THEN NULL ELSE p.last_ended_at END AS ended_at,
          CASE WHEN p.open THEN NULL ELSE p.listened_seconds::text END AS listened_seconds,

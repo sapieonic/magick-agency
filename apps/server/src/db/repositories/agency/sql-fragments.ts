@@ -11,6 +11,7 @@
 import { successDispositionSql } from '@magick-agency/domain/success-disposition';
 import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
+import { INBOUND_MATCH_NAME_COLUMNS } from '../../../agency/inbound/match-name.js';
 
 /**
  * "This roster row's number, digits only" — the PREFILTER for
@@ -583,4 +584,15 @@ export function ahtSecondsSql(voicemailCodeParam: string): string {
                     AND bridged_at IS NOT NULL
                     AND outcome IS DISTINCT FROM 'orphaned'
                     AND disposition_code IS DISTINCT FROM ${voicemailCodeParam})`;
+}
+
+/**
+ * A roster contact's name columns ({@link INBOUND_MATCH_NAME_COLUMNS}) from its `context`, as one
+ * JSONB object (NULL when the join found no contact): what `matchName` reads in TypeScript. Only
+ * those keys leave the database, never the rest of the row's CSV columns. `alias` is the
+ * `agency_contacts` row's alias in the caller's query; the caller names the column.
+ */
+export function contactNameContextSql(alias: string): string {
+  const pairs = INBOUND_MATCH_NAME_COLUMNS.map((k) => `'${k}', ${alias}.context->'${k}'`).join(', ');
+  return `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE jsonb_build_object(${pairs}) END`;
 }

@@ -58,7 +58,7 @@ import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/ke
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
-import { inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
+import { contactNameContextSql, inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -341,9 +341,7 @@ const MISSED_FROM_SQL = `agency_inbound_calls c
         LEFT JOIN agency_campaigns cam ON cam.id = c.matched_campaign_id
         LEFT JOIN agency_contacts mc ON mc.id = c.matched_contact_id AND mc.tenant_id = c.tenant_id`;
 const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name,
-  CASE WHEN mc.id IS NULL THEN NULL ELSE jsonb_build_object(
-    'name', mc.context->'name', 'full_name', mc.context->'full_name',
-    'customer_name', mc.context->'customer_name', 'first_name', mc.context->'first_name') END AS match_context`;
+  ${contactNameContextSql('mc')} AS match_context`;
 
 export class AgencyInboundCallRepository {
   /**

@@ -17,7 +17,7 @@
  */
 import { getPool } from '@magick-agency/db';
 import type { AgencyCallOrigin, AgencyClientKind } from '@magick-agency/contracts/agency';
-import { VOICEMAIL_DISPOSITION_CODE, ahtSecondsSql } from './sql-fragments.js';
+import { VOICEMAIL_DISPOSITION_CODE, ahtSecondsSql, contactNameContextSql } from './sql-fragments.js';
 
 /** One live call, as the internal handler answers it (full number; no names but the contact's). */
 export interface AgencyLiveCallRow {
@@ -77,9 +77,7 @@ export const LIVE_CALLS_SQL = `
   )
   SELECT l.call_id, l.origin, l.correlation_id, l.campaign_id, cam.name AS campaign_name, r.name AS inbound_route_name,
          s.id AS agent_session_id, s.agent_user_id, s.client_kind, c.destination_phone AS customer_phone,
-         CASE WHEN ct.id IS NULL THEN NULL ELSE jsonb_build_object(
-           'name', ct.context->'name', 'full_name', ct.context->'full_name',
-           'customer_name', ct.context->'customer_name', 'first_name', ct.context->'first_name') END AS contact_context,
+         ${contactNameContextSql('ct')} AS contact_context,
          COALESCE(l.connected_at, c.answered_at, c.created_at) AS connected_at,
          c.recording_requested AS recording
     FROM live l
