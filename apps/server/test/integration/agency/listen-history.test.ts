@@ -182,6 +182,27 @@ describe('the listening history statement', () => {
     expect(seen).toEqual([...tied, ids[3], ids[4]]);
   });
 
+  it('LS22 t: a page holds `limit` visits however many reconnects they hold, and says more follow', async () => {
+    // The newest visit is three sessions (two reconnects within the gap, one while it was open);
+    // two older visits are one each.
+    const listener = randomUUID();
+    const call = randomUUID();
+    const newest = await session({ listener, call, start: 900, end: 950 });
+    await session({ listener, call, start: 960, end: 1000 });
+    await session({ listener, call, start: 990, end: 1020 });
+    const middle = await session({ listener: randomUUID(), call: randomUUID(), start: 800, end: 810 });
+    const oldest = await session({ listener: randomUUID(), call: randomUUID(), start: 700, end: 710 });
+    const first = await list({ limit: 1 });
+    expect(first.rows.map((r) => [r.id, r.listen_ids.length])).toEqual([[newest, 3]]);
+    expect(first.hasMore).toBe(true);
+    const two = await list({ limit: 2 });
+    expect(two.rows.map((r) => r.id)).toEqual([newest, middle]);
+    expect(two.hasMore).toBe(true);
+    const all = await list({ limit: 3 });
+    expect(all.rows.map((r) => r.id)).toEqual([newest, middle, oldest]);
+    expect(all.hasMore).toBe(false);
+  });
+
   it('names the call from its rows where they still exist: campaign, contact, number; a purged call row reads null', async () => {
     const campaign = await insertAgencyCampaign({ name: 'Renewals' });
     const contact = await insertAgencyContact(campaign.id, { phone_e164: '+919812345678', context: { name: 'Asha Rao' } });
