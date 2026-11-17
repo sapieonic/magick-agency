@@ -151,6 +151,35 @@ describe('runAuditPartitionMaintenance: the two halves fail independently (NEW)'
   });
 });
 
+describe('the horizon tables wait for the audit partitions (LS12: never before their audit rows)', () => {
+  it('a failed partition purge in the pass skips the horizon tables, so no session row goes before its audit rows', async () => {
+    mocks.query.mockReset().mockImplementation(async (sql: string) => {
+      if (sql.trimStart().startsWith('DROP')) throw new Error('canceling statement due to lock timeout');
+      if (sql.includes('pg_inherits')) {
+        const rows = partitionRows('platform_audit_log');
+        return { rows, rowCount: rows.length };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const report = await runAuditPartitionMaintenance({
+      retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z'),
+    });
+
+    expect(Object.keys(report.errors).filter((k) => k.endsWith('.purge')).length).toBeGreaterThan(0);
+    expect(report.horizonSkipped).toBe(true);
+    expect(report.horizonRowsDeleted).toEqual({});
+    expect(executedSql().some((q) => q.includes('agency_listen_sessions'))).toBe(false);
+  });
+
+  it('a pass whose partitions all purged runs them', async () => {
+    mocks.query.mockReset().mockImplementation(async () => ({ rows: [], rowCount: 0 }));
+    const report = await runAuditPartitionMaintenance({ retentionDays: 85, monthsAhead: 0, now: new Date('2026-06-15T00:00:00Z') });
+    expect(report.horizonSkipped).toBe(false);
+    expect(report.horizonRowsDeleted).toEqual({ agency_listen_sessions: 0 });
+  });
+});
+
 describe('purgeAuditHorizonRows: the unpartitioned tables kept for the audit horizon (docs/listening.md, LS12)', () => {
   it('purges the listen sessions, by their start', () => {
     expect(AUDIT_HORIZON_TABLES).toEqual([{ table: 'agency_listen_sessions', tsColumn: 'started_at' }]);

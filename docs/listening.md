@@ -599,7 +599,8 @@ deletes listen sessions that started before the first instant (UTC) of the month
 (`AUDIT_HORIZON_TABLES`, `purgeAuditHorizonRows`; its report carries `horizonRowsDeleted`). That is
 the boundary below which every audit partition has been dropped (a partition goes once its whole
 month is past the cutoff), so a session row goes the same day as its month's audit rows, never
-before them.
+before them: a pass in which an audit partition purge failed (a lock timeout, say) skips the
+horizon tables (`horizonSkipped`), and the next pass retries both (final review).
 
 ## 7. Permission, flags, config
 

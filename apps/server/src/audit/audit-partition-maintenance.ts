@@ -267,6 +267,11 @@ export interface AuditPartitionMaintenanceReport {
   defaultRowsDeleted: Record<string, number>;
   /** Rows deleted (or, on a dry run, that would be) from each {@link AUDIT_HORIZON_TABLES} table. */
   horizonRowsDeleted: Record<string, number>;
+  /**
+   * The horizon tables were left for the next pass: an audit partition purge failed in this one,
+   * and their rows must not go before their month's audit rows (LS12).
+   */
+  horizonSkipped: boolean;
   errors: Record<string, string>;
 }
 
@@ -284,7 +289,7 @@ export async function runAuditPartitionMaintenance(
   const now = opts.now ?? new Date();
   const cutoff = new Date(now.getTime() - opts.retentionDays * 24 * 60 * 60 * 1000);
   const report: AuditPartitionMaintenanceReport = {
-    created: {}, dropped: {}, defaultRowsDeleted: {}, horizonRowsDeleted: {}, errors: {},
+    created: {}, dropped: {}, defaultRowsDeleted: {}, horizonRowsDeleted: {}, horizonSkipped: false, errors: {},
   };
 
   for (const spec of AUDIT_TABLES) {
@@ -305,7 +310,14 @@ export async function runAuditPartitionMaintenance(
   }
   // The horizon tables follow the partitions, not the exact cutoff: a partition goes once its
   // whole month is past the cutoff, so a row goes once it is older than the first instant of the
-  // cutoff's month — the same day its month's audit rows go (LS12).
+  // cutoff's month — the same day its month's audit rows go (LS12). Never before them: a pass
+  // whose partition purge failed leaves the horizon tables to the next, which retries both.
+  if (AUDIT_TABLES.some((spec) => report.errors[`${spec.table}.purge`] !== undefined)) {
+    report.horizonSkipped = true;
+    log.warn({ tables: AUDIT_HORIZON_TABLES.map((s) => s.table) },
+      'Audit partition purge failed — the horizon tables wait for the next pass, so no row goes before its audit rows');
+    return report;
+  }
   const horizonCutoff = utcMonthStart(cutoff);
   for (const spec of AUDIT_HORIZON_TABLES) {
     try {
