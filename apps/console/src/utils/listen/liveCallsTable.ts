@@ -2,6 +2,7 @@ import { CALL_OVERRUN_AHT_MULTIPLE, agentDisplayName } from '../agencyAgentFloor
 import { LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, maskedNumberLabel } from './listenCopy';
 import type { AgencyCallOrigin, AgencyLiveCall } from '../../types/live-calls';
 import type { ListenTarget } from './listenSessionReducer';
+import { sortedFilterOptions, type FilterOption } from './filterOptions';
 
 /**
  * The live calls table's rules, pure (`docs/listening.md` §9): filters, sorting, the rows that
@@ -123,12 +124,6 @@ export function isLiveCallOverrun(elapsedMs: number | null, ahtSeconds: number |
   return elapsedMs > ahtSeconds * CALL_OVERRUN_AHT_MULTIPLE * 1000;
 }
 
-/** One choice in the agent or campaign filter. */
-export interface LiveCallFilterOption {
-  id: string;
-  name: string;
-}
-
 /**
  * The agents and campaigns in the rows, for the filters, by name; plus the agent and campaign
  * chosen (`keep`), when their calls have all ended: a filter in force stays shown in its control,
@@ -136,10 +131,10 @@ export interface LiveCallFilterOption {
  */
 export function liveCallFilterOptions(
   calls: readonly AgencyLiveCall[],
-  keep: { agent?: LiveCallFilterOption | null; campaign?: LiveCallFilterOption | null } = {},
+  keep: { agent?: FilterOption | null; campaign?: FilterOption | null } = {},
 ): {
-  agents: LiveCallFilterOption[];
-  campaigns: LiveCallFilterOption[];
+  agents: FilterOption[];
+  campaigns: FilterOption[];
 } {
   const agents = new Map<string, string>();
   const campaigns = new Map<string, string>();
@@ -147,13 +142,7 @@ export function liveCallFilterOptions(
     agents.set(call.agent_user_id, agentName(call));
     if (call.campaign_id) campaigns.set(call.campaign_id, call.campaign_name ?? LIVE_CALLS_COPY.unnamedCampaign);
   }
-  if (keep.agent && !agents.has(keep.agent.id)) agents.set(keep.agent.id, keep.agent.name);
-  if (keep.campaign && !campaigns.has(keep.campaign.id)) campaigns.set(keep.campaign.id, keep.campaign.name);
-  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'en-GB', { sensitivity: 'base' });
-  return {
-    agents: [...agents].map(([id, name]) => ({ id, name })).sort(byName),
-    campaigns: [...campaigns].map(([id, name]) => ({ id, name })).sort(byName),
-  };
+  return { agents: sortedFilterOptions(agents, keep.agent), campaigns: sortedFilterOptions(campaigns, keep.campaign) };
 }
 
 /** What the listening bar keeps about a call when a listen starts. */

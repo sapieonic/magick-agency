@@ -35,8 +35,8 @@ import {
   listenHistoryRangeReversed,
   listenHistorySupervisor,
   type ListenHistoryDraft,
-  type ListenHistoryOption,
 } from '../../../utils/listen/listenHistory';
+import type { FilterOption } from '../../../utils/listen/filterOptions';
 import { agentName } from '../../../utils/listen/liveCallsTable';
 import type { AgencyListenHistoryEntry } from '../../../types/listen-history';
 import type { TenantMember } from '../../../types/team';
@@ -52,6 +52,23 @@ export const LISTEN_HISTORY_PAGE_SIZE = 50;
  * state: the history does not depend on the listening flag (LS19, amended 2026-11-17).
  */
 type Failure = 'forbidden' | 'failed';
+
+/**
+ * The filter form: the supervisor and agent chosen, by name (so a choice stays on offer whatever
+ * the rows hold), and the dates as `YYYY-MM-DD`.
+ */
+interface ListenHistoryForm {
+  supervisor: FilterOption | null;
+  agent: FilterOption | null;
+  from: string;
+  to: string;
+}
+
+const EMPTY_FORM: ListenHistoryForm = { supervisor: null, agent: null, from: '', to: '' };
+
+function draftOf(form: ListenHistoryForm): ListenHistoryDraft {
+  return { supervisor: form.supervisor?.id ?? '', agent: form.agent?.id ?? '', from: form.from, to: form.to };
+}
 
 function failureOf(err: unknown): Failure {
   const status = errorStatus(err);
@@ -74,7 +91,8 @@ export default function ListenHistoryPage() {
   const supervise = usePermission('agency.supervise');
   const { showToast, showErrorToast } = useToast();
 
-  const [draft, setDraft] = useState<ListenHistoryDraft>(EMPTY_LISTEN_HISTORY_DRAFT);
+  const [form, setForm] = useState<ListenHistoryForm>(EMPTY_FORM);
+  const draft = useMemo(() => draftOf(form), [form]);
   const [applied, setApplied] = useState<ListenHistoryDraft>(EMPTY_LISTEN_HISTORY_DRAFT);
   const [entries, setEntries] = useState<AgencyListenHistoryEntry[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -84,8 +102,6 @@ export default function ListenHistoryPage() {
   const [failure, setFailure] = useState<Failure | null>(null);
   const [exporting, setExporting] = useState(false);
   const [members, setMembers] = useState<TenantMember[]>([]);
-  // The supervisor and agent chosen, by name: kept on offer whatever the rows hold.
-  const [chosen, setChosen] = useState<{ supervisor: ListenHistoryOption | null; agent: ListenHistoryOption | null }>({ supervisor: null, agent: null });
   const seq = useRef(0);
 
   useEffect(() => {
@@ -166,20 +182,14 @@ export default function ListenHistoryPage() {
 
   const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const options = useMemo(
-    () => listenHistoryFilterOptions(members, entries, chosen, accountId ?? null),
-    [members, entries, chosen, accountId],
+    () => listenHistoryFilterOptions(members, entries, form, accountId ?? null),
+    [members, entries, form, accountId],
   );
   const reversed = listenHistoryRangeReversed(draft);
   const active = listenHistoryFilterCount(applied);
-  const set = (patch: Partial<ListenHistoryDraft>) => setDraft((current) => ({ ...current, ...patch }));
-  const chooseSupervisor = (id: string) => {
-    set({ supervisor: id });
-    setChosen((c) => ({ ...c, supervisor: options.supervisors.find((o) => o.id === id) ?? null }));
-  };
-  const chooseAgent = (id: string) => {
-    set({ agent: id });
-    setChosen((c) => ({ ...c, agent: options.agents.find((o) => o.id === id) ?? null }));
-  };
+  const set = (patch: Partial<ListenHistoryForm>) => setForm((current) => ({ ...current, ...patch }));
+  const chooseSupervisor = (id: string) => set({ supervisor: options.supervisors.find((o) => o.id === id) ?? null });
+  const chooseAgent = (id: string) => set({ agent: options.agents.find((o) => o.id === id) ?? null });
 
   const header = (exportable: boolean) => (
     <header className={spine.header}>
@@ -298,9 +308,8 @@ export default function ListenHistoryPage() {
                 type="button"
                 className="btn-secondary"
                 onClick={() => {
-                  setDraft(EMPTY_LISTEN_HISTORY_DRAFT);
+                  setForm(EMPTY_FORM);
                   setApplied(EMPTY_LISTEN_HISTORY_DRAFT);
-                  setChosen({ supervisor: null, agent: null });
                 }}
                 data-testid="listen-history-clear"
               >

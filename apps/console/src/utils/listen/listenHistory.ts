@@ -1,6 +1,7 @@
 import { hasPermission } from '../permissions';
 import { exclusiveDateRange } from '../agencyAttemptFilters';
 import { agentName, liveCallPagePath } from './liveCallsTable';
+import { sortedFilterOptions, type FilterOption } from './filterOptions';
 import { LISTENED_TO_BY_COPY, LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel } from './listenCopy';
 import {
   AGENCY_LISTEN_END_REASON_LABELS,
@@ -93,11 +94,6 @@ export function listenHistoryCallPath(entry: AgencyListenHistoryEntry, softphone
   return liveCallPagePath(entry, softphoneEnabled);
 }
 
-export interface ListenHistoryOption {
-  id: string;
-  name: string;
-}
-
 /**
  * The supervisor and agent choices: the team's members in this account (a tenant-wide seat, or a
  * seat in `accountId`; supervisors are those who may listen, `agency.calls.listen`; agents
@@ -108,9 +104,9 @@ export interface ListenHistoryOption {
 export function listenHistoryFilterOptions(
   members: readonly TenantMember[],
   entries: readonly AgencyListenHistoryEntry[],
-  keep: { supervisor?: ListenHistoryOption | null; agent?: ListenHistoryOption | null },
+  keep: { supervisor?: FilterOption | null; agent?: FilterOption | null },
   accountId: string | null,
-): { supervisors: ListenHistoryOption[]; agents: ListenHistoryOption[] } {
+): { supervisors: FilterOption[]; agents: FilterOption[] } {
   const supervisors = new Map<string, string>();
   const agents = new Map<string, string>();
   for (const m of members) {
@@ -123,11 +119,5 @@ export function listenHistoryFilterOptions(
     if (!supervisors.has(e.listener_user_id)) supervisors.set(e.listener_user_id, listenHistorySupervisor(e));
     if (!agents.has(e.agent_user_id)) agents.set(e.agent_user_id, agentName(e));
   }
-  if (keep.supervisor && !supervisors.has(keep.supervisor.id)) supervisors.set(keep.supervisor.id, keep.supervisor.name);
-  if (keep.agent && !agents.has(keep.agent.id)) agents.set(keep.agent.id, keep.agent.name);
-  const byName = (a: ListenHistoryOption, b: ListenHistoryOption) => a.name.localeCompare(b.name, 'en-GB', { sensitivity: 'base' });
-  return {
-    supervisors: [...supervisors].map(([id, name]) => ({ id, name })).sort(byName),
-    agents: [...agents].map(([id, name]) => ({ id, name })).sort(byName),
-  };
+  return { supervisors: sortedFilterOptions(supervisors, keep.supervisor), agents: sortedFilterOptions(agents, keep.agent) };
 }
