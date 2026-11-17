@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { browserStorage } from '../../utils/browserStorage';
 import {
   ListenPlaybackEngine,
@@ -17,6 +17,12 @@ import type { AgencyListenLeg } from '../../types/live-calls';
 export const LISTEN_VOLUME_KEY = 'magick-agency.listen.volume';
 
 const DEFAULT_VOLUME = 0.8;
+
+/**
+ * How long the volume rests before this browser remembers it: a drag of the slider is one write,
+ * not one per step. Whatever is still waiting is written when the bar's audio goes.
+ */
+export const LISTEN_VOLUME_SAVE_MS = 300;
 
 /** The remembered volume, 0–1; the default when there is none or storage is blocked. */
 export function readListenVolume(): number {
@@ -50,12 +56,32 @@ export function useListenPlayback(createContext: ListenAudioContextFactory = def
   const [engine] = useState(() => new ListenPlaybackEngine(createContext));
   const [muted, setMutedState] = useState<Record<AgencyListenLeg, boolean>>({ agent: false, customer: false });
   const [volume, setVolumeState] = useState(readListenVolume);
+  /** A volume set and not yet remembered. */
+  const unsaved = useRef<number | null>(null);
 
   useEffect(() => {
     engine.setVolume(volume);
   }, [engine, volume]);
 
-  useEffect(() => () => engine.close(), [engine]);
+  useEffect(() => {
+    if (unsaved.current === null) return;
+    const timer = setTimeout(saveVolume, LISTEN_VOLUME_SAVE_MS);
+    return () => clearTimeout(timer);
+  }, [volume]);
+
+  useEffect(
+    () => () => {
+      saveVolume();
+      engine.close();
+    },
+    [engine],
+  );
+
+  function saveVolume() {
+    if (unsaved.current === null) return;
+    writeListenVolume(unsaved.current);
+    unsaved.current = null;
+  }
 
   const setMuted = useCallback(
     (leg: AgencyListenLeg, next: boolean) => {
@@ -67,8 +93,8 @@ export function useListenPlayback(createContext: ListenAudioContextFactory = def
 
   const setVolume = useCallback((next: number) => {
     const clamped = Math.min(1, Math.max(0, next));
+    unsaved.current = clamped;
     setVolumeState(clamped);
-    writeListenVolume(clamped);
   }, []);
 
   return useMemo(() => ({ engine, muted, setMuted, volume, setVolume }), [engine, muted, setMuted, volume, setVolume]);

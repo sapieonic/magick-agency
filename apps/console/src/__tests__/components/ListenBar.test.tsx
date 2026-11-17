@@ -51,7 +51,7 @@ vi.mock('../../hooks/useMediaQuery', () => ({ useMediaQuery: () => mocks.compact
 import { LiveCallsTable } from '../../components/listen/LiveCallsTable';
 import { ListenProvider, LISTEN_CONFIRMED_KEY } from '../../components/listen/ListenProvider';
 import { ListenBar } from '../../components/listen/ListenBar';
-import { LISTEN_VOLUME_KEY } from '../../hooks/listen/useListenPlayback';
+import { LISTEN_VOLUME_KEY, LISTEN_VOLUME_SAVE_MS } from '../../hooks/listen/useListenPlayback';
 import barStyles from '../../components/listen/ListenBar.module.css';
 
 class FakeWs {
@@ -381,8 +381,22 @@ describe('the bar', () => {
     act(() => ws.ready());
     const volume = screen.getByTestId('listen-volume') as HTMLInputElement;
     expect(volume.value).toBe('35');
-    fireEvent.change(volume, { target: { value: '60' } });
+    // A drag is one write, once the slider rests.
+    for (const value of ['45', '50', '60']) fireEvent.change(volume, { target: { value } });
+    expect(window.localStorage.getItem(LISTEN_VOLUME_KEY)).toBe('0.35');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LISTEN_VOLUME_SAVE_MS);
+    });
     expect(window.localStorage.getItem(LISTEN_VOLUME_KEY)).toBe('0.6');
+  });
+
+  it('remembers a volume set just before the shell goes', async () => {
+    const view = await renderApp();
+    const ws = await startListening();
+    act(() => ws.ready());
+    fireEvent.change(screen.getByTestId('listen-volume'), { target: { value: '25' } });
+    view.unmount();
+    expect(window.localStorage.getItem(LISTEN_VOLUME_KEY)).toBe('0.25');
   });
 
   it('works with browser storage blocked', async () => {
