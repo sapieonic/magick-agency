@@ -367,6 +367,9 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     // Same key `tenantContextMiddleware` reads — a re-added user must not keep
     // serving the empty/revoked snapshot from before the write.
     await redisCache.del(membershipCacheKey(userId, tenantId));
+    // Live call listening (LS22 l): an account-scoped seat is the membership the tenant context
+    // picks in that account and can shadow a tenant-wide admin's, so their listens are re-checked now.
+    await revokeListens(tenantId, userId);
 
     /**
      * Super-admin add creates a `pending_` stub plus membership and sends an

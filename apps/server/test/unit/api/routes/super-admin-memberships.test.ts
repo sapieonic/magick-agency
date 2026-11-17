@@ -360,6 +360,21 @@ describe('POST /super-admin/tenants/:id/users', () => {
     expect(indexOfSql('INSERT INTO memberships')).toBe(-1);
   });
 
+  it('LS22 l: re-checks the user\'s open listens in the tenant at once, after the cache delete; a refused add does not', async () => {
+    // A tenant-wide admin listening in ACCOUNT, given an agent seat there: the seat is the membership
+    // the tenant context picks in that account, so their listen there must be re-checked now.
+    mocks.userRepository.resolveByProvenEmail.mockResolvedValue({ status: 'found', user: { id: USER } });
+    db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: null, status: 'active' }];
+    expect((await post({ email: 'known@acme.test', role: 'agent', account_id: ACCOUNT })).statusCode).toBe(201);
+    expect(mocks.revokeListens).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeListens).toHaveBeenCalledWith(TENANT, USER);
+    expect(mocks.revokeListens.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.redisDel.mock.invocationCallOrder[0]!);
+    mocks.revokeListens.mockClear();
+    db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: ACCOUNT, status: 'active' }];
+    expect((await post({ email: 'known@acme.test', role: 'agent', account_id: ACCOUNT })).statusCode).toBe(409);
+    expect(mocks.revokeListens).not.toHaveBeenCalled();
+  });
+
   it('account context: an active TENANT-WIDE membership does not block an account-scoped add', async () => {
     mocks.userRepository.resolveByProvenEmail.mockResolvedValue({ status: 'found', user: { id: USER } });
     db.existingMemberships = [{ id: OTHER_MEMBERSHIP, account_id: null, status: 'active' }];

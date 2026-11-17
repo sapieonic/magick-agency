@@ -139,7 +139,7 @@ comments and the other docs).
   the maintenance has dropped every audit partition, so it goes the same day as its month's audit
   rows.
 - **(t)** The super-admin role change and member removal (`api/routes/super-admin/tenants.ts`) call
-  `revokeListens` too, after their cache delete.
+  `revokeListens` too, after their cache delete; so does its add-user route (LS22 l).
 - **(u)** The live list's AHT cache holds at most 1,000 campaigns per process, dropping entries past
   their minute as it reads; the dialler spine reads the account's live attempts on
   `idx_agency_attempts_account_live` (pinned by `test/integration/agency/live-call-plan.test.ts`).
@@ -204,8 +204,8 @@ Manas.
   (a getter, not a snapshot taken when the tick began): a retry against a slow database can outlast
   the sweep's 60 s age floor. A tick that finds the last one still running starts no pass and no
   upkeep of its own and only applies the staleness cap, so hung ticks never stack.
-- **(l)** Adding a seat re-checks the invitee's listens: `POST /users/invite` and the invite's
-  claim call `revokeListens` too, since an account-scoped seat is the membership the tenant context
+- **(l)** Adding a seat re-checks the invitee's listens: `POST /users/invite`, the invite's
+  claim and the super-admin's `POST /super-admin/tenants/:id/users` call `revokeListens` too, since an account-scoped seat is the membership the tenant context
   picks in that account and can shadow a tenant-wide admin's (the access check shares the tenant
   context's `selectMembership`, now `rbac/select-membership.ts`).
 - **(m)** The load check's timing bounds (§10 "Load check") are asserted with 4 or more CPUs, or
@@ -409,8 +409,8 @@ a tick that finds the last still running applies only the staleness cap; `shutdo
 and admits nothing more (`listen_unavailable`).
 
 **Across processes** (`agency/listen/listen-revocation.ts`): the role-change and member-removal routes
-(and the super-admin's), and the two that add a seat (`POST /users/invite`, the invite's claim; LS22
-l), call `revokeListens(tenantId, userId)`, whose handlers are the runtime's `revokeUser` (registered by
+(and the super-admin's), and the three that add a seat (`POST /users/invite`, the invite's claim,
+the super-admin's `POST /super-admin/tenants/:id/users`; LS22 l), call `revokeListens(tenantId, userId)`, whose handlers are the runtime's `revokeUser` (registered by
 `startAgency`) and, with media workers, the primary's broadcast of `listen.revoke { reason:
 'permission_revoked', listenIds: null }` (registered by `startMediaWorkers`). A worker that admits a
 listen reads the supervisor's open rows and sends `listen.revoke { reason: 'superseded', listenIds }`

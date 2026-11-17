@@ -9,8 +9,8 @@ const log = createChildLogger({ component: 'agency-listen-revocation' });
  *
  *  - **Revocation.** The routes that change a role or remove a member (`api/routes/user.routes.ts`,
  *    where the membership cache is cleared, and the super-admin's), and those that add a seat which
- *    may shadow a wider one (`POST /users/invite`, the invite claim in `invites.routes.ts`), call
- *    {@link revokeListens}. In one process the handler
+ *    may shadow a wider one (`POST /users/invite`, the invite claim in `invites.routes.ts`, the
+ *    super-admin's `POST /super-admin/tenants/:id/users`), call {@link revokeListens}. In one process the handler
  *    is the runtime's registry (`revokeUser`: a re-check of that supervisor against the database);
  *    with media workers the primary also sends `listen.revoke` to every worker, which does the same.
  *    Registered by the bootstraps ({@link onListenRevocation}); with none registered (a process
@@ -18,7 +18,7 @@ const log = createChildLogger({ component: 'agency-listen-revocation' });
  *  - **Supersede across processes.** One listen per supervisor (`maxPerUser`): a listen admitted in
  *    one media worker ends the supervisor's older ones in the others. {@link remoteSupersedeTargets}
  *    reads their open rows and names the ones to end; the worker sends them to the primary, which
- *    ends its own and relays them to the other workers.
+ *    relays them to the other workers (the primary holds no listen while workers run, LS16 e).
  * Never throws: a revocation that could not be delivered is caught by the periodic re-check.
  */
 
