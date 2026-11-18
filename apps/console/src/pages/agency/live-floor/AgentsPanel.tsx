@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Users } from 'lucide-react';
+import { RefreshCw, Users } from 'lucide-react';
 import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
 import { homeFloor, type HomeCampaignRead } from '../../../utils/agency/home';
 import { AGENT_CHIPS, agentChips, floorWords } from '../../../utils/agency/liveFloor';
@@ -34,11 +34,14 @@ export function AgentsPanel({
   reads,
   floor,
   floorFailed = false,
+  onRetryFloor,
 }: {
   reads: readonly HomeCampaignRead[];
   floor?: AgentsPanelFloor | null;
   /** The floor read failed or was refused: say so beside the board's figures. */
   floorFailed?: boolean;
+  /** Reads the floor again: a refused read asks nothing more until this (B28a). */
+  onRetryFloor?: () => void;
 }) {
   const [filter, setFilter] = useState<FloorChipFilter>('all');
 
@@ -55,7 +58,7 @@ export function AgentsPanel({
       {floor ? (
         <AgentGrid rows={floor.rows} filter={filter} clockOffsetMs={floor.clockOffsetMs} onChanged={floor.onChanged} />
       ) : (
-        <BoardFloor reads={reads} failed={floorFailed} />
+        <BoardFloor reads={reads} failed={floorFailed} onRetry={onRetryFloor} />
       )}
     </section>
   );
@@ -125,15 +128,21 @@ function BoardChips({ reads }: { reads: readonly HomeCampaignRead[] }) {
 }
 
 /** Phase 1's floor: each campaign's agents in a few words, linking to its Agents tab. */
-function BoardFloor({ reads, failed }: { reads: readonly HomeCampaignRead[]; failed: boolean }) {
+function BoardFloor({ reads, failed, onRetry }: { reads: readonly HomeCampaignRead[]; failed: boolean; onRetry?: () => void }) {
   const chips = agentChips(reads);
   const floor = homeFloor(reads);
   return (
     <>
       {failed && (
-        <p className={styles.cardNote} data-testid="home-agents-unavailable">
-          The agents’ cards didn’t load. These are each campaign’s figures.
-        </p>
+        <div className={styles.staleNote} role="status" data-testid="home-agents-unavailable">
+          <span>The agents’ cards didn’t load. These are each campaign’s figures.</span>
+          {onRetry && (
+            <button type="button" className={`btn-secondary ${styles.action}`} onClick={onRetry}>
+              <RefreshCw size={14} aria-hidden="true" />
+              Retry
+            </button>
+          )}
+        </div>
       )}
       {chips.partial && (
         <p className={styles.cardNote}>Some campaigns’ figures haven’t loaded, so the states add up to less than the total.</p>

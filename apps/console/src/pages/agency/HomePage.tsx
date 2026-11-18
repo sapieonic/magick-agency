@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -67,8 +67,21 @@ export default function HomePage() {
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
   // Live floor's own reads (B28b): only this page asks for them, never the sidebar badge.
-  const agentFloor = useAgentFloor(tenantId, accountId, supervise);
-  const promises = usePromisesToday(tenantId, accountId, supervise);
+  const agentFloor = useAgentFloor(tenantId, accountId, supervise, role);
+  const promises = usePromisesToday(tenantId, accountId, supervise, role);
+  // Retry reads everything the page asks for (B28a: a refusal stops the asking until Retry), so a
+  // refused floor or promises read never stays stopped behind a board that came back.
+  const { reload: reloadBoard } = board;
+  const { reload: reloadFloor } = agentFloor;
+  const { reload: reloadPromises } = promises;
+  const retryFloor = useCallback(() => {
+    reloadFloor();
+    reloadPromises();
+  }, [reloadFloor, reloadPromises]);
+  const retry = useCallback(() => {
+    reloadBoard();
+    retryFloor();
+  }, [reloadBoard, retryFloor]);
   const [params, setParams] = useSearchParams();
 
   const floorRows = agentFloor.floor?.agents;
@@ -125,13 +138,13 @@ export default function HomePage() {
       />
 
       {/* The hook's copy (`HOME_BOARD_ERROR`), never the server's text. */}
-      {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={board.reload} />}
+      {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={retry} />}
       {(board.status === 'loading' || board.status === 'idle') && <LoadingSpinner />}
 
       {board.status === 'ready' && board.stale && (
         <div className={styles.staleNote} role="status" data-testid="home-stale">
           <span>{`Couldn’t refresh. Last updated ${lastUpdated ?? ''}`}</span>
-          <button type="button" className={`btn-secondary ${styles.action}`} onClick={board.reload}>
+          <button type="button" className={`btn-secondary ${styles.action}`} onClick={retry}>
             <RefreshCw size={14} aria-hidden="true" />
             Retry
           </button>
@@ -164,6 +177,7 @@ export default function HomePage() {
               reads={shown}
               floor={shownFloor ? { rows: shownFloor, clockOffsetMs: agentFloor.clockOffsetMs, stale: agentFloor.stale, onChanged: agentFloor.reload } : null}
               floorFailed={agentFloor.status === 'error' || agentFloor.status === 'refused'}
+              onRetryFloor={retryFloor}
             />
           )}
 

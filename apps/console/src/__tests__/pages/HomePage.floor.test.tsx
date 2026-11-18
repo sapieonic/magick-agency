@@ -235,6 +235,64 @@ describe('the agent cards', () => {
   });
 });
 
+describe('Retry after a refusal (B28a: until Retry or a new scope or role)', () => {
+  const refused = () => Object.assign(new Error('forbidden'), { statusCode: 403 });
+
+  it('the Agents panel offers its own Retry, which reads the floor again', async () => {
+    mocks.getAgencyFloor.mockRejectedValue(refused());
+    renderHome();
+    const note = await screen.findByTestId('home-agents-unavailable');
+    expect(screen.queryByTestId('home-agent-grid')).toBeNull();
+    mocks.getAgencyFloor.mockResolvedValue(FLOOR());
+    fireEvent.click(within(note).getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByTestId('home-agent-grid')).toBeTruthy();
+  });
+
+  it('the page’s Retry reads the board, the floor and the promises again', async () => {
+    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+    mocks.getAgencyFloor.mockRejectedValue(refused());
+    mocks.getAgencyPromisesSummary.mockRejectedValue(refused());
+    renderHome();
+    const retry = await screen.findByRole('button', { name: 'Retry loading' });
+    await waitFor(() => {
+      expect(mocks.getAgencyFloor).toHaveBeenCalled();
+      expect(mocks.getAgencyPromisesSummary).toHaveBeenCalled();
+    });
+    const floorReads = mocks.getAgencyFloor.mock.calls.length;
+    const promiseReads = mocks.getAgencyPromisesSummary.mock.calls.length;
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4 collections', stats: stats({ agents_live: 3 }) })]));
+    mocks.getAgencyFloor.mockResolvedValue(FLOOR());
+    mocks.getAgencyPromisesSummary.mockResolvedValue(SUMMARY());
+    fireEvent.click(retry);
+    expect(await screen.findByTestId('home-agent-grid')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('kpi-outcome').textContent).toContain('Will pay'));
+    expect(mocks.getAgencyFloor.mock.calls.length).toBe(floorReads + 1);
+    expect(mocks.getAgencyPromisesSummary.mock.calls.length).toBe(promiseReads + 1);
+  });
+
+  it('the stale note’s Retry reads the floor and the promises again too', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.getAgencyFloor.mockRejectedValue(refused());
+      mocks.getAgencyPromisesSummary.mockRejectedValue(refused());
+      renderHome();
+      await screen.findByTestId('home-agents-unavailable');
+      mocks.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      const note = await screen.findByTestId('home-stale');
+      mocks.getAgencyFloor.mockResolvedValue(FLOOR());
+      mocks.getAgencyPromisesSummary.mockResolvedValue(SUMMARY());
+      fireEvent.click(within(note).getByRole('button', { name: 'Retry' }));
+      expect(await screen.findByTestId('home-agent-grid')).toBeTruthy();
+      await waitFor(() => expect(screen.getByTestId('kpi-outcome').textContent).toContain('Will pay'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('the late callbacks past the board’s cap', () => {
   it('are a lower bound on the tile, said so, and the whole figure for one campaign picked', async () => {
     mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4', overdue: 3 }), onBoard('c2', { name: 'Gold', overdue: 1 })], { active_total: 30 }));

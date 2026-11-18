@@ -38,14 +38,16 @@ export interface AgentFloor {
  *    older than a period.
  *  - **A failed read keeps the last floor**, and once reads have failed for more than two periods
  *    it is `stale` (the page says so); one that never answered is `error`.
- *  - **A 403 stops the asking** (`refused`) until Retry or a new scope.
+ *  - **A 403 stops the asking** (`refused`) until Retry (`reload`) or a new scope or role (B28a):
+ *    the role is part of the scope, as it is of the board's identity in `useHomeBoard`.
  */
 export function useAgentFloor(
   tenantId: string | null | undefined,
   accountId: string | null | undefined,
   enabled: boolean,
+  role?: string | null,
 ): AgentFloor {
-  const scope = enabled && tenantId && accountId ? `${tenantId}/${accountId}` : null;
+  const scope = enabled && tenantId && accountId ? `${tenantId}/${accountId}/${role ?? ''}` : null;
   const [state, setState] = useState<Omit<AgentFloor, 'reload'>>({ status: 'loading', floor: null, stale: false, clockOffsetMs: 0 });
   const mounted = useMountedRef();
   const seq = useRef(0);

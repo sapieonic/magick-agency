@@ -85,6 +85,22 @@ describe('useAgentFloor', () => {
     expect(result.current).toMatchObject({ status: 'ready', floor: { totals: { on_shift: 2 } } });
   });
 
+  it('asks again after a 403 for a new role, as for a new scope', async () => {
+    api.getAgencyFloor.mockRejectedValue(new ApiError(403, { error: 'Forbidden' }));
+    const { result, rerender } = renderHook(({ role }) => useAgentFloor('t-1', 'a-1', true, role), {
+      initialProps: { role: 'account_admin' },
+    });
+    await flush();
+    expect(result.current.status).toBe('refused');
+    await flush(FLOOR_POLL_MS * 2);
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(1);
+    api.getAgencyFloor.mockResolvedValue(floor(2));
+    rerender({ role: 'tenant_admin' });
+    await flush();
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(2);
+    expect(result.current).toMatchObject({ status: 'ready', floor: { totals: { on_shift: 2 } } });
+  });
+
   it('reads nothing when not enabled (below Live floor’s gate)', async () => {
     renderHook(() => useAgentFloor('t-1', 'a-1', false));
     await flush(FLOOR_POLL_MS * 2);

@@ -66,4 +66,21 @@ describe('usePromisesToday', () => {
     await flush(HOME_SLOW_MS * 3);
     expect(api.getAgencyPromisesSummary).toHaveBeenCalledTimes(1);
   });
+
+  it('asks again after a 403 on Retry, and for a new role', async () => {
+    api.getAgencyPromisesSummary.mockRejectedValue(new ApiError(403, { error: 'Forbidden' }));
+    const { result, rerender } = renderHook(({ role }) => usePromisesToday('t-1', 'a-1', true, role), {
+      initialProps: { role: 'account_admin' },
+    });
+    await flush();
+    expect(result.current.status).toBe('unavailable');
+    act(() => result.current.reload());
+    await flush();
+    expect(api.getAgencyPromisesSummary).toHaveBeenCalledTimes(2);
+    rerender({ role: 'tenant_admin' });
+    await flush();
+    expect(api.getAgencyPromisesSummary).toHaveBeenCalledTimes(3);
+    await flush(HOME_SLOW_MS * 2);
+    expect(api.getAgencyPromisesSummary).toHaveBeenCalledTimes(3);
+  });
 });

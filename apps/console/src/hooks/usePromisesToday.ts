@@ -14,29 +14,36 @@ export type PromisesToday =
   /** The read failed (or the account cannot read it): the tile stays Successes. */
   | { status: 'unavailable' };
 
+/** The read, and Retry: asks again at once, a refused read included. */
+export type PromisesTodayRead = PromisesToday & { reload: () => void };
+
 /**
  * Today's promises to pay (`GET /proxy/agency/promises/summary`, decision B28b) for Live floor's
  * Will pay tile and its campaign cards: Today so far's window (the viewer's local midnight to now)
  * on Today so far's period (a minute) and rules (`useTodaySoFar`): one read at a time, a return to
  * the tab reads only once the figures are a minute old, and a failed refresh keeps them only while
- * they are still today's. A 403 stops the asking until the scope changes (the tile stays Successes).
+ * they are still today's. A 403 stops the asking (the tile stays Successes) until Retry (`reload`)
+ * or a new scope or role (B28a).
  */
 export function usePromisesToday(
   tenantId: string | null | undefined,
   accountId: string | null | undefined,
   enabled: boolean,
-): PromisesToday {
+  role?: string | null,
+): PromisesTodayRead {
   const [state, setState] = useState<PromisesToday>({ status: 'loading' });
   const mounted = useMountedRef();
   const seq = useRef(0);
   const inFlight = useRef<number | null>(null);
   const lastOk = useRef<{ at: number; day: string } | null>(null);
-  /** The server refused (403): no more asking in this scope (a new account or role is a new one). */
+  /** The server refused (403): no more asking in this scope (a new account or role is a new one) until Retry. */
   const refused = useRef(false);
   const ready = enabled && Boolean(tenantId && accountId);
+  /** Who asks for what: a new account or role is a new scope, which asks again after a refusal. */
+  const scope = ready ? `${tenantId}/${accountId}/${role ?? ''}` : null;
 
   const load = useCallback(async (reason: 'mount' | 'tick' | 'return') => {
-    if (!ready || !tenantId || !accountId || refused.current) return;
+    if (!scope || !tenantId || !accountId || refused.current) return;
     const now = new Date();
     const day = localDay(now);
     if (reason !== 'mount') {
@@ -63,7 +70,7 @@ export function usePromisesToday(
     } finally {
       if (inFlight.current === mine) inFlight.current = null;
     }
-  }, [ready, tenantId, accountId, mounted]);
+  }, [scope, tenantId, accountId, mounted]);
 
   useEffect(() => {
     lastOk.current = null;
@@ -74,5 +81,9 @@ export function usePromisesToday(
   useVisibleInterval(() => load('tick'), HOME_SLOW_MS, ready);
   useRefetchOnReturn(() => load('return'));
 
-  return state;
+  const reload = useCallback(() => {
+    refused.current = false;
+    void load('mount');
+  }, [load]);
+  return { ...state, reload };
 }
