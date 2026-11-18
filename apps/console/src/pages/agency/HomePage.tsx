@@ -28,7 +28,7 @@ import { formatCount } from '../../utils/format/number';
 import { GetStarted } from './campaigns-home/GetStarted';
 import { LiveFloorHeader } from './live-floor/LiveFloorHeader';
 import { LiveFloorKpis } from './live-floor/LiveFloorKpis';
-import { NeedsYouNow } from './live-floor/NeedsYouNow';
+import { NeedsYouNow, type BreaksChecked } from './live-floor/NeedsYouNow';
 import { CampaignsPanel } from './live-floor/CampaignsPanel';
 import { AgentsPanel } from './live-floor/AgentsPanel';
 import styles from './live-floor/LiveFloor.module.css';
@@ -109,6 +109,10 @@ export default function HomePage() {
   const noCampaigns = board.status === 'ready' && board.anyCampaign === false;
   const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
 
+  // Breaks over the limit come from the floor: unread, failed, refused or stale, they are unchecked.
+  const breaksChecked: BreaksChecked = agentFloor.status === 'loading'
+    ? 'checking'
+    : agentFloor.status === 'ready' && agentFloor.floor && !agentFloor.stale ? 'checked' : 'unchecked';
   const agents = agentFloor.floor ? floorAgentsWorking(agentFloor.floor, pickedId, board.reads) : undefined;
   const willPay = promises.status === 'ready' ? willPayFor(promises.summary, pickedId) : null;
   const outcome = willPay
@@ -163,6 +167,7 @@ export default function HomePage() {
               campaignName={picked?.name ?? null}
               stale={board.stale}
               lastUpdated={lastUpdated}
+              breaks={breaksChecked}
               onShowAll={() => pick(null)}
             />
             {noCampaigns ? (

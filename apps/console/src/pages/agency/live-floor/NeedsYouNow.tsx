@@ -31,6 +31,9 @@ import { formatCount, plural } from '../../../utils/format/number';
 import { ComingSoonButton } from '../../../components/common/ComingSoon';
 import styles from './LiveFloor.module.css';
 
+/** Whether Needs you now could check breaks over the limit (the floor read): see `breaks`. */
+export type BreaksChecked = 'checked' | 'checking' | 'unchecked';
+
 /** A time on today's date, else the date and time. */
 function when(iso: string, now: Date): string {
   const at = new Date(iso);
@@ -61,8 +64,9 @@ function rowIcon(item: HomeAttentionItem): LucideIcon {
  * information row, never a row put aside with "Got it". Live floor changes three things, each a
  * pure rule: one row for every campaign on the default calling hours (`groupCallingHours`), the
  * order (`HOME_RANKS`), and on late callbacks whose owner is away, a "Give to free agents" that is
- * coming. With a campaign picked it shows that campaign's rows and says how many it leaves out.
- * Never an all-clear from a read it could not refresh.
+ * coming. With a campaign picked it shows that campaign's rows and says how many it leaves out
+ * (not counting rows put aside). Never an all-clear from a read it could not refresh, nor while the
+ * floor, where breaks over the limit come from, is unread (`breaks`).
  */
 export function NeedsYouNow({
   items,
@@ -70,6 +74,7 @@ export function NeedsYouNow({
   campaignName,
   stale,
   lastUpdated,
+  breaks = 'checked',
   onShowAll,
 }: {
   items: readonly HomeAttentionItem[];
@@ -77,12 +82,18 @@ export function NeedsYouNow({
   campaignName: string | null;
   stale: boolean;
   lastUpdated: string | null;
+  /**
+   * Whether breaks over the limit were checked: the floor read answered and is fresh (`checked`),
+   * is still on its way (`checking`), or failed, was refused or is stale (`unchecked`). Short of
+   * `checked` the list can say nothing else needs the reader, never that nothing does.
+   */
+  breaks?: BreaksChecked;
   onShowAll: () => void;
 }) {
   const { tenantId, accountId } = useTenant();
-  const { shown, elsewhere } = attentionFor(items, campaignId);
   // "Got it" (B28a): rows the reader put aside, until they get worse or tomorrow.
   const { acks, acknowledge } = useHomeAcks(tenantId, accountId);
+  const { shown, elsewhere } = attentionFor(items, campaignId, acks);
   const { open, acknowledged } = splitAcknowledged(groupCallingHours(shown), acks);
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const needs = homeNeeds(open);
@@ -115,6 +126,14 @@ export function NeedsYouNow({
         // Never an all-clear from a read Live floor could not refresh.
         <p className={styles.quiet} data-testid="home-attention-unknown">
           {`Nothing needed you at ${lastUpdated ?? 'the last refresh'}, the last time Live floor could check.`}
+        </p>
+      ) : breaks !== 'checked' ? (
+        // Nor from a floor it has not read: an agent may be on a break past the limit.
+        <p className={styles.quiet} data-testid="home-attention-breaks-unknown">
+          {`${homeNeeds(acknowledged).length > 0
+            ? 'Nothing new on your campaigns needs you'
+            : campaignName ? `Nothing on ${campaignName} needs you` : 'Nothing on your campaigns needs you'}${
+            breaks === 'checking' ? '. Agents’ breaks are still being checked.' : ', but agents’ breaks couldn’t be checked.'}`}
         </p>
       ) : (
         <p className={styles.allClear} data-testid="home-attention-empty">

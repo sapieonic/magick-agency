@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   userId: 'u-1',
   getAgencyCampaign: vi.fn(),
   transitionAgencyCampaign: vi.fn(),
+  getAgencyFloor: vi.fn(),
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
 }));
@@ -35,9 +36,10 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 // Phase 2's reads fail here unless a test says otherwise: these cases pin the page on the board
-// alone (`HomePage.floor.test.tsx` covers the floor and the promises).
+// alone (`HomePage.floor.test.tsx` covers the floor and the promises). A case that needs an
+// all-clear reads an empty floor (`floorRead`): with the floor unread, breaks are unchecked.
 vi.mock('../../api/agencyFloor', () => ({
-  getAgencyFloor: () => Promise.reject(new Error('not in this file')),
+  getAgencyFloor: mocks.getAgencyFloor,
   getAgencyPromisesSummary: () => Promise.reject(new Error('not in this file')),
 }));
 vi.mock('../../hooks/useMissedCallsAccess', () => ({
@@ -67,6 +69,11 @@ function BadgeCount() {
   return <div data-testid="shared-count">{String(count)}</div>;
 }
 
+/** The floor answers, with nobody on it: nothing on a break, so the breaks are checked. */
+function floorRead() {
+  mocks.getAgencyFloor.mockImplementation(async () => ({ agents: [], totals: { on_shift: 0, assigned: 0 }, as_of: new Date().toISOString() }));
+}
+
 function renderHome(entry = '/agency/home') {
   return render(
     <MemoryRouter initialEntries={[entry]}>
@@ -87,6 +94,7 @@ beforeEach(() => {
   mocks.missed = { available: false, count: null };
   mocks.getAgencyHomeBoard.mockResolvedValue(board([], { any_campaign: true }));
   mocks.getAgencyGroupedStats.mockResolvedValue({ rows: [], total_groups: 0 });
+  mocks.getAgencyFloor.mockRejectedValue(new Error('not in this file'));
 });
 afterEach(() => cleanup());
 
@@ -135,6 +143,7 @@ describe('Needs you now', () => {
   });
 
   it('shows a campaign that is only waiting apart, muted, and leaves it out of the count', async () => {
+    floorRead();
     mocks.getAgencyHomeBoard.mockResolvedValue(board([
       onBoard('c1', { name: 'Night shift', stats: stats({ stall: { code: 'outside_calling_hours', contacts_waiting: 40, next_window_opens_at: null } }) }),
     ]));
@@ -148,10 +157,32 @@ describe('Needs you now', () => {
   });
 
   it('says nothing needs you when nothing does', async () => {
+    floorRead();
     mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
     renderHome();
     expect((await screen.findByTestId('home-attention-empty')).textContent).toContain('Nothing needs you right now');
     await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('0'));
+  });
+
+  it.each([
+    ['failed', () => mocks.getAgencyFloor.mockRejectedValue(new Error('network'))],
+    ['was refused', () => mocks.getAgencyFloor.mockRejectedValue(Object.assign(new Error('forbidden'), { statusCode: 403 }))],
+  ])('never gives an all-clear while the floor read %s: the breaks were not checked', async (_, floor) => {
+    floor();
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+    renderHome();
+    const note = await screen.findByTestId('home-attention-breaks-unknown');
+    await waitFor(() => expect(note.textContent).toBe('Nothing on your campaigns needs you, but agents’ breaks couldn’t be checked.'));
+    expect(screen.queryByTestId('home-attention-empty')).toBeNull();
+  });
+
+  it('never gives an all-clear while the floor is still being read', async () => {
+    mocks.getAgencyFloor.mockImplementation(() => new Promise(() => {}));
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+    renderHome();
+    expect((await screen.findByTestId('home-attention-breaks-unknown')).textContent)
+      .toBe('Nothing on your campaigns needs you. Agents’ breaks are still being checked.');
+    expect(screen.queryByTestId('home-attention-empty')).toBeNull();
   });
 });
 
@@ -207,6 +238,7 @@ describe('the page', () => {
   });
 
   it('says so in its own words, with a retry, when the board does not load: never the server’s text', async () => {
+    floorRead();
     mocks.getAgencyHomeBoard.mockRejectedValue(new Error('Route GET:/proxy/agency/home not found'));
     renderHome();
     expect(await screen.findByText(HOME_BOARD_ERROR)).toBeTruthy();
@@ -296,6 +328,15 @@ describe('the campaign filter', () => {
     fireEvent.click(within(screen.getByTestId('home-attention-elsewhere')).getByRole('button', { name: 'Show all campaigns' }));
     expect(screen.getByTestId('search').textContent).toBe('');
     expect(screen.getByTestId('home-campaign-c1')).toBeTruthy();
+  });
+
+  it('leaves what the reader put aside out of what it says the filter leaves out', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(two());
+    renderHome();
+    fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c2')).getByRole('button', { name: /Got it/ }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Show campaign' }), { target: { value: 'c1' } });
+    expect(screen.getByTestId('home-attention-callbacks-overdue:c1')).toBeTruthy();
+    expect(screen.queryByTestId('home-attention-elsewhere')).toBeNull();
   });
 
   it('survives a reload (the query), and shows everything for a campaign no longer active', async () => {
@@ -408,6 +449,7 @@ describe('when Home cannot refresh', () => {
   it('says so with the last time it could, offers Retry, and never says nothing needs you', async () => {
     vi.useFakeTimers();
     try {
+      floorRead();
       mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
       renderHome();
       await tick(0);
@@ -501,6 +543,7 @@ describe('Got it (acknowledged rows)', () => {
   });
 
   it('says nothing new needs you when everything is put aside', async () => {
+    floorRead();
     mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 1 })]));
     renderHome();
     fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));

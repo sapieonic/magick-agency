@@ -17,6 +17,7 @@ import {
   type HomeReviewCampaign,
   type TodayTotals,
 } from './home';
+import { stillAcknowledged, type HomeAck } from './homeAcks';
 
 /**
  * Live floor (decision LF1): the supervisor's landing page, `/agency/home`, which used to be called
@@ -89,15 +90,19 @@ export function callingHoursHref(campaignId: string): string {
 /**
  * The rows about one campaign, or every row; and how many rows that need the reader (not
  * information) the filter leaves out, so a filter never hides a problem without saying so. The
- * account's own rows (missed calls) are about no campaign, so a filter leaves them out too.
+ * account's own rows (missed calls) are about no campaign, so a filter leaves them out too. A row
+ * the reader put aside with "Got it" (`acks`, still holding) is not one the filter hides from them,
+ * so it is not counted.
  */
 export function attentionFor(
   items: readonly HomeAttentionItem[],
   campaignId: string | null,
+  acks: Readonly<Record<string, HomeAck>> = {},
 ): { shown: HomeAttentionItem[]; elsewhere: number } {
   if (campaignId === null) return { shown: [...items], elsewhere: 0 };
   const shown = items.filter((item) => item.campaign?.id === campaignId);
-  const elsewhere = items.filter((item) => item.campaign?.id !== campaignId && item.tone !== 'info').length;
+  const elsewhere = items.filter((item) =>
+    item.campaign?.id !== campaignId && item.tone !== 'info' && !stillAcknowledged(item, acks[item.id])).length;
   return { shown, elsewhere };
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ackOf } from '../../utils/agency/homeAcks';
 import {
   AGENT_CHIPS,
   CHOOSING_OUTCOME_LABEL,
@@ -89,6 +90,11 @@ describe('the campaign filter', () => {
     // c2's late callbacks and the account's missed calls; not c2's calling hours (information).
     expect(elsewhere).toBe(2);
     expect(attentionFor(items, null)).toEqual({ shown: items, elsewhere: 0 });
+    // A row the reader put aside is not something the filter hides from them.
+    const c2 = items.find((i) => i.id === 'callbacks-overdue:c2')!;
+    expect(attentionFor(items, 'c1', { [c2.id]: ackOf(c2) }).elsewhere).toBe(1);
+    // Until it gets worse.
+    expect(attentionFor(items, 'c1', { [c2.id]: { ...ackOf(c2), count: 0 } }).elsewhere).toBe(2);
   });
 });
 
