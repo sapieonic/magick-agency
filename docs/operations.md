@@ -790,38 +790,6 @@ revoked, shredded, another tenant's or unopenable cannot be fetched: playback an
 retried, and recovers once the key is restored). Revoking a credential therefore ends playback and
 analysis of that tenant's earlier recordings on it.
 
-### Re-analysing calls a recording-host refusal failed
-
-A host refusal fails a call's analysis for good (`TRANSCRIPTION_FAILED`, not retried), so when
-the allow-list is fixed (a host added to `VOICELINK_RECORDING_HOSTS`, or a code change such as
-Plivo's regional media hosts on 2026-11-18, after `aps1.media.plivo.com` was refused on staging
-from 2026-11-17 01:11 UTC) the calls it already failed stay failed. Once the fix is live,
-re-queue them with `apps/server/scripts/requeue-recording-host-refusals.ts` (in the image,
-`dist/requeue-recording-host-refusals.js`). It selects only `failed` jobs whose error is a host
-refusal (`error_code` `TRANSCRIPTION_FAILED`, `error_message` `Recording host "<host>" is not on
-the recording-host allow-list`, with or without `(redirect hop N)`) on calls not erased, and
-re-queues each as the manual retry does: `queued` with the full attempt budget
-(`DIALER_ANALYSIS_MAX_ATTEMPTS`), never past the lifetime ceiling
-(`DIALER_ANALYSIS_MAX_ATTEMPTS_TOTAL`; a job at it is listed as not re-queued), the call mirrored
-`pending`. A credential refusal, an upstream 401 or 404, a timeout or too many redirects is never
-selected. It is a dry run unless `--apply`; narrow it with `--host`, `--tenant <uuid>`,
-`--since` / `--before` (ISO times, when the job failed) and `--limit` (default 1000):
-
-```bash
-# dry run: lists job, call, tenant, failure time and host, and the count; changes nothing
-docker compose -f docker/docker-compose.prod.yml exec server \
-  node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z
-# then the same with --apply
-docker compose -f docker/docker-compose.prod.yml exec server \
-  node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z --apply
-```
-
-From a checkout: `DATABASE_URL=… pnpm tsx scripts/requeue-recording-host-refusals.ts …` in
-`apps/server`. Run it only after the deploy: a job re-queued onto a server that still refuses the
-host fails again and spends a lifetime attempt. The worker picks the jobs up like any queued job
-(watch `dialer_analysis_queue_depth{status="queued"}` fall); one still refused logs `refusing to
-fetch` again.
-
 ### Recordings a call did not ask for
 
 A call records only when it asked to (`agency_calls.recording_requested`, decided at the dial or

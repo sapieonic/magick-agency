@@ -2312,23 +2312,30 @@ empty label (`.media.plivo.com`, `aps1..media.plivo.com`), which `recordingHostn
 rather than leave to DNS. VoiceLink's rule is unchanged. Tests that pinned the old exact-only rule,
 updated: `recording-proxy.test.ts` (a Plivo URL on `evil.media.plivo.com` was a 502; it is now a
 media host, replaced by `evilmedia.plivo.com` and the cases above), `recording-access.test.ts` and
-`dialer-analysis-runner.test.ts` (`exactHosts: true` on Plivo's access). The failed jobs: new
-operator script `apps/server/scripts/requeue-recording-host-refusals.ts` (in the image,
-`dist/requeue-recording-host-refusals.js`), a dry run unless `--apply`, selects `failed`
-`TRANSCRIPTION_FAILED` jobs whose message is a host refusal on calls not erased
-(`findRecordingHostRefusals`, by `--host`, `--tenant`, `--since` / `--before`, `--limit`) and
-re-queues each with the existing `requeueForManualRetry` (full attempt budget, never past the
-lifetime ceiling, the call mirrored `pending`). There was no re-analyse route to reuse
-(`requeueForManualRetry` had no caller). A unit test pins the selector's pattern to the message the
-analysis fetch really throws. Runbook: [`operations.md`](operations.md) "Re-analysing calls a
-recording-host refusal failed"; to run after the deploy:
-`node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z`,
-then again with `--apply`. Mutation-checked (each red, then restored with `git checkout`): Plivo's
-access back to exact-only (10 unit and 1 integration red, the aps1 and usw1 accept cases among
-them); the subdomain match without its dot boundary (5 unit and 1 integration red,
+`dialer-analysis-runner.test.ts` (`exactHosts: true` on Plivo's access). The failed jobs: an
+operator script (`requeue-recording-host-refusals`) re-queued them with the existing
+`requeueForManualRetry`; it was removed once staging's had run (next entry). Mutation-checked
+(each red, then restored with `git checkout`): Plivo's access back to exact-only (10 unit and 1
+integration red, the aps1 and usw1 accept cases among them); the subdomain match without its dot boundary (5 unit and 1 integration red,
 `evilmedia.plivo.com` among them); the empty-label guard removed (3 red); the server's refusal
 message reworded (the 2 pattern pins red); the selector widened, without its message match (1 red
-in `packages/db`, 1 in the script's integration test) and without `status = 'failed'` (1 red).
+in `packages/db`, 1 in the script's integration test) and without `status = 'failed'` (1 red); the
+selector and the script are gone since.
+
+### The recording-host re-queue script removed 2026-11-18
+
+The operator script that re-queued the analysis jobs a recording-host refusal had failed
+(`apps/server/scripts/requeue-recording-host-refusals.ts`, bundled as
+`dist/requeue-recording-host-refusals.js`) has done its one job: staging's jobs on
+`aps1.media.plivo.com` were re-queued after the fix deployed, and no other deployment had such
+failures (Manas, 2026-11-18). Plivo's regional media hosts are accepted now, so that refusal cannot
+recur. Removed with it: its unit and integration tests, the repository selector
+`findRecordingHostRefusals` and its pattern `RECORDING_HOST_REFUSAL_MESSAGE` (and their tests in
+`dialer-analysis-job.repository.test.ts`), the build entry, the `analysisAttemptLimitsSchema`
+split in `config/blocks/analysis.ts` (the two ceilings are inline in `dialerAnalysis` again), and
+the runbook in `operations.md`. The host-check fix and its tests stay. Should an allow-list fix
+need failed jobs re-run again, the way back is a general retry of failed analyses over
+`requeueForManualRetry`, which still has no caller.
 
 ## Test counts
 
