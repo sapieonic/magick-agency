@@ -120,6 +120,9 @@ beforeAll(async () => {
   // A redialled conversation counts once, at its last attempt (the redial, bridged or not).
   const original = await attempt(c1, sessions['onCall']!, ago(3 * HOUR), { bridged_at: ago(3 * HOUR - 5_000), disposition_code: 'redialed' });
   await attempt(c1, sessions['onCall']!, ago(3 * HOUR - 60_000), { redial_number: 1, redial_of_attempt_id: original.id });
+  // A second chain whose redial bridged too: still once (counting bridged legs would make it two).
+  const original2 = await attempt(c1, sessions['onCall']!, ago(3.5 * HOUR), { bridged_at: ago(3.5 * HOUR - 5_000), disposition_code: 'redialed' });
+  await attempt(c1, sessions['onCall']!, ago(3.5 * HOUR - 60_000), { redial_number: 1, redial_of_attempt_id: original2.id, bridged_at: ago(3.5 * HOUR - 55_000) });
   await attempt(c1, sessions['leftToday']!, ago(4 * HOUR), { bridged_at: ago(4 * HOUR - 5_000) }); // counts for leftToday
   await attempt(c1, sessions['leftYesterday']!, ago(28 * HOUR), { bridged_at: ago(28 * HOUR - 5_000) }); // yesterday: no
   await attempt(cx, sessions['elsewhere']!, ago(1 * HOUR), { bridged_at: ago(1 * HOUR - 5_000), account_id: OTHER_ACCOUNT }); // other account: no
@@ -190,12 +193,12 @@ describe('callsToday', () => {
   it('counts each agent\'s conversations dialled in [from, to): the edges, a redial chain once, other accounts never', async () => {
     const counts = await agencyFloorRepository.callsToday(T, A, FROM, new Date(NOW + 1_000));
     expect(Object.fromEntries([...counts].map(([k, v]) => [Object.keys(users).find((n) => users[n] === k), v]))).toEqual({
-      onCall: 4, // the live call, one an hour ago, one at `from`, the redial chain once
+      onCall: 5, // the live call, one an hour ago, one at `from`, each redial chain once
       leftToday: 1,
     });
     // `to` is exclusive: an attempt dialled exactly at it is not counted.
     const before = await agencyFloorRepository.callsToday(T, A, FROM, ago(1 * HOUR));
-    expect(before.get(users['onCall']!)).toBe(2); // at `from`, the redial chain
+    expect(before.get(users['onCall']!)).toBe(3); // at `from`, the two redial chains
   });
 
   it('equals the grouped stats\' `connected` for group_by=agent over the same window', async () => {
@@ -241,7 +244,7 @@ describe('the internal handler, GET /floor', () => {
         call_id: liveCallId, origin: 'campaign', correlation_id: expect.any(String), customer_name: 'Ada Lovelace',
         connected_at: ago(80_000).toISOString(), aht_seconds: expect.anything(), recording: true, listener_user_ids: [],
       },
-      calls_today: 4, left_at: null,
+      calls_today: 5, left_at: null,
     });
     expect(JSON.stringify(body)).not.toContain('9811122233');
     expect(of('soft')).toMatchObject({ break_reason: 'soft_phone', break_label: 'Soft phone', campaign_id: null, call: null });
@@ -317,6 +320,6 @@ describe('the plan, on a seeded table', () => {
 
   it('the conversations read is still the right answer on the seeded table', async () => {
     const { rows } = await getTestPool().query(FLOOR_CALLS_TODAY_SQL, [T, A, FROM, new Date(NOW + 1_000)]);
-    expect(rows.map((r: { calls: string }) => Number(r.calls)).sort()).toEqual([1, 4]);
+    expect(rows.map((r: { calls: string }) => Number(r.calls)).sort()).toEqual([1, 5]);
   });
 });
