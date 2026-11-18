@@ -22,7 +22,8 @@ before writing a repository or a migration.
   the Contacts list's promise index, built out of 0041's lock, 0046 the retention purge's index of
   calls holding a recording link they did not ask for, 0047 live call listening's session rows, 0048
   their `access_unverified` end reason and `live_at`, 0049 the listening history's index of an
-  account's live sessions by start). node-pg-migrate,
+  account's live sessions by start, 0050 the promises summary's indexes of each call table's promises
+  by when their outcome was written). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).
