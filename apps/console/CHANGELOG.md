@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/sapieonic/magick-agency/compare/console-v0.26.0...console-v0.26.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **console:** show which setting stops a campaign saving, and what its draft holds ([#97](https://github.com/sapieonic/magick-agency/issues/97)) ([8283ae1](https://github.com/sapieonic/magick-agency/commit/8283ae1ac563733fe3c5d79bd0ef3bdd28de5a2d))
+
 ## [0.26.0](https://github.com/sapieonic/magick-agency/compare/console-v0.25.1...console-v0.26.0) (2026-11-17)
 
 
