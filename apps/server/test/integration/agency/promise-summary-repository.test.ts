@@ -120,6 +120,24 @@ describe('summary', () => {
     expect(none).toEqual([]);
   });
 
+  it('sums past a float\'s precision exactly: 150 twelve-digit amounts and a cent', async () => {
+    const account = randomUUID();
+    const big = await insertAgencyCampaign({ status: 'running', account_id: account }) as Id;
+    await getTestPool().query(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164)
+       SELECT $1::uuid, $2::uuid, $3::uuid, '+1444' || lpad(g::text, 7, '0') FROM generate_series(1, 151) g`, [big.id, T, account]);
+    await getTestPool().query(
+      `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, ended_at,
+                                         disposition_code, dispositioned_at, promise_date, promise_amount)
+       SELECT campaign_id, id, tenant_id, account_id, 1, '+15550000000', 'ended', $2::timestamptz, 'ptp', $2::timestamptz, '2026-11-25',
+              CASE WHEN phone_e164 = '+14440000151' THEN 0.01 ELSE 999999999999.99 END
+         FROM agency_contacts WHERE campaign_id = $1::uuid`, [big.id, inWindow]);
+    // A float8 sum reads 149999999999998.25 here.
+    expect(await agencyPromiseSummaryRepository.summary(T, account, FROM, TO)).toEqual([
+      { campaign_id: big.id, promises: 151, with_amount: 151, amount_total: '149999999999998.51' },
+    ]);
+  });
+
   it('another account sees only its own', async () => {
     const rows = await agencyPromiseSummaryRepository.summary(T, OTHER_ACCOUNT, FROM, TO);
     expect(rows).toEqual([
