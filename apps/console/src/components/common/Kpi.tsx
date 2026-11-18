@@ -4,7 +4,7 @@ import styles from './Kpi.module.css';
 
 /**
  * One figure: label, value, and an optional line beneath. `filled` is the Insights panels' look;
- * `outlined` is Home's Today so far. `hint` sits beside the label (hover and click).
+ * `outlined` is Live floor's tiles. `hint` sits beside the label (hover and click).
  */
 export function Kpi({
   label,
@@ -14,6 +14,7 @@ export function Kpi({
   withheld,
   testId,
   look = 'filled',
+  tone,
 }: {
   label: string;
   /** Extra words for the label, on hover and click. */
@@ -24,9 +25,11 @@ export function Kpi({
   withheld?: boolean;
   testId?: string;
   look?: 'filled' | 'outlined';
+  /** `danger`: the figure is a problem now (Live floor's late callbacks above zero). */
+  tone?: 'danger';
 }) {
   return (
-    <div className={`${styles.kpi} ${styles[look]}`} data-testid={testId}>
+    <div className={`${styles.kpi} ${styles[look]}`} data-testid={testId} data-tone={tone}>
       <span className={styles.label}>
         {hint ? <LabelWithHint label={label} hint={hint} /> : label}
       </span>

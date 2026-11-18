@@ -1,46 +1,38 @@
-import { useMemo, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
-import { Check, ChevronRight, CircleCheck, Plus, RefreshCw } from 'lucide-react';
+import { useMemo } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { HOME_FAST_MS, useHomeBoard } from '../../hooks/useHomeBoard';
-import { useHomeAcks } from '../../hooks/useHomeAcks';
-import { splitAcknowledged } from '../../utils/agency/homeAcks';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { hasPermission } from '../../utils/permissions';
 import { holdsHomePermission } from '../../utils/consoleNav';
-import {
-  homeAttention,
-  homeFloor,
-  homeNeeds,
-  homeWaiting,
-  todaySuccessLine,
-  HOME_CAMPAIGN_CAP,
-  type HomeAttentionItem,
-  type HomeFloorRow,
-} from '../../utils/agency/home';
-import { formatCount, plural } from '../../utils/format/number';
-import { durationWords } from '../../utils/format/duration';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { homeAttention, HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
+import { CAMPAIGN_FILTER_PARAM, readsFor, selectedCampaign } from '../../utils/agency/liveFloor';
+import { formatCount } from '../../utils/format/number';
 import { GetStarted } from './campaigns-home/GetStarted';
-import { Kpi } from '../../components/common/Kpi';
-import styles from './HomePage.module.css';
-
-/** A time on today's date, else the date and time. */
-function when(iso: string, now: Date): string {
-  const at = new Date(iso);
-  return at.toDateString() === now.toDateString() ? formatTime(iso) : formatDate(iso);
-}
+import { LiveFloorHeader } from './live-floor/LiveFloorHeader';
+import { LiveFloorKpis } from './live-floor/LiveFloorKpis';
+import { NeedsYouNow } from './live-floor/NeedsYouNow';
+import { CampaignsPanel } from './live-floor/CampaignsPanel';
+import { AgentsPanel } from './live-floor/AgentsPanel';
+import styles from './live-floor/LiveFloor.module.css';
 
 /**
- * Home (decision B28): what needs the supervisor now, the floor of each live campaign, and
- * today's totals. A supervisor lands here from `/agency` and after an account switch.
+ * Live floor (decisions B28a, LF1): the supervisor's landing page, Home until the redesign, at the
+ * URL Home had. What needs them now, the active campaigns with Pause and Resume, the floor, and
+ * today's totals, for every active campaign or one picked in the filter. A supervisor lands here
+ * from `/agency` and after an account switch.
  *
  * Gated at `agency.supervise` (`HOME_GATE` in `utils/consoleNav`): every read it makes floors
  * there. Anyone else who opens the URL is sent to `/agency`, whose index picks their landing.
+ *
+ * Its reads are Home's: the shared board (`useHomeBoard`, every 10 s while open), today so far
+ * (`useTodaySoFar`, one grouped read a minute) and the missed-calls count. The filter is client
+ * side over the board's campaigns and kept in `?campaign=`, so it survives a reload.
  */
 export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
@@ -49,50 +41,42 @@ export default function HomePage() {
   const board = useHomeBoard({ tenantId, accountId, role, enabled: supervise, intervalMs: HOME_FAST_MS });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
+  const [params, setParams] = useSearchParams();
 
   const items = useMemo(
     () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
     [board.reads, missed.available, missed.count],
   );
-  // "Got it" (B28a): rows the reader put aside, until they get worse or tomorrow.
-  const { acks, acknowledge } = useHomeAcks(tenantId, accountId);
-  const { open, acknowledged } = splitAcknowledged(items, acks);
-  const [showAcknowledged, setShowAcknowledged] = useState(false);
-  const needs = homeNeeds(open);
-  const waiting = homeWaiting(open);
-  const floor = useMemo(() => homeFloor(board.reads), [board.reads]);
+  const picked = selectedCampaign(params.get(CAMPAIGN_FILTER_PARAM), board.reads);
+  const pickedId = picked?.id ?? null;
+  const shown = useMemo(() => readsFor(board.reads, pickedId), [board.reads, pickedId]);
 
   if (role === undefined) return <LoadingSpinner />;
   if (!supervise) return <Navigate to="/agency" replace />;
 
   const canCreate = hasPermission(role, 'agency.campaigns.write');
   const accountName = accounts?.find((a) => a.id === accountId)?.name;
-  const running = board.reads.filter((r) => r.campaign.status === 'running').length;
-  const onFloor = board.reads.reduce((n, r) => n + (r.stats?.agents_live ?? 0), 0);
   const noCampaigns = board.status === 'ready' && board.anyCampaign === false;
-  const now = new Date();
   const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
+
+  const pick = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set(CAMPAIGN_FILTER_PARAM, id);
+    else next.delete(CAMPAIGN_FILTER_PARAM);
+    setParams(next, { replace: true });
+  };
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.headerText}>
-          {accountName && <p className={styles.eyebrow}>{accountName}</p>}
-          <h1 className={styles.title}>Home</h1>
-          {board.status === 'ready' && !noCampaigns && (
-            <p className={styles.subtitle} data-testid="home-summary">
-              {`${plural(running, 'campaign')} running · ${plural(onFloor, 'agent')} on the floor`}
-            </p>
-          )}
-        </div>
-        {/* With no campaign at all the get-started card carries the button instead. */}
-        {canCreate && !noCampaigns && (
-          <Link to="/agency/campaigns/new" className={`btn-primary ${styles.headerAction}`}>
-            <Plus size={16} aria-hidden="true" />
-            New campaign
-          </Link>
-        )}
-      </header>
+      <LiveFloorHeader
+        accountName={accountName}
+        campaigns={board.reads.map((r) => r.campaign)}
+        selectedId={pickedId}
+        onSelect={pick}
+        // With no campaign at all the get-started card carries the button instead.
+        canCreate={canCreate && !noCampaigns}
+        showFilter={board.status === 'ready' && board.reads.length > 0}
+      />
 
       {/* The hook's copy (`HOME_BOARD_ERROR`), never the server's text. */}
       {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={board.reload} />}
@@ -108,204 +92,36 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Its own read, so it shows whatever became of the board's. */}
+      <LiveFloorKpis board={board} reads={shown} today={today} campaignId={pickedId} />
+
       {board.status === 'ready' && (
         <>
-          <section className={styles.card} aria-labelledby="home-attention-heading">
-            <div className={styles.cardHead}>
-              <h2 id="home-attention-heading" className={styles.cardTitle}>
-                Needs your attention
-                {needs.length > 0 && <span className={styles.count}>{` · ${formatCount(needs.length)}`}</span>}
-              </h2>
-              <p className={styles.cardNote}>Each item clears itself once it’s fixed. “Got it” hides one until it gets worse, or until tomorrow</p>
-            </div>
-            {needs.length > 0 ? (
-              <ul className={styles.attentionList} data-testid="home-attention">
-                {needs.map((item) => (
-                  <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} />
-                ))}
-              </ul>
-            ) : board.stale ? (
-              // Never an all-clear from a read Home could not refresh.
-              <p className={styles.quiet} data-testid="home-attention-unknown">
-                {`Nothing needed you at ${lastUpdated ?? 'the last refresh'}, the last time Home could check.`}
-              </p>
+          <div className={styles.mid}>
+            <NeedsYouNow
+              items={items}
+              campaignId={pickedId}
+              campaignName={picked?.name ?? null}
+              stale={board.stale}
+              lastUpdated={lastUpdated}
+              onShowAll={() => pick(null)}
+            />
+            {noCampaigns ? (
+              <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />
             ) : (
-              <p className={styles.allClear} data-testid="home-attention-empty">
-                <CircleCheck size={18} aria-hidden="true" />
-                {homeNeeds(acknowledged).length > 0 ? 'Nothing new needs you right now' : 'Nothing needs you right now'}
-              </p>
+              <CampaignsPanel reads={shown} onChanged={board.reload} />
             )}
-            {waiting.length > 0 && (
-              <div className={styles.waiting} data-testid="home-waiting">
-                <h3 className={styles.waitingTitle}>For your information</h3>
-                <ul className={styles.attentionList}>
-                  {waiting.map((item) => (
-                    <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} />
-                  ))}
-                </ul>
-              </div>
-            )}
-            {acknowledged.length > 0 && (
-              <div className={styles.waiting} data-testid="home-acknowledged">
-                <button
-                  type="button"
-                  className={styles.ackToggle}
-                  aria-expanded={showAcknowledged}
-                  onClick={() => setShowAcknowledged((shown) => !shown)}
-                >
-                  {`${formatCount(acknowledged.length)} acknowledged · ${showAcknowledged ? 'Hide' : 'Show'}`}
-                </button>
-                {showAcknowledged && (
-                  <ul className={styles.attentionList} data-testid="home-acknowledged-list">
-                    {acknowledged.map((item) => (
-                      <AttentionRow key={item.id} item={item} now={now} />
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </section>
+          </div>
 
-          {noCampaigns ? (
-            <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />
-          ) : (
-            <section className={styles.card} aria-labelledby="home-floor-heading">
-              <div className={styles.cardHead}>
-                <h2 id="home-floor-heading" className={styles.cardTitle}>Floor right now</h2>
-                <Link to="/agency/campaigns" className={styles.cardLink}>All campaigns</Link>
-              </div>
-              {floor.length > 0 ? (
-                <>
-                  <div className={styles.tableWrap}>
-                    <table className={styles.table} data-testid="home-floor">
-                      <thead>
-                        <tr>
-                          <th scope="col">Campaign</th>
-                          <th scope="col" className={styles.num} title="Including agents a call is being connected to">On a call</th>
-                          <th scope="col" className={styles.num}>Available</th>
-                          <th scope="col" className={styles.num}>Wrapping up</th>
-                          <th scope="col" className={styles.num}>On break</th>
-                          <th scope="col" className={styles.num}>Abandonment (24h)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {floor.map((row) => (
-                          <FloorRow key={row.campaign.id} row={row} />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className={styles.cardNote}>Open a campaign to see who is where on its Agents tab.</p>
-                </>
-              ) : (
-                <p className={styles.quiet} data-testid="home-floor-empty">
-                  No campaign is running and nobody is on the floor.
-                </p>
-              )}
-              {board.activeTotal > board.reads.length && (
-                <p className={styles.cardNote} data-testid="home-cap-note">
-                  {`Home reads the first ${HOME_CAMPAIGN_CAP} of ${formatCount(board.activeTotal)} active campaigns. The rest are on the Campaigns page.`}
-                </p>
-              )}
-            </section>
+          {!noCampaigns && <AgentsPanel reads={shown} />}
+
+          {board.activeTotal > board.reads.length && (
+            <p className={styles.cardNote} data-testid="home-cap-note">
+              {`Live floor reads the first ${HOME_CAMPAIGN_CAP} of ${formatCount(board.activeTotal)} active campaigns. The rest are on the Campaigns page.`}
+            </p>
           )}
         </>
       )}
-
-      {/* Its own read, so it shows whatever became of the board's. */}
-      <TodaySoFar today={today} />
     </div>
-  );
-}
-
-function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
-  return (
-    <section className={styles.card} aria-labelledby="home-today-heading">
-      <div className={styles.cardHead}>
-        <h2 id="home-today-heading" className={styles.cardTitle}>Today so far</h2>
-        <Link to="/agency/analytics" className={styles.cardLink}>Open Analytics</Link>
-      </div>
-      {today.status === 'loading' && <p className={styles.quiet}>Loading today’s numbers…</p>}
-      {today.status === 'unavailable' && <p className={styles.quiet}>Today’s numbers didn’t load.</p>}
-      {today.status === 'ready' && (
-        <>
-          <div className={styles.tiles} data-testid="home-today">
-            <Kpi look="outlined" label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
-            <Kpi look="outlined" label="Conversations" value={formatCount(today.totals.conversations)} />
-            <Kpi look="outlined" label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals)} />
-            <Kpi look="outlined" label="Talk time" value={durationWords(today.totals.talkSeconds)} />
-          </div>
-          <p className={styles.cardNote}>
-            Since midnight your time, every campaign in this account. A success is a call whose outcome
-            the campaign marks ‘Counts as a success’.
-          </p>
-        </>
-      )}
-    </section>
-  );
-}
-
-/** One row; `onAcknowledge` offers "Got it" (left out on a row already put aside). */
-function AttentionRow({ item, now, onAcknowledge }: {
-  item: HomeAttentionItem;
-  now: Date;
-  onAcknowledge?: (item: HomeAttentionItem) => void;
-}) {
-  return (
-    <li className={styles.attentionRow} data-tone={item.tone} data-testid={`home-attention-${item.id}`}>
-      <span className={`${styles.dot} ${styles[item.tone]}`} aria-hidden="true" />
-      <div className={styles.attentionText}>
-        {item.campaign && <span className={styles.campaignName}>{item.campaign.name}</span>}
-        {item.stale && <span className={styles.staleTag}>Not refreshed</span>}
-        <span className={styles.attentionTitle}>{item.title}</span>
-        <span className={styles.attentionDetail}>{item.detail}</span>
-      </div>
-      {item.at && <time className={styles.when} dateTime={item.at}>{when(item.at, now)}</time>}
-      <div className={styles.rowActions}>
-        {onAcknowledge && (
-          <button
-            type="button"
-            className={`btn-secondary ${styles.ack}`}
-            onClick={() => onAcknowledge(item)}
-            aria-label={`Got it: ${item.campaign ? `${item.campaign.name}, ` : ''}${item.title}`}
-            title="Hide this until it gets worse, or until tomorrow"
-          >
-            <Check size={14} aria-hidden="true" />
-            Got it
-          </button>
-        )}
-        <Link to={item.to} className={`btn-secondary ${styles.action}`}>
-          {item.action}
-          <ChevronRight size={15} aria-hidden="true" />
-        </Link>
-      </div>
-    </li>
-  );
-}
-
-function figure(value: number | null): string {
-  return value === null ? '—' : formatCount(value);
-}
-
-function FloorRow({ row }: { row: HomeFloorRow }) {
-  return (
-    <tr>
-      <th scope="row">
-        <Link to={row.to} className={styles.floorName}>{row.campaign.name}</Link>
-        <AgencyCampaignStatusBadge status={row.campaign.status} />
-        {row.stale && <span className={styles.staleTag} data-testid="home-floor-stale">Not refreshed</span>}
-        {row.onCall === null && <span className={styles.quiet}>{` ${plural(row.agentsLive, 'agent')} live`}</span>}
-      </th>
-      {/* `data-label` names each figure where a phone stacks the row (the CSS). */}
-      <td className={styles.num} data-label="On a call">{figure(row.onCall)}</td>
-      <td className={styles.num} data-label="Available">{figure(row.available)}</td>
-      <td className={styles.num} data-label="Wrapping up">{figure(row.wrapup)}</td>
-      <td className={styles.num} data-label="On break">{figure(row.onBreak)}</td>
-      <td className={styles.num} data-label="Abandonment (24h)">
-        <span className={`${styles.rate} ${row.abandonment.level ? styles[row.abandonment.level] : ''}`}>
-          {row.abandonment.text}
-        </span>
-      </td>
-    </tr>
   );
 }

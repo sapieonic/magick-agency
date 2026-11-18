@@ -1,0 +1,600 @@
+/* Live floor (B28a, LF1). Breakpoints are container queries on `.page`, as on the Campaigns page:
+   the sidebar's width comes from the brand and vanishes under 768px. */
+.page {
+  container: livefloor / inline-size;
+  max-width: 1280px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.headerText {
+  min-width: 0;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-hover);
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.when {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Tabular figures and a fixed width, so the minute's tick never moves the header. */
+.clock {
+  display: inline-block;
+  min-width: 8ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filter {
+  min-width: 200px;
+  max-width: 320px;
+  height: 38px;
+  font-weight: 600;
+}
+
+.headerAction {
+  flex-shrink: 0;
+}
+
+@container livefloor (max-width: 560px) {
+  .headerActions {
+    width: 100%;
+  }
+
+  .filter {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
+  }
+}
+
+/* ── Tiles ───────────────────────────────────────────────────────────────── */
+
+.kpiSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpis > * {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+}
+
+.kpis > div,
+.kpiLink > div {
+  height: 100%;
+}
+
+.kpiLink {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-lg);
+}
+
+.kpiLink:hover > div {
+  border-color: var(--border-strong);
+}
+
+.kpiLink:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@container livefloor (max-width: 900px) {
+  .kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container livefloor (max-width: 560px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* The fifth tile (late callbacks) takes the last row whole. */
+  .kpis > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+
+.mid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@container livefloor (max-width: 900px) {
+  .mid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.cardTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.cardTitleNote {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  min-width: 20px;
+  justify-content: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cardNote {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.cardLink {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.quiet {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.smallButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Live floor could not refresh: said plainly above everything it shows. */
+.staleNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 14px;
+}
+
+/* A campaign whose figures this read could not refresh. */
+.staleTag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* ── Needs you now ───────────────────────────────────────────────────────── */
+
+.attentionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attentionRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+}
+
+.attentionRow[data-tone='danger'] {
+  background: var(--danger-subtle);
+}
+
+.attentionRow[data-tone='warning'] {
+  background: var(--warning-subtle);
+}
+
+.attentionRow[data-tone='info'] {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+}
+
+.rowIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.attentionRow[data-tone='danger'] .rowIcon {
+  background: var(--danger);
+  color: #fff;
+}
+
+.attentionRow[data-tone='warning'] .rowIcon {
+  background: var(--warning-subtle);
+  color: var(--warning);
+  box-shadow: inset 0 0 0 1px var(--warning);
+}
+
+.attentionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.attentionTitle {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.attentionRow[data-tone='info'] .attentionTitle {
+  font-weight: 500;
+}
+
+.attentionDetail {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.campaignName {
+  font-weight: 600;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.reviewList {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.flipped {
+  transform: rotate(180deg);
+}
+
+.allClear {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--success);
+}
+
+.elsewhere {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* For your information, and what was put aside: quieter, under the list. */
+.waiting {
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.waitingTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* A narrow page puts the buttons under the reason. */
+@container livefloor (max-width: 560px) {
+  .attentionRow {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .rowActions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+/* ── Campaigns ───────────────────────────────────────────────────────────── */
+
+.campaignList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.campaign {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.campaign + .campaign {
+  padding-top: 12px;
+}
+
+.campaign:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.campaignTop {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.campaignName2 {
+  font-weight: 700;
+  font-size: 14.5px;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.spacer {
+  margin-left: auto;
+}
+
+.campaignSub {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.campaignStall {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--warning);
+}
+
+.campaignStall svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.progressHead {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.progressHead b {
+  color: var(--text-primary);
+}
+
+.bar {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+/* ── Agents ──────────────────────────────────────────────────────────────── */
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.chipAll {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.chip[data-state='help'] > i { background: var(--danger); }
+.chip[data-state='on_call'] > i { background: var(--info); }
+.chip[data-state='available'] > i { background: var(--success); }
+.chip[data-state='wrapup'] > i { background: var(--accent); }
+.chip[data-state='break'] > i { background: var(--warning); }
+
+.chipSoon {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+.floorLinks ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 14px;
+}
+
+.floorLinks a {
+  font-weight: 600;
+}
