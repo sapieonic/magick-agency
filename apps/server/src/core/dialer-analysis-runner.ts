@@ -3,7 +3,7 @@
  * settlement: the job completes with no charge step (decision S6). The recording
  * fetch takes its hosts and headers from the call's carrier access
  * (`telephony/recording-access.ts`, B21): VoiceLink's host allow-list with nothing
- * attached, or a BYOC carrier's exact hosts with the tenant's credential. The PostHog /
+ * attached, or a BYOC carrier's recording media hosts with the tenant's credential. The PostHog /
  * LLM-observability emitters come from `analytics/posthog.ts` and
  * `analytics/llm-observability.ts`.
  */

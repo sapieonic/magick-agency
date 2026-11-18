@@ -31,7 +31,7 @@ export interface FetchRecordingOptions {
   allowedHosts: readonly string[];
   /** Headers for the first request only (a BYOC credential); a redirect hop never gets them. */
   headers?: Readonly<Record<string, string>>;
-  /** Match hosts exactly, no subdomains (set whenever `headers` carries a credential). */
+  /** Match hosts exactly, no subdomains (`RecordingAccess.exactHosts`). */
   exactHosts?: boolean;
   /** Further hosts a redirect hop may go to, exactly (`RecordingAccess.redirectHosts`, RC4). */
   redirectHosts?: readonly string[];

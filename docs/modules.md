@@ -610,7 +610,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/tenant.routes.test.ts` | ~17 |
 | `apps/server/test/integration/api/user.routes.test.ts` | ~15 |
 | `apps/server/test/integration/api/voice-routes.test.ts` | ~7 |
-| `apps/server/test/integration/api/webrtc-recordings.routes.test.ts` | ~11 |
+| `apps/server/test/integration/api/webrtc-recordings.routes.test.ts` (with a Plivo recording on a regional media host, `aps1.media.plivo.com`, and the Plivo refusals: PL6 as amended 2026-11-18) | 17 |
 | `apps/server/test/unit/api/agency-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
@@ -1223,7 +1223,7 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/carrier-errors.test.ts` | ~4 |
 | `apps/server/test/unit/telephony/carrier-modules.test.ts` | 30 |
 | `apps/server/test/unit/telephony/provider-capabilities.test.ts` | 12 |
-| `apps/server/test/unit/telephony/recording-access.test.ts` | ~15 |
+| `apps/server/test/unit/telephony/recording-access.test.ts` (with the hosts Plivo's access accepts and refuses, PL6 as amended 2026-11-18) | 42 |
 | `apps/server/test/unit/telephony/voicelink/redact-url-tail.test.ts` | 7 |
 | `apps/server/test/unit/telephony/voicelink/voicelink-carrier.fixture.test.ts` | 178 |
 | `apps/server/test/unit/telephony/voicelink/voicelink-token-manager.test.ts` | 23 |
@@ -1265,7 +1265,7 @@ Files: `gemini-transcriber.ts`, `index.ts`, `recording-fetcher.ts`, `sarvam-tran
 |---|---|
 | `apps/server/test/unit/transcription/gemini-transcriber.test.ts` | 21 |
 | `apps/server/test/unit/transcription/index.test.ts` | 11 |
-| `apps/server/test/unit/transcription/recording-fetcher.test.ts` (with RC3's failure counter by reason) | ~37 |
+| `apps/server/test/unit/transcription/recording-fetcher.test.ts` (with RC3's failure counter by reason, and Plivo's regional media hosts on the real access) | 47 |
 | `apps/server/test/unit/transcription/sarvam-transcriber.test.ts` | 7 |
 
 ### `apps/server/src/tts/`
@@ -1303,7 +1303,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
 | `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 35 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
-| `apps/server/test/unit/utils/recording-proxy.test.ts` | ~36 |
+| `apps/server/test/unit/utils/recording-proxy.test.ts` (with Plivo's regional media hosts proxied and a host with an empty label refused) | 48 |
 | `apps/server/test/unit/utils/recording-proxy-diagnosis.test.ts` (RC1 404 for a call that did not ask; RC3 every "could not reach" answer's status, `reason`, log fields and counter, hosts only, never the URL; the 504 headers timeout; RC4 redirect hosts off by default, exact, hops only, no credential) | 21 |
 | `apps/server/test/unit/utils/client-header.test.ts` | 5 |
 | `apps/server/test/unit/utils/recording-url.test.ts` | 13 |
@@ -1325,6 +1325,8 @@ service over a test keyring) against the mock Plivo carrier; `plivo-rig.ts` buil
 | `apps/server/test/integration/flows/feature-flag-rollout.test.ts` | ~4 |
 | `apps/server/test/integration/flows/tts-cache-sweep-scale.test.ts` | ~6 |
 | `apps/server/test/integration/scripts/create-super-admin.test.ts` | ~5 |
+| `apps/server/test/integration/scripts/requeue-recording-host-refusals.test.ts` (the operator re-queue of analysis jobs a recording-host refusal failed: dry run, `--apply`, the lifetime ceiling) | 3 |
+| `apps/server/test/unit/scripts/requeue-recording-host-refusals.test.ts` (its command line, and the selector's pattern pinned to the refusal message the analysis fetch throws) | 16 |
 | `apps/server/test/unit/branding/no-parent-brand.test.ts` | 5 |
 | `apps/server/test/unit/deploy/mobile-app-links.test.ts` | 17 |
 | `apps/server/test/unit/deploy/production-packaging.test.ts` | 18 |
@@ -1560,7 +1562,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/call-analysis-profile.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/claim-limit.test.ts` | 5 |
 | `packages/db/test/integration/repositories/credential-call-insert.repository.test.ts` | ~7 |
-| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~10 |
+| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` (with `findRecordingHostRefusals`, the operator re-queue's selector) | 14 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number-inbound.repository.test.ts` | 9 |
 | `packages/db/test/integration/repositories/phone-number-sync.repository.test.ts` | 18 |

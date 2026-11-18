@@ -29,8 +29,11 @@ export interface RecordingCallRef {
  *  - `allowedHosts`: the first URL and every redirect hop must be on it
  *    (`fetchWithAllowedRedirects`). Never taken from tenant or call data.
  *  - `headers`: sent with the first request only; a redirect hop never carries them.
- *  - `exactHosts`: hosts match exactly rather than exact-or-subdomain. True whenever
- *    `headers` carries a credential: B21 sends it only to the provider's exact hosts.
+ *  - `exactHosts`: hosts match exactly rather than exact-or-subdomain. No carrier sets it
+ *    today: Plivo did until its regional media hosts (`aps1.media.plivo.com`) were refused
+ *    (B21 and PL6 as amended 2026-11-18). A credential goes only to a list whose every
+ *    host, and every subdomain of it, is the provider's recording media (see
+ *    `PLIVO_RECORDING_HOSTS`); a list that holds an API host or an apex must set it.
  *  - `redirectHosts`: further hosts a REDIRECT hop (never the first URL) may go to, matched
  *    exactly, from operator config only (RC4; Plivo's `PLIVO_RECORDING_REDIRECT_HOSTS`, empty
  *    by default). A hop never carries `headers`, so the credential stays on the first request.
@@ -101,15 +104,24 @@ export interface RecordingAccessDeps {
 }
 
 /**
- * Plivo's recording media host. Exactly this one: the recording callback's `RecordUrl`
- * and the Recording API's `recording_url` are both `https://media.plivo.com/v1/Account/
- * {auth_id}/Recording/{id}.mp3`, so the fetch needs no other host.
+ * Plivo's recording media hosts: `media.plivo.com` and every subdomain of it, matched
+ * exact-or-subdomain (`exactHosts: false`). The recording callback's `RecordUrl` and the
+ * Recording API's `recording_url` are `https://media.plivo.com/v1/Account/{auth_id}/
+ * Recording/{id}.mp3` on some accounts and the account's regional media host on others
+ * (`https://aps1.media.plivo.com/...`, seen on staging 2026-11-17 as the FIRST URL, not a
+ * redirect), so the regional hosts are allowed too (PL6 as amended 2026-11-18).
  *
- * `api.plivo.com` is deliberately NOT here. The stored `recording_url` arrives in a
- * carrier callback, and the account's REST API answers a Basic-auth GET on that host
- * with account data (calls, numbers, recordings lists). Allowing it would let a forged
- * `recording_url` point a credentialed GET at the API and have the proxy stream the
- * answer back to the viewer. The media host serves only recordings.
+ * The boundary is the dot before `media.plivo.com`: `aps1.media.plivo.com` matches,
+ * `evilmedia.plivo.com`, `media.plivo.com.evil.example` and the apex `plivo.com` do not
+ * (`recordingHostMatches`). Everything under `media.plivo.com` is Plivo's media zone.
+ *
+ * `api.plivo.com` is deliberately NOT matched, and must never be: it is not under
+ * `media.plivo.com`, and the list must never be widened to `plivo.com`, which would take
+ * it in. The stored `recording_url` arrives in a carrier callback, and the account's REST
+ * API answers a Basic-auth GET on that host with account data (calls, numbers, recordings
+ * lists). Allowing it would let a forged `recording_url` point a credentialed GET at the
+ * API and have the proxy stream the answer back to the viewer. The media hosts serve only
+ * recordings.
  */
 export const PLIVO_RECORDING_HOSTS: readonly string[] = ['media.plivo.com'];
 
@@ -143,8 +155,8 @@ const RECORDING_ACCESS: ReadonlyMap<string, AccessEntry> = new Map<string, Acces
     }
     return { allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false };
   }],
-  // A tenant's own Plivo account: HTTP Basic auth_id:auth_token, to the exact media
-  // host only.
+  // A tenant's own Plivo account: HTTP Basic auth_id:auth_token, to Plivo's media hosts
+  // only (`media.plivo.com` and its regional subdomains; never api.plivo.com).
   ['plivo', async (call, deps) => {
     const cred = await pinnedCredential(call, deps);
     const token = cred.secret.reveal()['auth_token'];
@@ -155,7 +167,7 @@ const RECORDING_ACCESS: ReadonlyMap<string, AccessEntry> = new Map<string, Acces
     return {
       allowedHosts: PLIVO_RECORDING_HOSTS,
       headers: { Authorization: `Basic ${basic}` },
-      exactHosts: true,
+      exactHosts: false,
       ...(deps.plivoRedirectHosts?.length ? { redirectHosts: deps.plivoRedirectHosts } : {}),
     };
   }],

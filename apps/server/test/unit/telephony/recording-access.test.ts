@@ -13,11 +13,13 @@ import {
   type ResolvedCredential,
 } from '../../../src/telephony/credentials/credential-service.js';
 import { Secret } from '../../../src/telephony/credentials/secret.js';
+import { recordingHostMatches } from '../../../src/utils/recording-proxy.js';
 
 /*
  * The per-carrier recording access table (B21): VoiceLink keeps today's configured
- * hosts with nothing attached; Plivo gets exactly its media host and Basic auth from the
- * call's pinned credential, resolved for `recording`; anything the credential service
+ * hosts with nothing attached; Plivo gets its media hosts (`media.plivo.com` and its
+ * regional subdomains, never `api.plivo.com`: PL6 as amended 2026-11-18) and Basic auth
+ * from the call's pinned credential, resolved for `recording`; anything the credential service
  * refuses (revoked above all), a missing credential, a credential of another tenant or
  * provider, and an unknown provider are typed refusals with no fallback (B20).
  */
@@ -70,7 +72,7 @@ describe('recording access: VoiceLink (the service account)', () => {
 });
 
 describe('recording access: Plivo (the tenant\'s own account)', () => {
-  it('is exactly media.plivo.com, exact match, Basic auth_id:auth_token from the credential resolved for recording', async () => {
+  it('is media.plivo.com and its subdomains, Basic auth_id:auth_token from the credential resolved for recording', async () => {
     const creds = source(cred());
     const resolve = createRecordingAccessResolver({ voicelinkHosts: VL_HOSTS, credentials: () => creds });
     const access = await resolve(plivoCall());
@@ -79,7 +81,9 @@ describe('recording access: Plivo (the tenant\'s own account)', () => {
     // The REST API host is not a recording host: a forged recording_url must not be
     // able to point a credentialed GET at the account API.
     expect(access.allowedHosts).not.toContain('api.plivo.com');
-    expect(access.exactHosts).toBe(true);
+    // Exact-or-subdomain of media.plivo.com: the regional media hosts (aps1.media.plivo.com)
+    // too. Which hosts that admits and refuses is pinned below.
+    expect(access.exactHosts).toBe(false);
     expect(access.headers).toEqual({ Authorization: `Basic ${Buffer.from(`${AUTH_ID}:${AUTH_TOKEN}`).toString('base64')}` });
     expect(PLIVO_RECORDING_HOSTS).toEqual(['media.plivo.com']);
   });
@@ -152,6 +156,54 @@ describe('recording access: Plivo (the tenant\'s own account)', () => {
     });
     const err = await refusal(resolve(plivoCall()));
     expect(`${err.message} ${JSON.stringify(err)}`).not.toContain(AUTH_TOKEN);
+  });
+});
+
+/*
+ * Which URLs the Plivo access admits, through the matcher every fetch uses (the playback
+ * proxy and the analysis worker both call `fetchWithAllowedRedirects` with these
+ * `allowedHosts` and `exactHosts`). The credential goes with the first request to any
+ * URL admitted here, so the refusals are what keeps it off the account API and off
+ * hosts that are not Plivo's.
+ */
+describe("recording access: Plivo's media hosts (PL6 as amended 2026-11-18)", () => {
+  async function plivoAccess() {
+    return createRecordingAccessResolver({ voicelinkHosts: VL_HOSTS, credentials: () => source(cred()) })(plivoCall());
+  }
+  const PATH = `/v1/Account/${AUTH_ID}/Recording/r-1.mp3`;
+
+  it.each([
+    ['the global media host', `https://media.plivo.com${PATH}`],
+    ['the aps1 regional media host (staging, 2026-11-17)', `https://aps1.media.plivo.com${PATH}`],
+    ['another regional media host', `https://usw1.media.plivo.com${PATH}`],
+    ['a regional host in capitals (DNS is case-blind)', `https://APS1.Media.Plivo.COM${PATH}`],
+    ['a regional host with a trailing dot', `https://aps1.media.plivo.com.${PATH}`],
+  ])('accepts %s', async (_l, url) => {
+    const access = await plivoAccess();
+    expect(recordingHostMatches(url, access.allowedHosts, access.exactHosts)).toBe(true);
+  });
+
+  it.each([
+    ['the REST API host', `https://api.plivo.com/v1/Account/${AUTH_ID}/Call/`],
+    ['the apex', `https://plivo.com${PATH}`],
+    ['another Plivo host', `https://www.plivo.com${PATH}`],
+    ['a host that ends in media.plivo.com without the dot', `https://evilmedia.plivo.com${PATH}`],
+    ['the media host as a prefix of another domain', `https://media.plivo.com.evil.com${PATH}`],
+    ['a regional host as a prefix of another domain', `https://aps1.media.plivo.com.evil.com${PATH}`],
+    ['a lookalike domain', `https://media-plivo.com${PATH}`],
+    ['the media host as userinfo', `https://media.plivo.com@evil.com${PATH}`],
+    ['a regional host and port as userinfo', `https://aps1.media.plivo.com:443@evil.com${PATH}`],
+    ['the media host after a backslash', `https://evil.com\\@aps1.media.plivo.com${PATH}`],
+    ['the media host in the path', `https://evil.com/aps1.media.plivo.com${PATH}`],
+    ['the media host in the query', `https://evil.com${PATH}?h=aps1.media.plivo.com`],
+    ['the media host in the fragment', `https://evil.com${PATH}#.media.plivo.com`],
+    ['an empty label before the media host', `https://.media.plivo.com${PATH}`],
+    ['an empty label inside a regional host', `https://aps1..media.plivo.com${PATH}`],
+    ['a regional host over http', `http://aps1.media.plivo.com${PATH}`],
+    ['the media host over http', `http://media.plivo.com${PATH}`],
+  ])('refuses %s', async (_l, url) => {
+    const access = await plivoAccess();
+    expect(recordingHostMatches(url, access.allowedHosts, access.exactHosts)).toBe(false);
   });
 });
 

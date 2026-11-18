@@ -781,12 +781,46 @@ replaces the default, so keep `recording.app.voicelink.co.in` in it:
 `VOICELINK_RECORDING_HOSTS=recording.app.voicelink.co.in,<other host>`. Restart; it is read at boot.
 
 Plivo recordings stay on the tenant's Plivo account and are fetched on demand with its credential
-(B21): only from `media.plivo.com` (an exact match, not configurable), with HTTP Basic on the first
-request only; a redirect hop carries no credential, for any carrier. A call whose credential is
+(B21): only from Plivo's media hosts, `media.plivo.com` and any subdomain of it (an account's
+regional media host, such as `aps1.media.plivo.com`; PL6 as amended 2026-11-18; not configurable;
+never `api.plivo.com`, `plivo.com` or a lookalike such as `evilmedia.plivo.com`), with HTTP Basic
+on the first request only; a redirect hop carries no credential, for any carrier. A call whose credential is
 revoked, shredded, another tenant's or unopenable cannot be fetched: playback answers 404
 `recording_unavailable`, and its analysis job fails at once, not retried (a missing keyring key is
 retried, and recovers once the key is restored). Revoking a credential therefore ends playback and
 analysis of that tenant's earlier recordings on it.
+
+### Re-analysing calls a recording-host refusal failed
+
+A host refusal fails a call's analysis for good (`TRANSCRIPTION_FAILED`, not retried), so when
+the allow-list is fixed (a host added to `VOICELINK_RECORDING_HOSTS`, or a code change such as
+Plivo's regional media hosts on 2026-11-18, after `aps1.media.plivo.com` was refused on staging
+from 2026-11-17 01:11 UTC) the calls it already failed stay failed. Once the fix is live,
+re-queue them with `apps/server/scripts/requeue-recording-host-refusals.ts` (in the image,
+`dist/requeue-recording-host-refusals.js`). It selects only `failed` jobs whose error is a host
+refusal (`error_code` `TRANSCRIPTION_FAILED`, `error_message` `Recording host "<host>" is not on
+the recording-host allow-list`, with or without `(redirect hop N)`) on calls not erased, and
+re-queues each as the manual retry does: `queued` with the full attempt budget
+(`DIALER_ANALYSIS_MAX_ATTEMPTS`), never past the lifetime ceiling
+(`DIALER_ANALYSIS_MAX_ATTEMPTS_TOTAL`; a job at it is listed as not re-queued), the call mirrored
+`pending`. A credential refusal, an upstream 401 or 404, a timeout or too many redirects is never
+selected. It is a dry run unless `--apply`; narrow it with `--host`, `--tenant <uuid>`,
+`--since` / `--before` (ISO times, when the job failed) and `--limit` (default 1000):
+
+```bash
+# dry run: lists job, call, tenant, failure time and host, and the count; changes nothing
+docker compose -f docker/docker-compose.prod.yml exec server \
+  node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z
+# then the same with --apply
+docker compose -f docker/docker-compose.prod.yml exec server \
+  node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z --apply
+```
+
+From a checkout: `DATABASE_URL=… pnpm tsx scripts/requeue-recording-host-refusals.ts …` in
+`apps/server`. Run it only after the deploy: a job re-queued onto a server that still refuses the
+host fails again and spends a lifetime attempt. The worker picks the jobs up like any queued job
+(watch `dialer_analysis_queue_depth{status="queued"}` fall); one still refused logs `refusing to
+fetch` again.
 
 ### Recordings a call did not ask for
 
@@ -839,7 +873,7 @@ The server's answers that land there (RC3):
 
 | Status | `reason` in the log and in `recording_fetch_failures_total{surface="playback"}` | What it means |
 |---|---|---|
-| 502 | `host_not_allowed` | The stored URL's host is not the carrier's recording host (VoiceLink: `VOICELINK_RECORDING_HOSTS`; Plivo: exactly `media.plivo.com`). The log names `host` |
+| 502 | `host_not_allowed` | The stored URL's host is not the carrier's recording host (VoiceLink: `VOICELINK_RECORDING_HOSTS`; Plivo: `media.plivo.com` and its subdomains). The log names `host` |
 | 502 | `redirect_refused` | The carrier's host redirected to a host off its list. The log names `redirectHost` (the target) and `redirectedFrom`, hosts only (a signed URL's query is a secret) |
 | 502 | `too_many_redirects` | More than 3 hops |
 | 502 | `upstream_unauthorized` | The carrier answered 401 or 403 (`upstreamStatus` logged): for Plivo, the tenant's credential is wrong for the recording, or a redirect that came back to the media host without the credential |
@@ -863,13 +897,15 @@ then the warn and error logs of component `recording-proxy` for the reason (`cal
 `network` or `timeout` to VoiceLink is our egress; `upstream_unauthorized` on Plivo is the
 tenant's credential (verify it in the super-admin console); `redirect_refused` on Plivo is below.
 
-**Following a Plivo redirect (RC4, default, pending Manas).** Whether `media.plivo.com` answers a
+**Following a Plivo redirect (RC4, default, pending Manas).** A redirect from a Plivo media host to
+another one (`media.plivo.com` to `aps1.media.plivo.com`) is followed without listing anything:
+both are on Plivo's list (PL6 as amended 2026-11-18). Whether `media.plivo.com` answers a
 recording with a redirect has not been seen live (Plivo step 5 is open, `docs/status.md`). If the
 logs show `reason: redirect_refused` for Plivo with a stable `redirectHost`, an operator may list
 that host in `PLIVO_RECORDING_REDIRECT_HOSTS` (comma list of exact hostnames, lowercased on
 load, so case does not matter; refused at boot with a scheme, port, path, wildcard, IP address or
 `localhost`) and restart. A listed host is accepted as a redirect hop only, never as the first
-URL, and as any hop: from `media.plivo.com` or from an earlier listed hop (at most 3 hops). A hop
+URL, and as any hop: from a Plivo media host or from an earlier listed hop (at most 3 hops). A hop
 never carries the credential (only `Range`). Empty, the default, follows no redirect, as before.
 Never list a host the logs did not name.
 

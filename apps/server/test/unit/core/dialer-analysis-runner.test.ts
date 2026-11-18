@@ -295,13 +295,14 @@ describe('DialerAnalysisRunner.run', () => {
         resolveRecordingAccess: createRecordingAccessResolver({ voicelinkHosts: ['rec'], credentials: () => creds }),
       });
 
-    it('fetches with Basic auth to exactly media.plivo.com, the credential resolved for recording', async () => {
+    it("fetches with Basic auth to Plivo's media hosts (media.plivo.com and its subdomains), the credential resolved for recording", async () => {
       mockWebrtcRepo.findById.mockResolvedValue(plivoCall());
       const creds = credentials();
       expect(await runner(creds).run(makeJob())).toBe('completed');
       expect(creds.resolve).toHaveBeenCalledWith('cred-1', 'recording');
       expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
-        allowedHosts: ['media.plivo.com'], headers: { Authorization: AUTH }, exactHosts: true,
+        // No `exactHosts`: exact-or-subdomain of media.plivo.com (PL6 as amended 2026-11-18).
+        allowedHosts: ['media.plivo.com'], headers: { Authorization: AUTH },
         maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs, provider: 'plivo',
       });
     });

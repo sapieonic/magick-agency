@@ -3,6 +3,9 @@
  * hosts (suffix, userinfo, path, query), http scheme, empty list and unparseable URL
  * are permanent failures that never reach `fetch`; the mimeType assertion. Every other case runs against an allow-listed host.
  * B21: a BYOC fetch's headers go to the first URL only, and `exactHosts` refuses subdomains.
+ * Plivo's real access (PL6 as amended 2026-11-18): the analysis worker fetches a regional
+ * media host (`aps1.media.plivo.com`) with the credential, and refuses `api.plivo.com`,
+ * `evilmedia.plivo.com` and lookalikes permanently, without a request.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -17,6 +20,8 @@ vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => 
 }));
 
 const { fetchRecordingBytes } = await import('../../../src/transcription/recording-fetcher.js');
+const { createRecordingAccessResolver } = await import('../../../src/telephony/recording-access.js');
+const { Secret } = await import('../../../src/telephony/credentials/secret.js');
 
 const HOSTS = ['recordings.voicelink.test'] as const;
 const OPTS = { maxBytes: 1000, timeoutMs: 5000, allowedHosts: HOSTS };
@@ -144,6 +149,60 @@ describe('fetchRecordingBytes — a BYOC credential (B21)', () => {
   it('with exactHosts refuses a subdomain of the recording host without fetching (permanent)', async () => {
     await expect(fetchRecordingBytes('https://x.media.plivo.com/r.mp3', BYOC)).rejects.toMatchObject({
       code: 'TRANSCRIPTION_FAILED', retryable: false,
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchRecordingBytes — Plivo's media hosts on the real access (PL6 as amended 2026-11-18)", () => {
+  const origFetch = global.fetch;
+  beforeEach(() => { global.fetch = vi.fn(); });
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); });
+  const AUTH_ID = 'MAXXXXXXXXXXXXXXXXXX';
+  const BASIC = `Basic ${Buffer.from(`${AUTH_ID}:tok`).toString('base64')}`;
+  const PATH = `/v1/Account/${AUTH_ID}/Recording/r-1.mp3`;
+
+  /** The options the analysis runner builds from a Plivo call's access (`fetchRecording`). */
+  async function plivoOpts() {
+    const access = await createRecordingAccessResolver({
+      voicelinkHosts: ['recordings.voicelink.test'],
+      credentials: () => ({
+        resolve: async (id: string) => ({
+          id, tenantId: 't', provider: 'plivo', accountRef: AUTH_ID, publicConfig: {},
+          version: 1, secret: new Secret({ auth_token: 'tok' }), previous: [],
+        }),
+      }),
+    })({ provider: 'plivo', telephony_credential_id: 'cred-1', tenant_id: 't' });
+    return {
+      maxBytes: 1000, timeoutMs: 5000, provider: 'plivo',
+      allowedHosts: access.allowedHosts, headers: access.headers,
+      ...(access.exactHosts ? { exactHosts: true } : {}),
+    };
+  }
+  const authOf = (call: unknown[]) => new Headers((call[1] as RequestInit).headers).get('authorization');
+
+  it.each([
+    ['media.plivo.com', `https://media.plivo.com${PATH}`],
+    ['aps1.media.plivo.com (refused on staging before the amendment)', `https://aps1.media.plivo.com${PATH}`],
+    ['usw1.media.plivo.com', `https://usw1.media.plivo.com${PATH}`],
+  ])('fetches %s with the credential on the first request', async (_l, url) => {
+    (global.fetch as any).mockResolvedValueOnce(streamResponse([Buffer.from('a')], { contentType: 'audio/mpeg' }));
+    await fetchRecordingBytes(url, await plivoOpts());
+    expect((global.fetch as any).mock.calls[0][0]).toBe(url);
+    expect(authOf((global.fetch as any).mock.calls[0])).toBe(BASIC);
+  });
+
+  it.each([
+    ['api.plivo.com', `https://api.plivo.com/v1/Account/${AUTH_ID}/Call/`],
+    ['plivo.com', `https://plivo.com${PATH}`],
+    ['evilmedia.plivo.com', `https://evilmedia.plivo.com${PATH}`],
+    ['media.plivo.com.evil.com', `https://media.plivo.com.evil.com${PATH}`],
+    ['aps1.media.plivo.com.evil.com', `https://aps1.media.plivo.com.evil.com${PATH}`],
+    ['the media host as userinfo', `https://media.plivo.com@evil.com${PATH}`],
+    ['a regional host over http', `http://aps1.media.plivo.com${PATH}`],
+  ])('refuses %s as a permanent failure, without a request', async (_l, url) => {
+    await expect(fetchRecordingBytes(url, await plivoOpts())).rejects.toMatchObject({
+      code: 'TRANSCRIPTION_FAILED', retryable: false, message: expect.stringContaining('allow-list'),
     });
     expect(global.fetch).not.toHaveBeenCalled();
   });

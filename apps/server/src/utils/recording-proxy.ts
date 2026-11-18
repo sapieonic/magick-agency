@@ -14,7 +14,8 @@ import {
  * Which hosts, and which headers go with the first request, is per carrier and per
  * call (`telephony/recording-access.ts`, B21): VoiceLink's recordings are public
  * carrier-hosted MP3s (nothing attached); a BYOC carrier's are fetched with the
- * tenant's credential, sent to its exact recording hosts and never past a redirect.
+ * tenant's credential, sent to its recording media hosts only (Plivo: `media.plivo.com`
+ * and its regional subdomains, never `api.plivo.com`) and never past a redirect.
  * `proxyCallRecording` streams the body and forwards Range.
  */
 
@@ -24,9 +25,9 @@ const log = createChildLogger({ component: 'recording-proxy' });
 export { isDirectRecordingProvider } from './recording-url-resolver.js';
 
 /**
- * The normalised hostname of an https URL, or null for an unparseable or non-https
- * one. Factored out of `recordingHostMatches` (same parse, same scheme rule) so a
- * refusal can name the host without re-parsing differently.
+ * The normalised hostname of an https URL, or null for an unparseable or non-https one
+ * or one with an empty label. Factored out of `recordingHostMatches` (same parse, same
+ * scheme rule) so a refusal can name the host without re-parsing differently.
  */
 export function recordingHostname(rawUrl: string): string | null {
   try {
@@ -35,7 +36,11 @@ export function recordingHostname(rawUrl: string): string | null {
     // unauthenticated carrier callback, so an `http://` value is reachable by anyone
     // who can forge one. No carrier serves recording media over http.
     if (parsed.protocol !== 'https:') return null;
-    return parsed.hostname.toLowerCase().replace(/\.$/, '');
+    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    // An empty label (`.media.plivo.com`, `a..media.plivo.com`) names no host: refused here
+    // rather than matched as a "subdomain" and left to fail in DNS.
+    if (host.split('.').includes('')) return null;
+    return host;
   } catch {
     return null;
   }
@@ -54,14 +59,16 @@ export function recordingHostname(rawUrl: string): string | null {
  * resolve to the attacker's host. Parsing the URL and comparing the normalised
  * hostname is what makes "is this the carrier's host" mean what it reads as.
  *
- * Matching is exact-or-subdomain (`api.plivo.com` and `foo.plivo.com` match
- * `plivo.com`; `plivo.com.evil.example` does not), or exact only with `exact`, and an
- * unparseable URL matches nothing.
+ * Matching is exact-or-subdomain on a dot boundary (`aps1.media.plivo.com` matches
+ * `media.plivo.com`; `evilmedia.plivo.com` and `media.plivo.com.evil.example` do not; and
+ * `api.plivo.com` and `foo.plivo.com` would match `plivo.com`, which is why no list holds
+ * an apex whose subdomains are not all recording hosts), or exact only with `exact`, and an
+ * unparseable or non-https URL matches nothing.
  */
 export function recordingHostMatches(
   rawUrl: string,
   domains: readonly string[],
-  /** Exact host only, no subdomains: the rule for a fetch that carries a credential (B21). */
+  /** Exact host only, no subdomains (`RecordingAccess.exactHosts`; RC4's redirect hosts). */
   exact = false,
 ): boolean {
   const hostname = recordingHostname(rawUrl);
@@ -128,7 +135,7 @@ function redirectSafeHeaders(headers: RequestInit['headers']): Record<string, st
 }
 
 export interface FetchAllowedOptions {
-  /** Hosts match exactly, no subdomains (a credentialed fetch; see `RecordingAccess`). */
+  /** Hosts match exactly, no subdomains (`RecordingAccess.exactHosts`). */
   exactHosts?: boolean;
   /**
    * Further hosts a REDIRECT hop may go to, matched exactly (`RecordingAccess.redirectHosts`,
