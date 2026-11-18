@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAgencyGroupedStats } from '../api/agencyStats';
-import { localDay, todayTotals, todayWindow, type TodayTotals } from '../utils/agency/home';
+import { localDay, todayByCampaign, todayTotals, todayWindow, type TodayTotals } from '../utils/agency/home';
 import { useMountedRef } from './useMountedRef';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -11,8 +11,11 @@ export const TODAY_ROW_LIMIT = 1000;
 
 export type TodayState =
   | { status: 'loading' }
-  /** `day`: the viewer's local day the totals are for (`localDay`). */
-  | { status: 'ready'; totals: TodayTotals; day: string }
+  /**
+   * `day`: the viewer's local day the totals are for (`localDay`). `byCampaign`: each campaign's
+   * own totals, for Live floor's campaign filter; a campaign that dialled nothing has no entry.
+   */
+  | { status: 'ready'; totals: TodayTotals; byCampaign: Record<string, TodayTotals>; day: string }
   /** The read failed, or the server held rows back: nothing honest to print. */
   | { status: 'unavailable' };
 
@@ -63,7 +66,8 @@ export function useTodaySoFar(tenantId: string | null | undefined, accountId: st
       if (!mounted.current || seq.current !== mine) return;
       lastOk.current = { at: Date.now(), day };
       const totals = todayTotals(page);
-      setState(totals ? { status: 'ready', totals, day } : { status: 'unavailable' });
+      const byCampaign = todayByCampaign(page);
+      setState(totals && byCampaign ? { status: 'ready', totals, byCampaign, day } : { status: 'unavailable' });
     } catch {
       // A failed refresh keeps the numbers shown while they are still today's; a first read that
       // fails, or one after midnight, shows none.

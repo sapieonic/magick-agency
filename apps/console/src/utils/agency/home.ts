@@ -47,6 +47,31 @@ export const HOME_CAMPAIGN_CAP = AGENCY_HOME_CAMPAIGN_CAP;
 
 export type HomeTone = 'danger' | 'warning' | 'info';
 
+/**
+ * Where a row stands in Needs you now (decision LF9), most urgent first: an agent asking for help
+ * (a customer is on the line; Phase 3, not yet a row), then what has stopped a campaign dialling
+ * (an automatic pause, a compliance or carrier stop: a stall in the danger tone), a break run over
+ * its limit (Phase 3, not yet a row), late callbacks, then any other danger, the warnings and
+ * last the information rows. The badge does not read it: it counts tones, not places.
+ */
+export const HOME_RANKS = ['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info'] as const;
+export type HomeRank = (typeof HOME_RANKS)[number];
+const RANK_ORDER: Record<HomeRank, number> = Object.fromEntries(HOME_RANKS.map((rank, i) => [rank, i])) as Record<HomeRank, number>;
+
+/** A row's rank from its kind and tone ({@link HOME_RANKS}). */
+export function homeRank(item: Pick<HomeAttentionItem, 'kind' | 'tone'>): HomeRank {
+  if (item.kind.startsWith('stall:') && item.tone === 'danger') return 'stop';
+  if (item.kind === 'callbacks-overdue') return 'late-callbacks';
+  return item.tone;
+}
+
+/** One campaign a grouped row reviews (the default calling hours): its name and where to fix it. */
+export interface HomeReviewCampaign {
+  id: string;
+  name: string;
+  to: string;
+}
+
 export interface HomeAttentionItem {
   /** Stable across refreshes: the condition and the campaign it is about. */
   id: string;
@@ -82,6 +107,19 @@ export interface HomeAttentionItem {
    * the server stops counting): "until it gets worse" could never bring it back.
    */
   ackable: boolean;
+  /** Its place in the list ({@link homeRank}). */
+  rank: HomeRank;
+  /**
+   * Overdue callbacks whose owner is away, on a campaign's late-callbacks row: the ones a
+   * supervisor could give to agents who are free now (Phase 3's action; Live floor shows it as
+   * coming soon). Absent on every other row, and when none is.
+   */
+  handOff?: { count: number };
+  /**
+   * The campaigns a grouped row stands for, each with its fix (`groupCallingHours` in
+   * `liveFloor.ts`): the row's action opens this list instead of following `to`.
+   */
+  review?: HomeReviewCampaign[];
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -115,8 +153,6 @@ export interface HomeMissed {
   available: boolean;
   count: AgencyInboundMissedCountResponse | null;
 }
-
-const TONE_ORDER: Record<HomeTone, number> = { danger: 0, warning: 1, info: 2 };
 
 /**
  * Per stall code: how urgent it reads and the one place that fixes it. The automatic pauses
@@ -202,8 +238,9 @@ export function homeAttentionFacts(read: HomeCampaignRead): CampaignAttentionFac
 }
 
 /**
- * Every condition Home shows, most urgent first (danger, warning, information), campaigns in
- * their Campaigns-page order within a tone. Per campaign:
+ * Every condition Home shows, most urgent first ({@link HOME_RANKS}: what stopped a campaign
+ * dialling, late callbacks, the other dangers, the warnings, then information), campaigns in their
+ * Campaigns-page order within a rank. Per campaign:
  *
  *  - its stall: the top one, as the health strip shows it (one diagnosis, not five);
  *  - every row of the campaign Overview's "Needs your attention" ({@link attentionFrom}), with
@@ -245,6 +282,7 @@ export function homeAttention(
         kind: 'paused_at' in stall ? `stall:${stall.code}@${stall.paused_at}` : `stall:${stall.code}`,
         count: null,
         ackable: true,
+        rank: route.tone === 'danger' ? 'stop' : route.tone,
       });
     }
 
@@ -252,6 +290,7 @@ export function homeAttention(
     if (!facts) continue;
     for (const rule of attentionFrom(facts, HOME_TODAY_WORDS).items) {
       if (rule.id === 'abandonment' && stall?.code === 'auto_paused_abandonment') continue;
+      const absent = rule.id === 'callbacks-overdue' ? (read.allocation?.callbacks_overdue_absent_owner ?? 0) : 0;
       items.push({
         id: `${rule.id}:${campaign.id}`,
         tone: rule.tone,
@@ -266,6 +305,8 @@ export function homeAttention(
         kind: rule.id,
         count: rule.count ?? null,
         ackable: true,
+        rank: homeRank({ kind: rule.id, tone: rule.tone }),
+        ...(absent > 0 ? { handOff: { count: absent } } : {}),
       });
     }
   }
@@ -292,13 +333,18 @@ export function homeAttention(
       count: open.open,
       // Past 99 the count is capped and can no longer grow, so a "Got it" would hold all day.
       ackable: !many,
+      rank: 'warning',
     });
   }
 
-  // Stable: the loop above is already in campaign order.
+  return sortByRank(items);
+}
+
+/** The list in {@link HOME_RANKS} order; stable, so campaigns keep their Campaigns-page order within a rank. */
+export function sortByRank<T extends Pick<HomeAttentionItem, 'rank'>>(items: readonly T[]): T[] {
   return items
     .map((item, index) => ({ item, index }))
-    .sort((a, b) => TONE_ORDER[a.item.tone] - TONE_ORDER[b.item.tone] || a.index - b.index)
+    .sort((a, b) => RANK_ORDER[a.item.rank] - RANK_ORDER[b.item.rank] || a.index - b.index)
     .map(({ item }) => item);
 }
 
@@ -427,6 +473,31 @@ export function todayTotals(page: AgencyGroupPage): TodayTotals | null {
     { dials: 0, conversations: 0, successes: 0, talkSeconds: 0, campaigns: 0 },
   );
 }
+
+/**
+ * Each campaign's own totals for today, from the same grouped read, keyed by campaign id (Live
+ * floor's campaign filter). A campaign with no row placed no dial today. Null on the same rule as
+ * {@link todayTotals}: rows held back make every figure partial.
+ */
+export function todayByCampaign(page: AgencyGroupPage): Record<string, TodayTotals> | null {
+  if (page.total_groups > page.rows.length) return null;
+  const out: Record<string, TodayTotals> = {};
+  for (const row of page.rows) {
+    const id = row.key.campaign_id;
+    if (!id) continue;
+    out[id] = {
+      dials: row.attempts,
+      conversations: row.connected,
+      successes: row.successes,
+      talkSeconds: row.talk_seconds,
+      campaigns: 1,
+    };
+  }
+  return out;
+}
+
+/** What a campaign that placed no dial today adds up to. */
+export const NO_DIALS_TODAY: TodayTotals = { dials: 0, conversations: 0, successes: 0, talkSeconds: 0, campaigns: 0 };
 
 /**
  * Today's success rate: successes over conversations, the grouped read's own definition

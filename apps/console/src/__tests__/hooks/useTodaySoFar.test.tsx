@@ -14,7 +14,7 @@ import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { HOME_SLOW_MS } from '../../hooks/useHomeBoard';
 
 const page = (attempts: number) => ({
-  rows: [{ attempts, connected: 1, successes: 0, talk_seconds: 60 }],
+  rows: [{ key: { campaign_id: 'c-1' }, attempts, connected: 1, successes: 0, talk_seconds: 60 }],
   total_groups: 1,
 });
 
@@ -75,6 +75,8 @@ describe('a failed refresh', () => {
     const { result } = renderHook(() => useTodaySoFar('t-1', 'a-1', true));
     await flush();
     expect(result.current).toMatchObject({ status: 'ready', totals: { dials: 5 }, day: '2026-11-12' });
+    // Each campaign's own row is kept beside the total, for Live floor's campaign filter.
+    expect(result.current).toMatchObject({ byCampaign: { 'c-1': { dials: 5, conversations: 1 } } });
     api.getAgencyGroupedStats.mockRejectedValue(new Error('down'));
     await flush(HOME_SLOW_MS);
     expect(result.current).toMatchObject({ status: 'ready', totals: { dials: 5 } });
