@@ -36,7 +36,7 @@ export function BuilderStepper({
           const reachable = canVisitStep(step.id, basicsReady);
           const isCurrent = step.id === current;
           const isInvalid = invalid?.has(step.id) ?? false;
-          const isComplete = completed.has(step.id) && !isInvalid;
+          const isComplete = completed.has(step.id);
           return (
             <li key={step.id} className={styles.item} data-current={isCurrent || undefined}>
               {index > 0 ? <span className={styles.connector} aria-hidden="true" /> : null}

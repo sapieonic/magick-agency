@@ -9,7 +9,7 @@ import {
   type AgencyCallbackFallback,
   type AgencyOnUnstaff,
 } from '@magick-agency/contracts/agency';
-import type { AssignmentConfigState } from '../../../utils/agencyCampaignConfigForm';
+import { DEFAULT_ASSIGNMENT_CONFIG, type AssignmentConfigState } from '../../../utils/agencyCampaignConfigForm';
 import {
   ASSIGNMENT_MODE_COPY,
   CALLBACK_FALLBACK_COPY,
@@ -18,6 +18,14 @@ import {
 } from '../../../utils/agencyAssignmentCopy';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './CampaignBehaviourSection.module.css';
+
+/** The bounds `validateConfig` holds the agent-retry values to. */
+function roundsValid(value: number): boolean {
+  return Number.isInteger(value) && value >= AGENCY_AGENT_RETRY_ROUNDS_MIN && value <= AGENCY_AGENT_RETRY_ROUNDS_MAX;
+}
+function cooldownValid(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX;
+}
 
 /*
   One of the editors `CampaignBehaviourSection` assembles, shown only while the
@@ -148,7 +156,19 @@ export function AssignmentFields({ assignment, onChange, errors, modeLocked }: A
           <input
             type="checkbox"
             checked={assignment.allowAgentRetry}
-            onChange={(event) => set({ allowAgentRetry: event.target.checked })}
+            onChange={(event) => set(
+              event.target.checked
+                ? { allowAgentRetry: true }
+                : {
+                  allowAgentRetry: false,
+                  // Checked whatever the box says, and hidden once it is unticked: a wrong
+                  // value left behind would hold Save with no input to change it.
+                  ...(roundsValid(assignment.agentRetryRounds) ? {} : { agentRetryRounds: DEFAULT_ASSIGNMENT_CONFIG.agentRetryRounds }),
+                  ...(cooldownValid(assignment.agentRetryCooldownMinutes)
+                    ? {}
+                    : { agentRetryCooldownMinutes: DEFAULT_ASSIGNMENT_CONFIG.agentRetryCooldownMinutes }),
+                },
+            )}
             data-testid="allow-agent-retry"
           />
           Let agents retry the contacts they didn’t reach
@@ -160,10 +180,7 @@ export function AssignmentFields({ assignment, onChange, errors, modeLocked }: A
         </p>
       </div>
 
-      {/* Shown while either value is wrong as well, so a finding always has its input to fix. */}
-      {assignment.allowAgentRetry
-        || errors.message('agent_retry_rounds') !== null
-        || errors.message('agent_retry_cooldown_minutes') !== null ? (
+      {assignment.allowAgentRetry ? (
         <div className={styles.retryFields} data-testid="agent-retry-fields">
           <label className={styles.retryField}>
             up to

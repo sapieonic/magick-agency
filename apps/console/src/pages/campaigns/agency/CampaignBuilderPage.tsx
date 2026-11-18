@@ -151,6 +151,12 @@ export default function CampaignBuilderPage() {
   const [configSaved, setConfigSaved] = useState(false);
   /** Whether Save campaign has gone through at least once: what the draft holds, for the notes. */
   const [savedOnce, setSavedOnce] = useState(false);
+  /**
+   * Whether an import has been sent into the draft. Set as it starts, never by a check, and
+   * kept: rows that landed stay in the draft even if the import later fails or is cancelled,
+   * and a second file being mapped does not take them out.
+   */
+  const [importSent, setImportSent] = useState(false);
   /** The form as the server has it: empty until a draft is created, then as last saved. */
   const [savedForm, setSavedForm] = useState<BuilderForm>(() => ({
     name: '',
@@ -300,6 +306,7 @@ export default function CampaignBuilderPage() {
     // Hero fields are campaign config, not ingest config — they are what the
     // Agent Console reads to decide which fields get the big type.
     onIngestStarted: async (id, currentMapping) => {
+      setImportSent(true);
       const display = buildContextDisplay(currentMapping);
       if (display.hero) {
         await updateAgencyCampaign(
@@ -567,19 +574,16 @@ export default function CampaignBuilderPage() {
     settings should be. Said only while something differs from what the draft holds, and
     in words true of how the draft came to be.
   */
-  // An import that is under way counts: the draft exists from its start. A failed or
-  // cancelled one does not, and nor does a check, which never writes contacts.
-  const contactsInDraft = contactsImported || (running && job?.dry_run !== true);
   const draftNote = campaignId === null || !settingsChanged || savingConfig
     ? null
     : savedOnce
       ? 'Some changes are not saved yet. They reach the campaign only when you click Save campaign.'
-      : contactsInDraft
+      : importSent
         ? 'Your contacts are in a draft of this campaign, but your settings are not saved yet. They reach the draft only when you click Save campaign.'
         : 'A draft of this campaign exists, but your settings are not saved yet. They reach the draft only when you click Save campaign.';
   const leaveMessage = campaignId === null
     ? 'What you have entered for this new campaign is not saved. Leave now and it is lost; Cancel keeps you here to save it.'
-    : `${contactsInDraft ? 'Your contacts are in a draft of this campaign' : 'A draft of this campaign exists'}, but your latest changes are not saved. Leave now and the draft keeps ${
+    : `${importSent ? 'Your contacts are in a draft of this campaign' : 'A draft of this campaign exists'}, but your latest changes are not saved. Leave now and the draft keeps ${
       savedOnce ? 'the settings it was last saved with' : 'the default settings'
     }; Cancel keeps you here to save them.`;
 
@@ -1027,19 +1031,30 @@ export default function CampaignBuilderPage() {
               <span className={styles.blockReason}>{basicsBlock}</span>
             ) : null}
             {blockCopy ? (
-              <span className={styles.blockReason} data-testid="config-block">
-                {blockCopy}{' '}
+              <span className={styles.blockReason} data-testid="config-block" aria-live="polite">
+                {blockCopy}
                 {/*
                   A way to the field from wherever the operator is: another step's, or this
-                  step's when it is scrolled out of view (the outcome list is long).
+                  step's when it is scrolled out of view (the outcome list is long). Not
+                  offered while Basics is incomplete: no other step opens until it is.
                 */}
-                <button
-                  type="button"
-                  className={styles.blockLink}
-                  onClick={() => goToFinding(otherStepWithFindings ?? step)}
-                >
-                  {otherStepWithFindings ? goToStepLabel(otherStepWithFindings) : 'Show me'}
-                </button>
+                {basicsReady || !otherStepWithFindings ? (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className={styles.blockLink}
+                      onClick={() => goToFinding(otherStepWithFindings ?? step)}
+                      aria-label={
+                        otherStepWithFindings
+                          ? `${goToStepLabel(otherStepWithFindings)}, where a setting stops the campaign saving`
+                          : 'Show the setting that stops the campaign saving'
+                      }
+                    >
+                      {otherStepWithFindings ? goToStepLabel(otherStepWithFindings) : 'Show me'}
+                    </button>
+                  </>
+                ) : null}
               </span>
             ) : null}
             {configSaved ? (

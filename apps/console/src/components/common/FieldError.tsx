@@ -21,7 +21,7 @@ interface FieldErrorProps {
 export function FieldError({ id, message, className, announce = true }: FieldErrorProps) {
   if (!message) return null;
   return (
-    <p id={id} role={announce ? 'alert' : undefined} className={className}>
+    <p id={id} role={announce ? 'alert' : undefined} data-live={announce ? undefined : ''} className={className}>
       <ErrorText message={message} />
     </p>
   );

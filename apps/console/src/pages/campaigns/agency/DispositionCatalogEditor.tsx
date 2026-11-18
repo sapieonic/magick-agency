@@ -115,6 +115,10 @@ export function DispositionCatalogEditor({
             cannot fire, so the reason takes its place.
           */
           const retryUnreachable = Boolean(entry.suppress || entry.terminal);
+          // A wrong retry value keeps its inputs on screen even where the rule is inert:
+          // Save is held by it either way, and it has to have something to change.
+          const retryWrong = errors.message(`disposition_catalog[${index}].retry.max_attempts`) !== null
+            || errors.message(`disposition_catalog[${index}].retry.delay_minutes`) !== null;
           return (
             /*
               Keyed by POSITION, never by code. The key used to embed
@@ -261,7 +265,7 @@ export function DispositionCatalogEditor({
                 The disposition's OWN retry — the one the retry table says
                 lives here. Offered only where the API would read it.
               */}
-              {retryUnreachable ? (
+              {retryUnreachable && !retryWrong ? (
                 entry.retry ? (
                   <p className={styles.precedence} data-testid={`retry-inert-${index}`}>
                     This outcome carries a retry rule, but nothing will act on it while the

@@ -8,7 +8,6 @@ import {
   saveBlockCopy,
   stepForConfigField,
 } from '../../pages/campaigns/agency/builderErrors';
-import { focusFirstFieldError } from '../../pages/campaigns/agency/configFieldErrors';
 import { emptyCampaignConfig, validateConfig } from '../../utils/agencyCampaignConfigForm';
 
 /*
@@ -119,8 +118,9 @@ describe('reviewFindings', () => {
   /*
     Every kind of key `validateConfig` produces, from a config broken everywhere, with the
     step and row each one belongs on. The mappers have catch-alls; this pins that no real
-    key reaches them by accident. A key whose prefix is not in the table fails here, so a
-    new rule cannot be added without saying where it is shown.
+    key reaches them by accident. A key this config produces whose prefix is not in the
+    table fails here; a new rule is caught only if the config below is broken enough to
+    trigger it, so extend the config with the rule.
   */
   const EXPECTED: ReadonlyArray<[RegExp, string, string]> = [
     [/^calling_window_(start|end)$|^calling_days$|^default_timezone$/, 'hours', 'hours'],
@@ -162,24 +162,5 @@ describe('reviewFindings', () => {
       expect(stepForConfigField(key)).toBe(row![1]);
       expect(reviewRowForConfigField(key)).toBe(row![2]);
     }
-  });
-});
-
-describe('focusFirstFieldError', () => {
-  it('focuses the control that names the first error, and reports when there is none', () => {
-    const container = document.createElement('div');
-    container.innerHTML = `
-      <input id="ok" />
-      <input id="bad" aria-describedby="lead err-1" />
-      <p class="error-text" id="err-1" role="alert">Wrong</p>
-    `;
-    document.body.appendChild(container);
-    expect(focusFirstFieldError(container)).toBe(true);
-    expect(document.activeElement?.id).toBe('bad');
-    container.remove();
-
-    const clean = document.createElement('div');
-    clean.innerHTML = '<input />';
-    expect(focusFirstFieldError(clean)).toBe(false);
   });
 });

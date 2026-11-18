@@ -339,21 +339,23 @@ describe('a caller ID dedicated to an agent', () => {
 
 describe('agent retries that hold Save', () => {
   /*
-    The rounds and the cooldown are checked whatever "Let agents retry" says, so a wrong
-    value left behind when the box is unticked must keep its input on screen: otherwise
-    Save is held by a finding under a checkbox with nothing to change.
+    The rounds and the cooldown are checked whatever "Let agents retry" says, and their inputs
+    are hidden once it is unticked. A wrong value left behind would hold Save with nothing to
+    change, so unticking puts a wrong value back to its default.
   */
-  it('keeps the inputs while a value is wrong, even with retries switched off', async () => {
+  it('unticking puts a wrong value back to its default, so nothing hidden holds Save', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ allow_agent_retry: true, agent_retry_rounds: 2 }));
     renderPage();
     const rounds = await screen.findByLabelText('Agent retry rounds per contact');
     fireEvent.change(rounds, { target: { value: '' } });
-    fireEvent.click(screen.getByTestId('allow-agent-retry'));
-
-    expect(screen.getByTestId('agent-retry-fields')).toBeTruthy();
     expect(screen.getByText(/^Rounds are 1 to/)).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Agent retry rounds per contact'), { target: { value: '2' } });
+    fireEvent.click(screen.getByTestId('allow-agent-retry'));
+
     expect(screen.queryByTestId('agent-retry-fields')).toBeNull();
+    expect(screen.queryByText(/^Rounds are 1 to/)).toBeNull();
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1]).toMatchObject({ allow_agent_retry: false, agent_retry_rounds: 1 });
   });
 });

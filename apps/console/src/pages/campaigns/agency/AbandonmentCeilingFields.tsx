@@ -87,10 +87,10 @@ export function AbandonmentCeilingFields({
     The section's error is about the value it was given for. The section's own live
     finding always is; the server's refusal of a save is kept by the page until the
     next save, so once the supervisor moves the line it would describe a number no
-    longer on screen: "Must be above 0" beside a perfectly good 4%. So the value the error arrived with is remembered (the same
-    during-render adjustment as the draft, keyed on the message, which the pages
-    clear at the start of every save), and once the value differs the field falls
-    back to its own live check.
+    longer on screen: "Must be above 0" beside a perfectly good 4%. So the value the
+    error arrived with is remembered (the same during-render adjustment as the draft,
+    keyed on the message, which the pages clear at the start of every save), and once
+    the value differs the field falls back to its own live check.
   */
   const sectionMessage = errors.message(FIELD);
   const [arrival, setArrival] = useState({ message: sectionMessage, value: ceilingPct });
@@ -151,6 +151,11 @@ export function AbandonmentCeilingFields({
             />
           </div>
         </div>
+        {/*
+          Announced, live check included, unlike the section's other live findings: this field
+          was built to say its own range as it is typed (its tests pin the announcement), and
+          the box is a single number whose message changes only at the range's edges.
+        */}
         <FieldError id={errorId} message={shown} className="error-text" />
         {/*
           A consequence, not an error: the save goes through. Whether a campaign

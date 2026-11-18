@@ -148,7 +148,7 @@ describe('a finding on How agents work', () => {
     fireEvent.focus(screen.getByLabelText(/Wrap-up seconds/));
     (screen.getByLabelText(/Wrap-up seconds/) as HTMLInputElement).focus();
 
-    fireEvent.click(within(screen.getByTestId('config-block')).getByRole('button', { name: 'Show me' }));
+    fireEvent.click(within(screen.getByTestId('config-block')).getByRole('button', { name: /^Show the setting that stops/ }));
     expect(document.activeElement).toBe(promiseBox());
   });
 
@@ -178,7 +178,7 @@ describe('a finding on How agents work', () => {
 
     const block = screen.getByTestId('config-block');
     expect(block.textContent).toContain('Can’t save yet: 1 setting on How agents work needs fixing.');
-    expect(within(block).getByRole('button', { name: 'Go to How agents work' })).toBeTruthy();
+    expect(within(block).getByRole('button', { name: /^Go to How agents work/ })).toBeTruthy();
     expect(saveButton().disabled).toBe(true);
     expect(mocks.createAgencyCampaign).not.toHaveBeenCalled();
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
@@ -206,7 +206,7 @@ describe('a finding on How agents work', () => {
     goToStep('When to call');
 
     const block = screen.getByTestId('config-block');
-    fireEvent.click(within(block).getByRole('button', { name: 'Go to How agents work' }));
+    fireEvent.click(within(block).getByRole('button', { name: /^Go to How agents work/ }));
     expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('behaviour');
     await waitFor(() => expect(document.activeElement).toBe(promiseBox()));
   });
@@ -219,6 +219,19 @@ describe('a finding on How agents work', () => {
     goToStep('Review & save');
     const errors = within(screen.getByTestId('builder-review')).getByTestId('review-row-errors');
     expect(errors.textContent).toContain('Outcome 4: Every outcome needs a label');
+  });
+});
+
+describe('“Go to” and the Basics gate', () => {
+  it('is not offered while Basics is incomplete, since no other step opens until it is', async () => {
+    await openBehaviour();
+    askCallbackForAPromise();
+    goToStep('Name & numbers');
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: '' } });
+
+    const block = screen.getByTestId('config-block');
+    expect(block.textContent).toContain('Can’t save yet: 1 setting on How agents work needs fixing.');
+    expect(within(block).queryByRole('button')).toBeNull();
   });
 });
 

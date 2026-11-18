@@ -46,10 +46,11 @@ export function OutcomeDispositionMap({
   onChange,
   fieldErrors,
 }: OutcomeDispositionMapProps) {
-  const errors = useConfigFieldErrors({
-    ...validateOutcomeDispositions(mapping, dispositions),
-    ...fieldErrors,
-  });
+  const live = validateOutcomeDispositions(mapping, dispositions);
+  const errors = useConfigFieldErrors(
+    { ...live, ...fieldErrors },
+    new Set(Object.keys(live).filter((field) => !(field in fieldErrors))),
+  );
 
   // The first entry per code, as the server reads it; a duplicate is the catalog's finding.
   const eligible: AgencyDispositionEntry[] = [];

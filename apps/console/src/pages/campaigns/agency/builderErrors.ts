@@ -15,6 +15,8 @@ import { joinAnd } from '../../../utils/agencyCampaignConfigForm';
 */
 
 const HOURS_FIELDS = new Set(['calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone']);
+// Not produced by `validateConfig`: keys of a server refusal, mapped so a finding on them
+// would still name Basics. The builder shows such a refusal as its banner on Basics today.
 const BASICS_FIELDS = new Set(['name', 'caller_ids', 'telephony_provider', 'telephony_credential_id']);
 const ASSIGNMENT_FIELDS = new Set([
   'assignment_mode',

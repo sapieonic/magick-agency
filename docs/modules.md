@@ -1908,7 +1908,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | ~7 |
 | `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 5 |
 | `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 23 |
-| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 14 |
+| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` (and live findings, quiet, under the server's announced answer) | 17 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 26 |
@@ -2204,7 +2204,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AppHomeRedirect.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.carrier.test.tsx` | ~6 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 46 |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.findings.test.tsx` (a setting that holds Save: on its field live, on the stepper, on Review with Fix, and beside Save with Show me or Go to) | 9 |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.findings.test.tsx` (a setting that holds Save: on its field live, on the stepper, on Review with Fix, and beside Save with Show me or Go to, held back while Basics is incomplete) | 10 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` (and after a check or an import that did not finish: a corrected file or another mapping, Import again while the check is valid; what the draft an import creates holds, and the leave dialog then) | 34 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
@@ -2333,7 +2333,8 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/alaw8/g711.test.ts` | 39 |
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
-| `apps/console/src/__tests__/utils/builderErrors.test.ts` | 10 |
+| `apps/console/src/__tests__/utils/builderErrors.test.ts` | 9 |
+| `apps/console/src/__tests__/utils/focusFirstFieldError.test.ts` (where Fix, Go to and Show me land: live findings first, into a group, a page's own error markup) | 4 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/consoleNav.test.ts` | 81 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 17 |

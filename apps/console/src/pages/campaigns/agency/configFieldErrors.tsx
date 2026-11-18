@@ -56,7 +56,10 @@ export function useConfigFieldErrors(
  * first on the page.
  */
 export function focusFirstFieldError(container: HTMLElement): boolean {
-  const first = container.querySelector<HTMLElement>(FIELD_ERROR_SELECTOR);
+  // The form's own live findings first: they are what holds Save. A server refusal is kept
+  // until the next save and can sit on a field that has since been fixed.
+  const first = container.querySelector<HTMLElement>('.error-text[id][data-live]')
+    ?? container.querySelector<HTMLElement>(FIELD_ERROR_SELECTOR);
   if (!first) return false;
   const described = first.matches('[aria-invalid="true"]')
     ? first
