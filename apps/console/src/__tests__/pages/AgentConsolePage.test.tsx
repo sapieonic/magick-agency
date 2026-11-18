@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const mocks = vi.hoisted(() => ({
   createAgencySession: vi.fn(),
@@ -522,11 +524,10 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(breakIdx).toBeGreaterThanOrEqual(0);
     expect(saveIdx).toBeGreaterThan(breakIdx);
     expect(hangupIdx).toBeGreaterThan(saveIdx);
-    // Need help (coming soon) is reachable, so a keyboard user can learn why it does nothing: after
-    // Save and before Hang up, never ahead of the call's own controls.
+    // Need help (coming soon) is reachable, so a keyboard user can learn why it does nothing: last,
+    // after Hang up, so it is never a Tab stop between Mute and Hang up.
     const helpIdx = names.findIndex((n) => n.includes('Need help'));
-    expect(helpIdx).toBeGreaterThan(saveIdx);
-    expect(hangupIdx).toBeGreaterThan(helpIdx);
+    expect(helpIdx).toBeGreaterThan(hangupIdx);
   });
 
   it('shows Need help on a call as an inert control marked coming soon, which nothing presses', async () => {
@@ -539,15 +540,26 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(description).toBe('Ask a supervisor for help during a call. Coming soon.');
     const wrap = screen.getByTestId('need-help');
     expect(within(wrap).getByRole('tooltip').textContent).toBe('Ask a supervisor for help during a call. Coming soon.');
-    expect(within(wrap).getByText('Coming soon')).toBeTruthy();
-    // Beside the call's own controls: after Mute, before Hang up, in the action bar.
-    const bar = button.closest('div')!;
+    // Compact: the dashed button is the mark, no badge beside it to widen the bar.
+    expect(within(wrap).queryByTestId('coming-soon')).toBeNull();
+    // Last in the action bar, after Hang up: should the bar wrap, Need help goes to a second row,
+    // never Hang up.
+    // The bar: Need help's slot (its `needHelp` span) is one of its children.
+    const bar = wrap.parentElement!.parentElement!;
     const order = Array.from(bar.querySelectorAll('button')).map((b) => b.textContent?.trim() ?? '');
     const muteIdx = order.findIndex((n) => n === 'Mute' || n === 'Unmute');
     const helpIdx = order.findIndex((n) => n.includes('Need help'));
     const hangupIdx = order.findIndex((n) => n.startsWith('Hang up'));
-    expect(helpIdx).toBeGreaterThan(muteIdx);
-    expect(hangupIdx).toBeGreaterThan(helpIdx);
+    expect(hangupIdx).toBeGreaterThan(muteIdx);
+    expect(helpIdx).toBeGreaterThan(hangupIdx);
+    expect(helpIdx).toBe(order.length - 1);
+    // Hang up is still pushed to the far end of the controls before it, not Need help.
+    const css = readFileSync(resolve(__dirname, '../../components/agency/AgentStation.module.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(/\.actionBar > \.hangup \{[^}]*margin-left: auto;/);
+    expect(css).not.toMatch(/\.actionBar > \*:last-child/);
+    const hangup = screen.getByRole('button', { name: /Hang up/ });
+    expect(Array.from(bar.children).find((child) => child.contains(hangup))!.className).toMatch(/hangup/);
     // The shortcuts are as they were: Ctrl+Enter still saves, and nothing reaches the button.
     press('1');
     act(() => {
