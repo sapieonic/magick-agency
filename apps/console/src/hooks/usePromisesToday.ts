@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgencyPromisesSummaryResponse } from '@magick-agency/contracts/api/agency/promises';
 import { getAgencyPromisesSummary } from '../api/agencyFloor';
 import { localDay, todayWindow } from '../utils/agency/home';
+import { errorStatus } from '../utils/agencyErrors';
 import { useMountedRef } from './useMountedRef';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -18,7 +19,7 @@ export type PromisesToday =
  * Will pay tile and its campaign cards: Today so far's window (the viewer's local midnight to now)
  * on Today so far's period (a minute) and rules (`useTodaySoFar`): one read at a time, a return to
  * the tab reads only once the figures are a minute old, and a failed refresh keeps them only while
- * they are still today's.
+ * they are still today's. A 403 stops the asking until the scope changes (the tile stays Successes).
  */
 export function usePromisesToday(
   tenantId: string | null | undefined,
@@ -30,10 +31,12 @@ export function usePromisesToday(
   const seq = useRef(0);
   const inFlight = useRef<number | null>(null);
   const lastOk = useRef<{ at: number; day: string } | null>(null);
+  /** The server refused (403): no more asking in this scope (a new account or role is a new one). */
+  const refused = useRef(false);
   const ready = enabled && Boolean(tenantId && accountId);
 
   const load = useCallback(async (reason: 'mount' | 'tick' | 'return') => {
-    if (!ready || !tenantId || !accountId) return;
+    if (!ready || !tenantId || !accountId || refused.current) return;
     const now = new Date();
     const day = localDay(now);
     if (reason !== 'mount') {
@@ -48,7 +51,12 @@ export function usePromisesToday(
       if (!mounted.current || seq.current !== mine) return;
       lastOk.current = { at: Date.now(), day };
       setState({ status: 'ready', summary, day });
-    } catch {
+    } catch (err) {
+      if (mounted.current && seq.current === mine && errorStatus(err) === 403) {
+        refused.current = true;
+        setState({ status: 'unavailable' });
+        return;
+      }
       if (mounted.current && seq.current === mine) {
         setState((prev) => (prev.status === 'ready' && prev.day === day ? prev : { status: 'unavailable' }));
       }
@@ -59,6 +67,7 @@ export function usePromisesToday(
 
   useEffect(() => {
     lastOk.current = null;
+    refused.current = false;
     setState({ status: 'loading' });
     void load('mount');
   }, [load]);

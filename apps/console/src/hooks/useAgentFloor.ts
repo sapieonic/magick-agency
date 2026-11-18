@@ -32,8 +32,10 @@ export interface AgentFloor {
  *
  *  - **`from` is the viewer's local midnight** (`todayWindow`, Today so far's), worked out at each
  *    read, so calls today turn over at midnight with the tiles.
- *  - **One read at a time.** A tick or a return while one is in flight asks nothing; an answer for
- *    an older scope, or older than the latest read asked, never lands.
+ *  - **One read at a time, per scope.** A tick or a return while one is in flight asks nothing; a
+ *    new scope reads at once, and an answer for an older scope, or older than the latest read
+ *    asked, never lands (nor frees the new scope's read). A return to the tab reads only a floor
+ *    older than a period.
  *  - **A failed read keeps the last floor**, and once reads have failed for more than two periods
  *    it is `stale` (the page says so); one that never answered is `error`.
  *  - **A 403 stops the asking** (`refused`) until Retry or a new scope.
@@ -47,17 +49,22 @@ export function useAgentFloor(
   const [state, setState] = useState<Omit<AgentFloor, 'reload'>>({ status: 'loading', floor: null, stale: false, clockOffsetMs: 0 });
   const mounted = useMountedRef();
   const seq = useRef(0);
-  const inFlight = useRef(false);
+  /** The read in flight: its scope and sequence number, so only that read can clear it. */
+  const inFlight = useRef<{ scope: string; seq: number } | null>(null);
   const lastOk = useRef<number | null>(null);
   const refused = useRef(false);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
 
-  const read = useCallback(async () => {
-    if (!scope || !tenantId || !accountId || inFlight.current || refused.current) return;
+  const read = useCallback(async (reason: 'mount' | 'tick' | 'return' = 'tick') => {
+    if (!scope || !tenantId || !accountId || refused.current) return;
+    if (inFlight.current?.scope === scope) return;
+    // A return to the tab (focus and visibilitychange both fire) reads only a floor older than a period.
+    if (reason === 'return' && lastOk.current !== null && Date.now() - lastOk.current < FLOOR_POLL_MS) return;
     const asked = scope;
     const mine = (seq.current += 1);
-    inFlight.current = true;
+    const token = { scope: asked, seq: mine };
+    inFlight.current = token;
     const sentAt = Date.now();
     try {
       const floor = await getAgencyFloor({ from: todayWindow(new Date()).from }, tenantId, accountId);
@@ -79,7 +86,9 @@ export function useAgentFloor(
         ? { ...prev, status: 'error', floor: null }
         : { ...prev, stale: Date.now() - since > FLOOR_STALE_PERIODS * FLOOR_POLL_MS }));
     } finally {
-      inFlight.current = false;
+      // Only this read's own token: a read of an older scope finishing late never frees the slot a
+      // newer scope's read holds.
+      if (inFlight.current === token) inFlight.current = null;
     }
   }, [scope, tenantId, accountId, mounted]);
 
@@ -87,16 +96,15 @@ export function useAgentFloor(
   useEffect(() => {
     lastOk.current = null;
     refused.current = false;
-    inFlight.current = false;
     setState({ status: 'loading', floor: null, stale: false, clockOffsetMs: 0 });
-    void read();
+    void read('mount');
   }, [read]);
-  useVisibleInterval(read, FLOOR_POLL_MS, scope !== null);
-  useRefetchOnReturn(() => read());
+  useVisibleInterval(() => read('tick'), FLOOR_POLL_MS, scope !== null);
+  useRefetchOnReturn(() => read('return'));
 
   const reload = useCallback(() => {
     refused.current = false;
-    void read();
+    void read('mount');
   }, [read]);
   return { ...state, reload };
 }

@@ -98,4 +98,44 @@ describe('useAgentFloor', () => {
     await flush(FLOOR_POLL_MS * 3);
     expect(api.getAgencyFloor).toHaveBeenCalledTimes(1);
   });
+
+  it('on a new scope reads at once, never lands the old scope’s answer, and keeps one read in flight', async () => {
+    const answers: Array<(v: unknown) => void> = [];
+    api.getAgencyFloor.mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }));
+    const { result, rerender } = renderHook(({ account }) => useAgentFloor('t-1', account, true), { initialProps: { account: 'a-1' } });
+    await flush();
+    rerender({ account: 'a-2' });
+    await flush();
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(2);
+    expect(api.getAgencyFloor.mock.calls[1]![2]).toBe('a-2');
+    // The old account's read answers late: it neither lands nor frees the new read's slot.
+    answers[0]!(floor(99));
+    await flush();
+    expect(result.current).toMatchObject({ status: 'loading', floor: null });
+    await flush(FLOOR_POLL_MS * 2);
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(2);
+    answers[1]!(floor(4));
+    await flush();
+    expect(result.current).toMatchObject({ status: 'ready', floor: { totals: { on_shift: 4 } } });
+  });
+
+  it('reads on a return to the tab only when the floor is older than a period', async () => {
+    renderHook(() => useAgentFloor('t-1', 'a-1', true));
+    await flush();
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    await flush(FLOOR_POLL_MS * 2);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(2);
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
+import { ApiError } from '../../api/client';
 
 /**
  * Today's promises (`usePromisesToday`, B28b): Today so far's window and minute, and a failed
@@ -55,5 +56,14 @@ describe('usePromisesToday', () => {
     vi.setSystemTime(new Date('2026-11-19T00:00:30Z'));
     await flush(HOME_SLOW_MS);
     expect(result.current.status).toBe('unavailable');
+  });
+
+  it('stops asking after a 403, the tile then staying Successes', async () => {
+    api.getAgencyPromisesSummary.mockRejectedValue(new ApiError(403, { error: 'Forbidden' }));
+    const { result } = renderHook(() => usePromisesToday('t-1', 'a-1', true));
+    await flush();
+    expect(result.current.status).toBe('unavailable');
+    await flush(HOME_SLOW_MS * 3);
+    expect(api.getAgencyPromisesSummary).toHaveBeenCalledTimes(1);
   });
 });
