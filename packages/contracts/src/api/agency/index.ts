@@ -28,4 +28,6 @@ export * from './inbound';
 export * from './live-calls';
 export * from './listen-history';
 export * from './home';
+export * from './floor';
+export * from './promises';
 export * from './shared';

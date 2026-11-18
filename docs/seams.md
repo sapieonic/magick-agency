@@ -38,6 +38,13 @@ Each module area (decision B4) has one file of each kind:
 | Background work | `apps/server/src/bootstrap/platform.ts` | `.../agency.ts` | `.../voice.ts` | `.../analysis.ts` |
 | Metrics | `packages/observability/src/metrics/platform.ts` | `.../agency.ts` | `.../voice.ts` | `.../analysis.ts` |
 
+An area's routes plugin registers one route plugin per family, each in its own scope. The latest
+in the agency plugin is `api/routes/proxy-agency-floor.routes.ts` (decision B28b): the Live floor's
+`GET /proxy/agency/floor` and `GET /proxy/agency/promises/summary`, no path params (the routes
+validate their query with their own 400s), its hooks the session, the tenant context and
+`Cache-Control: no-store`; the floor reaches the internal `GET /api/v1/agency/floor` (owner `none`
+in `api/core-owners.ts`) through `callCore`.
+
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts` and
 by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 

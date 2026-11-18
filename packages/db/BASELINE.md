@@ -1590,6 +1590,21 @@ the invalid-index refusal, down then up), the server's
 no sequential scan, a page reading under 1,000 rows of 20,000 seeded sessions, first page and from a
 cursor) and the down → up inventory suite.
 
+### 0050 — `migrations/0050_promise_summary_indexes.sql`
+
+The promises summary (decision B28b, the Live floor's "Will pay"): an account's promises to pay by
+when the outcome carrying them was written. **`idx_agency_attempts_promise_written`** on
+`agency_call_attempts`, **`idx_agency_manual_calls_promise_written`** on `agency_manual_calls` and
+**`idx_agency_inbound_calls_promise_written`** on `agency_inbound_calls`, each `(tenant_id,
+account_id, dispositioned_at) WHERE promise_date IS NOT NULL`: the size of the promises, not of the
+calls; `PROMISE_SUMMARY_SQL` reads one range of each (before them, no index served an account's
+outcomes by time on any of the three). `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout =
+'10s'`, so a deployment may build them `CONCURRENTLY` first; an invalid index left under one of the
+names by a failed concurrent build fails the migration. **Down** drops them. **Tests**:
+`test/integration/db/promise-summary-indexes-migration.test.ts` (the definitions, the invalid-index
+refusal, down then up), the server's `test/integration/agency/promise-summary-repository.test.ts`
+(the summary on each index by tenant and account) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

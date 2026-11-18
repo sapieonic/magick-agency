@@ -51,8 +51,11 @@ export function clearLiveCallAhtCacheForTests(): void {
   ahtCache.clear();
 }
 
-/** The campaigns' AHT: cached ones as they are, the misses read in one query. Never rejects. */
-async function ahtFor(tenantId: string, campaignIds: string[]): Promise<Map<string, number | null>> {
+/**
+ * The campaigns' AHT: cached ones as they are, the misses read in one query. Never rejects. Also
+ * the floor's (`./floor.ts`), so a call's amber on the floor is the live list's.
+ */
+export async function ahtFor(tenantId: string, campaignIds: string[]): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
   const missing: string[] = [];
   for (const id of new Set(campaignIds)) {

@@ -74,10 +74,13 @@ export function onBoard(
     today?: AgencyAttentionRangeFigures | null;
     /** Null: the board of a reader below `agency.supervise` (with the other insights parts null). */
     settings?: AgencyAttentionSettings | null;
+    /** When and by whom a paused or stopping campaign got there (B28b); null unless given. */
+    statusChanged?: AgencyHomeCampaign['status_changed'];
   } = {},
 ): AgencyHomeCampaign {
   return {
     ...campaign(id, over.status ?? 'running', over.name),
+    status_changed: over.statusChanged ?? null,
     stats: over.stats === undefined ? stats() : over.stats,
     staffing: over.staffing === undefined ? STAFFED : over.staffing,
     allocation: over.overdue === null ? null : allocationFacts({ callbacks_overdue: over.overdue ?? 0 }),

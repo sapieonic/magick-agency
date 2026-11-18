@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * allocation and today's figures). The memos read `Date.now`, so the clock is faked.
  */
 
-const repo = vi.hoisted(() => ({ listForHome: vi.fn(), floorSignatures: vi.fn() }));
+const repo = vi.hoisted(() => ({ listForHome: vi.fn(), floorSignatures: vi.fn(), stopAuditedAt: vi.fn() }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyCampaignRepository: repo }));
 // Home never drops anyone's shared stats read: it publishes nothing on either channel.
 const bus = vi.hoisted(() => ({ publishPacingInvalidation: vi.fn() }));
@@ -121,9 +121,11 @@ beforeEach(() => {
     allocation: vi.fn(async () => ALLOCATION),
     today: vi.fn(async () => TODAY),
   };
+  repo.stopAuditedAt.mockImplementation(async () => new Map());
   const liveStats = vi.fn(async () => answer(payload()));
-  deps = { liveStats, insights: reads };
-  viewer = { liveStats, insights: null };
+  const names = vi.fn(async () => new Map<string, string | null>());
+  deps = { liveStats, insights: reads, names };
+  viewer = { liveStats, insights: null, names };
 });
 
 afterEach(() => {
@@ -139,7 +141,7 @@ describe('the board', () => {
     expect(board.any_campaign).toBe(true);
     expect(board.campaigns).toEqual([
       {
-        id: 'r1', name: 'Campaign r1', status: 'running',
+        id: 'r1', name: 'Campaign r1', status: 'running', status_changed: null,
         stats: {
           stall: null, abandoned_24h: 1, answered_24h: 40, abandonment_ceiling_pct: 3, agents_live: 0,
           agents_by_state: { offline: 0, available: 0, reserved: 0, on_call: 0, wrapup: 0, break: 0 },
@@ -154,6 +156,58 @@ describe('the board', () => {
       },
       expect.objectContaining({ id: 'p1', status: 'paused', allocation: ALLOCATION }),
     ]);
+  });
+
+  it('names who paused or stopped a campaign, and when (B28b), from the row, its audit and the identity lookup', async () => {
+    const PAUSED_AT = new Date('2026-11-12T05:33:00.000Z');
+    const STOPPED_AT = new Date('2026-11-12T06:00:00.000Z');
+    list([
+      row('r1', 'running', { last_transition_by_user_id: 'u-start', last_transition_by_name: 'Starter' } as Partial<AgencyCampaignRecord>),
+      row('s1', 'stopping', { last_transition_by_user_id: 'u-stop', last_transition_by_name: 'Old Name' } as Partial<AgencyCampaignRecord>),
+      row('p1', 'paused', {
+        pause_reason: 'supervisor', paused_at: PAUSED_AT, last_transition_by_user_id: 'u-anitha', last_transition_by_name: 'Anitha (then)',
+      } as Partial<AgencyCampaignRecord>),
+      row('p2', 'paused', {
+        pause_reason: 'abandonment_ceiling', paused_at: PAUSED_AT, last_transition_by_user_id: null, last_transition_by_name: null,
+      } as Partial<AgencyCampaignRecord>),
+      row('p3', 'paused', {
+        pause_reason: 'supervisor', paused_at: PAUSED_AT, last_transition_by_user_id: 'u-gone', last_transition_by_name: 'Recorded',
+      } as Partial<AgencyCampaignRecord>),
+    ]);
+    deps.names = vi.fn(async () => new Map<string, string | null>([['u-anitha', 'Anitha'], ['u-stop', 'Stopper']]));
+    repo.stopAuditedAt.mockImplementation(async () => new Map([['s1', STOPPED_AT]]));
+    const board = await computeHomeBoard(SCOPE, deps);
+    const changed = Object.fromEntries(board.campaigns.map((c) => [c.id, c.status_changed]));
+    expect(changed).toEqual({
+      r1: null,
+      s1: { at: STOPPED_AT.toISOString(), by_user_id: 'u-stop', by_name: 'Stopper', automatic: false },
+      p1: { at: PAUSED_AT.toISOString(), by_user_id: 'u-anitha', by_name: 'Anitha', automatic: false },
+      p2: { at: PAUSED_AT.toISOString(), by_user_id: null, by_name: null, automatic: true },
+      // The lookup has no name now: the one the transition recorded.
+      p3: { at: PAUSED_AT.toISOString(), by_user_id: 'u-gone', by_name: 'Recorded', automatic: false },
+    });
+    // One name lookup for the paused and stopping campaigns' actors; one audit read, for the stopping one.
+    expect(deps.names).toHaveBeenCalledTimes(1);
+    expect([...(deps.names as ReturnType<typeof vi.fn>).mock.calls[0]![0]]).toEqual(['u-stop', 'u-anitha', null, 'u-gone']);
+    expect(repo.stopAuditedAt).toHaveBeenCalledWith('t-1', ['s1']);
+  });
+
+  it('reads no audit without a stopping campaign, and none of it for a running board', async () => {
+    list([row('r1', 'running')]);
+    const board = await computeHomeBoard(SCOPE, viewer);
+    expect(board.campaigns[0]!.status_changed).toBeNull();
+    expect(repo.stopAuditedAt).not.toHaveBeenCalled();
+    expect(viewer.names).not.toHaveBeenCalled();
+  });
+
+  it('serves the recorded name and no stop time when the lookups fail, never a failed board; and serves it to a viewer too', async () => {
+    list([
+      row('s1', 'stopping', { last_transition_by_user_id: 'u-stop', last_transition_by_name: 'Recorded' } as Partial<AgencyCampaignRecord>),
+    ]);
+    viewer.names = vi.fn(async () => { throw new Error('users down'); });
+    repo.stopAuditedAt.mockRejectedValue(new Error('audit down'));
+    const board = await computeHomeBoard(SCOPE, viewer);
+    expect(board.campaigns[0]!.status_changed).toEqual({ at: null, by_user_id: 'u-stop', by_name: 'Recorded', automatic: false });
   });
 
   it('serves the campaign’s recording and calling-hours settings as the insights summary does', async () => {

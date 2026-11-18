@@ -1003,6 +1003,21 @@ a rate-limit key and never an auth input.
 - **Server branding guard**: `apps/server/test/unit/branding/no-parent-brand.test.ts` scans
   `apps/server/src` and `packages/*/src` with comments stripped.
 
+  **Live floor (server reads, B28b).** The page that replaces Home reads, besides the board (which
+  now names who paused or stopped each campaign and when, `status_changed`), two account-wide reads
+  from `api/routes/proxy-agency-floor.routes.ts`: `GET /proxy/agency/floor?from=` (one row per
+  person: every open session in the account and every agent staffed on an active campaign with
+  none; the call in progress from the live calls list's own read, with the customer's name and
+  never the number, listenable only while listening is on; conversations since `from` as the grouped
+  stats count them; on-shift and assigned people), served through `callCore` by the internal
+  `api/routes/agency/floor.ts` over `db/repositories/agency/floor.repository.ts`; and
+  `GET /proxy/agency/promises/summary?from=&to=` (the promises to pay recorded in the window on
+  the three call tables, per campaign, summed exactly, on the indexes `0050_promise_summary_indexes.sql` adds; and the active
+  campaigns that record promises), over `db/repositories/agency/promise-summary.repository.ts`.
+  Measured on a seeded account of 540 agents over 25 running campaigns in a deployment of 600,000
+  attempts: the floor's rows 5–7 ms, its calls 1.5 ms, today's conversations 35 ms (the window's
+  attempts; kept 30 s per account), the promises summary under 2 ms.
+
 ## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
 
 Off by default: with neither set, everything above is one process, exactly as described. Design

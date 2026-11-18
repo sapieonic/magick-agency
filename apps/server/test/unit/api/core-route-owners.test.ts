@@ -47,6 +47,9 @@ const NONE_WITH_RUNTIME: Record<string, string> = {
   'POST /inbound/calls/:id/ring/answering': INBOUND_SINGLE_PROCESS,
   'POST /inbound/calls/:id/ring/decline': INBOUND_SINGLE_PROCESS,
   'POST /inbound/calls/:id/ring/accept': INBOUND_SINGLE_PROCESS,
+  // The Live floor (B28b): reads only the station registry's liveness keys in Redis
+  // (`connectedBySession`), as the stats strip does wherever it runs; no process-held station state.
+  'GET /floor': 'the station liveness read: Redis ownership keys every process reads alike, as the stats strip\'s',
 };
 
 let core: FastifyInstance;
