@@ -105,6 +105,12 @@ export interface HomeAttentionItem {
   kind: string;
   count: number | null;
   /**
+   * How much the count must grow past the acknowledged one to bring the row back (`homeAcks.ts`);
+   * 1 when absent, so any growth does. A break over the limit counts the seconds it has run and
+   * says 900: a "Got it" holds for 15 more minutes of the break (LF10).
+   */
+  worseBy?: number;
+  /**
    * Whether "Got it" is offered. Not on a count that cannot grow (missed calls past 99, where
    * the server stops counting): "until it gets worse" could never bring it back.
    */

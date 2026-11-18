@@ -394,6 +394,32 @@ describe('breaks over the limit', () => {
     }
   });
 
+  it('come back 15 minutes after “Got it”, not at the next quarter-hour of the break', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // 44 minutes into Tea: the old rule brought the row back a minute later, at 45. Each read
+      // says it is now (`as_of`), so the server's clock moves with the viewer's.
+      const since = minutesAgo(44);
+      mocks.getAgencyFloor.mockImplementation(async () => floorOf([
+        floorRow('priya', { agent_name: 'Priya M', state: 'break', break_label: 'Tea', state_since: since }),
+      ]));
+      renderHome();
+      const row = await screen.findByTestId('home-attention-break-overrun:priya');
+      fireEvent.click(within(row).getByRole('button', { name: /Got it/ }));
+      expect(screen.queryByTestId('home-attention-break-overrun:priya')).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14 * 60_000);
+      });
+      expect(screen.queryByTestId('home-attention-break-overrun:priya')).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(90_000);
+      });
+      expect(screen.getByTestId('home-attention-break-overrun:priya').textContent).toMatch(/Priya M on Tea for 59 min/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('are a row in Needs you now with a coming-soon Send reminder, left off the sidebar badge', async () => {
     renderHome();
     const row = await screen.findByTestId('home-attention-break-overrun:priya');

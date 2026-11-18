@@ -42,6 +42,14 @@ describe('stillAcknowledged', () => {
 });
 
 describe('rows that may not be put aside', () => {
+  it('a row that says how much worse brings it back holds until its count has grown that much', () => {
+    // A break row: seconds into the break, back after 15 more minutes of it.
+    const brk = (count: number) => ({ ...row('b', 'break-overrun@x', 'warning', count), worseBy: 900 });
+    const ack = ackOf(brk(2_640));
+    expect(stillAcknowledged(brk(2_640 + 899), ack)).toBe(true);
+    expect(stillAcknowledged(brk(2_640 + 900), ack)).toBe(false);
+  });
+
   it('a row whose count cannot grow is never still acknowledged', () => {
     const capped = { ...row('missed', 'missed', 'warning', 100), ackable: false };
     expect(stillAcknowledged(capped, ackOf(capped))).toBe(false);

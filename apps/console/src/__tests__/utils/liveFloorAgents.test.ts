@@ -218,7 +218,9 @@ describe('breaks over the limit, in Needs you now', () => {
       to: '/agency/campaigns/c1/agents',
       badge: false,
       ackable: true,
-      count: 0,
+      // How long the break has run, in seconds; a "Got it" holds for 15 minutes more of it.
+      count: 42 * 60,
+      worseBy: 15 * 60,
       comingSoon: { label: 'Send reminder', tooltip: 'Remind Priya M that their break is over.' },
     });
     expect(homeBadgeCount([item!])).toBe(0);
@@ -239,19 +241,24 @@ describe('breaks over the limit, in Needs you now', () => {
     expect(later.title).toMatch(/for 47 min$/);
   });
 
-  it('comes back after “Got it” once the break runs another 15 minutes, and a new break is a new row', () => {
-    // A break that started 42 minutes before NOW, read `later` minutes on.
-    const since = ago(42);
+  it('comes back 15 minutes after “Got it”, whenever in the quarter-hour it was pressed, and a new break is a new row', () => {
+    // A break that started 44 minutes before NOW, read `later` minutes on: a minute short of 45.
+    const since = ago(44);
     const at = (later: number, start = since) =>
       breakOverrunItems(rankFloorCards([floorRow('p', { state: 'break', state_since: start })], NOW + later * 60_000), campaigns)[0]!;
     const put = ackOf(at(0));
-    expect(stillAcknowledged(at(2), put)).toBe(true);
-    // 30 + 15 = 45 minutes in: one step more.
-    expect(at(3).count).toBe(1);
-    expect(stillAcknowledged(at(3), put)).toBe(false);
+    // 45 minutes in is no reason to bring it back: only 15 more minutes since the "Got it" is.
+    expect(stillAcknowledged(at(1), put)).toBe(true);
+    expect(stillAcknowledged(at(14.5), put)).toBe(true);
+    expect(stillAcknowledged(at(15), put)).toBe(false);
+    // Put aside again then, it holds for another 15.
+    const again = ackOf(at(15));
+    expect(stillAcknowledged(at(29.5), again)).toBe(true);
+    expect(stillAcknowledged(at(30), again)).toBe(false);
     // Ended and a new one started: a new kind.
     expect(stillAcknowledged(at(0, ago(41)), put)).toBe(false);
   });
+
 });
 
 describe('the tiles from the floor and the promises', () => {

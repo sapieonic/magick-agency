@@ -4,7 +4,6 @@ import type { AgencyLiveCall } from '@magick-agency/contracts/api/agency/live-ca
 import type { AgencySupervisorAgent } from '../../types/agency-campaign';
 import {
   AGENCY_FLOOR_RISK_RANK,
-  LONG_BREAK_SECONDS,
   agentDisplayName,
   floorRisk,
   isOnSoftphone,
@@ -296,7 +295,7 @@ export function stripeTone(card: FloorCard): FloorCardState | 'risk' | 'lost' {
 
 // ── Needs you now: breaks over the limit ────────────────────────────────────
 
-/** A "Got it" on a long break holds for this many more minutes before the row comes back. */
+/** A "Got it" on a long break holds for this many more minutes of the break before the row comes back. */
 export const BREAK_OVERRUN_STEP_MINUTES = 15;
 
 /**
@@ -305,8 +304,9 @@ export const BREAK_OVERRUN_STEP_MINUTES = 15;
  * warning ranked `break-overrun` (LF9), with a coming-soon Send reminder.
  *
  * - **Got it**: the row's kind carries the break's start, so a new break is a new row; its count is
- *   how many {@link BREAK_OVERRUN_STEP_MINUTES} past the limit, so a put-aside row comes back each
- *   time the break runs a quarter of an hour longer.
+ *   the seconds the break has run and its `worseBy` {@link BREAK_OVERRUN_STEP_MINUTES} minutes of
+ *   them, so a put-aside row comes back once the break has run a quarter of an hour longer than
+ *   when it was put aside (to the break clock's 30 s), whenever in the break that was.
  * - **Measured at `now`**, the caller's clock, so the minutes keep counting between floor reads
  *   and while they fail (then the rows are `stale`); the kind and id never move with them.
  * - **Not on the sidebar badge** (`badge: false`): the badge reads only the shared board, at a
@@ -324,7 +324,6 @@ export function breakOverrunItems(
     if (card.risk !== 'long_break' || card.elapsedMs === null) return [];
     const { row } = card;
     const minutes = Math.floor(card.elapsedMs / 60_000);
-    const steps = Math.floor((minutes - LONG_BREAK_SECONDS / 60) / BREAK_OVERRUN_STEP_MINUTES);
     const campaign = row.campaign_id
       ? { id: row.campaign_id, name: campaigns.find((c) => c.id === row.campaign_id)?.name ?? row.campaign_name ?? 'Campaign' }
       : null;
@@ -340,7 +339,8 @@ export function breakOverrunItems(
       badge: false,
       stale,
       kind: `break-overrun@${row.state_since ?? ''}`,
-      count: Math.max(0, steps),
+      count: Math.floor(card.elapsedMs / 1000),
+      worseBy: BREAK_OVERRUN_STEP_MINUTES * 60,
       ackable: true,
       rank: 'break-overrun' as const,
       comingSoon: { label: 'Send reminder', tooltip: `Remind ${card.displayName} that their break is over.` },
