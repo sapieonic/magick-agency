@@ -2356,7 +2356,7 @@ moment until the promises read answers. Test counts below.
 
 ## Test counts
 
-**Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; migration 0050), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
+**Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
 
 **Plivo's regional recording media hosts, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`,
 on the tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and
@@ -3272,7 +3272,7 @@ files are listed in [`modules.md`](modules.md).
 
 **Live floor** (LF4–LF8, open): Phase 3, Need help from a station, messages from a supervisor to
 an agent (Talk to agent, Send reminder), break limits per reason, giving late callbacks to free
-agents, the account-wide Callbacks list (its schema is migration 0051 or later); Phase 4, Join
+agents, the account-wide Callbacks list (its schema is a migration numbered 0051 or later); Phase 4, Join
 call and whisper (reopens "listen only"). Their controls are on the console as Coming soon; the
 agent app has none.
 
