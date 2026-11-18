@@ -52,6 +52,8 @@ export function LiveFloorKpis({
 }) {
   const boardReady = board.status === 'ready';
   const working = agents ?? agentsWorking(reads);
+  // The floor read's figure stands on its own; the board's sum needs the board.
+  const workingKnown = agents !== undefined || boardReady;
   const late = boardReady ? lateCallbacks(reads) : null;
   const figures = today.status === 'ready' ? todayFor(today.totals, today.byCampaign, campaignId) : null;
   const pending = today.status === 'loading' ? '…' : DASH;
@@ -62,8 +64,8 @@ export function LiveFloorKpis({
         <Kpi
           look="outlined"
           label="Agents working"
-          value={boardReady ? formatCount(working.working) : DASH}
-          sub={boardReady ? agentsWorkingSub(working) : undefined}
+          value={workingKnown ? formatCount(working.working) : DASH}
+          sub={workingKnown ? agentsWorkingSub(working) : undefined}
           testId="kpi-agents"
         />
         <Kpi

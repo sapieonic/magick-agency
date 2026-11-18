@@ -34,6 +34,12 @@ vi.mock('../../api/agencyCampaigns', () => ({
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
+// Phase 2's reads fail here unless a test says otherwise: these cases pin the page on the board
+// alone (`HomePage.floor.test.tsx` covers the floor and the promises).
+vi.mock('../../api/agencyFloor', () => ({
+  getAgencyFloor: () => Promise.reject(new Error('not in this file')),
+  getAgencyPromisesSummary: () => Promise.reject(new Error('not in this file')),
+}));
 vi.mock('../../hooks/useMissedCallsAccess', () => ({
   useMissedCallsAccess: () => ({ ...mocks.missed, inboundOn: true, settled: true }),
 }));

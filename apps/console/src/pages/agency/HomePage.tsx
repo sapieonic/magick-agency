@@ -8,9 +8,20 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { HOME_FAST_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
+import { useAgentFloor } from '../../hooks/useAgentFloor';
+import { usePromisesToday } from '../../hooks/usePromisesToday';
 import { hasPermission } from '../../utils/permissions';
 import { holdsHomePermission } from '../../utils/consoleNav';
-import { homeAttention, HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
+import { homeAttention, sortByRank, HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
+import {
+  breakOverrunItems,
+  floorAgentsWorking,
+  floorRowsFor,
+  rankFloorCards,
+  willPayByCampaign,
+  willPayFor,
+  willPayLine,
+} from '../../utils/agency/liveFloorAgents';
 import { CAMPAIGN_FILTER_PARAM, readsFor, selectedCampaign } from '../../utils/agency/liveFloor';
 import { formatCount } from '../../utils/format/number';
 import { GetStarted } from './campaigns-home/GetStarted';
@@ -41,15 +52,23 @@ export default function HomePage() {
   const board = useHomeBoard({ tenantId, accountId, role, enabled: supervise, intervalMs: HOME_FAST_MS });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
+  // Live floor's own reads (B28b): only this page asks for them, never the sidebar badge.
+  const agentFloor = useAgentFloor(tenantId, accountId, supervise);
+  const promises = usePromisesToday(tenantId, accountId, supervise);
   const [params, setParams] = useSearchParams();
 
-  const items = useMemo(
-    () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
-    [board.reads, missed.available, missed.count],
-  );
+  const floorRows = agentFloor.floor?.agents;
+  const items = useMemo(() => {
+    const fromBoard = homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate);
+    if (!floorRows) return fromBoard;
+    // Breaks over the limit, from the floor (re-measured on every floor read, every 5 s).
+    const breaks = breakOverrunItems(rankFloorCards(floorRows, Date.now()), board.reads.map((r) => r.campaign));
+    return sortByRank([...fromBoard, ...breaks]);
+  }, [board.reads, missed.available, missed.count, floorRows]);
   const picked = selectedCampaign(params.get(CAMPAIGN_FILTER_PARAM), board.reads);
   const pickedId = picked?.id ?? null;
   const shown = useMemo(() => readsFor(board.reads, pickedId), [board.reads, pickedId]);
+  const shownFloor = useMemo(() => (floorRows ? floorRowsFor(floorRows, pickedId) : null), [floorRows, pickedId]);
 
   if (role === undefined) return <LoadingSpinner />;
   if (!supervise) return <Navigate to="/agency" replace />;
@@ -58,6 +77,15 @@ export default function HomePage() {
   const accountName = accounts?.find((a) => a.id === accountId)?.name;
   const noCampaigns = board.status === 'ready' && board.anyCampaign === false;
   const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
+
+  const agents = agentFloor.floor ? floorAgentsWorking(agentFloor.floor, pickedId, board.reads) : undefined;
+  const willPay = promises.status === 'ready' ? willPayFor(promises.summary, pickedId) : null;
+  const outcome = willPay
+    ? { label: 'Will pay', value: formatCount(willPay.promises), sub: willPayLine(willPay), testId: 'kpi-outcome' }
+    : undefined;
+  const extras = promises.status === 'ready'
+    ? Object.fromEntries(Object.entries(willPayByCampaign(promises.summary)).map(([id, n]) => [id, { willPay: n }]))
+    : undefined;
 
   const pick = (id: string | null) => {
     const next = new URLSearchParams(params);
@@ -93,7 +121,7 @@ export default function HomePage() {
       )}
 
       {/* Its own read, so it shows whatever became of the board's. */}
-      <LiveFloorKpis board={board} reads={shown} today={today} campaignId={pickedId} />
+      <LiveFloorKpis board={board} reads={shown} today={today} campaignId={pickedId} agents={agents} outcome={outcome} />
 
       {board.status === 'ready' && (
         <>
@@ -109,11 +137,17 @@ export default function HomePage() {
             {noCampaigns ? (
               <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />
             ) : (
-              <CampaignsPanel reads={shown} onChanged={board.reload} />
+              <CampaignsPanel reads={shown} onChanged={board.reload} extras={extras} />
             )}
           </div>
 
-          {!noCampaigns && <AgentsPanel reads={shown} />}
+          {!noCampaigns && (
+            <AgentsPanel
+              reads={shown}
+              floor={shownFloor ? { rows: shownFloor, clockOffsetMs: agentFloor.clockOffsetMs, stale: agentFloor.stale, onChanged: agentFloor.reload } : null}
+              floorFailed={agentFloor.status === 'error' || agentFloor.status === 'refused'}
+            />
+          )}
 
           {board.activeTotal > board.reads.length && (
             <p className={styles.cardNote} data-testid="home-cap-note">

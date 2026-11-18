@@ -9,6 +9,7 @@ import {
   CircleCheck,
   CirclePause,
   Clock,
+  Coffee,
   Gauge,
   Hourglass,
   MicOff,
@@ -45,6 +46,7 @@ function rowIcon(item: HomeAttentionItem): LucideIcon {
   if (kind === 'stall:no_carrier_capacity' || kind === 'stall:concurrency_saturated') return Gauge;
   if (kind === 'stall:no_agents_available' || kind === 'no-agents' || kind === 'held-by-absent') return Users;
   if (kind === 'stall:outside_calling_hours' || kind === 'callbacks-overdue') return Clock;
+  if (kind.startsWith('break-overrun')) return Coffee;
   if (kind === 'stall:list_exhausted_retries_pending') return Hourglass;
   if (kind === 'abandonment') return TrendingUp;
   if (kind === 'recordings-missing') return MicOff;
@@ -216,6 +218,15 @@ function AttentionRow({ item, now, onAcknowledge }: {
             <Check size={14} aria-hidden="true" />
             Got it
           </button>
+        )}
+        {item.comingSoon && (
+          <ComingSoonButton
+            className={`btn-secondary ${styles.smallButton}`}
+            tooltip={item.comingSoon.tooltip}
+            testId={`home-soon-${item.id}`}
+          >
+            {item.comingSoon.label}
+          </ComingSoonButton>
         )}
         {item.handOff && (
           <ComingSoonButton

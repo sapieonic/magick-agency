@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Pause, Play, Send, TriangleAlert } from 'lucide-react';
-import { formatDate } from '@magick-agency/web-ui/format';
+import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
 import { useTenant } from '../../../contexts/TenantContext';
 import { campaignCards, type LiveFloorCampaignCard } from '../../../utils/agency/liveFloor';
@@ -12,13 +12,14 @@ import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import { useCampaignLifecycle } from '../campaign-detail/useCampaignLifecycle';
 import styles from './LiveFloor.module.css';
 
-/**
- * What a later phase adds to a card, each optional (Phase 2): "71 will pay" from the promises
- * read, and who paused a paused campaign and when, from the board.
- */
+/** What another read adds to a card: "71 will pay" from the promises summary (B28b). */
 export interface CampaignCardExtras {
   willPay?: number;
-  pausedBy?: { name: string; at: string };
+}
+
+/** A time on today's date ("11:03 am"), else the date and time. */
+function whenShort(iso: string): string {
+  return new Date(iso).toDateString() === new Date().toDateString() ? formatTime(iso) : formatDate(iso);
 }
 
 /**
@@ -39,7 +40,7 @@ export function CampaignsPanel({
   onChanged: () => void;
   extras?: Readonly<Record<string, CampaignCardExtras>>;
 }) {
-  const cards = useMemo(() => campaignCards(reads, formatDate), [reads]);
+  const cards = useMemo(() => campaignCards(reads, whenShort), [reads]);
   const running = reads.filter((r) => r.campaign.status === 'running').length;
   return (
     <section className={styles.card} aria-labelledby="home-campaigns-heading">
@@ -120,8 +121,8 @@ function CampaignCard({ card, onChanged, extras }: {
           )}
         </span>
       </div>
-      {extras?.pausedBy && campaign.status === 'paused' && (
-        <span className={styles.campaignSub}>{`Paused by ${extras.pausedBy.name} at ${extras.pausedBy.at}`}</span>
+      {card.statusLine && (
+        <span className={styles.campaignSub} data-testid={`home-campaign-status-${campaign.id}`}>{card.statusLine}</span>
       )}
       {subParts.length > 0 && <span className={styles.campaignSub}>{subParts.join(' · ')}</span>}
       {card.stall && (

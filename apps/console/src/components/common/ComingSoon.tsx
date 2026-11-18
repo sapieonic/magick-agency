@@ -8,9 +8,9 @@ export const COMING_SOON = 'Coming soon';
  * The console's one "Coming soon" mark: a small badge beside a control or a heading for something
  * that is planned and has nothing behind it yet. `id` lets a control name it as its description.
  */
-export function ComingSoonBadge({ id }: { id?: string }) {
+export function ComingSoonBadge({ id, hidden = false }: { id?: string; hidden?: boolean }) {
   return (
-    <span id={id} className={styles.badge} data-testid="coming-soon">
+    <span id={id} className={hidden ? 'sr-only' : styles.badge} data-testid="coming-soon">
       {COMING_SOON}
     </span>
   );
@@ -34,6 +34,8 @@ export function ComingSoonButton({
   tooltip,
   className,
   testId,
+  compact = false,
+  label,
 }: {
   children: ReactNode;
   /** One sentence on what it will do; "Coming soon." is added when it does not say so. */
@@ -41,21 +43,30 @@ export function ComingSoonButton({
   /** The button's own look (`btn-secondary`, a page's class). */
   className?: string;
   testId?: string;
+  /**
+   * An icon button in a tight row (an agent card's actions): the badge's words are kept for a
+   * screen reader and the tooltip, and the button itself is marked (dashed) rather than a badge
+   * beside each one.
+   */
+  compact?: boolean;
+  /** The accessible name, when the button shows only an icon. */
+  label?: string;
 }) {
   const badgeId = useId();
   const tipId = useId();
   const said = comingSoonWords(tooltip);
   return (
-    <span className={styles.wrap} title={said} data-testid={testId}>
+    <span className={`${styles.wrap} ${compact ? styles.compact : ''}`} title={said} data-testid={testId}>
       <button
         type="button"
         className={className}
+        aria-label={label}
         disabled
         aria-describedby={tooltip ? tipId : badgeId}
       >
         {children}
       </button>
-      <ComingSoonBadge id={badgeId} />
+      <ComingSoonBadge id={badgeId} hidden={compact} />
       {tooltip ? <span id={tipId} className="sr-only">{said}</span> : null}
     </span>
   );
