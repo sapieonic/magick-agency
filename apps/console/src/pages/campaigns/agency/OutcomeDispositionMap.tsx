@@ -24,11 +24,11 @@ import styles from './CampaignBehaviourSection.module.css';
   copy.
 
   ── Its findings show as soon as they exist ─────────────────────────────────
-  The section's other errors arrive on a save attempt or from the server. A finding
-  here is usually caused somewhere ELSE on the screen — an outcome removed or set to
-  stop calling in the catalog above — so waiting for a save would leave Save disabled
-  with nothing on screen saying why. The live check is `validateOutcomeDispositions`,
-  the same one a save runs; a save's or the server's message for the same row wins.
+  As every finding in the section does (`CampaignBehaviourSection` shows `validateConfig`
+  live). A finding here is usually caused somewhere ELSE on the screen — an outcome
+  removed or set to stop calling in the catalog above — which is why this row checks
+  itself too. The check is `validateOutcomeDispositions`, the one a save runs; the
+  server's message for the same row wins.
 */
 
 interface OutcomeDispositionMapProps {
@@ -36,7 +36,7 @@ interface OutcomeDispositionMapProps {
   /** The catalog being edited, which is what a mapping is checked against. */
   dispositions: readonly AgencyDispositionEntry[];
   onChange: (next: AgencyOutcomeDispositions) => void;
-  /** The section's field errors (a save's findings and the server's `details`). */
+  /** The server's `details` for the section, keyed by body path; they win over the live check. */
   fieldErrors: Record<string, string>;
 }
 

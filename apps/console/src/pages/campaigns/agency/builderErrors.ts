@@ -1,4 +1,4 @@
-import { BUILDER_STEPS, type BuilderStepId } from './builderFlow';
+import { BUILDER_STEPS, stepById, type BuilderStepId } from './builderFlow';
 import { OUTCOME_LABELS, type CampaignConfigState } from '../../../utils/agency/config/configConstants';
 import type { AgencyRetryOutcome } from '../../../types/agency-campaign';
 import { joinAnd } from '../../../utils/agencyCampaignConfigForm';
@@ -76,10 +76,6 @@ export function findingsByStep(errors: Record<string, string>): Map<BuilderStepI
   return ordered;
 }
 
-function stepTitle(id: BuilderStepId): string {
-  return BUILDER_STEPS.find((step) => step.id === id)?.title ?? id;
-}
-
 /**
  * Why Save is held, said where the operator is.
  *
@@ -96,7 +92,7 @@ export function saveBlockCopy(byStep: Map<BuilderStepId, number>, current: Build
     return total === 1 ? 'Fix the highlighted field to save.' : `Fix the ${total} highlighted fields to save.`;
   }
 
-  const where = [...byStep.keys()].map((id) => (id === current ? 'this step' : stepTitle(id)));
+  const where = [...byStep.keys()].map((id) => (id === current ? 'this step' : stepById(id).title));
   const settings = total === 1 ? '1 setting' : `${total} settings`;
   return `Can’t save yet: ${settings} on ${joinAnd(where)} ${total === 1 ? 'needs' : 'need'} fixing.`;
 }
@@ -111,7 +107,7 @@ export function firstOtherStepWithFindings(
 }
 
 export function goToStepLabel(id: BuilderStepId): string {
-  return `Go to ${stepTitle(id)}`;
+  return `Go to ${stepById(id).title}`;
 }
 
 const CATALOG_INDEX = /^disposition_catalog\[(\d+)\]/;

@@ -2177,9 +2177,9 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 14 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.carrier.test.tsx` | ~7 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 79 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 80 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 34 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
@@ -2204,9 +2204,9 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AppHomeRedirect.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.carrier.test.tsx` | ~6 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 46 |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.findings.test.tsx` (a setting that holds Save: on its field live, on the stepper, on Review with Fix, and beside Save) | 8 |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.findings.test.tsx` (a setting that holds Save: on its field live, on the stepper, on Review with Fix, and beside Save with Show me or Go to) | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` (and after a check or an import that did not finish: a corrected file or another mapping, Import again while the check is valid; what the draft an import creates holds) | 32 |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` (and after a check or an import that did not finish: a corrected file or another mapping, Import again while the check is valid; what the draft an import creates holds, and the leave dialog then) | 34 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` (the add's stated scope, the scope filter, what a removal un-blocks and what still blocks it where; DS1–DS7) | 40 |
 | `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 20 |

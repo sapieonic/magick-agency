@@ -346,15 +346,19 @@
   cursor: pointer;
 }
 
-/* What the draft holds while the form differs from it: just above Save, where it is decided. */
+/*
+  What the draft holds while the form differs from it: just above Save, where it is decided,
+  and in the warning colour, since missing it is how settings get lost.
+*/
 .draftNote {
   margin: 0;
   padding: 10px 20px;
   border-top: 1px solid var(--border);
-  font-size: 12.5px;
+  border-left: 3px solid var(--warning);
+  font-size: 13px;
   line-height: 1.5;
-  color: var(--text-secondary);
-  background: var(--accent-subtle);
+  color: var(--text-primary);
+  background: var(--warning-subtle);
 }
 
 .savedLink {
@@ -405,6 +409,11 @@
      read as a stray), at a finger's height. */
   .footer > button {
     flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  /* The link beside Save's reason is inside the reason, not a footer button: a finger's height too. */
+  .blockLink {
     min-height: 44px;
   }
 }

@@ -1461,4 +1461,17 @@ describe('a setting that holds Save', () => {
     expect(screen.queryByTestId('unsaved-changes-show')).toBeNull();
     expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(false);
   });
+  it('“Show me” finds a missing caller ID too, whose picker marks no control invalid', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    try {
+      renderPage();
+      fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+      fireEvent.click(screen.getByTestId('unsaved-changes-show'));
+      expect(scrolled.map((element) => element.textContent)).toEqual(['A campaign needs at least one caller ID.']);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
 });

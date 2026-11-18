@@ -94,13 +94,11 @@ describe('reviewFindings', () => {
       { code: 'ptp', label: 'Promise to pay', requires_promise: true, requires_datetime: true },
       { code: '', label: '' },
     ];
-    const promiseIndex = config.dispositions.length - 2;
     const blankIndex = config.dispositions.length - 1;
     const rows = reviewFindings(validateConfig(config), config);
     const outcomes = rows.get('outcomes') ?? [];
     expect(outcomes.some((line) => line.startsWith('Promise to pay: An outcome cannot ask for both'))).toBe(true);
     expect(outcomes.some((line) => line.startsWith(`Outcome ${blankIndex + 1}: Every outcome needs a label`))).toBe(true);
-    expect(promiseIndex).toBeGreaterThan(0);
   });
 
   it('names the unanswered call a retry rule or an automatic outcome is for', () => {
@@ -118,20 +116,52 @@ describe('reviewFindings', () => {
     ]);
   });
 
-  it('places every finding a broken config can produce on a Review row', () => {
+  /*
+    Every kind of key `validateConfig` produces, from a config broken everywhere, with the
+    step and row each one belongs on. The mappers have catch-alls; this pins that no real
+    key reaches them by accident. A key whose prefix is not in the table fails here, so a
+    new rule cannot be added without saying where it is shown.
+  */
+  const EXPECTED: ReadonlyArray<[RegExp, string, string]> = [
+    [/^calling_window_(start|end)$|^calling_days$|^default_timezone$/, 'hours', 'hours'],
+    [/^disposition_catalog\[\d+\]/, 'behaviour', 'outcomes'],
+    [/^retry_policy\./, 'behaviour', 'unanswered'],
+    [/^outcome_dispositions\./, 'behaviour', 'unanswered'],
+    [/^wrapup_seconds$/, 'behaviour', 'wrapup'],
+    [/^abandonment_ceiling_pct$/, 'behaviour', 'abandonment'],
+    [/^(assignment_mode|on_unstaff|callback_owner_grace_minutes|callback_fallback|agent_retry_rounds|agent_retry_cooldown_minutes)$/, 'behaviour', 'assignment'],
+  ];
+
+  it('places every kind of finding on the step and Review row that shows it', () => {
     const config = emptyCampaignConfig();
-    config.window = { ...config.window, start: '09:00', end: '09:00', days: [] };
+    config.window = { start: '9am', end: '09:00', days: [], timezone: 'EST' };
     config.wrapupSeconds = 9999;
     config.abandonmentCeilingPct = 50;
-    config.dispositions = [...config.dispositions, { code: 'Bad Code', label: '' }];
+    config.dispositions = [
+      ...config.dispositions,
+      { code: 'Bad Code', label: '', retry: { max_attempts: 99 } },
+    ];
+    config.retryPolicy = { busy: { max_attempts: -1 } };
+    config.outcomeDispositions = { invalid: 'gone' };
+    config.assignment = {
+      ...config.assignment,
+      mode: 'nonsense' as never,
+      onUnstaff: 'nonsense' as never,
+      callbackFallback: 'nonsense' as never,
+      callbackGraceMinutes: -1,
+      agentRetryRounds: 0,
+      agentRetryCooldownMinutes: -1,
+    };
     const errors = validateConfig(config);
-    const rows = reviewFindings(errors, config);
-    const placed = [...rows.values()].reduce((sum, lines) => sum + lines.length, 0);
-    expect(placed).toBe(Object.keys(errors).length);
-    expect(rows.has('hours')).toBe(true);
-    expect(rows.has('wrapup')).toBe(true);
-    expect(rows.has('abandonment')).toBe(true);
-    expect(rows.has('outcomes')).toBe(true);
+    const keys = Object.keys(errors);
+    // Every row of the table is exercised by this config.
+    for (const [pattern] of EXPECTED) expect(keys.some((key) => pattern.test(key))).toBe(true);
+    for (const key of keys) {
+      const row = EXPECTED.find(([pattern]) => pattern.test(key));
+      expect(row, `no expectation for ${key}`).toBeDefined();
+      expect(stepForConfigField(key)).toBe(row![1]);
+      expect(reviewRowForConfigField(key)).toBe(row![2]);
+    }
   });
 });
 

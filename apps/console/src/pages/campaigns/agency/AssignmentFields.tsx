@@ -160,7 +160,10 @@ export function AssignmentFields({ assignment, onChange, errors, modeLocked }: A
         </p>
       </div>
 
-      {assignment.allowAgentRetry ? (
+      {/* Shown while either value is wrong as well, so a finding always has its input to fix. */}
+      {assignment.allowAgentRetry
+        || errors.message('agent_retry_rounds') !== null
+        || errors.message('agent_retry_cooldown_minutes') !== null ? (
         <div className={styles.retryFields} data-testid="agent-retry-fields">
           <label className={styles.retryField}>
             up to

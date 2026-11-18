@@ -336,3 +336,24 @@ describe('a caller ID dedicated to an agent', () => {
     )).toBeTruthy();
   });
 });
+
+describe('agent retries that hold Save', () => {
+  /*
+    The rounds and the cooldown are checked whatever "Let agents retry" says, so a wrong
+    value left behind when the box is unticked must keep its input on screen: otherwise
+    Save is held by a finding under a checkbox with nothing to change.
+  */
+  it('keeps the inputs while a value is wrong, even with retries switched off', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ allow_agent_retry: true, agent_retry_rounds: 2 }));
+    renderPage();
+    const rounds = await screen.findByLabelText('Agent retry rounds per contact');
+    fireEvent.change(rounds, { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('allow-agent-retry'));
+
+    expect(screen.getByTestId('agent-retry-fields')).toBeTruthy();
+    expect(screen.getByText(/^Rounds are 1 to/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Agent retry rounds per contact'), { target: { value: '2' } });
+    expect(screen.queryByTestId('agent-retry-fields')).toBeNull();
+  });
+});

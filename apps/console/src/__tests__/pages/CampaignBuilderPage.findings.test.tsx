@@ -134,9 +134,22 @@ describe('a finding on How agents work', () => {
 
     askCallbackForAPromise();
 
-    expect(screen.getByText(PROMISE_AND_CALLBACK)).toBeTruthy();
+    // Shown, linked to its field, and not announced as an alert while the form is edited.
+    const finding = screen.getByText(PROMISE_AND_CALLBACK).closest('p')!;
+    expect(finding.getAttribute('role')).toBeNull();
+    expect(promiseBox().getAttribute('aria-describedby')).toContain(finding.id);
     expect(saveButton().disabled).toBe(true);
-    expect(screen.getByTestId('config-block').textContent).toBe('Fix the highlighted field to save.');
+    expect(screen.getByTestId('config-block').textContent).toBe('Fix the highlighted field to save. Show me');
+  });
+
+  it('“Show me” on the same step takes focus to the field, wherever it has been scrolled', async () => {
+    await openBehaviour();
+    askCallbackForAPromise();
+    fireEvent.focus(screen.getByLabelText(/Wrap-up seconds/));
+    (screen.getByLabelText(/Wrap-up seconds/) as HTMLInputElement).focus();
+
+    fireEvent.click(within(screen.getByTestId('config-block')).getByRole('button', { name: 'Show me' }));
+    expect(document.activeElement).toBe(promiseBox());
   });
 
   it('marks the step on the stepper and leaves the hours ticked', async () => {

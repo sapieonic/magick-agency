@@ -212,10 +212,12 @@ export default function CampaignBuilderPage() {
         if (cardRef.current) focusFirstFieldError(cardRef.current);
         return;
       }
+      // The same gate as the stepper: no step past Basics until its basics are in.
+      if (!canVisitStep(target, name.trim().length > 0 && callerIds.length > 0)) return;
       focusFindingRef.current = true;
       goTo(target);
     },
-    [goTo, step],
+    [goTo, step, name, callerIds],
   );
 
   /*
@@ -473,8 +475,9 @@ export default function CampaignBuilderPage() {
 
   /*
     The form's own findings, live: what holds Save, which steps they are on, and what Review
-    says on each row. Review also shows a refusal from the server (`fieldErrors`), which
-    lands on the same keys.
+    says on each row. A refusal from the server (`fieldErrors`) is shown on its field, where
+    the save that answered it sent the operator; it is not repeated on Review, because it is
+    kept until the next save and would stay red there after the field was fixed.
   */
   const configErrors = useMemo(() => validateConfig(config), [config]);
   const configBlock = Object.keys(configErrors).length > 0;
@@ -482,10 +485,7 @@ export default function CampaignBuilderPage() {
   const invalidSteps = useMemo(() => new Set<BuilderStepId>(byStep.keys()), [byStep]);
   const blockCopy = saveBlockCopy(byStep, step);
   const otherStepWithFindings = firstOtherStepWithFindings(byStep, step);
-  const rowFindings = useMemo(
-    () => reviewFindings({ ...configErrors, ...fieldErrors }, config),
-    [configErrors, fieldErrors, config],
-  );
+  const rowFindings = useMemo(() => reviewFindings(configErrors, config), [configErrors, config]);
   const basicsReady = name.trim().length > 0 && callerIds.length > 0;
   const basicsBlock = basicsBlockReason(name, callerIds);
   const contactsLabel = contactsContinueLabel(phase);
@@ -560,17 +560,28 @@ export default function CampaignBuilderPage() {
   const leaveGuard = useUnsavedChangesGuard(unsaved);
 
   /*
-    Importing contacts creates the campaign as a draft, with the name, numbers and carrier
-    only; everything else reaches it with Save campaign. Without saying so, a draft in the
-    campaign list reads as "saved", and an operator whose save never went through finds
-    the recommended settings where their own should be. Said only while something differs
-    from what the draft holds.
+    A draft exists from its first need (a contact import, or a Save campaign whose settings
+    were then refused) with the name, numbers and carrier only; everything else reaches it
+    with Save campaign. Without saying so, a draft in the campaign list reads as "saved",
+    and an operator whose save never went through finds the defaults where their own
+    settings should be. Said only while something differs from what the draft holds, and
+    in words true of how the draft came to be.
   */
-  const draftNote = campaignId !== null && settingsChanged && !savingConfig
-    ? savedOnce
-      ? 'Some changes are not saved yet. Click Save campaign to keep them.'
-      : 'The draft holding your contacts still has the recommended settings. Your changes are kept when you click Save campaign.'
-    : null;
+  // An import that is under way counts: the draft exists from its start. A failed or
+  // cancelled one does not, and nor does a check, which never writes contacts.
+  const contactsInDraft = contactsImported || (running && job?.dry_run !== true);
+  const draftNote = campaignId === null || !settingsChanged || savingConfig
+    ? null
+    : savedOnce
+      ? 'Some changes are not saved yet. They reach the campaign only when you click Save campaign.'
+      : contactsInDraft
+        ? 'Your contacts are in a draft of this campaign, but your settings are not saved yet. They reach the draft only when you click Save campaign.'
+        : 'A draft of this campaign exists, but your settings are not saved yet. They reach the draft only when you click Save campaign.';
+  const leaveMessage = campaignId === null
+    ? 'What you have entered for this new campaign is not saved. Leave now and it is lost; Cancel keeps you here to save it.'
+    : `${contactsInDraft ? 'Your contacts are in a draft of this campaign' : 'A draft of this campaign exists'}, but your latest changes are not saved. Leave now and the draft keeps ${
+      savedOnce ? 'the settings it was last saved with' : 'the default settings'
+    }; Cancel keeps you here to save them.`;
 
   /** A Review row's button: "Fix" lands on the first field with an error, "Edit" on the step. */
   const editRow = (row: ReviewRowId, target: BuilderStepId) => () =>
@@ -1017,19 +1028,18 @@ export default function CampaignBuilderPage() {
             ) : null}
             {blockCopy ? (
               <span className={styles.blockReason} data-testid="config-block">
-                {blockCopy}
-                {otherStepWithFindings ? (
-                  <>
-                    {' '}
-                    <button
-                      type="button"
-                      className={styles.blockLink}
-                      onClick={() => goToFinding(otherStepWithFindings)}
-                    >
-                      {goToStepLabel(otherStepWithFindings)}
-                    </button>
-                  </>
-                ) : null}
+                {blockCopy}{' '}
+                {/*
+                  A way to the field from wherever the operator is: another step's, or this
+                  step's when it is scrolled out of view (the outcome list is long).
+                */}
+                <button
+                  type="button"
+                  className={styles.blockLink}
+                  onClick={() => goToFinding(otherStepWithFindings ?? step)}
+                >
+                  {otherStepWithFindings ? goToStepLabel(otherStepWithFindings) : 'Show me'}
+                </button>
               </span>
             ) : null}
             {configSaved ? (
@@ -1062,16 +1072,7 @@ export default function CampaignBuilderPage() {
         </div>
       </div>
 
-      <LeaveUnsavedDialog
-        guard={leaveGuard}
-        message={
-          campaignId !== null
-            ? `Your contacts are in a draft of this campaign, but your other changes are not saved. Leave now and the draft keeps ${
-              savedOnce ? 'the settings it was last saved with' : 'the recommended settings'
-            }; Cancel keeps you here to save them.`
-            : 'What you have entered for this new campaign is not saved. Leave now and it is lost; Cancel keeps you here to save it.'
-        }
-      />
+      <LeaveUnsavedDialog guard={leaveGuard} message={leaveMessage} />
     </div>
   );
 }

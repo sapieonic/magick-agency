@@ -138,10 +138,17 @@ export function CampaignBehaviourSection({
     Findings show as soon as they exist, not on a save attempt. Both pages disable Save
     while `validateConfig` finds anything, so a finding that waited for a save could never
     appear: Save would sit disabled beside "Fix the highlighted fields" with nothing
-    highlighted. A viewer who cannot save is shown only what the server said.
+    highlighted. They are quiet (no `role="alert"`), since they come and go while a field is
+    being typed in; the server's answer to a save is still announced, and wins. A section the
+    page marks `readOnly` is shown only what the server said.
   */
   const live = useMemo(() => (readOnly ? {} : validateConfig(state)), [readOnly, state]);
-  const errors = useConfigFieldErrors(useMemo(() => ({ ...live, ...fieldErrors }), [live, fieldErrors]));
+  const merged = useMemo(() => ({ ...live, ...fieldErrors }), [live, fieldErrors]);
+  const quiet = useMemo(
+    () => new Set(Object.keys(live).filter((field) => !(field in fieldErrors))),
+    [live, fieldErrors],
+  );
+  const errors = useConfigFieldErrors(merged, quiet);
   // The catalog row each mapped outcome follows through code edits (`followCatalogEdit`).
   const mappedRows = useRef<MappedRows>({});
   const showHours = include.includes('hours');

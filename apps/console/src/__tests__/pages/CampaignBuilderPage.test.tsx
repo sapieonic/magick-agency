@@ -644,6 +644,35 @@ describe('leaving the builder mid-upload', () => {
     expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
     expect(mocks.createAgencyCampaign).not.toHaveBeenCalled();
   });
+  it('after an import, says the contacts are kept in the draft but the settings are not', async () => {
+    const { default: CampaignBuilderPage } = await import(
+      '../../pages/campaigns/agency/CampaignBuilderPage'
+    );
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/new']}>
+        <Routes>
+          <Route path="/agency/campaigns/new" element={<CampaignBuilderPage />} />
+          <Route path="*" element={<p>Campaigns list</p>} />
+        </Routes>
+        <JumpAway />
+      </MemoryRouter>,
+    );
+    fillBasics();
+    goToStep('Who to call');
+    const input = screen.getByLabelText('CSV file') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['Cust Mobile\n9820041772\n'], 'c.csv', { type: 'text/csv' })] } });
+    await screen.findByLabelText('Use Cust Mobile as');
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
+    goToStep('How agents work');
+    fireEvent.change(screen.getByLabelText(/Wrap-up seconds/), { target: { value: '45' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    const dialog = screen.getByRole('dialog', { name: 'Leave without saving?' });
+    expect(dialog.textContent).toContain(
+      'Your contacts are in a draft of this campaign, but your latest changes are not saved. Leave now and the draft keeps the default settings; Cancel keeps you here to save them.',
+    );
+  });
 });
 
 /*
@@ -717,7 +746,7 @@ describe('the draft a roster import creates', () => {
     goToStep('How agents work');
     fireEvent.change(wrapup(), { target: { value: '45' } });
     expect(screen.getByTestId('draft-note').textContent).toBe(
-      'The draft holding your contacts still has the recommended settings. Your changes are kept when you click Save campaign.',
+      'Your contacts are in a draft of this campaign, but your settings are not saved yet. They reach the draft only when you click Save campaign.',
     );
     goToStep('Review & save');
     expect(screen.getByTestId('draft-note')).toBeTruthy();
@@ -734,7 +763,27 @@ describe('the draft a roster import creates', () => {
 
     fireEvent.change(wrapup(), { target: { value: '50' } });
     expect(screen.getByTestId('draft-note').textContent).toBe(
-      'Some changes are not saved yet. Click Save campaign to keep them.',
+      'Some changes are not saved yet. They reach the campaign only when you click Save campaign.',
+    );
+  });
+
+  it('does not talk of contacts when the draft has none: a save whose settings were refused', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(
+      Object.assign(new Error('Validation Error'), {
+        statusCode: 400,
+        details: { details: { wrapup_seconds: 'Wrap-up is 0–600 seconds.' } },
+      }),
+    );
+    await renderPage();
+    fillBasics();
+    goToStep('How agents work');
+    fireEvent.change(wrapup(), { target: { value: '45' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+
+    expect(await screen.findByTestId('draft-note')).toBeTruthy();
+    expect(screen.getByTestId('draft-note').textContent).toBe(
+      'A draft of this campaign exists, but your settings are not saved yet. They reach the draft only when you click Save campaign.',
     );
   });
 });

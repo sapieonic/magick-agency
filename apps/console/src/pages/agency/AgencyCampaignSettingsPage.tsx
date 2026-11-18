@@ -649,7 +649,8 @@ export function AgencyCampaignSettingsPage() {
                     disabled={!canEdit}
                   />
                   {callerIdsError && (
-                    <p className={styles.fieldError}>{callerIdsError}</p>
+                    // `data-field-error`: the picker marks no control invalid, so this is what "Show me" finds.
+                    <p className={styles.fieldError} data-field-error>{callerIdsError}</p>
                   )}
                 </div>
               </div>
