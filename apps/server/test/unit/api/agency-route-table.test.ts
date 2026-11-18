@@ -61,11 +61,6 @@ const PENDING: ReadonlyMap<string, string> = new Map([]);
  */
 const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['GET /healthz', 'liveness probe'],
-  // The Live floor's reads (decision B28b; `proxy-agency-floor.routes.ts`): served ahead of the
-  // console page that reads them. Move each to `console-paths.json` with its caller once the console
-  // calls it.
-  ['GET /proxy/agency/floor', 'Live floor: the account\'s floor (B28b), console caller pending'],
-  ['GET /proxy/agency/promises/summary', 'Live floor: the promises summary (B28b), console caller pending'],
   ['GET /readyz', 'readiness probe'],
   // The console's Overview/Performance tabs were its only caller; the Insights tab replaced them
   // (docs/insights.md, IN1). Kept: its types live in `contracts/src/agency/performance.ts`, beside

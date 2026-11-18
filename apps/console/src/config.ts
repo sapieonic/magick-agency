@@ -189,6 +189,12 @@ export const ENDPOINTS = {
        * the Insights parts it shares a cache with (staffing, allocation, today, settings) null.
        */
       home: `${API_BASE}/proxy/agency/home`,
+      /**
+       * Live floor's reads (decision B28b), both `agency.supervise`: the account's floor (one row
+       * per agent, `?from=` the viewer's local midnight) and the promises summary over a window.
+       */
+      floor: `${API_BASE}/proxy/agency/floor`,
+      promisesSummary: `${API_BASE}/proxy/agency/promises/summary`,
     },
   },
   /**
