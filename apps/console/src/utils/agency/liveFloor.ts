@@ -31,7 +31,9 @@ import { stillAcknowledged, type HomeAck } from './homeAcks';
  *  - a card per active campaign (calls live, how much of the list is done, Pause or Resume);
  *  - the agents' state chips, counted from each campaign's floor.
  *
- * Phase 2 adds an account-wide floor read (one row per agent); its seams are named where they are.
+ * Phase 2's account-wide floor read (one row per agent) and the promises summary have their rules
+ * in `liveFloorAgents.ts`: the agent cards and their chips, breaks over the limit in Needs you now,
+ * Agents working from the floor and the Will pay tile.
  */
 
 /** The page's name, in the sidebar, the breadcrumb and its heading. */

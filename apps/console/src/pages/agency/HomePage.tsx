@@ -55,9 +55,12 @@ function useBreakClock(): number {
  * Gated at `agency.supervise` (`HOME_GATE` in `utils/consoleNav`): every read it makes floors
  * there. Anyone else who opens the URL is sent to `/agency`, whose index picks their landing.
  *
- * Its reads are Home's: the shared board (`useHomeBoard`, every 10 s while open), today so far
- * (`useTodaySoFar`, one grouped read a minute) and the missed-calls count. The filter is client
- * side over the board's campaigns and kept in `?campaign=`, so it survives a reload.
+ * Its reads: Home's shared board (`useHomeBoard`, every 10 s while open), today so far
+ * (`useTodaySoFar`, one grouped read a minute and at local midnight) and the missed-calls count;
+ * and Phase 2's own (B28b), which only this page asks for: the account's floor (`useAgentFloor`,
+ * every 5 s) and today's promises (`usePromisesToday`, a minute and at local midnight). Retry reads
+ * all three of the board, the floor and the promises again, a refused one included. The filter is
+ * client side over the board's campaigns and kept in `?campaign=`, so it survives a reload.
  */
 export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();

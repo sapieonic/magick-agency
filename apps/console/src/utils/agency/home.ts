@@ -52,8 +52,9 @@ export type HomeTone = 'danger' | 'warning' | 'info';
  * Where a row stands in Needs you now (decision LF9), most urgent first: an agent asking for help
  * (a customer is on the line; Phase 3, not yet a row), then what has stopped a campaign dialling
  * (an automatic pause, a compliance or carrier stop: a stall in the danger tone), a break run over
- * its limit (Phase 3, not yet a row), late callbacks, then any other danger, the warnings and
- * last the information rows. The badge does not read it: it counts tones, not places.
+ * the floor's limit (Phase 2, from the floor read: `breakOverrunItems` in `liveFloorAgents.ts`),
+ * late callbacks, then any other danger, the warnings and last the information rows. The badge
+ * does not read it: it counts tones, not places.
  */
 export const HOME_RANKS = ['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info'] as const;
 export type HomeRank = (typeof HOME_RANKS)[number];
