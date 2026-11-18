@@ -39,11 +39,11 @@ super-admins add (not env). Built in steps:
 |---|---|---|
 | 1 Carrier modules | Done | The bridge asks a per-carrier module (media protocol, hangup style) instead of `provider === 'voicelink'`; `carrier-modules.test.ts`, mutation-checked against the bridge suites |
 | 2 Credential store | Done | Migration `0002_telephony_credentials.sql`; envelope sealer and env keyring; credential service and `getForCredentialId`; super-admin API and Telephony Credentials screen; unit tests and a real-Postgres repository suite, guards mutation-checked; keyring and sweep metrics with alerts `agy-credential-keyring-missing-keys` and `agy-credential-sweep-failing` (`voice-credential-housekeeping.test.ts`) |
-| 3 Plivo adapter | Done | `feat(server): Plivo carrier module (adapter, μ-law media, callbacks, V3 signatures)` and `feat(server): fetch BYOC recordings on the tenant's credential (B21)`. Dial on the fixed API host returning the `request_uuid`, `time_limit` on every dial, cancel by request id and hang up by call id (an empty or malformed id refused before any URL is built), answer XML with a session `<Record>` and a bidirectional μ-law `<Stream>`, V3 signatures against the current and grace tokens, a per-account calls-per-second gate in Redis, `carrier_dial_refusals_total`; recordings through `telephony/recording-access.ts` (Plivo: `media.plivo.com` exactly, the credential on the first request only). Tests: `test/unit/telephony/plivo/` (`plivo.adapter`, `plivo-signature`, `plivo-dial-rate`, `plivo-config`, and `plivo-carrier.fixture.test.ts` over `plivo-carrier.fixture.json`), `audio-fir-mulaw.test.ts`, `carrier-errors.test.ts`, `recording-access.test.ts`, `recording-proxy.test.ts`, `recording-fetcher.test.ts` |
+| 3 Plivo adapter | Done | `feat(server): Plivo carrier module (adapter, μ-law media, callbacks, V3 signatures)` and `feat(server): fetch BYOC recordings on the tenant's credential (B21)`. Dial on the fixed API host returning the `request_uuid`, `time_limit` on every dial, cancel by request id and hang up by call id (an empty or malformed id refused before any URL is built), answer XML with a session `<Record>` and a bidirectional μ-law `<Stream>`, V3 signatures against the current and grace tokens, a per-account calls-per-second gate in Redis, `carrier_dial_refusals_total`; recordings through `telephony/recording-access.ts` (Plivo: `media.plivo.com` exactly, the credential on the first request only; since 2026-11-18 its regional subdomains too, PL6 as amended). Tests: `test/unit/telephony/plivo/` (`plivo.adapter`, `plivo-signature`, `plivo-dial-rate`, `plivo-config`, and `plivo-carrier.fixture.test.ts` over `plivo-carrier.fixture.json`), `audio-fir-mulaw.test.ts`, `carrier-errors.test.ts`, `recording-access.test.ts`, `recording-proxy.test.ts`, `recording-fetcher.test.ts` |
 | 4 Dialler integration | Done | `feat(server,console,contracts,db,domain): pin campaigns to a tenant carrier credential and sync its numbers` (migration `0019_plivo_numbers_and_carrier_pause.sql`, numbered 0018 before main's `0018_agent_caller_ids.sql` was merged: the `plivo` provider row active, `phone_numbers.telephony_credential_id`, pause reason `carrier_auth`); `feat(server): dial Plivo on the campaign's credential through the bridge`; `feat(server): serve Plivo's answer, status and recording callbacks`; `feat(server): forward Plivo callbacks to the media worker that holds the call`; `feat(console,super-admin): choose the campaign's carrier and sync a credential's numbers`; `fix(db): offer no caller ID from a carrier credential that cannot dial`; `feat(server,console,contracts,db): pause a campaign whose carrier account is no longer active` (migration `0020_carrier_account_unavailable_pause.sql`). Every step-2 obligation is met: the bridge dials through `getForCredentialId(provider, id, 'dial', tenantId)`; the call row's INSERT re-checks the credential is `active` (`credential-call-insert.repository.test.ts`); a campaign pins only an `active` credential of its tenant; the dial's `request_uuid` is persisted to `provider_request_id` and a teardown before the answer cancels by it. Tests: `campaign-carrier-pinning.test.ts` (integration), `dialer-carrier-refusals.test.ts`, `webrtc-bridge-plivo.test.ts`, `plivo-webhooks.test.ts`, `plivo-callback-forwarding.test.ts`, `credential-number-sync.test.ts`, `proxy-agency-carriers.test.ts`, the db suites `plivo-numbers-migration`, `carrier-account-unavailable-migration` and `phone-number-sync.repository`, the console's `CampaignBuilderPage.carrier`, `AgencyCampaignSettingsPage.carrier` and `agencyCarriers`. End to end against the scriptable mock carrier (`apps/server/test/mocks/plivo/`, checked by `test/unit/load/mock-plivo-carrier.test.ts`, which runs the real `PlivoAdapter` against it): `test/integration/telephony/plivo-call-e2e.test.ts` (a full call; cancelled while ringing; unsigned, forged and other-tenant callbacks refused; a 401 pausing `carrier_auth`; a disabled credential pausing `carrier_account_unavailable`; the previous token accepted inside the rotation grace) and `plivo-cluster-forwarding.test.ts` (callbacks forwarded to a media worker and verified there), in the rest lane. An account on a per-carrier concurrency breakdown needs a `plivo` row, set in the super-admin console (`operations.md`, "Enabling Plivo for a tenant"); since the review fixes a campaign without one is refused at start (PL14) |
 | Review fixes (2026-11-07) | Done | An independent review (principal engineer, product and QA) of steps 3 and 4 found no critical defect; every finding is fixed with a test that fails without it (mutation-checked). Dial path: a dial the adapter refuses before sending is unplaced and uncharged (`CarrierDialNotSentError`), and a contact number the carrier will never dial is suppressed `invalid`; `PLIVO_WEBHOOK_BASE_URL` validated at load; five carrier refusals in a row pause the campaign `carrier_refusing_calls` (migration `0021_carrier_refusing_calls_pause.sql`, PL11); a carrier that cannot dial is not offered and its campaigns do not start (PL12); a failed hangup gives back its one-hangup claim; a replayed signed callback is refused; an unanswered call ends soon after the carrier's ring timeout; the calls-per-second gate is a sliding window; tenants never see a carrier's raw error text. Campaigns: a retired caller ID no longer locks the settings and is no longer dialled (PL13); start is refused when the carrier has no concurrency allocation on a per-carrier breakdown (PL14); the health strip shows automatic carrier pauses and campaigns that cannot dial. Copy: "contact support" (PL15), super-admin names carriers "Alias (Vendor)" (PL16), no vendor name or UUID in the Activity trail, British spelling guarded in both web UIs. Agent app: the ringing warning only on a carrier that cannot cancel, `can_cancel_ringing` decoded in `agency_wire` |
 | Merge with main (2026-11-07) | Done | `main`'s dedicated caller ID per agent (#51, DN1–DN10) and the Insights tabs (#53) merged in (a merge commit; the branch is published). `main`'s `0018_agent_caller_ids.sql` is released and kept; this branch's unreleased migrations moved up one, to `0019_plivo_numbers_and_carrier_pause.sql`, `0020_carrier_account_unavailable_pause.sql` and `0021_carrier_refusing_calls_pause.sql` (headers, tests, `BASELINE.md`, the down → up ledger). The two caller-ID rules are one: every dial path hands `resolveCallerId` (DN2) the campaign's DIALABLE caller IDs (PL13), so on a tenant's own carrier account a dedicated number retired or revoked there falls back to the rotation, and the rotation is the dialable pool minus the dedicated numbers; a service-account campaign behaves as on `main` (`decisions.md`, PL13's addendum). The supervisor's caller-ID list and PUT and the agent's My contacts see the same pool; removing a retired number still dedicated is refused `caller_id_dedicated`, naming it. Tests: `pacing-engine.test.ts` and `dedicated-caller-ids.test.ts` ("over the dialable pool"), `agency-agent-caller-ids.test.ts` (a pinned campaign end to end), each mutation-checked; counts under "Test counts" |
-| 5 Live check | Not started | Needs a Plivo account. To check: one real call end to end (dial, answer XML, stream, hangup) and one recording analysed; the cause codes real hangup callbacks carry, added to `plivo-carrier.fixture.json`; the recording host and whether a recording fetch redirects (the fetch sends the credential to `media.plivo.com` only and never follows a redirect with it); the assumption that a 403 on create-call is a geo-permission refusal of the destination, not an auth failure; and the call detail record the ring deadline reads (`GET Call/{call_uuid}/`): the values of its `call_state` for a busy, unanswered, cancelled, failed and answered call (the SDK names the field, not its values; `plivo-carrier.fixture.json` `cdr` holds illustrative ones), its `hangup_cause_name` catalogue, and that it answers 404 while the call is live |
+| 5 Live check | Not started | Needs a Plivo account. To check: one real call end to end (dial, answer XML, stream, hangup) and one recording analysed; the cause codes real hangup callbacks carry, added to `plivo-carrier.fixture.json`; the recording host and whether a recording fetch redirects (the fetch sends the credential to `media.plivo.com` and its subdomains only, and never follows a redirect with it; staging's account records on `aps1.media.plivo.com`); the assumption that a 403 on create-call is a geo-permission refusal of the destination, not an auth failure; and the call detail record the ring deadline reads (`GET Call/{call_uuid}/`): the values of its `call_state` for a busy, unanswered, cancelled, failed and answered call (the SDK names the field, not its values; `plivo-carrier.fixture.json` `cdr` holds illustrative ones), its `hangup_cause_name` catalogue, and that it answers 404 while the call is live |
 
 ### Tidy-up 2026-10-16/17
 
@@ -2261,7 +2261,94 @@ restored with `git checkout`), 5: the server's flag gate re-added
 (`ListenHistoryPage.test.tsx`); a 503 read as final; the page reading the flag itself (21 red).
 Counts under "Test counts".
 
+### Analysis: why the AI vendor refuses, and an alert when it does not stop 2026-11-18
+
+Staging's post-call analysis worker was rate-limited (HTTP 429) by Gemini from 21:10 IST on
+2026-11-17, one second after a boot, and stayed refused all night: two WARN lines every 12-18
+minutes with no reason in them, and the job row's `error_message` a fixed "transcriber
+rate-limited" text. A short per-minute limit and an exhausted daily quota or billing stop looked
+the same. Now: the AI clients keep what the vendor said on a `rate_limited` `AiError` (Gemini's
+status, exceeded quota ids and retry delay, parsed from the SDK's JSON body; OpenAI's code and
+`retry-after`/`retry-after-ms`); a `RATE_LIMITED` `TranscriptionError` carries the same detail
+(Gemini's mapped from its `AiError`, Sarvam's from its own 429 body and `retry-after`), and the
+runner turns either into one flat set of log fields that it and the worker both write, with the
+refused `stage` (`transcribe` or `analyze`) and `refusingSince`; the job row keeps it in
+`error_message`. From the 8th consecutive pause (~45 minutes, no job completed;
+`PERSISTENT_RATE_LIMIT_PAUSES`) the worker logs ERROR, and each process logs its recovery at INFO.
+New gauge `dialer_analysis_rate_limit_consecutive_pauses`, a dashboard panel (*Dialer Analysis
+Vendor Refusals*) and the warning alert `agy-analysis-vendor-refusing`, filtered to deployments
+still pausing (each analysis process holds its own gauge until a job of its own completes); the
+validator pins its threshold to the worker's constant. Runbook: [`operations.md`](operations.md),
+"Alert runbooks". Reviewed by a fresh-context reviewer; its findings (the stale gauge across
+processes, the untested worker hop, the runbook's keys and per-minute remedy, the doc counts, the
+dashboard) are fixed in the same commit, and a cleanup pass (reuse, simplification, efficiency,
+altitude) flattened the cause into one shape and moved it off the breaker. Mutation-checked (each red, then restored with
+`git checkout`), 16 in all, among them: the worker dropping the cause, the runner dropping the
+stage or the row's reason, the transcriber dropping the cause, the escalation threshold off by
+one, `since` reset on every opening, the close never announced, the parsers' edge cases, the
+repository ignoring the reason (real Postgres), the constant drifting from the alert, the alert
+losing its filter, Sarvam's 429 losing its detail. Not changed, and why: campaigns are not paused outside calling hours or with no
+agents (pacing already dials nothing and resumes by itself, `pacing-engine.ts` "`to_dial == 0` IS
+the paused state"); the analysis worker keeps working overnight, which is when it should catch up.
+
+### Plivo's regional recording media hosts, and re-queueing what they failed 2026-11-18 (B21, PL6, RC4 amended)
+
+Staging refused every Plivo recording stored on the account's regional media host: from
+2026-11-17 01:11 UTC the analysis worker logged "Recording URL is not on the recording-host
+allow-list; refusing to fetch" (`host=aps1.media.plivo.com`, `reason=host_not_allowed`, hop 0)
+33 times, each a job failed for good (`TRANSCRIPTION_FAILED`, not retryable), and the console's
+player 502'd 4 calls (8 "refusing to proxy" lines). Plivo gives the regional host as the
+recording URL itself, so `PLIVO_RECORDING_REDIRECT_HOSTS` could not help: Plivo's access matched
+`media.plivo.com` exactly. Now (Manas asked for it; B21, PL6 and RC4 amended in
+[`decisions.md`](decisions.md)) Plivo's access matches `media.plivo.com` and any subdomain of it on
+a dot boundary (it no longer sets `exactHosts`, `telephony/recording-access.ts`), on the first URL
+and every redirect hop, for both consumers (the playback proxy and the analysis fetch), with Basic
+auth on the first request only as before. Accepted: `media.plivo.com`, `aps1.media.plivo.com`,
+`usw1.media.plivo.com` (any case, a trailing dot). Refused, with tests: `api.plivo.com`,
+`plivo.com`, `www.plivo.com`, `evilmedia.plivo.com`, `media.plivo.com.evil.com`,
+`aps1.media.plivo.com.evil.com`, `media-plivo.com`, the host as userinfo (also with a port), after
+a backslash, in the path, query or fragment, http, and (new, for every carrier) a host with an
+empty label (`.media.plivo.com`, `aps1..media.plivo.com`), which `recordingHostname` now refuses
+rather than leave to DNS. VoiceLink's rule is unchanged. Tests that pinned the old exact-only rule,
+updated: `recording-proxy.test.ts` (a Plivo URL on `evil.media.plivo.com` was a 502; it is now a
+media host, replaced by `evilmedia.plivo.com` and the cases above), `recording-access.test.ts` and
+`dialer-analysis-runner.test.ts` (`exactHosts: true` on Plivo's access). The failed jobs: new
+operator script `apps/server/scripts/requeue-recording-host-refusals.ts` (in the image,
+`dist/requeue-recording-host-refusals.js`), a dry run unless `--apply`, selects `failed`
+`TRANSCRIPTION_FAILED` jobs whose message is a host refusal on calls not erased
+(`findRecordingHostRefusals`, by `--host`, `--tenant`, `--since` / `--before`, `--limit`) and
+re-queues each with the existing `requeueForManualRetry` (full attempt budget, never past the
+lifetime ceiling, the call mirrored `pending`). There was no re-analyse route to reuse
+(`requeueForManualRetry` had no caller). A unit test pins the selector's pattern to the message the
+analysis fetch really throws. Runbook: [`operations.md`](operations.md) "Re-analysing calls a
+recording-host refusal failed"; to run after the deploy:
+`node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z`,
+then again with `--apply`. Mutation-checked (each red, then restored with `git checkout`): Plivo's
+access back to exact-only (10 unit and 1 integration red, the aps1 and usw1 accept cases among
+them); the subdomain match without its dot boundary (5 unit and 1 integration red,
+`evilmedia.plivo.com` among them); the empty-label guard removed (3 red); the server's refusal
+message reworded (the 2 pattern pins red); the selector widened, without its message match (1 red
+in `packages/db`, 1 in the script's integration test) and without `status = 'failed'` (1 red).
+
 ## Test counts
+
+**Plivo's regional recording media hosts, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`,
+on the tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and
+Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana`
+34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit: `apps/server` 10487 passed + 1 expected
+fail (529 files), `packages/db` 457 (28 files). Integration: `packages/db` 832 (91 files);
+`apps/server` `INTEGRATION_LANE=rest` 3025 passed + 9 expected fail + 2 skipped (275 files passed,
+2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The changed files' own counts are in
+[`modules.md`](modules.md).
+
+**Analysis vendor refusals, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`, on the
+tree of this entry's commit (after the cleanup pass), every suite run one after another (Postgres 16 on 5436 and Redis on
+6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana` 34,
+`pnpm test:release` 10, `pnpm test:tooling` 20. Unit: `apps/server` 10430 passed + 1 expected fail
+(528 files), `packages/db` 457 (28 files), `packages/observability` 23 (5 files). Integration:
+`packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3018 passed + 9 expected fail
++ 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The
+changed files' own counts are in [`modules.md`](modules.md).
 
 **Live call listening, the history without the flag, 2026-11-17.** Branch `ccr-364c489c-zeoxwy`,
 on the tree of `4858093`, every suite run one after another. From the root: `pnpm lint` clean;

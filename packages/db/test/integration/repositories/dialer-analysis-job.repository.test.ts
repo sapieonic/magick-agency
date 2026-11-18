@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { insertWebrtcCall } from '../setup/factories.js';
+import { OTHER_TENANT, insertWebrtcCall } from '../setup/factories.js';
 
 /*
  * Real Postgres. Rows live in `agency_calls`; ids come from the UUID factories.
@@ -9,10 +9,12 @@ import { insertWebrtcCall } from '../setup/factories.js';
  * covers queue depth and that a completed job is not reclaimed. Also covered end
  * to end: every mirrored `analysis_status` transition, `recoverStale` failing at
  * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited`, `list` and
- * `msUntilNextRunnable` (the worker's next-due timer).
+ * `msUntilNextRunnable` (the worker's next-due timer), and `findRecordingHostRefusals`, the
+ * operator re-queue's selector: only failed jobs a recording-host refusal ended, by window,
+ * tenant and host, then re-queued with `requeueForManualRetry`.
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
-const { dialerAnalysisJobRepository: repo } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
+const { dialerAnalysisJobRepository: repo, RECORDING_HOST_REFUSAL_MESSAGE } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
 
 async function callWithRecording(overrides: Record<string, unknown> = {}) {
   return insertWebrtcCall({ recording_requested: true, recording_url: 'https://recording.example/call.wav', ...overrides });
@@ -184,8 +186,12 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect(await repo.findById(bJob.id)).toMatchObject({ status: 'queued', attempts: 0, claim_generation: bClaim!.claim_generation + 1 });
 
     const [again] = await repo.claimRunnable(1);
-    expect(await repo.requeueRateLimited(bJob.id, again!.claim_generation, 60)).toBe(true);
-    expect(await repo.findById(bJob.id)).toMatchObject({ status: 'queued', attempts: 0, error_code: 'RATE_LIMITED' });
+    // The row keeps why the vendor refused, trimmed to 2000 characters like every error.
+    const reason = `rate-limited (transcribe, gemini): You exceeded your current quota ${'x'.repeat(3000)}`;
+    expect(await repo.requeueRateLimited(bJob.id, again!.claim_generation, 60, reason)).toBe(true);
+    expect(await repo.findById(bJob.id)).toMatchObject({
+      status: 'queued', attempts: 0, error_code: 'RATE_LIMITED', error_message: reason.slice(0, 2000),
+    });
     expect(await callStatus(b.id)).toBe('pending');
   });
 
@@ -227,5 +233,71 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect(await repo.msUntilNextRunnable()).toBe(0);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = NULL WHERE id = $1`, [soon.id]);
     expect(await repo.msUntilNextRunnable()).toBe(0);
+  });
+
+  describe('findRecordingHostRefusals (the operator re-queue after an allow-list fix)', () => {
+    // What the analysis runner stores for a refused host: `RecordingHostRefusedError`'s
+    // message unchanged (pinned against the server's class in the server's unit tests).
+    const APS1_HOP0 = 'Recording host "aps1.media.plivo.com" is not on the recording-host allow-list';
+    const APS1_HOP1 = 'Recording host "aps1.media.plivo.com" is not on the recording-host allow-list (redirect hop 1)';
+    const OTHER_HOST = 'Recording host "evil.example" is not on the recording-host allow-list';
+
+    /** A call whose analysis job ended as given (the call row mirrors `failed`, as markFailed does). */
+    async function ended(errorCode: string, errorMessage: string, over: { tenant_id?: string; status?: string; callStatus?: string } = {}) {
+      const call = await callWithRecording({ provider: 'plivo', ...(over.tenant_id ? { tenant_id: over.tenant_id } : {}) });
+      const job = await enqueue(call);
+      await getTestPool().query(
+        `UPDATE dialer_analysis_jobs SET status = $2, error_code = $3, error_message = $4, attempts = 1, attempts_total = 1 WHERE id = $1`,
+        [job.id, over.status ?? 'failed', errorCode, errorMessage],
+      );
+      await getTestPool().query(`UPDATE agency_calls SET analysis_status = $2 WHERE id = $1`, [call.id, over.callStatus ?? 'failed']);
+      return { call, job };
+    }
+    const ids = (rows: Array<{ id: string }>) => rows.map((r) => r.id).sort();
+    const dbNow = async () => (await getTestPool().query<{ now: Date }>('SELECT clock_timestamp() AS now')).rows[0]!.now;
+
+    it('matches only a failed TRANSCRIPTION_FAILED job whose message is a host refusal, on a call not erased', async () => {
+      const hop0 = await ended('TRANSCRIPTION_FAILED', APS1_HOP0);
+      const hop1 = await ended('TRANSCRIPTION_FAILED', APS1_HOP1);
+      // Every other ending is left alone: none of them is cured by an allow-list fix.
+      await ended('TRANSCRIPTION_FAILED', 'Recording fetch failed with status 404');
+      await ended('TRANSCRIPTION_FAILED', 'Recording fetch followed more than 3 redirects');
+      await ended('TRANSCRIPTION_FAILED', 'Recording host (unparseable or non-https URL) is not on the recording-host allow-list');
+      await ended('TRANSCRIPTION_FAILED', 'Recording access refused for provider "plivo": credential_unavailable (status)');
+      await ended('TRANSCRIPTION_FAILED', `Failed to fetch recording: ${APS1_HOP0}`);
+      await ended('TRANSCRIPTION_FAILED', `${APS1_HOP0}; and more`);
+      await ended('TIMEOUT', APS1_HOP0);
+      await ended('TRANSCRIPTION_FAILED', APS1_HOP0, { status: 'queued', callStatus: 'pending' });
+      await ended('TRANSCRIPTION_FAILED', APS1_HOP0, { status: 'completed', callStatus: 'completed' });
+      await ended('TRANSCRIPTION_FAILED', APS1_HOP0, { callStatus: 'deleted' });
+
+      expect(ids(await repo.findRecordingHostRefusals())).toEqual([hop0.job.id, hop1.job.id].sort());
+      expect(new RegExp(RECORDING_HOST_REFUSAL_MESSAGE).test(APS1_HOP1)).toBe(true);
+    });
+
+    it('narrows by refused host, tenant, failure window and limit, oldest failure first', async () => {
+      const first = await ended('TRANSCRIPTION_FAILED', APS1_HOP0);
+      const between = await dbNow();
+      const other = await ended('TRANSCRIPTION_FAILED', OTHER_HOST);
+      const otherTenant = await ended('TRANSCRIPTION_FAILED', APS1_HOP1, { tenant_id: OTHER_TENANT });
+
+      expect(ids(await repo.findRecordingHostRefusals({ host: 'aps1.media.plivo.com' })))
+        .toEqual([first.job.id, otherTenant.job.id].sort());
+      expect(ids(await repo.findRecordingHostRefusals({ host: 'media.plivo.com' }))).toEqual([]);
+      expect(ids(await repo.findRecordingHostRefusals({ tenantId: OTHER_TENANT }))).toEqual([otherTenant.job.id]);
+      expect(ids(await repo.findRecordingHostRefusals({ failedBefore: between }))).toEqual([first.job.id]);
+      expect(ids(await repo.findRecordingHostRefusals({ failedSince: between })))
+        .toEqual([other.job.id, otherTenant.job.id].sort());
+      expect((await repo.findRecordingHostRefusals({ limit: 1 })).map((r) => r.id)).toEqual([first.job.id]);
+    });
+
+    it('a matched job re-queued with requeueForManualRetry is queued, mirrored pending, and no longer matched', async () => {
+      const { call, job } = await ended('TRANSCRIPTION_FAILED', APS1_HOP0);
+      const requeued = await repo.requeueForManualRetry(call.id, { extraAttempts: 3, attemptsTotalCeiling: 8, settleSeconds: 0 });
+      expect(requeued).toMatchObject({ id: job.id, status: 'queued', attempts: 0, attempts_total: 1, error_code: null, error_message: null });
+      expect(await callStatus(call.id)).toBe('pending');
+      expect(await repo.findRecordingHostRefusals()).toEqual([]);
+      expect((await repo.claimRunnable(5)).map((r) => r.id)).toEqual([job.id]);
+    });
   });
 });

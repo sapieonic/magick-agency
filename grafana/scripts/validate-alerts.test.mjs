@@ -470,4 +470,20 @@ describe('agency alert rules', () => {
     }
     assert.deepEqual(problems, [], `routing contract with the stack's notification policy broken:\n  ${problems.join('\n  ')}`);
   });
+
+  // The analysis worker logs an ERROR from its PERSISTENT_RATE_LIMIT_PAUSES-th consecutive pause
+  // on; the alert must fire at that same pause, or the page and the log disagree.
+  test('agy-analysis-vendor-refusing fires at the pause the worker escalates its log at', () => {
+    const source = readFileSync(join(root, 'apps/server/src/core/vendor-rate-limit-breaker.ts'), 'utf8');
+    const pauses = Number(/export const PERSISTENT_RATE_LIMIT_PAUSES = (\d+);/.exec(source)?.[1]);
+    assert.ok(Number.isInteger(pauses), 'PERSISTENT_RATE_LIMIT_PAUSES not found in vendor-rate-limit-breaker.ts');
+    const rule = load().rules.find((r) => r.uid === 'agy-analysis-vendor-refusing');
+    assert.ok(rule, 'agy-analysis-vendor-refusing not found');
+    assert.equal(rule.op, 'gt');
+    assert.equal(Number(rule.threshold), pauses - 0.5);
+    // Each analysis process holds its gauge until a job of its own completes, so the rule keeps
+    // to deployments still pausing: without the filter, a process the recovery never reached
+    // would hold the alert on.
+    assert.match(rule.rawExpr, /\band on \(service_name\) \(sum by \(service_name\) \(increase\(dialer_analysis_rate_limit_pauses_total\{/);
+  });
 });

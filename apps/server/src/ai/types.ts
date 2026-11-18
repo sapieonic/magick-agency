@@ -176,16 +176,46 @@ const NOT_RETRIED_IN_PLACE: ReadonlySet<AiErrorKind> = new Set([
   'rate_limited', 'unsupported_input', 'unsupported_operation', 'invalid_config',
 ]);
 
+/**
+ * What a vendor said about a `rate_limited` error, as far as it said anything. Logged so an
+ * operator can tell a short per-minute limit from an exhausted daily quota or a billing stop
+ * (both arrive as HTTP 429); nothing branches on it.
+ */
+export interface AiRateLimitDetail {
+  /** The vendor's own code: Gemini's `RESOURCE_EXHAUSTED`, OpenAI's `insufficient_quota` or `rate_limit_exceeded`. */
+  vendorCode?: string;
+  /** The quotas the vendor says were exceeded (Gemini's QuotaFailure `quotaId`s, e.g. `GenerateRequestsPerDayPerProjectPerModel`). */
+  quotaIds?: string[];
+  /** The vendor's own retry hint in seconds (Gemini's RetryInfo `retryDelay`, a `retry-after` header). */
+  retryAfterSeconds?: number;
+  /** The vendor's human-readable message, without the SDK's JSON wrapping. */
+  vendorMessage?: string;
+}
+
+/**
+ * A vendor's retry hint as whole seconds: a number, or a header's text (`perSecond` 1000 for a
+ * value in milliseconds). Undefined for anything that is not a non-negative number, an empty
+ * header or an HTTP-date included.
+ */
+export function retryAfterSeconds(raw: unknown, perSecond = 1): number | undefined {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.ceil(n / perSecond) : undefined;
+}
+
 export class AiError extends Error {
+  /** Set on `rate_limited` errors when the vendor's response said why. */
+  readonly rateLimit?: AiRateLimitDetail;
+
   constructor(
     readonly kind: AiErrorKind,
     readonly provider: AiProvider,
     message: string,
     readonly status?: number,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; rateLimit?: AiRateLimitDetail },
   ) {
     super(message, options);
     this.name = 'AiError';
+    this.rateLimit = options?.rateLimit;
   }
 
   /** Read by `utils/retry.ts`: these kinds are not retried in place. */

@@ -7,8 +7,10 @@ import {
   type AiInputPart,
   type AiJsonRequest,
   type AiJsonResponse,
+  type AiRateLimitDetail,
   type AiUsage,
   type GeminiClientConfig,
+  retryAfterSeconds,
 } from './types.js';
 
 // Minimal structural types for the parts of @google/genai this client touches. The
@@ -237,10 +239,55 @@ function classify(err: unknown, context: string): AiError {
   const status = typeof (err as { status?: unknown })?.status === 'number'
     ? (err as { status: number }).status
     : undefined;
-  const kind = status === 429 || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(message)
-    ? 'rate_limited'
-    : 'request_failed';
-  return new AiError(kind, 'gemini', `${context}: ${message}`, status, { cause: err });
+  if (status === 429 || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(message)) {
+    return new AiError('rate_limited', 'gemini', `${context}: ${message}`, status, {
+      cause: err,
+      rateLimit: geminiRateLimitDetail(message),
+    });
+  }
+  return new AiError('request_failed', 'gemini', `${context}: ${message}`, status, { cause: err });
+}
+
+const QUOTA_FAILURE_TYPE = 'type.googleapis.com/google.rpc.QuotaFailure';
+const RETRY_INFO_TYPE = 'type.googleapis.com/google.rpc.RetryInfo';
+
+/**
+ * What Gemini said about a 429. The SDK's `ApiError` message is the response body as JSON,
+ * `{"error":{"code":429,"message":…,"status":"RESOURCE_EXHAUSTED","details":[…]}}`, whose
+ * details name the exceeded quotas (QuotaFailure) and a retry delay (RetryInfo, `"36s"`).
+ * Anything that does not parse yields what could be read, never a throw.
+ */
+export function geminiRateLimitDetail(message: string): AiRateLimitDetail {
+  const start = message.indexOf('{');
+  if (start < 0) return {};
+  let body: unknown;
+  try {
+    body = JSON.parse(message.slice(start));
+  } catch {
+    return {};
+  }
+  const error = (body as { error?: unknown } | null)?.error;
+  if (!error || typeof error !== 'object') return {};
+  const { message: vendorMessage, status, details } = error as {
+    message?: unknown; status?: unknown; details?: unknown;
+  };
+  const detail: AiRateLimitDetail = {};
+  // A canonical code (RESOURCE_EXHAUSTED); a non-JSON 429 body puts the HTTP status text here.
+  if (typeof status === 'string' && /^[A-Z][A-Z_]*$/.test(status)) detail.vendorCode = status;
+  if (typeof vendorMessage === 'string' && vendorMessage) detail.vendorMessage = vendorMessage;
+  if (!Array.isArray(details)) return detail;
+  const quotaIds = new Set<string>();
+  for (const d of details as Array<Record<string, unknown> | null>) {
+    if (d?.['@type'] === QUOTA_FAILURE_TYPE && Array.isArray(d.violations)) {
+      for (const v of d.violations as Array<{ quotaId?: unknown } | null>) {
+        if (typeof v?.quotaId === 'string' && v.quotaId) quotaIds.add(v.quotaId);
+      }
+    } else if (d?.['@type'] === RETRY_INFO_TYPE && typeof d.retryDelay === 'string') {
+      detail.retryAfterSeconds = retryAfterSeconds(Number.parseFloat(d.retryDelay)); // "36.5s"
+    }
+  }
+  if (quotaIds.size > 0) detail.quotaIds = [...quotaIds];
+  return detail;
 }
 
 function sleep(ms: number): Promise<void> {

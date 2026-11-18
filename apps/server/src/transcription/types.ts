@@ -1,4 +1,5 @@
 import type { DialerSpeakerRole, DialerTranscriptEntry } from '@magick-agency/db/models/agency-call.model';
+import type { AiRateLimitDetail } from '../ai/index.js';
 
 /**
  * The transcription seam. A dialer call has no live STT — the
@@ -61,13 +62,22 @@ export type TranscriptionErrorCode =
   | 'RATE_LIMITED';
 
 export class TranscriptionError extends Error {
+  /** On `RATE_LIMITED`: the transcriber's vendor, its HTTP status and what it said, as `AiError` carries them. */
+  readonly provider?: string;
+  readonly status?: number;
+  readonly rateLimit?: AiRateLimitDetail;
+
   constructor(
     public readonly code: TranscriptionErrorCode,
     message: string,
     /** False for permanent failures — the runner must not burn retries. */
     public readonly retryable = true,
+    options?: { cause?: unknown; provider?: string; status?: number; rateLimit?: AiRateLimitDetail },
   ) {
-    super(message);
+    super(message, options);
     this.name = 'TranscriptionError';
+    this.provider = options?.provider;
+    this.status = options?.status;
+    this.rateLimit = options?.rateLimit;
   }
 }

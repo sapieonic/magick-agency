@@ -14,7 +14,7 @@ import {
 } from './dialer-analysis-runner.js';
 import { setDialerAnalysisWorker, type DialerAnalysisWorkerHandle } from './dialer-analysis-worker-handle.js';
 import { RecordingByteBudget, type RecordingLease } from './recording-byte-budget.js';
-import { VendorRateLimitBreaker } from './vendor-rate-limit-breaker.js';
+import { PERSISTENT_RATE_LIMIT_PAUSES, VendorRateLimitBreaker } from './vendor-rate-limit-breaker.js';
 import { DEFAULT_DIALER_ANALYSIS_MEMORY_BUDGET_BYTES, RECORDING_COPIES } from '../config/blocks/analysis.js';
 import {
   setDialerAnalysisQueueDepth,
@@ -22,6 +22,7 @@ import {
   setDialerAnalysisMemoryReserved,
   dialerAnalysisBudgetWaitsTotal,
   dialerAnalysisRateLimitPausesTotal,
+  setDialerAnalysisRateLimitConsecutivePauses,
 } from '@magick-agency/observability/metrics/analysis';
 import { createChildLogger } from '@magick-agency/observability';
 
@@ -132,9 +133,31 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
     });
     this.reserveBytes = this.budget.clamp(opts.config.maxRecordingBytes * RECORDING_COPIES);
     this.breaker = opts.breaker ?? new VendorRateLimitBreaker();
-    this.breaker.onOpenListener((pauseMs, consecutive) => {
+    // ERROR from PERSISTENT_RATE_LIMIT_PAUSES on. A pause applied from another analysis process
+    // (D10) calls no listener: the process that opened it logged and counted it.
+    setDialerAnalysisRateLimitConsecutivePauses(0);
+    this.breaker.onOpenListener((pauseMs, consecutive, { since, cause }) => {
       dialerAnalysisRateLimitPausesTotal.inc();
-      log.warn({ pauseMs, consecutive }, 'AI vendor rate-limited dialer analysis; pausing new claims');
+      setDialerAnalysisRateLimitConsecutivePauses(consecutive);
+      const fields = {
+        pauseMs,
+        consecutive,
+        refusingSince: new Date(since).toISOString(),
+        refusingForMinutes: Math.floor((Date.now() - since) / 60_000),
+        ...cause,
+      };
+      if (consecutive >= PERSISTENT_RATE_LIMIT_PAUSES) {
+        log.error(fields, 'AI vendor keeps refusing dialer analysis; no call is being analysed. Check the vendor quota and billing');
+      } else {
+        log.warn(fields, 'AI vendor rate-limited dialer analysis; pausing new claims');
+      }
+    });
+    this.breaker.onCloseListener(({ since, pauses }) => {
+      setDialerAnalysisRateLimitConsecutivePauses(0);
+      log.info(
+        { pauses, refusedForMinutes: Math.floor((Date.now() - since) / 60_000) },
+        'AI vendor accepted dialer analysis again; claiming resumed',
+      );
     });
     this.runner = new DialerAnalysisRunner({
       transcriber: opts.transcriber,
@@ -409,7 +432,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
     try {
       outcome = await this.runner.run(job, {
         lease,
-        onRateLimited: () => this.breaker.recordRateLimit(startedAt),
+        onRateLimited: (cause) => this.breaker.recordRateLimit(startedAt, cause),
       });
     } catch (err) {
       // `run` never throws; this only keeps a broken promise from wedging the slot.

@@ -23,10 +23,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * There is no settle step: the ordering case ends at `recover`, and the
  * step-failure case asserts `recover` (the last step) still ran.
  */
+const { mockLog } = vi.hoisted(() => ({
+  mockLog: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
-  createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  createChildLogger: () => mockLog,
 }));
 
 // ── Job repo ────────────────────────────────────────────────────────────────
@@ -55,7 +58,10 @@ vi.mock('../../../src/core/dialer-analysis-runner.js', () => ({
 }));
 
 // ── Metrics ─────────────────────────────────────────────────────────────────
-const { mockSetQueueDepth } = vi.hoisted(() => ({ mockSetQueueDepth: vi.fn() }));
+const { mockSetQueueDepth, mockSetConsecutivePauses } = vi.hoisted(() => ({
+  mockSetQueueDepth: vi.fn(),
+  mockSetConsecutivePauses: vi.fn(),
+}));
 vi.mock('@magick-agency/observability/metrics/analysis', () => ({
   dialerAnalysisTotal: { inc: vi.fn() },
   dialerAnalysisDurationSeconds: { observe: vi.fn() },
@@ -65,6 +71,7 @@ vi.mock('@magick-agency/observability/metrics/analysis', () => ({
   setDialerAnalysisMemoryReserved: vi.fn(),
   dialerAnalysisBudgetWaitsTotal: { inc: vi.fn() },
   dialerAnalysisRateLimitPausesTotal: { inc: vi.fn() },
+  setDialerAnalysisRateLimitConsecutivePauses: mockSetConsecutivePauses,
 }));
 
 // ── Worker handle ───────────────────────────────────────────────────────────
@@ -75,7 +82,7 @@ vi.mock('../../../src/core/dialer-analysis-worker-handle.js', () => ({
 
 import { DialerAnalysisWorker, initDialerAnalysisWorker } from '../../../src/core/dialer-analysis-worker.js';
 import type { DialerAnalysisConfig, DialerAnalysisRunContext } from '../../../src/core/dialer-analysis-runner.js';
-import { VendorRateLimitBreaker } from '../../../src/core/vendor-rate-limit-breaker.js';
+import { PERSISTENT_RATE_LIMIT_PAUSES, VendorRateLimitBreaker } from '../../../src/core/vendor-rate-limit-breaker.js';
 import type { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 
@@ -521,11 +528,11 @@ describe('slot pool', () => {
     expect(runs.running()).toEqual(['j0', 'j1', 'j2', 'j3']);
 
     // j0 is rate-limited: the runner asks the breaker for the pause to back the job off by.
-    expect(runs.ctx('j0').onRateLimited!()).toBe(30);
+    expect(runs.ctx('j0').onRateLimited!({ stage: 'transcribe', vendorReason: '429' })).toBe(30);
     runs.finish('j0', 'rate_limited');
     // Its siblings, already in flight when the limit hit, hit it too: one opening, not four.
     for (const id of ['j1', 'j2', 'j3']) {
-      expect(runs.ctx(id).onRateLimited!()).toBeLessThanOrEqual(30);
+      expect(runs.ctx(id).onRateLimited!({ stage: 'transcribe', vendorReason: '429' })).toBeLessThanOrEqual(30);
       runs.finish(id, 'rate_limited');
     }
     await flush();
@@ -541,7 +548,7 @@ describe('slot pool', () => {
     expect(mockJobRepo.claimRunnable).toHaveBeenLastCalledWith(1);
 
     // The probe is rate-limited too: the pause doubles.
-    expect(runs.ctx('j4').onRateLimited!()).toBe(60);
+    expect(runs.ctx('j4').onRateLimited!({ stage: 'transcribe', vendorReason: '429' })).toBe(60);
     runs.finish('j4', 'rate_limited');
     await vi.advanceTimersByTimeAsync(59_000);
     expect(runs.running()).toEqual([]);
@@ -554,5 +561,101 @@ describe('slot pool', () => {
     expect(breaker.state).toBe('closed');
     expect(runs.running()).toEqual(['j6', 'j7', 'j8', 'j9']);
     await w.gracefulShutdown();
+  });
+
+  describe('rate-limit visibility', () => {
+    const cause = {
+      stage: 'transcribe' as const,
+      vendor: 'gemini',
+      vendorStatus: 429,
+      vendorCode: 'RESOURCE_EXHAUSTED',
+      quotaIds: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier,GenerateRequestsPerMinutePerProjectPerModel',
+      vendorRetryAfterSeconds: 36,
+      vendorReason: 'You exceeded your current quota',
+    };
+
+    beforeEach(() => {
+      mockLog.warn.mockClear();
+      mockLog.error.mockClear();
+      mockLog.info.mockClear();
+      mockSetConsecutivePauses.mockClear();
+    });
+
+    /** Open the breaker `n` times in a row, each probe refused once its pause ends. */
+    function refuse(breaker: VendorRateLimitBreaker, n: number): void {
+      for (let i = 0; i < n; i++) {
+        breaker.recordRateLimit(Date.now(), cause);
+        vi.advanceTimersByTime(breaker.reopensInMs());
+      }
+    }
+
+    it('each opening logs the vendor\'s reason and since when it has refused, and publishes the run length', () => {
+      vi.useFakeTimers();
+      const breaker = new VendorRateLimitBreaker({ random: () => 0.5 });
+      poolWorker({}, { breaker });
+      expect(mockSetConsecutivePauses).toHaveBeenLastCalledWith(0); // a series from the start
+      const first = Date.now();
+      refuse(breaker, 2);
+      expect(mockLog.warn).toHaveBeenCalledTimes(2);
+      expect(mockLog.warn).toHaveBeenLastCalledWith(
+        { pauseMs: 60_000, consecutive: 2, refusingSince: new Date(first).toISOString(), refusingForMinutes: 0, ...cause },
+        'AI vendor rate-limited dialer analysis; pausing new claims',
+      );
+      expect(mockSetConsecutivePauses).toHaveBeenLastCalledWith(2);
+      expect(mockLog.error).not.toHaveBeenCalled();
+    });
+
+    it(`from the ${PERSISTENT_RATE_LIMIT_PAUSES}th consecutive opening it logs an error naming the quota and billing`, () => {
+      vi.useFakeTimers();
+      const breaker = new VendorRateLimitBreaker({ random: () => 0.5 });
+      poolWorker({}, { breaker });
+      const first = Date.now();
+      refuse(breaker, PERSISTENT_RATE_LIMIT_PAUSES - 1);
+      expect(mockLog.error).not.toHaveBeenCalled();
+      refuse(breaker, 1);
+      expect(mockLog.warn).toHaveBeenCalledTimes(PERSISTENT_RATE_LIMIT_PAUSES - 1);
+      expect(mockLog.error).toHaveBeenCalledOnce();
+      const [fields, message] = mockLog.error.mock.calls[0]!;
+      expect(message).toMatch(/keeps refusing dialer analysis.*quota and billing/);
+      // 30 s + 1 + 2 + 4 + 8 + 15 + 15 min of pauses before the eighth opening.
+      expect(fields).toMatchObject({
+        consecutive: PERSISTENT_RATE_LIMIT_PAUSES,
+        refusingSince: new Date(first).toISOString(),
+        refusingForMinutes: 45,
+        quotaIds: expect.stringContaining('PerDay'),
+      });
+      expect(mockSetConsecutivePauses).toHaveBeenLastCalledWith(PERSISTENT_RATE_LIMIT_PAUSES);
+    });
+
+    it('the cause a run reports reaches the worker\'s log line through onRateLimited', async () => {
+      vi.useFakeTimers();
+      queueOf(1);
+      const runs = heldRuns();
+      const breaker = new VendorRateLimitBreaker({ random: () => 0.5 });
+      const w = poolWorker({ concurrency: 1 }, { breaker });
+      w.wake();
+      await flush();
+      expect(runs.ctx('j0').onRateLimited!(cause)).toBe(30);
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ consecutive: 1, ...cause }),
+        'AI vendor rate-limited dialer analysis; pausing new claims',
+      );
+      runs.finish('j0', 'rate_limited');
+      await w.gracefulShutdown();
+    });
+
+    it('a completed probe logs the recovery with how long the vendor refused, and zeroes the gauge', () => {
+      vi.useFakeTimers();
+      const breaker = new VendorRateLimitBreaker({ random: () => 0.5 });
+      poolWorker({}, { breaker });
+      refuse(breaker, 3); // 30 s + 60 s + 120 s
+      breaker.onStarted(1);
+      breaker.recordSuccess(Date.now());
+      expect(mockLog.info).toHaveBeenCalledWith(
+        { pauses: 3, refusedForMinutes: 3 },
+        'AI vendor accepted dialer analysis again; claiming resumed',
+      );
+      expect(mockSetConsecutivePauses).toHaveBeenLastCalledWith(0);
+    });
   });
 });

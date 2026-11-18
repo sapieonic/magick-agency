@@ -3,7 +3,7 @@
  * settlement: the job completes with no charge step (decision S6). The recording
  * fetch takes its hosts and headers from the call's carrier access
  * (`telephony/recording-access.ts`, B21): VoiceLink's host allow-list with nothing
- * attached, or a BYOC carrier's exact hosts with the tenant's credential. The PostHog /
+ * attached, or a BYOC carrier's recording media hosts with the tenant's credential. The PostHog /
  * LLM-observability emitters come from `analytics/posthog.ts` and
  * `analytics/llm-observability.ts`.
  */
@@ -90,10 +90,11 @@ export interface DialerAnalysisRunContext {
    */
   lease?: RecordingLease;
   /**
-   * Called when a vendor rate-limits this run; returns the seconds the worker will not
-   * claim for (the shared breaker's pause). The job is requeued no earlier than that.
+   * Called when a vendor rate-limits this run, with what the vendor said; returns the
+   * seconds the worker will not claim for (the shared breaker's pause). The job is
+   * requeued no earlier than that.
    */
-  onRateLimited?: () => number;
+  onRateLimited?: (cause: RateLimitCause) => number;
 }
 
 export interface DialerAnalysisRunnerDeps {
@@ -528,7 +529,7 @@ export class DialerAnalysisRunner {
   private async handleError(
     job: DialerAnalysisJobRecord,
     err: unknown,
-    onRateLimited?: () => number,
+    onRateLimited?: (cause: RateLimitCause) => number,
   ): Promise<DialerAnalysisOutcome> {
     const { id: jobId, call_id: callId, tenant_id: tenantId, claim_generation: generation, attempts } = job;
     const isTx = err instanceof TranscriptionError;
@@ -543,10 +544,15 @@ export class DialerAnalysisRunner {
     // long as the breaker's pause so another process does not pick it straight back up.
     if ((isTx && (err as TranscriptionError).code === 'RATE_LIMITED') || (isAi && err.kind === 'rate_limited')) {
       const own = jitter(Math.min(RATE_LIMIT_BACKOFF_BASE_SECONDS * Math.pow(2, attempts), RETRY_BACKOFF_CAP_SECONDS));
-      const pause = onRateLimited?.() ?? 0;
+      const cause = rateLimitCauseOf(err, isTx ? 'transcribe' : 'analyze');
+      const pause = onRateLimited?.(cause) ?? 0;
       const backoff = Math.max(own, pause);
-      await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff);
-      log.warn({ callId, jobId, backoff, breakerPauseSeconds: pause }, 'Dialer analysis rate-limited; requeued without consuming an attempt');
+      const where = cause.vendor ? `${cause.stage}, ${cause.vendor}` : cause.stage;
+      await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff, `rate-limited (${where}): ${cause.vendorReason}`);
+      log.warn(
+        { callId, jobId, backoff, breakerPauseSeconds: pause, ...cause },
+        'Dialer analysis rate-limited; requeued without consuming an attempt',
+      );
       return 'rate_limited';
     }
 
@@ -626,4 +632,40 @@ function jitter(seconds: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Longest vendor reason kept in a log line: a Gemini 429 body's message is a few hundred characters. */
+const RATE_LIMIT_REASON_MAX = 500;
+
+/**
+ * Why a run was rate-limited, as the log fields the runner and the worker both write (the breaker
+ * passes it to its open listeners untouched). `quotaIds` is comma-joined so Loki keeps it as one
+ * readable field.
+ */
+export interface RateLimitCause {
+  /** The call refused: transcribing the recording or analysing the transcript (each has its own key). */
+  stage: 'transcribe' | 'analyze';
+  vendor?: string;
+  vendorStatus?: number;
+  vendorCode?: string;
+  quotaIds?: string;
+  vendorRetryAfterSeconds?: number;
+  /** The vendor's own words when it gave any, else the error's message; trimmed. */
+  vendorReason: string;
+}
+
+/** The cause from a rate-limited `AiError` (analysis) or `TranscriptionError` (transcription). */
+export function rateLimitCauseOf(err: unknown, stage: RateLimitCause['stage']): RateLimitCause {
+  const vendorErr = err instanceof AiError || err instanceof TranscriptionError ? err : undefined;
+  const detail = vendorErr?.rateLimit;
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    stage,
+    vendor: vendorErr?.provider,
+    vendorStatus: vendorErr?.status,
+    vendorCode: detail?.vendorCode,
+    quotaIds: detail?.quotaIds?.join(','),
+    vendorRetryAfterSeconds: detail?.retryAfterSeconds,
+    vendorReason: (detail?.vendorMessage ?? message).slice(0, RATE_LIMIT_REASON_MAX),
+  };
 }

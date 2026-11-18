@@ -12,7 +12,7 @@ import { DEFAULTS, OTHER_TENANT, insertTenant, insertWebrtcCall } from '../../..
  * exactly as the agency attempt route will. A VoiceLink recording carries no credentials:
  * the test asserts NONE are sent. Also covered: off-list host / redirect refusal, the
  * signed-URL TTL/path checks on the real route, and a Plivo recording on the tenant's
- * credential (below).
+ * credential (below), on media.plivo.com and on a regional media host (aps1).
  */
 const SECRET = 'integration-test-signing-secret-xyz123';
 process.env['RECORDING_URL_SIGNING_SECRET'] = SECRET;
@@ -186,7 +186,7 @@ describe('webrtc recording playback (integration)', () => {
 
     const adminId = randomUUID();
 
-    async function plivoCall() {
+    async function plivoCall(recordingUrl = PLIVO_URL) {
       await insertTenant({ id: DEFAULTS.tenantId });
       // `truncateAll` empties the provider catalogue too; the credential's FK needs the row.
       await getTestPool().query(
@@ -202,7 +202,7 @@ describe('webrtc recording playback (integration)', () => {
       });
       if (!created.ok) throw new Error(`credential create failed: ${created.code}`);
       const signedCall = await signed({
-        provider: 'plivo', telephony_credential_id: created.value.id, recording_url: PLIVO_URL,
+        provider: 'plivo', telephony_credential_id: created.value.id, recording_url: recordingUrl,
       });
       return { ...signedCall, credentialId: created.value.id };
     }
@@ -221,6 +221,39 @@ describe('webrtc recording playback (integration)', () => {
       expect(fetchedUrl).toBe(PLIVO_URL);
       expect(new Headers(fetchInit.headers).get('authorization'))
         .toBe(`Basic ${Buffer.from(`${AUTH_ID}:${AUTH_TOKEN}`).toString('base64')}`);
+    });
+
+    // PL6 as amended 2026-11-18: the account's regional media host is the first URL on some
+    // accounts (staging's was aps1), and the player 502'd every one of them before.
+    it('fetches a regional media host (aps1.media.plivo.com) with Basic auth from the pinned credential', async () => {
+      const regional = `https://aps1.media.plivo.com/v1/Account/${AUTH_ID}/Recording/r-1.mp3`;
+      const mockFetch = vi.fn().mockResolvedValue(makeUpstreamResponse(Buffer.from('PLIVO_APS1_MP3')));
+      vi.stubGlobal('fetch', mockFetch);
+      const { url } = await plivoCall(regional);
+
+      const res = await app.inject({ method: 'GET', url });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.rawPayload.toString()).toBe('PLIVO_APS1_MP3');
+      const [fetchedUrl, fetchInit] = mockFetch.mock.calls[0]!;
+      expect(fetchedUrl).toBe(regional);
+      expect(new Headers(fetchInit.headers).get('authorization'))
+        .toBe(`Basic ${Buffer.from(`${AUTH_ID}:${AUTH_TOKEN}`).toString('base64')}`);
+    });
+
+    it.each([
+      'https://api.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/',
+      'https://evilmedia.plivo.com/r-1.mp3',
+      'https://aps1.media.plivo.com.evil.com/r-1.mp3',
+    ])('502s %s without fetching: the credential never leaves', async (recordingUrl) => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal('fetch', mockFetch);
+      const { url } = await plivoCall(recordingUrl);
+
+      const res = await app.inject({ method: 'GET', url });
+
+      expect(res.statusCode).toBe(502);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('a revoked credential ends playback: 404 recording_unavailable, nothing fetched', async () => {

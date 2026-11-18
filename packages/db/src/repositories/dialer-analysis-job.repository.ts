@@ -492,11 +492,14 @@ export class DialerAnalysisJobRepository {
    * `RATE_LIMITED` requeue that does NOT consume an attempt (M4): we were never
    * given a chance to succeed. Decrements `attempts` and `attempts_total` back to
    * pre-claim, applies a longer jittered backoff. Fenced. Never drops below 0.
+   * `errorMessage` keeps why the vendor refused (the runner passes the stage, the vendor and
+   * its words).
    */
   async requeueRateLimited(
     id: string,
     generation: number,
     backoffSeconds: number,
+    errorMessage: string,
   ): Promise<boolean> {
     const pool = getPool();
     const result = await pool.query(
@@ -507,7 +510,7 @@ export class DialerAnalysisJobRepository {
              attempts_total = GREATEST(attempts_total - 1, 0),
              next_attempt_at = now() + ($3::int * INTERVAL '1 second'),
              error_code = 'RATE_LIMITED',
-             error_message = 'transcriber rate-limited; retrying without consuming an attempt'
+             error_message = $4
          WHERE id = $1 AND claim_generation = $2 AND status IN ('transcribing','analyzing')
          RETURNING call_id
        ),
@@ -521,7 +524,7 @@ export class DialerAnalysisJobRepository {
          RETURNING agency_calls.id
        )
        SELECT call_id FROM requeued`,
-      [id, generation, backoffSeconds],
+      [id, generation, backoffSeconds, errorMessage.slice(0, 2000)],
     );
     return (result.rowCount ?? 0) > 0;
   }
@@ -747,6 +750,53 @@ export class DialerAnalysisJobRepository {
     return result.rows[0] ?? null;
   }
 
+  // ── Operator re-queue: recordings refused by the host allow-list ───────────
+
+  /**
+   * The `failed` jobs a recording-host refusal ended: `TRANSCRIPTION_FAILED` with the
+   * message `RecordingHostRefusedError` gives a refused host (first URL or redirect hop,
+   * {@link RECORDING_HOST_REFUSAL_MESSAGE}), on a call not erased (`deleted`). Nothing else:
+   * a credential refusal, an upstream 401/404, a timeout, a too-many-redirects or an
+   * unparseable URL is not matched. Read only; the operator script
+   * (`apps/server/scripts/requeue-recording-host-refusals.ts`) re-queues each with
+   * `requeueForManualRetry` once an allow-list fix has deployed (Plivo's regional media
+   * hosts, 2026-11-18). Narrowed by when the job failed (`updated_at`, its last write),
+   * tenant and refused host; oldest failure first.
+   */
+  async findRecordingHostRefusals(opts: {
+    failedSince?: Date;
+    failedBefore?: Date;
+    tenantId?: string;
+    /** The refused host as the message names it (lowercase, e.g. `aps1.media.plivo.com`). */
+    host?: string;
+    limit?: number;
+  } = {}): Promise<DialerAnalysisJobRecord[]> {
+    const pool = getPool();
+    const result = await pool.query<DialerAnalysisJobRecord>(
+      `SELECT j.* FROM dialer_analysis_jobs j
+       JOIN agency_calls c ON c.id = j.call_id
+       WHERE j.status = 'failed'
+         AND j.error_code = 'TRANSCRIPTION_FAILED'
+         AND j.error_message ~ $1
+         AND c.analysis_status IS DISTINCT FROM 'deleted'
+         AND ($2::timestamptz IS NULL OR j.updated_at >= $2::timestamptz)
+         AND ($3::timestamptz IS NULL OR j.updated_at < $3::timestamptz)
+         AND ($4::uuid IS NULL OR j.tenant_id = $4::uuid)
+         AND ($5::text IS NULL OR substring(j.error_message from '^Recording host "([^"]+)"') = $5::text)
+       ORDER BY j.updated_at, j.id
+       LIMIT $6`,
+      [
+        RECORDING_HOST_REFUSAL_MESSAGE,
+        opts.failedSince ?? null,
+        opts.failedBefore ?? null,
+        opts.tenantId ?? null,
+        opts.host ?? null,
+        opts.limit ?? 1000,
+      ],
+    );
+    return result.rows;
+  }
+
   // ── Observability ─────────────────────────────────────────────────────────
 
   /** Backlog visibility: COUNT(*) GROUP BY status. */
@@ -769,5 +819,16 @@ export class DialerAnalysisJobRepository {
     return result.rows[0]?.claim_generation === generation;
   }
 }
+
+/**
+ * The `error_message` a recording-host refusal leaves on a failed job, as a Postgres regex:
+ * `RecordingHostRefusedError`'s `off_list` message (`apps/server/src/utils/recording-proxy.ts`),
+ * which the analysis runner stores unchanged through `TranscriptionError`. A host is quoted
+ * (an unparseable or non-https URL names none and is not matched); `(redirect hop N)` follows
+ * a refused hop. Pinned against the server's real message by
+ * `apps/server/test/unit/scripts/requeue-recording-host-refusals.test.ts`.
+ */
+export const RECORDING_HOST_REFUSAL_MESSAGE =
+  '^Recording host "[^"]+" is not on the recording-host allow-list( \\(redirect hop [0-9]+\\))?$';
 
 export const dialerAnalysisJobRepository = new DialerAnalysisJobRepository();

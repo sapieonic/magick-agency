@@ -305,12 +305,20 @@ next to everything else in a 4 GB heap. The server refuses to start with a budge
 **Rate limits.** A vendor rate limit (HTTP 429 / `RESOURCE_EXHAUSTED`) requeues the job without
 using an attempt and pauses all new claims in this process for 30 s, doubling with each
 consecutive pause up to 15 min. After a pause one probe job runs; slots fill again only when it
-completes. A rate-limited job is requeued no earlier than the pause.
+completes. A rate-limited job is requeued no earlier than the pause. Each pause is logged with
+the call refused (`stage`: `transcribe` or `analyze`), the vendor's reason (`vendorReason`,
+`vendorCode`, Gemini's `quotaIds`, `vendorRetryAfterSeconds`) and `refusingSince`; from the 8th in
+a row (~45 min, no job completed) at ERROR, because by then it is a quota or billing stop rather
+than a short limit (alert `agy-analysis-vendor-refusing`). Each process logs its recovery at INFO,
+with how long the vendor refused, when a job of its own completes. The count is per process and a
+restart sets it back to 0.
 
 **What to watch** (dashboard row *Analysis*): `dialer_analysis_slot_utilization` pinned at 1
 while `dialer_analysis_queue_depth{status="queued"}` grows means too few slots;
 `dialer_analysis_budget_waits_total` rising means the memory budget, not the slots, is the limit;
-`dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is. `dialer_analysis_in_flight`
+`dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is;
+`dialer_analysis_rate_limit_consecutive_pauses` climbing instead of falling back to 0 means the
+vendor is not recovering (a short limit reads 1-3; the alert fires at 8). `dialer_analysis_in_flight`
 and `dialer_analysis_memory_reserved_bytes` show the pool itself.
 
 ### Sizing the media workers
@@ -773,12 +781,46 @@ replaces the default, so keep `recording.app.voicelink.co.in` in it:
 `VOICELINK_RECORDING_HOSTS=recording.app.voicelink.co.in,<other host>`. Restart; it is read at boot.
 
 Plivo recordings stay on the tenant's Plivo account and are fetched on demand with its credential
-(B21): only from `media.plivo.com` (an exact match, not configurable), with HTTP Basic on the first
-request only; a redirect hop carries no credential, for any carrier. A call whose credential is
+(B21): only from Plivo's media hosts, `media.plivo.com` and any subdomain of it (an account's
+regional media host, such as `aps1.media.plivo.com`; PL6 as amended 2026-11-18; not configurable;
+never `api.plivo.com`, `plivo.com` or a lookalike such as `evilmedia.plivo.com`), with HTTP Basic
+on the first request only; a redirect hop carries no credential, for any carrier. A call whose credential is
 revoked, shredded, another tenant's or unopenable cannot be fetched: playback answers 404
 `recording_unavailable`, and its analysis job fails at once, not retried (a missing keyring key is
 retried, and recovers once the key is restored). Revoking a credential therefore ends playback and
 analysis of that tenant's earlier recordings on it.
+
+### Re-analysing calls a recording-host refusal failed
+
+A host refusal fails a call's analysis for good (`TRANSCRIPTION_FAILED`, not retried), so when
+the allow-list is fixed (a host added to `VOICELINK_RECORDING_HOSTS`, or a code change such as
+Plivo's regional media hosts on 2026-11-18, after `aps1.media.plivo.com` was refused on staging
+from 2026-11-17 01:11 UTC) the calls it already failed stay failed. Once the fix is live,
+re-queue them with `apps/server/scripts/requeue-recording-host-refusals.ts` (in the image,
+`dist/requeue-recording-host-refusals.js`). It selects only `failed` jobs whose error is a host
+refusal (`error_code` `TRANSCRIPTION_FAILED`, `error_message` `Recording host "<host>" is not on
+the recording-host allow-list`, with or without `(redirect hop N)`) on calls not erased, and
+re-queues each as the manual retry does: `queued` with the full attempt budget
+(`DIALER_ANALYSIS_MAX_ATTEMPTS`), never past the lifetime ceiling
+(`DIALER_ANALYSIS_MAX_ATTEMPTS_TOTAL`; a job at it is listed as not re-queued), the call mirrored
+`pending`. A credential refusal, an upstream 401 or 404, a timeout or too many redirects is never
+selected. It is a dry run unless `--apply`; narrow it with `--host`, `--tenant <uuid>`,
+`--since` / `--before` (ISO times, when the job failed) and `--limit` (default 1000):
+
+```bash
+# dry run: lists job, call, tenant, failure time and host, and the count; changes nothing
+docker compose -f docker/docker-compose.prod.yml exec server \
+  node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z
+# then the same with --apply
+docker compose -f docker/docker-compose.prod.yml exec server \
+  node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z --apply
+```
+
+From a checkout: `DATABASE_URL=… pnpm tsx scripts/requeue-recording-host-refusals.ts …` in
+`apps/server`. Run it only after the deploy: a job re-queued onto a server that still refuses the
+host fails again and spends a lifetime attempt. The worker picks the jobs up like any queued job
+(watch `dialer_analysis_queue_depth{status="queued"}` fall); one still refused logs `refusing to
+fetch` again.
 
 ### Recordings a call did not ask for
 
@@ -831,7 +873,7 @@ The server's answers that land there (RC3):
 
 | Status | `reason` in the log and in `recording_fetch_failures_total{surface="playback"}` | What it means |
 |---|---|---|
-| 502 | `host_not_allowed` | The stored URL's host is not the carrier's recording host (VoiceLink: `VOICELINK_RECORDING_HOSTS`; Plivo: exactly `media.plivo.com`). The log names `host` |
+| 502 | `host_not_allowed` | The stored URL's host is not the carrier's recording host (VoiceLink: `VOICELINK_RECORDING_HOSTS`; Plivo: `media.plivo.com` and its subdomains). The log names `host` |
 | 502 | `redirect_refused` | The carrier's host redirected to a host off its list. The log names `redirectHost` (the target) and `redirectedFrom`, hosts only (a signed URL's query is a secret) |
 | 502 | `too_many_redirects` | More than 3 hops |
 | 502 | `upstream_unauthorized` | The carrier answered 401 or 403 (`upstreamStatus` logged): for Plivo, the tenant's credential is wrong for the recording, or a redirect that came back to the media host without the credential |
@@ -855,13 +897,15 @@ then the warn and error logs of component `recording-proxy` for the reason (`cal
 `network` or `timeout` to VoiceLink is our egress; `upstream_unauthorized` on Plivo is the
 tenant's credential (verify it in the super-admin console); `redirect_refused` on Plivo is below.
 
-**Following a Plivo redirect (RC4, default, pending Manas).** Whether `media.plivo.com` answers a
+**Following a Plivo redirect (RC4, default, pending Manas).** A redirect from a Plivo media host to
+another one (`media.plivo.com` to `aps1.media.plivo.com`) is followed without listing anything:
+both are on Plivo's list (PL6 as amended 2026-11-18). Whether `media.plivo.com` answers a
 recording with a redirect has not been seen live (Plivo step 5 is open, `docs/status.md`). If the
 logs show `reason: redirect_refused` for Plivo with a stable `redirectHost`, an operator may list
 that host in `PLIVO_RECORDING_REDIRECT_HOSTS` (comma list of exact hostnames, lowercased on
 load, so case does not matter; refused at boot with a scheme, port, path, wildcard, IP address or
 `localhost`) and restart. A listed host is accepted as a redirect hop only, never as the first
-URL, and as any hop: from `media.plivo.com` or from an earlier listed hop (at most 3 hops). A hop
+URL, and as any hop: from a Plivo media host or from an earlier listed hop (at most 3 hops). A hop
 never carries the credential (only `Range`). Empty, the default, follows no redirect, as before.
 Never list a host the logs did not name.
 
@@ -1025,7 +1069,8 @@ and a longer one only delays the retry of a genuinely lost message.
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
 warn (Slack) and never page, for the carrier credential rules, for the inbound rules, for the
-reports rules (warn only), and for the live call listening rules (warn only). The insights rules first: a stale or holed Insights page costs no
+reports rules (warn only), for the live call listening rules (warn only), and for the analysis rule
+(warn only, last). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -1381,6 +1426,43 @@ callers in the access logs.
 **Do:** replace the server's secret lines with what `reports_callback_secret_env_command` prints
 (SSM is the source; mid-rotation it prints both) and recreate the server, then let users re-run
 what failed meanwhile.
+
+### `agy-analysis-vendor-refusing`
+
+**Means:** the post-call analysis worker has paused on a vendor rate limit (HTTP 429) 8 times in
+a row with no job completed in between (`dialer_analysis_rate_limit_consecutive_pauses` > 7.5,
+while `dialer_analysis_rate_limit_pauses_total` rose in the last 25 minutes), about 45 minutes of
+refused probes. No call is being transcribed or analysed. Dialling is unaffected, and nothing is
+lost: rate-limited jobs are requeued without using an attempt. The count lives in each analysis
+process and a restart sets it back to 0, so after a deploy the alert needs another ~45 minutes.
+
+**Check:** the worker's ERROR "AI vendor keeps refusing dialer analysis"
+(`component=dialer-analysis-worker`; the WARNs before it carry the same fields):
+
+- `stage`: which call was refused, `transcribe` (the recording) or `analyze` (the transcript).
+  Each has its own key, even when both go to the same vendor.
+- `vendor` and `vendorReason`: the provider, and the vendor's own words.
+- `quotaIds` (Gemini): a `…PerDay…` id is a daily quota, which resets at midnight Pacific; a
+  `…FreeTier` id is a key without billing.
+- `vendorCode`: `insufficient_quota` (OpenAI) is a billing stop; `RESOURCE_EXHAUSTED` (Gemini)
+  is any quota, so read `quotaIds`.
+- `refusingSince`: when this process's run of pauses began. It is per process and starts again at
+  a restart, so a run that seems to begin at a boot may have begun before it.
+
+**Do:** for a quota or billing stop, raise the quota or enable billing on the key's project, or set
+another key and recreate the server:
+
+| `stage` | Key, in the order the server reads them |
+|---|---|
+| `transcribe` (Gemini) | `DIALER_TRANSCRIBE_API_KEY`, else `GEMINI_API_KEY` |
+| `transcribe` (Sarvam) | `DIALER_TRANSCRIBE_SARVAM_API_KEY`, else `SARVAM_API_KEY` |
+| `analyze` | `POST_CALL_ANALYSIS_API_KEY`, else `GEMINI_API_KEY` (provider `gemini`) or `OPENAI_API_KEY` (no base URL); `POST_CALL_ANALYSIS_AZURE_API_KEY` for `azure_openai` |
+
+A `…PerMinute…` quota id that refuses 8 probes in a row is not traffic: while paused, the worker
+sends one probe every 12-18 minutes. The key's limit for that model is 0, or something else uses
+the same project's quota. Each analysis process logs INFO "AI vendor accepted dialer analysis
+again" when a job of its own completes; the backlog (`dialer_analysis_queue_depth{status="queued"}`)
+then drains by itself.
 
 ## What CI runs
 

@@ -12,11 +12,13 @@ const workspace = /^@magick-agency\//;
 await build({
   // migrate.js: the pre-boot migration step docker/entrypoint.sh runs.
   // create-super-admin.js: the first-admin CLI, runnable inside the image.
+  // requeue-recording-host-refusals.js: re-queues analysis jobs a recording-host refusal failed.
   // Named entries, so every output lands at dist/<name>.js whatever directory it is in.
   entryPoints: {
     index: 'src/index.ts',
     migrate: 'src/migrate.ts',
     'create-super-admin': 'scripts/create-super-admin.ts',
+    'requeue-recording-host-refusals': 'scripts/requeue-recording-host-refusals.ts',
   },
   outdir: 'dist',
   bundle: true,
@@ -38,4 +40,4 @@ await build({
     },
   ],
 });
-console.log('built dist/index.js, dist/migrate.js, dist/create-super-admin.js');
+console.log('built dist/index.js, dist/migrate.js, dist/create-super-admin.js, dist/requeue-recording-host-refusals.js');

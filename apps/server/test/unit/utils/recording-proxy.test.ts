@@ -10,7 +10,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
  *
  * B21 suites: a redirect hop never carries the first request's headers (Range
  * excepted), whoever the caller; a Plivo recording is proxied with Basic auth on hop 0
- * only, to the exact media host only; a revoked (or missing) credential refuses
+ * only, to Plivo's media hosts only (`media.plivo.com` and its regional subdomains such as
+ * `aps1.media.plivo.com`, PL6 as amended 2026-11-18; never `api.plivo.com`); a revoked (or missing) credential refuses
  * playback with 404 before any fetch. The proxy runs on the real carrier table
  * (`createRecordingAccessResolver`), so the VoiceLink cases above also pin that
  * VoiceLink behaviour is unchanged by it.
@@ -93,6 +94,12 @@ describe('recording host matching is a HOST check, not a substring match', () =>
     expect(recordingHostMatches('https://RECORDINGS.VoiceLink.TEST/x.mp3', HOSTS)).toBe(true);
     expect(recordingHostMatches('https://recordings.voicelink.test./x.mp3', HOSTS)).toBe(true);
     expect(recordingHostMatches(GOOD, ['VOICELINK.TEST'])).toBe(true);
+  });
+
+  it('matches nothing for a host with an empty label, never a "subdomain"', () => {
+    expect(recordingHostMatches('https://.voicelink.test/x.mp3', HOSTS)).toBe(false);
+    expect(recordingHostMatches('https://eu..voicelink.test/x.mp3', HOSTS)).toBe(false);
+    expect(recordingHostname('https://a..b.example/x')).toBeNull();
   });
 
   it('matches nothing for an unparseable URL, an empty string or an empty list', () => {
@@ -318,8 +325,43 @@ describe('proxyCallRecording — a Plivo recording on the tenant credential (B21
   });
 
   it.each([
+    ['aps1.media.plivo.com', `https://aps1.media.plivo.com/v1/Account/${AUTH_ID}/Recording/r-1.mp3`],
+    ['usw1.media.plivo.com', `https://usw1.media.plivo.com/v1/Account/${AUTH_ID}/Recording/r-1.mp3`],
+  ])('proxies a recording on the regional media host %s, Basic auth on hop 0 (staging refused aps1 before 2026-11-18)', async (_l, url) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok());
+    vi.stubGlobal('fetch', fetchMock);
+    const r = reply();
+    await proxyCallRecording(pl(url), { headers: {} } as any, r, access(HOSTS));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toBe(url);
+    expect(headersOf(fetchMock.mock.calls[0]![1]).get('authorization')).toBe(BASIC);
+    expect(r.sent.code).toBe(200);
+  });
+
+  it('follows a redirect from media.plivo.com to a regional media host, without the credential', async () => {
+    const regional = `https://aps1.media.plivo.com/v1/Account/${AUTH_ID}/Recording/r-1.mp3`;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, status: 302, body: null,
+        headers: { get: (k: string) => (k.toLowerCase() === 'location' ? regional : null) },
+      })
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal('fetch', fetchMock);
+    const r = reply();
+    await proxyCallRecording(pl(PLIVO_URL), { headers: {} } as any, r, access(HOSTS));
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([PLIVO_URL, regional]);
+    expect(headersOf(fetchMock.mock.calls[1]![1]).get('authorization')).toBeNull();
+    expect(r.sent.code).toBe(200);
+  });
+
+  it.each([
     ['the REST API host', `https://api.plivo.com/v1/Account/${AUTH_ID}/Call/`],
-    ['a subdomain of the media host', 'https://evil.media.plivo.com/r.mp3'],
+    ['the apex', 'https://plivo.com/r.mp3'],
+    ['a host ending in media.plivo.com without the dot', 'https://evilmedia.plivo.com/r.mp3'],
+    ['the media host as a prefix of another domain', 'https://media.plivo.com.evil.com/r.mp3'],
+    ['a regional host as a prefix of another domain', 'https://aps1.media.plivo.com.evil.com/r.mp3'],
+    ['the media host as userinfo', 'https://media.plivo.com@evil.com/r.mp3'],
+    ['a regional host over http', 'http://aps1.media.plivo.com/r.mp3'],
     ['a VoiceLink host', GOOD],
     ['an attacker host', 'https://evil.example/r.mp3'],
   ])('502s a Plivo recording_url on %s without fetching (the credential never leaves)', async (_l, url) => {

@@ -300,6 +300,29 @@ describe('GeminiTranscriber', () => {
     expect(TranscriptionError).toBeDefined();
   });
 
+  it('keeps the vendor\'s rate-limit detail on the RATE_LIMITED error, for the analysis worker\'s logs', async () => {
+    const body = {
+      error: {
+        code: 429,
+        message: 'You exceeded your current quota',
+        status: 'RESOURCE_EXHAUSTED',
+        details: [{
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+        }],
+      },
+    };
+    mocks.generateContent.mockRejectedValueOnce(Object.assign(new Error(JSON.stringify(body)), { status: 429 }));
+    const err = await makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: 'RATE_LIMITED',
+      provider: 'gemini',
+      status: 429,
+      rateLimit: { vendorCode: 'RESOURCE_EXHAUSTED', quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'] },
+    });
+    expect((err as Error).cause).toMatchObject({ name: 'AiError', kind: 'rate_limited' }); // kept for the stack
+  });
+
   it('windows a long call, offsets timestamps by window start, and heartbeats per window', async () => {
     // 900s call, 600s window → windows [0,600], [600,900].
     mocks.generateContent

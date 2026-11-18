@@ -69,6 +69,20 @@ export const dialerAnalysisRateLimitPausesTotal = counter(meter, 'dialer_analysi
   description: 'Times the analysis worker paused claiming after a vendor rate limit',
 });
 
+/**
+ * Consecutive vendor rate-limit pauses with no analysis completed between them; 0 while
+ * claiming normally. A short rate limit reads 1-3 and falls back to 0; the worker escalates
+ * (and the alert fires) at its PERSISTENT_RATE_LIMIT_PAUSES.
+ */
+const dialerAnalysisRateLimitConsecutivePauses = gauge(meter, 'dialer_analysis_rate_limit_consecutive_pauses', {
+  description: 'Consecutive vendor rate-limit pauses with no completed analysis between them (0 when claiming normally)',
+});
+
+/** Publish the breaker's run of consecutive pauses (0 once a job completes). */
+export function setDialerAnalysisRateLimitConsecutivePauses(value: number): void {
+  dialerAnalysisRateLimitConsecutivePauses.set(value);
+}
+
 /** Publish the slot pool: jobs in flight out of `slots`. */
 export function setDialerAnalysisSlots(inFlight: number, slots: number): void {
   dialerAnalysisInFlight.set(inFlight);

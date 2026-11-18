@@ -737,8 +737,9 @@ every account the caller belongs to (CH2) where every internal handler is single
   - *Recordings* (`telephony/recording-access.ts`, B21). Every recording fetch (the attempt and
     soft-phone recording proxies, signed playback and the analysis fetch) asks a per-carrier table
     with the call row's provider, pinned credential and tenant. VoiceLink: the configured hosts,
-    nothing attached. Plivo: `media.plivo.com` exactly, with Basic auth from the credential
-    resolved for `recording`, on the first request only; `fetchWithAllowedRedirects` sends request
+    nothing attached. Plivo: `media.plivo.com` and its subdomains (the regional media hosts,
+    `aps1.media.plivo.com`; never `api.plivo.com`; PL6 as amended 2026-11-18), with Basic auth
+    from the credential resolved for `recording`, on the first request only; `fetchWithAllowedRedirects` sends request
     headers to the first URL only, so a redirect hop carries nothing but `Range`, for every carrier.
     A missing, revoked or foreign credential is a typed refusal with no fallback.
   - *Media workers.* Plivo's callbacks carry the `w` hint like VoiceLink's posts; the primary
@@ -776,7 +777,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   the `ai/` gemini client) or Sarvam.
   `recording-fetcher.ts` fetches only from the hosts `telephony/recording-access.ts` allows for the
   call's carrier (VoiceLink: `VOICELINK_RECORDING_HOSTS`, default `recording.app.voicelink.co.in`;
-  Plivo: `media.plivo.com` on the tenant's credential), checked on every redirect hop. A refused
+  Plivo: `media.plivo.com` and its regional subdomains on the tenant's credential), checked on
+  every redirect hop. A refused
   access fails the job without a retry; a keyring fault is retried.
 - **LLM analysis** (`analysis/`): any `ai/` provider (`POST_CALL_ANALYSIS_PROVIDER`), on the transcript,
   or with `POST_CALL_ANALYSIS_INPUT=audio` (gemini) on the recording plus the transcript: the runner

@@ -1,5 +1,6 @@
 import { createChildLogger } from '@magick-agency/observability';
 import type { DialerSpeakerRole, DialerTranscriptEntry } from '@magick-agency/db/models/agency-call.model';
+import { retryAfterSeconds } from '../ai/index.js';
 import {
   TranscriptionError,
   type Transcriber,
@@ -74,7 +75,11 @@ export class SarvamTranscriber implements Transcriber {
       const rateLimited = res.status === 429;
       const body = await res.text().catch(() => '');
       if (rateLimited) {
-        throw new TranscriptionError('RATE_LIMITED', `Sarvam rate-limited (429): ${body.slice(0, 200)}`);
+        throw new TranscriptionError('RATE_LIMITED', `Sarvam rate-limited (429): ${body.slice(0, 200)}`, true, {
+          provider: 'sarvam',
+          status: 429,
+          rateLimit: { vendorMessage: body.slice(0, 500) || undefined, retryAfterSeconds: retryAfterSeconds(res.headers?.get('retry-after')) },
+        });
       }
       throw new TranscriptionError(
         'TRANSCRIPTION_FAILED',
