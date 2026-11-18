@@ -32,6 +32,39 @@ describe('ComingSoonButton', () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  it('never passes a press to a parent', () => {
+    const parent = vi.fn();
+    render(
+      <div onClick={parent}>
+        <ComingSoonButton>Join call</ComingSoonButton>
+      </div>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Join call' }));
+    expect(parent).not.toHaveBeenCalled();
+  });
+
+  it('keeps a press from following a link around it', () => {
+    render(<a href="#elsewhere"><ComingSoonButton>Join call</ComingSoonButton></a>);
+    const pressed = fireEvent.click(screen.getByRole('button', { name: 'Join call' }));
+    // fireEvent returns false when the event's default action was prevented.
+    expect(pressed).toBe(false);
+  });
+
+  it('hides its tooltip on Escape while only hovered, not focused (WCAG 1.4.13)', () => {
+    render(<ComingSoonButton testId="join">Join call</ComingSoonButton>);
+    const wrap = screen.getByTestId('join');
+    fireEvent.mouseEnter(wrap);
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Join call' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(wrap.getAttribute('data-dismissed')).toBe('true');
+    // Shown again the next time the pointer comes back.
+    fireEvent.mouseLeave(wrap);
+    expect(wrap.hasAttribute('data-dismissed')).toBe(false);
+    // Not hovered, an Escape elsewhere on the page is none of its business.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(wrap.hasAttribute('data-dismissed')).toBe(false);
+  });
+
   it('as a compact icon button keeps its name and explanation without a badge, and Escape hides the tooltip', () => {
     render(<ComingSoonButton compact label="Talk to Ravi" testId="talk"><svg /></ComingSoonButton>);
     const button = screen.getByRole('button', { name: 'Talk to Ravi' });
