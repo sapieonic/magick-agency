@@ -522,6 +522,37 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(breakIdx).toBeGreaterThanOrEqual(0);
     expect(saveIdx).toBeGreaterThan(breakIdx);
     expect(hangupIdx).toBeGreaterThan(saveIdx);
+    // Need help (coming soon) is on the bar but never in its keyboard path.
+    expect(names.some((n) => n.includes('Need help'))).toBe(false);
+  });
+
+  it('shows Need help on a call as a disabled control marked coming soon, which nothing presses', async () => {
+    await onCall();
+    const button = screen.getByRole('button', { name: /Need help/ });
+    // A real disabled button, never a link that goes nowhere.
+    expect(button.tagName).toBe('BUTTON');
+    expect(button.hasAttribute('disabled')).toBe(true);
+    const description = button.getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)?.textContent).join(' ');
+    expect(description).toBe('Ask a supervisor for help during a call. Coming soon.');
+    const wrap = screen.getByTestId('need-help');
+    expect(wrap.getAttribute('title')).toBe('Ask a supervisor for help during a call. Coming soon.');
+    expect(within(wrap).getByText('Coming soon')).toBeTruthy();
+    // Beside the call's own controls: after Mute, before Hang up, in the action bar.
+    const bar = button.closest('div')!;
+    const order = Array.from(bar.querySelectorAll('button')).map((b) => b.textContent?.trim() ?? '');
+    const muteIdx = order.findIndex((n) => n === 'Mute' || n === 'Unmute');
+    const helpIdx = order.findIndex((n) => n.includes('Need help'));
+    const hangupIdx = order.findIndex((n) => n.startsWith('Hang up'));
+    expect(helpIdx).toBeGreaterThan(muteIdx);
+    expect(hangupIdx).toBeGreaterThan(helpIdx);
+    // The shortcuts are as they were: Ctrl+Enter still saves, and nothing reaches the button.
+    press('1');
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true });
+    });
+    await act(async () => {});
+    expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
+    expect(button.hasAttribute('disabled')).toBe(true);
   });
 });
 

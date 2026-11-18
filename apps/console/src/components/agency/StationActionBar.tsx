@@ -1,11 +1,12 @@
 import type { RefObject } from 'react';
-import { Phone } from 'lucide-react';
+import { LifeBuoy, Phone } from 'lucide-react';
 import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { BreakMenu, type BreakMenuHandle } from './BreakMenu';
 import { QueuedBreakPill } from './QueuedBreakPill';
 import { CustomerWaitingPill } from './inbound/CustomerWaitingPill';
 import { DncControl, type DncControlHandle } from './DncControl';
 import { HoldToConfirmButton } from './HoldToConfirmButton';
+import { ComingSoonButton } from '../common/ComingSoon';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { DISPOSITION_BLOCK_COPY } from '../../utils/agencyDispositionForm';
 import type { DncScope } from '../../utils/agencyDncCopy';
@@ -203,6 +204,25 @@ export function StationActionBar({
       >
         {cons.audio.muted ? 'Unmute' : 'Mute'}
       </button>
+
+      {/*
+        Need help: an agent will be able to ask a supervisor for help during a call. Nothing is
+        behind it yet, so it is a real disabled button marked coming soon: out of the tab order
+        and bound to no shortcut, so the bar's keyboard path (Break → Save → … → Hang up) and its
+        shortcuts are as they were. Beside Mute, the other control on the live call. Rendered in
+        every state (the geometry rule: controls disable, they never appear and vanish), and left
+        out of a phone's bar (the CSS), whose wrapped rows it would reflow.
+      */}
+      <span className={styles.needHelp}>
+        <ComingSoonButton
+          className={styles.mute}
+          tooltip="Ask a supervisor for help during a call. Coming soon."
+          testId="need-help"
+        >
+          <LifeBuoy size={15} aria-hidden="true" style={{ marginRight: 6 }} />
+          Need help
+        </ComingSoonButton>
+      </span>
 
       <HoldToConfirmButton
         attemptId={cons.station.live?.attempt.attempt_id ?? null}
