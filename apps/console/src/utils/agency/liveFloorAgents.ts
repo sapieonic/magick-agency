@@ -198,7 +198,7 @@ export function floorNowLine(row: AgencyFloorAgent, formatTime: (iso: string) =>
     return row.on_inbound_call ? 'Inbound call ringing' : 'Connecting a call';
   }
   if (state === 'available') return 'Waiting for a call';
-  if (state === 'wrapup') return owesInboundOutcome(row) ? 'After an inbound call' : 'Saving the call’s outcome';
+  if (state === 'wrapup') return owesInboundOutcome(row) ? 'After an inbound call' : 'After the call';
   if (state === 'break') {
     if (isOnSoftphone({ state: row.state, break_reason: row.break_reason })) return 'Taking calls by hand';
     return row.break_label ?? 'On a break';
