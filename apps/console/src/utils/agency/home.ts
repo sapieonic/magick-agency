@@ -9,6 +9,7 @@ import {
   type AgencyAttentionStaffing,
   type AgencyHomeActiveStatus,
   type AgencyHomeCampaignStats,
+  type AgencyHomeStatusChange,
 } from '@magick-agency/contracts/api/agency/home';
 import { AGENCY_STALL_LABELS, stallCopy } from '../agencyHealthStrip';
 import { campaignTabHref, type CampaignTabId } from '../agencyCampaignTabs';
@@ -62,6 +63,7 @@ const RANK_ORDER: Record<HomeRank, number> = Object.fromEntries(HOME_RANKS.map((
 export function homeRank(item: Pick<HomeAttentionItem, 'kind' | 'tone'>): HomeRank {
   if (item.kind.startsWith('stall:') && item.tone === 'danger') return 'stop';
   if (item.kind === 'callbacks-overdue') return 'late-callbacks';
+  if (item.kind.startsWith('break-overrun')) return 'break-overrun';
   return item.tone;
 }
 
@@ -120,6 +122,11 @@ export interface HomeAttentionItem {
    * `liveFloor.ts`): the row's action opens this list instead of following `to`.
    */
   review?: HomeReviewCampaign[];
+  /**
+   * An action that is planned and not built yet, shown as a disabled "Coming soon" control beside
+   * the row's link (a break overrun's "Send reminder", Phase 3).
+   */
+  comingSoon?: { label: string; tooltip: string };
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -141,6 +148,8 @@ export interface HomeCampaignRead {
   /** Today's carrier failures and recording, in the campaign's zone. */
   today: AgencyAttentionRangeFigures | null;
   settings: AgencyAttentionSettings | null;
+  /** For a paused or stopping campaign, when and by whom (the board's `status_changed`); null while running. */
+  statusChanged?: AgencyHomeStatusChange | null;
   /**
    * Whether any part is the last good read's because this one failed for it: the page marks the
    * campaign's rows so a number it could not refresh is not read as fresh.

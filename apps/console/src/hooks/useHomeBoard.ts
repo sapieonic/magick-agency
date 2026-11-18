@@ -145,6 +145,8 @@ function read(board: Board, kind: Kind): Promise<void> {
           allocation: kept('allocation'),
           today: kept('today'),
           settings: c.settings,
+          // Optional on the wire's older servers: absent reads as nothing known.
+          statusChanged: c.status_changed ?? null,
           stale,
         };
       });

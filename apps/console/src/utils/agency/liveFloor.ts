@@ -290,8 +290,34 @@ export function floorLifecycleAction(status: string): Extract<AgencyCampaignActi
   return live ? (live.action as 'pause' | 'resume') : null;
 }
 
+/**
+ * Who paused or is stopping a campaign, and when, from the board's `status_changed`: "Paused by
+ * Anitha at 11:03 am", "Paused automatically at 11:03 am" (the guardrail or the carrier account),
+ * "Stopping, by Anitha at …". Each part is left out when the board does not know it; null while
+ * running, or when nothing is known at all.
+ */
+export function statusChangeLine(
+  read: Pick<HomeCampaignRead, 'campaign' | 'statusChanged'>,
+  formatInstant: (iso: string) => string,
+): string | null {
+  const change = read.statusChanged;
+  const { status } = read.campaign;
+  if (!change || (status !== 'paused' && status !== 'stopping')) return null;
+  const at = change.at ? ` at ${formatInstant(change.at)}` : '';
+  const by = change.by_name?.trim();
+  if (status === 'paused') {
+    if (change.automatic) return `Paused automatically${at}`;
+    if (by) return `Paused by ${by}${at}`;
+    return at ? `Paused${at}` : null;
+  }
+  if (by) return `Stopping, by ${by}${at}`;
+  return change.at ? `Stopping since ${formatInstant(change.at)}` : null;
+}
+
 export interface LiveFloorCampaignCard {
   campaign: HomeCampaignRef;
+  /** "Paused by Anitha at 11:03 am" ({@link statusChangeLine}), or null. */
+  statusLine: string | null;
   /** "4 calls live", null before the stats answer. */
   callsLive: string | null;
   list: ListDone;
@@ -309,6 +335,7 @@ export function campaignCards(
 ): LiveFloorCampaignCard[] {
   return reads.map((read) => ({
     campaign: read.campaign,
+    statusLine: statusChangeLine(read, formatInstant),
     callsLive: callsLiveText(read.stats),
     list: listDone(read.stats),
     stall: read.stats?.stall ? stallCopy(read.stats.stall, formatInstant).headline : null,
