@@ -5,9 +5,11 @@
  *  - {@link FLOOR_ROWS_SQL}: one row per person. Every open session in the account (a campaign
  *    session on any of its campaigns, or a soft-phone session, `campaign_id` NULL), with its
  *    campaign, its unsettled inbound call (the per-campaign floor's lateral, `supervisorAgents`),
- *    and whether the person is staffed on an active campaign; then one row per agent staffed on an
- *    ACTIVE campaign (`running`, `stopping`, `paused`) with no open session in the account, with
- *    when their last session here ended.
+ *    the window its wrap-up takes (an inbound wrap-up's captured on its call, else the campaign's;
+ *    none for a timerless campaign), and whether the person is staffed on an active campaign;
+ *    then one row per agent staffed on an ACTIVE campaign (`running`, `stopping`, `paused`) with
+ *    no open session in the account, with when their last session in THIS account ended (never a
+ *    later one in another account).
  *  - {@link FLOOR_CALLS_TODAY_SQL}: each agent's conversations dialled in a window, counted as
  *    the grouped stats count `connected` (the same FROM, scope, window and
  *    `CONVERSATION_ATTEMPT_SQL`), so an agent's `calls_today` is their `group_by=agent` row.
@@ -45,10 +47,12 @@
 import { getPool } from '@magick-agency/db';
 import type { AgencyAgentLiveState, AgencyClientKind } from '@magick-agency/contracts/agency';
 import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
+import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
+import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { CONVERSATION_ATTEMPT_SQL } from './sql-fragments.js';
 
-/** The campaign statuses whose staffed agents are on the floor with no session (Home's active set). */
-export const FLOOR_ACTIVE_STATUSES = ['running', 'stopping', 'paused'] as const;
+/** The campaign statuses whose staffed agents are on the floor with no session: Home's active set, the same list. */
+export const FLOOR_ACTIVE_STATUSES = AGENCY_HOME_ACTIVE_STATUSES;
 
 /** One person on the floor, as the database answers. */
 export interface AgencyFloorRow {
@@ -57,7 +61,12 @@ export interface AgencyFloorRow {
   agent_user_id: string;
   campaign_id: string | null;
   campaign_name: string | null;
-  /** The campaign's wrap-up window (`wrapup_seconds`); null without a campaign. */
+  /**
+   * The window the session's wrap-up takes, in seconds: on an inbound wrap-up (`inbound_outcome_owed`)
+   * the one captured on the inbound call (IQ52, `agency_inbound_calls.wrapup_seconds`), else the
+   * inbound default; otherwise the campaign's `wrapup_seconds`. Null without a campaign, and for a
+   * timerless campaign (`wrapup_seconds = 0`: no countdown, so nothing to be past).
+   */
   wrapup_seconds: number | null;
   /** The campaign's break catalog as stored (`[]`: the default catalog); null without a campaign. */
   break_reasons: AgencyBreakReason[] | null;
@@ -91,7 +100,13 @@ export const FLOOR_ROWS_SQL = `
      WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.status = ANY($4::text[])
   )
   SELECT o.id AS session_id, o.agent_user_id, o.campaign_id, cam.name AS campaign_name,
-         cam.wrapup_seconds, cam.break_reasons,
+         -- The window the session's wrap-up takes: on an inbound wrap-up (its call ended and owes
+         -- its outcome) the one captured on the call (IQ52), else the inbound default; otherwise
+         -- the campaign's, and none for a timerless campaign (wrapup_seconds = 0: no countdown).
+         CASE WHEN ib.outcome_owed THEN COALESCE(ib.wrapup_seconds, ${INBOUND_DEFAULT_WRAPUP_SECONDS})
+              WHEN cam.wrapup_seconds > 0 THEN cam.wrapup_seconds
+         END AS wrapup_seconds,
+         cam.break_reasons,
          o.state, o.state_since,
          -- Only while on a break: the column keeps the last reason after they return.
          CASE WHEN o.state = 'break' THEN o.break_reason END AS break_reason,
@@ -106,7 +121,8 @@ export const FLOOR_ROWS_SQL = `
     -- one): the per-campaign floor's own rule (campaign-stats.ts supervisorAgents).
     LEFT JOIN LATERAL (
       SELECT ib.state IN ('offered', 'connected') AS on_call,
-             (ib.state = 'ended' AND ib.bridged_at IS NOT NULL) AS outcome_owed
+             (ib.state = 'ended' AND ib.bridged_at IS NOT NULL) AS outcome_owed,
+             ib.wrapup_seconds
         FROM agency_inbound_calls ib
        WHERE ib.session_id = o.id AND ib.settled_at IS NULL
        LIMIT 1

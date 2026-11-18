@@ -52,7 +52,9 @@ export interface AgencyPromisesSummaryResponse {
   /**
    * The account's ACTIVE campaigns (`running`, `stopping`, `paused`) whose outcome catalog has an
    * entry with `requires_promise`. Empty: no active campaign records promises (the console shows
-   * Successes in place of Will pay).
+   * Successes in place of Will pay). Complete: only a campaign's catalog can ask for a promise (the
+   * soft phone's and an inbound route's refuse `requires_promise`, `AgencyDisposition`), so a promise is only ever
+   * recorded on a call some campaign's catalog resolved.
    */
   promise_campaign_ids: string[];
   /** The window served, echoed as ISO-8601 (UTC). */

@@ -186,7 +186,10 @@ names or whether a call can be listened to, which the public route adds (`agentN
 listening flags). `promises.ts` (`GET /proxy/agency/promises/summary`) is assembled by the public
 API layer from the three call tables. Neither has a dialer counterpart. Home's board gained
 `AgencyHomeCampaign.status_changed` (`AgencyHomeStatusChange`: when, by whom, or automatic) for
-"Paused by" on the Live floor's campaign cards.
+"Paused by" on the Live floor's campaign cards. `AgencyFloorAgent.wrapup_window_seconds` is the
+window the session's wrap-up actually takes, not the campaign's configured `wrapup_seconds` that
+`AgencyCampaign` carries: on an inbound wrap-up it is the window captured on the inbound call
+(IQ52), and a timerless campaign (`wrapup_seconds = 0`) serves null, as a soft-phone session does.
 
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,

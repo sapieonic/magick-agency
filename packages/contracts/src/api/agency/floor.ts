@@ -96,7 +96,14 @@ export interface AgencyFloorAgent {
   on_inbound_call: boolean;
   /** The session's inbound call ended and still owes its outcome, as `AgencySupervisorAgent.inbound_outcome_owed`. */
   inbound_outcome_owed: boolean;
-  /** The open session's campaign's wrap-up window in seconds (the console's `wrapup_overrun` risk); null without a campaign. */
+  /**
+   * The window the open session's wrap-up takes, in seconds (the console's `wrapup_overrun` risk):
+   * on an inbound wrap-up (`inbound_outcome_owed`) the route's window captured on the inbound call
+   * (IQ52; 30 s when the call captured none), otherwise the campaign's `wrapup_seconds`. **Null when
+   * there is no countdown to be past:** a timerless campaign (`wrapup_seconds = 0`, "no timer", not
+   * a 0 s window), a soft-phone session, a row with no open session. The console reads null as
+   * "never past the window".
+   */
   wrapup_window_seconds: number | null;
   /** The call in progress on the open session, if any. */
   call: AgencyFloorCall | null;

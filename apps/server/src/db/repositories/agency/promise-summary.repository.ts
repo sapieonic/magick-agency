@@ -59,9 +59,12 @@ export const PROMISE_SUMMARY_SQL = `
 /**
  * The account's active campaigns whose stored outcome catalog has an entry with
  * `requires_promise: true` ($1 tenant, $2 account, $3 the active statuses). An empty catalog means
- * the default one, which has none. Exported for its test.
+ * the default one, which has none. Only a campaign's catalog can ask for a promise: the soft
+ * phone's and an inbound route's refuse `requires_promise` when saved (`allowPromise: false`), and
+ * a call outside a campaign resolves to one of those or the default, so no other catalog is read.
+ * Tested through {@link AgencyPromiseSummaryRepository.promiseCampaignIds}.
  */
-export const PROMISE_CAMPAIGNS_SQL = `
+const PROMISE_CAMPAIGNS_SQL = `
   SELECT c.id
     FROM agency_campaigns c
    WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.status = ANY($3::text[])

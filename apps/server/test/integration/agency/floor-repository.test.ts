@@ -211,6 +211,83 @@ describe('callsToday', () => {
   });
 });
 
+/**
+ * A third account of the tenant (A3), its own floor: an agent whose last session HERE ended
+ * today, with a later closed session in account A (so the last session in the tenant is not this
+ * account's), and the wrap-up window each open row serves: the campaign's, none on a timerless
+ * campaign (`wrapup_seconds = 0`), and on an inbound wrap-up the window captured on the call
+ * (IQ52), else the inbound default.
+ */
+const A3 = randomUUID();
+const a3: Record<string, string> = {};
+const a3Sessions: Record<string, string> = {};
+
+/** An answered inbound call on `session` that ended and still owes its outcome; `wrapup` the captured window. */
+async function inboundOwed(session: string, agent: string, wrapup: number | null, accountId: string) {
+  await getTestPool().query(
+    `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, to_e164, state, outcome, bridged_at, ended_at,
+                                       answered_by_user_id, session_id, offered_at, offer_count, wrapup_seconds)
+     VALUES ($1, $2, $3, '+919000000003', 'ended', 'answered', now() - interval '2 minutes', now() - interval '1 minute',
+             $4, $5, now() - interval '3 minutes', 1, $6)`,
+    [T, accountId, `floor-ib-${randomUUID()}`, agent, session, wrapup]);
+}
+
+describe('another account of the tenant: left_at, and the wrap-up window served', () => {
+  beforeAll(async () => {
+    await insertAccount({ id: A3, tenant_id: T });
+    for (const name of ['leftHere', 'wrapCampaign', 'wrapTimerless', 'wrapInbound', 'wrapInboundDefault', 'liveInbound']) {
+      a3[name] = (await insertUser() as Id).id;
+    }
+    const timed = await insertAgencyCampaign({ status: 'running', account_id: A3, name: 'Timed', wrapup_seconds: 45 }) as Id;
+    const timerless = await insertAgencyCampaign({ status: 'running', account_id: A3, name: 'Timerless', wrapup_seconds: 0 }) as Id;
+    await staff(timed, a3['leftHere']!, A3);
+    // Their last session in A3 ended four hours ago; a later one in account A (same tenant) ended an
+    // hour ago. A3's floor says four hours ago: the other account's session is not this one's.
+    await insertAgentSession(timed.id, { account_id: A3, agent_user_id: a3['leftHere'], state: 'offline', joined_at: ago(5 * HOUR), left_at: ago(4 * HOUR) });
+    await insertAgentSession(c1.id, { agent_user_id: a3['leftHere'], state: 'offline', joined_at: ago(3 * HOUR), left_at: ago(1 * HOUR) });
+
+    const open = async (name: string, campaign: Id, state: string) => {
+      a3Sessions[name] = (await insertAgentSession(campaign.id, { account_id: A3, agent_user_id: a3[name], state }) as Id).id;
+    };
+    await open('wrapCampaign', timed, 'wrapup');
+    await open('wrapTimerless', timerless, 'wrapup');
+    await open('wrapInbound', timed, 'wrapup');
+    await open('wrapInboundDefault', timerless, 'wrapup');
+    await open('liveInbound', timed, 'on_call');
+    await inboundOwed(a3Sessions['wrapInbound']!, a3['wrapInbound']!, 90, A3);
+    await inboundOwed(a3Sessions['wrapInboundDefault']!, a3['wrapInboundDefault']!, null, A3);
+    await getTestPool().query(
+      `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, to_e164, state, bridged_at, answered_by_user_id, session_id, offered_at, offer_count, wrapup_seconds)
+       VALUES ($1, $2, 'floor-ib-live-a3', '+919000000003', 'connected', now(), $3, $4, now(), 1, 120)`,
+      [T, A3, a3['liveInbound'], a3Sessions['liveInbound']]);
+  });
+
+  it('left_at is the end of the last session in THIS account, never a later one in another account of the tenant', async () => {
+    const rows = await agencyFloorRepository.floorRows(T, A3, FROM);
+    const left = rows.find((r) => r.agent_user_id === a3['leftHere']);
+    expect(left).toMatchObject({ session_id: null, state: 'offline' });
+    expect(left!.left_at!.toISOString()).toBe(ago(4 * HOUR).toISOString());
+  });
+
+  it('serves the effective wrap-up window: the campaign\'s, none without a timer, the inbound call\'s captured one on an inbound wrap-up', async () => {
+    const rows = await agencyFloorRepository.floorRows(T, A3, FROM);
+    const windowOf = (name: string) => rows.find((r) => r.agent_user_id === a3[name])!.wrapup_seconds;
+    expect(windowOf('wrapCampaign')).toBe(45);
+    // `wrapup_seconds = 0` is "no timer": no window to be past.
+    expect(windowOf('wrapTimerless')).toBeNull();
+    // An inbound wrap-up takes the route's window captured on the call (IQ52), not the campaign's.
+    expect(windowOf('wrapInbound')).toBe(90);
+    // A call that captured none takes the inbound default (30 s), even on a timerless campaign.
+    expect(windowOf('wrapInboundDefault')).toBe(30);
+    // A live inbound call owes no outcome yet: the campaign's window stands.
+    expect(windowOf('liveInbound')).toBe(45);
+    // Account A's floor is untouched: its campaign's own window.
+    const inA = await agencyFloorRepository.floorRows(T, A, FROM);
+    expect(inA.find((r) => r.agent_user_id === users['onCall'])!.wrapup_seconds).toBe(45);
+    expect(inA.find((r) => r.agent_user_id === users['soft'])!.wrapup_seconds).toBeNull();
+  });
+});
+
 describe('the internal handler, GET /floor', () => {
   let app: FastifyInstance;
   let connected: (ids: readonly string[]) => Promise<Map<string, boolean>>;
@@ -226,7 +303,7 @@ describe('the internal handler, GET /floor', () => {
   });
   afterAll(async () => { await app.close(); });
 
-  const get = (from: string, account = A) => app.inject({
+  const get = (from: string, account: string = A) => app.inject({
     method: 'GET', url: `/api/v1/agency/floor?from=${encodeURIComponent(from)}`,
     headers: { 'x-mgkvc-tenant': T, 'x-mgkvc-account': account },
   });
@@ -267,6 +344,27 @@ describe('the internal handler, GET /floor', () => {
     } finally {
       connected = async (ids) => new Map(ids.map((id) => [id, true]));
     }
+  });
+
+  it('keeps calls today per account: another account of the tenant read with the same `from` never gets this one\'s counts', async () => {
+    clearFloorCallsTodayCacheForTests();
+    const from = FROM.toISOString();
+    const counts = (body: { agents: Array<{ agent_user_id: string; calls_today: number }> }) => Object.fromEntries(
+      body.agents.filter((a) => a.calls_today > 0).map((a) => [Object.keys(users).find((n) => users[n] === a.agent_user_id), a.calls_today]));
+    // A first (its counts cached), then the other account with the very same `from`, then A again.
+    expect(counts((await get(from)).json())).toEqual({ onCall: 5, leftToday: 1 });
+    expect(counts((await get(from, OTHER_ACCOUNT)).json())).toEqual({ elsewhere: 1 });
+    expect(counts((await get(from)).json())).toEqual({ onCall: 5, leftToday: 1 });
+  });
+
+  it('serves another account\'s left_at and effective wrap-up windows as its repository reads them', async () => {
+    const body = (await get(FROM.toISOString(), A3)).json();
+    const of = (u: string) => body.agents.find((a: { agent_user_id: string }) => a.agent_user_id === a3[u]);
+    expect(of('leftHere')).toMatchObject({ left_at: ago(4 * HOUR).toISOString(), wrapup_window_seconds: null });
+    expect(of('wrapCampaign').wrapup_window_seconds).toBe(45);
+    expect(of('wrapTimerless').wrapup_window_seconds).toBeNull();
+    expect(of('wrapInbound')).toMatchObject({ inbound_outcome_owed: true, wrapup_window_seconds: 90 });
+    expect(of('wrapInboundDefault').wrapup_window_seconds).toBe(30);
   });
 
   it('refuses a bad `from` with a 400', async () => {
