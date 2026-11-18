@@ -522,20 +522,23 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(breakIdx).toBeGreaterThanOrEqual(0);
     expect(saveIdx).toBeGreaterThan(breakIdx);
     expect(hangupIdx).toBeGreaterThan(saveIdx);
-    // Need help (coming soon) is on the bar but never in its keyboard path.
-    expect(names.some((n) => n.includes('Need help'))).toBe(false);
+    // Need help (coming soon) is reachable, so a keyboard user can learn why it does nothing: after
+    // Save and before Hang up, never ahead of the call's own controls.
+    const helpIdx = names.findIndex((n) => n.includes('Need help'));
+    expect(helpIdx).toBeGreaterThan(saveIdx);
+    expect(hangupIdx).toBeGreaterThan(helpIdx);
   });
 
-  it('shows Need help on a call as a disabled control marked coming soon, which nothing presses', async () => {
+  it('shows Need help on a call as an inert control marked coming soon, which nothing presses', async () => {
     await onCall();
     const button = screen.getByRole('button', { name: /Need help/ });
-    // A real disabled button, never a link that goes nowhere.
+    // A real button marked disabled (focusable, so its tooltip can be read), never a link that goes nowhere.
     expect(button.tagName).toBe('BUTTON');
-    expect(button.hasAttribute('disabled')).toBe(true);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
     const description = button.getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)?.textContent).join(' ');
     expect(description).toBe('Ask a supervisor for help during a call. Coming soon.');
     const wrap = screen.getByTestId('need-help');
-    expect(wrap.getAttribute('title')).toBe('Ask a supervisor for help during a call. Coming soon.');
+    expect(within(wrap).getByRole('tooltip').textContent).toBe('Ask a supervisor for help during a call. Coming soon.');
     expect(within(wrap).getByText('Coming soon')).toBeTruthy();
     // Beside the call's own controls: after Mute, before Hang up, in the action bar.
     const bar = button.closest('div')!;
@@ -552,7 +555,10 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     });
     await act(async () => {});
     expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
-    expect(button.hasAttribute('disabled')).toBe(true);
+    // Pressing it does nothing either.
+    fireEvent.click(button);
+    expect(mocks.hangupAttempt).not.toHaveBeenCalled();
+    expect(button.getAttribute('aria-disabled')).toBe('true');
   });
 });
 

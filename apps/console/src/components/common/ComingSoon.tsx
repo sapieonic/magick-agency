@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import styles from './ComingSoon.module.css';
 
 /** The words every coming-soon control carries, on screen and to a screen reader. */
@@ -23,11 +23,12 @@ export function comingSoonWords(tooltip?: string): string {
 }
 
 /**
- * A control that will exist and does nothing yet: a real `<button disabled>` (never a link that
- * goes nowhere), with the badge beside it. Its accessible description is the badge's words, or the
- * tooltip's (what it will do, then "Coming soon."). The tooltip sits on the wrapper, because a
- * disabled button gets no pointer events in some browsers. Disabled, it is out of the tab order, so it
- * never shifts a keyboard path or takes a shortcut.
+ * A control that will exist and does nothing yet. A real `<button>`, never a link that goes
+ * nowhere, marked `aria-disabled="true"` rather than `disabled`: it stays focusable, so a keyboard
+ * user can reach it and learn why it does nothing, and pressing it does nothing. Its explanation
+ * ("what it will do. Coming soon.") is a tooltip shown on hover and on focus (Escape hides it), and
+ * the button's accessible description. A full button also carries the visible badge; a `compact`
+ * icon button is marked by its dashed border instead.
  */
 export function ComingSoonButton({
   children,
@@ -43,31 +44,38 @@ export function ComingSoonButton({
   /** The button's own look (`btn-secondary`, a page's class). */
   className?: string;
   testId?: string;
-  /**
-   * An icon button in a tight row (an agent card's actions): the badge's words are kept for a
-   * screen reader and the tooltip, and the button itself is marked (dashed) rather than a badge
-   * beside each one.
-   */
+  /** An icon button in a tight row (an agent card's actions): no badge beside each one. */
   compact?: boolean;
   /** The accessible name, when the button shows only an icon. */
   label?: string;
 }) {
-  const badgeId = useId();
   const tipId = useId();
   const said = comingSoonWords(tooltip);
+  const [dismissed, setDismissed] = useState(false);
   return (
-    <span className={`${styles.wrap} ${compact ? styles.compact : ''}`} title={said} data-testid={testId}>
+    <span
+      className={`${styles.wrap} ${compact ? styles.compact : ''}`}
+      data-testid={testId}
+      data-dismissed={dismissed ? 'true' : undefined}
+      onMouseLeave={() => setDismissed(false)}
+    >
       <button
         type="button"
         className={className}
         aria-label={label}
-        disabled
-        aria-describedby={tooltip ? tipId : badgeId}
+        aria-disabled="true"
+        aria-describedby={tipId}
+        // Nothing behind it yet: a press is swallowed, never passed to a form or a parent.
+        onClick={(e) => e.preventDefault()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setDismissed(true);
+        }}
+        onBlur={() => setDismissed(false)}
       >
         {children}
       </button>
-      <ComingSoonBadge id={badgeId} hidden={compact} />
-      {tooltip ? <span id={tipId} className="sr-only">{said}</span> : null}
+      {compact ? null : <ComingSoonBadge />}
+      <span id={tipId} role="tooltip" className={styles.tip}>{said}</span>
     </span>
   );
 }

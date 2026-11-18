@@ -633,7 +633,7 @@ describe('Needs you now, as Live floor shows it', () => {
     renderHome();
     const row = await screen.findByTestId('home-attention-callbacks-overdue:c1');
     const give = within(row).getByRole('button', { name: 'Give to free agents' });
-    expect(give.hasAttribute('disabled')).toBe(true);
+    expect(give.getAttribute('aria-disabled')).toBe('true');
     const described = document.getElementById(give.getAttribute('aria-describedby')!)!.textContent;
     expect(described).toBe('Give the 4 late callbacks whose agent is away to agents who are free now. Coming soon.');
     expect(within(row).getByText('Coming soon')).toBeTruthy();
