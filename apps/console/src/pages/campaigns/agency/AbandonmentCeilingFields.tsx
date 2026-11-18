@@ -159,7 +159,7 @@ export function AbandonmentCeilingFields({
         */}
         {warn ? (
           <p className={styles.ceilingWarning} id={warningId} data-testid="abandonment-ceiling-warning">
-            {`Above ${pct(ABANDONMENT_CEILING_REFERENCE_PCT)}, the limit most dropped-call rules set. Check the rules that apply to these calls before raising it.`}
+            {`Above ${pct(ABANDONMENT_CEILING_REFERENCE_PCT)}, the limit most dropped-call rules set. Check the rules that apply to these calls before raising it. You can still save.`}
           </p>
         ) : null}
         <p className={styles.hint} data-testid="abandonment-ceiling-hint">

@@ -33,3 +33,27 @@ export function useConfigFieldErrors(fieldErrors: Record<string, string>): Confi
     message,
   };
 }
+
+/**
+ * Move focus to the first field on screen that has an error, and bring it into view.
+ *
+ * A finding renders as a `FieldError` (`.error-text`, with an id) that its control names in
+ * `aria-describedby`, as `useConfigFieldErrors` wires it. The control takes focus, so a
+ * keyboard user lands where the fix is typed. When no control names the error (a
+ * section-level message), the message itself is scrolled to. A control marked
+ * `aria-invalid` with its own error markup (a page's basics) counts too, whichever is
+ * first on the page.
+ */
+export function focusFirstFieldError(container: HTMLElement): boolean {
+  const first = container.querySelector<HTMLElement>('[aria-invalid="true"], .error-text[id]');
+  if (!first) return false;
+  const control = first.matches('[aria-invalid="true"]')
+    ? first
+    : Array.from(container.querySelectorAll<HTMLElement>('[aria-describedby]')).find((element) =>
+      (element.getAttribute('aria-describedby') ?? '').split(/\s+/).includes(first.id),
+    );
+  const target = control ?? first;
+  target.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  if (control) control.focus({ preventScroll: true });
+  return true;
+}

@@ -16,6 +16,11 @@ interface UnsavedChangesBarProps {
   note: string | null;
   onDiscard: () => void;
   onSave: () => void;
+  /**
+   * Takes the person to what holds Save back. Offered while `blockedReason` is set, because on
+   * a long form the highlighted field can be well out of view of a bar at the bottom.
+   */
+  onShowBlocked?: () => void;
 }
 
 /**
@@ -25,7 +30,15 @@ interface UnsavedChangesBarProps {
  * the page, so a screen reader hears them appear and change without focus moving off the field
  * being edited: a save that fails, or a Save that a field holds back, is heard and not only seen.
  */
-export function UnsavedChangesBar({ count, saving, blockedReason, note, onDiscard, onSave }: UnsavedChangesBarProps) {
+export function UnsavedChangesBar({
+  count,
+  saving,
+  blockedReason,
+  note,
+  onDiscard,
+  onSave,
+  onShowBlocked,
+}: UnsavedChangesBarProps) {
   const summary = count > 0 ? plural(count, 'unsaved change') : '';
   const said = blockedReason ?? note;
   return (
@@ -41,6 +54,11 @@ export function UnsavedChangesBar({ count, saving, blockedReason, note, onDiscar
             {said && <p className={styles.note} data-testid="unsaved-changes-note">{said}</p>}
           </div>
           <div className={styles.actions}>
+            {blockedReason !== null && onShowBlocked ? (
+              <button type="button" className="btn-secondary" onClick={onShowBlocked} data-testid="unsaved-changes-show">
+                Show me
+              </button>
+            ) : null}
             <button type="button" className="btn-secondary" onClick={onDiscard} disabled={saving}>
               Discard
             </button>

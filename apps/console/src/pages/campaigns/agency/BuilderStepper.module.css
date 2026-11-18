@@ -87,6 +87,13 @@
   color: var(--success);
 }
 
+/* A step with a setting that holds Save, current or not. */
+.step[data-invalid='true'] .badge {
+  background: var(--danger-subtle);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .labelFull,
 .labelShort {
   font-family: var(--font-display);

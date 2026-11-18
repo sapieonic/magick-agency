@@ -1,7 +1,8 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { ComposerSection } from '../components/ComposerSection';
 import {
   followCatalogEdit,
+  validateConfig,
   type CampaignConfigState,
   type MappedRows,
 } from '../../../utils/agencyCampaignConfigForm';
@@ -86,7 +87,10 @@ export type BehaviourSectionId = 'hours' | 'behaviour' | 'retries' | 'outcomes' 
 export interface CampaignBehaviourSectionProps {
   state: CampaignConfigState;
   onChange: (next: CampaignConfigState) => void;
-  /** Keyed by body path — client findings and the server's `details` land alike. */
+  /**
+   * The server's `details`, keyed by body path. The section's own findings
+   * (`validateConfig`) are added live; the server's message for a field wins.
+   */
   fieldErrors: Record<string, string>;
   /** Injectable for tests; the echo is clock-derived. */
   now?: Date;
@@ -130,7 +134,14 @@ export function CampaignBehaviourSection({
   readOnly = false,
   inbound = false,
 }: CampaignBehaviourSectionProps) {
-  const errors = useConfigFieldErrors(fieldErrors);
+  /*
+    Findings show as soon as they exist, not on a save attempt. Both pages disable Save
+    while `validateConfig` finds anything, so a finding that waited for a save could never
+    appear: Save would sit disabled beside "Fix the highlighted fields" with nothing
+    highlighted. A viewer who cannot save is shown only what the server said.
+  */
+  const live = useMemo(() => (readOnly ? {} : validateConfig(state)), [readOnly, state]);
+  const errors = useConfigFieldErrors(useMemo(() => ({ ...live, ...fieldErrors }), [live, fieldErrors]));
   // The catalog row each mapped outcome follows through code edits (`followCatalogEdit`).
   const mappedRows = useRef<MappedRows>({});
   const showHours = include.includes('hours');

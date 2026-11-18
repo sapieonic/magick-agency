@@ -48,6 +48,7 @@ import {
   type CampaignRecordingState,
 } from '../../utils/agencyCampaignRecording';
 import { CampaignBehaviourSection } from '../campaigns/agency/CampaignBehaviourSection';
+import { focusFirstFieldError } from '../campaigns/agency/configFieldErrors';
 import { CallerIdPicker } from './CallerIdPicker';
 import { CampaignCarrierField } from '../../components/agency/CampaignCarrierField';
 import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
@@ -300,16 +301,12 @@ export function AgencyCampaignSettingsPage() {
     if (configBlockReason(config) !== null) {
       /*
         The Save control is already disabled while this is non-null, so reaching
-        here means a keyboard or programmatic submit. Populate the per-field
-        errors on the way out regardless: the block copy says "Fix the
-        highlighted fields", and until now nothing was highlighted —
-        `fieldErrors` was only ever filled from a server response, so a purely
-        client-side finding (a duplicate code, an unlabelled outcome) produced a
-        banner pointing at fields that looked fine. `validateConfig` keys
-        exactly as the server does, so the two land in the same place.
+        here means a keyboard or programmatic submit. The findings are already on
+        their fields: `CampaignBehaviourSection` shows `validateConfig` live. They
+        are not copied into `fieldErrors`, which holds the server's answer and
+        wins over a live finding, so a copy would keep a field red after it was fixed.
       */
       const errors = validateConfig(config);
-      setFieldErrors(errors);
       trackAgencyCampaignConfigBlocked({
         source: 'settings',
         field_error_count: Object.keys(errors).length,
@@ -858,6 +855,8 @@ export function AgencyCampaignSettingsPage() {
               note={saveError ? 'Not saved. The reason is above the form.' : null}
               onDiscard={onDiscard}
               onSave={() => void onSave()}
+              // The highlighted field can be sections away from a bar stuck to the bottom.
+              onShowBlocked={() => focusFirstFieldError(document.body)}
             />
           )}
 

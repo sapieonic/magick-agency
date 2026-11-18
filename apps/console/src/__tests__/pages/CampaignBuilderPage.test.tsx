@@ -685,3 +685,56 @@ describe('basics changed after the roster upload created the draft', () => {
     expect(patchBody()).not.toHaveProperty('telephony_provider');
   });
 });
+
+describe('the draft a roster import creates', () => {
+  /*
+    The import creates the campaign as a draft with the name, numbers and carrier only;
+    hours and agent settings reach it with Save campaign. An operator who imported, changed
+    "How agents work" and never got a save through found the draft in the list with the
+    recommended settings, and had to make every change again in its Settings. The page now
+    says what the draft holds while the form differs from it.
+  */
+  async function importContacts() {
+    await renderPage();
+    fillBasics();
+    goToStep('Who to call');
+    const input = screen.getByLabelText('CSV file') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['Cust Mobile\n9820041772\n'], 'c.csv', { type: 'text/csv' })] } });
+    await screen.findByLabelText('Use Cust Mobile as');
+    fireEvent.click(screen.getByRole('button', { name: 'Import without checking' }));
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
+  }
+  const wrapup = () => screen.getByLabelText(/Wrap-up seconds/) as HTMLInputElement;
+
+  it('says nothing while the form matches the draft', async () => {
+    await importContacts();
+    goToStep('How agents work');
+    expect(screen.queryByTestId('draft-note')).toBeNull();
+  });
+
+  it('says the draft still has the recommended settings once something is changed', async () => {
+    await importContacts();
+    goToStep('How agents work');
+    fireEvent.change(wrapup(), { target: { value: '45' } });
+    expect(screen.getByTestId('draft-note').textContent).toBe(
+      'The draft holding your contacts still has the recommended settings. Your changes are kept when you click Save campaign.',
+    );
+    goToStep('Review & save');
+    expect(screen.getByTestId('draft-note')).toBeTruthy();
+  });
+
+  it('goes once saved, and says only that changes since are unsaved after that', async () => {
+    await importContacts();
+    goToStep('How agents work');
+    fireEvent.change(wrapup(), { target: { value: '45' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].wrapup_seconds).toBe(45);
+    await waitFor(() => expect(screen.queryByTestId('draft-note')).toBeNull());
+
+    fireEvent.change(wrapup(), { target: { value: '50' } });
+    expect(screen.getByTestId('draft-note').textContent).toBe(
+      'Some changes are not saved yet. Click Save campaign to keep them.',
+    );
+  });
+});
