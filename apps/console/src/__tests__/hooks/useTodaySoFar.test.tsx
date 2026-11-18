@@ -92,3 +92,26 @@ describe('a failed refresh', () => {
     expect(result.current).toEqual({ status: 'unavailable' });
   });
 });
+
+describe('local midnight', () => {
+  it('reads again at the turn of the day, not up to a minute after it', async () => {
+    vi.setSystemTime(new Date('2026-11-12T23:59:30Z'));
+    const { result } = renderHook(() => useTodaySoFar('t-1', 'a-1', true));
+    await flush();
+    expect(api.getAgencyGroupedStats).toHaveBeenCalledTimes(1);
+    expect(result.current).toMatchObject({ status: 'ready', day: '2026-11-12' });
+    await flush(30_000);
+    expect(api.getAgencyGroupedStats).toHaveBeenCalledTimes(2);
+    expect(api.getAgencyGroupedStats.mock.calls[1]![0]).toMatchObject({ from: '2026-11-13T00:00:00.000Z' });
+    expect(result.current).toMatchObject({ status: 'ready', day: '2026-11-13' });
+  });
+
+  it('asks nothing at midnight once unmounted', async () => {
+    vi.setSystemTime(new Date('2026-11-12T23:59:30Z'));
+    const { unmount } = renderHook(() => useTodaySoFar('t-1', 'a-1', true));
+    await flush();
+    unmount();
+    await flush(60_000);
+    expect(api.getAgencyGroupedStats).toHaveBeenCalledTimes(1);
+  });
+});

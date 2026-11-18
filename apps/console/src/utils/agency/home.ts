@@ -454,6 +454,15 @@ export function localDay(now: Date): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/**
+ * How long until the viewer's next local midnight, when Today so far's day turns. At least 1 ms,
+ * so a timer set on the boundary itself waits for the next one rather than firing at once.
+ */
+export function msToNextLocalMidnight(now: Date): number {
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return Math.max(1, next.getTime() - now.getTime());
+}
+
 /** The window "today so far" asks for: the viewer's local midnight up to now. */
 export function todayWindow(now: Date): { from: string; to: string } {
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());

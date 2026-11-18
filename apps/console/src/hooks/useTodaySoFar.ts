@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAgencyGroupedStats } from '../api/agencyStats';
 import { localDay, todayByCampaign, todayTotals, todayWindow, type TodayTotals } from '../utils/agency/home';
+import { useAtLocalMidnight } from './useAtLocalMidnight';
 import { useMountedRef } from './useMountedRef';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -35,6 +36,8 @@ type Reason = 'mount' | 'tick' | 'return';
  *    Totals younger than {@link HOME_SLOW_MS} and still today's are kept.
  *  - **A failed refresh keeps today's totals**, never yesterday's: once the local day has turned,
  *    a failed read shows nothing rather than the day before under "Today so far".
+ *  - **Read again at local midnight** (`useAtLocalMidnight`), so the new day shows at once, not on
+ *    the next minute's tick; a read still in flight then is overtaken (its answer is ignored).
  */
 export function useTodaySoFar(tenantId: string | null | undefined, accountId: string | null | undefined, enabled: boolean): TodayState {
   const [state, setState] = useState<TodayState>({ status: 'loading' });
@@ -86,6 +89,8 @@ export function useTodaySoFar(tenantId: string | null | undefined, accountId: st
   }, [load]);
   useVisibleInterval(() => load('tick'), HOME_SLOW_MS, ready);
   useRefetchOnReturn(() => load('return'));
+  // The day turns at the viewer's midnight, not on the minute's tick: read the new day's then.
+  useAtLocalMidnight(() => void load('mount'), ready);
 
   return state;
 }

@@ -3,6 +3,7 @@ import type { AgencyPromisesSummaryResponse } from '@magick-agency/contracts/api
 import { getAgencyPromisesSummary } from '../api/agencyFloor';
 import { localDay, todayWindow } from '../utils/agency/home';
 import { errorStatus } from '../utils/agencyErrors';
+import { useAtLocalMidnight } from './useAtLocalMidnight';
 import { useMountedRef } from './useMountedRef';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -22,8 +23,8 @@ export type PromisesTodayRead = PromisesToday & { reload: () => void };
  * Will pay tile and its campaign cards: Today so far's window (the viewer's local midnight to now)
  * on Today so far's period (a minute) and rules (`useTodaySoFar`): one read at a time, a return to
  * the tab reads only once the figures are a minute old, and a failed refresh keeps them only while
- * they are still today's. A 403 stops the asking (the tile stays Successes) until Retry (`reload`)
- * or a new scope or role (B28a).
+ * they are still today's; it reads again at local midnight (`useAtLocalMidnight`). A 403 stops the
+ * asking (the tile stays Successes) until Retry (`reload`) or a new scope or role (B28a).
  */
 export function usePromisesToday(
   tenantId: string | null | undefined,
@@ -80,6 +81,8 @@ export function usePromisesToday(
   }, [load]);
   useVisibleInterval(() => load('tick'), HOME_SLOW_MS, ready);
   useRefetchOnReturn(() => load('return'));
+  // The day turns at the viewer's midnight, not on the minute's tick: read the new day's then.
+  useAtLocalMidnight(() => void load('mount'), ready);
 
   const reload = useCallback(() => {
     refused.current = false;
