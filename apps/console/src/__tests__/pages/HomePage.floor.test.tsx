@@ -258,20 +258,37 @@ describe('the drawer from Live floor', () => {
 });
 
 describe('breaks over the limit', () => {
-  it('keep counting against the clock while the floor cannot be read, and say they were not refreshed', async () => {
+  it('keep counting against the clock while nothing new is read', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       renderHome();
       const row = await screen.findByTestId('home-attention-break-overrun:priya');
       expect(row.textContent).toContain('Priya M on Tea for 42 min');
-      expect(within(row).queryByText('Not refreshed')).toBeNull();
-      mocks.getAgencyFloor.mockRejectedValue(new Error('network'));
+      // Every read now hangs: no answer, so only the clock can move the minutes.
+      mocks.getAgencyFloor.mockImplementation(() => new Promise(() => {}));
+      mocks.getAgencyHomeBoard.mockImplementation(() => new Promise(() => {}));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3 * 60_000);
       });
+      expect(screen.getByTestId('home-attention-break-overrun:priya').textContent).toMatch(/Priya M on Tea for 4[45] min/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('say they were not refreshed while the floor cannot be read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderHome();
+      const row = await screen.findByTestId('home-attention-break-overrun:priya');
+      expect(within(row).queryByText('Not refreshed')).toBeNull();
+      mocks.getAgencyFloor.mockRejectedValue(new Error('network'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
       const later = screen.getByTestId('home-attention-break-overrun:priya');
-      expect(later.textContent).toMatch(/Priya M on Tea for 4[45] min/);
       expect(within(later).getByText('Not refreshed')).toBeTruthy();
+      expect(later.getAttribute('data-testid')).toBe('home-attention-break-overrun:priya');
     } finally {
       vi.useRealTimers();
     }
