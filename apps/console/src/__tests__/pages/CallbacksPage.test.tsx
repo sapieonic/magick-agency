@@ -19,7 +19,9 @@ vi.mock('../../contexts/TenantContext', () => ({
 vi.mock('../../api/agencyHome', () => ({ getAgencyHomeBoard: mocks.getAgencyHomeBoard }));
 
 import CallbacksPage from '../../pages/agency/CallbacksPage';
-import { HOME_BOARD_ERROR } from '../../hooks/useHomeBoard';
+import { ApiError } from '../../api/client';
+import { HOME_BOARD_ERROR, HOME_BOARD_REFUSED } from '../../hooks/useHomeBoard';
+import { CALLBACKS_ERROR, CALLBACKS_REFUSED } from '../../utils/agency/liveFloor';
 
 function Where() {
   return <div data-testid="where">{useLocation().pathname}</div>;
@@ -80,9 +82,31 @@ describe('Callbacks', () => {
 
     mocks.getAgencyHomeBoard.mockRejectedValue(new Error('Route not found'));
     renderPage();
-    expect(await screen.findByText(HOME_BOARD_ERROR)).toBeTruthy();
+    expect(await screen.findByText(CALLBACKS_ERROR)).toBeTruthy();
+    expect(screen.queryByText(HOME_BOARD_ERROR)).toBeNull();
     expect(screen.queryByText(/Route not found/)).toBeNull();
     // The coming-soon panel does not depend on the read.
     expect(screen.getByTestId('callbacks-coming-soon')).toBeTruthy();
+  });
+
+  it('says in its own words when the server refuses the board, never Live floor’s', async () => {
+    mocks.getAgencyHomeBoard.mockRejectedValue(new ApiError(403, { error: 'Forbidden' }));
+    renderPage();
+    expect(await screen.findByText(CALLBACKS_REFUSED)).toBeTruthy();
+    expect(screen.queryByText(HOME_BOARD_REFUSED)).toBeNull();
+  });
+
+  it('gives no all-clear while a campaign’s callbacks are not known', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4' }), onBoard('c2', { name: 'Gold', overdue: null })]));
+    renderPage();
+    expect((await screen.findByTestId('callbacks-summary')).textContent)
+      .toBe('No late callbacks found, but 1 campaign’s callbacks aren’t known.');
+    expect(screen.getByTestId('callbacks-row-c2').textContent).toContain('Not known');
+  });
+
+  it('never says “at least 0” past the board’s cap', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')], { active_total: 30 }));
+    renderPage();
+    expect((await screen.findByTestId('callbacks-summary')).textContent).toBe('No late callbacks found in the first 25 active campaigns.');
   });
 });

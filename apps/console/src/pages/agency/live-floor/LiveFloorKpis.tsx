@@ -9,6 +9,7 @@ import {
   agentsWorkingSub,
   answeredLine,
   lateCallbacks,
+  lateCallbacksUnknown,
   lateCallbacksText,
   todayFor,
   type AgentsWorking,
@@ -59,9 +60,15 @@ export function LiveFloorKpis({
   // The floor read's figure stands on its own; the board's sum needs the board.
   const workingKnown = agents !== undefined || boardReady;
   const late = boardReady ? lateCallbacks(reads) : null;
-  // One campaign picked is one campaign's whole figure; the account's past the cap is "4+".
-  const lateText = late === null ? DASH : lateCallbacksText(late, partial && campaignId === null);
-  const lateBound = partial && campaignId === null;
+  // One campaign picked is one campaign's whole figure; the account's past the cap is "4+", and so
+  // is a sum that leaves out a campaign whose callbacks are not known: never a plain 0 it did not read.
+  const capped = partial && campaignId === null;
+  const unknown = late === null ? 0 : lateCallbacksUnknown(reads);
+  const lateBound = capped || unknown > 0;
+  const lateText = late === null ? DASH : lateCallbacksText(late, lateBound);
+  const lateSaid = late === null
+    ? 'not known'
+    : lateBound ? (late === 0 ? 'none found in the campaigns read' : `at least ${formatCount(late)}`) : formatCount(late);
   const figures = today.status === 'ready' ? todayFor(today.totals, today.byCampaign, campaignId) : null;
   const pending = today.status === 'loading' ? '…' : DASH;
 
@@ -104,13 +111,13 @@ export function LiveFloorKpis({
           to={CALLBACKS_PATH}
           className={styles.kpiLink}
           data-testid="kpi-late-callbacks"
-          aria-label={`Late callbacks: ${late === null ? 'not known' : `${lateBound ? 'at least ' : ''}${formatCount(late)}`}. Open Callbacks`}
+          aria-label={`Late callbacks: ${lateSaid}. Open Callbacks`}
         >
           <Kpi
             look="outlined"
             label="Late callbacks"
             value={lateText}
-            sub={lateBound ? 'in the first 25 active campaigns' : 'promised time has passed'}
+            sub={capped ? 'in the first 25 active campaigns' : lateBound ? 'some campaigns not read' : 'promised time has passed'}
             tone={late !== null && late > 0 ? 'danger' : undefined}
           />
         </Link>

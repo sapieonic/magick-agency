@@ -9,6 +9,7 @@ import { badgeText } from '../badgeText';
 import { listWorkedRing } from './overview/pulse';
 import { insightsRate, rateText } from './insights/rates';
 import {
+  HOME_CAMPAIGN_CAP,
   NO_DIALS_TODAY,
   homeRank,
   type HomeAttentionItem,
@@ -191,6 +192,41 @@ export function lateCallbacks(reads: readonly HomeCampaignRead[]): number | null
   return known.reduce((n, r) => n + r.allocation!.callbacks_overdue, 0);
 }
 
+/**
+ * How many campaigns' late callbacks are not known (their allocation was not read). With any, a sum
+ * over the rest is a lower bound, never the account's figure, and never an all-clear.
+ */
+export function lateCallbacksUnknown(reads: readonly HomeCampaignRead[]): number {
+  return reads.filter((r) => r.allocation === null).length;
+}
+
+/** "1 campaign's callbacks aren't known", "2 campaigns' …". */
+function unknownCallbacksText(unknown: number): string {
+  return unknown === 1 ? '1 campaign’s callbacks aren’t known' : `${formatCount(unknown)} campaigns’ callbacks aren’t known`;
+}
+
+/**
+ * The Callbacks page's summary line. "No callback is late right now" only when every active
+ * campaign was read (not past the board's cap, `partial`) and every one's allocation is known
+ * (`unknown` 0): B28a's never-an-all-clear rule. Otherwise a lower bound in words, never
+ * "at least 0". Null with no campaign at all (the list says so).
+ */
+export function callbacksSummary({ total, partial, unknown }: { total: number | null; partial: boolean; unknown: number }): string | null {
+  if (total === null) return unknown > 0 ? 'Late callbacks couldn’t be read for any campaign.' : null;
+  if (!partial && unknown === 0) {
+    return total === 0 ? 'No callback is late right now.' : `${plural(total, 'callback')} late across the active campaigns.`;
+  }
+  const where = partial ? ` in the first ${HOME_CAMPAIGN_CAP} active campaigns` : '';
+  if (total === 0) return `No late callbacks found${where}${unknown > 0 ? `, but ${unknownCallbacksText(unknown)}` : ''}.`;
+  return `At least ${plural(total, 'callback')} late${partial ? `,${where}` : ''}.${unknown > 0 ? ` ${unknownCallbacksText(unknown)}.` : ''}`;
+}
+
+/** The Callbacks page's own words when the board does not load (never Live floor's "what needs your attention"). */
+export const CALLBACKS_ERROR = 'We couldn’t load the late callbacks. Try again in a moment.';
+
+/** The Callbacks page's own words when the server refuses the board (403). */
+export const CALLBACKS_REFUSED = 'Callbacks aren’t available to you in this account right now.';
+
 /** One campaign on the Callbacks page: its overdue callbacks and how many belong to an agent who is away. */
 export interface CallbackRow {
   campaign: HomeCampaignRef;
@@ -220,9 +256,10 @@ export function callbackRows(reads: readonly HomeCampaignRead[]): CallbackRow[] 
 }
 
 /**
- * A late-callbacks figure as shown: the count, or "4+" when the board left campaigns out (it reads
- * the first 25 active ones, `activeTotal` past them), so a sum over some campaigns is never read
- * as the account's. "99+" past 99 either way.
+ * A late-callbacks figure as shown: the count, or "4+" when it is a lower bound (the board left
+ * campaigns out: it reads the first 25 active ones, `activeTotal` past them; or a campaign's
+ * callbacks are not known), so a sum over some campaigns is never read as the account's. "99+"
+ * past 99 either way.
  */
 export function lateCallbacksText(count: number, partial: boolean): string {
   const text = badgeText(count) ?? '0';

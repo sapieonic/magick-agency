@@ -275,6 +275,14 @@ describe('the tiles', () => {
     expect(tile.querySelector('[data-tone="danger"]')).not.toBeNull();
   });
 
+  it('is a lower bound, said so, when a campaign’s callbacks are not known: never a plain 0', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4' }), onBoard('c2', { name: 'Gold', overdue: null })]));
+    renderHome();
+    const tile = await screen.findByTestId('kpi-late-callbacks');
+    await waitFor(() => expect(tile.textContent).toBe('Late callbacks0+some campaigns not read'));
+    expect(tile.getAttribute('aria-label')).toBe('Late callbacks: none found in the campaigns read. Open Callbacks');
+  });
+
   it('is not in the danger tone with none late', async () => {
     mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
     renderHome();

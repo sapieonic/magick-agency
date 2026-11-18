@@ -223,4 +223,11 @@ describe('the Callbacks entry’s badge (LF1)', () => {
     const badge = await screen.findByTestId('sidebar-callbacks-badge');
     await waitFor(() => expect(badge.textContent).toBe('4+, at least 4 callbacks overdue'));
   });
+
+  it('is a lower bound when a campaign’s callbacks are not known, and says so', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 2 }), onBoard('c2', { overdue: null })]));
+    await renderAt('/agency/campaigns');
+    const badge = await screen.findByTestId('sidebar-callbacks-badge');
+    await waitFor(() => expect(badge.textContent).toBe('2+, at least 2 callbacks overdue'));
+  });
 });

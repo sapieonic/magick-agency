@@ -8,9 +8,17 @@ import { useTenant } from '../../contexts/TenantContext';
 import { HOME_SLOW_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 import { holdsHomePermission } from '../../utils/consoleNav';
 import { campaignTabHref } from '../../utils/agencyCampaignTabs';
-import { boardIsPartial, callbackRows, lateCallbacks } from '../../utils/agency/liveFloor';
+import {
+  CALLBACKS_ERROR,
+  CALLBACKS_REFUSED,
+  boardIsPartial,
+  callbackRows,
+  callbacksSummary,
+  lateCallbacks,
+  lateCallbacksUnknown,
+} from '../../utils/agency/liveFloor';
 import { HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
-import { formatCount, plural } from '../../utils/format/number';
+import { formatCount } from '../../utils/format/number';
 import { ComingSoonBadge } from '../../components/common/ComingSoon';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import styles from './live-floor/LiveFloor.module.css';
@@ -33,7 +41,12 @@ export default function CallbacksPage() {
   if (role === undefined) return <LoadingSpinner />;
   if (!supervise) return <Navigate to="/agency" replace />;
 
-  const total = lateCallbacks(board.reads);
+  // Never an all-clear it did not read (B28a): every campaign on the board, and every one's known.
+  const summary = callbacksSummary({
+    total: lateCallbacks(board.reads),
+    partial: boardIsPartial(board),
+    unknown: lateCallbacksUnknown(board.reads),
+  });
   const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
 
   return (
@@ -41,14 +54,8 @@ export default function CallbacksPage() {
       <header className={styles.header}>
         <div className={styles.headerText}>
           <h1 className={styles.title}>Callbacks</h1>
-          {board.status === 'ready' && total !== null && (
-            <p className={styles.cardNote} data-testid="callbacks-summary">
-              {total === 0 && !boardIsPartial(board)
-                ? 'No callback is late right now.'
-                : boardIsPartial(board)
-                  ? `At least ${plural(total, 'callback')} late, in the first ${HOME_CAMPAIGN_CAP} active campaigns.`
-                  : `${plural(total, 'callback')} late across the active campaigns.`}
-            </p>
+          {board.status === 'ready' && summary !== null && (
+            <p className={styles.cardNote} data-testid="callbacks-summary">{summary}</p>
           )}
         </div>
       </header>
@@ -66,7 +73,8 @@ export default function CallbacksPage() {
         </p>
       </section>
 
-      {board.status === 'error' && board.error && <ErrorAlert message={board.error} onRetry={board.reload} />}
+      {/* Its own words, never Live floor's (the board's `HOME_BOARD_ERROR` and `HOME_BOARD_REFUSED`). */}
+      {board.status === 'error' && <ErrorAlert message={board.refused ? CALLBACKS_REFUSED : CALLBACKS_ERROR} onRetry={board.reload} />}
       {(board.status === 'loading' || board.status === 'idle') && <LoadingSpinner />}
 
       {board.status === 'ready' && board.stale && (

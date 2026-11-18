@@ -17,6 +17,8 @@ import {
   floorLifecycleAction,
   groupCallingHours,
   lateCallbacks,
+  lateCallbacksUnknown,
+  callbacksSummary,
   listDone,
   liveFloorClock,
   msToNextMinute,
@@ -256,6 +258,26 @@ describe('the Callbacks page and badge', () => {
     expect(callbacksBadgeLabel(4, true, true)).toBe('at least 4 callbacks overdue (not up to date)');
     expect(boardIsPartial({ activeTotal: 30, reads: new Array(25) })).toBe(true);
     expect(boardIsPartial({ activeTotal: 25, reads: new Array(25) })).toBe(false);
+  });
+
+  it('counts the campaigns whose late callbacks are not known', () => {
+    expect(lateCallbacksUnknown([read('a', { overdue: 1 }), read('b', { allocation: null }), read('c', { allocation: null })])).toBe(2);
+    expect(lateCallbacksUnknown([read('a')])).toBe(0);
+  });
+
+  it('gives the Callbacks page an all-clear only when every campaign was read, all of them', () => {
+    expect(callbacksSummary({ total: 0, partial: false, unknown: 0 })).toBe('No callback is late right now.');
+    expect(callbacksSummary({ total: 5, partial: false, unknown: 0 })).toBe('5 callbacks late across the active campaigns.');
+    // A campaign not known: never "no callback is late".
+    expect(callbacksSummary({ total: 0, partial: false, unknown: 1 })).toBe('No late callbacks found, but 1 campaign’s callbacks aren’t known.');
+    expect(callbacksSummary({ total: 3, partial: false, unknown: 2 })).toBe('At least 3 callbacks late. 2 campaigns’ callbacks aren’t known.');
+    // Past the board's cap: never "at least 0".
+    expect(callbacksSummary({ total: 0, partial: true, unknown: 0 })).toBe('No late callbacks found in the first 25 active campaigns.');
+    expect(callbacksSummary({ total: 4, partial: true, unknown: 0 })).toBe('At least 4 callbacks late, in the first 25 active campaigns.');
+    expect(callbacksSummary({ total: 0, partial: true, unknown: 1 })).toBe('No late callbacks found in the first 25 active campaigns, but 1 campaign’s callbacks aren’t known.');
+    // None known at all.
+    expect(callbacksSummary({ total: null, partial: false, unknown: 2 })).toBe('Late callbacks couldn’t be read for any campaign.');
+    expect(callbacksSummary({ total: null, partial: false, unknown: 0 })).toBeNull();
   });
 
   it('says the count to a screen reader, and nothing at zero', () => {
