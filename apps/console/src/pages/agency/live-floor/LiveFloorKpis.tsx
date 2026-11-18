@@ -9,6 +9,7 @@ import {
   agentsWorkingSub,
   answeredLine,
   lateCallbacks,
+  lateCallbacksText,
   todayFor,
   type AgentsWorking,
 } from '../../../utils/agency/liveFloor';
@@ -42,6 +43,7 @@ export function LiveFloorKpis({
   campaignId,
   agents,
   outcome,
+  partial = false,
 }: {
   board: Pick<HomeBoard, 'status'>;
   reads: readonly HomeCampaignRead[];
@@ -49,12 +51,17 @@ export function LiveFloorKpis({
   campaignId: string | null;
   agents?: AgentsWorking;
   outcome?: LiveFloorTile;
+  /** The board left active campaigns out (its cap): an account-wide late count is a lower bound. */
+  partial?: boolean;
 }) {
   const boardReady = board.status === 'ready';
   const working = agents ?? agentsWorking(reads);
   // The floor read's figure stands on its own; the board's sum needs the board.
   const workingKnown = agents !== undefined || boardReady;
   const late = boardReady ? lateCallbacks(reads) : null;
+  // One campaign picked is one campaign's whole figure; the account's past the cap is "4+".
+  const lateText = late === null ? DASH : lateCallbacksText(late, partial && campaignId === null);
+  const lateBound = partial && campaignId === null;
   const figures = today.status === 'ready' ? todayFor(today.totals, today.byCampaign, campaignId) : null;
   const pending = today.status === 'loading' ? '…' : DASH;
 
@@ -97,13 +104,13 @@ export function LiveFloorKpis({
           to={CALLBACKS_PATH}
           className={styles.kpiLink}
           data-testid="kpi-late-callbacks"
-          aria-label={`Late callbacks: ${late === null ? 'not known' : formatCount(late)}. Open Callbacks`}
+          aria-label={`Late callbacks: ${late === null ? 'not known' : `${lateBound ? 'at least ' : ''}${formatCount(late)}`}. Open Callbacks`}
         >
           <Kpi
             look="outlined"
             label="Late callbacks"
-            value={late === null ? DASH : formatCount(late)}
-            sub="promised time has passed"
+            value={lateText}
+            sub={lateBound ? 'in the first 25 active campaigns' : 'promised time has passed'}
             tone={late !== null && late > 0 ? 'danger' : undefined}
           />
         </Link>

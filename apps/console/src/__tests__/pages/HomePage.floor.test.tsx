@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { AgencyFloorAgent, AgencyFloorResponse } from '@magick-agency/contracts/api/agency/floor';
 import type { AgencyPromisesSummaryResponse } from '@magick-agency/contracts/api/agency/promises';
@@ -143,7 +143,7 @@ describe('the agent cards', () => {
     expect(ravi.textContent).toContain('On a call');
     expect(ravi.textContent).toContain('Ramesh Goud');
     expect(ravi.textContent).toMatch(/\d+:\d{2}/);
-    expect(ravi.textContent).toContain('42 calls today');
+    expect(ravi.textContent).toContain('42 conversations today');
     expect(within(ravi).getByText('Mobile app')).toBeTruthy();
     expect(screen.getByTestId('home-agent-divya').textContent).toContain('Choosing outcome');
     expect(screen.getByTestId('home-agent-risk-divya').textContent).toBe('Wrap-up has run past this campaign’s window.');
@@ -215,12 +215,12 @@ describe('the agent cards', () => {
     const ravi = screen.getByTestId('home-agent-ravi');
     for (const name of ['Talk to Ravi Kumar', 'Join Ravi Kumar’s call']) {
       const button = within(ravi).getByRole('button', { name });
-      expect(button.hasAttribute('disabled')).toBe(true);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
       expect(document.getElementById(button.getAttribute('aria-describedby')!)!.textContent).toMatch(/Coming soon\.$/);
     }
     // Reminders only for a break over the limit; nothing to talk to an absent agent about.
     expect(within(ravi).queryByRole('button', { name: /reminder/ })).toBeNull();
-    expect(within(screen.getByTestId('home-agent-priya')).getByRole('button', { name: 'Send Priya M a reminder' }).hasAttribute('disabled')).toBe(true);
+    expect(within(screen.getByTestId('home-agent-priya')).getByRole('button', { name: 'Send Priya M a reminder' }).getAttribute('aria-disabled')).toBe('true');
     expect(within(screen.getByTestId('home-agent-naveen')).queryAllByRole('button')).toHaveLength(0);
   });
 
@@ -233,14 +233,57 @@ describe('the agent cards', () => {
   });
 });
 
+describe('the late callbacks past the board’s cap', () => {
+  it('are a lower bound on the tile, said so, and the whole figure for one campaign picked', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4', overdue: 3 }), onBoard('c2', { name: 'Gold', overdue: 1 })], { active_total: 30 }));
+    renderHome();
+    const tile = await screen.findByTestId('kpi-late-callbacks');
+    await waitFor(() => expect(tile.textContent).toBe('Late callbacks4+in the first 25 active campaigns'));
+    expect(tile.getAttribute('aria-label')).toBe('Late callbacks: at least 4. Open Callbacks');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Show campaign' }), { target: { value: 'c1' } });
+    expect(tile.textContent).toBe('Late callbacks3promised time has passed');
+  });
+});
+
+describe('the drawer from Live floor', () => {
+  it('names the card’s figure as conversations today, as the card does', async () => {
+    renderHome();
+    await screen.findByTestId('home-agent-grid');
+    expect(within(screen.getByTestId('home-agent-divya')).getByTitle('Dialler conversations since midnight. Soft-phone and inbound calls are not counted.').textContent).toBe('12 conversations today');
+    fireEvent.click(within(screen.getByTestId('home-agent-divya')).getByRole('button', { name: 'Make Divya S available' }));
+    const facts = await screen.findByTestId('agent-drawer-facts');
+    expect(within(facts).getByText('Conversations today')).toBeTruthy();
+    expect(within(facts).queryByText('Calls this shift')).toBeNull();
+  });
+});
+
 describe('breaks over the limit', () => {
+  it('keep counting against the clock while the floor cannot be read, and say they were not refreshed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderHome();
+      const row = await screen.findByTestId('home-attention-break-overrun:priya');
+      expect(row.textContent).toContain('Priya M on Tea for 42 min');
+      expect(within(row).queryByText('Not refreshed')).toBeNull();
+      mocks.getAgencyFloor.mockRejectedValue(new Error('network'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3 * 60_000);
+      });
+      const later = screen.getByTestId('home-attention-break-overrun:priya');
+      expect(later.textContent).toMatch(/Priya M on Tea for 4[45] min/);
+      expect(within(later).getByText('Not refreshed')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('are a row in Needs you now with a coming-soon Send reminder, left off the sidebar badge', async () => {
     renderHome();
     const row = await screen.findByTestId('home-attention-break-overrun:priya');
     expect(row.textContent).toContain('Priya M on Tea for 42 min');
     expect(row.textContent).toContain('Any break over 30 minutes is flagged. Limits per break reason are coming soon.');
     const remind = within(row).getByRole('button', { name: 'Send reminder' });
-    expect(remind.hasAttribute('disabled')).toBe(true);
+    expect(remind.getAttribute('aria-disabled')).toBe('true');
     expect(within(row).getByRole('link', { name: /Open the floor/ }).getAttribute('href')).toBe('/agency/campaigns/c1/agents');
     // On the page's own count, not the sidebar's.
     expect(screen.getByTestId('home-attention-count').textContent).toBe('1, 1');

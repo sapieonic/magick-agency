@@ -20,7 +20,7 @@ import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
 import { useCallbacksBadgeCount, useHomeBadgeCount } from '../../hooks/useHomeBoard';
 import { attentionBadgeLabel, type HomeMissed } from '../../utils/agency/home';
-import { callbacksBadgeLabel } from '../../utils/agency/liveFloor';
+import { callbacksBadgeLabel, lateCallbacksText } from '../../utils/agency/liveFloor';
 import { badgeText } from '../../utils/badgeText';
 import {
   SETTINGS_GATE,
@@ -132,10 +132,10 @@ function HomeNavBadge({ missed }: { missed: HomeMissed }) {
  */
 function CallbacksNavBadge() {
   const { tenantId, accountId, role } = useTenant();
-  const { count, stale } = useCallbacksBadgeCount(tenantId, accountId, role);
-  const text = badgeText(count);
-  const label = callbacksBadgeLabel(count, stale);
-  if (!text) return null;
+  const { count, stale, partial } = useCallbacksBadgeCount(tenantId, accountId, role);
+  const label = callbacksBadgeLabel(count, stale, partial);
+  if (count === null || !label) return null;
+  const text = lateCallbacksText(count, partial);
   return (
     <span
       className={`${styles.navBadge} ${styles.navBadgeDanger} ${stale ? styles.navBadgeStale : ''}`}

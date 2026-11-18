@@ -216,4 +216,11 @@ describe('the Callbacks entry’s badge (LF1)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('is a lower bound when the board leaves active campaigns out, and says so', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 4 })], { active_total: 30 }));
+    await renderAt('/agency/campaigns');
+    const badge = await screen.findByTestId('sidebar-callbacks-badge');
+    await waitFor(() => expect(badge.textContent).toBe('4+, at least 4 callbacks overdue'));
+  });
 });

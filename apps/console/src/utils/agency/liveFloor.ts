@@ -212,11 +212,28 @@ export function callbackRows(reads: readonly HomeCampaignRead[]): CallbackRow[] 
     .map(({ row }) => row);
 }
 
+/**
+ * A late-callbacks figure as shown: the count, or "4+" when the board left campaigns out (it reads
+ * the first 25 active ones, `activeTotal` past them), so a sum over some campaigns is never read
+ * as the account's. "99+" past 99 either way.
+ */
+export function lateCallbacksText(count: number, partial: boolean): string {
+  const text = badgeText(count) ?? '0';
+  return partial && text !== '99+' ? `${text}+` : text;
+}
+
+/** Whether the board's campaigns are only some of the active ones (the cap). */
+export function boardIsPartial(board: { activeTotal: number; reads: readonly unknown[] }): boolean {
+  return board.activeTotal > board.reads.length;
+}
+
 /** What a screen reader hears beside the Callbacks entry: "4 callbacks overdue"; null at zero. */
-export function callbacksBadgeLabel(count: number | null, stale = false): string | null {
+export function callbacksBadgeLabel(count: number | null, stale = false, partial = false): string | null {
   const text = badgeText(count);
   if (!text) return null;
-  const said = text === '99+' ? 'more than 99 callbacks overdue' : `${plural(count!, 'callback')} overdue`;
+  const said = text === '99+'
+    ? 'more than 99 callbacks overdue'
+    : partial ? `at least ${plural(count!, 'callback')} overdue` : `${plural(count!, 'callback')} overdue`;
   return stale ? `${said} (not up to date)` : said;
 }
 

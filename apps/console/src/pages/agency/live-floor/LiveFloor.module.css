@@ -826,3 +826,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.agentCard[data-stripe='softphone'] { --stripe: var(--teal); }
+.avatar[data-state='softphone'],
+.stateTag[data-state='softphone'] { background: color-mix(in srgb, var(--teal) 14%, transparent); color: var(--teal); }
+.chip[data-state='softphone'] > i { background: var(--teal); }

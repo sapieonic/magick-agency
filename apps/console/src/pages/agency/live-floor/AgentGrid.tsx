@@ -12,6 +12,7 @@ import { listenToLabel, notListenableCopy } from '../../../utils/listen/listenCo
 import { SOFTPHONE_BREAK_REASON_LABEL } from '../../../types/softphone';
 import {
   FLOOR_CARD_LABELS,
+  CONVERSATIONS_TODAY_NOTE,
   callsTodayText,
   cardsFor,
   floorBadges,
@@ -82,6 +83,7 @@ export function AgentGrid({
           now={now}
           canSupervise
           sort="risk"
+          callsLabel="Conversations today"
           onClose={() => setForcing(null)}
           onForced={() => {
             setForcing(null);
@@ -144,7 +146,7 @@ function AgentCard({ card, clockOffsetMs, onMakeAvailable }: {
       {notListenable && <p id={reasonId} className={styles.agentReason}>{notListenable}</p>}
 
       <div className={styles.agentFoot}>
-        <span>{callsTodayText(row.calls_today)}</span>
+        <span title={CONVERSATIONS_TODAY_NOTE}>{callsTodayText(row.calls_today)}</span>
         <span className={styles.agentActions}>
           {listen?.canListen && call && (call.listenable ? (
             <button

@@ -31,8 +31,13 @@ import { CHOOSING_OUTCOME_LABEL, type AgentsWorking } from './liveFloor';
  * for every row. So "Past wrap-up" means here what it means on the campaign's Agents tab.
  */
 
-/** The chips' and cards' states, in the chips' order: a call being connected counts as on a call. */
-export const FLOOR_CARD_STATES = ['on_call', 'available', 'wrapup', 'break', 'offline'] as const;
+/**
+ * The chips' and cards' states, in the chips' order. A call being connected counts as on a call.
+ * `softphone` is a soft-phone session with no call in progress: its wire state is `break` (the
+ * reserved reason `soft_phone`, `docs/softphone.md` §2), but the agent is working calls by hand, so
+ * it is neither a break nor ready, and it has a chip of its own (shown only when anyone is in it).
+ */
+export const FLOOR_CARD_STATES = ['on_call', 'available', 'wrapup', 'softphone', 'break', 'offline'] as const;
 export type FloorCardState = (typeof FLOOR_CARD_STATES)[number];
 
 /** A card's state tag, and its chip's word. */
@@ -40,11 +45,18 @@ export const FLOOR_CARD_LABELS: Record<FloorCardState, string> = {
   on_call: 'On a call',
   available: 'Ready',
   wrapup: CHOOSING_OUTCOME_LABEL,
+  softphone: 'On soft phone',
   break: 'Break',
   offline: 'Offline',
 };
 
-export function floorCardState(row: Pick<AgencyFloorAgent, 'state'>): FloorCardState {
+/**
+ * A row with a call in progress is on a call whatever its session's state: a soft-phone session
+ * stays `break`/`soft_phone` through its manual calls, and its call is what the supervisor needs.
+ */
+export function floorCardState(row: Pick<AgencyFloorAgent, 'state' | 'break_reason' | 'call'>): FloorCardState {
+  if (row.call) return 'on_call';
+  if (isOnSoftphone({ state: row.state, break_reason: row.break_reason })) return 'softphone';
   switch (row.state) {
     case 'on_call':
     case 'reserved':
@@ -157,7 +169,7 @@ export function floorRowsFor(rows: readonly AgencyFloorAgent[], campaignId: stri
 
 /** How many rows in each state, and in all. */
 export function floorStateCounts(rows: readonly AgencyFloorAgent[]): { total: number; counts: Record<FloorCardState, number> } {
-  const counts: Record<FloorCardState, number> = { on_call: 0, available: 0, wrapup: 0, break: 0, offline: 0 };
+  const counts: Record<FloorCardState, number> = { on_call: 0, available: 0, wrapup: 0, softphone: 0, break: 0, offline: 0 };
   for (const row of rows) counts[floorCardState(row)] += 1;
   return { total: rows.length, counts };
 }
@@ -182,7 +194,8 @@ export function floorBadges(row: AgencyFloorAgent): FloorBadges {
   return {
     mobile: row.client_kind === 'mobile',
     inbound: row.on_inbound_call,
-    softphone: isOnSoftphone({ state: row.state, break_reason: row.break_reason }),
+    // On a soft-phone call: its tag says On a call, so the badge says how. With no call the tag says it.
+    softphone: Boolean(row.call) && isOnSoftphone({ state: row.state, break_reason: row.break_reason }),
     connectionLost: row.session_id !== null && row.connected === false,
   };
 }
@@ -199,18 +212,23 @@ export function floorNowLine(row: AgencyFloorAgent, formatTime: (iso: string) =>
   }
   if (state === 'available') return 'Waiting for a call';
   if (state === 'wrapup') return owesInboundOutcome(row) ? 'After an inbound call' : 'After the call';
-  if (state === 'break') {
-    if (isOnSoftphone({ state: row.state, break_reason: row.break_reason })) return 'Taking calls by hand';
-    return row.break_label ?? 'On a break';
-  }
+  if (state === 'softphone') return 'Taking calls by hand';
+  if (state === 'break') return row.break_label ?? 'On a break';
   if (row.session_id === null) return row.left_at ? `Left at ${formatTime(row.left_at)}` : 'Not signed in today';
   return 'Offline';
 }
 
-/** "1 call today", "42 calls today". */
+/**
+ * The card's count: conversations since the viewer's midnight on the dialler (the grouped stats'
+ * `connected` for this agent; soft-phone and inbound calls are not counted, the server's rule), so
+ * "conversations", never "calls", which the Calls today tile counts as dials.
+ */
 export function callsTodayText(count: number): string {
-  return count === 1 ? '1 call today' : `${formatCount(count)} calls today`;
+  return count === 1 ? '1 conversation today' : `${formatCount(count)} conversations today`;
 }
+
+/** What {@link callsTodayText} counts, for its tooltip and the drawer. */
+export const CONVERSATIONS_TODAY_NOTE = 'Dialler conversations since midnight. Soft-phone and inbound calls are not counted.';
 
 /** The Live calls list's row for a floor row's call, so Listen starts exactly as it does there. */
 export function liveCallOf(row: AgencyFloorAgent): AgencyLiveCall | null {
@@ -236,14 +254,26 @@ export function liveCallOf(row: AgencyFloorAgent): AgencyLiveCall | null {
     recording: false,
     listenable: call.listenable,
     not_listenable_reason: call.not_listenable_reason,
+    // The floor names no listeners. Empty, every listener count reads "none to count", so a full
+    // call says "This call has reached its listening limit" (and a refused start the same), never
+    // a made-up "0 supervisors are already listening".
     listeners: [],
   };
 }
 
-/** Make available: the campaign floor's force-return rule, offered on a card only once it is stuck. */
+/**
+ * Make available, offered on a card only once the agent is stuck: a wrap-up past its window and the
+ * grace (the campaign floor's `wrapup_overrun`, an inbound wrap-up included), or an inbound outcome
+ * still owed by an agent who is no longer in wrap-up (a restart rehydrates them onto a break, where
+ * nothing else will close it). An ordinary inbound wrap-up owes its outcome from the moment the call
+ * ends, so owing one alone is not stuck: offering the return then would close an outcome the agent
+ * is writing. The drawer's own rule (`canForceAvailable`) is wider on purpose: it is reached on
+ * purpose, from one agent; a red button on every card is not.
+ */
 export function offersMakeAvailable(card: FloorCard): boolean {
   if (card.row.session_id === null) return false;
-  return card.risk === 'wrapup_overrun' || owesInboundOutcome(card.row);
+  if (card.risk === 'wrapup_overrun') return true;
+  return owesInboundOutcome(card.row) && card.row.state !== 'wrapup';
 }
 
 /** A card's stripe: a warning's colour when it carries one, else its state's. */
@@ -266,6 +296,8 @@ export const BREAK_OVERRUN_STEP_MINUTES = 15;
  * - **Got it**: the row's kind carries the break's start, so a new break is a new row; its count is
  *   how many {@link BREAK_OVERRUN_STEP_MINUTES} past the limit, so a put-aside row comes back each
  *   time the break runs a quarter of an hour longer.
+ * - **Measured at `now`**, the caller's clock, so the minutes keep counting between floor reads
+ *   and while they fail (then the rows are `stale`); the kind and id never move with them.
  * - **Not on the sidebar badge** (`badge: false`): the badge reads only the shared board, at a
  *   minute on every page, and the floor is read on Live floor alone (5 s, one row per agent). A
  *   badge that counted these only while Live floor is open would change its number by page. The
@@ -274,6 +306,8 @@ export const BREAK_OVERRUN_STEP_MINUTES = 15;
 export function breakOverrunItems(
   cards: readonly FloorCard[],
   campaigns: readonly HomeCampaignRef[],
+  /** The floor read is the last good one's (`useAgentFloor().stale`): its rows say so. */
+  stale = false,
 ): HomeAttentionItem[] {
   return cards.flatMap((card) => {
     if (card.risk !== 'long_break' || card.elapsedMs === null) return [];
@@ -293,7 +327,7 @@ export function breakOverrunItems(
       action: 'Open the floor',
       to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
       badge: false,
-      stale: false,
+      stale,
       kind: `break-overrun@${row.state_since ?? ''}`,
       count: Math.max(0, steps),
       ackable: true,

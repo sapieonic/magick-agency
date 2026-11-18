@@ -7,6 +7,8 @@ import {
   agentsWorkingSub,
   answeredLine,
   attentionFor,
+  boardIsPartial,
+  lateCallbacksText,
   callbackRows,
   callbacksBadgeLabel,
   callsLiveText,
@@ -237,6 +239,17 @@ describe('the Callbacks page and badge', () => {
       ['d', 0, 0],
       ['b', null, 0],
     ]);
+  });
+
+  it('is a lower bound past the board’s cap, in figures and in words', () => {
+    expect(lateCallbacksText(4, false)).toBe('4');
+    expect(lateCallbacksText(4, true)).toBe('4+');
+    expect(lateCallbacksText(0, true)).toBe('0+');
+    expect(lateCallbacksText(150, true)).toBe('99+');
+    expect(callbacksBadgeLabel(4, false, true)).toBe('at least 4 callbacks overdue');
+    expect(callbacksBadgeLabel(4, true, true)).toBe('at least 4 callbacks overdue (not up to date)');
+    expect(boardIsPartial({ activeTotal: 30, reads: new Array(25) })).toBe(true);
+    expect(boardIsPartial({ activeTotal: 25, reads: new Array(25) })).toBe(false);
   });
 
   it('says the count to a screen reader, and nothing at zero', () => {

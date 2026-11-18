@@ -8,7 +8,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { HOME_SLOW_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 import { holdsHomePermission } from '../../utils/consoleNav';
 import { campaignTabHref } from '../../utils/agencyCampaignTabs';
-import { callbackRows, lateCallbacks } from '../../utils/agency/liveFloor';
+import { boardIsPartial, callbackRows, lateCallbacks } from '../../utils/agency/liveFloor';
 import { HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
 import { formatCount, plural } from '../../utils/format/number';
 import { ComingSoonBadge } from '../../components/common/ComingSoon';
@@ -43,7 +43,11 @@ export default function CallbacksPage() {
           <h1 className={styles.title}>Callbacks</h1>
           {board.status === 'ready' && total !== null && (
             <p className={styles.cardNote} data-testid="callbacks-summary">
-              {total === 0 ? 'No callback is late right now.' : `${plural(total, 'callback')} late across the active campaigns.`}
+              {total === 0 && !boardIsPartial(board)
+                ? 'No callback is late right now.'
+                : boardIsPartial(board)
+                  ? `At least ${plural(total, 'callback')} late, in the first ${HOME_CAMPAIGN_CAP} active campaigns.`
+                  : `${plural(total, 'callback')} late across the active campaigns.`}
             </p>
           )}
         </div>

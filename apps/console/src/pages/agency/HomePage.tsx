@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -22,7 +22,7 @@ import {
   willPayFor,
   willPayLine,
 } from '../../utils/agency/liveFloorAgents';
-import { CAMPAIGN_FILTER_PARAM, readsFor, selectedCampaign } from '../../utils/agency/liveFloor';
+import { CAMPAIGN_FILTER_PARAM, boardIsPartial, readsFor, selectedCampaign } from '../../utils/agency/liveFloor';
 import { formatCount } from '../../utils/format/number';
 import { GetStarted } from './campaigns-home/GetStarted';
 import { LiveFloorHeader } from './live-floor/LiveFloorHeader';
@@ -31,6 +31,19 @@ import { NeedsYouNow } from './live-floor/NeedsYouNow';
 import { CampaignsPanel } from './live-floor/CampaignsPanel';
 import { AgentsPanel } from './live-floor/AgentsPanel';
 import styles from './live-floor/LiveFloor.module.css';
+
+/** How often a break row's minutes are measured again between floor reads. */
+export const BREAK_CLOCK_MS = 30_000;
+
+/** The clock break rows are measured against: now, moved on every {@link BREAK_CLOCK_MS}. */
+function useBreakClock(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), BREAK_CLOCK_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
 
 /**
  * Live floor (decisions B28a, LF1): the supervisor's landing page, Home until the redesign, at the
@@ -58,13 +71,15 @@ export default function HomePage() {
   const [params, setParams] = useSearchParams();
 
   const floorRows = agentFloor.floor?.agents;
+  const breakClock = useBreakClock();
   const items = useMemo(() => {
     const fromBoard = homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate);
     if (!floorRows) return fromBoard;
-    // Breaks over the limit, from the floor (re-measured on every floor read, every 5 s).
-    const breaks = breakOverrunItems(rankFloorCards(floorRows, Date.now()), board.reads.map((r) => r.campaign));
+    // Breaks over the limit, from the floor, measured against the clock (so the minutes keep
+    // counting while the floor's reads fail, and the rows then say they were not refreshed).
+    const breaks = breakOverrunItems(rankFloorCards(floorRows, breakClock), board.reads.map((r) => r.campaign), agentFloor.stale);
     return sortByRank([...fromBoard, ...breaks]);
-  }, [board.reads, missed.available, missed.count, floorRows]);
+  }, [board.reads, missed.available, missed.count, floorRows, breakClock, agentFloor.stale]);
   const picked = selectedCampaign(params.get(CAMPAIGN_FILTER_PARAM), board.reads);
   const pickedId = picked?.id ?? null;
   const shown = useMemo(() => readsFor(board.reads, pickedId), [board.reads, pickedId]);
@@ -121,7 +136,7 @@ export default function HomePage() {
       )}
 
       {/* Its own read, so it shows whatever became of the board's. */}
-      <LiveFloorKpis board={board} reads={shown} today={today} campaignId={pickedId} agents={agents} outcome={outcome} />
+      <LiveFloorKpis board={board} reads={shown} today={today} campaignId={pickedId} agents={agents} outcome={outcome} partial={boardIsPartial(board)} />
 
       {board.status === 'ready' && (
         <>

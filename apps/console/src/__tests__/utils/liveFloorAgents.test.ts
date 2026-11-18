@@ -29,6 +29,7 @@ import { formatAmountShort, sumPromiseAmounts } from '../../utils/format/promise
 import { sortByRank, homeBadgeCount } from '../../utils/agency/home';
 import { ackOf, stillAcknowledged } from '../../utils/agency/homeAcks';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
+import { listenRefusalMessage, notListenableCopy } from '../../utils/listen/listenCopy';
 import { campaign, floorRow } from '../helpers/home';
 
 /**
@@ -53,13 +54,30 @@ const CALL = (over: Partial<NonNullable<AgencyFloorAgent['call']>> = {}): NonNul
 
 describe('the floor row on the campaign floor’s rules', () => {
   it('counts a call being connected as on a call, and has a state for each chip', () => {
-    expect(floorCardState({ state: 'reserved' })).toBe('on_call');
-    expect(floorCardState({ state: 'on_call' })).toBe('on_call');
-    expect(floorCardState({ state: 'wrapup' })).toBe('wrapup');
-    expect(floorCardState({ state: 'offline' })).toBe('offline');
-    expect(FLOOR_CARD_LABELS).toEqual({ on_call: 'On a call', available: 'Ready', wrapup: 'Choosing outcome', break: 'Break', offline: 'Offline' });
+    expect(floorCardState(floorRow('a', { state: 'reserved' }))).toBe('on_call');
+    expect(floorCardState(floorRow('a', { state: 'on_call' }))).toBe('on_call');
+    expect(floorCardState(floorRow('a', { state: 'wrapup' }))).toBe('wrapup');
+    expect(floorCardState(floorRow('a', { state: 'offline' }))).toBe('offline');
+    expect(FLOOR_CARD_LABELS).toEqual({
+      on_call: 'On a call', available: 'Ready', wrapup: 'Choosing outcome', softphone: 'On soft phone', break: 'Break', offline: 'Offline',
+    });
     // Choosing outcome is Live floor's word alone.
     expect(AGENCY_FLOOR_STATE_LABELS.wrapup).toBe('Wrapping up');
+  });
+
+  it('puts a soft-phone session on a call while it has one, and on the soft phone (never a break) while it has none', () => {
+    const manual = floorRow('a', { state: 'break', break_reason: 'soft_phone', state_since: ago(50), call: CALL({ origin: 'manual', connected_at: ago(2) }) });
+    expect(floorCardState(manual)).toBe('on_call');
+    expect(floorNowLine(manual, String)).toBe('Ramesh Goud');
+    expect(floorTimerAnchor(manual)).toBe(ago(2));
+    expect(floorBadges(manual).softphone).toBe(true);
+    const idle = floorRow('b', { state: 'break', break_reason: 'soft_phone', state_since: ago(50) });
+    expect(floorCardState(idle)).toBe('softphone');
+    expect(floorNowLine(idle, String)).toBe('Taking calls by hand');
+    expect(floorBadges(idle).softphone).toBe(false);
+    expect(floorStateCounts([manual, idle, floorRow('c', { state: 'break', state_since: ago(5) })]).counts).toMatchObject({ on_call: 1, softphone: 1, break: 1 });
+    // Neither is a long break.
+    expect(breakOverrunItems(rankFloorCards([manual, idle], NOW), [])).toEqual([]);
   });
 
   it('maps a row onto the campaign floor’s row, a no-session row with an id no session has', () => {
@@ -117,7 +135,7 @@ describe('the cards’ order', () => {
 
   it('filters by the chips, counting each state from the rows', () => {
     const rows = [floorRow('a'), floorRow('b', { state: 'reserved' }), floorRow('c', { state: 'on_call', call: CALL() }), floorRow('d', { session_id: null, state: 'offline', state_since: null })];
-    expect(floorStateCounts(rows)).toEqual({ total: 4, counts: { on_call: 2, available: 1, wrapup: 0, break: 0, offline: 1 } });
+    expect(floorStateCounts(rows)).toEqual({ total: 4, counts: { on_call: 2, available: 1, wrapup: 0, softphone: 0, break: 0, offline: 1 } });
     const cards = rankFloorCards(rows, NOW);
     expect(cardsFor(cards, 'on_call').map((c) => c.row.agent_user_id)).toEqual(['b', 'c']);
     expect(cardsFor(cards, 'all')).toHaveLength(4);
@@ -139,23 +157,29 @@ describe('a card', () => {
     expect(floorNowLine(floorRow('a', { state: 'on_call', call: CALL({ customer_name: null, origin: 'inbound' }) }), fmt)).toBe('Unknown caller');
     expect(floorNowLine(floorRow('a'), fmt)).toBe('Waiting for a call');
     expect(floorNowLine(floorRow('a', { state: 'break', break_label: 'Tea' }), fmt)).toBe('Tea');
+    expect(floorNowLine(floorRow('a', { state: 'wrapup' }), fmt)).toBe('After the call');
     expect(floorNowLine(floorRow('a', { session_id: null, state: 'offline', state_since: null, left_at: '2026-11-18T08:10:00Z' }), fmt)).toBe('Left at T08:10');
     expect(floorNowLine(floorRow('a', { session_id: null, state: 'offline', state_since: null }), fmt)).toBe('Not signed in today');
-    expect(callsTodayText(1)).toBe('1 call today');
-    expect(callsTodayText(1284)).toBe('1,284 calls today');
+    // Conversations, never "calls": the Calls today tile counts dials.
+    expect(callsTodayText(1)).toBe('1 conversation today');
+    expect(callsTodayText(1284)).toBe('1,284 conversations today');
   });
 
   it('carries the campaign floor’s badges, a lost connection only on a read that said so', () => {
     expect(floorBadges(floorRow('a', { client_kind: 'mobile', on_inbound_call: true, connected: false }))).toEqual({
       mobile: true, inbound: true, softphone: false, connectionLost: true,
     });
-    expect(floorBadges(floorRow('a', { state: 'break', break_reason: 'soft_phone', connected: null })).softphone).toBe(true);
+    expect(floorBadges(floorRow('a', { state: 'break', break_reason: 'soft_phone', connected: null, call: CALL({ origin: 'manual' }) })).softphone).toBe(true);
     expect(floorBadges(floorRow('a', { connected: null })).connectionLost).toBe(false);
   });
 
-  it('offers Make available on a stuck wrap-up or an inbound outcome owed, never on an absent agent', () => {
+  it('offers Make available only when stuck: a wrap-up past its window, or an inbound outcome owed off wrap-up', () => {
     expect(offersMakeAvailable(floorCard(floorRow('a', { state: 'wrapup', state_since: ago(5) }), NOW))).toBe(true);
     expect(offersMakeAvailable(floorCard(floorRow('a', { state: 'wrapup', state_since: ago(0, 30) }), NOW))).toBe(false);
+    // An ordinary inbound wrap-up owes its outcome from the call's end: not stuck until past its window.
+    expect(offersMakeAvailable(floorCard(floorRow('a', { state: 'wrapup', inbound_outcome_owed: true, state_since: ago(0, 5) }), NOW))).toBe(false);
+    expect(offersMakeAvailable(floorCard(floorRow('a', { state: 'wrapup', inbound_outcome_owed: true, state_since: ago(5) }), NOW))).toBe(true);
+    // Rehydrated onto a break with the outcome still owed: nothing else will close it.
     expect(offersMakeAvailable(floorCard(floorRow('a', { state: 'break', inbound_outcome_owed: true }), NOW))).toBe(true);
     expect(offersMakeAvailable(floorCard(floorRow('a', { session_id: null, state: 'offline', state_since: null }), NOW))).toBe(false);
   });
@@ -170,6 +194,10 @@ describe('a card', () => {
     const call = liveCallOf(floorRow('a', { state: 'on_call', call: CALL() }))!;
     expect(call).toMatchObject({ call_id: 'call-1', agent_session_id: 's-a', customer_phone_masked: 'Ramesh Goud', listenable: true, listeners: [] });
     expect(liveCallOf(floorRow('a'))).toBeNull();
+    // With no listener list, a full call's copy needs no count, on the card and on a refused start.
+    const full = liveCallOf(floorRow('a', { state: 'on_call', call: CALL({ listenable: false, not_listenable_reason: 'listen_limit_call' }) }))!;
+    expect(notListenableCopy(full.not_listenable_reason, full.listeners.length)).toBe('This call has reached its listening limit');
+    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, full.listeners.length)).toBe('That call has reached its listening limit.');
   });
 });
 
@@ -200,6 +228,15 @@ describe('breaks over the limit, in Needs you now', () => {
     const [brk] = breakOverrunItems(rankFloorCards([floorRow('p', { state: 'break', state_since: ago(42) })], NOW), campaigns);
     const sorted = sortByRank([{ ...brk!, id: 'late', rank: 'late-callbacks' as const }, brk!, { ...brk!, id: 'stop', rank: 'stop' as const }]);
     expect(sorted.map((i) => i.id)).toEqual(['stop', 'break-overrun:p', 'late']);
+  });
+
+  it('is stale while the floor is, and counts on against the clock without changing its id or kind', () => {
+    const row = floorRow('p', { state: 'break', state_since: ago(42) });
+    const now = breakOverrunItems(rankFloorCards([row], NOW), campaigns)[0]!;
+    const later = breakOverrunItems(rankFloorCards([row], NOW + 5 * 60_000), campaigns, true)[0]!;
+    expect(now.stale).toBe(false);
+    expect(later).toMatchObject({ stale: true, id: now.id, kind: now.kind });
+    expect(later.title).toMatch(/for 47 min$/);
   });
 
   it('comes back after “Got it” once the break runs another 15 minutes, and a new break is a new row', () => {

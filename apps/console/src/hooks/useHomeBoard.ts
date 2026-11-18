@@ -4,7 +4,7 @@ import { ApiError } from '../api/client';
 import { REFRESH_MS } from '../utils/agencyCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
 import { splitAcknowledged } from '../utils/agency/homeAcks';
-import { lateCallbacks } from '../utils/agency/liveFloor';
+import { boardIsPartial, lateCallbacks } from '../utils/agency/liveFloor';
 import { useHomeAcks } from './useHomeAcks';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { MISSED_COUNT_POLL_MS } from './useMissedCallsCount';
@@ -361,10 +361,12 @@ export function useCallbacksBadgeCount(
   tenantId: string | null | undefined,
   accountId: string | null | undefined,
   role: string | null | undefined,
-): HomeBadge {
+): HomeBadge & { partial: boolean } {
   const board = useHomeBoard({ tenantId, accountId, role, enabled: true, intervalMs: HOME_SLOW_MS });
   return {
     count: board.status === 'ready' ? lateCallbacks(board.reads) : null,
     stale: board.status === 'ready' && board.stale,
+    // The board reads the first 25 active campaigns: past them the count is a lower bound.
+    partial: board.status === 'ready' && boardIsPartial(board),
   };
 }

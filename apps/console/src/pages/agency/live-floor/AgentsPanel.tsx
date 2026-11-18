@@ -97,7 +97,10 @@ function FloorChips({ rows, filter, onFilter }: {
     <ul className={styles.chips} aria-label="Show agents by state" data-testid="home-agent-chips">
       {chip('all', `All ${formatCount(total)}`)}
       <NeedHelpChip />
-      {FLOOR_CARD_STATES.map((state) => chip(state, `${FLOOR_CARD_LABELS[state]} ${formatCount(counts[state])}`))}
+      {FLOOR_CARD_STATES
+        // The soft phone's chip only while someone is on it (or it is the filter): most accounts have none.
+        .filter((state) => state !== 'softphone' || counts.softphone > 0 || filter === 'softphone')
+        .map((state) => chip(state, `${FLOOR_CARD_LABELS[state]} ${formatCount(counts[state])}`))}
     </ul>
   );
 }
