@@ -53,9 +53,9 @@ describe('the pointer to Home', () => {
     await renderPage();
     const aside = screen.getByTestId('notifications-home-aside');
     expect(aside.textContent).toContain(
-      'Looking for what needs you right now? Paused campaigns, overdue callbacks and missed calls are listed on Home, under Needs your attention.',
+      'Looking for what needs you right now? Paused campaigns, overdue callbacks and missed calls are listed on Live floor, under Needs you now.',
     );
-    expect(within(aside).getByRole('link', { name: 'Go to Home' }).getAttribute('href')).toBe('/agency/home');
+    expect(within(aside).getByRole('link', { name: 'Go to Live floor' }).getAttribute('href')).toBe('/agency/home');
   });
 
   it.each(['viewer', 'operator', 'agent'])('is not shown to a %s, who has no Home', async (role) => {

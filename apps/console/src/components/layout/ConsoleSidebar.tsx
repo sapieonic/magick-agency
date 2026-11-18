@@ -1,8 +1,9 @@
 import { Link, useLocation } from 'react-router-dom';
 import {
   ChartNoAxesCombined,
+  Clock,
   Headset,
-  House,
+  LayoutGrid,
   ListChecks,
   PhoneIncoming,
   PhoneOff,
@@ -17,8 +18,9 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useNavGate } from '../../hooks/useNavGate';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
-import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
+import { useCallbacksBadgeCount, useHomeBadgeCount } from '../../hooks/useHomeBoard';
 import { attentionBadgeLabel, type HomeMissed } from '../../utils/agency/home';
+import { callbacksBadgeLabel } from '../../utils/agency/liveFloor';
 import { badgeText } from '../../utils/badgeText';
 import {
   SETTINGS_GATE,
@@ -33,8 +35,9 @@ import { AccountSwitcher } from './AccountSwitcher';
 import styles from './ConsoleSidebar.module.css';
 
 const ICONS: Record<ConsoleSectionId, LucideIcon> = {
-  home: House,
+  home: LayoutGrid,
   campaigns: ListChecks,
+  callbacks: Clock,
   inbound: PhoneIncoming,
   reports: ChartNoAxesCombined,
   dnc: PhoneOff,
@@ -46,7 +49,7 @@ function itemClass(active: boolean): string {
 }
 
 /**
- * Home and the four work sections. Mounted only when the dialer is on for the account (the `agency`
+ * Live floor and the work sections. Mounted only when the dialer is on for the account (the `agency`
  * capability and `agency_dialer_enabled`), so the missed-calls count is never asked for by a
  * tenant without it.
  */
@@ -78,6 +81,7 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
             {section.id === 'home' ? (
               <HomeNavBadge missed={{ available: missed.available, count: missed.count }} />
             ) : null}
+            {section.id === 'callbacks' ? <CallbacksNavBadge /> : null}
             {section.id === 'inbound' && badge ? (
               <span className={styles.navBadge} data-testid="sidebar-missed-badge">
                 <span aria-hidden="true">{badge}</span>
@@ -112,7 +116,32 @@ function HomeNavBadge({ missed }: { missed: HomeMissed }) {
       className={`${styles.navBadge} ${styles.navBadgeAttention} ${stale ? styles.navBadgeStale : ''}`}
       data-testid="sidebar-attention-badge"
       data-stale={stale ? 'true' : undefined}
-      title={stale ? 'Not up to date: Home couldn’t refresh' : undefined}
+      title={stale ? 'Not up to date: Live floor couldn’t refresh' : undefined}
+    >
+      <span aria-hidden="true">{text}</span>
+      <span className={styles.srOnly}>{`, ${label}`}</span>
+    </span>
+  );
+}
+
+/**
+ * The Callbacks entry's badge: every active campaign's overdue callbacks, in the danger tone (a
+ * customer was promised the call), from the board Live floor reads (`useCallbacksBadgeCount`), no
+ * request of its own. Rendered only beside the Callbacks entry, so only past its gate (Live
+ * floor's). Kept, muted, while the board is stale.
+ */
+function CallbacksNavBadge() {
+  const { tenantId, accountId, role } = useTenant();
+  const { count, stale } = useCallbacksBadgeCount(tenantId, accountId, role);
+  const text = badgeText(count);
+  const label = callbacksBadgeLabel(count, stale);
+  if (!text) return null;
+  return (
+    <span
+      className={`${styles.navBadge} ${styles.navBadgeDanger} ${stale ? styles.navBadgeStale : ''}`}
+      data-testid="sidebar-callbacks-badge"
+      data-stale={stale ? 'true' : undefined}
+      title={stale ? 'Not up to date: Live floor couldn’t refresh' : undefined}
     >
       <span aria-hidden="true">{text}</span>
       <span className={styles.srOnly}>{`, ${label}`}</span>

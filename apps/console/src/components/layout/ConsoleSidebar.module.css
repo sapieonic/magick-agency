@@ -173,6 +173,13 @@
   box-shadow: inset 0 0 0 1px var(--warning);
 }
 
+/* Overdue callbacks: a customer was promised the call. */
+.navBadgeDanger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
 /* The last good count while Home cannot refresh: kept, but not shown as fresh. */
 .navBadgeStale {
   opacity: 0.55;

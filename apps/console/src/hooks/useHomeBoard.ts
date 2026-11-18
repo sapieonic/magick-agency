@@ -4,6 +4,7 @@ import { ApiError } from '../api/client';
 import { REFRESH_MS } from '../utils/agencyCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
 import { splitAcknowledged } from '../utils/agency/homeAcks';
+import { lateCallbacks } from '../utils/agency/liveFloor';
 import { useHomeAcks } from './useHomeAcks';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { MISSED_COUNT_POLL_MS } from './useMissedCallsCount';
@@ -40,8 +41,8 @@ export interface HomeBoardOptions {
  */
 export const HOME_BOARD_ERROR = 'We couldn’t load what needs your attention. Try again in a moment.';
 
-/** What Home says when the server refuses the board (403: the role or the dialer changed). */
-export const HOME_BOARD_REFUSED = 'Home isn’t available to you in this account right now.';
+/** What Live floor says when the server refuses the board (403: the role or the dialer changed). */
+export const HOME_BOARD_REFUSED = 'Live floor isn’t available to you in this account right now.';
 
 /**
  * A board is stale once its reads have failed for more than this many of its periods since the
@@ -344,6 +345,24 @@ export function useHomeBadgeCount(
     count: board.status === 'ready'
       ? homeBadgeCount(splitAcknowledged(homeAttention(board.reads, missed, () => ''), acks).open)
       : null,
+    stale: board.status === 'ready' && board.stale,
+  };
+}
+
+/**
+ * The Callbacks entry's badge: every active campaign's overdue callbacks (`lateCallbacks`, the
+ * figure Live floor's Late callbacks tile shows), from the shared board at the badge's period, so
+ * it adds no request beside Live floor's or the Home badge's. No "Got it" here: a promised call
+ * that is late stays late. Stale as the Home badge is: the last count, said to be old.
+ */
+export function useCallbacksBadgeCount(
+  tenantId: string | null | undefined,
+  accountId: string | null | undefined,
+  role: string | null | undefined,
+): HomeBadge {
+  const board = useHomeBoard({ tenantId, accountId, role, enabled: true, intervalMs: HOME_SLOW_MS });
+  return {
+    count: board.status === 'ready' ? lateCallbacks(board.reads) : null,
     stale: board.status === 'ready' && board.stale,
   };
 }

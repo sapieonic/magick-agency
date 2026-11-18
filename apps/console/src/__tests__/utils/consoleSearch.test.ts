@@ -48,12 +48,13 @@ describe('the pages', () => {
     for (const section of CONSOLE_SECTIONS) for (const tab of section.tabs) expect(tos).toContain(tab.to);
     expect(tos).toContain('/agency/campaigns/new');
     expect(searchPages().map((p) => p.title)).toEqual([
-      'Home',
+      'Live floor',
       'Campaigns',
       'New campaign',
       'Soft-phone calls',
       'Live calls',
       'Listening history',
+      'Callbacks',
       'Missed calls',
       'Inbound summary',
       'Analytics',
@@ -65,7 +66,18 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(12);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(13);
+  });
+
+  it('finds Live floor by its old name, and Callbacks however people spell it (LF1)', () => {
+    const first = (q: string) => pageResults(searchTokens(q), ALL_ON('account_admin'))[0]?.key;
+    expect(first('home')).toBe('page:home:home');
+    expect(first('live floor')).toBe('page:home:home');
+    for (const q of ['callbacks', 'call-backs', 'call backs', 'follow-ups']) {
+      expect(pageResults(searchTokens(q), ALL_ON('account_admin')).map((r) => r.key), q).toContain('page:callbacks:callbacks');
+    }
+    // Gated as its route: a viewer is not offered it.
+    expect(pageResults(searchTokens('callbacks'), ALL_ON('viewer')).map((r) => r.key)).not.toContain('page:callbacks:callbacks');
   });
 
   it('offers nothing under /agency without the dialer flag or the agency capability', () => {

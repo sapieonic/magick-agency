@@ -109,7 +109,7 @@ describe('a URL that is no page', () => {
       expect(notFound()).toBeTruthy();
       expect(screen.getByRole('heading', { name: 'Page not found' })).toBeTruthy();
       expect(screen.queryByTestId('where')).toBeNull();
-      const home = within(notFound()!).getByRole('link', { name: 'Go to Home' });
+      const home = within(notFound()!).getByRole('link', { name: 'Go to Live floor' });
       expect(home.getAttribute('href')).toBe('/agency/home');
     },
   );

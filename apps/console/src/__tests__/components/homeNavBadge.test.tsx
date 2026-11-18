@@ -168,3 +168,52 @@ describe('the Home entry and its badge', () => {
     }
   });
 });
+
+describe('the Callbacks entry’s badge (LF1)', () => {
+  it('counts every active campaign’s overdue callbacks, in the danger tone, from the same board: no request of its own', async () => {
+    await renderAt('/agency/campaigns');
+    const badge = await screen.findByTestId('sidebar-callbacks-badge');
+    await waitFor(() => expect(badge.textContent).toBe('8, 8 callbacks overdue'));
+    expect(badge.className).toMatch(/navBadgeDanger/);
+    expect(badge.className).not.toMatch(/navBadgeAttention/);
+    // One board read serves the Home badge and this one.
+    expect(screen.getByTestId('sidebar-attention-badge')).toBeTruthy();
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not offered below Live floor’s gate, and shows nothing when no callback is late', async () => {
+    mocks.role = 'viewer';
+    await renderAt('/agency/campaigns');
+    expect(screen.queryByTestId('console-nav-callbacks')).toBeNull();
+    expect(screen.queryByTestId('sidebar-callbacks-badge')).toBeNull();
+    cleanup();
+
+    mocks.role = 'account_admin';
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+    await renderAt('/agency/campaigns');
+    await waitFor(() => expect(mocks.getAgencyHomeBoard).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.getByTestId('console-nav-callbacks')).toBeTruthy();
+    expect(screen.queryByTestId('sidebar-callbacks-badge')).toBeNull();
+  });
+
+  it('keeps its last count while the board cannot refresh, said to be out of date', async () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      await renderAt('/agency/campaigns');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mocks.getAgencyHomeBoard.mockRejectedValue(new Error('network'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HOME_SLOW_MS * 3);
+      });
+      const badge = screen.getByTestId('sidebar-callbacks-badge');
+      expect(badge.getAttribute('data-stale')).toBe('true');
+      expect(badge.textContent).toBe('8, 8 callbacks overdue (not up to date)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
