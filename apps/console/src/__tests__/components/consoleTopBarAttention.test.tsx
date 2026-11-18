@@ -4,9 +4,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { board, onBoard, stats } from '../helpers/home';
 
 /**
- * The Home badge on a phone (B28a): the sidebar is a closed drawer there, so the top bar's menu
- * button carries a dot, and says "N things need you", while the Home badge is above zero. Only
- * for a reader the sidebar offers Home, and from the badge's own board (no request of its own).
+ * The sidebar's badges on a phone (B28a, LF1): the sidebar is a closed drawer there, so the top
+ * bar's menu button carries a dot, and says "N things need you" and "N callbacks overdue", while
+ * the Home badge or the Callbacks badge is above zero. Only for a reader the sidebar offers Live
+ * floor (and so Callbacks), and from the badges' own board (no request of its own).
  */
 
 const mocks = vi.hoisted(() => ({
@@ -31,7 +32,8 @@ vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null 
 
 import { ConsoleTopBar } from '../../components/layout/ConsoleTopBar';
 import { PageCrumbsProvider } from '../../components/layout/PageCrumbs';
-import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
+import { homeAcksKey, resetHomeAcksForTests } from '../../hooks/useHomeAcks';
+import { localDay } from '../../utils/agency/home';
 
 async function renderBar() {
   render(
@@ -62,8 +64,26 @@ describe('the menu button’s attention dot', () => {
   it('shows a dot and says how many things need the reader while the Home badge is above zero', async () => {
     await renderBar();
     await waitFor(() => expect(screen.getByTestId('menu-attention-dot')).toBeTruthy());
-    expect(menu().getAttribute('aria-label')).toBe('Toggle menu, 2 things need you');
+    expect(menu().getAttribute('aria-label')).toMatch(/^Toggle menu, 2 things need you/);
     expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays while the Callbacks badge counts late callbacks the reader put aside on Live floor', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 2 })]));
+    // "Got it" on the late callbacks: off the Home badge, still on the Callbacks one.
+    window.localStorage.setItem(homeAcksKey('u-1', 't-1', 'a-1'), JSON.stringify({
+      day: localDay(new Date()),
+      acks: { 'callbacks-overdue:c1': { kind: 'callbacks-overdue', tone: 'danger', count: 2 } },
+    }));
+    await renderBar();
+    await waitFor(() => expect(screen.getByTestId('menu-attention-dot')).toBeTruthy());
+    expect(menu().getAttribute('aria-label')).toBe('Toggle menu, 2 callbacks overdue');
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+  });
+
+  it('says both badges when both count', async () => {
+    await renderBar();
+    await waitFor(() => expect(menu().getAttribute('aria-label')).toBe('Toggle menu, 2 things need you, 2 callbacks overdue'));
   });
 
   it('shows none when nothing needs the reader', async () => {

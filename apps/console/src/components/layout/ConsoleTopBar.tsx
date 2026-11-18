@@ -3,9 +3,10 @@ import { Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Menu, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useNavGate } from '../../hooks/useNavGate';
-import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
+import { useCallbacksBadgeCount, useHomeBadgeCount } from '../../hooks/useHomeBoard';
 import { HOME_GATE, backCrumb, breadcrumbFor, dialerOn, passesGate } from '../../utils/consoleNav';
 import { menuAttentionLabel } from '../../utils/agency/home';
+import { callbacksBadgeLabel } from '../../utils/agency/liveFloor';
 import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
 import { useSuppliedCrumbs } from './PageCrumbs';
@@ -122,15 +123,25 @@ interface MenuButtonProps {
   menuControls?: string;
 }
 
+/** What the menu button's dot stands for: each sidebar badge's words, and whether they are old. */
+interface MenuAttention {
+  /** "2 things need you", "4 callbacks overdue": the badges above zero, in the sidebar's order. */
+  said: string[];
+  stale: boolean;
+}
+
 /**
- * The phone's menu button. `attention` is the Home badge's count and freshness: above zero, the
- * button carries a dot and says "N things need you", because on a phone the sidebar, and the badge
- * on its Home entry, is a closed drawer.
+ * The phone's menu button. `attention` is the sidebar's badges that are above zero (Live floor's
+ * and Callbacks'): with any, the button carries a dot and says them ("2 things need you, 4
+ * callbacks overdue"), because on a phone the sidebar, and its badges, is a closed drawer. Either
+ * badge lights it: a "Got it" on late callbacks takes them off Live floor's badge, not Callbacks'.
  */
 function MenuButton({ onMenuClick, menuExpanded, menuControls, attention }: MenuButtonProps & {
-  attention: { count: number | null; stale: boolean } | null;
+  attention: MenuAttention | null;
 }) {
-  const said = attention ? menuAttentionLabel(attention.count, attention.stale) : null;
+  const said = attention && attention.said.length > 0
+    ? `${attention.said.join(', ')}${attention.stale ? ' (not up to date)' : ''}`
+    : null;
   return (
     <button
       className={styles.menuBtn}
@@ -152,11 +163,18 @@ function MenuButton({ onMenuClick, menuExpanded, menuControls, attention }: Menu
   );
 }
 
-/** The menu button for a reader the sidebar offers Home: the Home badge's board, no request of its own. */
+/**
+ * The menu button for a reader the sidebar offers Live floor, and so Callbacks (`CALLBACKS_GATE`
+ * is `HOME_GATE`): both badges' board, no request of its own.
+ */
 function AttentionMenuButton(props: MenuButtonProps) {
   const { tenantId, accountId, role } = useTenant();
-  const attention = useHomeBadgeCount(tenantId, accountId, role, NO_MISSED);
-  return <MenuButton {...props} attention={attention} />;
+  const home = useHomeBadgeCount(tenantId, accountId, role, NO_MISSED);
+  const callbacks = useCallbacksBadgeCount(tenantId, accountId, role);
+  const said = [menuAttentionLabel(home.count), callbacksBadgeLabel(callbacks.count, false, callbacks.partial)]
+    .filter((words): words is string => words !== null);
+  // Both badges read one board, so they are out of date together; the dot is muted then.
+  return <MenuButton {...props} attention={{ said, stale: home.stale || callbacks.stale }} />;
 }
 
 /** The badge never counts the missed calls (the Inbound badge has them), so the dot needs no missed read. */
