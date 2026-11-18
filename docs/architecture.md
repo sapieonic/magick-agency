@@ -899,7 +899,8 @@ a rate-limit key and never an auth input.
 - **One console shell** (decision B28). Every signed-in page outside the agent's full-viewport
   surfaces (`/station`, `/dialer/*`) renders in `ConsoleLayout` (`components/layout/`), mounted
   by `ConsoleShell` in `App.tsx`. The sidebar has the tenant and account context block (the
-  existing switchers), Home, the work sections Campaigns, Inbound, Reports and Do Not Call, Take
+  existing switchers), Live floor (Home, B28a, redesigned: LF1–LF10), the work sections Campaigns,
+  Callbacks, Inbound, Reports and Do Not Call, Take
   calls (a link out to `/dialer` for whoever takes calls without supervising), then Settings at
   the foot of the same Main landmark, and the version; the top bar has a breadcrumb (on a phone
   the current page with a back arrow to the nearest crumb above it that is not this page), one search field and the profile

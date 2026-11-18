@@ -2330,6 +2330,30 @@ them); the subdomain match without its dot boundary (5 unit and 1 integration re
 message reworded (the 2 pattern pins red); the selector widened, without its message match (1 red
 in `packages/db`, 1 in the script's integration test) and without `status = 'failed'` (1 red).
 
+### Live floor 2026-11-18 (LF1–LF10, B28b, [`decisions.md`](decisions.md) "Live floor (LF)")
+
+Home (B28a) is rebuilt as the Live floor, the supervisor's landing page, at the same URL and gate.
+**Phase 1** (console only, on Home's reads): the tiles (agents working, calls dialled since
+midnight, customers reached "of dials answered", Will pay, late callbacks), Needs you now beside
+the active campaigns (ranked by `HOME_RANKS`, LF9), grouped calling hours, the campaign filter, and
+a Callbacks section in the sidebar (`/agency/callbacks`, an interim per-campaign list until the
+account-wide one). **Phase 2** (B28b): one account-wide floor read, `GET /proxy/agency/floor`
+(agents, states, the call each is on with its customer's name and whether it can be listened to,
+"N of M assigned", dialler conversations today, cached 30 s per account), the promises summary
+`GET /proxy/agency/promises/summary` across attempts, manual and inbound calls (migration
+`0050_promise_summary_indexes.sql`, three partial indexes built `CONCURRENTLY` in production:
+`db-hygiene.md`, `DEPLOYMENT.md`), and who paused or stopped a campaign on Home's board
+(`status_changed`). On the console: the agent card grid with state chips (a new "On soft phone"),
+Listen from a card, break overruns past 30 minutes as Needs you now rows, Will pay per campaign,
+"Paused by" on the campaign cards. **Coming soon** (focusable `aria-disabled` buttons with a
+tooltip, `components/common/ComingSoon.tsx`, LF1): Need help on the console station, Talk to agent,
+Send reminder, Give to free agents, Join call, and the Need help chip. Not on the agent app.
+Phase 3 (Need help, messages, break limits, giving late callbacks to free agents, the
+account-wide Callbacks list) and Phase 4 (Join call, whisper, LF8) are under "Not built".
+Known limits: the dialler-conversations count reads the day's attempts deployment-wide before it
+filters to the account (an account-first index would bound it); Will pay shows Successes for a
+moment until the promises read answers. Test counts below.
+
 ## Test counts
 
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; migration 0050), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
@@ -3246,6 +3270,12 @@ files are listed in [`modules.md`](modules.md).
 
 ## Not built
 
+**Live floor** (LF4–LF8, open): Phase 3, Need help from a station, messages from a supervisor to
+an agent (Talk to agent, Send reminder), break limits per reason, giving late callbacks to free
+agents, the account-wide Callbacks list (its schema is migration 0051 or later); Phase 4, Join
+call and whisper (reopens "listen only"). Their controls are on the console as Coming soon; the
+agent app has none.
+
 **Launch work** (phase 10):
 
 - Importing existing tenants and their data from the previous platform: gate queries (no running
@@ -3354,6 +3384,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
+| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF4–LF8 (Phase 3 and 4); ratify LF1, LF9 and LF10 (`decisions.md`, "Live floor (LF)") |
 
 ## Deployment invariants
 

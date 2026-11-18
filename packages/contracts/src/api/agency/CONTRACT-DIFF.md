@@ -180,6 +180,14 @@ at `agency.campaigns.read`; below `agency.supervise` the server does not read th
 and serves `staffing`, `allocation`, `today` and `settings` null, which is why `settings` is
 nullable.
 
+The Live floor's reads (decision B28b) are console-side only too. `floor.ts` is the public
+`GET /proxy/agency/floor`; the internal `GET /agency/floor` answers the same agents without their
+names or whether a call can be listened to, which the public route adds (`agentNamesOrNone`, the
+listening flags). `promises.ts` (`GET /proxy/agency/promises/summary`) is assembled by the public
+API layer from the three call tables. Neither has a dialer counterpart. Home's board gained
+`AgencyHomeCampaign.status_changed` (`AgencyHomeStatusChange`: when, by whom, or automatic) for
+"Paused by" on the Live floor's campaign cards.
+
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 `AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.
