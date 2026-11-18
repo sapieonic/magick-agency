@@ -11,6 +11,7 @@ import { rangeAttentionFigures } from '../../../agency/insights/health.js';
 import { liveStatsRead } from '../helpers/live-stats.js';
 import { dialerEnabled } from '../helpers/dialer-gate.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
+import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 
 /** The insights reads the board makes for a supervisor: the insights routes' own, all `agency.supervise`. */
 const INSIGHTS: HomeInsightsDeps = {
@@ -51,6 +52,7 @@ export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<voi
     const board = await computeHomeBoard({ tenantId: request.tenantId!, accountId }, {
       liveStats: liveStatsRead,
       insights: supervises ? INSIGHTS : null,
+      names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'home board'),
     });
     return reply.code(200).send(board);
   });

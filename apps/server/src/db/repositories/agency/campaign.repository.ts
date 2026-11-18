@@ -395,6 +395,31 @@ export class AgencyCampaignRepository {
   }
 
   /**
+   * When Stop was accepted for each of these campaigns (Home's board, `status_changed.at` of a
+   * `stopping` campaign, decision B28b): the `agency_campaign.stopped` row the public Stop route
+   * audits once the transition is accepted (`proxy-agency-campaigns/lifecycle.ts`). The campaign
+   * row keeps no stamp of the stop (`transitionStatus` writes none for `stopping`), and a campaign
+   * is stopped at most once (`stopped` is terminal), so its one row is the answer. A campaign with
+   * none (a Stop the audit logger dropped) is absent. One probe per campaign of
+   * `idx_audit_log_tenant_campaign` on each partition; read only for the board's stopping campaigns.
+   */
+  async stopAuditedAt(tenantId: string, campaignIds: readonly string[]): Promise<Map<string, Date>> {
+    if (campaignIds.length === 0) return new Map();
+    const { rows } = await getPool().query<{ campaign_id: string; at: Date }>(
+      `SELECT ids.id AS campaign_id, last.created_at AS at
+         FROM unnest($2::text[]) AS ids(id)
+         JOIN LATERAL (
+           SELECT l.created_at FROM platform_audit_log l
+            WHERE l.tenant_id = $1::uuid AND l.campaign_id = ids.id AND l.action = 'agency_campaign.stopped'
+            ORDER BY l.created_at DESC
+            LIMIT 1
+         ) last ON true`,
+      [tenantId, [...campaignIds]],
+    );
+    return new Map(rows.map((r) => [r.campaign_id, r.at]));
+  }
+
+  /**
    * The campaigns a soft-phone call may be logged to (docs/softphone.md §6, bootstrap):
    * the account's campaigns in `statuses`, and — with `staffedUserId` — only those the
    * user is actively staffed on, newest first, at most `limit`. The staffing filter is
