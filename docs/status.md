@@ -2339,6 +2339,18 @@ need failed jobs re-run again, the way back is a general retry of failed analyse
 
 ## Test counts
 
+**The recording-host re-queue script removed, 2026-11-18.** Branch
+`claude-mgkvc/wizardly-dirac-gxwzam`, on the tree of this entry's commit, every suite run one after
+another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root:
+`pnpm lint` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit:
+`apps/server` 10471 passed + 1 expected fail (528 files), `packages/db` 457 (28 files).
+Integration: `packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3022 passed + 9
+expected fail + 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed
+(7 files). The rest lane went red twice before this green run, each time on a different timing
+check that passes alone (`inbound-connector-review-fixes.test.ts` IQ50 "back within the grace",
+`timed out: offered`; `load/concurrency-cap.test.ts`, seed 24301 round 16, counters 11 against 14
+live attempts, which does not reproduce with `LOAD_SEED=24301`); this change touches neither.
+
 **Plivo's regional recording media hosts, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`,
 on the tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and
 Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana`
