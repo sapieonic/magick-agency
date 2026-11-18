@@ -1856,7 +1856,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 
 API client (`client.ts`, auth headers) and one module per API family: accounts, agency, activity, campaigns, insights, spine, stats, auth, analysis profiles, calls, DNC, CSV export, feature flags, invites, notifications, phone numbers, soft phone, tenants, users. `agencyInsights.ts` is the campaign Insights tab's seven reads (`GET …/campaigns/:id/insights/*`, docs/insights.md), one function per section, ranges as half-open `[from, to)` instants. `softphone.ts` is the soft phone's routes (docs/softphone.md §6), all under `/proxy/agency/softphone` except the switch and return on a campaign session: bootstrap, session open, place / update / hang up / outcome / DNC for a manual call, the keyset call list (`manualCallQuery`) and detail, the recording blob, and settings. Refusals come back as typed results (`SoftphoneResult`, `parseSoftphoneRefusal`: the DNC, calling-hours, contact-in-flight, session-on-campaign and call-pending shapes, a generic one for the rest of the code union, and an unknown one) rather than exceptions; `agencySpine.ts` exports `recordingRefusal` for its recording fetch. Contact assignment (behind `agency_contact_assignment_enabled`): `agencyAssignment.ts` is the supervisor's operations, progress and history and the agent's reads of their own contacts, `agencyMyContacts.ts` the agent's two acts on them (retry the ones not reached, call one now). `customerHistory.ts` is customer history's four routes (docs/customer-history.md §2): search, timeline, export (the CSV's file name read from a plain, quoted or RFC 5987 `Content-Disposition`) and `getCustomerSearchOptions`. `reports.ts` is the reports surface (docs/reports.md): runs (create, keyset list, get, the per-format download URL then `window.location.assign`, retry) and subscriptions (list, create, patch, delete, run now); `REPORT_ERROR_MESSAGES` / `reportErrorMessage` give every report refusal code and `feature_disabled` British-English words.
 
-Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyHome.ts` (Home's board, `GET /proxy/agency/home`, B28a), `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `blobAudio.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `inboundRecordings.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `listenHistory.ts` (the account's Listening history and its CSV, docs/listening.md §12), `notifications.ts`, `phone-numbers.ts`, `reports.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
+Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyFloor.ts` (Live floor's floor and promises reads, `GET /proxy/agency/floor` and `GET /proxy/agency/promises/summary`, B28b), `agencyHome.ts` (Home's board, `GET /proxy/agency/home`, B28a), `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `blobAudio.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `inboundRecordings.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `listenHistory.ts` (the account's Listening history and its CSV, docs/listening.md §12), `notifications.ts`, `phone-numbers.ts`, `reports.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1924,13 +1924,14 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 26 |
+| `apps/console/src/__tests__/components/ComingSoon.test.tsx` (the one Coming soon control: focusable and inert, a press that stops at it, Escape on hover and focus) | 7 |
 | `apps/console/src/__tests__/components/CompareTray.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/ComposerSection.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/ConnectionHealthPill.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/ConsoleLayout.mobileDrawer.test.tsx` | 10 |
 | `apps/console/src/__tests__/components/ConsoleLayout.listen.test.tsx` (the shell's listen as wired: the bar under `<main>`, the listen across pages, ended with the socket and the audio context closed by an account switch and by leaving the shell) | 3 |
 | `apps/console/src/__tests__/components/ConsoleShell.test.tsx` | 7 |
-| `apps/console/src/__tests__/components/ConsoleSidebar.test.tsx` | 24 |
+| `apps/console/src/__tests__/components/ConsoleSidebar.test.tsx` | 27 |
 | `apps/console/src/__tests__/components/ContributionTable.test.tsx` | 18 |
 | `apps/console/src/__tests__/components/DialerUnavailable.test.tsx` | 3 |
 | `apps/console/src/__tests__/components/DispositionOverrideGroup.test.tsx` | 4 |
@@ -2037,7 +2038,8 @@ Files: `ExportReportButton.tsx`, `ExportReportDialog.tsx`, `ReportDownloads.tsx`
 | `apps/console/src/__tests__/components/reportEntryPoints.test.tsx` | 24 |
 | `apps/console/src/__tests__/components/SubscriptionsPanel.test.tsx` | 18 |
 | `apps/console/src/__tests__/components/GlobalSearch.test.tsx` | 20 |
-| `apps/console/src/__tests__/components/homeNavBadge.test.tsx` | 11 |
+| `apps/console/src/__tests__/components/homeNavBadge.test.tsx` | 13 |
+| `apps/console/src/__tests__/components/consoleTopBarAttention.test.tsx` (the phone menu button's dot for the Live floor and Callbacks badges) | 6 |
 | `apps/console/src/__tests__/components/missedNavBadge.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/pageCrumbs.test.tsx` | 4 |
 | `apps/console/src/__tests__/hooks/useReportRun.test.tsx` | 14 |
@@ -2143,7 +2145,7 @@ The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a
 
 Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
-Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgentFloor.ts` (Live floor's floor read every 5 s, B28b: from local midnight, one at a time, stale after two failed periods, stopped by a 403), `usePromisesToday.ts` (today's promises on Today so far's window and minute, B28b), `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCallNotesAutosave.ts`, `useCampaignCrumbs.ts` (also remembers the campaign for search's recent campaigns, `useRememberCampaignVisit.ts`), `useCampaignTabBadges.ts` (the campaign tab bar's on-shift and overdue counts, one read per campaign every 30 s shared by every screen, which the detail page's poll keeps current), `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useCustomerSearchRun.ts` (the customer-history search, shared by `CustomerSearchBox` and `GlobalSearch`), `useDialActivityDisplay.ts` (late binding's hidden dials as the idle slot and the rail show them: `dial_activity` with a 4 s hold over the gap between dials, `DIAL_GAP_HOLD_MS`), `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useGateReaders.ts` (the flag and capability readers a navigation gate needs, failing closed outside their providers), `useHomeAcks.ts` (the signed-in reader's Home "Got it"s per user, tenant and account, in browser storage, shared by the page and the badges, forgotten in the tab at sign-out, B28a), `useHomeBoard.ts` (Home's one board read, shared by Home, the sidebar badge and the Campaigns page's Active cards per tenant, account and role, and its refreshes: every 10 s on Home and on the Campaigns page while a campaign is active, once a minute for the badge elsewhere; stale after two periods of failed reads, stopped by a 403, B28a), `useInboundCall.ts`, `useInboundQueue.ts`, `useKeepInViewport.ts` (nudges a top-bar popover back on screen before paint and on resize: the switchers), `useLatestRef.ts`, `useLazyBlobAudio.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `useNavGate.ts` (the one memoised input to every navigation gate: role, fail-closed readers and, when asked, the Missed-calls rule; the sidebar, top bar, tab bar, search, Settings, not-found), `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useSearchCampaigns.ts` (search's campaign list, kept per tenant and account for the session and read again in the background when over a minute old, cleared on sign-out, B28), `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useUnsavedChangesGuard.ts` (asks before leaving a page with unsaved edits, campaign Settings and New campaign: adds a blocker to the navigator's one stack (`utils/navigationBlockers.ts`), which holds in-app navigation and, in `UrlScopeContext`'s history listener, Back and Forward before the router hears them; `beforeunload`; the console has no data router, so no `useBlocker`), `useTeam.ts`, `useTodaySoFar.ts` (Home's one grouped read for today, B28a), `useVisibleInterval.ts`, `useWrapupRedial.ts`
+Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgentFloor.ts` (Live floor's floor read every 5 s, B28b: from local midnight, one at a time, stale after two failed periods, stopped by a 403 until Retry or a new scope or role), `usePromisesToday.ts` (today's promises on Today so far's window and minute, B28b, with Retry), `useAtLocalMidnight.ts` (a timer to the viewer's next local midnight, so Today so far and the promises read the new day at once), `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCallNotesAutosave.ts`, `useCampaignCrumbs.ts` (also remembers the campaign for search's recent campaigns, `useRememberCampaignVisit.ts`), `useCampaignTabBadges.ts` (the campaign tab bar's on-shift and overdue counts, one read per campaign every 30 s shared by every screen, which the detail page's poll keeps current), `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useCustomerSearchRun.ts` (the customer-history search, shared by `CustomerSearchBox` and `GlobalSearch`), `useDialActivityDisplay.ts` (late binding's hidden dials as the idle slot and the rail show them: `dial_activity` with a 4 s hold over the gap between dials, `DIAL_GAP_HOLD_MS`), `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useGateReaders.ts` (the flag and capability readers a navigation gate needs, failing closed outside their providers), `useHomeAcks.ts` (the signed-in reader's Home "Got it"s per user, tenant and account, in browser storage, shared by the page and the badges, forgotten in the tab at sign-out, B28a), `useHomeBoard.ts` (Home's one board read, shared by Home, the sidebar badge and the Campaigns page's Active cards per tenant, account and role, and its refreshes: every 10 s on Home and on the Campaigns page while a campaign is active, once a minute for the badge elsewhere; stale after two periods of failed reads, stopped by a 403, B28a), `useInboundCall.ts`, `useInboundQueue.ts`, `useKeepInViewport.ts` (nudges a top-bar popover back on screen before paint and on resize: the switchers), `useLatestRef.ts`, `useLazyBlobAudio.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `useNavGate.ts` (the one memoised input to every navigation gate: role, fail-closed readers and, when asked, the Missed-calls rule; the sidebar, top bar, tab bar, search, Settings, not-found), `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useSearchCampaigns.ts` (search's campaign list, kept per tenant and account for the session and read again in the background when over a minute old, cleared on sign-out, B28), `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useUnsavedChangesGuard.ts` (asks before leaving a page with unsaved edits, campaign Settings and New campaign: adds a blocker to the navigator's one stack (`utils/navigationBlockers.ts`), which holds in-app navigation and, in `UrlScopeContext`'s history listener, Back and Forward before the router hears them; `beforeunload`; the console has no data router, so no `useBlocker`), `useTeam.ts`, `useTodaySoFar.ts` (Home's one grouped read for today, B28a), `useVisibleInterval.ts`, `useWrapupRedial.ts`
 
 | Test file | Cases |
 |---|---|
@@ -2154,6 +2156,7 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useAgencyStation.manualCall.test.ts` | 5 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.media.test.ts` | 10 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 77 |
+| `apps/console/src/__tests__/hooks/useAgentFloor.test.tsx` | 10 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.dialActivity.test.ts` (the `dial_activity` frame: follows dials, cleared by `reserved`, restated by `ready`, a malformed or other-campaign frame dropped, the customer ringing in with the connector's real frames) | 8 |
 | `apps/console/src/__tests__/hooks/useDialActivityDisplay.test.ts` (the 4 s gap hold between hidden dials, dropped on `reserved` or leaving the waiting slot) | 8 |
 | `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 24 |
@@ -2163,9 +2166,11 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useKeepInViewport.test.tsx` | 6 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
+| `apps/console/src/__tests__/hooks/usePromisesToday.test.tsx` | 6 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useServerClock.test.ts` | 16 |
 | `apps/console/src/__tests__/hooks/useStationMediaFormat.test.ts` | 4 |
+| `apps/console/src/__tests__/hooks/useTodaySoFar.test.tsx` | 6 |
 | `apps/console/src/__tests__/hooks/useVisibleInterval.test.ts` | 7 |
 
 ### `apps/console/src/pages/`
@@ -2209,7 +2214,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` | 28 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 46 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 47 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 49 |
 | `apps/console/src/__tests__/pages/AgentHomePage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgentPerformancePage.test.tsx` | 51 |
 | `apps/console/src/__tests__/pages/AnalysisProfilesPage.test.tsx` | 9 |
@@ -2254,9 +2259,9 @@ Files: `SoftphoneCallDetailPage.tsx`, `SoftphoneCallsPage.tsx`, `closeSoftphoneS
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/pages/SoftphoneSupervisor.test.tsx` | 18 |
-| `apps/console/src/__tests__/pages/HomePage.test.tsx` | 38 |
-| `apps/console/src/__tests__/pages/HomePage.floor.test.tsx` (Live floor's Phase 2: the cards ranked and filtered, Listen, Make available, the coming-soon controls, the fallback, breaks over the limit off the badge, Agents working, Will pay, who paused) | 11 |
-| `apps/console/src/__tests__/pages/CallbacksPage.test.tsx` | 5 |
+| `apps/console/src/__tests__/pages/HomePage.test.tsx` | 43 |
+| `apps/console/src/__tests__/pages/HomePage.floor.test.tsx` (Live floor's Phase 2: the cards ranked and filtered, Listen, Make available and its drawer read from each floor, the coming-soon controls, the fallback, Retry after a refusal, the server's clock, breaks over the limit off the badge and their Got it, Agents working, Will pay, who paused) | 24 |
+| `apps/console/src/__tests__/pages/CallbacksPage.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` | 11 |
 | `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` | 8 |
 
@@ -2350,7 +2355,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/builderErrors.test.ts` | 9 |
 | `apps/console/src/__tests__/utils/focusFirstFieldError.test.ts` (where Fix, Go to and Show me land: live findings first, into a group, a page's own error markup) | 4 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/consoleNav.test.ts` | 81 |
+| `apps/console/src/__tests__/utils/consoleNav.test.ts` | 82 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx` | 81 |
 | `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 22 |
@@ -2388,10 +2393,11 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/softphoneCallLabels.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/softphoneRingback.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyHome.test.ts` | 55 |
-| `apps/console/src/__tests__/utils/liveFloor.test.ts` | 21 |
-| `apps/console/src/__tests__/utils/liveFloorAgents.test.ts` | 20 |
+| `apps/console/src/__tests__/utils/homeAcks.test.ts` | 8 |
+| `apps/console/src/__tests__/utils/liveFloor.test.ts` | 24 |
+| `apps/console/src/__tests__/utils/liveFloorAgents.test.ts` | 22 |
 | `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 4 |
-| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 81 |
+| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 82 |
 
 `softphoneCallState.test.ts` also covers the station reducer's `manual_call` action (`utils/agencyStationReducer.ts`); `softphoneFields.test.ts` covers `callFields`, `fieldSettings`, `settingsForm`, the override note, `refusalCopy` and `callStats`.
 
