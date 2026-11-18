@@ -103,20 +103,22 @@ function CampaignCard({ card, onChanged, extras }: {
       <div className={styles.campaignTop}>
         <Link to={card.to} className={styles.campaignName2}>{campaign.name}</Link>
         {card.stale && <span className={styles.staleTag} data-testid="home-floor-stale">Not refreshed</span>}
-        <span className={styles.spacer} />
-        <AgencyCampaignStatusBadge status={campaign.status} />
-        {card.action && (
-          <button
-            type="button"
-            className={`btn-secondary ${styles.smallButton}`}
-            onClick={() => lifecycle.onAction(card.action!)}
-            disabled={lifecycle.busy !== null}
-            aria-label={`${card.action === 'pause' ? 'Pause' : 'Resume'} ${campaign.name}`}
-          >
-            {card.action === 'pause' ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
-            {lifecycle.busy ? 'Working…' : card.action === 'pause' ? 'Pause' : 'Resume'}
-          </button>
-        )}
+        {/* Together, so on a narrow card they wrap as one, under the name. */}
+        <span className={styles.campaignControls}>
+          <AgencyCampaignStatusBadge status={campaign.status} />
+          {card.action && (
+            <button
+              type="button"
+              className={`btn-secondary ${styles.smallButton}`}
+              onClick={() => lifecycle.onAction(card.action!)}
+              disabled={lifecycle.busy !== null}
+              aria-label={`${card.action === 'pause' ? 'Pause' : 'Resume'} ${campaign.name}`}
+            >
+              {card.action === 'pause' ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
+              {lifecycle.busy ? 'Working…' : card.action === 'pause' ? 'Pause' : 'Resume'}
+            </button>
+          )}
+        </span>
       </div>
       {extras?.pausedBy && campaign.status === 'paused' && (
         <span className={styles.campaignSub}>{`Paused by ${extras.pausedBy.name} at ${extras.pausedBy.at}`}</span>

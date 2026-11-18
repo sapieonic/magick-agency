@@ -88,7 +88,7 @@ export function NeedsYouNow({
   const now = new Date();
 
   return (
-    <section className={styles.card} aria-labelledby="home-attention-heading">
+    <section className={`${styles.card} ${styles.attentionCard}`} aria-labelledby="home-attention-heading">
       <div className={styles.cardHead}>
         <h2 id="home-attention-heading" className={styles.cardTitle}>
           <Bell size={18} aria-hidden="true" />
