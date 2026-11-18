@@ -192,6 +192,16 @@ export interface AiRateLimitDetail {
   vendorMessage?: string;
 }
 
+/**
+ * A vendor's retry hint as whole seconds: a number, or a header's text (`perSecond` 1000 for a
+ * value in milliseconds). Undefined for anything that is not a non-negative number, an empty
+ * header or an HTTP-date included.
+ */
+export function retryAfterSeconds(raw: unknown, perSecond = 1): number | undefined {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.ceil(n / perSecond) : undefined;
+}
+
 export class AiError extends Error {
   /** Set on `rate_limited` errors when the vendor's response said why. */
   readonly rateLimit?: AiRateLimitDetail;
@@ -203,9 +213,9 @@ export class AiError extends Error {
     readonly status?: number,
     options?: { cause?: unknown; rateLimit?: AiRateLimitDetail },
   ) {
-    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    super(message, options);
     this.name = 'AiError';
-    if (options?.rateLimit) this.rateLimit = options.rateLimit;
+    this.rateLimit = options?.rateLimit;
   }
 
   /** Read by `utils/retry.ts`: these kinds are not retried in place. */

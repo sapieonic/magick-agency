@@ -844,28 +844,30 @@ describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', (
     expect(backoff).toBeLessThanOrEqual(132);
   });
 
-  it('hands the breaker what the vendor said, through the transcriber\'s wrapping', async () => {
-    const vendor = new AiError('rate_limited', 'gemini', 'Gemini generateContent failed: {…}', 429, {
+  it('hands the breaker what the vendor said, from the transcriber\'s error', async () => {
+    const refused = new TranscriptionError('RATE_LIMITED', 'Gemini transcription failed: {…}', true, {
+      provider: 'gemini',
+      status: 429,
       rateLimit: {
         vendorCode: 'RESOURCE_EXHAUSTED',
-        quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'],
+        quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'GenerateRequestsPerMinutePerProjectPerModel'],
         retryAfterSeconds: 36,
         vendorMessage: 'You exceeded your current quota',
       },
     });
-    const wrapped = new TranscriptionError('RATE_LIMITED', `Gemini transcription failed: ${vendor.message}`, true, { cause: vendor });
-    const limited = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(wrapped) });
+    const limited = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(refused) });
     const onRateLimited = vi.fn(() => 30);
     await runnerWith({ transcriber: limited }).run(makeJob({ attempts: 1 }), { onRateLimited });
     expect(onRateLimited).toHaveBeenCalledWith({
       stage: 'transcribe',
-      provider: 'gemini',
-      status: 429,
+      vendor: 'gemini',
+      vendorStatus: 429,
       vendorCode: 'RESOURCE_EXHAUSTED',
-      quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'],
-      retryAfterSeconds: 36,
-      reason: 'You exceeded your current quota',
+      quotaIds: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier,GenerateRequestsPerMinutePerProjectPerModel',
+      vendorRetryAfterSeconds: 36,
+      vendorReason: 'You exceeded your current quota',
     });
+    expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'rate-limited (transcribe, gemini): You exceeded your current quota');
   });
 
   it('names the analysis stage when the analysis call is the one refused', async () => {
@@ -873,7 +875,7 @@ describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', (
     const onRateLimited = vi.fn(() => 30);
     await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG })
       .run(makeJob(), { onRateLimited });
-    expect(onRateLimited).toHaveBeenCalledWith({ stage: 'analyze', provider: 'openai_compatible', status: 429, reason: '429' });
+    expect(onRateLimited).toHaveBeenCalledWith({ stage: 'analyze', vendor: 'openai_compatible', vendorStatus: 429, vendorReason: '429' });
     // The job row keeps the same reason, for whoever reads the queue.
     expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'rate-limited (analyze, openai_compatible): 429');
   });
@@ -881,15 +883,15 @@ describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', (
 
 describe('rateLimitCauseOf', () => {
   it('without vendor detail, the reason is the error\'s own message, trimmed to 500 characters', () => {
-    expect(rateLimitCauseOf(new TranscriptionError('RATE_LIMITED', 'Sarvam rate-limited (429): slow down'))).toEqual({
-      reason: 'Sarvam rate-limited (429): slow down',
+    expect(rateLimitCauseOf(new TranscriptionError('RATE_LIMITED', 'rate-limited: slow down'), 'transcribe')).toEqual({
+      stage: 'transcribe', vendorReason: 'rate-limited: slow down',
     });
-    expect(rateLimitCauseOf(new TranscriptionError('RATE_LIMITED', 'x'.repeat(2_000))).reason).toHaveLength(500);
+    expect(rateLimitCauseOf(new TranscriptionError('RATE_LIMITED', 'x'.repeat(2_000)), 'transcribe').vendorReason).toHaveLength(500);
   });
 
   it('an AiError without parsed detail still names its provider and status', () => {
-    expect(rateLimitCauseOf(new AiError('rate_limited', 'openai_compatible', 'Too many requests', 429))).toEqual({
-      provider: 'openai_compatible', status: 429, reason: 'Too many requests',
+    expect(rateLimitCauseOf(new AiError('rate_limited', 'openai_compatible', 'Too many requests', 429), 'analyze')).toEqual({
+      stage: 'analyze', vendor: 'openai_compatible', vendorStatus: 429, vendorReason: 'Too many requests',
     });
   });
 });

@@ -12,7 +12,6 @@ import {
   VendorRateLimitBreaker,
   BREAKER_BASE_PAUSE_MS,
   BREAKER_MAX_PAUSE_MS,
-  rateLimitLogFields,
 } from '../../../src/core/vendor-rate-limit-breaker.js';
 
 function breaker() {
@@ -164,13 +163,12 @@ describe('VendorRateLimitBreaker', () => {
   });
 
   describe('visibility', () => {
-    const cause = { provider: 'gemini', status: 429, vendorCode: 'RESOURCE_EXHAUSTED', reason: 'quota' };
+    const cause = { stage: 'transcribe' as const, vendor: 'gemini', vendorCode: 'RESOURCE_EXHAUSTED', vendorReason: 'quota' };
 
     it('every opening in a run reports the first opening\'s time and its own cause', () => {
       const { b, advance, now } = breaker();
       const opened = vi.fn();
       b.onOpenListener(opened);
-      expect(b.refusingSince).toBeNull();
       const first = now();
       b.recordRateLimit(now(), cause);
       advance(BREAKER_BASE_PAUSE_MS);
@@ -180,7 +178,6 @@ describe('VendorRateLimitBreaker', () => {
         [BREAKER_BASE_PAUSE_MS, 1, { since: first, cause }],
         [BREAKER_BASE_PAUSE_MS * 2, 2, { since: first }],
       ]);
-      expect(b.refusingSince).toBe(first);
     });
 
     it('a close tells its listeners when the refusals began and how many pauses there were; a new run starts afresh', () => {
@@ -201,7 +198,6 @@ describe('VendorRateLimitBreaker', () => {
       b.recordSuccess(now());
       expect(closed).toHaveBeenCalledOnce();
       expect(closed).toHaveBeenCalledWith({ since: first, pauses: 2 });
-      expect(b.refusingSince).toBeNull();
       advance(1_000);
       b.recordRateLimit(now(), cause);
       expect(opened).toHaveBeenLastCalledWith(BREAKER_BASE_PAUSE_MS, 1, { since: now(), cause });
@@ -213,23 +209,10 @@ describe('VendorRateLimitBreaker', () => {
       b.onOpenListener(opened);
       const remoteStart = now();
       b.applyRemotePause(now() + 45_000, 2);
-      expect(b.refusingSince).toBe(remoteStart);
       advance(45_000);
       b.onStarted(1);
       b.recordRateLimit(now(), cause);
       expect(opened).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS * 4, 3, { since: remoteStart, cause });
-    });
-
-    it('rateLimitLogFields flattens a cause for Loki, and leaves out what the vendor did not say', () => {
-      expect(rateLimitLogFields(undefined)).toEqual({});
-      expect(rateLimitLogFields({ reason: 'Sarvam rate-limited (429)' })).toEqual({ vendorReason: 'Sarvam rate-limited (429)' });
-      expect(rateLimitLogFields({
-        provider: 'gemini', status: 429, vendorCode: 'RESOURCE_EXHAUSTED',
-        quotaIds: ['PerDay', 'PerMinute'], retryAfterSeconds: 0, reason: 'quota',
-      })).toEqual({
-        vendor: 'gemini', vendorStatus: 429, vendorCode: 'RESOURCE_EXHAUSTED',
-        quotaIds: 'PerDay,PerMinute', vendorRetryAfterSeconds: 0, vendorReason: 'quota',
-      });
     });
   });
 });

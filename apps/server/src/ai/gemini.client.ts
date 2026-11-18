@@ -10,6 +10,7 @@ import {
   type AiRateLimitDetail,
   type AiUsage,
   type GeminiClientConfig,
+  retryAfterSeconds,
 } from './types.js';
 
 // Minimal structural types for the parts of @google/genai this client touches. The
@@ -282,8 +283,7 @@ export function geminiRateLimitDetail(message: string): AiRateLimitDetail {
         if (typeof v?.quotaId === 'string' && v.quotaId) quotaIds.add(v.quotaId);
       }
     } else if (d?.['@type'] === RETRY_INFO_TYPE && typeof d.retryDelay === 'string') {
-      const seconds = Number.parseFloat(d.retryDelay);
-      if (Number.isFinite(seconds) && seconds >= 0) detail.retryAfterSeconds = Math.ceil(seconds);
+      detail.retryAfterSeconds = retryAfterSeconds(Number.parseFloat(d.retryDelay)); // "36.5s"
     }
   }
   if (quotaIds.size > 0) detail.quotaIds = [...quotaIds];

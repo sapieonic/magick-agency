@@ -493,13 +493,13 @@ export class DialerAnalysisJobRepository {
    * given a chance to succeed. Decrements `attempts` and `attempts_total` back to
    * pre-claim, applies a longer jittered backoff. Fenced. Never drops below 0.
    * `errorMessage` keeps why the vendor refused (the runner passes the stage, the vendor and
-   * its words), so the row says it too; without one the row says only that it was rate-limited.
+   * its words).
    */
   async requeueRateLimited(
     id: string,
     generation: number,
     backoffSeconds: number,
-    errorMessage?: string,
+    errorMessage: string,
   ): Promise<boolean> {
     const pool = getPool();
     const result = await pool.query(
@@ -510,7 +510,7 @@ export class DialerAnalysisJobRepository {
              attempts_total = GREATEST(attempts_total - 1, 0),
              next_attempt_at = now() + ($3::int * INTERVAL '1 second'),
              error_code = 'RATE_LIMITED',
-             error_message = COALESCE($4::text, 'rate-limited; retrying without consuming an attempt')
+             error_message = $4
          WHERE id = $1 AND claim_generation = $2 AND status IN ('transcribing','analyzing')
          RETURNING call_id
        ),
@@ -524,7 +524,7 @@ export class DialerAnalysisJobRepository {
          RETURNING agency_calls.id
        )
        SELECT call_id FROM requeued`,
-      [id, generation, backoffSeconds, errorMessage?.slice(0, 2000) ?? null],
+      [id, generation, backoffSeconds, errorMessage.slice(0, 2000)],
     );
     return (result.rowCount ?? 0) > 0;
   }

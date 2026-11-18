@@ -528,11 +528,11 @@ describe('slot pool', () => {
     expect(runs.running()).toEqual(['j0', 'j1', 'j2', 'j3']);
 
     // j0 is rate-limited: the runner asks the breaker for the pause to back the job off by.
-    expect(runs.ctx('j0').onRateLimited!({ reason: '429' })).toBe(30);
+    expect(runs.ctx('j0').onRateLimited!({ stage: 'transcribe', vendorReason: '429' })).toBe(30);
     runs.finish('j0', 'rate_limited');
     // Its siblings, already in flight when the limit hit, hit it too: one opening, not four.
     for (const id of ['j1', 'j2', 'j3']) {
-      expect(runs.ctx(id).onRateLimited!({ reason: '429' })).toBeLessThanOrEqual(30);
+      expect(runs.ctx(id).onRateLimited!({ stage: 'transcribe', vendorReason: '429' })).toBeLessThanOrEqual(30);
       runs.finish(id, 'rate_limited');
     }
     await flush();
@@ -548,7 +548,7 @@ describe('slot pool', () => {
     expect(mockJobRepo.claimRunnable).toHaveBeenLastCalledWith(1);
 
     // The probe is rate-limited too: the pause doubles.
-    expect(runs.ctx('j4').onRateLimited!({ reason: '429' })).toBe(60);
+    expect(runs.ctx('j4').onRateLimited!({ stage: 'transcribe', vendorReason: '429' })).toBe(60);
     runs.finish('j4', 'rate_limited');
     await vi.advanceTimersByTimeAsync(59_000);
     expect(runs.running()).toEqual([]);
@@ -565,12 +565,13 @@ describe('slot pool', () => {
 
   describe('rate-limit visibility', () => {
     const cause = {
-      provider: 'gemini',
-      status: 429,
+      stage: 'transcribe' as const,
+      vendor: 'gemini',
+      vendorStatus: 429,
       vendorCode: 'RESOURCE_EXHAUSTED',
-      quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'GenerateRequestsPerMinutePerProjectPerModel'],
-      retryAfterSeconds: 36,
-      reason: 'You exceeded your current quota',
+      quotaIds: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier,GenerateRequestsPerMinutePerProjectPerModel',
+      vendorRetryAfterSeconds: 36,
+      vendorReason: 'You exceeded your current quota',
     };
 
     beforeEach(() => {
@@ -597,18 +598,7 @@ describe('slot pool', () => {
       refuse(breaker, 2);
       expect(mockLog.warn).toHaveBeenCalledTimes(2);
       expect(mockLog.warn).toHaveBeenLastCalledWith(
-        {
-          pauseMs: 60_000,
-          consecutive: 2,
-          refusingSince: new Date(first).toISOString(),
-          refusingForMinutes: 0,
-          vendor: 'gemini',
-          vendorStatus: 429,
-          vendorCode: 'RESOURCE_EXHAUSTED',
-          quotaIds: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier,GenerateRequestsPerMinutePerProjectPerModel',
-          vendorRetryAfterSeconds: 36,
-          vendorReason: 'You exceeded your current quota',
-        },
+        { pauseMs: 60_000, consecutive: 2, refusingSince: new Date(first).toISOString(), refusingForMinutes: 0, ...cause },
         'AI vendor rate-limited dialer analysis; pausing new claims',
       );
       expect(mockSetConsecutivePauses).toHaveBeenLastCalledWith(2);
@@ -645,16 +635,9 @@ describe('slot pool', () => {
       const w = poolWorker({ concurrency: 1 }, { breaker });
       w.wake();
       await flush();
-      expect(runs.ctx('j0').onRateLimited!({ ...cause, stage: 'transcribe' })).toBe(30);
+      expect(runs.ctx('j0').onRateLimited!(cause)).toBe(30);
       expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          consecutive: 1,
-          stage: 'transcribe',
-          vendor: 'gemini',
-          vendorCode: 'RESOURCE_EXHAUSTED',
-          quotaIds: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier,GenerateRequestsPerMinutePerProjectPerModel',
-          vendorReason: 'You exceeded your current quota',
-        }),
+        expect.objectContaining({ consecutive: 1, ...cause }),
         'AI vendor rate-limited dialer analysis; pausing new claims',
       );
       runs.finish('j0', 'rate_limited');

@@ -71,8 +71,8 @@ export const dialerAnalysisRateLimitPausesTotal = counter(meter, 'dialer_analysi
 
 /**
  * Consecutive vendor rate-limit pauses with no analysis completed between them; 0 while
- * claiming normally. A short rate limit reads 1-3 and falls back to 0; one that climbs to 8
- * (~45 minutes of refused probes) is an exhausted quota or a billing stop.
+ * claiming normally. A short rate limit reads 1-3 and falls back to 0; the worker escalates
+ * (and the alert fires) at its PERSISTENT_RATE_LIMIT_PAUSES.
  */
 const dialerAnalysisRateLimitConsecutivePauses = gauge(meter, 'dialer_analysis_rate_limit_consecutive_pauses', {
   description: 'Consecutive vendor rate-limit pauses with no completed analysis between them (0 when claiming normally)',

@@ -314,12 +314,13 @@ describe('GeminiTranscriber', () => {
     };
     mocks.generateContent.mockRejectedValueOnce(Object.assign(new Error(JSON.stringify(body)), { status: 429 }));
     const err = await makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }).catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: 'RATE_LIMITED' });
-    expect((err as Error).cause).toMatchObject({
-      name: 'AiError',
-      kind: 'rate_limited',
+    expect(err).toMatchObject({
+      code: 'RATE_LIMITED',
+      provider: 'gemini',
+      status: 429,
       rateLimit: { vendorCode: 'RESOURCE_EXHAUSTED', quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'] },
     });
+    expect((err as Error).cause).toMatchObject({ name: 'AiError', kind: 'rate_limited' }); // kept for the stack
   });
 
   it('windows a long call, offsets timestamps by window start, and heartbeats per window', async () => {

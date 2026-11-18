@@ -34,7 +34,6 @@ import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-an
 import { auditLogger } from '../audit/audit-logger.js';
 import { RECORDING_COPIES } from '../config/blocks/analysis.js';
 import { UNBUDGETED_LEASE, type RecordingLease } from './recording-byte-budget.js';
-import { rateLimitLogFields, type RateLimitCause } from './vendor-rate-limit-breaker.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { Traced } from '@magick-agency/observability';
 import {
@@ -545,13 +544,13 @@ export class DialerAnalysisRunner {
     // long as the breaker's pause so another process does not pick it straight back up.
     if ((isTx && (err as TranscriptionError).code === 'RATE_LIMITED') || (isAi && err.kind === 'rate_limited')) {
       const own = jitter(Math.min(RATE_LIMIT_BACKOFF_BASE_SECONDS * Math.pow(2, attempts), RETRY_BACKOFF_CAP_SECONDS));
-      const cause = { ...rateLimitCauseOf(err), stage: isTx ? 'transcribe' as const : 'analyze' as const };
+      const cause = rateLimitCauseOf(err, isTx ? 'transcribe' : 'analyze');
       const pause = onRateLimited?.(cause) ?? 0;
       const backoff = Math.max(own, pause);
-      const where = [cause.stage, cause.provider].filter(Boolean).join(', ');
-      await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff, `rate-limited (${where}): ${cause.reason}`);
+      const where = cause.vendor ? `${cause.stage}, ${cause.vendor}` : cause.stage;
+      await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff, `rate-limited (${where}): ${cause.vendorReason}`);
       log.warn(
-        { callId, jobId, backoff, breakerPauseSeconds: pause, ...rateLimitLogFields(cause) },
+        { callId, jobId, backoff, breakerPauseSeconds: pause, ...cause },
         'Dialer analysis rate-limited; requeued without consuming an attempt',
       );
       return 'rate_limited';
@@ -639,23 +638,34 @@ function sleep(ms: number): Promise<void> {
 const RATE_LIMIT_REASON_MAX = 500;
 
 /**
- * What a rate-limited run's error says about why: the vendor's own detail when the AI layer
- * parsed one (an `AiError`, directly or wrapped by the transcriber), else the error's message.
+ * Why a run was rate-limited, as the log fields the runner and the worker both write (the breaker
+ * passes it to its open listeners untouched). `quotaIds` is comma-joined so Loki keeps it as one
+ * readable field.
  */
-export function rateLimitCauseOf(err: unknown): RateLimitCause {
-  let ai: AiError | undefined;
-  for (let e: unknown = err, depth = 0; e && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
-    if (e instanceof AiError) { ai = e; break; }
-  }
-  const detail = ai?.rateLimit;
+export interface RateLimitCause {
+  /** The call refused: transcribing the recording or analysing the transcript (each has its own key). */
+  stage: 'transcribe' | 'analyze';
+  vendor?: string;
+  vendorStatus?: number;
+  vendorCode?: string;
+  quotaIds?: string;
+  vendorRetryAfterSeconds?: number;
+  /** The vendor's own words when it gave any, else the error's message; trimmed. */
+  vendorReason: string;
+}
+
+/** The cause from a rate-limited `AiError` (analysis) or `TranscriptionError` (transcription). */
+export function rateLimitCauseOf(err: unknown, stage: RateLimitCause['stage']): RateLimitCause {
+  const vendorErr = err instanceof AiError || err instanceof TranscriptionError ? err : undefined;
+  const detail = vendorErr?.rateLimit;
   const message = err instanceof Error ? err.message : String(err);
-  const reason = (detail?.vendorMessage ?? message).slice(0, RATE_LIMIT_REASON_MAX);
   return {
-    reason,
-    ...(ai ? { provider: ai.provider } : {}),
-    ...(ai?.status !== undefined ? { status: ai.status } : {}),
-    ...(detail?.vendorCode ? { vendorCode: detail.vendorCode } : {}),
-    ...(detail?.quotaIds?.length ? { quotaIds: detail.quotaIds } : {}),
-    ...(detail?.retryAfterSeconds !== undefined ? { retryAfterSeconds: detail.retryAfterSeconds } : {}),
+    stage,
+    vendor: vendorErr?.provider,
+    vendorStatus: vendorErr?.status,
+    vendorCode: detail?.vendorCode,
+    quotaIds: detail?.quotaIds?.join(','),
+    vendorRetryAfterSeconds: detail?.retryAfterSeconds,
+    vendorReason: (detail?.vendorMessage ?? message).slice(0, RATE_LIMIT_REASON_MAX),
   };
 }

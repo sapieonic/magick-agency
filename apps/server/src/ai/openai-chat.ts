@@ -7,6 +7,7 @@ import {
   type AiProvider,
   type AiRateLimitDetail,
   type AiStructuredOutputMode,
+  retryAfterSeconds,
 } from './types.js';
 
 /**
@@ -125,20 +126,15 @@ function toAiError(provider: AiProvider, err: unknown): AiError {
  * body's message and the `retry-after-ms` or `retry-after` header (a `Headers` instance or a
  * plain record, depending on the SDK version; an HTTP-date is left out).
  */
-export function openAiRateLimitDetail(err: unknown): AiRateLimitDetail {
+function openAiRateLimitDetail(err: unknown): AiRateLimitDetail {
   const e = err as { code?: unknown; error?: { message?: unknown } | null; headers?: unknown } | null;
   const detail: AiRateLimitDetail = {};
   if (typeof e?.code === 'string' && e.code && !/^\d+$/.test(e.code)) detail.vendorCode = e.code;
   if (typeof e?.error?.message === 'string' && e.error.message) detail.vendorMessage = e.error.message;
   const headers = e?.headers as { get?: (name: string) => unknown } | Record<string, unknown> | undefined;
-  const header = (name: string): number => {
-    const raw = typeof headers?.get === 'function'
-      ? headers.get(name)
-      : (headers as Record<string, unknown> | undefined)?.[name];
-    return typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
-  };
-  const ms = header('retry-after-ms');
-  const seconds = Number.isFinite(ms) ? ms / 1000 : header('retry-after');
-  if (Number.isFinite(seconds) && seconds >= 0) detail.retryAfterSeconds = Math.ceil(seconds);
+  const header = (name: string): unknown => (typeof headers?.get === 'function'
+    ? headers.get(name)
+    : (headers as Record<string, unknown> | undefined)?.[name]);
+  detail.retryAfterSeconds = retryAfterSeconds(header('retry-after-ms'), 1000) ?? retryAfterSeconds(header('retry-after'));
   return detail;
 }

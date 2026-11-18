@@ -20,51 +20,21 @@
  * runner also requeues a rate-limited job no earlier than the pause, so another process
  * sharing the queue does not pick it straight back up.
  *
- * **Visibility.** Each opening tells its listeners why (the vendor's own words, when the
- * runner has them) and since when the vendor has refused every job; a close tells them how
- * long that lasted. From {@link PERSISTENT_RATE_LIMIT_PAUSES} consecutive openings on (about
- * 45 minutes with no analysis completed) it is not a short rate limit any more but an
- * exhausted quota or a billing stop, and the worker says so at error level.
+ * Each opening tells its listeners why and since when; a close, how long it lasted (the
+ * worker's logs and gauge, {@link PERSISTENT_RATE_LIMIT_PAUSES}).
  */
+import type { RateLimitCause } from './dialer-analysis-runner.js';
 
 export const BREAKER_BASE_PAUSE_MS = 30_000;
 export const BREAKER_MAX_PAUSE_MS = 15 * 60_000;
 
 /**
- * Consecutive openings from which the refusal is persistent: 30 s + 1 + 2 + 4 + 8 min reach the
- * 15-minute cap at the sixth, so the eighth comes ~45 minutes after the first with every probe
- * refused. The alert `agy-analysis-vendor-refusing` uses the same count.
+ * Consecutive openings from which the refusal is persistent, an exhausted quota or a billing stop
+ * rather than a short limit: 30 s + 1 + 2 + 4 + 8 min reach the 15-minute cap at the sixth, so the
+ * eighth comes ~45 minutes after the first with every probe refused. The worker logs ERROR from
+ * it; the alert `agy-analysis-vendor-refusing` uses the same count (its validator pins it).
  */
 export const PERSISTENT_RATE_LIMIT_PAUSES = 8;
-
-/** Why the vendor refused a job, as far as it said: for logs only. */
-export interface RateLimitCause {
-  /** Which call was refused: transcribing the recording or analysing the transcript (each has its own key). */
-  stage?: 'transcribe' | 'analyze';
-  provider?: string;
-  status?: number;
-  vendorCode?: string;
-  quotaIds?: string[];
-  retryAfterSeconds?: number;
-  /** The vendor's message (or the error's), trimmed. */
-  reason: string;
-}
-
-/**
- * A cause as flat log fields: `stage`, `vendor`, `vendorStatus`, `vendorCode`, `quotaIds`
- * (comma-joined, so Loki keeps it as one readable field), `vendorRetryAfterSeconds`, `vendorReason`.
- */
-export function rateLimitLogFields(cause: RateLimitCause | undefined): Record<string, string | number> {
-  if (!cause) return {};
-  const fields: Record<string, string | number> = { vendorReason: cause.reason };
-  if (cause.stage) fields.stage = cause.stage;
-  if (cause.provider) fields.vendor = cause.provider;
-  if (cause.status !== undefined) fields.vendorStatus = cause.status;
-  if (cause.vendorCode) fields.vendorCode = cause.vendorCode;
-  if (cause.quotaIds?.length) fields.quotaIds = cause.quotaIds.join(',');
-  if (cause.retryAfterSeconds !== undefined) fields.vendorRetryAfterSeconds = cause.retryAfterSeconds;
-  return fields;
-}
 
 export interface BreakerOpenInfo {
   /** When the vendor started refusing (the first opening of this run of openings), epoch ms. */
@@ -124,11 +94,6 @@ export class VendorRateLimitBreaker {
     this.closeListeners.push(listener);
   }
 
-  /** When the vendor started refusing (epoch ms), or null while closed. */
-  get refusingSince(): number | null {
-    return this.consecutive === 0 ? null : this.since;
-  }
-
   get state(): BreakerState {
     if (this.consecutive === 0) return 'closed';
     return this.now() < this.openUntil ? 'open' : 'half_open';
@@ -183,7 +148,7 @@ export class VendorRateLimitBreaker {
       const pauseMs = Math.round(base * (0.8 + this.random() * 0.4));
       this.openedAt = this.now();
       this.openUntil = this.openedAt + pauseMs;
-      const info: BreakerOpenInfo = cause ? { since: this.since, cause } : { since: this.since };
+      const info: BreakerOpenInfo = { since: this.since, cause };
       for (const listener of this.openListeners) listener(pauseMs, this.consecutive, info);
     }
     return Math.ceil(this.reopensInMs() / 1000);

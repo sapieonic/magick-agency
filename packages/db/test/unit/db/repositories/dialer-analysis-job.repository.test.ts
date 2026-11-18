@@ -364,7 +364,7 @@ describe('DialerAnalysisJobRepository', () => {
   describe('requeueRateLimited — does not burn an attempt (M4)', () => {
     it('decrements attempts and attempts_total (floored at 0), fenced', async () => {
       mocks.poolQuery.mockResolvedValueOnce({ rowCount: 1 });
-      await repo.requeueRateLimited('j1', 2, 300);
+      await repo.requeueRateLimited('j1', 2, 300, 'rate-limited (transcribe): 429');
       const text = poolText();
       expect(text).toContain('attempts = GREATEST(attempts - 1, 0)');
       expect(text).toContain('attempts_total = GREATEST(attempts_total - 1, 0)');

@@ -2269,9 +2269,11 @@ minutes with no reason in them, and the job row's `error_message` a fixed "trans
 rate-limited" text. A short per-minute limit and an exhausted daily quota or billing stop looked
 the same. Now: the AI clients keep what the vendor said on a `rate_limited` `AiError` (Gemini's
 status, exceeded quota ids and retry delay, parsed from the SDK's JSON body; OpenAI's code and
-`retry-after`/`retry-after-ms`), the transcriber keeps it as the cause, and the runner and worker
-log it with the refused `stage` (`transcribe` or `analyze`) and `refusingSince`; the job row keeps
-it in `error_message`. From the 8th consecutive pause (~45 minutes, no job completed;
+`retry-after`/`retry-after-ms`); a `RATE_LIMITED` `TranscriptionError` carries the same detail
+(Gemini's mapped from its `AiError`, Sarvam's from its own 429 body and `retry-after`), and the
+runner turns either into one flat set of log fields that it and the worker both write, with the
+refused `stage` (`transcribe` or `analyze`) and `refusingSince`; the job row keeps it in
+`error_message`. From the 8th consecutive pause (~45 minutes, no job completed;
 `PERSISTENT_RATE_LIMIT_PAUSES`) the worker logs ERROR, and each process logs its recovery at INFO.
 New gauge `dialer_analysis_rate_limit_consecutive_pauses`, a dashboard panel (*Dialer Analysis
 Vendor Refusals*) and the warning alert `agy-analysis-vendor-refusing`, filtered to deployments
@@ -2279,19 +2281,20 @@ still pausing (each analysis process holds its own gauge until a job of its own 
 validator pins its threshold to the worker's constant. Runbook: [`operations.md`](operations.md),
 "Alert runbooks". Reviewed by a fresh-context reviewer; its findings (the stale gauge across
 processes, the untested worker hop, the runbook's keys and per-minute remedy, the doc counts, the
-dashboard) are fixed in the same commit. Mutation-checked (each red, then restored with
-`git checkout`), 15 in all, among them: the worker dropping the cause, the runner dropping the
+dashboard) are fixed in the same commit, and a cleanup pass (reuse, simplification, efficiency,
+altitude) flattened the cause into one shape and moved it off the breaker. Mutation-checked (each red, then restored with
+`git checkout`), 16 in all, among them: the worker dropping the cause, the runner dropping the
 stage or the row's reason, the transcriber dropping the cause, the escalation threshold off by
 one, `since` reset on every opening, the close never announced, the parsers' edge cases, the
 repository ignoring the reason (real Postgres), the constant drifting from the alert, the alert
-losing its filter. Not changed, and why: campaigns are not paused outside calling hours or with no
+losing its filter, Sarvam's 429 losing its detail. Not changed, and why: campaigns are not paused outside calling hours or with no
 agents (pacing already dials nothing and resumes by itself, `pacing-engine.ts` "`to_dial == 0` IS
 the paused state"); the analysis worker keeps working overnight, which is when it should catch up.
 
 ## Test counts
 
 **Analysis vendor refusals, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`, on the
-tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and Redis on
+tree of this entry's commit (after the cleanup pass), every suite run one after another (Postgres 16 on 5436 and Redis on
 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana` 34,
 `pnpm test:release` 10, `pnpm test:tooling` 20. Unit: `apps/server` 10430 passed + 1 expected fail
 (528 files), `packages/db` 457 (28 files), `packages/observability` 23 (5 files). Integration:

@@ -26,7 +26,7 @@ describe('dialer analysis failure scenarios', () => {
     expect((await getTestPool().query(`SELECT analysis_status FROM agency_calls WHERE id = $1`, [retry.call.id])).rows[0]!.analysis_status).toBe('failed');
 
     const rate = await claimed();
-    expect(await jobs.requeueRateLimited(rate.job.id, rate.claim.claim_generation, 0)).toBe(true);
+    expect(await jobs.requeueRateLimited(rate.job.id, rate.claim.claim_generation, 0, 'rate-limited (transcribe): 429')).toBe(true);
     expect(await jobs.findById(rate.job.id)).toMatchObject({ attempts: 0, attempts_total: 0, status: 'queued' });
   });
 

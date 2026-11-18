@@ -76,6 +76,20 @@ describe('SarvamTranscriber', () => {
     expect(TranscriptionError).toBeDefined();
   });
 
+  it('a 429 carries the vendor, its body and its retry-after, for the analysis worker\'s logs', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{"error":"quota exceeded"}', { status: 429, headers: { 'retry-after': '12' } }));
+    await expect(new SarvamTranscriber(cfg).transcribe({ audio: Buffer.from('audio'), mimeType: 'audio/wav' }))
+      .rejects.toMatchObject({
+        code: 'RATE_LIMITED',
+        provider: 'sarvam',
+        status: 429,
+        rateLimit: { vendorMessage: '{"error":"quota exceeded"}', retryAfterSeconds: 12 },
+      });
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 429 }));
+    const err = await new SarvamTranscriber(cfg).transcribe({ audio: Buffer.from('audio'), mimeType: 'audio/wav' }).catch((e: unknown) => e);
+    expect((err as InstanceType<typeof TranscriptionError>).rateLimit).toEqual({});
+  });
+
   it('maps a timed-out fetch to TIMEOUT', async () => {
     fetchMock.mockRejectedValue(Object.assign(new Error('timed out'), { name: 'TimeoutError' }));
     await expect(new SarvamTranscriber(cfg).transcribe({ audio: Buffer.from('audio'), mimeType: 'audio/wav' }))
