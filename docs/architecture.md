@@ -944,7 +944,13 @@ a rate-limit key and never an auth input.
   `useCampaignLifecycle`); and the agents' state chips with a link to each campaign's Agents tab.
   Needs you now is ordered by LF9 (`HOME_RANKS`), groups the campaigns on the default calling hours
   into one row, and offers a coming-soon "Give to free agents" on late callbacks whose owner is
-  away. **Callbacks** (`/agency/callbacks`, `pages/agency/CallbacksPage.tsx`, Live floor's gate)
+  away. Phase 2 (B28b) adds the account's floor (`hooks/useAgentFloor.ts`, `GET /proxy/agency/floor`
+  every 5 s on this page alone): a card per agent (`live-floor/AgentGrid.tsx`, the campaign floor's
+  risk rules per row in `utils/agency/liveFloorAgents.ts`) filtered by the state chips, Listen,
+  Make available and the coming-soon Talk, Join call and Send reminder; breaks over 30 minutes in
+  Needs you now (not on the sidebar badge, which reads the board alone); Agents working "of N
+  assigned"; and today's promises (`hooks/usePromisesToday.ts`) as Will pay and each card's "N will
+  pay", with who paused a campaign from the board's `status_changed`. **Callbacks** (`/agency/callbacks`, `pages/agency/CallbacksPage.tsx`, Live floor's gate)
   lists each active campaign's late callbacks from the same board, with a danger-tone sidebar badge.
   Before LF1 the page had three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
   every row of the campaign Overview's "Needs your attention" run over the board with today for its
