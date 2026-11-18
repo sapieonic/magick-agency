@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { useState } from 'react';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { CampaignBehaviourSection, type BehaviourSectionId } from '../../pages/campaigns/agency/CampaignBehaviourSection';
 import {
   configFromCampaign,
@@ -270,5 +270,54 @@ describe('the settings page’s slices of behaviour', () => {
     cleanup();
     render(<Editor include={['agents']} />);
     expect(editors()).toEqual({ retries: false, outcomes: false, wrapup: false });
+  });
+});
+
+/*
+  Findings are shown live, quietly; the server's answer to a save wins over a live finding
+  for the same field and is still announced. Both pages disable Save on a live finding, so
+  this is what keeps them from showing a disabled Save with nothing highlighted.
+*/
+describe('live findings and the server’s answer', () => {
+  const SAME_TIME =
+    'The window cannot start and end at the same time — the campaign would never dial. For all day, use 00:00 to 23:59.';
+  const sameTimes = {
+    id: 'camp-1', name: 'Collections', status: 'draft',
+    calling_window_start: '09:00', calling_window_end: '09:00',
+  } as AgencyCampaign;
+
+  it('shows a live finding on its field without announcing it', () => {
+    render(<Editor initial={sameTimes} />);
+    const finding = screen.getByText(SAME_TIME).closest('p')!;
+    expect(finding.getAttribute('role')).toBeNull();
+    expect(screen.getByLabelText('End').getAttribute('aria-describedby')).toBe(finding.id);
+  });
+
+  it('lets the server’s message for the same field win, and announces it', () => {
+    render(<Editor initial={sameTimes} fieldErrors={{ calling_window_end: 'The server says no.' }} />);
+    expect(screen.queryByText(SAME_TIME)).toBeNull();
+    const answer = screen.getByText('The server says no.').closest('p')!;
+    expect(answer.getAttribute('role')).toBe('alert');
+  });
+});
+
+describe('a retry rule that holds Save on an outcome that ends the contact', () => {
+  /*
+    Ending or stopping a contact makes its retry rule inert, and the inputs give way to a
+    note. A wrong value in them still holds Save, so they stay while it is wrong.
+  */
+  it('keeps the retry inputs while their value is wrong, and lets them go once it is right', () => {
+    render(<Editor include={['behaviour']} />);
+    const attempts = screen.getByLabelText('Voicemail retry attempts');
+    fireEvent.change(attempts, { target: { value: '25' } });
+    const flags = screen.getByRole('group', { name: 'What happens when an agent files Voicemail' });
+    fireEvent.click(within(flags).getByRole('checkbox', { name: /Ends this contact/ }));
+
+    expect(screen.getByLabelText('Voicemail retry attempts')).toBeTruthy();
+    expect(screen.getByText('Set how many attempts — a whole number from 0 to 20.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Voicemail retry attempts'), { target: { value: '2' } });
+    expect(screen.queryByLabelText('Voicemail retry attempts')).toBeNull();
+    expect(screen.getByTestId('retry-inert-0')).toBeTruthy();
   });
 });

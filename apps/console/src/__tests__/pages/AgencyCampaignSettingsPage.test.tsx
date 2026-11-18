@@ -1424,3 +1424,54 @@ describe('the settings sections', () => {
     expect(current()).toEqual(['Dialling and retries']);
   });
 });
+
+/**
+ * ── A setting that holds Save ─────────────────────────────────────────────────
+ * Save is disabled while the form finds anything, so a finding has to show on its field as
+ * soon as it exists: one that waited for a save attempt never showed, and the bar said "Fix
+ * the highlighted fields" with nothing highlighted. On a long page the field can be well out
+ * of view, so the bar offers "Show me".
+ */
+describe('a setting that holds Save', () => {
+  const SAME_TIME = 'The window cannot start and end at the same time — the campaign would never dial. For all day, use 00:00 to 23:59.';
+
+  it('shows on its field as soon as it is made, and the bar holds Save', async () => {
+    renderPage();
+    await screen.findByDisplayValue('18:00');
+    expect(screen.queryByText(SAME_TIME)).toBeNull();
+
+    fireEvent.change(screen.getByDisplayValue('18:00'), { target: { value: '10:00' } });
+
+    expect(screen.getByText(SAME_TIME)).toBeTruthy();
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('unsaved-changes-note').textContent).toBe('Fix the highlighted fields before saving.');
+  });
+
+  it('“Show me” takes focus to the field, and clears once it is fixed', async () => {
+    renderPage();
+    await screen.findByDisplayValue('18:00');
+    const end = screen.getByDisplayValue('18:00') as HTMLInputElement;
+    fireEvent.change(end, { target: { value: '10:00' } });
+
+    fireEvent.click(screen.getByTestId('unsaved-changes-show'));
+    expect(document.activeElement).toBe(end);
+
+    fireEvent.change(end, { target: { value: '19:00' } });
+    expect(screen.queryByText(SAME_TIME)).toBeNull();
+    expect(screen.queryByTestId('unsaved-changes-show')).toBeNull();
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it('“Show me” finds a missing caller ID too, whose picker marks no control invalid', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    try {
+      renderPage();
+      fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+      fireEvent.click(screen.getByTestId('unsaved-changes-show'));
+      expect(scrolled.map((element) => element.textContent)).toEqual(['A campaign needs at least one caller ID.']);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+});

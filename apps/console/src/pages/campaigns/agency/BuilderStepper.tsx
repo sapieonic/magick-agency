@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react';
+import { AlertCircle, Check } from 'lucide-react';
 import {
   BUILDER_STEPS,
   canVisitStep,
@@ -10,6 +10,8 @@ export interface BuilderStepperProps {
   current: BuilderStepId;
   basicsReady: boolean;
   completed: ReadonlySet<BuilderStepId>;
+  /** Steps holding a setting that stops the campaign saving: marked, and named for a screen reader. */
+  invalid?: ReadonlySet<BuilderStepId>;
   onSelect: (id: BuilderStepId) => void;
 }
 
@@ -24,6 +26,7 @@ export function BuilderStepper({
   current,
   basicsReady,
   completed,
+  invalid,
   onSelect,
 }: BuilderStepperProps) {
   return (
@@ -32,6 +35,7 @@ export function BuilderStepper({
         {BUILDER_STEPS.map((step, index) => {
           const reachable = canVisitStep(step.id, basicsReady);
           const isCurrent = step.id === current;
+          const isInvalid = invalid?.has(step.id) ?? false;
           const isComplete = completed.has(step.id);
           return (
             <li key={step.id} className={styles.item} data-current={isCurrent || undefined}>
@@ -41,13 +45,20 @@ export function BuilderStepper({
                 className={styles.step}
                 data-current={isCurrent || undefined}
                 data-complete={isComplete && !isCurrent ? true : undefined}
-                aria-label={step.title}
+                data-invalid={isInvalid || undefined}
+                aria-label={isInvalid ? `${step.title}, needs fixing` : step.title}
                 aria-current={isCurrent ? 'step' : undefined}
                 disabled={!reachable}
                 onClick={() => onSelect(step.id)}
               >
                 <span className={styles.badge} aria-hidden="true">
-                  {isComplete && !isCurrent ? <Check size={12} strokeWidth={2.5} /> : index + 1}
+                  {isInvalid ? (
+                    <AlertCircle size={13} strokeWidth={2.5} />
+                  ) : isComplete && !isCurrent ? (
+                    <Check size={12} strokeWidth={2.5} />
+                  ) : (
+                    index + 1
+                  )}
                 </span>
                 <span className={styles.labelFull} aria-hidden="true">
                   {step.title}

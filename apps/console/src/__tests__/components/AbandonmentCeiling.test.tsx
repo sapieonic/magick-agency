@@ -383,7 +383,7 @@ describe('the reference warning', () => {
     fireEvent.keyDown(slider(), { key: 'ArrowRight' }); // 3.1
     const warning = screen.getByTestId('abandonment-ceiling-warning');
     expect(warning.textContent).toBe(
-      'Above 3%, the limit most dropped-call rules set. Check the rules that apply to these calls before raising it.',
+      'Above 3%, the limit most dropped-call rules set. Check the rules that apply to these calls before raising it. You can still save.',
     );
     expect(input().getAttribute('aria-invalid')).toBeNull();
     // Both controls are described by it, and the box by the lead sentence too.

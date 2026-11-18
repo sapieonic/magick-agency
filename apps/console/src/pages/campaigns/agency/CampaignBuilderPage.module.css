@@ -274,6 +274,27 @@
   border-left: 3px solid var(--warning);
 }
 
+/* A setting that holds Save: marked like a field error, and says what is wrong. */
+.reviewRow[data-invalid='true'] {
+  border-left: 3px solid var(--danger);
+  background: var(--danger-subtle);
+}
+
+.reviewText {
+  min-width: 0;
+}
+
+.reviewErrors {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--danger);
+}
+
 .reviewLabel {
   margin: 0 0 4px;
   font-size: 11px;
@@ -310,6 +331,34 @@
 .saved {
   font-size: 13px;
   color: var(--success);
+}
+
+/* The step a finding is on, from the sentence that names it. */
+.blockLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/*
+  What the draft holds while the form differs from it: just above Save, where it is decided,
+  and in the warning colour, since missing it is how settings get lost.
+*/
+.draftNote {
+  margin: 0;
+  padding: 10px 20px;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--warning-subtle);
 }
 
 .savedLink {
@@ -350,7 +399,8 @@
 
   .cardHeader,
   .cardBody,
-  .footer {
+  .footer,
+  .draftNote {
     padding-left: 16px;
     padding-right: 16px;
   }
@@ -359,6 +409,11 @@
      read as a stray), at a finger's height. */
   .footer > button {
     flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  /* The link beside Save's reason is inside the reason, not a footer button: a finger's height too. */
+  .blockLink {
     min-height: 44px;
   }
 }
