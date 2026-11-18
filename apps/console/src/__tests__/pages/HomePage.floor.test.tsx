@@ -47,6 +47,7 @@ vi.mock('../../components/listen/ListenProvider', () => ({
 }));
 
 import HomePage from '../../pages/agency/HomePage';
+import { AgentGrid } from '../../pages/agency/live-floor/AgentGrid';
 import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
 import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
 
@@ -89,7 +90,8 @@ const CALL = (over: Partial<NonNullable<AgencyFloorAgent['call']>> = {}): NonNul
 
 const FLOOR = () => floorOf([
   floorRow('ravi', { agent_name: 'Ravi Kumar', state: 'on_call', state_since: minutesAgo(1), call: CALL(), calls_today: 42, client_kind: 'mobile' }),
-  floorRow('priya', { agent_name: 'Priya M', state: 'break', break_label: 'Tea', state_since: minutesAgo(42) }),
+  // Half a minute into the 42nd, so the floor read's clock offset (a few ms) never moves the minute.
+  floorRow('priya', { agent_name: 'Priya M', state: 'break', break_label: 'Tea', state_since: minutesAgo(42.5) }),
   floorRow('divya', { agent_name: 'Divya S', state: 'wrapup', state_since: minutesAgo(5), wrapup_window_seconds: 30 }),
   floorRow('arjun', { agent_name: 'Arjun T', campaign_id: 'c2', campaign_name: 'Gold' }),
   floorRow('naveen', { agent_name: 'Naveen G', session_id: null, campaign_id: null, campaign_name: null, state: 'offline', state_since: null, connected: null, client_kind: null, calls_today: 0 }),
@@ -246,6 +248,46 @@ describe('the late callbacks past the board’s cap', () => {
 });
 
 describe('the drawer from Live floor', () => {
+  function renderGrid(rows: AgencyFloorAgent[]) {
+    const grid = (next: AgencyFloorAgent[]) => (
+      <MemoryRouter>
+        <AgentGrid rows={next} filter="all" clockOffsetMs={0} onChanged={() => {}} />
+      </MemoryRouter>
+    );
+    const view = render(grid(rows));
+    return { rerender: (next: AgencyFloorAgent[]) => view.rerender(grid(next)) };
+  }
+  const stuck = (over: Partial<AgencyFloorAgent> = {}) =>
+    floorRow('divya', { agent_name: 'Divya S', state: 'wrapup', state_since: minutesAgo(5), wrapup_window_seconds: 30, ...over });
+
+  it('reads the agent from each new floor, not the card it was opened from', () => {
+    const { rerender } = renderGrid([stuck()]);
+    fireEvent.click(screen.getByRole('button', { name: 'Make Divya S available' }));
+    expect(screen.getByTestId('agent-drawer-elapsed').textContent).toMatch(/^5:0\d$/);
+    // Still stuck, a later state change and a name the lookup has now: the open drawer says so.
+    rerender([stuck({ agent_name: 'Divya Sharma', state_since: minutesAgo(2) })]);
+    expect(screen.getByRole('dialog').textContent).toContain('Divya Sharma');
+    // The grid's second was taken before this floor: 2:00 or a hair under.
+    expect(screen.getByTestId('agent-drawer-elapsed').textContent).toMatch(/^(1:59|2:0\d)$/);
+  });
+
+  it('closes when the agent leaves wrap-up on their own (an outcome saved, then Tea)', () => {
+    const { rerender } = renderGrid([stuck()]);
+    fireEvent.click(screen.getByRole('button', { name: 'Make Divya S available' }));
+    expect(screen.getByTestId('agent-drawer-state')).toBeTruthy();
+    rerender([stuck({ state: 'break', break_reason: 'tea', break_label: 'Tea', state_since: minutesAgo(0) })]);
+    expect(screen.queryByTestId('agent-drawer-state')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'End wrap-up and return' })).toBeNull();
+  });
+
+  it('closes when the agent is no longer on the floor', () => {
+    const { rerender } = renderGrid([stuck(), floorRow('ravi')]);
+    fireEvent.click(screen.getByRole('button', { name: 'Make Divya S available' }));
+    expect(screen.getByTestId('agent-drawer-state')).toBeTruthy();
+    rerender([floorRow('ravi')]);
+    expect(screen.queryByTestId('agent-drawer-state')).toBeNull();
+  });
+
   it('names the card’s figure as conversations today, as the card does', async () => {
     renderHome();
     await screen.findByTestId('home-agent-grid');
@@ -305,6 +347,38 @@ describe('breaks over the limit', () => {
     // On the page's own count, not the sidebar's.
     expect(screen.getByTestId('home-attention-count').textContent).toBe('1, 1');
     await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('0'));
+  });
+});
+
+describe('the server’s clock (a viewer whose clock runs fast)', () => {
+  // The floor says it is 10 minutes earlier than the viewer's clock does.
+  const AHEAD_MS = 10 * 60_000;
+  const serverMinutesAgo = (m: number) => new Date(Date.now() - AHEAD_MS - m * 60_000).toISOString();
+
+  beforeEach(() => {
+    mocks.getAgencyFloor.mockImplementation(async () => ({
+      ...floorOf([
+        floorRow('priya', { agent_name: 'Priya M', state: 'break', break_label: 'Tea', state_since: serverMinutesAgo(25) }),
+        floorRow('divya', { agent_name: 'Divya S', state: 'wrapup', state_since: serverMinutesAgo(0.25), wrapup_window_seconds: 30 }),
+      ]),
+      as_of: new Date(Date.now() - AHEAD_MS).toISOString(),
+    }));
+  });
+
+  it('times the cards by it, so a 25-minute break says 25 minutes, not 35', async () => {
+    renderHome();
+    await screen.findByTestId('home-agent-grid');
+    expect(screen.getByTestId('home-agent-priya').textContent).toMatch(/25:\d{2}/);
+    expect(screen.getByTestId('home-agent-divya').textContent).toMatch(/0:1\d/);
+  });
+
+  it('measures the floor’s risks by it: no break row, no stuck wrap-up', async () => {
+    renderHome();
+    await screen.findByTestId('home-agent-grid');
+    expect(screen.queryByTestId('home-attention-break-overrun:priya')).toBeNull();
+    expect(screen.queryByTestId('home-agent-risk-priya')).toBeNull();
+    expect(screen.queryByTestId('home-agent-risk-divya')).toBeNull();
+    expect(within(screen.getByTestId('home-agent-divya')).queryByRole('button', { name: /available/ })).toBeNull();
   });
 });
 

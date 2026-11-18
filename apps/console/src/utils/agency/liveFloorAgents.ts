@@ -113,13 +113,24 @@ export function floorTimerAnchor(row: AgencyFloorAgent): string | null {
   return row.state_since;
 }
 
+/**
+ * The server's now, from the viewer's: the floor read's offset (`useAgentFloor().clockOffsetMs`,
+ * the server's clock minus the viewer's) added to the viewer's clock. Every anchor on a floor row is
+ * the server's, so the cards' clocks, the wrap-up and break thresholds and the break rows are
+ * measured against this, as the Live calls list corrects its time on call; a viewer whose clock runs
+ * fast would otherwise see every agent minutes further on.
+ */
+export function floorNow(viewerNow: number, clockOffsetMs: number): number {
+  return viewerNow + clockOffsetMs;
+}
+
 function elapsedFrom(anchor: string | null, now: number): number | null {
   if (!anchor) return null;
   const at = Date.parse(anchor);
   return Number.isFinite(at) ? Math.max(0, now - at) : null;
 }
 
-/** One row's card at `now`. */
+/** One row's card at `now`, the server's now ({@link floorNow}). */
 export function floorCard(row: AgencyFloorAgent, now: number): FloorCard {
   const agent = supervisorAgentOf(row);
   return {

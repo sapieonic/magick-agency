@@ -16,6 +16,7 @@ import { homeAttention, sortByRank, HOME_CAMPAIGN_CAP } from '../../utils/agency
 import {
   breakOverrunItems,
   floorAgentsWorking,
+  floorNow,
   floorRowsFor,
   rankFloorCards,
   willPayByCampaign,
@@ -76,10 +77,12 @@ export default function HomePage() {
     const fromBoard = homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate);
     if (!floorRows) return fromBoard;
     // Breaks over the limit, from the floor, measured against the clock (so the minutes keep
-    // counting while the floor's reads fail, and the rows then say they were not refreshed).
-    const breaks = breakOverrunItems(rankFloorCards(floorRows, breakClock), board.reads.map((r) => r.campaign), agentFloor.stale);
+    // counting while the floor's reads fail, and the rows then say they were not refreshed): the
+    // server's clock, as the cards' are, since the breaks' starts are the server's.
+    const now = floorNow(breakClock, agentFloor.clockOffsetMs);
+    const breaks = breakOverrunItems(rankFloorCards(floorRows, now), board.reads.map((r) => r.campaign), agentFloor.stale);
     return sortByRank([...fromBoard, ...breaks]);
-  }, [board.reads, missed.available, missed.count, floorRows, breakClock, agentFloor.stale]);
+  }, [board.reads, missed.available, missed.count, floorRows, breakClock, agentFloor.clockOffsetMs, agentFloor.stale]);
   const picked = selectedCampaign(params.get(CAMPAIGN_FILTER_PARAM), board.reads);
   const pickedId = picked?.id ?? null;
   const shown = useMemo(() => readsFor(board.reads, pickedId), [board.reads, pickedId]);

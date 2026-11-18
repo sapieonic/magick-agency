@@ -16,6 +16,7 @@ import {
   callsTodayText,
   cardsFor,
   floorBadges,
+  floorNow,
   floorNowLine,
   liveCallOf,
   offersMakeAvailable,
@@ -26,14 +27,18 @@ import {
 } from '../../../utils/agency/liveFloorAgents';
 import styles from './LiveFloor.module.css';
 
-/** The shared second: every card's clock repaints together, once a second. */
-function useFloorNow(): number {
+/**
+ * The shared second: every card's clock repaints together, once a second. It is the server's clock
+ * (`floorNow`, the viewer's corrected by the floor read's offset), since every anchor it measures is
+ * the server's.
+ */
+function useFloorNow(clockOffsetMs: number): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), AGENCY_FLOOR_TICK_MS);
     return () => clearInterval(timer);
   }, []);
-  return now;
+  return floorNow(now, clockOffsetMs);
 }
 
 /**
@@ -45,6 +50,10 @@ function useFloorNow(): number {
  * none for a reader who cannot listen at all), Make available on a stuck wrap-up (the campaign
  * floor's drawer, with its confirmation), and Talk to agent, Join call and Send reminder, which are
  * coming (Phase 3 and 4) and shown as such.
+ *
+ * The drawer holds the agent's session id, never a copy of the card: it reads the agent from every
+ * new floor, as the campaign floor's does, and closes once the session is gone or no longer offers
+ * Make available (an outcome saved, a break taken), so nobody forces a return the agent already made.
  */
 export function AgentGrid({
   rows,
@@ -57,9 +66,16 @@ export function AgentGrid({
   clockOffsetMs: number;
   onChanged: () => void;
 }) {
-  const now = useFloorNow();
-  const cards = useMemo(() => cardsFor(rankFloorCards(rows, now), filter), [rows, now, filter]);
-  const [forcing, setForcing] = useState<FloorCard | null>(null);
+  const now = useFloorNow(clockOffsetMs);
+  const ranked = useMemo(() => rankFloorCards(rows, now), [rows, now]);
+  const cards = useMemo(() => cardsFor(ranked, filter), [ranked, filter]);
+  const [forcingId, setForcingId] = useState<string | null>(null);
+  // From this floor, every time: the card at the click is a snapshot the next poll may contradict.
+  const found = forcingId === null ? undefined : ranked.find((card) => card.row.session_id === forcingId);
+  const forcing = found && offersMakeAvailable(found) ? found : null;
+  useEffect(() => {
+    if (forcingId !== null && forcing === null) setForcingId(null);
+  }, [forcingId, forcing]);
 
   if (cards.length === 0) {
     return (
@@ -72,11 +88,12 @@ export function AgentGrid({
     <>
       <ul className={styles.agentGrid} data-testid="home-agent-grid">
         {cards.map((card) => (
-          <AgentCard key={card.row.agent_user_id} card={card} clockOffsetMs={clockOffsetMs} onMakeAvailable={() => setForcing(card)} />
+          <AgentCard key={card.row.agent_user_id} card={card} clockOffsetMs={clockOffsetMs} onMakeAvailable={() => setForcingId(card.row.session_id)} />
         ))}
       </ul>
       {forcing && (
         <AgentFloorDrawer
+          key={forcing.agent.session_id}
           // The analytics event's campaign; a soft-phone session has none.
           campaignId={forcing.row.campaign_id ?? ''}
           agent={forcing.agent}
@@ -84,9 +101,9 @@ export function AgentGrid({
           canSupervise
           sort="risk"
           callsLabel="Conversations today"
-          onClose={() => setForcing(null)}
+          onClose={() => setForcingId(null)}
           onForced={() => {
-            setForcing(null);
+            setForcingId(null);
             onChanged();
           }}
         />
