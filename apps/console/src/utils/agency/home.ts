@@ -282,7 +282,7 @@ export function homeAttention(
         kind: 'paused_at' in stall ? `stall:${stall.code}@${stall.paused_at}` : `stall:${stall.code}`,
         count: null,
         ackable: true,
-        rank: route.tone === 'danger' ? 'stop' : route.tone,
+        rank: homeRank({ kind: `stall:${stall.code}`, tone: route.tone }),
       });
     }
 
