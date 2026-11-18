@@ -930,13 +930,23 @@ a rate-limit key and never an auth input.
   call pages show "Listened to by". All behind `agency.supervise` and the flag
   `agency_live_listen_enabled`. The agent's station and soft phone show the "Monitoring and
   recording" line while the flag is on.
-- **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
+- **Live floor**, Home until LF1 (`/agency/home`, `pages/agency/HomePage.tsx` over
+  `pages/agency/live-floor/*` and the pure rules in `utils/agency/liveFloor.ts`; B28, LF1). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
   switch lands there too; a dedicated agent lands on `/dialer`, a viewer or operator on the campaign
   list, `agencyLandingPath` in `utils/consoleNav.ts`) and the first sidebar entry, with a badge
   counting the dangers and warnings on its list (not a waiting campaign, and not the missed calls
   the Inbound badge carries).
-  Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
+  A header with the date, a minute clock, a campaign filter (client side over the board, kept in
+  `?campaign=`) and New campaign; five tiles (agents working, calls today, customers reached as a
+  share of dials, successes, late callbacks linking to Callbacks); **Needs you now** beside one card
+  per active campaign (calls live, list done, its stall, Pause or Resume through the header's
+  `useCampaignLifecycle`); and the agents' state chips with a link to each campaign's Agents tab.
+  Needs you now is ordered by LF9 (`HOME_RANKS`), groups the campaigns on the default calling hours
+  into one row, and offers a coming-soon "Give to free agents" on late callbacks whose owner is
+  away. **Callbacks** (`/agency/callbacks`, `pages/agency/CallbacksPage.tsx`, Live floor's gate)
+  lists each active campaign's late callbacks from the same board, with a danger-tone sidebar badge.
+  Before LF1 the page had three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
   every row of the campaign Overview's "Needs your attention" run over the board with today for its
   range figures (`attentionFrom`, shared, not copied), the account's open missed calls), each
   linking to the campaign tab or page that fixes it, derived on every refresh
