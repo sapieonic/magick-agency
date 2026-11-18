@@ -185,8 +185,19 @@ describe('dialerAnalysisJobRepository (integration)', () => {
 
     const [again] = await repo.claimRunnable(1);
     expect(await repo.requeueRateLimited(bJob.id, again!.claim_generation, 60)).toBe(true);
-    expect(await repo.findById(bJob.id)).toMatchObject({ status: 'queued', attempts: 0, error_code: 'RATE_LIMITED' });
+    expect(await repo.findById(bJob.id)).toMatchObject({
+      status: 'queued', attempts: 0, error_code: 'RATE_LIMITED',
+      error_message: 'rate-limited; retrying without consuming an attempt',
+    });
     expect(await callStatus(b.id)).toBe('pending');
+    // With the vendor's reason, the row keeps it (trimmed to 2000 characters, as every error).
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() WHERE id = $1`, [bJob.id]);
+    const [third] = await repo.claimRunnable(1);
+    const reason = `rate-limited (transcribe, gemini): You exceeded your current quota ${'x'.repeat(3000)}`;
+    expect(await repo.requeueRateLimited(bJob.id, third!.claim_generation, 60, reason)).toBe(true);
+    const row = await repo.findById(bJob.id);
+    expect(row).toMatchObject({ status: 'queued', attempts: 0, error_code: 'RATE_LIMITED' });
+    expect(row!.error_message).toBe(reason.slice(0, 2000));
   });
 
   it('exposes queue depth, lookups and the support listing', async () => {

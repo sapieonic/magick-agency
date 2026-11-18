@@ -143,6 +143,36 @@ describe('openai_compatible client', () => {
     await expect(client.generateJson(request())).rejects.toMatchObject({ kind: 'request_failed', message: 'socket hang up' });
   });
 
+  it('a 429 carries the vendor\'s code, message and retry-after, from Headers or a plain record', async () => {
+    const client = createAiClient({ provider: 'openai_compatible', apiKey: 'k', model: 'm' });
+    const quota = { code: 'insufficient_quota', error: { message: 'You exceeded your current quota' } };
+    mocks.create.mockRejectedValueOnce(Object.assign(new Error('429 You exceeded your current quota'), {
+      status: 429, ...quota, headers: new Headers({ 'retry-after': '20' }),
+    }));
+    await expect(client.generateJson(request())).rejects.toMatchObject({
+      kind: 'rate_limited',
+      rateLimit: { vendorCode: 'insufficient_quota', vendorMessage: 'You exceeded your current quota', retryAfterSeconds: 20 },
+    });
+    mocks.create.mockRejectedValueOnce(Object.assign(new Error('429'), { status: 429, headers: { 'retry-after': '1.5' } }));
+    await expect(client.generateJson(request())).rejects.toMatchObject({ rateLimit: { retryAfterSeconds: 2 } });
+    mocks.create.mockRejectedValueOnce(Object.assign(new Error('429'), { status: 429, headers: { 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' } }));
+    const err = await client.generateJson(request()).catch((e: unknown) => e);
+    expect((err as InstanceType<typeof AiError>).rateLimit).toEqual({});
+  });
+
+  it('a 429\'s retry-after-ms wins over retry-after; an empty header and Azure\'s bare "429" code are left out', async () => {
+    const client = createAiClient({ provider: 'openai_compatible', apiKey: 'k', model: 'm' });
+    mocks.create.mockRejectedValueOnce(Object.assign(new Error('429'), {
+      status: 429, code: 'rate_limit_exceeded', headers: { 'retry-after-ms': '2500', 'retry-after': '20' },
+    }));
+    await expect(client.generateJson(request())).rejects.toMatchObject({
+      rateLimit: { vendorCode: 'rate_limit_exceeded', retryAfterSeconds: 3 },
+    });
+    mocks.create.mockRejectedValueOnce(Object.assign(new Error('429'), { status: 429, code: '429', headers: { 'retry-after': '' } }));
+    const err = await client.generateJson(request()).catch((e: unknown) => e);
+    expect((err as InstanceType<typeof AiError>).rateLimit).toEqual({});
+  });
+
   it('has no file input: a file part and uploadFile are refused', async () => {
     const client = createAiClient({ provider: 'openai_compatible', apiKey: 'k', model: 'm' });
     expect(client.capabilities.fileInput).toBe(false);

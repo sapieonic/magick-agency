@@ -3,13 +3,16 @@
  * Pins: closed admits every slot; a rate limit opens it for the base pause and admits
  * nothing; rate limits from jobs that started before the opening neither reopen nor
  * escalate it; half-open admits one probe; a failed probe doubles the pause up to the
- * cap; only a completion that started after the opening closes it.
+ * cap; only a completion that started after the opening closes it. Visibility: each
+ * opening tells its listeners why and since when the vendor has refused; a close tells
+ * them how long that lasted.
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
   VendorRateLimitBreaker,
   BREAKER_BASE_PAUSE_MS,
   BREAKER_MAX_PAUSE_MS,
+  rateLimitLogFields,
 } from '../../../src/core/vendor-rate-limit-breaker.js';
 
 function breaker() {
@@ -33,7 +36,7 @@ describe('VendorRateLimitBreaker', () => {
     const started = now();
     advance(10);
     expect(b.recordRateLimit(started)).toBe(BREAKER_BASE_PAUSE_MS / 1000);
-    expect(listener).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS, 1);
+    expect(listener).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS, 1, { since: now() });
     expect(b.state).toBe('open');
     expect(b.admit(8)).toBe(0);
     advance(BREAKER_BASE_PAUSE_MS - 1);
@@ -123,7 +126,7 @@ describe('VendorRateLimitBreaker', () => {
       b.onStarted(1);
       b.recordRateLimit(now());
       expect(b.reopensInMs()).toBe(BREAKER_BASE_PAUSE_MS * 4);
-      expect(opened).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS * 4, 3);
+      expect(opened).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS * 4, 3, { since: now() - 45_000 });
     });
 
     it('never shortens a pause this process already holds, and ignores one already over', () => {
@@ -159,5 +162,74 @@ describe('VendorRateLimitBreaker', () => {
       expect(b.state).toBe('closed');
     });
   });
-});
 
+  describe('visibility', () => {
+    const cause = { provider: 'gemini', status: 429, vendorCode: 'RESOURCE_EXHAUSTED', reason: 'quota' };
+
+    it('every opening in a run reports the first opening\'s time and its own cause', () => {
+      const { b, advance, now } = breaker();
+      const opened = vi.fn();
+      b.onOpenListener(opened);
+      expect(b.refusingSince).toBeNull();
+      const first = now();
+      b.recordRateLimit(now(), cause);
+      advance(BREAKER_BASE_PAUSE_MS);
+      b.onStarted(1);
+      b.recordRateLimit(now()); // a cause is optional
+      expect(opened.mock.calls).toEqual([
+        [BREAKER_BASE_PAUSE_MS, 1, { since: first, cause }],
+        [BREAKER_BASE_PAUSE_MS * 2, 2, { since: first }],
+      ]);
+      expect(b.refusingSince).toBe(first);
+    });
+
+    it('a close tells its listeners when the refusals began and how many pauses there were; a new run starts afresh', () => {
+      const { b, advance, now } = breaker();
+      const closed = vi.fn();
+      const opened = vi.fn();
+      b.onCloseListener(closed);
+      b.onOpenListener(opened);
+      b.recordSuccess(now()); // closed already: nothing to announce
+      expect(closed).not.toHaveBeenCalled();
+      const first = now();
+      b.recordRateLimit(now(), cause);
+      advance(BREAKER_BASE_PAUSE_MS);
+      b.onStarted(1);
+      b.recordRateLimit(now(), cause);
+      advance(BREAKER_BASE_PAUSE_MS * 2);
+      b.onStarted(1);
+      b.recordSuccess(now());
+      expect(closed).toHaveBeenCalledOnce();
+      expect(closed).toHaveBeenCalledWith({ since: first, pauses: 2 });
+      expect(b.refusingSince).toBeNull();
+      advance(1_000);
+      b.recordRateLimit(now(), cause);
+      expect(opened).toHaveBeenLastCalledWith(BREAKER_BASE_PAUSE_MS, 1, { since: now(), cause });
+    });
+
+    it('a remote pause starts the run here, and a local escalation after it reports that start', () => {
+      const { b, advance, now } = breaker();
+      const opened = vi.fn();
+      b.onOpenListener(opened);
+      const remoteStart = now();
+      b.applyRemotePause(now() + 45_000, 2);
+      expect(b.refusingSince).toBe(remoteStart);
+      advance(45_000);
+      b.onStarted(1);
+      b.recordRateLimit(now(), cause);
+      expect(opened).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS * 4, 3, { since: remoteStart, cause });
+    });
+
+    it('rateLimitLogFields flattens a cause for Loki, and leaves out what the vendor did not say', () => {
+      expect(rateLimitLogFields(undefined)).toEqual({});
+      expect(rateLimitLogFields({ reason: 'Sarvam rate-limited (429)' })).toEqual({ vendorReason: 'Sarvam rate-limited (429)' });
+      expect(rateLimitLogFields({
+        provider: 'gemini', status: 429, vendorCode: 'RESOURCE_EXHAUSTED',
+        quotaIds: ['PerDay', 'PerMinute'], retryAfterSeconds: 0, reason: 'quota',
+      })).toEqual({
+        vendor: 'gemini', vendorStatus: 429, vendorCode: 'RESOURCE_EXHAUSTED',
+        quotaIds: 'PerDay,PerMinute', vendorRetryAfterSeconds: 0, vendorReason: 'quota',
+      });
+    });
+  });
+});

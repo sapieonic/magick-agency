@@ -66,8 +66,10 @@ export class TranscriptionError extends Error {
     message: string,
     /** False for permanent failures — the runner must not burn retries. */
     public readonly retryable = true,
+    /** The error it wraps (an `AiError` carries the vendor's rate-limit detail). */
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = 'TranscriptionError';
   }
 }

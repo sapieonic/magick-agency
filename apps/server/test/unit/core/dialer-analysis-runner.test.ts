@@ -94,7 +94,7 @@ vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => 
 const { mockAuditLogger } = vi.hoisted(() => ({ mockAuditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: mockAuditLogger }));
 
-import { DialerAnalysisRunner, toAnalysisEntries, type DialerAnalysisConfig } from '../../../src/core/dialer-analysis-runner.js';
+import { DialerAnalysisRunner, rateLimitCauseOf, toAnalysisEntries, type DialerAnalysisConfig } from '../../../src/core/dialer-analysis-runner.js';
 import { TranscriptionError } from '../../../src/transcription/types.js';
 import { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import { AiError } from '../../../src/ai/index.js';
@@ -833,7 +833,7 @@ describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', (
     await runnerWith({ transcriber: limited }).run(makeJob({ attempts: 1 }), { onRateLimited });
     expect(onRateLimited).toHaveBeenCalledOnce();
     // Its own backoff would be ~120 s (60 × 2^1); the pause wins.
-    expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledWith('job-1', 5, 900);
+    expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledWith('job-1', 5, 900, 'rate-limited (transcribe): 429');
   });
 
   it('without a pause the job keeps its own rate-limit backoff', async () => {
@@ -842,6 +842,55 @@ describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', (
     const backoff = mockJobRepo.requeueRateLimited.mock.calls[0]![2] as number;
     expect(backoff).toBeGreaterThanOrEqual(108);
     expect(backoff).toBeLessThanOrEqual(132);
+  });
+
+  it('hands the breaker what the vendor said, through the transcriber\'s wrapping', async () => {
+    const vendor = new AiError('rate_limited', 'gemini', 'Gemini generateContent failed: {…}', 429, {
+      rateLimit: {
+        vendorCode: 'RESOURCE_EXHAUSTED',
+        quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'],
+        retryAfterSeconds: 36,
+        vendorMessage: 'You exceeded your current quota',
+      },
+    });
+    const wrapped = new TranscriptionError('RATE_LIMITED', `Gemini transcription failed: ${vendor.message}`, true, { cause: vendor });
+    const limited = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(wrapped) });
+    const onRateLimited = vi.fn(() => 30);
+    await runnerWith({ transcriber: limited }).run(makeJob({ attempts: 1 }), { onRateLimited });
+    expect(onRateLimited).toHaveBeenCalledWith({
+      stage: 'transcribe',
+      provider: 'gemini',
+      status: 429,
+      vendorCode: 'RESOURCE_EXHAUSTED',
+      quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'],
+      retryAfterSeconds: 36,
+      reason: 'You exceeded your current quota',
+    });
+  });
+
+  it('names the analysis stage when the analysis call is the one refused', async () => {
+    const analysisService = { analyze: vi.fn().mockRejectedValue(new AiError('rate_limited', 'openai_compatible', '429', 429)) };
+    const onRateLimited = vi.fn(() => 30);
+    await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG })
+      .run(makeJob(), { onRateLimited });
+    expect(onRateLimited).toHaveBeenCalledWith({ stage: 'analyze', provider: 'openai_compatible', status: 429, reason: '429' });
+    // The job row keeps the same reason, for whoever reads the queue.
+    expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'rate-limited (analyze, openai_compatible): 429');
+  });
+});
+
+describe('rateLimitCauseOf', () => {
+  it('without vendor detail, the reason is the error\'s own message, trimmed to 500 characters', () => {
+    expect(rateLimitCauseOf(new TranscriptionError('RATE_LIMITED', 'Sarvam rate-limited (429): slow down'))).toEqual({
+      reason: 'Sarvam rate-limited (429): slow down',
+    });
+    expect(rateLimitCauseOf(new TranscriptionError('RATE_LIMITED', 'x'.repeat(2_000))).reason).toHaveLength(500);
+  });
+
+  it('an AiError without parsed detail still names its provider and status', () => {
+    expect(rateLimitCauseOf(new AiError('rate_limited', 'openai_compatible', 'Too many requests', 429))).toEqual({
+      provider: 'openai_compatible', status: 429, reason: 'Too many requests',
+    });
   });
 });
 

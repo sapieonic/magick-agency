@@ -5,6 +5,7 @@ import {
   type AiJsonRequest,
   type AiJsonResponse,
   type AiProvider,
+  type AiRateLimitDetail,
   type AiStructuredOutputMode,
 } from './types.js';
 
@@ -113,7 +114,31 @@ function toAiError(provider: AiProvider, err: unknown): AiError {
     ? (err as { status: number }).status
     : undefined;
   if (status === 429) {
-    return new AiError('rate_limited', provider, message, status, { cause: err });
+    return new AiError('rate_limited', provider, message, status, { cause: err, rateLimit: openAiRateLimitDetail(err) });
   }
   return new AiError('request_failed', provider, message, status, { cause: err });
+}
+
+/**
+ * What an OpenAI-style 429 said: the SDK's `code` (`insufficient_quota` is a billing stop,
+ * `rate_limit_exceeded` a short limit; Azure's bare `"429"` says nothing and is left out), the
+ * body's message and the `retry-after-ms` or `retry-after` header (a `Headers` instance or a
+ * plain record, depending on the SDK version; an HTTP-date is left out).
+ */
+export function openAiRateLimitDetail(err: unknown): AiRateLimitDetail {
+  const e = err as { code?: unknown; error?: { message?: unknown } | null; headers?: unknown } | null;
+  const detail: AiRateLimitDetail = {};
+  if (typeof e?.code === 'string' && e.code && !/^\d+$/.test(e.code)) detail.vendorCode = e.code;
+  if (typeof e?.error?.message === 'string' && e.error.message) detail.vendorMessage = e.error.message;
+  const headers = e?.headers as { get?: (name: string) => unknown } | Record<string, unknown> | undefined;
+  const header = (name: string): number => {
+    const raw = typeof headers?.get === 'function'
+      ? headers.get(name)
+      : (headers as Record<string, unknown> | undefined)?.[name];
+    return typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+  };
+  const ms = header('retry-after-ms');
+  const seconds = Number.isFinite(ms) ? ms / 1000 : header('retry-after');
+  if (Number.isFinite(seconds) && seconds >= 0) detail.retryAfterSeconds = Math.ceil(seconds);
+  return detail;
 }

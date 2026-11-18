@@ -305,12 +305,20 @@ next to everything else in a 4 GB heap. The server refuses to start with a budge
 **Rate limits.** A vendor rate limit (HTTP 429 / `RESOURCE_EXHAUSTED`) requeues the job without
 using an attempt and pauses all new claims in this process for 30 s, doubling with each
 consecutive pause up to 15 min. After a pause one probe job runs; slots fill again only when it
-completes. A rate-limited job is requeued no earlier than the pause.
+completes. A rate-limited job is requeued no earlier than the pause. Each pause is logged with
+the call refused (`stage`: `transcribe` or `analyze`), the vendor's reason (`vendorReason`,
+`vendorCode`, Gemini's `quotaIds`, `vendorRetryAfterSeconds`) and `refusingSince`; from the 8th in
+a row (~45 min, no job completed) at ERROR, because by then it is a quota or billing stop rather
+than a short limit (alert `agy-analysis-vendor-refusing`). Each process logs its recovery at INFO,
+with how long the vendor refused, when a job of its own completes. The count is per process and a
+restart sets it back to 0.
 
 **What to watch** (dashboard row *Analysis*): `dialer_analysis_slot_utilization` pinned at 1
 while `dialer_analysis_queue_depth{status="queued"}` grows means too few slots;
 `dialer_analysis_budget_waits_total` rising means the memory budget, not the slots, is the limit;
-`dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is. `dialer_analysis_in_flight`
+`dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is;
+`dialer_analysis_rate_limit_consecutive_pauses` climbing instead of falling back to 0 means the
+vendor is not recovering (a short limit reads 1-3; the alert fires at 8). `dialer_analysis_in_flight`
 and `dialer_analysis_memory_reserved_bytes` show the pool itself.
 
 ### Sizing the media workers
@@ -1025,7 +1033,8 @@ and a longer one only delays the retry of a genuinely lost message.
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
 warn (Slack) and never page, for the carrier credential rules, for the inbound rules, for the
-reports rules (warn only), and for the live call listening rules (warn only). The insights rules first: a stale or holed Insights page costs no
+reports rules (warn only), for the live call listening rules (warn only), and for the analysis rule
+(warn only, last). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -1381,6 +1390,43 @@ callers in the access logs.
 **Do:** replace the server's secret lines with what `reports_callback_secret_env_command` prints
 (SSM is the source; mid-rotation it prints both) and recreate the server, then let users re-run
 what failed meanwhile.
+
+### `agy-analysis-vendor-refusing`
+
+**Means:** the post-call analysis worker has paused on a vendor rate limit (HTTP 429) 8 times in
+a row with no job completed in between (`dialer_analysis_rate_limit_consecutive_pauses` > 7.5,
+while `dialer_analysis_rate_limit_pauses_total` rose in the last 25 minutes), about 45 minutes of
+refused probes. No call is being transcribed or analysed. Dialling is unaffected, and nothing is
+lost: rate-limited jobs are requeued without using an attempt. The count lives in each analysis
+process and a restart sets it back to 0, so after a deploy the alert needs another ~45 minutes.
+
+**Check:** the worker's ERROR "AI vendor keeps refusing dialer analysis"
+(`component=dialer-analysis-worker`; the WARNs before it carry the same fields):
+
+- `stage`: which call was refused, `transcribe` (the recording) or `analyze` (the transcript).
+  Each has its own key, even when both go to the same vendor.
+- `vendor` and `vendorReason`: the provider, and the vendor's own words.
+- `quotaIds` (Gemini): a `…PerDay…` id is a daily quota, which resets at midnight Pacific; a
+  `…FreeTier` id is a key without billing.
+- `vendorCode`: `insufficient_quota` (OpenAI) is a billing stop; `RESOURCE_EXHAUSTED` (Gemini)
+  is any quota, so read `quotaIds`.
+- `refusingSince`: when this process's run of pauses began. It is per process and starts again at
+  a restart, so a run that seems to begin at a boot may have begun before it.
+
+**Do:** for a quota or billing stop, raise the quota or enable billing on the key's project, or set
+another key and recreate the server:
+
+| `stage` | Key, in the order the server reads them |
+|---|---|
+| `transcribe` (Gemini) | `DIALER_TRANSCRIBE_API_KEY`, else `GEMINI_API_KEY` |
+| `transcribe` (Sarvam) | `DIALER_TRANSCRIBE_SARVAM_API_KEY`, else `SARVAM_API_KEY` |
+| `analyze` | `POST_CALL_ANALYSIS_API_KEY`, else `GEMINI_API_KEY` (provider `gemini`) or `OPENAI_API_KEY` (no base URL); `POST_CALL_ANALYSIS_AZURE_API_KEY` for `azure_openai` |
+
+A `…PerMinute…` quota id that refuses 8 probes in a row is not traffic: while paused, the worker
+sends one probe every 12-18 minutes. The key's limit for that model is 0, or something else uses
+the same project's quota. Each analysis process logs INFO "AI vendor accepted dialer analysis
+again" when a job of its own completes; the backlog (`dialer_analysis_queue_depth{status="queued"}`)
+then drains by itself.
 
 ## What CI runs
 

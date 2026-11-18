@@ -34,6 +34,7 @@ import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-an
 import { auditLogger } from '../audit/audit-logger.js';
 import { RECORDING_COPIES } from '../config/blocks/analysis.js';
 import { UNBUDGETED_LEASE, type RecordingLease } from './recording-byte-budget.js';
+import { rateLimitLogFields, type RateLimitCause } from './vendor-rate-limit-breaker.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { Traced } from '@magick-agency/observability';
 import {
@@ -90,10 +91,11 @@ export interface DialerAnalysisRunContext {
    */
   lease?: RecordingLease;
   /**
-   * Called when a vendor rate-limits this run; returns the seconds the worker will not
-   * claim for (the shared breaker's pause). The job is requeued no earlier than that.
+   * Called when a vendor rate-limits this run, with what the vendor said; returns the
+   * seconds the worker will not claim for (the shared breaker's pause). The job is
+   * requeued no earlier than that.
    */
-  onRateLimited?: () => number;
+  onRateLimited?: (cause: RateLimitCause) => number;
 }
 
 export interface DialerAnalysisRunnerDeps {
@@ -528,7 +530,7 @@ export class DialerAnalysisRunner {
   private async handleError(
     job: DialerAnalysisJobRecord,
     err: unknown,
-    onRateLimited?: () => number,
+    onRateLimited?: (cause: RateLimitCause) => number,
   ): Promise<DialerAnalysisOutcome> {
     const { id: jobId, call_id: callId, tenant_id: tenantId, claim_generation: generation, attempts } = job;
     const isTx = err instanceof TranscriptionError;
@@ -543,10 +545,15 @@ export class DialerAnalysisRunner {
     // long as the breaker's pause so another process does not pick it straight back up.
     if ((isTx && (err as TranscriptionError).code === 'RATE_LIMITED') || (isAi && err.kind === 'rate_limited')) {
       const own = jitter(Math.min(RATE_LIMIT_BACKOFF_BASE_SECONDS * Math.pow(2, attempts), RETRY_BACKOFF_CAP_SECONDS));
-      const pause = onRateLimited?.() ?? 0;
+      const cause = { ...rateLimitCauseOf(err), stage: isTx ? 'transcribe' as const : 'analyze' as const };
+      const pause = onRateLimited?.(cause) ?? 0;
       const backoff = Math.max(own, pause);
-      await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff);
-      log.warn({ callId, jobId, backoff, breakerPauseSeconds: pause }, 'Dialer analysis rate-limited; requeued without consuming an attempt');
+      const where = [cause.stage, cause.provider].filter(Boolean).join(', ');
+      await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff, `rate-limited (${where}): ${cause.reason}`);
+      log.warn(
+        { callId, jobId, backoff, breakerPauseSeconds: pause, ...rateLimitLogFields(cause) },
+        'Dialer analysis rate-limited; requeued without consuming an attempt',
+      );
       return 'rate_limited';
     }
 
@@ -626,4 +633,29 @@ function jitter(seconds: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Longest vendor reason kept in a log line: a Gemini 429 body's message is a few hundred characters. */
+const RATE_LIMIT_REASON_MAX = 500;
+
+/**
+ * What a rate-limited run's error says about why: the vendor's own detail when the AI layer
+ * parsed one (an `AiError`, directly or wrapped by the transcriber), else the error's message.
+ */
+export function rateLimitCauseOf(err: unknown): RateLimitCause {
+  let ai: AiError | undefined;
+  for (let e: unknown = err, depth = 0; e && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof AiError) { ai = e; break; }
+  }
+  const detail = ai?.rateLimit;
+  const message = err instanceof Error ? err.message : String(err);
+  const reason = (detail?.vendorMessage ?? message).slice(0, RATE_LIMIT_REASON_MAX);
+  return {
+    reason,
+    ...(ai ? { provider: ai.provider } : {}),
+    ...(ai?.status !== undefined ? { status: ai.status } : {}),
+    ...(detail?.vendorCode ? { vendorCode: detail.vendorCode } : {}),
+    ...(detail?.quotaIds?.length ? { quotaIds: detail.quotaIds } : {}),
+    ...(detail?.retryAfterSeconds !== undefined ? { retryAfterSeconds: detail.retryAfterSeconds } : {}),
+  };
 }

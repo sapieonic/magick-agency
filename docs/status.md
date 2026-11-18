@@ -2261,7 +2261,43 @@ restored with `git checkout`), 5: the server's flag gate re-added
 (`ListenHistoryPage.test.tsx`); a 503 read as final; the page reading the flag itself (21 red).
 Counts under "Test counts".
 
+### Analysis: why the AI vendor refuses, and an alert when it does not stop 2026-11-18
+
+Staging's post-call analysis worker was rate-limited (HTTP 429) by Gemini from 21:10 IST on
+2026-11-17, one second after a boot, and stayed refused all night: two WARN lines every 12-18
+minutes with no reason in them, and the job row's `error_message` a fixed "transcriber
+rate-limited" text. A short per-minute limit and an exhausted daily quota or billing stop looked
+the same. Now: the AI clients keep what the vendor said on a `rate_limited` `AiError` (Gemini's
+status, exceeded quota ids and retry delay, parsed from the SDK's JSON body; OpenAI's code and
+`retry-after`/`retry-after-ms`), the transcriber keeps it as the cause, and the runner and worker
+log it with the refused `stage` (`transcribe` or `analyze`) and `refusingSince`; the job row keeps
+it in `error_message`. From the 8th consecutive pause (~45 minutes, no job completed;
+`PERSISTENT_RATE_LIMIT_PAUSES`) the worker logs ERROR, and each process logs its recovery at INFO.
+New gauge `dialer_analysis_rate_limit_consecutive_pauses`, a dashboard panel (*Dialer Analysis
+Vendor Refusals*) and the warning alert `agy-analysis-vendor-refusing`, filtered to deployments
+still pausing (each analysis process holds its own gauge until a job of its own completes); the
+validator pins its threshold to the worker's constant. Runbook: [`operations.md`](operations.md),
+"Alert runbooks". Reviewed by a fresh-context reviewer; its findings (the stale gauge across
+processes, the untested worker hop, the runbook's keys and per-minute remedy, the doc counts, the
+dashboard) are fixed in the same commit. Mutation-checked (each red, then restored with
+`git checkout`), 15 in all, among them: the worker dropping the cause, the runner dropping the
+stage or the row's reason, the transcriber dropping the cause, the escalation threshold off by
+one, `since` reset on every opening, the close never announced, the parsers' edge cases, the
+repository ignoring the reason (real Postgres), the constant drifting from the alert, the alert
+losing its filter. Not changed, and why: campaigns are not paused outside calling hours or with no
+agents (pacing already dials nothing and resumes by itself, `pacing-engine.ts` "`to_dial == 0` IS
+the paused state"); the analysis worker keeps working overnight, which is when it should catch up.
+
 ## Test counts
+
+**Analysis vendor refusals, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`, on the
+tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and Redis on
+6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm test:grafana` 34,
+`pnpm test:release` 10, `pnpm test:tooling` 20. Unit: `apps/server` 10430 passed + 1 expected fail
+(528 files), `packages/db` 457 (28 files), `packages/observability` 23 (5 files). Integration:
+`packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3018 passed + 9 expected fail
++ 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The
+changed files' own counts are in [`modules.md`](modules.md).
 
 **Live call listening, the history without the flag, 2026-11-17.** Branch `ccr-364c489c-zeoxwy`,
 on the tree of `4858093`, every suite run one after another. From the root: `pnpm lint` clean;

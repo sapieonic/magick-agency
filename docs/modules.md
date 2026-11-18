@@ -536,8 +536,8 @@ Files: `azure-openai.client.ts`, `factory.ts`, `gemini.client.ts`, `index.ts`, `
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/ai/factory.test.ts` | 4 |
-| `apps/server/test/unit/ai/gemini.client.test.ts` | 8 |
-| `apps/server/test/unit/ai/openai-clients.test.ts` | 10 |
+| `apps/server/test/unit/ai/gemini.client.test.ts` | 10 |
+| `apps/server/test/unit/ai/openai-clients.test.ts` | 12 |
 
 ### `apps/server/src/analysis/`
 
@@ -970,9 +970,9 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`) | 45 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`) | 49 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
-| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 22 |
+| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 26 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
 | `apps/server/test/unit/core/pace-schedule.test.ts` | 15 |
 | `apps/server/test/unit/core/paced-audio-streamer.test.ts` (with the inbound hold's `loop`) | 18 |
@@ -983,7 +983,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/telephony-guard-host.test.ts` | 31 |
 | `apps/server/test/unit/core/telephony-release-wiring.test.ts` | 2 |
 | `apps/server/test/unit/core/telephony-release.test.ts` | 41 |
-| `apps/server/test/unit/core/vendor-rate-limit-breaker.test.ts` | 10 |
+| `apps/server/test/unit/core/vendor-rate-limit-breaker.test.ts` | 14 |
 | `apps/server/test/unit/core/voice-concurrency-control.test.ts` | 8 |
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | ~5 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
@@ -1263,7 +1263,7 @@ Files: `gemini-transcriber.ts`, `index.ts`, `recording-fetcher.ts`, `sarvam-tran
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/transcription/gemini-transcriber.test.ts` | 20 |
+| `apps/server/test/unit/transcription/gemini-transcriber.test.ts` | 21 |
 | `apps/server/test/unit/transcription/index.test.ts` | 11 |
 | `apps/server/test/unit/transcription/recording-fetcher.test.ts` (with RC3's failure counter by reason) | ~37 |
 | `apps/server/test/unit/transcription/sarvam-transcriber.test.ts` | 6 |

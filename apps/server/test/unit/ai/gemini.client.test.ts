@@ -23,6 +23,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 }));
 
 const { createAiClient } = await import('../../../src/ai/index.js');
+const { geminiRateLimitDetail } = await import('../../../src/ai/gemini.client.js');
 import type { AiJsonRequest } from '../../../src/ai/index.js';
 
 const SCHEMA = { name: 'call_analysis', strict: true, schema: { type: 'object', additionalProperties: false } };
@@ -129,6 +130,55 @@ describe('gemini client', () => {
     await expect(client.generateJson(analysisRequest())).rejects.toMatchObject({ kind: 'rate_limited', provider: 'gemini' });
     mocks.generateContent.mockRejectedValueOnce(new Error('500 internal'));
     await expect(client.generateJson(analysisRequest())).rejects.toMatchObject({ kind: 'request_failed' });
+  });
+
+  // The SDK's ApiError: `message` is the response body as JSON, `status` the HTTP status
+  // (@google/genai `throwErrorIfNotOK`).
+  const QUOTA_BODY = {
+    error: {
+      code: 429,
+      message: 'You exceeded your current quota, please check your plan and billing details.',
+      status: 'RESOURCE_EXHAUSTED',
+      details: [
+        {
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [
+            { quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests', quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', quotaValue: '250' },
+            { quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests', quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', quotaValue: '250' },
+          ],
+        },
+        { '@type': 'type.googleapis.com/google.rpc.Help', links: [{ description: 'Learn more', url: 'https://ai.google.dev/gemini-api/docs/rate-limits' }] },
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '35.4s' },
+      ],
+    },
+  };
+
+  it('a 429 carries what Gemini said: its status, the quotas exceeded, its retry delay and its message', async () => {
+    const client = gemini();
+    mocks.generateContent.mockRejectedValueOnce(Object.assign(new Error(JSON.stringify(QUOTA_BODY)), { status: 429 }));
+    await expect(client.generateJson(analysisRequest())).rejects.toMatchObject({
+      kind: 'rate_limited',
+      status: 429,
+      rateLimit: {
+        vendorCode: 'RESOURCE_EXHAUSTED',
+        quotaIds: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'],
+        retryAfterSeconds: 36,
+        vendorMessage: 'You exceeded your current quota, please check your plan and billing details.',
+      },
+    });
+  });
+
+  it('geminiRateLimitDetail reads a prefixed body, and yields what it can from anything else without throwing', () => {
+    expect(geminiRateLimitDetail(`got status: 429 Too Many Requests. ${JSON.stringify(QUOTA_BODY)}`))
+      .toMatchObject({ vendorCode: 'RESOURCE_EXHAUSTED', retryAfterSeconds: 36 });
+    expect(geminiRateLimitDetail('429 RESOURCE_EXHAUSTED: quota')).toEqual({});
+    expect(geminiRateLimitDetail('{not json')).toEqual({});
+    expect(geminiRateLimitDetail('{"error":null}')).toEqual({});
+    // The SDK's shape for a non-JSON 429 body: the HTTP status text is no vendor code.
+    expect(geminiRateLimitDetail('{"error":{"message":"<html>busy</html>","code":429,"status":"Too Many Requests"}}'))
+      .toEqual({ vendorMessage: '<html>busy</html>' });
+    expect(geminiRateLimitDetail('{"error":{"message":"m","status":"RESOURCE_EXHAUSTED","details":[null,{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"soon"}]}}'))
+      .toEqual({ vendorCode: 'RESOURCE_EXHAUSTED', vendorMessage: 'm' });
   });
 
   it('uploads a file, polls until ACTIVE, and references it as a file part', async () => {

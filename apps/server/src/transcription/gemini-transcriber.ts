@@ -482,7 +482,7 @@ function toTranscriptionError(err: unknown, context: string): TranscriptionError
   if (err instanceof AiError) {
     switch (err.kind) {
       case 'rate_limited':
-        return new TranscriptionError('RATE_LIMITED', `${context}: ${message}`);
+        return new TranscriptionError('RATE_LIMITED', `${context}: ${message}`, true, { cause: err });
       case 'timeout':
         return new TranscriptionError('TIMEOUT', 'Timed out waiting for the recording to be processed');
       case 'unsupported_input':
