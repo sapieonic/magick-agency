@@ -122,19 +122,6 @@ export const RECORDING_COPIES = 2;
 export const DEFAULT_DIALER_ANALYSIS_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
 
 /**
- * The dialer analysis job's attempt ceilings (`DIALER_ANALYSIS_MAX_ATTEMPTS`,
- * `DIALER_ANALYSIS_MAX_ATTEMPTS_TOTAL`), part of `dialerAnalysis` below. Exported so the
- * operator re-queue (`scripts/requeue-recording-host-refusals.ts`) grants the same headroom
- * under the same lifetime ceiling as the worker, without loading the rest of the block.
- */
-export const analysisAttemptLimitsSchema = z.object({
-  /** Provider-call attempt ceiling before terminal `failed` (infra churn excluded). */
-  maxAttempts: z.coerce.number().int().min(1).default(3),
-  /** Lifetime attempt ceiling incl. manual retries — the "stop mashing Retry" guard. */
-  maxAttemptsTotal: z.coerce.number().int().min(1).default(8),
-});
-
-/**
  * Dialer Call Analysis — post-call transcription + analysis of agency calls.
  * Presence of this block (env `DIALER_ANALYSIS_ENABLED` truthy) activates the
  * worker + transcriber; the `agency_call_analysis` feature flag additionally gates
@@ -166,7 +153,10 @@ const dialerAnalysisSchema = z.object({
   minTalkTimeSeconds: z.coerce.number().int().min(0).default(10),
   /** Give the carrier this long to POST the recording URL before `expired`. */
   recordingWaitMinutes: z.coerce.number().int().min(1).default(30),
-  ...analysisAttemptLimitsSchema.shape,
+  /** Provider-call attempt ceiling before terminal `failed` (infra churn excluded). */
+  maxAttempts: z.coerce.number().int().min(1).default(3),
+  /** Lifetime attempt ceiling incl. manual retries — the "stop mashing Retry" guard. */
+  maxAttemptsTotal: z.coerce.number().int().min(1).default(8),
   /**
    * Analysis slots in this process (NOT cluster-wide — size accordingly, M4). The worker
    * keeps this many jobs in flight and starts the next as soon as one finishes. Size:
