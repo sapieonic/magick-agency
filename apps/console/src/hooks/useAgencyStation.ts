@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
+import type {
+  AgencySessionHelp,
+  AgencyStationFloorAssistFrame,
+  AgencyStationMediaFormat,
+} from '@magick-agency/contracts/agency';
+import { AGENCY_HELP_ANSWER_HOWS, AGENCY_HELP_CLEARED_REASONS } from '@magick-agency/contracts/agency';
 import type { AgencyAgentState, AgencyStationServerFrame } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
 import { mintStationToken } from '../api/agency';
@@ -212,6 +217,9 @@ export function useAgencyStation(
     inboundCall,
     customerWaiting,
     dialActivity,
+    help,
+    helpNotice,
+    supervisorMessages,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
   if (diagnosticsRef.current === null) {
@@ -445,9 +453,14 @@ export function useAgencyStation(
        * work most likely to grow.
        */
       const receivedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      let frame: AgencyStationServerFrame;
+      /*
+        The floor assist frames (LF15) are their own union until the app's change moves them into
+        `AgencyStationServerFrame`; a console station is sent them either way (LF16), and after the
+        move this union is the same type.
+      */
+      let frame: AgencyStationServerFrame | AgencyStationFloorAssistFrame;
       try {
-        frame = JSON.parse(raw) as AgencyStationServerFrame;
+        frame = JSON.parse(raw) as AgencyStationServerFrame | AgencyStationFloorAssistFrame;
       } catch {
         // Non-JSON is ignored by contract, not an error.
         logDiagnostic('unparseable', raw.slice(0, 200));
@@ -1094,6 +1107,59 @@ export function useAgencyStation(
           return;
         }
 
+        case 'supervisor_message': {
+          /*
+            A supervisor's message (LF5): held until the agent dismisses it, each id once. Checked
+            field by field, as `customer_waiting` is: the text is shown, so a frame without one is
+            dropped rather than shown empty. Logged without the text (it is the agent's to read,
+            and the diagnostics buffer is not).
+          */
+          if (
+            typeof frame.id !== 'string'
+            || typeof frame.text !== 'string'
+            || typeof frame.sent_at !== 'string'
+            || (frame.from_name !== null && typeof frame.from_name !== 'string')
+          ) {
+            logDiagnostic('supervisor_message_malformed', String((frame as { id?: unknown }).id ?? '').slice(0, 64));
+            return;
+          }
+          dispatch({
+            type: 'supervisor_message',
+            frame: { event: 'supervisor_message', id: frame.id, text: frame.text, from_name: frame.from_name, sent_at: frame.sent_at },
+          });
+          logDiagnostic('supervisor_message', frame.id);
+          return;
+        }
+
+        case 'help_answered': {
+          // Who answered the agent's Need help, and how (LF15); only the request on screen.
+          if (
+            typeof frame.raised_at !== 'string'
+            || !(AGENCY_HELP_ANSWER_HOWS as readonly string[]).includes(frame.how)
+            || (frame.by_name !== null && typeof frame.by_name !== 'string')
+          ) {
+            logDiagnostic('help_answered_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          dispatch({ type: 'help_answered', frame });
+          logDiagnostic('help_answered', `${frame.raised_at} ${frame.how}`);
+          return;
+        }
+
+        case 'help_cleared': {
+          // The one frame that ends a request on screen (LF15), and only the one it names.
+          if (
+            typeof frame.raised_at !== 'string'
+            || !(AGENCY_HELP_CLEARED_REASONS as readonly string[]).includes(frame.reason)
+          ) {
+            logDiagnostic('help_cleared_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          dispatch({ type: 'help_cleared', frame });
+          logDiagnostic('help_cleared', `${frame.raised_at} ${frame.reason}`);
+          return;
+        }
+
         case 'error': {
           // Non-fatal by contract; the socket stays open.
           dispatch({ type: 'error', frame });
@@ -1598,6 +1664,15 @@ export function useAgencyStation(
    * ordinary reconnect.
    */
   const reconnect = useCallback(() => restart(supersededRef.current), [restart]);
+
+  // Floor assist's own writes into the station state (the raise and cancel answers, the agent's
+  // dismissals). `dispatch` is stable, so these are too.
+  const setHelp = useCallback((next: AgencySessionHelp | null) => dispatch({ type: 'help_set', help: next }), []);
+  const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
+  const dismissSupervisorMessage = useCallback(
+    (id: string) => dispatch({ type: 'supervisor_message_dismissed', id }),
+    [],
+  );
   /**
    * A reconnect nobody pressed (a back/forward-cache restore): never a take-over, so a window
    * restored after the station moved elsewhere is refused and says so instead of taking it back.
@@ -1669,6 +1744,12 @@ export function useAgencyStation(
     inboundCall,
     customerWaiting,
     dialActivity,
+    help,
+    helpNotice,
+    supervisorMessages,
+    setHelp,
+    dismissHelpNotice,
+    dismissSupervisorMessage,
     reconnect,
     sendMedia,
     mediaFormat: socketFormat,

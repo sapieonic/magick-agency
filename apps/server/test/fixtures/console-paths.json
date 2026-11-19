@@ -73,6 +73,20 @@
     },
     {
       "method": "POST",
+      "path": "/proxy/agency/sessions/:id/help",
+      "source": "apps/console/src/api/agency.ts",
+      "status": "served",
+      "reason": "Need help raised on the agent's own session (LF4, floor assist; the station's action bar)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/sessions/:id/help",
+      "source": "apps/console/src/api/agency.ts",
+      "status": "served",
+      "reason": "Need help cancelled (LF4, floor assist; the station's action bar)"
+    },
+    {
+      "method": "POST",
       "path": "/proxy/agency/sessions/:id/force-available",
       "source": "apps/console/src/api/agency.ts",
       "status": "served",

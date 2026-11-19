@@ -18,8 +18,6 @@ import {
 } from './consoleNav';
 import { CAMPAIGN_TABS, canOpenCampaignScreen, type CampaignTabId } from './agencyCampaignTabs';
 import { campaignSettingsSectionsFor } from './campaignSettingsSections';
-import { CONTACT_ASSIGNMENT_FLAG } from './agencyAssignmentCopy';
-import { INBOUND_FLAG } from './inbound/inboundFlag';
 import { hasPermission } from './permissions';
 
 /**
@@ -590,15 +588,10 @@ export interface SearchAnswer {
 
 /**
  * The campaign Settings sections search may link to: the ones every campaign's page has for
- * this reader (`campaignSettingsSectionsFor`). Agents is left out when its page might not show
- * it: without contact assignment or inbound calls it is there only for a campaign with
- * contact-assignment settings left over, which the campaign list does not say.
+ * this reader (`campaignSettingsSectionsFor`). Agents is every campaign's (its break limits).
  */
 export function searchableCampaignSections(gate: GateInput): CampaignSettingsSection[] {
   return campaignSettingsSectionsFor({
-    assignmentEnabled: gate.isFlagEnabled(CONTACT_ASSIGNMENT_FLAG),
-    inboundEnabled: gate.isFlagEnabled(INBOUND_FLAG),
-    assignmentLeftovers: false,
     canSupervise: hasPermission(gate.role, 'agency.supervise'),
   });
 }
