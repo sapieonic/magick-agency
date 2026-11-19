@@ -10,7 +10,8 @@ import { insertWebrtcCall } from '../setup/factories.js';
  * to end: every mirrored `analysis_status` transition, `recoverStale` failing at
  * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited`, `list`,
  * `msUntilNextRunnable` (the worker's next-due timer) and `analysisDelayFor` (why a
- * pending summary is held up).
+ * pending summary is held up: the vendor's newest answer a refusal, AD1; the outage, the
+ * drain, a later refusal, a requeue of an old refusal, and the columns' writers).
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: repo } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
@@ -194,53 +195,119 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect(await callStatus(b.id)).toBe('pending');
   });
 
-  it('analysisDelayFor: every queued job is vendor_unavailable while a queued job was refused, and none otherwise', async () => {
-    const delay = (call: { id: string }) => repo.analysisDelayFor(call.id);
+  /** Claim exactly this queued job: every other queued job is put an hour out first. */
+  async function claimJob(id: string) {
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() + interval '1 hour' WHERE status = 'queued' AND id <> $1`, [id]);
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 minute' WHERE id = $1`, [id]);
+    const [claimed] = await repo.claimRunnable(1);
+    expect(claimed!.id).toBe(id);
+    return claimed!;
+  }
+  async function refuse(id: string) {
+    const claimed = await claimJob(id);
+    expect(await repo.requeueRateLimited(id, claimed.claim_generation, 60, 'rate-limited (transcribe, gemini): credits depleted')).toBe(true);
+  }
+  async function complete(job: { id: string; call_id: string }) {
+    const claimed = await claimJob(job.id);
+    expect(await repo.completeWithAnalysis(job.id, job.call_id, claimed.claim_generation, { call_analysis: ANALYSIS as never, analysis_audio_seconds: 10 })).toBe(true);
+  }
+  const delay = (call: { id: string }) => repo.analysisDelayFor(call.id);
+
+  it('analysisDelayFor: delayed while the vendor\'s newest answer is a refusal, cleared by a later completion though refused jobs stay queued, on again at a later refusal', async () => {
     expect(await delay({ id: '99999999-9999-4999-8999-999999999999' })).toBeNull();
+    const [a, b, c, d] = [await callWithRecording(), await callWithRecording(), await callWithRecording(), await callWithRecording()];
+    const [aJob, bJob, , dJob] = [await enqueue(a), await enqueue(b), await enqueue(c), await enqueue(d)];
+    // An ordinary queue, no completion yet: nothing held up.
+    for (const call of [a, b, c, d]) expect(await delay(call)).toBeNull();
 
-    const a = await callWithRecording();
-    const b = await callWithRecording();
-    const c = await callWithRecording();
-    const aJob = await enqueue(a);
-    await enqueue(b);
-    const cJob = await enqueue(c);
-    // An ordinary queue: nothing held up.
-    for (const call of [a, b, c]) expect(await delay(call)).toBeNull();
-
-    // A's run is refused by the vendor and requeued through the runner's own write.
-    const [aClaim] = await repo.claimRunnable(1);
-    expect(aClaim!.id).toBe(aJob.id);
-    expect(await repo.requeueRateLimited(aJob.id, aClaim!.claim_generation, 60, 'rate-limited (transcribe, gemini): credits depleted')).toBe(true);
+    // (a) The outage: A's run is refused through the runner's own write. C has never been tried
+    // and the breaker holds it all the same; so is another tenant's call (the vendor is the server's).
+    await refuse(aJob!.id);
     expect(await callStatus(a.id)).toBe('pending');
-    // B is claimed (running now), C has never been tried: the breaker holds it all the same.
-    const [bClaim] = await repo.claimRunnable(1);
-    expect(bClaim!.call_id).toBe(b.id);
     expect(await delay(a)).toBe('vendor_unavailable');
-    expect(await delay(b)).toBeNull();
     expect(await delay(c)).toBe('vendor_unavailable');
-
-    // Another tenant's call waits behind the same server-wide vendor.
     const other = await callWithRecording({
       tenant_id: '88888888-8888-4888-8888-888888888888', account_id: '77777777-7777-4777-8777-777777777777',
     });
     await enqueue(other);
     expect(await delay(other)).toBe('vendor_unavailable');
+    // A running job is not waiting.
+    const bClaim = await claimJob(bJob!.id);
+    expect(await delay(b)).toBeNull();
 
-    // A queued job requeued for an ordinary failure is no refusal.
-    await getTestPool().query(`UPDATE dialer_analysis_jobs SET error_code = 'TRANSCRIPTION_FAILED' WHERE id = $1`, [aJob.id]);
+    // (b) The drain: B's summary is written after A's refusal. A is still queued with its refusal
+    // (claimed last, with the longest backoff), and no queued job reads delayed any more.
+    expect(await repo.completeWithAnalysis(bJob!.id, b.id, bClaim.claim_generation, { call_analysis: ANALYSIS as never, analysis_audio_seconds: 10 })).toBe(true);
+    expect(await repo.findById(aJob!.id)).toMatchObject({ status: 'queued', error_code: 'RATE_LIMITED' });
+    for (const call of [a, c, d, other]) expect(await delay(call)).toBeNull();
+
+    // (c) The vendor refuses again after that completion (D's run): every queued job is held again.
+    await refuse(dJob!.id);
+    for (const call of [a, c, d, other]) expect(await delay(call)).toBe('vendor_unavailable');
+    expect(await delay(b)).toBeNull();
+
+    // A queued job requeued for an ordinary failure is no refusal: with D's code changed, the
+    // newest refusal of a queued job is A's, older than B's completion.
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET error_code = 'TRANSCRIPTION_FAILED' WHERE id = $1`, [dJob!.id]);
     expect(await delay(c)).toBeNull();
-    await getTestPool().query(`UPDATE dialer_analysis_jobs SET error_code = 'RATE_LIMITED' WHERE id = $1`, [aJob.id]);
-    expect(await delay(c)).toBe('vendor_unavailable');
+  });
 
-    // The vendor answers again: the refused job is claimed for its next run, and nothing is held.
-    // (The never-tried jobs, NULL `next_attempt_at`, would be claimed first: set them later.)
-    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() + interval '1 hour' WHERE status = 'queued'`);
-    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 minute' WHERE id = $1`, [aJob.id]);
-    const [aAgain] = await repo.claimRunnable(1);
-    expect(aAgain!.id).toBe(aJob.id);
+  it('analysisDelayFor: a graceful requeue or a stale recovery of a refused job keeps its refusal as old as it was', async () => {
+    const [a, b, c] = [await callWithRecording(), await callWithRecording(), await callWithRecording()];
+    const aJob = await enqueue(a);
+    const bJob = await enqueue(b);
+    await enqueue(c);
+    await refuse(aJob.id);
+    const refusedAt = (await repo.findById(aJob.id))!.vendor_refused_at;
+    expect(refusedAt).toBeInstanceOf(Date);
+    await complete(bJob);
+    expect(await delay(c)).toBeNull();
+
+    // A deploy mid-run of the refused job: the graceful requeue puts it back with its old code.
+    const claimed = await claimJob(aJob.id);
+    expect(await repo.gracefulRequeue([{ id: aJob.id, generation: claimed.claim_generation }])).toBe(1);
+    expect(await repo.findById(aJob.id)).toMatchObject({ status: 'queued', error_code: 'RATE_LIMITED', vendor_refused_at: refusedAt });
     expect(await delay(a)).toBeNull();
     expect(await delay(c)).toBeNull();
-    expect((await repo.findById(cJob.id))!.status).toBe('queued');
+
+    // A crash mid-run: stale recovery puts it back the same way.
+    await claimJob(aJob.id);
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET heartbeat_at = now() - interval '1 hour' WHERE id = $1`, [aJob.id]);
+    const [recovered] = await repo.recoverStale(new Date(Date.now() - 60_000), 8);
+    expect(recovered).toMatchObject({ id: aJob.id, status: 'queued', error_code: 'RATE_LIMITED', vendor_refused_at: refusedAt });
+    expect(await delay(a)).toBeNull();
+    expect(await delay(c)).toBeNull();
+
+    // Its next run is refused: that refusal is new.
+    await refuse(aJob.id);
+    expect(await delay(c)).toBe('vendor_unavailable');
+  });
+
+  it('only requeueRateLimited stamps vendor_refused_at; completion and manual retry clear it, and completion stamps completed_at', async () => {
+    const [a, b, c] = [await callWithRecording(), await callWithRecording(), await callWithRecording()];
+    const [aJob, bJob, cJob] = [await enqueue(a), await enqueue(b), await enqueue(c)];
+    expect(await repo.findById(aJob!.id)).toMatchObject({ vendor_refused_at: null, completed_at: null });
+
+    await refuse(aJob!.id);
+    expect((await repo.findById(aJob!.id))!.vendor_refused_at).toBeInstanceOf(Date);
+    await complete(aJob!);
+    const done = (await repo.findById(aJob!.id))!;
+    expect(done).toMatchObject({ status: 'completed', vendor_refused_at: null, error_code: null });
+    expect(done.completed_at).toBeInstanceOf(Date);
+
+    // An ordinary retryable failure writes no refusal.
+    const cClaim = await claimJob(cJob!.id);
+    expect(await repo.requeueForRetry(cJob!.id, cClaim.claim_generation, 30, 'TRANSCRIPTION_FAILED', 'boom')).toBe(true);
+    expect(await repo.findById(cJob!.id)).toMatchObject({ status: 'queued', vendor_refused_at: null, completed_at: null });
+
+    // A refused job that then fails keeps the refusal until a person retries it.
+    await refuse(bJob!.id);
+    const bClaim = await claimJob(bJob!.id);
+    expect(await repo.markFailed(bJob!.id, b.id, bClaim.claim_generation, 'BAD_AUDIO', 'bad')).toBe(true);
+    expect((await repo.findById(bJob!.id))!.vendor_refused_at).toBeInstanceOf(Date);
+    expect(await repo.requeueForManualRetry(b.id, { extraAttempts: 3, attemptsTotalCeiling: 8, settleSeconds: 0 })).toMatchObject({
+      status: 'queued', vendor_refused_at: null, error_code: null, completed_at: null,
+    });
   });
 
   it('exposes queue depth, lookups and the support listing', async () => {

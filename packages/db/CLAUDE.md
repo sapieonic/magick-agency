@@ -25,7 +25,8 @@ before writing a repository or a migration.
   account's live sessions by start, 0050 the promises summary's indexes of each call table's promises
   by when their outcome was written, 0051 the campaign's `stopping_at`, when Stop was pressed, 0052 floor assist: the session's Need help
   columns and the supervisor messages table, 0053 the account's callbacks list's index of
-  the pending contacts that may be callbacks, by due time). node-pg-migrate,
+  the pending contacts that may be callbacks, by due time, 0052 the analysis job's `vendor_refused_at`
+  and `completed_at`, 0053 their partial indexes, the summary delay's two sides). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

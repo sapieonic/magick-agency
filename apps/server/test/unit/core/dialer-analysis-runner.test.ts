@@ -152,6 +152,8 @@ function makeJob(over: Partial<DialerAnalysisJobRecord> = {}): DialerAnalysisJob
     analysis_audio_seconds: null,
     error_code: null,
     error_message: null,
+    vendor_refused_at: null,
+    completed_at: null,
     created_at: new Date(),
     updated_at: new Date(),
     ...over,

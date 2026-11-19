@@ -155,7 +155,7 @@ Columns: `id`, `tenant_id`, `name`, `type`, `audio_file_id`, `is_active`, `creat
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `description`, `context`, `custom_dimensions`, `language_hint`, `is_default`, `is_active`, `version`, `created_at`, `updated_at`.
 
-**`dialer_analysis_jobs`**. One analysis job per call: profile snapshot, status machine, attempt counters, `claim_generation` fencing, heartbeat, `analysis_audio_seconds`. Cascades from `agency_calls`.
+**`dialer_analysis_jobs`**. One analysis job per call: profile snapshot, status machine, attempt counters, `claim_generation` fencing, heartbeat, `analysis_audio_seconds`. Cascades from `agency_calls`. 0052 adds `vendor_refused_at` and `completed_at` (the summary delay's two sides; see below).
 
 Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snapshot`, `analysis_language`, `status`, `attempts`, `attempts_total`, `claim_generation`, `claimed_at`, `heartbeat_at`, `next_attempt_at`, `analysis_audio_seconds`, `error_code`, `error_message`, `created_at`, `updated_at`.
 
@@ -1678,6 +1678,45 @@ ACCESS EXCLUSIVE on `agency_contacts`). **Tests**:
 on both sides, the invalid-index refusal, down then up), the server's `test/integration/agency/callbacks-list.test.ts` (each
 campaign's page on the index, never the dialable index, on seeded rosters) and the down → up
 inventory suite.
+### 0052 — `migrations/0052_analysis_vendor_answers.sql`
+
+When the AI vendor last refused an analysis job and when a job last completed (decision AD1: a
+call's summary reads "delayed" while the vendor's newest answer is a refusal).
+**`dialer_analysis_jobs.vendor_refused_at`** `TIMESTAMPTZ` (new, nullable, no default): written only
+by `requeueRateLimited` (`now()`, beside `error_code = 'RATE_LIMITED'`), cleared by
+`completeWithAnalysis` and `requeueForManualRetry`, left as it was by `gracefulRequeue` and
+`recoverStale` (so a deploy does not make an old refusal new). **`completed_at`** `TIMESTAMPTZ`
+(new, nullable, no default): written only by `completeWithAnalysis`. `analysisDelaySql` compares
+the newest refusal of a queued job with the newest completion; before this, any queued
+`RATE_LIMITED` row turned the delay on, which kept it on through a whole post-outage drain (refused
+jobs are claimed last) and walked the queue on every read. `updated_at` could not serve: every write
+moves it, a heartbeat included. No backfill: a job refused before 0052 does not count (the breaker's
+state is in memory, so after the deploy a vendor still refusing is recorded again within seconds),
+and the first completion after the deploy writes the first `completed_at`. The Up starts with `SET
+LOCAL lock_timeout = '10s'` (ACCESS EXCLUSIVE on a table the live server writes, for the moment the
+catalog change takes); no index here (0053 builds them out of this lock, 0041 / 0045's split).
+**Down** drops both. **Tests**: `test/integration/db/analysis-vendor-answers-migration.test.ts`, the
+repository's `test/integration/repositories/dialer-analysis-job.repository.test.ts` (the writers,
+the outage, the drain, a later refusal, a requeue of an old refusal) and the down → up inventory
+suite.
+
+### 0053 — `migrations/0053_analysis_vendor_answer_indexes.sql`
+
+The summary delay's two sides, each one probe of the end of a partial index rather than a walk.
+**`idx_dialer_analysis_jobs_vendor_refused`** `(vendor_refused_at) WHERE status = 'queued' AND
+error_code = 'RATE_LIMITED'` (the queued refused jobs: an outage's backlog, empty otherwise; the
+predicate spelled as `VENDOR_REFUSING_SQL` spells it, so the planner can prove the read implies it);
+**`idx_dialer_analysis_jobs_completed`** `(completed_at) WHERE completed_at IS NOT NULL` (one entry
+per job completed since 0052; no other read filters on `completed_at`, so no sweep can switch to
+walking it). Plain `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`: SHARE on
+`dialer_analysis_jobs` for one read of it per index, writing empty indexes on the release that adds
+0052 (the columns are new), so they cannot be built beforehand on a database without 0052; a database
+already on 0052 may build them `CONCURRENTLY` first, and an invalid index left under a name by a
+failed concurrent build fails the migration. **Down** drops them; the read falls back to the queued
+refused rows and the completed jobs (correct, slower). **Tests**:
+`test/integration/db/analysis-vendor-answers-migration.test.ts` (the definitions, the delay read's
+plan on a seeded queue probing each index backward with no table scan, the invalid-index refusal,
+down then up) and the down → up inventory suite.
 
 ## Tests
 

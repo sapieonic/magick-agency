@@ -30,17 +30,30 @@ import type { DialerAnalysisDelay } from '@magick-agency/contracts/api/agency/we
 export const RATE_LIMITED_ERROR_CODE = 'RATE_LIMITED';
 
 /**
- * True while the AI vendor is refusing: some queued job's last run ended in a vendor
- * refusal ({@link RATE_LIMITED_ERROR_CODE}). The vendor and its keys are server-wide and
- * one breaker pauses every claim while it refuses (D10), so no queued job runs until a
- * probe gets through, including one never yet tried. It turns false once those jobs are
- * claimed again (a claim moves them out of `queued`) or a later run of each overwrites the
- * code. Uncorrelated, so Postgres evaluates it once per statement (an InitPlan), over the
- * queued rows of `idx_dialer_analysis_jobs_runnable`.
+ * True while the AI vendor's most recent answer was a refusal: the newest refusal of a queued
+ * job (`vendor_refused_at`, which only {@link DialerAnalysisJobRepository.requeueRateLimited}
+ * writes, beside {@link RATE_LIMITED_ERROR_CODE}) is newer than the newest completion
+ * (`completed_at`, which only {@link DialerAnalysisJobRepository.completeWithAnalysis} writes).
+ * The vendor and its keys are server-wide and one breaker pauses every claim while it refuses
+ * (D10), so no queued job runs until a probe gets through, including one never yet tried.
+ *
+ * It turns false at the first completion after the last refusal, although refused jobs stay
+ * queued: they are requeued with the longest backoff and claimed last, so after an outage they
+ * drain for hours while summaries are being written. A later refusal turns it on again. A
+ * graceful requeue or stale recovery of a refused job keeps its old `vendor_refused_at`, so a
+ * deploy does not make an old refusal new. No completion yet (NULL) reads as never.
+ *
+ * Uncorrelated, so Postgres evaluates each side once per statement (an InitPlan), each one probe
+ * of the end of a partial index (0053: `idx_dialer_analysis_jobs_vendor_refused`, whose predicate
+ * is spelled exactly as here, and `idx_dialer_analysis_jobs_completed`), not a walk of the queue.
  */
-export const VENDOR_REFUSING_SQL = `EXISTS (
-  SELECT 1 FROM dialer_analysis_jobs vendor_refused
-  WHERE vendor_refused.status = 'queued' AND vendor_refused.error_code = '${RATE_LIMITED_ERROR_CODE}')`;
+export const VENDOR_REFUSING_SQL = `((
+  SELECT max(vendor_refused.vendor_refused_at) FROM dialer_analysis_jobs vendor_refused
+  WHERE vendor_refused.status = 'queued' AND vendor_refused.error_code = '${RATE_LIMITED_ERROR_CODE}'
+) > COALESCE((
+  SELECT max(vendor_answered.completed_at) FROM dialer_analysis_jobs vendor_answered
+  WHERE vendor_answered.completed_at IS NOT NULL
+), '-infinity'::timestamptz))`;
 
 /**
  * Why the summary of the job aliased `job` is waiting rather than being written, as the
@@ -450,7 +463,9 @@ export class DialerAnalysisJobRepository {
    * Complete BOTH tables in one transaction (M8), fenced on the job generation: the
    * call row gets `call_analysis` + `analysis_status='completed'`, the job goes
    * `completed`. A crash between the two writes can't leave the job completed and the call
-   * pending forever. Returns false when the fence rejects it.
+   * pending forever. Stamps `completed_at` (the vendor answered: the completion side of
+   * {@link VENDOR_REFUSING_SQL}) and clears `vendor_refused_at`. Returns false when the fence
+   * rejects it.
    */
   async completeWithAnalysis(
     jobId: string,
@@ -480,6 +495,8 @@ export class DialerAnalysisJobRepository {
         `UPDATE dialer_analysis_jobs
          SET status = 'completed',
              analysis_audio_seconds = $2,
+             completed_at = now(),
+             vendor_refused_at = NULL,
              error_code = NULL,
              error_message = NULL
          WHERE id = $1`,
@@ -540,7 +557,8 @@ export class DialerAnalysisJobRepository {
    * given a chance to succeed. Decrements `attempts` and `attempts_total` back to
    * pre-claim, applies a longer jittered backoff. Fenced. Never drops below 0.
    * `errorMessage` keeps why the vendor refused (the runner passes the stage, the vendor and
-   * its words).
+   * its words). Stamps `vendor_refused_at`, the refusal side of {@link VENDOR_REFUSING_SQL}; no
+   * other write sets it.
    */
   async requeueRateLimited(
     id: string,
@@ -556,6 +574,7 @@ export class DialerAnalysisJobRepository {
              attempts = GREATEST(attempts - 1, 0),
              attempts_total = GREATEST(attempts_total - 1, 0),
              next_attempt_at = now() + ($3::int * INTERVAL '1 second'),
+             vendor_refused_at = now(),
              error_code = '${RATE_LIMITED_ERROR_CODE}',
              error_message = $4
          WHERE id = $1 AND claim_generation = $2 AND status IN ('transcribing','analyzing')
@@ -674,7 +693,9 @@ export class DialerAnalysisJobRepository {
    * back to `queued`, **decrementing `attempts`** (infra churn is not a real
    * attempt, M7) but NOT `attempts_total`, and bumping `claim_generation` so any
    * resurrected original runner is fenced out. Once `attempts_total` reaches its
-   * higher ceiling the row is failed `SYSTEM_REBOOTED` instead. Returns recovered rows.
+   * higher ceiling the row is failed `SYSTEM_REBOOTED` instead. Keeps `error_code` and
+   * `vendor_refused_at`: a recovered refused job's refusal stays as old as it was
+   * ({@link VENDOR_REFUSING_SQL}). Returns recovered rows.
    */
   async recoverStale(
     staleBefore: Date,
@@ -722,7 +743,9 @@ export class DialerAnalysisJobRepository {
    * claim generation it holds) and decrement `attempts` so a deploy mid-job costs
    * nothing. Generation-matched so a job already recovered by another replica is
    * left alone; the generation is then advanced to fence the original runner if it
-   * completes while shutdown is still draining. Returns the number re-queued.
+   * completes while shutdown is still draining. Leaves `error_code` and `vendor_refused_at`
+   * alone, so a deploy does not make an old refusal new ({@link VENDOR_REFUSING_SQL}). Returns
+   * the number re-queued.
    */
   async gracefulRequeue(claims: Array<{ id: string; generation: number }>): Promise<number> {
     if (claims.length === 0) return 0;
@@ -777,6 +800,7 @@ export class DialerAnalysisJobRepository {
          SET status = 'queued',
              attempts = GREATEST(attempts - $2, 0),
              next_attempt_at = now() + ($4::int * INTERVAL '1 second'),
+             vendor_refused_at = NULL,
              error_code = NULL,
              error_message = NULL
          WHERE call_id = $1

@@ -100,7 +100,8 @@ function makeJob(over: Partial<DialerAnalysisJobRecord> = {}): DialerAnalysisJob
     status: 'queued', attempts: 1, attempts_total: 1, claim_generation: 3,
     claimed_at: new Date(), heartbeat_at: new Date(), next_attempt_at: null,
     analysis_audio_seconds: 95,
-    error_code: null, error_message: null, created_at: new Date(), updated_at: new Date(),
+    error_code: null, error_message: null, vendor_refused_at: null, completed_at: null,
+    created_at: new Date(), updated_at: new Date(),
     ...over,
   };
 }

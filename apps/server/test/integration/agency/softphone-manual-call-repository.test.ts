@@ -629,11 +629,12 @@ describe('AgencyManualCallRepository (integration)', () => {
       // The vendor answers: nothing is held up.
       expect(await delays()).toEqual([[waiting.id, null], [running.id, null], [noJob.id, null], [done.id, null]]);
 
-      // Another call's job (another account's, even: the vendor is the server's) was refused.
+      // Another call's job (another account's, even: the vendor is the server's) was refused, and
+      // nothing has completed since: the vendor's newest answer is a refusal.
       const refusedLeg = await insertWebrtcCall({ campaign_id: null, account_id: OTHER_ACCOUNT, analysis_status: 'pending' });
       await getTestPool().query(
-        `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, error_code)
-         VALUES ($1, $2, $3, 'queued', 'RATE_LIMITED')`,
+        `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, error_code, vendor_refused_at)
+         VALUES ($1, $2, $3, 'queued', 'RATE_LIMITED', now() - interval '1 minute')`,
         [refusedLeg.id, TENANT, OTHER_ACCOUNT],
       );
       expect(await delays()).toEqual([
@@ -641,6 +642,11 @@ describe('AgencyManualCallRepository (integration)', () => {
       ]);
       const account = await repo.listForAccount({ ...SCOPE, filters: { agentUserId: session.agent_user_id }, limit: 1 });
       expect(account.rows[0]).toMatchObject({ id: waiting.id, analysis_status: 'pending', analysis_delay: 'vendor_unavailable' });
+
+      // A summary is written after that refusal: the vendor answers again, and the list says so
+      // although the refused job is still queued (the drain).
+      await getTestPool().query(`UPDATE dialer_analysis_jobs SET completed_at = now() WHERE call_id = $1`, [doneLeg.id]);
+      expect(await delays()).toEqual([[waiting.id, null], [running.id, null], [noJob.id, null], [done.id, null]]);
     });
   });
 

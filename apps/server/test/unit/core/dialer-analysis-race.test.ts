@@ -40,7 +40,8 @@ class InMemoryJobs {
       attempts: 0, attempts_total: 0, claim_generation: 0,
       claimed_at: null, heartbeat_at: null, next_attempt_at: null,
       analysis_audio_seconds: null,
-      error_code: null, error_message: null, created_at: createdAt, updated_at: createdAt,
+      error_code: null, error_message: null, vendor_refused_at: null, completed_at: null,
+      created_at: createdAt, updated_at: createdAt,
     };
     this.jobs.set(job.id, job);
     return job;
