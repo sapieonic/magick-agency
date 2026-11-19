@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.26.0...contracts-v0.27.0) (2026-11-19)
+
+
+### Features
+
+* **console,server,contracts,db:** say when a call summary waits on the AI service, and transcribe cut-short recordings at most twice ([#104](https://github.com/sapieonic/magick-agency/issues/104)) ([7149546](https://github.com/sapieonic/magick-agency/commit/7149546e4dc846f8c89440248b5e9fa8e6ce7468))
+
 ## [0.26.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.25.0...contracts-v0.26.0) (2026-11-19)
 
 

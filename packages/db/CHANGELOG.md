@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.25.0](https://github.com/sapieonic/magick-agency/compare/db-v0.24.0...db-v0.25.0) (2026-11-19)
+
+
+### Features
+
+* **console,server,contracts,db:** say when a call summary waits on the AI service, and transcribe cut-short recordings at most twice ([#104](https://github.com/sapieonic/magick-agency/issues/104)) ([7149546](https://github.com/sapieonic/magick-agency/commit/7149546e4dc846f8c89440248b5e9fa8e6ce7468))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.27.0
+    * @magick-agency/domain bumped to 0.13.1
+
 ## [0.24.0](https://github.com/sapieonic/magick-agency/compare/db-v0.23.0...db-v0.24.0) (2026-11-19)
 
 
