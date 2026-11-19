@@ -176,8 +176,8 @@ export class FloorAssistService {
   /**
    * A supervisor answered the session's open request (`how`). False when none was open. Never
    * throws: an answer is a side effect of a listen or a message, which it must not fail. `byName` is
-   * the answerer's name when the caller has read it already (a message's `from_name`); absent, it
-   * is read here.
+   * the answerer's name when the caller has read it already (a message's `from_name`, already through
+   * {@link senderNameForFrame}); absent, it is read here and put through the same rule.
    */
   async answer(input: {
     sessionId: string; tenantId: string; byUserId: string; how: AgencyHelpAnswerHow; byName?: string | null;
@@ -196,9 +196,10 @@ export class FloorAssistService {
         raised_at: raisedAt.toISOString(), how: input.how, answered_by: input.byUserId,
         ...(row.call_id ? { call_id: row.call_id } : {}),
       });
+      // A name read here goes through the frame's rule as a message's `from_name` does (trimmed, cut).
       const byName = input.byName !== undefined
         ? input.byName
-        : (await this.deps.names([input.byUserId], input.tenantId)).get(input.byUserId) ?? null;
+        : senderNameForFrame((await this.deps.names([input.byUserId], input.tenantId)).get(input.byUserId));
       this.frame(row.session_id, { event: 'help_answered', raised_at: raisedAt.toISOString(), by_name: byName, how: input.how });
       this.frame(row.session_id, { event: 'help_cleared', raised_at: raisedAt.toISOString(), reason: 'answered' });
       log.info({ sessionId: row.session_id, how: input.how, seconds }, 'Need help answered');
