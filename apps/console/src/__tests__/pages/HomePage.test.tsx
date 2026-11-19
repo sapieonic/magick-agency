@@ -221,6 +221,27 @@ describe('the page', () => {
     expect(screen.getByTestId('kpi-agents').textContent).toBe('Agents working6on the floor now');
   });
 
+  it('scrolls Needs you now and Campaigns inside their cards, counting each row and campaign', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([
+      onBoard('c1', { name: 'Q4 collections', stats: stats({ agents_live: 2, abandoned_24h: 3, answered_24h: 100 }), overdue: 7 }),
+      onBoard('c2', { status: 'paused', name: 'Card follow-up' }),
+    ]));
+    renderHome();
+    const attention = await screen.findByTestId('home-attention');
+    const campaigns = screen.getByTestId('home-campaigns');
+    // Each list sits in its own pane's scroll box (FloorPane), heading outside it.
+    expect(screen.getByTestId('home-attention-pane-body').contains(attention)).toBe(true);
+    expect(screen.getByTestId('home-campaigns-pane-body').contains(campaigns)).toBe(true);
+    expect(screen.getByTestId('home-campaigns-pane-body').contains(screen.getByRole('heading', { name: /^Campaigns/ }))).toBe(false);
+    // "N more below" counts what carries the pane's item mark: every row, every campaign card.
+    const rows = within(attention).getAllByRole('listitem').filter((li) => li.parentElement === attention);
+    expect(rows.length).toBeGreaterThan(0);
+    rows.forEach((row) => expect(row.hasAttribute('data-pane-item')).toBe(true));
+    const cards = within(campaigns).getAllByRole('listitem');
+    expect(cards).toHaveLength(2);
+    cards.forEach((card) => expect(card.hasAttribute('data-pane-item')).toBe(true));
+  });
+
   it('says so when nothing is active, and offers the new-campaign button', async () => {
     renderHome();
     expect((await screen.findByTestId('home-floor-empty')).textContent).toContain('No campaign is running or paused');
