@@ -82,7 +82,7 @@ export async function proxyAgencyFloorAssistRoutes(app: FastifyInstance, opts: P
     const scoped = await scope(request, reply);
     if (!scoped) return reply;
     const actor = resolveAgencyActor(request);
-    if (!actor.ok) return reply.code(400).send({ error: 'Bad Request', code: actor.code, message: actor.message });
+    if (!actor.ok) return sendRefusal(reply, 400, actor.code, actor.message);
     const result = await deps.callCore({
       method: call.method,
       path: call.path,
