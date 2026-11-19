@@ -185,7 +185,7 @@ export {
   waitingContactSql,
 } from './agency/drilldown-sql.js';
 export type { ContactWaitingBucket } from './agency/drilldown-sql.js';
-export { contactListFilterConditions } from './agency/query-builders.js';
+export { contactListFilterConditions, toKeysetPage } from './agency/query-builders.js';
 export {
   AgencyInsightsRollupRepository,
   agencyInsightsRollupRepository,
