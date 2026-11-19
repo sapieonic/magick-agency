@@ -50,6 +50,9 @@ describe('build:lambda', () => {
     expect(index).not.toContain('chromium.br');
     const mod = (await import(join(root, 'dist', 'lambda', 'index.mjs'))) as { handler: unknown };
     expect(typeof mod.handler).toBe('function');
+    // Every log line names the bundled contracts' release (src/version.ts).
+    const contracts = JSON.parse(readFileSync(join(root, 'node_modules', '@magick-agency', 'contracts', 'package.json'), 'utf8')) as { version: string };
+    expect(index).toContain(`contracts: "${contracts.version}"`);
   }, 120_000);
 
   // aws/terraform builds the zip at every plan and deploys it when its hash changes, so an

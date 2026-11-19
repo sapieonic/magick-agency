@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ORIGINATOR_HEADER, ORIGINATOR } from '../../config';
 
 // Mock global fetch before importing the modules under test.
@@ -38,6 +40,7 @@ Object.defineProperty(window, 'location', {
  */
 import { apiFetch } from '../../api/client';
 import { fetchRecordingBlobUrl } from '../../api/calls';
+import { getInvite } from '../../api/invites';
 
 function okJson(body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -108,4 +111,35 @@ describe('x-mgkvc-originator header — raw-fetch endpoints', () => {
     expect(headersOf()[ORIGINATOR_HEADER]).toBe(ORIGINATOR);
   });
 
+});
+
+// `X-Client: <originator>/<version>`: which console build sent the request, read by the
+// server into `clientApp` / `clientVersion` on every log line. The version is the console's
+// own package.json version (release-please's), not a number repeated here.
+describe('X-Client header', () => {
+  const { version } = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8')) as { version: string };
+  const expected = `${ORIGINATOR}/${version}`;
+
+  it('names the console and its package.json version', () => {
+    expect(version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(expected).toBe(`magick-agency-console/${version}`);
+  });
+
+  it('is sent on apiFetch, and options.headers cannot drop it', async () => {
+    mocks.fetch.mockResolvedValue(okJson());
+    await apiFetch('/api/example', { headers: { 'X-Custom': 'v' } });
+    expect(headersOf()['X-Client']).toBe(expected);
+  });
+
+  it('is sent on the raw-fetch endpoints (buildAuthHeaders)', async () => {
+    mocks.fetch.mockResolvedValue(new Response(new Blob(['audio']), { status: 200 }));
+    await fetchRecordingBlobUrl('t1', 'call-1', 'a1');
+    expect(headersOf()['X-Client']).toBe(expected);
+  });
+
+  it('is sent on the signed-out invite lookup', async () => {
+    mocks.fetch.mockResolvedValue(okJson({ status: 'pending' }));
+    await getInvite('tok').catch(() => undefined);
+    expect(headersOf()['X-Client']).toBe(expected);
+  });
 });

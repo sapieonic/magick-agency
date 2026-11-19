@@ -870,10 +870,12 @@ bucket has the same body and `retry-after`, and counts `rate_limit_rejected_tota
 key on `request.ip`, which trusts exactly `TRUST_PROXY_HOPS` proxies (Q9).
 
 The mobile app names itself in `X-Client` (`magick-agency-mobile/<semver>+<build> (<ios|android>
-<osver>; <model>)`; anything else is `web`, `utils/client-header.ts`). An app-wide `onRequest` hook
-(`api/middleware/client-log-context.ts`) puts it on every log line the request produces as `client`
-(with `clientVersion` / `clientPlatform` for the app), through the ambient log context. It is never
-a rate-limit key and never an auth input.
+<osver>; <model>)`); the console and super-admin send `<originator>/<version>`
+(`magick-agency-console/0.29.0`), which is still `web`, and anything else is a bare `web`
+(`utils/client-header.ts`). An app-wide `onRequest` hook (`api/middleware/client-log-context.ts`)
+puts it on every log line the request produces as `client`, with `clientApp` / `clientVersion` for
+an app that names itself and `clientPlatform` for the mobile app, through the ambient log context.
+It is never a rate-limit key and never an auth input.
 
 ## Data layer
 

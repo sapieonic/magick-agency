@@ -22,7 +22,8 @@ import {
   type ReportRenderCallback,
   type ReportRenderMessage,
 } from '@magick-agency/contracts/reports';
-import { createHandler, type HandlerDeps } from '../src/lambda';
+import { createHandler, logRecord, type HandlerDeps } from '../src/lambda';
+import { RENDERER_VERSION } from '../src/version';
 import { CALLBACK_BACKOFF_MS } from '../src/lambda/callback';
 import { chromiumSpecifier, loadSparticuzChromium } from '../src/lambda/chromium';
 import { verifyCallbackSignature } from '../src/signature';
@@ -218,5 +219,20 @@ describe('@sparticuz/chromium resolution', () => {
     const seen: string[] = [];
     await loadSparticuzChromium({ layerDir: '/nonexistent/layer/', importer: async (s) => (seen.push(s), { default: { args: [], executablePath: async () => '' } }) });
     expect(seen).toEqual(['@sparticuz/chromium']);
+  });
+});
+
+describe('logRecord', () => {
+  it('stamps every Lambda line with its time and the renderer\'s version; the event\'s fields follow', () => {
+    const at = new Date('2026-11-19T10:00:00.000Z');
+    expect(logRecord({ event: 'record.failed', message_id: 'm1' }, at)).toEqual({
+      ts: '2026-11-19T10:00:00.000Z',
+      version: RENDERER_VERSION,
+      // Empty outside the Lambda build, which injects them (test/build-lambda.test.ts).
+      packages: {},
+      event: 'record.failed',
+      message_id: 'm1',
+    });
+    expect(RENDERER_VERSION).toMatch(/^\d+\.\d+\.\d+/);
   });
 });

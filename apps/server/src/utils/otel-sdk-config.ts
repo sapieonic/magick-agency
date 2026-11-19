@@ -142,9 +142,17 @@ export function processInstanceSuffix(env: Env): string | null {
   return positive(env['MEDIA_WORKERS']) || analysisChildren ? 'primary' : null;
 }
 
+/** A bundled package's name as it may appear in an attribute key. */
+const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** The resource attribute carrying a bundled workspace package's version. */
+export function packageVersionAttribute(name: string): string {
+  return `magick_agency.package.${name}.version`;
+}
+
 export function buildResourceAttributes(
   env: Env,
-  opts: { version: string; hostname: () => string },
+  opts: { version: string; hostname: () => string; packageVersions?: Readonly<Record<string, string>> },
 ): Record<string, string> {
   const attrs: Record<string, string> = {
     // Same default as `config.otel.serviceName`.
@@ -152,6 +160,13 @@ export function buildResourceAttributes(
     [ATTR_SERVICE_VERSION]: opts.version,
     [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: env['OTEL_ENVIRONMENT'] || env['NODE_ENV'] || 'development',
   };
+  // Every workspace package bundled into this build, with its own release-please version
+  // (`magick_agency.package.db.version`, …; `magick_agency_package_db_version` in Loki and on
+  // `target_info`). A resource attribute rides on every exported log, span and metric at no
+  // per-series cost, so a line in Grafana names the release of each package behind it.
+  for (const [name, version] of Object.entries(opts.packageVersions ?? {})) {
+    if (PACKAGE_NAME.test(name) && version) attrs[packageVersionAttribute(name)] = version;
+  }
   // D7 (docs/scaling.md §7): with worker processes every process exports the same series
   // names, so each must have its own instance or counters from several processes
   // interleave into one series. Forced on then, the base id suffixed with the process:

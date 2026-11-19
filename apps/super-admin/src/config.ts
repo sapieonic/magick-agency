@@ -12,3 +12,18 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
  */
 export const ORIGINATOR_HEADER = 'x-mgkvc-originator';
 export const ORIGINATOR = `${brand.id}-super-admin`;
+
+/**
+ * `X-Client: <originator>/<version>` (`magick-agency-super-admin/0.29.0`): which build of this UI
+ * sent a request. The server reads it into `clientApp` / `clientVersion` on every log line
+ * the request produces (`apps/server/src/utils/client-header.ts`), as it does for the mobile
+ * app. Logging only: never an auth input or a rate-limit key.
+ */
+export const CLIENT_HEADER = 'X-Client';
+export const CLIENT = `${ORIGINATOR}/${__APP_VERSION__}`;
+
+/** The headers every request to the API carries: who sent it, and which build. */
+export const CLIENT_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  [ORIGINATOR_HEADER]: ORIGINATOR,
+  [CLIENT_HEADER]: CLIENT,
+});

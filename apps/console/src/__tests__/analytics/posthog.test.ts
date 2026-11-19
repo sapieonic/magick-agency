@@ -75,7 +75,7 @@ describe('analytics/posthog', () => {
       capture_dead_clicks: true,
     });
     expect(mocks.register).toHaveBeenCalledWith(
-      expect.objectContaining({ environment: expect.any(String) }),
+      expect.objectContaining({ environment: expect.any(String), app_version: __APP_VERSION__ }),
     );
     expect(a.isEnabled()).toBe(true);
   });

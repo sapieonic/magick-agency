@@ -139,6 +139,27 @@ describe('buildResourceAttributes', () => {
     });
   });
 
+  it('carries each bundled package\'s version as its own attribute', () => {
+    const attrs = buildResourceAttributes({}, {
+      version, hostname, packageVersions: { contracts: '0.26.0', db: '0.24.0', 'report-renderer': '0.4.3' },
+    });
+    expect(attrs).toEqual({
+      'service.name': 'magick-agency',
+      'service.version': '9.9.9',
+      'deployment.environment': 'development',
+      'magick_agency.package.contracts.version': '0.26.0',
+      'magick_agency.package.db.version': '0.24.0',
+      'magick_agency.package.report-renderer.version': '0.4.3',
+    });
+  });
+
+  it('drops a package entry whose name could not be an attribute segment, or with no version', () => {
+    const attrs = buildResourceAttributes({}, {
+      version, hostname, packageVersions: { 'db.x': '1.0.0', 'Db': '1.0.0', '': '1.0.0', domain: '' },
+    });
+    expect(Object.keys(attrs).filter((k) => k.startsWith('magick_agency.'))).toEqual([]);
+  });
+
   it('only the exact string "true" enables it (same convention as OTEL_ENABLED)', () => {
     for (const v of ['1', 'yes', 'TRUE', 'false', '']) {
       expect(buildResourceAttributes({ OTEL_SERVICE_INSTANCE_ID_ENABLED: v }, { version, hostname }))

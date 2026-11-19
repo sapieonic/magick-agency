@@ -103,9 +103,11 @@ export function initAnalytics(): void {
     });
 
     // Tag every event so staging/prod are distinguishable within one project,
-    // consistent with the backend's `environment` super-property.
+    // consistent with the backend's `environment` super-property, and with the
+    // console build that sent it (the release-please version, as `X-Client` carries).
     posthog.register({
       environment: import.meta.env.VITE_POSTHOG_ENVIRONMENT || import.meta.env.MODE,
+      app_version: __APP_VERSION__,
     });
 
     enabled = true;

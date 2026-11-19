@@ -1657,13 +1657,31 @@ END_COMMIT_OVERRIDE
   time (`apps/server/scripts/build.mjs`; `packages/observability/src/version.ts`); a `tsx` dev run
   reports `0.0.0`.
 
+  The workspace packages bundled into the server (`contracts`, `db`, `domain`, `observability`,
+  `report-renderer`) each have their own release-please version. The same build injects them
+  (`PACKAGE_VERSIONS`), and each is a resource attribute,
+  `magick_agency.package.<name>.version`, so every exported record carries all of them; Loki
+  keeps them as `magick_agency_package_<name>_version` (a hyphen in the name becomes `_`). The
+  listening line also logs them as `packages`, which is where they show on stdout, with no OTel
+  resource. A `tsx` dev run has none.
+
   ```logql
-  {service_name=~"magick-agency(-.+)?"} |= "listening"            # one line per boot, with its version
+  {service_name=~"magick-agency(-.+)?"} |= "listening"            # one line per boot, with its versions
   {service_name=~"magick-agency(-.+)?"} | service_version="0.2.0"  # everything one release logged
+  {service_name=~"magick-agency(-.+)?"} | magick_agency_package_db_version="0.24.0"  # one db release
   ```
 
-- **Traces and metrics.** The same `service.version` resource attribute is on every span and on
-  `target_info`.
+- **Which client sent a request.** Every server line a request produces carries `client` (`web`
+  or `mobile`) and, for an app that names itself in `X-Client`, `clientApp` and `clientVersion`:
+  the mobile app (`magick-agency-mobile/<semver>+<build>`), the console
+  (`magick-agency-console/<version>`) and super-admin (`magick-agency-super-admin/<version>`).
+  A station or listener WebSocket is opened by the browser, which cannot set the header, so its
+  lines say `client` alone. The console's PostHog events carry `app_version` as well.
+- **The report renderer Lambda.** Every CloudWatch line carries `version` (its package.json) and
+  `packages` (the bundled `contracts`, injected by `scripts/build-lambda.mjs`), and each callback
+  carries `renderer_version`, which the report run keeps.
+- **Traces and metrics.** The same `service.version` and package resource attributes are on every
+  span and on `target_info`.
 - **The UIs.** The console and the super-admin console each show their own version (`v0.2.0`) at
   the foot of the sidebar, in the platform shell (expanded or collapsed to its rail), the agency
   shell and the super-admin shell (`AppVersion`, `packages/web-ui`). The agent surfaces have no
