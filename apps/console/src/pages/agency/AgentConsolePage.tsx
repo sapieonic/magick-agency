@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -12,7 +12,11 @@ import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
 import { useStationHelp } from './station/useStationHelp';
-import { SupervisorMessages } from '../../components/agency/SupervisorMessages';
+import {
+  FloorAssistAnnouncer,
+  SupervisorMessages,
+  useFloorAssistAnnouncer,
+} from '../../components/agency/SupervisorMessages';
 import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
@@ -223,11 +227,20 @@ export default function AgentConsolePage() {
     station,
   });
   const supervisorMessages = (
-    <SupervisorMessages
-      messages={station.supervisorMessages}
-      onDismiss={station.dismissSupervisorMessage}
-      helpAnnouncement={help.announcement}
-    />
+    <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
+  );
+  /*
+    What supervisors say, out loud (LF25): held here, above every screen this page returns, and
+    rendered once in the same slot of each (`withAnnouncer`), so moving between the campaign's
+    screen, an inbound call and the soft phone neither remounts the region nor says anything again.
+    The card stack comes after each view's own controls, so it is after them in Tab order too.
+  */
+  const announced = useFloorAssistAnnouncer(station.supervisorMessages, help.announcement);
+  const withAnnouncer = (view: ReactNode) => (
+    <>
+      {view}
+      <FloorAssistAnnouncer lines={announced} />
+    </>
   );
 
   const softphone = useStationSoftphone({
@@ -296,7 +309,7 @@ export default function AgentConsolePage() {
     frees them.
   */
   if (join.joinConflict) {
-    return (
+    return withAnnouncer(
       <JoinConflictScreen
         conflict={join.joinConflict}
         toCampaign={exit.canExitToCampaign}
@@ -318,7 +331,7 @@ export default function AgentConsolePage() {
     finished.
   */
   if (join.onSoftphoneElsewhere) {
-    return (
+    return withAnnouncer(
       <SoftphoneJoinScreen
         closing={join.closingSoftphone}
         failure={join.closeSoftphoneFailure}
@@ -333,7 +346,7 @@ export default function AgentConsolePage() {
     and another device or window holds it. Nothing moves until the agent says so.
   */
   if (join.onOtherDevice) {
-    return (
+    return withAnnouncer(
       <StationFatal
         message={STATION_ON_OTHER_DEVICE_COPY}
         toCampaign={exit.canExitToCampaign}
@@ -344,7 +357,7 @@ export default function AgentConsolePage() {
   }
 
   if (join.joinError) {
-    return (
+    return withAnnouncer(
       <StationFatal
         message={join.joinError}
         toCampaign={exit.canExitToCampaign}
@@ -405,7 +418,7 @@ export default function AgentConsolePage() {
     outcome (the server refuses `/leave` too), read off the call as the soft phone's is.
   */
   if (inbound.call) {
-    return (
+    return withAnnouncer(
       <div
         className={styles.shell}
         data-testid="station-inbound"
@@ -427,7 +440,6 @@ export default function AgentConsolePage() {
           missedPings={missedPings}
         />
         {micBanner}
-        {supervisorMessages}
         <InboundCallView
           ib={inbound}
           call={inbound.call}
@@ -437,6 +449,7 @@ export default function AgentConsolePage() {
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
+        {supervisorMessages}
         {leaveDialog}
       </div>
     );
@@ -452,7 +465,7 @@ export default function AgentConsolePage() {
   */
   if (softphone.active) {
     const busy = softphone.sp.call !== null;
-    return (
+    return withAnnouncer(
       <div className={styles.shell} data-testid="station-softphone">
         <StationHeader
           user={user}
@@ -498,7 +511,6 @@ export default function AgentConsolePage() {
           }
         />
         {micBanner}
-        {supervisorMessages}
         <SoftphoneView
           sp={softphone.sp}
           connection={connection}
@@ -507,12 +519,13 @@ export default function AgentConsolePage() {
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
+        {supervisorMessages}
         {leaveDialog}
       </div>
     );
   }
 
-  return (
+  return withAnnouncer(
     /*
       `data-connect-flash` is set ONLY when the audible cue could not carry the
       connect — a muted console, an `AudioContext` the browser refuses to run, or
@@ -574,7 +587,7 @@ export default function AgentConsolePage() {
       {micBanner}
 
       {/* The rail is the call's one polite live region. (Floor assist has its own, LF25:
-          `SupervisorMessages`, for what supervisors say, never about the call.) */}
+          `FloorAssistAnnouncer`, for what supervisors say, never about the call.) */}
       <StateRail
         agentState={agentState}
         agentStateSince={station.agentStateSince}

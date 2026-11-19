@@ -156,6 +156,27 @@ describe('Callbacks', () => {
     expect(screen.queryByTestId('callbacks-more')).toBeNull();
   });
 
+  it('says the empty line about the campaign asked for, even one the board does not name', async () => {
+    mocks.listAccountCallbacks.mockResolvedValue(page([]));
+    renderPage('/agency/callbacks?campaign=c9');
+    await waitFor(() => expect(mocks.listAccountCallbacks).toHaveBeenCalledWith({ due: 'overdue', campaign_id: 'c9' }, 't-1', 'a-1'));
+    // c9 is past the board's first 25 or not active: no name, and still not the account-wide line.
+    expect((await screen.findByTestId('callbacks-empty')).textContent).toBe('No callback is overdue in this campaign right now.');
+  });
+
+  it('shows a callback once when it comes back on the next page', async () => {
+    mocks.listAccountCallbacks.mockResolvedValueOnce(page([callback('k1'), callback('k2')], 'cur-1'));
+    renderPage();
+    await screen.findByTestId('callbacks-list');
+    // k2's due time moved past the cursor while paging: served again on page two.
+    mocks.listAccountCallbacks.mockResolvedValueOnce(page([callback('k2'), callback('k3')], null));
+    fireEvent.click(screen.getByTestId('callbacks-more'));
+    await waitFor(() => expect(screen.queryByTestId('callbacks-more')).toBeNull());
+    expect(screen.getAllByRole('listitem').map((li) => li.getAttribute('data-testid'))).toEqual([
+      'callbacks-row-k1', 'callbacks-row-k2', 'callbacks-row-k3',
+    ]);
+  });
+
   it('drops a late answer for a tab no longer shown', async () => {
     let answerOverdue: (value: AgencyCallbacksPage) => void = () => {};
     mocks.listAccountCallbacks.mockImplementationOnce(() => new Promise((resolve) => {

@@ -80,8 +80,59 @@ describe('Need help on the station', () => {
     expect(answered(open, R1)).toBe(open);
     expect(cleared(open, R1, 'expired')).toBe(open);
     expect(cleared(open, R1, 'answered')).toBe(open);
-    // With nothing open, nothing to clear either.
-    expect(cleared(INITIAL_STATION_STATE, R1, 'expired')).toBe(INITIAL_STATION_STATE);
+    // With nothing open there is nothing to close, and nothing to say about a lapse.
+    const lapsed = cleared(INITIAL_STATION_STATE, R1, 'expired');
+    expect(lapsed.help).toBeNull();
+    expect(lapsed.helpNotice).toBeNull();
+  });
+
+  it('remembers a request cleared while nothing is on screen: the raise’s answer landing after its own frames opens nothing', () => {
+    // The raise is in flight; the server took it, a supervisor answered and it closed, all
+    // before the HTTP answer came back.
+    let state = answered(INITIAL_STATION_STATE, R1, 'Priya N', 'listen');
+    state = cleared(state, R1, 'answered');
+    expect(state.helpEndedAt).toBe(R1);
+    state = stationReducer(state, { type: 'help_set', help: { raised_at: R1, call_id: 'call-1' } });
+    // Not open (no frame about it is coming, so it would never close), and the answer is said.
+    expect(state.help).toBeNull();
+    expect(state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+  });
+
+  it('keeps an answer that arrived before the raise’s own answer, and closes on its clear', () => {
+    let state = answered(INITIAL_STATION_STATE, R1, 'Priya N', 'message');
+    state = stationReducer(state, { type: 'help_set', help: { raised_at: R1, call_id: 'call-1' } });
+    expect(state.help).toEqual({ raised_at: R1, call_id: 'call-1' });
+    expect(state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'message' });
+    state = cleared(state, R1, 'answered');
+    expect(state.help).toBeNull();
+    expect(state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'message' });
+  });
+
+  it('shows the answer to a raise whose HTTP call failed after the server took it, and a retry opens nothing ended', () => {
+    // The raise failed on the agent's side (the page set nothing), but the server holds R1.
+    let state = answered(INITIAL_STATION_STATE, R1, 'Priya N', 'listen');
+    expect(state.help).toBeNull();
+    expect(state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    state = cleared(state, R1, 'answered');
+    expect(state.helpNotice?.kind).toBe('answered');
+    // Pressed again, the server (idempotent, LF13) names R1 if it were still open; it is not.
+    expect(stationReducer(state, { type: 'help_set', help: { raised_at: R1, call_id: 'call-1' } })).toBe(state);
+    // With only the clear (no answer frame), it is still an answer, said without a name.
+    const onlyClear = cleared(INITIAL_STATION_STATE, R1, 'answered');
+    expect(onlyClear.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: null, how: null });
+    // A retry before any frame opens it, and its frames end it as usual.
+    const retried = stationReducer(INITIAL_STATION_STATE, { type: 'help_set', help: { raised_at: R1, call_id: 'call-1' } });
+    expect(cleared(retried, R1, 'expired').helpNotice).toEqual({ kind: 'expired', raised_at: R1 });
+  });
+
+  it('keeps the answer when the agent’s cancel lands between help_answered and help_cleared', () => {
+    let state = answered(raised(), R1, 'Priya N', 'listen');
+    state = stationReducer(state, { type: 'help_set', help: null });
+    expect(state.help).toBeNull();
+    expect(state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    state = cleared(state, R1, 'answered');
+    expect(state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    expect(state.helpEndedAt).toBe(R1);
   });
 
   it('never re-opens a request a frame already ended (the raise’s answer landing late)', () => {

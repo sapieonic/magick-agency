@@ -23,6 +23,7 @@ import {
 } from '../../utils/agency/lateCallbacks';
 import {
   CALLBACK_SOURCE_LABELS,
+  appendCallbackRows,
   callbackContactHref,
   callbackCustomer,
   callbackDueText,
@@ -160,6 +161,41 @@ describe('the chime’s sound (fails silently)', () => {
     expect(() => unlockHelpChime()).not.toThrow();
   });
 
+  it('keeps at most one play waiting on a suspended context: never a stacked burst', async () => {
+    let unlock!: () => void;
+    const holder: { state: AudioContextState } = { state: 'suspended' };
+    const { ctx, started } = context('suspended', () => new Promise<void>((resolve) => {
+      unlock = () => {
+        holder.state = 'running';
+        resolve();
+      };
+    }));
+    Object.defineProperty(ctx, 'state', { get: () => holder.state });
+    setHelpChimeContextFactoryForTests(() => ctx);
+    playHelpChime();
+    playHelpChime();
+    playHelpChime();
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
+    unlock();
+    await Promise.resolve();
+    await Promise.resolve();
+    // One chime (two notes), not three on top of each other.
+    expect(started).toHaveLength(2);
+    // Running now: each new request plays straight away.
+    playHelpChime();
+    expect(started).toHaveLength(4);
+  });
+
+  it('asks again after a refused resume', async () => {
+    const { ctx } = context('suspended', () => Promise.reject(new DOMException('not allowed', 'NotAllowedError')));
+    setHelpChimeContextFactoryForTests(() => ctx);
+    playHelpChime();
+    await Promise.resolve();
+    await Promise.resolve();
+    playHelpChime();
+    expect(ctx.resume).toHaveBeenCalledTimes(2);
+  });
+
   it('throws nothing with no audio at all, or a constructor that throws', () => {
     setHelpChimeContextFactoryForTests(() => null);
     expect(() => playHelpChime()).not.toThrow();
@@ -194,6 +230,17 @@ describe('give late callbacks to free agents (LF7, LF30)', () => {
     }, name)).toBe('Gave 4 late callbacks: Arjun T 2, Divya S 2.');
     expect(lateCallbacksResultText({ moved: 0, per_agent: [] }, name)).toMatch(/^Nothing moved/);
     expect(LATE_CALLBACKS_POOL_COPY).toMatch(/shares one queue/);
+  });
+});
+
+describe('the Callbacks page’s paging (LF32)', () => {
+  it('appends a further page with each callback once, by campaign and contact', () => {
+    const r = (campaign: string, contact: string) => ({ campaign_id: campaign, contact_id: contact });
+    const held = [r('c1', 'k1'), r('c1', 'k2')];
+    expect(appendCallbackRows(held, [r('c1', 'k2'), r('c2', 'k2'), r('c1', 'k3'), r('c1', 'k3')])).toEqual([
+      r('c1', 'k1'), r('c1', 'k2'), r('c2', 'k2'), r('c1', 'k3'),
+    ]);
+    expect(appendCallbackRows(held, [])).toEqual(held);
   });
 });
 
@@ -233,7 +280,10 @@ describe('the Callbacks page’s words (LF32)', () => {
   it('links the contact in its campaign, and says what is empty without a wider all-clear', () => {
     expect(callbackContactHref(row)).toBe('/agency/campaigns/c1/contacts/k1');
     expect(callbacksEmptyText('overdue', null)).toBe('No callback is overdue right now.');
-    expect(callbacksEmptyText('today', 'Gold loan')).toBe('No more callbacks are due today on Gold loan.');
+    expect(callbacksEmptyText('today', { name: 'Gold loan' })).toBe('No more callbacks are due today on Gold loan.');
+    // A campaign asked for whose name is not known here: still that campaign, never account-wide.
+    expect(callbacksEmptyText('overdue', { name: null })).toBe('No callback is overdue in this campaign right now.');
+    expect(callbacksEmptyText('today', { name: null })).toBe('No more callbacks are due today in this campaign.');
     expect(callbacksErrorText(refused(403))).toBe(CALLBACKS_REFUSED);
     expect(callbacksErrorText(new Error('x'))).toBe(CALLBACKS_ERROR);
   });

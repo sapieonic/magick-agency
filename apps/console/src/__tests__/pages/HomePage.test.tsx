@@ -616,17 +616,21 @@ describe('Got it (acknowledged rows)', () => {
   });
 
   it('works without storage (a private window): the row is put aside for this page', async () => {
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
-    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError'); });
+    // Blocked site data: reaching `localStorage` at all throws. (A spy on `Storage.prototype` does
+    // not reach this environment's store, so it would leave the try/catch untested.)
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
     try {
       mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 1 })]));
       renderHome();
       fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
       expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
       expect(screen.getByTestId('home-acknowledged')).toBeTruthy();
+      // It did reach storage: read on render, written on Got it.
+      expect(blocked).toHaveBeenCalled();
     } finally {
-      setItem.mockRestore();
-      getItem.mockRestore();
+      blocked.mockRestore();
     }
   });
 });

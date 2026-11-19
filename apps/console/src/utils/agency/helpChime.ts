@@ -6,7 +6,8 @@
  * **Fails silently, always.** A browser refuses sound from a context that no user gesture unlocked
  * (a page loaded and never clicked), and some have no `AudioContext` at all; the red row and card
  * carry the request either way, so a refusal is no error: nothing here throws or logs. A context left
- * `suspended` is asked to resume and plays only if it does. {@link unlockHelpChime} is called from
+ * `suspended` is asked to resume and plays only if it does, once however many requests came in
+ * while it waited (`pendingPlay`). {@link unlockHelpChime} is called from
  * the sound toggle, a gesture, so turning the sound on also makes it able to play.
  */
 
@@ -29,6 +30,12 @@ const NOTE_S = 0.16;
 const PEAK = 0.18;
 
 let context: ChimeAudioContext | null = null;
+/**
+ * A play is waiting on the context's `resume()`. At most one: a suspended context resumes only on
+ * a gesture, possibly minutes later, and every play queued behind it would then sound at once, one
+ * loud clipped burst. Requests that came in meanwhile are on screen; one chime says so.
+ */
+let pendingPlay = false;
 let makeContext: () => ChimeAudioContext | null = () => {
   const Ctor = typeof window === 'undefined'
     ? undefined
@@ -40,6 +47,7 @@ let makeContext: () => ChimeAudioContext | null = () => {
 export function setHelpChimeContextFactoryForTests(factory: () => ChimeAudioContext | null): void {
   makeContext = factory;
   context = null;
+  pendingPlay = false;
 }
 
 function contextOrNull(): ChimeAudioContext | null {
@@ -80,13 +88,18 @@ export function playHelpChime(): void {
       tones(ctx);
       return;
     }
+    if (pendingPlay) return;
+    pendingPlay = true;
     ctx.resume().then(() => {
+      pendingPlay = false;
       if (ctx.state === 'running') tones(ctx);
     }).catch(() => {
       // Blocked until a gesture: the row and the card carry the request.
+      pendingPlay = false;
     });
   } catch {
     // No audio here: the row and the card carry the request.
+    pendingPlay = false;
   }
 }
 

@@ -2143,7 +2143,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 | `apps/console/src/__tests__/api/inboundCalls.test.ts` (the call routes, the queue, reassign, the count and the summary, and the voicemail URL: never anywhere but its own route) | 14 |
 | `apps/console/src/__tests__/utils/inboundCall.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/agencyStationReducer.inbound.test.ts` | 6 |
-| `apps/console/src/__tests__/utils/agencyStationReducer.floorAssist.test.ts` (Need help's open request: the raise and cancel answers, `ready.help`, `help_answered` and `help_cleared` only for the request on screen, no re-open by a late answer; supervisor messages each id once, kept through `ready`, capped, LF24, LF25) | 13 |
+| `apps/console/src/__tests__/utils/agencyStationReducer.floorAssist.test.ts` (Need help's open request: the raise and cancel answers, `ready.help`, `help_answered` and `help_cleared` only for the request on screen, no re-open by a late answer, even one whose frames came first or whose raise failed after the server took it; an answer kept through the agent's cancel; supervisor messages each id once, kept through `ready`, capped, LF24, LF25) | 17 |
 | `apps/console/src/__tests__/utils/inboundRouteForm.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/inboundCopy.test.ts` | 5 |
 
@@ -2243,7 +2243,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` | 28 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 49 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.floorAssist.test.tsx` (floor assist on the station, LF24–LF26: Need help offered, raised, cancelled, every refusal, restored from `ready.help`, answered and cleared only for its own `raised_at`; supervisor messages as text, announced politely, never taking focus, stacked; the break countdown) | 29 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.floorAssist.test.tsx` (floor assist on the station, LF24–LF26: Need help offered, raised, cancelled, every refusal, restored from `ready.help`, answered and cleared only for its own `raised_at`; supervisor messages as text, announced politely, never taking focus, stacked (one on a phone, after the call controls); the polite region never clobbered, the same words said again, one region through a move to an inbound call; no "cancelled" for an answered request; the break countdown) | 35 |
 | `apps/console/src/__tests__/pages/AgentHomePage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgentPerformancePage.test.tsx` | 51 |
 | `apps/console/src/__tests__/pages/AnalysisProfilesPage.test.tsx` | 9 |
@@ -2291,7 +2291,7 @@ Files: `SoftphoneCallDetailPage.tsx`, `SoftphoneCallsPage.tsx`, `closeSoftphoneS
 | `apps/console/src/__tests__/pages/HomePage.test.tsx` (and a card's stale Pause or Resume reading the board at once; the grouped calling-hours Got it held per campaign across the filter) | 47 |
 | `apps/console/src/__tests__/pages/HomePage.assist.test.tsx` (Live floor's Phase 3: Need help's row, red card and chip, the chime once per new request, muted and without storage, Talk and Send reminder and each refusal, Give to free agents previewed then committed, never on pool, a stale preview confirmed again, nothing while the flags are off) | 21 |
 | `apps/console/src/__tests__/pages/HomePage.floor.test.tsx` (Live floor's Phase 2: the cards ranked and filtered, Listen, Make available and its drawer read from each floor, Join coming soon and no Talk or Send reminder with floor assist off, the fallback, Retry after a refusal, the server's clock, breaks over the limit off the badge and their Got it, a break crossing the limit on its card and in Needs you now together, an equal read re-rendering no card, an open Need help read again re-rendering none, Agents working, Will pay, who paused) | 27 |
-| `apps/console/src/__tests__/pages/CallbacksPage.test.tsx` (the account's list: rows with no number, tabs and filter in the URL, Load more, a late answer dropped, empty, error and refusal) | 11 |
+| `apps/console/src/__tests__/pages/CallbacksPage.test.tsx` (the account's list: rows with no number, tabs and filter in the URL, Load more with each row once, a late answer dropped, empty (naming a campaign the board does not), error and refusal) | 13 |
 | `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` | 11 |
 | `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` | 8 |
 
@@ -2428,7 +2428,7 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/homeAcks.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/liveFloor.test.ts` | 26 |
 | `apps/console/src/__tests__/utils/liveFloorAgents.test.ts` (and Need help's rows, order and chip, break rows on the reason's limit, LF28, LF33) | 32 |
-| `apps/console/src/__tests__/utils/floorAssist.test.ts` (messages and their refusals, Send reminder's words, Need help's keys, the chime's setting without storage and its silence, the hand-off's offer and words, the Callbacks page's words) | 17 |
+| `apps/console/src/__tests__/utils/floorAssist.test.ts` (messages and their refusals, Send reminder's words, Need help's keys, the chime's setting without storage, its silence and one play at most waiting on a suspended context, the hand-off's offer and words, the Callbacks page's words and paging) | 20 |
 | `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 82 |
 

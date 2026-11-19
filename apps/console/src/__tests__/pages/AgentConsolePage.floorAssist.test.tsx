@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   leaveAgencySession: vi.fn(),
   raiseHelp: vi.fn(),
   cancelHelp: vi.fn(),
+  getInboundCall: vi.fn(),
   useTenant: vi.fn(),
   flags: new Set<string>(),
 }));
@@ -30,6 +31,13 @@ vi.mock('../../api/agency', () => ({
   raiseHelp: mocks.raiseHelp,
   cancelHelp: mocks.cancelHelp,
 }));
+vi.mock('../../api/inbound', () => ({
+  getInboundCall: mocks.getInboundCall,
+  updateInboundCallNotes: vi.fn(),
+  hangupInboundCall: vi.fn(),
+  dispositionInboundCall: vi.fn(),
+  markInboundCallDnc: vi.fn(),
+}));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'u-1', display_name: 'Ravi Kumar', email: 'ravi@example.com', avatar_url: null } }),
@@ -41,6 +49,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { ApiError } from '../../api/client';
 import { FakeSocket, latestSocket } from '../helpers/fakeSocket';
+import { inboundCall } from '../helpers/inbound';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -103,6 +112,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const message = (id: string, text: string, from: string | null = 'Priya N') => ({
+  event: 'supervisor_message',
+  id,
+  text,
+  from_name: from,
+  sent_at: '2026-11-19T10:01:00.000Z',
+});
+
 async function mounted() {
   render(
     <MemoryRouter initialEntries={['/station?campaign=camp-1']}>
@@ -131,7 +148,10 @@ async function onCall() {
 
 const helpButton = () => screen.getByTestId('need-help-button');
 const status = () => screen.queryByTestId('need-help-status')?.textContent ?? null;
-const announcer = () => screen.getByTestId('floor-assist-announcer').textContent;
+/** Everything the polite region holds, one entry per thing said, oldest first. */
+const said = () => within(screen.getByTestId('floor-assist-announcer')).queryAllByTestId('floor-assist-said').map((n) => n.textContent);
+/** The last thing the polite region said. */
+const announcer = () => said().at(-1) ?? '';
 
 async function pressHelp() {
   await act(async () => {
@@ -313,23 +333,15 @@ describe('Need help: what the station hears', () => {
   it('clears silently when the session ends', async () => {
     await onCall();
     await pressHelp();
-    const before = announcer();
+    const before = said();
     await frame({ event: 'help_cleared', raised_at: R1, reason: 'session_ended' });
     expect(status()).toBeNull();
     expect(screen.queryByTestId('need-help-dismiss')).toBeNull();
-    expect(announcer()).toBe(before);
+    expect(said()).toEqual(before);
   });
 });
 
 describe('supervisor messages', () => {
-  const message = (id: string, text: string, from: string | null = 'Priya N') => ({
-    event: 'supervisor_message',
-    id,
-    text,
-    from_name: from,
-    sent_at: '2026-11-19T10:01:00.000Z',
-  });
-
   it('shows the sender, the time and the text as plain text, never as markup', async () => {
     await onCall();
     const hostile = 'Offer the <b>3-month</b> plan <img src=x onerror="window.__pwned=1">';
@@ -354,7 +366,9 @@ describe('supervisor messages', () => {
     const region = screen.getByTestId('floor-assist-announcer');
     expect(region.getAttribute('aria-live')).toBe('polite');
     expect(region.getAttribute('role')).not.toBe('alert');
-    expect(region.textContent).toBe('Message from Priya N: Wrap up this call');
+    // Each utterance a node of its own, said as it is added.
+    expect(region.getAttribute('aria-atomic')).toBe('false');
+    expect(said()).toEqual(['Message from Priya N: Wrap up this call']);
     // Laid over the station, not inside the action bar: nothing in the bar moved.
     expect(screen.getByTestId('supervisor-messages').closest('[data-testid="need-help"]')).toBeNull();
     expect(mute.closest('div')!.contains(screen.getByTestId('supervisor-messages'))).toBe(false);
@@ -382,6 +396,112 @@ describe('supervisor messages', () => {
     await onCall();
     await frame({ event: 'supervisor_message', id: 'm-1', from_name: 'Priya', sent_at: R1 });
     expect(screen.queryByTestId('supervisor-message')).toBeNull();
+  });
+});
+
+describe('what the polite region says (LF25)', () => {
+  it('says a Talk answer’s message and then the answer, the message never overwritten', async () => {
+    await onCall();
+    await pressHelp();
+    // A Talk answer, in the server's order.
+    await frame(message('m-1', 'Offer the 3-month plan'));
+    await frame({ event: 'help_answered', raised_at: R1, by_name: 'Priya N', how: 'message' });
+    await frame({ event: 'help_cleared', raised_at: R1, reason: 'answered' });
+    expect(said()).toEqual([
+      'Help requested. Your supervisors can see it.',
+      'Message from Priya N: Offer the 3-month plan',
+      'Priya N sent you a message.',
+    ]);
+  });
+
+  it('says the same words again when they are said again', async () => {
+    await onCall();
+    await frame(message('m-1', 'Carry on'));
+    await frame(message('m-2', 'Carry on'));
+    expect(said()).toEqual(['Message from Priya N: Carry on', 'Message from Priya N: Carry on']);
+    // The same refusal twice.
+    mocks.raiseHelp.mockRejectedValue(new Error('offline'));
+    await pressHelp();
+    await pressHelp();
+    expect(said().slice(-2)).toEqual([
+      'Your request for help did not go through. Try again.',
+      'Your request for help did not go through. Try again.',
+    ]);
+  });
+
+  it('keeps one region through a move to an inbound call and back, and says nothing again', async () => {
+    mocks.getInboundCall.mockReturnValue(new Promise(() => {}));
+    await onCall();
+    await pressHelp();
+    await frame({ event: 'help_answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    await frame(message('m-1', 'I am listening'));
+    const region = screen.getByTestId('floor-assist-announcer');
+    const before = said();
+    expect(before).toEqual([
+      'Help requested. Your supervisors can see it.',
+      'Priya N is listening in.',
+      'Message from Priya N: I am listening',
+    ]);
+    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
+    await frame({ event: 'inbound_call', call: inboundCall() });
+    expect(screen.getByTestId('station-inbound')).toBeTruthy();
+    // The same node, holding what it held: not remounted, nothing said again.
+    expect(screen.getByTestId('floor-assist-announcer')).toBe(region);
+    expect(said()).toEqual(before);
+    await frame({ event: 'inbound_call', call: inboundCall({ state: 'ended', outcome: 'abandoned_in_queue', settled_at: '2026-11-19T10:03:01Z' }) });
+    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T10:03:01.000Z' });
+    expect(screen.queryByTestId('station-inbound')).toBeNull();
+    expect(screen.getByTestId('floor-assist-announcer')).toBe(region);
+    expect(said()).toEqual(before);
+  });
+
+  it('keeps the answer and says no cancel when the cancel lands between the answer and its clear', async () => {
+    await onCall();
+    await pressHelp();
+    await frame({ event: 'help_answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    expect(status()).toBe('Priya N is listening in.');
+    await pressHelp();
+    expect(mocks.cancelHelp).toHaveBeenCalledTimes(1);
+    expect(status()).toBe('Priya N is listening in.');
+    expect(said()).not.toContain('Help request cancelled.');
+    await frame({ event: 'help_cleared', raised_at: R1, reason: 'answered' });
+    expect(status()).toBe('Priya N is listening in.');
+    expect(said()).toEqual(['Help requested. Your supervisors can see it.', 'Priya N is listening in.']);
+  });
+});
+
+describe('supervisor messages on a phone', () => {
+  function narrowScreen(matches: boolean) {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: matches && query === '(max-width: 767px)',
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  }
+
+  it('shows one card at a time, the rest counted', async () => {
+    narrowScreen(true);
+    await onCall();
+    for (const id of ['m-1', 'm-2', 'm-3']) await frame(message(id, `Note ${id}`));
+    expect(screen.getAllByTestId('supervisor-message')).toHaveLength(1);
+    expect(screen.getByTestId('supervisor-message-text').textContent).toBe('Note m-1');
+    expect(screen.getByTestId('supervisor-messages-more').textContent).toBe('2 more messages');
+  });
+
+  it('puts the stack after the call controls in tab order, on the campaign’s screen and an inbound call’s', async () => {
+    mocks.getInboundCall.mockReturnValue(new Promise(() => {}));
+    await onCall();
+    await frame(message('m-1', 'Note'));
+    const after = (control: Element) =>
+      Boolean(control.compareDocumentPosition(screen.getByTestId('supervisor-messages')) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(after(helpButton())).toBe(true);
+    expect(after(screen.getByRole('button', { name: /Hang up/ }))).toBe(true);
+    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
+    await frame({ event: 'inbound_call', call: inboundCall() });
+    const bar = screen.getByTestId('inbound-action-bar');
+    for (const control of within(bar).getAllByRole('button')) expect(after(control)).toBe(true);
+    expect(after(screen.getByTestId('inbound-body'))).toBe(true);
   });
 });
 

@@ -113,20 +113,25 @@ export interface StationState {
    * The agent's open Need help request (LF4, LF15): set by the HTTP answer to the agent's own
    * raise (`help_set`), stated by `ready.help` on every (re)connect (a snapshot: absent means none
    * is open), and ended only by a `help_cleared` whose `raised_at` is this one's, or by the
-   * agent's own cancel. A frame about any other request changes nothing (decision LF24).
+   * agent's own cancel. A frame about any other request changes nothing (decision LF24); with
+   * nothing open, a `help_answered` is kept as the notice and a `help_cleared` is remembered in
+   * `helpEndedAt` (the raise's own answer may still be in flight, or have failed after the server
+   * took it).
    */
   help: AgencySessionHelp | null;
   /**
    * What the station says about the request it showed last, once something happened to it: a
    * supervisor answered (`help_answered`, kept through the `help_cleared` that follows), or it
-   * lapsed unanswered (`help_cleared` `expired`). A cancel and a session end say nothing. Cleared
-   * by the agent (Dismiss), by a new request, and by a `ready` that states a different open one.
+   * lapsed unanswered (`help_cleared` `expired`). A cancel and a session end say nothing; a cancel
+   * landing after the answer keeps it. Cleared by the agent (Dismiss), by a new request, and by a
+   * `ready` that states a different open one.
    */
   helpNotice: StationHelpNotice | null;
   /**
-   * The `raised_at` of the last request this station saw end (a `help_cleared`, the agent's
-   * cancel, or a `ready` that no longer states it). An HTTP raise answer that lands after its own
-   * request was already ended by a frame names this one, and must not open it again.
+   * The `raised_at` of the last request this station saw end (a `help_cleared`, even with nothing
+   * on screen, the agent's cancel, or a `ready` that no longer states it). An HTTP raise answer
+   * that lands after its own request was already ended by a frame names this one, and must not
+   * open it again.
    */
   helpEndedAt: string | null;
   /**
@@ -438,22 +443,32 @@ export function stationReducer(state: StationState, action: StationAction): Stat
     case 'help_set': {
       const { help } = action;
       if (help === null) {
-        // The agent's cancel: the request ends here, and says nothing (they know).
+        // The agent's cancel: the request ends here, and says nothing (they know). An answer that
+        // reached it first (`help_answered`, its `help_cleared` still on the way) is kept: the
+        // supervisor is listening in or wrote, whatever the cancel says.
         if (state.help === null) return state;
-        return { ...state, help: null, helpNotice: null, helpEndedAt: state.help.raised_at };
+        const answered = answeredNoticeFor(state.helpNotice, state.help.raised_at);
+        return { ...state, help: null, helpNotice: answered, helpEndedAt: state.help.raised_at };
       }
       // A frame already ended this very request (it was answered or lapsed while the raise was in
       // flight): the late answer must not open it again.
       if (help.raised_at === state.helpEndedAt) return state;
       // A raise while one is open answers the open one unchanged (LF13): nothing moves.
       if (state.help?.raised_at === help.raised_at && state.help.call_id === help.call_id) return state;
-      return { ...state, help: { raised_at: help.raised_at, call_id: help.call_id }, helpNotice: null };
+      // An answer that arrived before the raise's own answer is about this request: kept.
+      return {
+        ...state,
+        help: { raised_at: help.raised_at, call_id: help.call_id },
+        helpNotice: answeredNoticeFor(state.helpNotice, help.raised_at),
+      };
     }
 
     case 'help_answered': {
       const { frame } = action;
-      // Only the request on screen: a late frame about an earlier one says nothing about this one.
-      if (state.help?.raised_at !== frame.raised_at) return state;
+      // A late frame about an earlier request says nothing about the one on screen. With nothing
+      // on screen it may be about a request whose raise answer is still in flight (or failed after
+      // the server took it): the answer is kept, and shown.
+      if (state.help !== null && state.help.raised_at !== frame.raised_at) return state;
       return {
         ...state,
         helpNotice: { kind: 'answered', raised_at: frame.raised_at, by_name: frame.by_name, how: frame.how },
@@ -462,7 +477,19 @@ export function stationReducer(state: StationState, action: StationAction): Stat
 
     case 'help_cleared': {
       const { frame } = action;
-      if (state.help?.raised_at !== frame.raised_at) return state;
+      if (state.help === null) {
+        // Nothing on screen: remembered as ended, so a raise answer still in flight cannot open it
+        // (it would then stay open forever: no frame about it is coming). An answer that arrived
+        // first stays (and an answer told only by the clear is still an answer); a lapse, a cancel
+        // or a session end says nothing about a request the station is not showing.
+        const held = answeredNoticeFor(state.helpNotice, frame.raised_at);
+        const helpNotice = frame.reason === 'answered'
+          ? held ?? { kind: 'answered' as const, raised_at: frame.raised_at, by_name: null, how: null }
+          : state.helpNotice;
+        if (state.helpEndedAt === frame.raised_at && helpNotice === state.helpNotice) return state;
+        return { ...state, helpNotice, helpEndedAt: frame.raised_at };
+      }
+      if (state.help.raised_at !== frame.raised_at) return state;
       let helpNotice: StationHelpNotice | null = null;
       if (frame.reason === 'answered') {
         const held = state.helpNotice;
@@ -503,6 +530,11 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       return { ...state, dialActivity: next };
     }
   }
+}
+
+/** The notice when it says that request `raisedAt` was answered, else null. */
+function answeredNoticeFor(notice: StationHelpNotice | null, raisedAt: string): StationHelpNotice | null {
+  return notice?.kind === 'answered' && notice.raised_at === raisedAt ? notice : null;
 }
 
 /**

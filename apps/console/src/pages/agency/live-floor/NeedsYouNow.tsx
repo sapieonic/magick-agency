@@ -79,6 +79,9 @@ function rowIcon(item: HomeAttentionItem): LucideIcon {
   return CircleAlert;
 }
 
+/** The chime toggle's name, the same on and off: its `aria-pressed` says which (LF31). */
+export const HELP_CHIME_LABEL = 'Need help sound';
+
 /**
  * Needs you now (B28a's list, LF9's order): Home's attention rows, restyled. Every rule is Home's
  * (`homeAttention`), so the sidebar badge counts this list: the dangers and warnings, never an
@@ -152,7 +155,10 @@ export const NeedsYouNow = memo(function NeedsYouNow({
             data-testid="home-help-chime"
           >
             {assist.chime.on ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
-            {assist.chime.on ? 'Need help sound on' : 'Need help sound off'}
+            {/* The name stays "Need help sound" whatever the state: `aria-pressed` says on or off,
+                and a name that changed too would say it twice ("…sound off, not pressed"). */}
+            {HELP_CHIME_LABEL}
+            <span aria-hidden="true">{assist.chime.on ? ' on' : ' off'}</span>
           </button>
         )}
       </div>

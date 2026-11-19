@@ -91,14 +91,34 @@
   box-shadow: var(--shadow-sm);
 }
 
-/* A phone: the full width under the header, a little lower because the header wraps there. */
+/*
+ * A phone: the full width under the header, a little lower because the header wraps there. One
+ * card at a time (`SUPERVISOR_MESSAGES_SHOWN_NARROW`, the same breakpoint), compact, and never
+ * taller than a third of the screen (a long message scrolls inside it), so the outcome form and
+ * the call controls stay in view.
+ */
 @media (max-width: 767px) {
   .stack {
     top: 112px;
     right: 12px;
     left: 12px;
     width: auto;
-    max-height: calc(100dvh - 112px - 160px);
+    gap: 4px;
+    max-height: min(33dvh, calc(100dvh - 112px - 160px));
+  }
+
+  .card {
+    padding: 6px 10px;
+  }
+
+  .text {
+    margin-top: 2px;
+    font-size: 0.875rem;
+    line-height: 1.35;
+  }
+
+  .more {
+    padding: 2px 10px;
   }
 }
 

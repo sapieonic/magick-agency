@@ -66,7 +66,8 @@ export function useStationHelp({
   const say = useCallback((text: string) => setAnnouncement((was) => ({ text, seq: (was?.seq ?? 0) + 1 })), []);
   // Read at press time: a double press while the first is in flight sends nothing more.
   const busyRef = useRef(false);
-  const openRef = useLatestRef(help !== null);
+  const helpRef = useLatestRef(help);
+  const noticeRef = useLatestRef(helpNotice);
 
   // A refusal is about the state it was pressed in; a new state makes it stale.
   useEffect(() => {
@@ -78,7 +79,8 @@ export function useStationHelp({
 
   const press = useCallback(() => {
     if (!offered || !sessionId || busyRef.current) return;
-    const cancelling = openRef.current;
+    const cancelling = helpRef.current !== null;
+    const raisedAt = helpRef.current?.raised_at ?? null;
     if (!cancelling && !helpRaisable(agentState)) return;
     busyRef.current = true;
     setBusy(true);
@@ -87,7 +89,11 @@ export function useStationHelp({
     request
       .then((answer) => {
         setHelp(answer.help);
-        if (cancelling) say(STATION_HELP_COPY.cancelledAnnouncement);
+        // A request a supervisor answered while the cancel was on its way was not cancelled: the
+        // answer is what the station says (it already did), never "cancelled" after it.
+        const notice = noticeRef.current;
+        const answered = notice?.kind === 'answered' && notice.raised_at === raisedAt;
+        if (cancelling && !answered) say(STATION_HELP_COPY.cancelledAnnouncement);
       })
       .catch((err: unknown) => {
         const text = helpRefusalText(err, cancelling ? 'cancel' : 'raise');
@@ -98,7 +104,7 @@ export function useStationHelp({
         busyRef.current = false;
         setBusy(false);
       });
-  }, [offered, sessionId, tenantId, accountId, agentState, openRef, setHelp, say]);
+  }, [offered, sessionId, tenantId, accountId, agentState, helpRef, noticeRef, setHelp, say]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers

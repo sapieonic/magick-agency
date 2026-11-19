@@ -15,10 +15,12 @@ import {
   CALLBACKS_DUE_PARAM,
   CALLBACKS_TABS,
   CALLBACK_SOURCE_LABELS,
+  appendCallbackRows,
   callbackContactHref,
   callbackCustomer,
   callbackDueText,
   callbackOwner,
+  callbackRowKey,
   callbacksDueOf,
   callbacksEmptyText,
   callbacksErrorText,
@@ -85,7 +87,8 @@ export default function CallbacksPage() {
     listAccountCallbacks({ due, cursor, ...(campaignId ? { campaign_id: campaignId } : {}) }, tenantId, accountId)
       .then((page) => {
         if (generation.current !== mine) return;
-        setList({ status: 'ready', rows: [...rows, ...page.rows], cursor: page.next_cursor, asOf: page.as_of });
+        // A row can move between pages while paging (its due time changed, another came in): each once.
+        setList({ status: 'ready', rows: appendCallbackRows(rows, page.rows), cursor: page.next_cursor, asOf: page.as_of });
         setMore('idle');
       })
       .catch(() => {
@@ -195,14 +198,14 @@ export default function CallbacksPage() {
                 {`As of ${formatTime(list.asOf)}. Times are in your time zone.`}
               </p>
               {list.rows.length === 0 ? (
-                <p className={styles.quiet} data-testid="callbacks-empty">{callbacksEmptyText(due, pickedName)}</p>
+                <p className={styles.quiet} data-testid="callbacks-empty">{callbacksEmptyText(due, campaignId ? { name: pickedName } : null)}</p>
               ) : (
                 <ul className={own.rows} data-testid="callbacks-list">
                   {list.rows.map((row) => {
                     const owner = callbackOwner(row);
                     const customer = callbackCustomer(row);
                     return (
-                      <li key={`${row.campaign_id}:${row.contact_id}`} className={own.row} data-testid={`callbacks-row-${row.contact_id}`}>
+                      <li key={callbackRowKey(row)} className={own.row} data-testid={`callbacks-row-${row.contact_id}`}>
                         <div className={own.rowName}>
                           <span className={own.name}>{customer}</span>
                           <span className={own.campaign}>{row.campaign_name}</span>

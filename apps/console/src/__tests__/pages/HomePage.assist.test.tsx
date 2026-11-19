@@ -222,9 +222,13 @@ describe('the chime (LF31)', () => {
       const view = renderHome();
       const toggle = await screen.findByTestId('home-help-chime');
       expect(toggle.getAttribute('aria-pressed')).toBe('true');
+      // One name whatever the state; `aria-pressed` says on or off (the visible word is hidden from it).
+      expect(screen.getByRole('button', { name: 'Need help sound', pressed: true })).toBe(toggle);
       expect(toggle.textContent).toBe('Need help sound on');
       fireEvent.click(toggle);
       expect(toggle.getAttribute('aria-pressed')).toBe('false');
+      expect(screen.getByRole('button', { name: 'Need help sound', pressed: false })).toBe(toggle);
+      expect(toggle.textContent).toBe('Need help sound off');
       expect(mocks.unlockHelpChime).toHaveBeenCalled();
       expect(window.localStorage.getItem('magick.liveFloor.helpChime.v1')).toBe('off');
       mocks.getAgencyFloor.mockImplementation(async () => floorOf([RAVI(), { ...ARJUN(), help: { raised_at: minutesAgo(0), call_id: null } }]));
