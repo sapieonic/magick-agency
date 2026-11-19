@@ -93,8 +93,8 @@ const ALL_MIGRATIONS = [
   '0051_campaign_stopping_at',
   '0052_floor_assist',
   '0053_account_callbacks_index',
-  '0052_analysis_vendor_answers',
-  '0053_analysis_vendor_answer_indexes',
+  '0054_analysis_vendor_answers',
+  '0055_analysis_vendor_answer_indexes',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

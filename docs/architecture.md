@@ -824,7 +824,7 @@ every account the caller belongs to (CH2) where every internal handler is single
   vendor's newest answer was a refusal, else null: the newest refusal of a queued job
   (`vendor_refused_at`, stamped only by `requeueRateLimited` with `error_code = 'RATE_LIMITED'`) is
   newer than the newest completion (`completed_at`, stamped by `completeWithAnalysis`), each read
-  from the end of a partial index (0052, 0053; `analysisDelaySql` in
+  from the end of a partial index (0054, 0055; `analysisDelaySql` in
   `dialer-analysis-job.repository.ts`). The first summary written after the last refusal clears it
   while the refused jobs, claimed last, still drain; a graceful requeue or stale recovery keeps a
   refusal's time. The breaker lives in the analysis worker's process, so the routes read the

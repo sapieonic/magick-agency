@@ -912,8 +912,8 @@ settings and indexes only, so going back past them needs no `migrate:down`. Nor 
 time from its audit row again. `0053_account_callbacks_index.sql` (the Live floor's callbacks list)
 adds one on `agency_contacts`, partial (the pending contacts whose last call was a conversation or
 that an inbound miss booked): if `agency_contacts` holds more than about a million rows, build it
-`CONCURRENTLY` first the same way; going back past it needs no `migrate:down` (an index only). Nor do `0052_analysis_vendor_answers.sql` and
-`0053_analysis_vendor_answer_indexes.sql`: an older image ignores the nullable `vendor_refused_at` and
+`CONCURRENTLY` first the same way; going back past it needs no `migrate:down` (an index only). Nor do `0054_analysis_vendor_answers.sql` and
+`0055_analysis_vendor_answer_indexes.sql`: an older image ignores the nullable `vendor_refused_at` and
 `completed_at` and reads the summary delay from `error_code` alone again.
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,

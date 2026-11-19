@@ -1,7 +1,7 @@
-// Real Postgres: migrations/0052_analysis_vendor_answers.sql and 0053_analysis_vendor_answer_indexes.sql
+// Real Postgres: migrations/0054_analysis_vendor_answers.sql and 0055_analysis_vendor_answer_indexes.sql
 // (decision AD1: a call's summary reads delayed while the AI vendor's newest answer is a refusal).
 // globalSetup has applied every migration. Pins the two columns (nullable, no default, so the ADD
-// COLUMN rewrites nothing and every row already there reads null), 0052's lock timeout, the two
+// COLUMN rewrites nothing and every row already there reads null), 0054's lock timeout, the two
 // partial indexes by their definitions, that the delay read (`analysisDelaySql`, the repository's
 // own SQL) probes each index on a seeded queue rather than walking it, the invalid-index refusal,
 // and down then up.
@@ -24,8 +24,8 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
-const COLUMNS_FILE = '0052_analysis_vendor_answers.sql';
-const INDEXES_FILE = '0053_analysis_vendor_answer_indexes.sql';
+const COLUMNS_FILE = '0054_analysis_vendor_answers.sql';
+const INDEXES_FILE = '0055_analysis_vendor_answer_indexes.sql';
 
 const DEFINITIONS: Record<string, string> = {
   idx_dialer_analysis_jobs_vendor_refused:
@@ -66,7 +66,7 @@ function upStatements(file: string): string[] {
 
 const EXPECTED_COLUMNS = { vendor_refused_at: 'timestamp with time zone', completed_at: 'timestamp with time zone' };
 
-describe('0052 — dialer_analysis_jobs.vendor_refused_at and completed_at', () => {
+describe('0054 — dialer_analysis_jobs.vendor_refused_at and completed_at', () => {
   it('are nullable TIMESTAMPTZ columns with no default and a comment each; a new job has neither', async () => {
     expect(await columns()).toEqual(EXPECTED_COLUMNS);
     const call = await insertWebrtcCall();
@@ -89,11 +89,11 @@ describe('0052 — dialer_analysis_jobs.vendor_refused_at and completed_at', () 
   });
 });
 
-describe('0053 — the delay read\'s indexes of the newest refusal and the newest completion', () => {
+describe('0055 — the delay read\'s indexes of the newest refusal and the newest completion', () => {
   it('defines the two indexes exactly, built in a file of their own after a lock timeout', async () => {
     expect(await indexDefs()).toEqual(DEFINITIONS);
     expect(upStatements(INDEXES_FILE)[0]).toBe("SET LOCAL lock_timeout = '10s'");
-    // Out of 0052's ACCESS EXCLUSIVE: 0052 builds no index.
+    // Out of 0054's ACCESS EXCLUSIVE: 0054 builds no index.
     expect(upStatements(COLUMNS_FILE).some((s) => /CREATE INDEX/i.test(s))).toBe(false);
   });
 

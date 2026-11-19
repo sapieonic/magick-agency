@@ -2411,8 +2411,8 @@ is the design (`inbound.md` §4.3, §5.1; soft-phone pickup is P3). Changes:
   job is newer than the newest completion of any job), so the console says "Summary delayed: the
   AI service is not available right now. It will be written automatically when it is back." on the
   attempt and soft-phone call pages and "Delayed" in the soft-phone list. Server-wide by design
-  (the vendor keys are). Migrations `0052_analysis_vendor_answers.sql` (`vendor_refused_at`,
-  `completed_at`) and `0053_analysis_vendor_answer_indexes.sql` (two partial indexes, one index
+  (the vendor keys are). Migrations `0054_analysis_vendor_answers.sql` (`vendor_refused_at`,
+  `completed_at`) and `0055_analysis_vendor_answer_indexes.sql` (two partial indexes, one index
   probe each side). No vendor words reach the API; no Dart change (the app does not read it).
 - **Short recordings** (TR1): the runner fingerprints each fetched recording (bytes and SHA-256)
   and transcribes identical audio at most twice per job, within an attempt and across attempts

@@ -44,7 +44,7 @@ export const RATE_LIMITED_ERROR_CODE = 'RATE_LIMITED';
  * deploy does not make an old refusal new. No completion yet (NULL) reads as never.
  *
  * Uncorrelated, so Postgres evaluates each side once per statement (an InitPlan), each one probe
- * of the end of a partial index (0053: `idx_dialer_analysis_jobs_vendor_refused`, whose predicate
+ * of the end of a partial index (0055: `idx_dialer_analysis_jobs_vendor_refused`, whose predicate
  * is spelled exactly as here, and `idx_dialer_analysis_jobs_completed`), not a walk of the queue.
  */
 export const VENDOR_REFUSING_SQL = `((

@@ -1,4 +1,4 @@
--- 0052_analysis_vendor_answers.sql — when the AI vendor last refused an analysis job, and when a
+-- 0054_analysis_vendor_answers.sql — when the AI vendor last refused an analysis job, and when a
 -- job last completed (decision AD1: "Summary delayed: the AI service is not available right now").
 --
 -- A call's summary reads delayed (`analysis_delay: 'vendor_unavailable'`) when its job is queued
@@ -21,7 +21,7 @@
 -- `vendor_refused_at` and does not count as a refusal: the breaker's state is in memory, so after
 -- the deploy the worker claims at once and a vendor still refusing is recorded again within
 -- seconds. A job completed before it has no `completed_at`; the first completion after the deploy
--- writes one. 0053 indexes both (built out of this file's ACCESS EXCLUSIVE, 0041 / 0045's split).
+-- writes one. 0055 indexes both (built out of this file's ACCESS EXCLUSIVE, 0041 / 0045's split).
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────
 -- ADD COLUMN with no default is catalog-only (no rewrite), but takes ACCESS EXCLUSIVE on
@@ -29,7 +29,7 @@
 -- (db-hygiene.md).
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
--- Drops both columns (and with them 0053's indexes, were they still there); a release before this
+-- Drops both columns (and with them 0055's indexes, were they still there); a release before this
 -- one reads the delay from `error_code` alone again.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
@@ -44,10 +44,10 @@ ALTER TABLE dialer_analysis_jobs ADD COLUMN IF NOT EXISTS vendor_refused_at TIME
 ALTER TABLE dialer_analysis_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 COMMENT ON COLUMN dialer_analysis_jobs.vendor_refused_at IS
-  'When the AI vendor last refused this job (requeueRateLimited, with error_code RATE_LIMITED); kept by a graceful requeue or stale recovery, cleared on completion and manual retry. NULL for a job never refused, or refused before 0052 (decision AD1).';
+  'When the AI vendor last refused this job (requeueRateLimited, with error_code RATE_LIMITED); kept by a graceful requeue or stale recovery, cleared on completion and manual retry. NULL for a job never refused, or refused before 0054 (decision AD1).';
 
 COMMENT ON COLUMN dialer_analysis_jobs.completed_at IS
-  'When the job completed with a summary (completeWithAnalysis). NULL for a job not completed, or completed before 0052 (decision AD1).';
+  'When the job completed with a summary (completeWithAnalysis). NULL for a job not completed, or completed before 0054 (decision AD1).';
 
 -- Down Migration
 

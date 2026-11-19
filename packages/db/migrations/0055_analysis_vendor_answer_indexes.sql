@@ -1,5 +1,5 @@
--- 0053_analysis_vendor_answer_indexes.sql — the two indexes `analysisDelaySql` reads (decision AD1),
--- built out of 0052's ACCESS EXCLUSIVE (0041 / 0045's split).
+-- 0055_analysis_vendor_answer_indexes.sql — the two indexes `analysisDelaySql` reads (decision AD1),
+-- built out of 0054's ACCESS EXCLUSIVE (0041 / 0045's split).
 --
 -- The delay read compares the newest refusal of a queued job with the newest completion. It runs
 -- on every pending call's detail read and every soft-phone list page, so each side is one probe of
@@ -11,16 +11,16 @@
 --   the size of an outage's backlog and empty otherwise. `max(vendor_refused_at)` reads its end.
 --   The predicate is spelled as the read spells it, so the planner can prove the read implies it.
 -- idx_dialer_analysis_jobs_completed (completed_at) WHERE completed_at IS NOT NULL: one entry per
---   job completed since 0052. `max(completed_at)` reads its end. No other read filters on
+--   job completed since 0054. `max(completed_at)` reads its end. No other read filters on
 --   `completed_at`, so no sweep can switch to walking it.
 --
 -- ── Locking and cost ──────────────────────────────────────────────────────────
 -- Plain CREATE INDEX, not CONCURRENTLY: node-pg-migrate runs a SQL file's Up inside a transaction,
 -- where CONCURRENTLY is refused. It holds SHARE on dialer_analysis_jobs until commit: reads
--- proceed, writes wait while it is read once. On the release that adds 0052 both columns are NULL
+-- proceed, writes wait while it is read once. On the release that adds 0054 both columns are NULL
 -- everywhere (they are new), so each build is one read of the table that writes an empty index. It
--- cannot be built beforehand on a database without 0052 (the columns do not exist). `IF NOT EXISTS`
--- all the same, so a database already on 0052 can build them CONCURRENTLY first; the check at the
+-- cannot be built beforehand on a database without 0054 (the columns do not exist). `IF NOT EXISTS`
+-- all the same, so a database already on 0054 can build them CONCURRENTLY first; the check at the
 -- end of Up refuses an invalid index such a failed build leaves under a name (db-hygiene.md §2).
 -- `SET LOCAL lock_timeout = '10s'` first: a lock not granted within 10 s fails the migration (the
 -- deploy can be retried) instead of queueing the analysis worker's writes behind the wait.

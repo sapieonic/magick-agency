@@ -32,7 +32,7 @@ describe('dialer-analysis baseline (integration)', () => {
     );
     expect(gone.rows).toEqual([]);
     const idx = await getTestPool().query(`SELECT indexname FROM pg_indexes WHERE tablename = 'dialer_analysis_jobs'`);
-    // The baseline's four, plus 0053's two of the summary delay (AD1).
+    // The baseline's four, plus 0055's two of the summary delay (AD1).
     expect(idx.rows.map((r) => r.indexname).sort()).toEqual([
       'dialer_analysis_jobs_pkey', 'idx_dialer_analysis_jobs_completed', 'idx_dialer_analysis_jobs_runnable',
       'idx_dialer_analysis_jobs_stale', 'idx_dialer_analysis_jobs_vendor_refused', 'uq_dialer_analysis_jobs_call',
