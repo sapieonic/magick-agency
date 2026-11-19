@@ -638,6 +638,12 @@
     ]
   },
   {
+    "name": "agency_supervisor_message_mark_failures_total",
+    "kind": "Counter",
+    "description": "Supervisor messages a station took whose row could not be marked delivered (tried twice): the supervisor was told it was delivered, the audit row says so, and the stored row still reads delivered = false",
+    "attributes": []
+  },
+  {
     "name": "agency_supervisor_messages_total",
     "kind": "Counter",
     "description": "Supervisor messages to an agent's station (Talk to agent, Send reminder), by result: delivered, or agent_not_live (no live station could receive it)",

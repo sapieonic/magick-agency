@@ -288,8 +288,9 @@ export interface AgencyLateCallbacksPreview extends Omit<AgencyAssignmentPreview
   /** Always null: the dealing is by load, not a random order. */
   seed: null;
   /**
-   * The agents live on the campaign who could receive, fewest callbacks due first (ties by id):
-   * empty when nobody is live, so nothing would move ("No agent is free on this campaign").
+   * The agents live on the campaign and not on a break who could receive, fewest callbacks due
+   * first (ties by id): empty when nobody is free, so nothing would move ("No agent is free on this
+   * campaign").
    * `per_agent` lists the ones the plan gives callbacks to (`receiving`), and the away owners
    * (`giving`).
    */

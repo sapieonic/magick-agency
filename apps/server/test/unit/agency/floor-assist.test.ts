@@ -12,16 +12,18 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
-const metrics = vi.hoisted(() => ({ raised: vi.fn(), cleared: vi.fn(), message: vi.fn() }));
+const metrics = vi.hoisted(() => ({ raised: vi.fn(), cleared: vi.fn(), message: vi.fn(), markFailed: vi.fn() }));
 vi.mock('@magick-agency/observability/metrics/agency', () => ({
   trackHelpRaised: metrics.raised, trackHelpCleared: metrics.cleared, trackSupervisorMessage: metrics.message,
+  trackSupervisorMessageMarkFailed: metrics.markFailed,
 }));
 
 import {
   FloorAssistService,
   FLOOR_ASSIST_REFUSAL_MESSAGES,
   normaliseMessageText,
-  openHelpOfSession,
+  senderNameForFrame,
+  SENDER_NAME_MAX_CHARS,
   type FloorAssistDeps,
 } from '../../../src/agency/floor-assist.js';
 import { AGENCY_HELP_EXPIRY_MS, AGENCY_FLOOR_ASSIST_ERROR_CODES } from '@magick-agency/contracts/agency';
@@ -46,6 +48,7 @@ beforeEach(() => {
     answer: vi.fn(async () => ({ ...ended(), answered_at: new Date(RAISED.getTime() + 42_000) })),
     endWithSession: vi.fn(async () => ended()),
     expireDue: vi.fn(async () => []),
+    openForSession: vi.fn(async () => null),
     insertMessage: vi.fn(async () => ({ id: 'msg-1', sent_at: new Date('2026-11-19T10:01:00.000Z') })),
     markDelivered: vi.fn(async () => undefined),
   };
@@ -207,6 +210,15 @@ describe('every clearing path: the frames, one audit row, one metric', () => {
   });
 });
 
+describe('openHelp (the station\'s ready.help)', () => {
+  it('reads the repository\'s open request with the service\'s expiry (the database clock), in the wire shape; null when none', async () => {
+    repo['openForSession']!.mockResolvedValueOnce({ session_id: SESSION.id, raised_at: RAISED, call_id: 'call-1' });
+    expect(await service().openHelp(SESSION)).toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1' });
+    expect(repo['openForSession']).toHaveBeenCalledWith(SESSION.id, 't-1', 'a-1', AGENCY_HELP_EXPIRY_MS);
+    expect(await service().openHelp(SESSION)).toBeNull();
+  });
+});
+
 describe('sendMessage', () => {
   const send = (over: Partial<Parameters<FloorAssistService['sendMessage']>[0]> = {}) =>
     service().sendMessage({ session: SESSION, senderUserId: 'sup-1', fromName: 'Anitha N', text: 'Offer the 3-month plan', ...over });
@@ -249,6 +261,35 @@ describe('sendMessage', () => {
     expect(deps.audits).toEqual([expect.objectContaining({ action: 'agency_session.message_sent', details: expect.objectContaining({ delivered: false }) })]);
   });
 
+  it('the mark fails once: tried again, marked, nothing counted as a failure', async () => {
+    repo['markDelivered']!.mockRejectedValueOnce(new Error('connection reset'));
+    expect(await send()).toMatchObject({ ok: true, id: 'msg-1' });
+    expect(repo['markDelivered']).toHaveBeenCalledTimes(2);
+    expect(metrics.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('the mark fails twice: still delivered (the agent has it), counted, and the metric, audit row and help answer all still happen', async () => {
+    // FALSIFIED: with the mark awaited bare again (no catch) this reds: the send rejects, which the
+    // route turned into a 500 for a message the agent had been shown.
+    repo['markDelivered']!.mockRejectedValue(new Error('pool exhausted'));
+    expect(await send()).toEqual({ ok: true, id: 'msg-1', sent_at: new Date('2026-11-19T10:01:00.000Z') });
+    expect(repo['markDelivered']).toHaveBeenCalledTimes(2);
+    expect(metrics.markFailed).toHaveBeenCalledTimes(1);
+    expect(metrics.message).toHaveBeenCalledWith('delivered');
+    expect(deps.audits.map((a) => a['action'])).toEqual(['agency_session.message_sent', 'agency_session.help_answered']);
+    expect(deps.audits[0]).toMatchObject({ details: expect.objectContaining({ delivered: true }) });
+    expect(events().map((f) => f['event'])).toEqual(['supervisor_message', 'help_answered', 'help_cleared']);
+  });
+
+  it('each step after delivery is independent: a throwing metric and audit skip neither the answer nor the 201', async () => {
+    metrics.message.mockImplementationOnce(() => { throw new Error('meter'); });
+    (deps.audit as ReturnType<typeof vi.fn>).mockImplementationOnce(() => { throw new Error('audit'); });
+    repo['markDelivered']!.mockRejectedValue(new Error('down'));
+    expect(await send()).toMatchObject({ ok: true });
+    expect(repo['answer']).toHaveBeenCalledTimes(1);
+    expect(events().map((f) => f['event'])).toEqual(['supervisor_message', 'help_answered', 'help_cleared']);
+  });
+
   it('a message to an agent with no open request: delivered, no help frames', async () => {
     repo['answer']!.mockResolvedValue(null);
     await send();
@@ -266,14 +307,29 @@ describe('the rules', () => {
     }
   });
 
-  it('the station\'s ready.help: raised, not answered, under the expiry', () => {
-    const now = RAISED.getTime() + 60_000;
-    expect(openHelpOfSession({ help_raised_at: RAISED, help_answered_at: null, help_call_id: 'call-1' }, now))
-      .toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1' });
-    expect(openHelpOfSession({ help_raised_at: null, help_answered_at: null }, now)).toBeUndefined();
-    expect(openHelpOfSession({ help_raised_at: RAISED, help_answered_at: new Date(now) }, now)).toBeUndefined();
-    expect(openHelpOfSession({ help_raised_at: RAISED }, RAISED.getTime() + AGENCY_HELP_EXPIRY_MS - 1)).toBeDefined();
-    expect(openHelpOfSession({ help_raised_at: RAISED }, RAISED.getTime() + AGENCY_HELP_EXPIRY_MS)).toBeUndefined();
+  it('a message holds no control character Postgres or the agent cannot use: NUL and the other C0 controls refused, never stripped (LF17)', () => {
+    // FALSIFIED: with the forbidden-character test removed, the NUL cases red (and the route then
+    // reached Postgres with a NUL: `22021`, which the agency error handler answers a bare 400
+    // "Invalid input" with no `message_invalid` code).
+    for (const bad of ['a\u0000b', '\u0000', 'Offer\u0007 the plan', 'x\u001by', 'x\u007fy', 'x\u000by', 'x\ud800y', 'x\udc00']) {
+      expect(normaliseMessageText(bad), JSON.stringify(bad)).toBeNull();
+    }
+    // Tab and line breaks are text; a carriage return becomes a line feed.
+    expect(normaliseMessageText('Step 1\tOffer\nStep 2')).toBe('Step 1\tOffer\nStep 2');
+    expect(normaliseMessageText('one\r\ntwo\rthree')).toBe('one\ntwo\nthree');
+    // A well-formed pair is one character, never refused.
+    expect(normaliseMessageText('Good 😀')).toBe('Good 😀');
+  });
+
+  it('the sender\'s name in the frame: cut to its length (never inside a surrogate pair), never a refusal', () => {
+    expect(senderNameForFrame('Anitha N')).toBe('Anitha N');
+    expect(senderNameForFrame(null)).toBeNull();
+    expect(senderNameForFrame('   ')).toBeNull();
+    expect(senderNameForFrame('x'.repeat(SENDER_NAME_MAX_CHARS))).toBe('x'.repeat(SENDER_NAME_MAX_CHARS));
+    const long = senderNameForFrame('😀'.repeat(600))!;
+    expect([...long]).toHaveLength(SENDER_NAME_MAX_CHARS);
+    expect(long.endsWith('…')).toBe(true);
+    expect(/\p{Cs}/u.test(long)).toBe(false);
   });
 
   it('every refusal code has its sentence, in British English', () => {

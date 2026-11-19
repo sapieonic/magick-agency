@@ -6,7 +6,7 @@ import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore, type CoreCallRequest, type CoreCallResult } from '../core-dispatch.js';
 import { resolveAgencyActor } from '../../agency/agency-actor.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
-import { FLOOR_ASSIST_REFUSAL_MESSAGES, normaliseMessageText } from '../../agency/floor-assist.js';
+import { FLOOR_ASSIST_REFUSAL_MESSAGES, normaliseMessageText, senderNameForFrame } from '../../agency/floor-assist.js';
 import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
 import { accountOrRefuse } from './helpers/account-scope.js';
 import { sendRefusal } from './helpers/refusal.js';
@@ -26,8 +26,9 @@ import { sendRefusal } from './helpers/refusal.js';
  *    another account's, another tenant's) with the uniform 404, a supervisor's included: a
  *    supervisor does not raise help for an agent.
  *  - `POST /sessions/:id/messages` (`agency.supervise`): Talk to agent and Send reminder. Body
- *    `{ text }`, trimmed, 1 to 500 characters (`400 message_invalid`); the sender's name read here
- *    for the frame. A session outside the caller's account is the uniform 404.
+ *    `{ text }`, trimmed, 1 to 500 characters with no control character but tab and line break
+ *    (`400 message_invalid`, LF17); the sender's name read here for the frame and cut to its length
+ *    (`senderNameForFrame`), never refused. A session outside the caller's account is the uniform 404.
  *
  * Audit rows, frames and metrics are the runtime's (`agency/floor-assist.ts`), written once per
  * transition wherever it happens (a listen, the expiry sweep and a leave end requests too).
@@ -119,7 +120,8 @@ export async function proxyAgencyFloorAssistRoutes(app: FastifyInstance, opts: P
       const text = parsed.success ? normaliseMessageText(parsed.data.text) : null;
       if (text === null) return sendRefusal(reply, 400, 'message_invalid', FLOOR_ASSIST_REFUSAL_MESSAGES.message_invalid);
       const me = request.user!.id;
-      const fromName = (await deps.names([me], scoped.tenantId)).get(me) ?? null;
+      // Cut to the frame's length, never a reason to refuse the message (LF17).
+      const fromName = senderNameForFrame((await deps.names([me], scoped.tenantId)).get(me));
       const result = await deps.callCore({
         method: 'POST',
         path: '/agency/supervisor-messages',

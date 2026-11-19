@@ -116,7 +116,7 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
     }
   }
 
-    /** The listening flags, or null when listening is not offered on this floor (off, or unreadable). */
+  /** The listening flags, or null when listening is not offered on this floor (off, or unreadable). */
   async function listening(tenantId: string, accountId: string): Promise<ListenFlags | null> {
     try {
       const flags = await deps.listenFlags(tenantId, accountId);

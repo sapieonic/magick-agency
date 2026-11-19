@@ -330,6 +330,8 @@ export class AgencyRuntime {
         answer: (sessionId, tenantId, byUserId, expiryMs) => agencyFloorAssistRepository.answer(sessionId, tenantId, byUserId, expiryMs),
         endWithSession: (sessionId, expiryMs) => agencyFloorAssistRepository.endWithSession(sessionId, expiryMs),
         expireDue: (expiryMs, opts) => agencyFloorAssistRepository.expireDue(expiryMs, opts),
+        openForSession: (sessionId, tenantId, accountId, expiryMs) =>
+          agencyFloorAssistRepository.openForSession(sessionId, tenantId, accountId, expiryMs),
         insertMessage: (input) => agencyFloorAssistRepository.insertMessage(input),
         markDelivered: (id) => agencyFloorAssistRepository.markDelivered(id),
       },

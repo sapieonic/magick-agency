@@ -56,6 +56,12 @@ describe('0053 — the account callbacks list\'s index of the pending contacts t
     expect(timeout).toBeLessThan(up.indexOf('CREATE INDEX'));
   });
 
+  it('starts its Down with a lock timeout too, before the DROP INDEX (ACCESS EXCLUSIVE on agency_contacts)', () => {
+    const down = readFileSync(join(MIGRATIONS_DIR, FILE), 'utf8').split(/^-- Down Migration/m)[1]!;
+    const statements = down.replace(/--.*$/gm, '').split(';').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    expect(statements).toEqual(["SET LOCAL lock_timeout = '10s'", 'DROP INDEX IF EXISTS idx_agency_contacts_callbacks']);
+  });
+
   it('fails on an invalid index left under its name by a failed CREATE INDEX CONCURRENTLY', async () => {
     const pool = getTestPool();
     await migrate('down', stepsDownTo(FILE));

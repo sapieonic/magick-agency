@@ -107,6 +107,10 @@ interface Harness {
   unannounced: { value: boolean };
   /** The state the rehydrate answers (default `wrapup`). */
   rehydrateAgent: ReturnType<typeof vi.fn>;
+  /** The session's open Need help as the repository reads it (`floorAssist.openHelp`; default none). */
+  openHelp: ReturnType<typeof vi.fn>;
+  /** The registry double's `send`, for a test that clears a request mid-attach. */
+  send: (sessionId: string, frame: any) => boolean;
 }
 
 async function harness(): Promise<Harness> {
@@ -118,6 +122,8 @@ async function harness(): Promise<Harness> {
   const unannounced = { value: false };
   /** What `attach` last registered — see the `stations` double below. */
   const holder: { ws: unknown } = { ws: undefined };
+  /** The `raised_at` of each `help_cleared` handed to `send` for the registered socket (the real registry's `helpCleared`). */
+  const helpCleared: string[] = [];
 
   const runtime = {
     replicaId: 'r1',
@@ -141,7 +147,7 @@ async function harness(): Promise<Harness> {
      * `holder.ws` rather than by defeating the guard.
      */
     stations: {
-      attach: vi.fn(async (entry: any) => { holder.ws = entry.ws; }),
+      attach: vi.fn(async (entry: any) => { holder.ws = entry.ws; helpCleared.length = 0; }),
       detach: vi.fn(async (_id: string, ws?: unknown) => {
         // Identity-scoped exactly as the real one is: a superseded socket's detach
         // must not evict the socket that replaced it.
@@ -154,11 +160,14 @@ async function harness(): Promise<Harness> {
       // Honours `expectedWs` like the real one, so a mis-scoped send shows up here
       // as a missing frame rather than passing quietly.
       send: vi.fn((_id: string, frame: any, expectedWs?: unknown) => {
+        if (frame.event === 'help_cleared' && holder.ws !== undefined) helpCleared.push(frame.raised_at);
         if (expectedWs !== undefined && holder.ws !== expectedWs) return false;
         sent.push(frame);
         return true;
       }),
+      helpClearedOn: vi.fn((_id: string, ws: unknown, raisedAt: string) => holder.ws === ws && helpCleared.includes(raisedAt)),
     },
+    floorAssist: { openHelp: vi.fn().mockResolvedValue(null) },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
@@ -186,7 +195,10 @@ async function harness(): Promise<Harness> {
   await app.register(websocket);
   await app.register(async (a) => registerStationSocket(a as never, runtime as never), { prefix: '/api/v1/agency' });
   await app.ready();
-  return { app, breaks, sent, wrapupState, activeAttempt, dialActivity, unannounced, rehydrateAgent: runtime.rehydrateAgent };
+  return {
+    app, breaks, sent, wrapupState, activeAttempt, dialActivity, unannounced, rehydrateAgent: runtime.rehydrateAgent,
+    openHelp: runtime.floorAssist.openHelp, send: runtime.stations.send,
+  };
 }
 
 /** Open the station socket and return the `ready` frame it produced. */
@@ -443,34 +455,66 @@ describe('a reconnect mid-ring is told the state the agent was last shown (late 
   });
 });
 
-describe('a reconnect is told the session\'s open Need help (LF4, LF15)', () => {
+describe('a reconnect is told the session\'s open Need help (LF4, LF12, LF15)', () => {
   // FALSIFIED: with `help` dropped from the frame the first case reds; with the capability check
-  // dropped, the phone case does.
+  // dropped, the phone case does; with the `helpClearedOn` check dropped from `ready`, the
+  // clear-between-read-and-ready case does; reading `help` from the attach's row again (the help
+  // read removed), the cleared-before-the-read case does.
   const RAISED = new Date(Date.now() - 60_000);
+  const OPEN = { raised_at: RAISED.toISOString(), call_id: 'call-1' };
 
-  it('carries the open request: when it was raised and on which call', async () => {
+  it('carries the open request the repository reads (its OPEN rule on the database clock): when it was raised and on which call', async () => {
+    h.openHelp.mockResolvedValue(OPEN);
+    expect((await ready(h)).help).toEqual(OPEN);
+    expect(h.openHelp).toHaveBeenCalledWith({ id: 'sess-1', tenant_id: 't1', account_id: 'a1' });
+  });
+
+  it('omits it when the repository finds none open (never raised, answered, cleared or past its 15 minutes)', async () => {
+    h.openHelp.mockResolvedValue(null);
+    expect('help' in (await ready(h))).toBe(false);
+  });
+
+  it('reads it after the socket is registered, never from the attach\'s row: a request cleared before the read is not shown', async () => {
+    // The attach's row still has it open (read before the clear); the repository, read after, does not.
     repos.session.findById.mockResolvedValue({ ...SESSION, help_raised_at: RAISED, help_answered_at: null, help_call_id: 'call-1' });
-    expect((await ready(h)).help).toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1' });
+    h.openHelp.mockResolvedValue(null);
+    expect('help' in (await ready(h))).toBe(false);
   });
 
-  it('omits it when none is open: never raised, answered, or past its 15 minutes', async () => {
-    for (const row of [
-      { help_raised_at: null },
-      { help_raised_at: RAISED, help_answered_at: new Date() },
-      { help_raised_at: new Date(Date.now() - 15 * 60_000 - 1_000), help_answered_at: null },
-    ]) {
-      await h.app.close();
-      h = await harness();
-      repos.session.findById.mockResolvedValue({ ...SESSION, ...row });
-      expect('help' in (await ready(h)), JSON.stringify(row)).toBe(false);
-    }
+  it('a request read as open, then cleared (its help_cleared sent to this socket) before ready went out, is left off ready', async () => {
+    h.openHelp.mockImplementation(async () => {
+      // The clear lands while the read is in flight: its UPDATE committed after the read's snapshot,
+      // its frame reaches the newly registered socket before `ready` does.
+      h.send('sess-1', { event: 'help_cleared', raised_at: OPEN.raised_at, reason: 'cancelled' });
+      return OPEN;
+    });
+    const frame = await ready(h);
+    expect('help' in frame).toBe(false);
+    const events = h.sent.map((f) => f.event);
+    expect(events.indexOf('help_cleared')).toBeLessThan(events.indexOf('ready'));
   });
 
-  it('not to a phone that cannot receive the floor assist frames (which are what end it)', async () => {
-    repos.session.findById.mockResolvedValue({ ...SESSION, help_raised_at: RAISED, help_answered_at: null, help_call_id: null });
+  it('a help_cleared for an EARLIER request does not hide the open one', async () => {
+    h.openHelp.mockImplementation(async () => {
+      h.send('sess-1', { event: 'help_cleared', raised_at: new Date(RAISED.getTime() - 5_000).toISOString(), reason: 'answered' });
+      return OPEN;
+    });
+    expect((await ready(h)).help).toEqual(OPEN);
+  });
+
+  it('a failed read omits it, and ready is still sent', async () => {
+    h.openHelp.mockRejectedValue(new Error('pool down'));
+    const frame = await ready(h);
+    expect(frame.event).toBe('ready');
+    expect('help' in frame).toBe(false);
+  });
+
+  it('not to a phone that cannot receive the floor assist frames (which are what end it): not even read', async () => {
+    h.openHelp.mockResolvedValue(OPEN);
     const ws = await h.app.injectWS('/api/v1/agency/station/sess-1?token=tok&client=mobile&caps=inbound');
     await vi.waitFor(() => expect(h.sent.some((f) => f.event === 'ready')).toBe(true));
     ws.terminate();
     expect('help' in h.sent.find((f) => f.event === 'ready')).toBe(false);
+    expect(h.openHelp).not.toHaveBeenCalled();
   });
 });

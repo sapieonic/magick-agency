@@ -16,6 +16,7 @@ vi.mock('../../../../src/auth/session.middleware.js', () => ({ sessionMiddleware
 vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({ tenantContextMiddleware: async () => {} }));
 
 import { proxyAgencyFloorAssistRoutes, type FloorAssistRouteDeps } from '../../../../src/api/routes/proxy-agency-floor-assist.routes.js';
+import { SENDER_NAME_MAX_CHARS } from '../../../../src/agency/floor-assist.js';
 import type { CoreCallRequest, CoreCallResult } from '../../../../src/api/core-dispatch.js';
 
 const TENANT = '33333333-3333-4333-8333-333333333333';
@@ -161,14 +162,21 @@ describe('POST /sessions/:id/messages', () => {
     }]);
   });
 
+  it('a sender with a very long name: cut for the frame, never a refusal', async () => {
+    (deps.names as ReturnType<typeof vi.fn>).mockResolvedValue(new Map([[ME, 'N'.repeat(2_000)]]));
+    expect((await message()).statusCode).toBe(201);
+    const fromName = (deps.calls[0]!.body as Record<string, unknown>)['from_name'] as string;
+    expect([...fromName]).toHaveLength(SENDER_NAME_MAX_CHARS);
+  });
+
   it('a sender with no readable name is sent as null', async () => {
     (deps.names as ReturnType<typeof vi.fn>).mockResolvedValue(new Map());
     await message();
     expect((deps.calls[0]!.body as Record<string, unknown>)['from_name']).toBeNull();
   });
 
-  it('400 message_invalid for a missing, empty, blank, too long or non-string text; nothing sent', async () => {
-    for (const body of [{}, { text: '' }, { text: '   \n ' }, { text: 'x'.repeat(501) }, { text: 42 }, { text: ['a'] }]) {
+  it('400 message_invalid for a missing, empty, blank, too long or non-string text, or one with a NUL or another control character; nothing sent', async () => {
+    for (const body of [{}, { text: '' }, { text: '   \n ' }, { text: 'x'.repeat(501) }, { text: 42 }, { text: ['a'] }, { text: 'a\u0000b' }, { text: 'a\u001bb' }]) {
       const res = await message(body);
       expect([res.statusCode, res.json().code], JSON.stringify(body)).toEqual([400, 'message_invalid']);
     }

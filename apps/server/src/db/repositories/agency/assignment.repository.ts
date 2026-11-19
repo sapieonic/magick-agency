@@ -327,15 +327,14 @@ function rebalanceCtes(
                 OVER (ORDER BY giv.idx, giv.ord DESC, giv.gkey, giv.gi ROWS UNBOUNDED PRECEDING))::bigint - giv.size AS cum_start
         FROM giv WHERE giv.end_in_giver <= giv.give
     )`;
-  // A callback no receiver's range covers (nobody live, or the count grew since the quotas were
-  // read) stays with its owner: planned but unchanged, so `matched` is every late callback of an
-  // away owner and `moving` the ones dealt.
   const plan = `plan AS MATERIALIZED (
-      SELECT cum.id, cum.from_user_id,
-             COALESCE((SELECT r.uid FROM unnest(${recv}::uuid[], ${ends}::int[]) AS r(uid, e)
-                        WHERE cum.cum_start < r.e ORDER BY r.e LIMIT 1), cum.from_user_id) AS to_user_id,
-             cum.size, cum.gi
-        FROM cum
+      SELECT t.* FROM (
+        SELECT cum.id, cum.from_user_id,
+               (SELECT r.uid FROM unnest(${recv}::uuid[], ${ends}::int[]) AS r(uid, e)
+                 WHERE cum.cum_start < r.e ORDER BY r.e LIMIT 1) AS to_user_id,
+               cum.size, cum.gi
+          FROM cum) t
+       WHERE t.to_user_id IS NOT NULL
     )`;
   return { ctes: [sel, nl, giv, cum, plan].join(',\n    '), writeGuard: `c.state = 'pending'` };
 }
@@ -498,10 +497,12 @@ export class AgencyAssignmentRepository {
 
   /**
    * The hand-off's receivers (LF7, LF21): the agents live on the campaign (a session present on it,
-   * `presentSessionSql`, the rule CA5 reads) with an active staffing row (only staffed agents receive
-   * contacts), each with their callbacks due now on the campaign; and how many late callbacks of
-   * away owners there are to deal ({@link lateCallbackSql}). Dealt fewest due first
-   * (`lateCallbackQuotas`).
+   * `presentSessionSql`, the rule CA5 reads) and not on a break (the session's state is not `break`:
+   * lunch, tea, `device_away`, Mode B's `away_ring` and every other reason; the button gives them to
+   * FREE agents), with an active staffing row (only staffed agents receive contacts), each with their
+   * callbacks due now on the campaign; and how many late callbacks of away owners there are to deal
+   * ({@link lateCallbackSql}). Dealt fewest due first (`lateCallbackQuotas`). An OWNER on a break is
+   * still present and keeps their callbacks (CA5's rule, unchanged).
    */
   private async lateCallbackQuotas(db: Queryable, scope: AssignmentCampaignScope): Promise<LateCallbackQuotas> {
     const bind = params();
@@ -513,6 +514,7 @@ export class AgencyAssignmentRepository {
          SELECT DISTINCT s.agent_user_id AS uid
            FROM agency_agent_sessions s
           WHERE s.campaign_id = ${campaign}::uuid AND ${presentSessionSql('s')}
+            AND s.state <> 'break'
             AND EXISTS (
               SELECT 1 FROM agency_campaign_agents a
                WHERE a.tenant_id = ${tenant}::uuid AND a.campaign_id = ${campaign}::uuid
