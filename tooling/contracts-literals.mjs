@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Extracts the closed string vocabularies the agent app switches on from the TypeScript
+ * Extracts the closed string vocabularies the agent app switches on (and the few numbers it
+ * says or acts on: the station's close codes, the Need help expiry) from the TypeScript
  * sources of `packages/contracts` into `packages/contracts/fixtures/agent/literals.json`.
  *
  * The mobile app is Dart and cannot import the contract, so its wire package
@@ -29,6 +30,7 @@
  *                                               literals and `|`, or extraction fails);
  *   - `export const X = ['a', 'b'] as const`    a const list (same rule);
  *   - `export const X = { A: 4401, … } as const` a const object of numbers;
+ *   - `export const X = 15 * 60_000;`           a number: integer literals and `*` only;
  *   - one field of an interface whose type is an inline literal union.
  *
  * Anything else (a union that starts referencing another type, a list built by spread)
@@ -113,6 +115,20 @@ function constNumberObject(file, name) {
     out[kv[1]] = Number(kv[2]);
   }
   return out;
+}
+
+/**
+ * `export const NAME = 15 * 60_000;` → `900000`: a product of integer literals (`_` separators
+ * allowed), nothing else, or it throws.
+ */
+function constNumber(file, name) {
+  const m = new RegExp(`export const ${name}\\s*=\\s*([^;]*);`).exec(source(file));
+  if (!m) throw new Error(`const ${name} not found in ${file}`);
+  const factors = m[1].split('*').map((s) => s.trim());
+  if (!factors.every((f) => /^\d[\d_]*$/.test(f))) {
+    throw new Error(`const ${name} is not a product of integer literals; update tooling/contracts-literals.mjs`);
+  }
+  return factors.reduce((product, f) => product * Number(f.replaceAll('_', '')), 1);
 }
 
 /**
@@ -220,7 +236,7 @@ const VOCABULARIES = {
   station_close_codes: ['agency/station.ts#AGENCY_STATION_CLOSE', () => constNumberObject('agency/station.ts', 'AGENCY_STATION_CLOSE')],
   station_server_events: [
     'agency/station.ts#AgencyStationServerFrame',
-    () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts', 'agency/inbound.ts']),
+    () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts', 'agency/inbound.ts', 'agency/floor-assist.ts']),
   ],
   wrapup_hold_reasons: ['agency/actions.ts#AgencyWrapupHoldReason', () => typeUnion('agency/actions.ts', 'AgencyWrapupHoldReason')],
   dnc_scopes: ['agency/actions.ts#AgencyDncScope', () => typeUnion('agency/actions.ts', 'AgencyDncScope')],
@@ -243,7 +259,8 @@ const VOCABULARIES = {
     'agency/station.ts#AGENCY_STATION_MEDIA_FORMATS',
     () => constList('agency/station.ts', 'AGENCY_STATION_MEDIA_FORMATS'),
   ],
-  // `caps=` on the station upgrade: the app sends `caps=inbound` to be offered inbound calls (IQ46).
+  // `caps=` on the station upgrade: the app sends `caps=inbound` to be offered inbound calls (IQ46),
+  // and `caps=floor_assist` to be sent a supervisor's messages and its Need help's answers (LF16).
   station_capabilities: [
     'agency/station.ts#AGENCY_STATION_CAPABILITIES',
     () => constList('agency/station.ts', 'AGENCY_STATION_CAPABILITIES'),
@@ -415,6 +432,19 @@ const VOCABULARIES = {
   ],
   // Promise to pay (PT7): where a contact's latest promise stands, on the agent's panel.
   promise_states: ['agency/promise.ts#AGENCY_PROMISE_STATES', () => constList('agency/promise.ts', 'AGENCY_PROMISE_STATES')],
+  // Floor assist (LF4, LF5, LF15): how a supervisor answered the agent's Need help, why it ended,
+  // and the refusals of its raise and cancel.
+  // How long a request stays open unanswered: the app's "No supervisor answered within N minutes".
+  help_expiry_ms: ['agency/floor-assist.ts#AGENCY_HELP_EXPIRY_MS', () => constNumber('agency/floor-assist.ts', 'AGENCY_HELP_EXPIRY_MS')],
+  help_answer_hows: ['agency/floor-assist.ts#AGENCY_HELP_ANSWER_HOWS', () => constList('agency/floor-assist.ts', 'AGENCY_HELP_ANSWER_HOWS')],
+  help_cleared_reasons: [
+    'agency/floor-assist.ts#AGENCY_HELP_CLEARED_REASONS',
+    () => constList('agency/floor-assist.ts', 'AGENCY_HELP_CLEARED_REASONS'),
+  ],
+  floor_assist_error_codes: [
+    'errors.ts#AGENCY_FLOOR_ASSIST_ERROR_CODES',
+    () => constList('errors.ts', 'AGENCY_FLOOR_ASSIST_ERROR_CODES'),
+  ],
 };
 
 /** Each label map the app shows as it is: where it is declared, and how to read it. */

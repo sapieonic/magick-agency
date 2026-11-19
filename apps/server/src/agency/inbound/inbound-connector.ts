@@ -1136,7 +1136,7 @@ export class InboundConnector {
     // since the search: IQ46): never offered, so it is never told `reserved` for a call it
     // cannot see. Not a busy session (nothing is owed): the agent is returned, the next
     // candidate tried.
-    if (this.deps.stations.get(sessionId)?.canTakeInbound === false) return 'station_incapable';
+    if (this.deps.stations.get(sessionId)?.caps.has('inbound') === false) return 'station_incapable';
     const at = new Date(this.now());
     const res = await agencyInboundCallRepository.offer(held.id, sessionId, { at });
     const station = this.deps.stations.get(sessionId);
@@ -1145,7 +1145,7 @@ export class InboundConnector {
       trackInboundOffer('refused', client);
       return res.reason === 'session_busy' ? 'session_busy' : 'call_gone';
     }
-    if (station?.canTakeInbound === false) return this.unwriteOffer(held, sessionId, client);
+    if (station?.caps.has('inbound') === false) return this.unwriteOffer(held, sessionId, client);
     // ── From here to the frames, no await (IB1) ─────────────────────────────
     this.seat(held, sessionId, res.call, station?.agentUserId ?? null, client, 'station');
     this.deps.stations.send(sessionId, { event: 'agent_state', state: 'reserved', since: at.toISOString() });
@@ -1240,7 +1240,7 @@ export class InboundConnector {
       await this.cancelOffer(held, sessionId, 'station_lost');
       return;
     }
-    if (!station.canTakeInbound && push) {
+    if (!station.caps.has('inbound') && push) {
       // A station that cannot take inbound calls attached since the accept (IQ46): it can never
       // show the call. Ended as the attach's own let-go ends it: the absence over as `device_away`.
       await this.rings.end(held, sessionId, 'cancelled', {
@@ -1248,7 +1248,7 @@ export class InboundConnector {
       });
       return;
     }
-    if (!station.canTakeInbound) {
+    if (!station.caps.has('inbound')) {
       // The session's station was replaced, during the offer, by one that cannot take inbound calls
       // (an older app build: IQ46). Never bound: cancelled as a lost station's, and the agent, whose
       // station is still open, returned to the pool ({@link onStationCannotTakeInbound}).
@@ -1784,7 +1784,7 @@ export class InboundConnector {
       tenantId: s.tenantId,
       accountId: s.accountId,
       campaignId: s.campaignId,
-      canTakeInbound: s.canTakeInbound,
+      canTakeInbound: s.caps.has('inbound'),
       stationOpen,
       ...(rejoins ? { rejoining: true } : {}),
       ...(ringable.has(s.sessionId) ? { ringable: true } : {}),
@@ -1939,7 +1939,7 @@ export class InboundConnector {
     // Only a station that can take the caller (IQ46): an older app build's is never offered one, so
     // holding it back from pacing would idle it for nothing.
     const preferred = this.deps.stations.all()
-      .filter((s) => s.canTakeInbound && sticky.has(s.agentUserId) && s.tenantId === tenantId && s.accountId === accountId)
+      .filter((s) => s.caps.has('inbound') && sticky.has(s.agentUserId) && s.tenantId === tenantId && s.accountId === accountId)
       .map((s) => s.sessionId);
     this.publish({
       type: 'inbound_waiting', tenantId, accountId, n: summary.n,
@@ -2047,7 +2047,7 @@ export class InboundConnector {
    */
   private releasableStation(sessionId: string) {
     const station = this.deps.stations.get(sessionId);
-    if (!station || station.campaignId === null || !station.canTakeInbound || station.ws.readyState !== 1) return null;
+    if (!station || station.campaignId === null || !station.caps.has('inbound') || station.ws.readyState !== 1) return null;
     return station;
   }
 

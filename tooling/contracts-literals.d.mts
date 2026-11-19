@@ -3,8 +3,8 @@
 export interface LiteralVocabulary {
   /** `packages/contracts/src/<file>#<declaration>`. */
   source: string;
-  /** A list of literals, or (close codes) a name → code map. */
-  values: string[] | Record<string, number>;
+  /** A list of literals, (close codes) a name → code map, or (the help expiry) one number. */
+  values: string[] | Record<string, number> | number;
 }
 
 export type LiteralsDocument = { _comment: string } & Record<string, LiteralVocabulary | string>;

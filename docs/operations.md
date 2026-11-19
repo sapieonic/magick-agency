@@ -757,6 +757,38 @@ and CSV, `agency.supervise` alone, LS19 as amended 2026-11-17), each call's "Lis
 campaign History's listen rows stay readable, so the account can still see and export who
 listened.
 
+## Enabling floor assist for a tenant (Need help and supervisor messages)
+
+`agency_floor_assist_enabled` (LF11, off by default) gates the Live floor's Phase 3 ways for an agent
+and a supervisor to reach each other ([`decisions.md`](decisions.md) LF4, LF5): an agent's **Need
+help** on their own station (`POST`/`DELETE /proxy/agency/sessions/:id/help`), and a supervisor's
+**message** to an agent's station (`POST /proxy/agency/sessions/:id/messages`: Talk to agent, Send
+reminder). While it is off both answer `403 floor_assist_disabled` and the floor read carries no
+`help`. It does not gate break limits, giving late callbacks to free agents or the callbacks list
+(their gates are permissions). An ordinary flag: no handling policy, so a bulk rollout is allowed.
+`FF_AGENCY_FLOOR_ASSIST=true` turns it on for every tenant (dev and staging).
+
+1. **Who answers.** Every `agency.supervise` holder in the account (account admin and up) sees a Need
+   help on the Live floor, which polls every 5 s; nobody is pushed or paged (LF4). Agree with the
+   tenant who keeps the Live floor open during calling hours. A request nobody answers expires after
+   15 minutes (`agy-help-unanswered` warns).
+2. **The record.** Each request is a pair of audit rows (`agency_session.help_raised` and how it
+   ended); each message an `agency_session.message_sent` row and a row in
+   `agency_supervisor_messages`, kept 90 days (LF5) and deleted by the retention purge. Tell the
+   tenant messages are kept and audited.
+3. **The app.** A console station always shows messages and Need help. The agent app shows them
+   from the build that declares the floor assist capability on its station socket; to an older
+   build a message is refused `409 agent_not_live` (nothing is shown that nobody sees).
+4. **Turn it on.** Super-admin console → the tenant → Feature flags → `agency_floor_assist_enabled`
+   → On, at tenant scope or for one account. The console and the app read it (client-exposed) at
+   their next flag read.
+5. **Check it.** An agent on a test call presses Need help: the supervisor's Live floor shows it
+   within 5 s. The supervisor sends a message: it shows on the agent's station, and the agent's Need
+   help clears ("answered"). Both are on the Audit Log.
+
+To turn it off: Off for the tenant or account. Open requests stay in their rows and expire on their
+own; the floor stops showing them at once, and new ones are refused.
+
 ## Recordings
 
 VoiceLink recordings are public MP3s on the carrier's host. The fetcher accepts only `https` URLs
@@ -1037,8 +1069,8 @@ and a longer one only delays the retry of a genuinely lost message.
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
 warn (Slack) and never page, for the carrier credential rules, for the inbound rules, for the
-reports rules (warn only), for the live call listening rules (warn only), and for the analysis rule
-(warn only, last). The insights rules first: a stale or holed Insights page costs no
+reports rules (warn only), for the live call listening rules (warn only), for the Live floor's
+Need help rule (warn only), and for the analysis rule (warn only, last). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -1394,6 +1426,31 @@ callers in the access logs.
 **Do:** replace the server's secret lines with what `reports_callback_secret_env_command` prints
 (SSM is the source; mid-rotation it prints both) and recreate the server, then let users re-run
 what failed meanwhile.
+
+### `agy-help-unanswered` (the Live floor)
+
+**Means:** at least one agent's Need help (LF4) expired in the last 30 minutes
+(`agency_help_requests_cleared_total{reason="expired"}`): the agent asked on a call or in wrap-up,
+and no supervisor listened to their call or sent them a message within 15 minutes. No call is
+affected; a customer may have been kept waiting on a question only a supervisor could answer.
+Warns only.
+
+**Check:** the Audit Log, filtered to "Agent's request for help expired unanswered"
+(`agency_session.help_expired`): each row names the session and its campaign, and the matching
+"Agent asked for help" row before it says when it was raised and on which call. Then why nobody
+answered: was any supervisor on the Live floor (it is how Need help reaches them: the floor read,
+polled every 5 s; there is no push), was the help alert's chime muted in their browser, were they
+all busy. The usual response is `agency_help_answer_seconds`; `agency_help_requests_raised_total`
+and the other reasons of `agency_help_requests_cleared_total` say how often agents ask and how
+requests end (in Explore; no dashboard panel yet).
+
+**Do:** a floor with no supervisor watching is the tenant's to fix (who keeps the Live floor open).
+If supervisors say they never saw the request: check `GET /proxy/agency/floor` answers and carries
+`help` (it is null on every row while `agency_floor_assist_enabled` is off for the account, or when
+the flag cannot be read), and that the agent's raise was answered 200 (a `409 help_not_on_call` is
+an agent who was not on a call or in wrap-up). The expiry is read on every floor read; the sweep that
+sends the agent's station `help_cleared` and writes the audit row runs every 15 s in the primary
+(`component=agency-floor-assist`, "Need help expiry sweep failed" on a failing pass).
 
 ### `agy-analysis-vendor-refusing`
 

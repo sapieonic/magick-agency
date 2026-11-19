@@ -782,6 +782,69 @@ describe('break_reasons at the write', () => {
   });
 });
 
+// LF6, LF20: a break reason's `limit_minutes`, 1–240 whole minutes, never on a reserved reason.
+describe('break limits at the write (LF6, LF20)', () => {
+  it('accepts a whole number of minutes from 1 to 240, and no limit at all', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    expect(validate({ break_reasons: [
+      { code: 'tea', label: 'Tea', limit_minutes: 1 },
+      { code: 'lunch', label: 'Lunch', limit_minutes: 240 },
+      { code: 'training', label: 'Training' },
+    ] })).toEqual([]);
+  });
+
+  it('refuses 0, 241, a fraction, a string, null and a negative, one issue per entry naming its code', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    for (const bad of [0, 241, 15.5, '15', null, -5, Number.NaN, true]) {
+      expect(validate({ break_reasons: [{ code: 'tea', label: 'Tea', limit_minutes: bad }] }), String(bad)).toEqual([{
+        field: 'break_reasons',
+        message: 'The limit for "tea" must be a whole number of minutes from 1 to 240. Leave it out for no limit.',
+      }]);
+    }
+    expect(validate({ break_reasons: [
+      { code: 'tea', label: 'Tea', limit_minutes: 0 },
+      { code: 'lunch', label: 'Lunch', limit_minutes: 30 },
+      { code: 'nap', label: 'Nap', limit_minutes: 500 },
+    ] }).map((i) => i.message)).toEqual([
+      expect.stringContaining('"tea"'),
+      expect.stringContaining('"nap"'),
+    ]);
+  });
+
+  it('refuses a limit on a reserved reason (the reserved code is refused, once)', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    for (const code of ['soft_phone', 'device_away', 'phone_call', 'away_ring']) {
+      const issues = validate({ break_reasons: [{ code, label: 'X', limit_minutes: 15 }] });
+      expect(issues, code).toEqual([{ field: 'break_reasons', message: expect.stringContaining(`"${code}": it is reserved for`) }]);
+    }
+    // Out of range on a reserved code: still the one reserved refusal, not two messages.
+    expect(validate({ break_reasons: [{ code: 'device_away', label: 'X', limit_minutes: 999 }] })).toHaveLength(1);
+  });
+
+  it('the public layer refuses the same, with the same messages', async () => {
+    const { validateAgencyCampaignConfig: validatePublic } = await import('../../../src/agency/agency-campaign-config.js');
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    const bodies = [
+      { break_reasons: [{ code: 'tea', label: 'Tea', limit_minutes: 241 }] },
+      { break_reasons: [{ code: 'device_away', label: 'X', limit_minutes: 15 }] },
+      { break_reasons: [{ code: 'tea', label: 'Tea', limit_minutes: 15 }] },
+    ];
+    for (const body of bodies) expect(validatePublic(body), JSON.stringify(body)).toEqual(validate(body));
+    expect(validatePublic(bodies[0])).toHaveLength(1);
+  });
+
+  it('a PATCH carrying an out-of-range limit is a 400 and writes nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { break_reasons: [{ code: 'tea', label: 'Tea', limit_minutes: 600 }] },
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.body).toContain('from 1 to 240');
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('allow_wrapup_redial (wrap-up redial, 0008)', () => {
   it('accepts a boolean either way and refuses anything else, null included', async () => {
     const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');

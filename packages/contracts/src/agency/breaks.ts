@@ -116,3 +116,36 @@ export const RESERVED_BREAK_REASON_LABELS: Readonly<Record<AgencyReservedBreakRe
   [PHONE_CALL_BREAK_REASON]: PHONE_CALL_BREAK_REASON_LABEL,
   [AWAY_RING_BREAK_REASON]: AWAY_RING_BREAK_REASON_LABEL,
 });
+
+// ─── Break limits (decisions LF6, LF20) ──────────────────────────────────────
+
+/**
+ * LF6: the shortest `limit_minutes` a break reason may carry (`AgencyBreakReason.limit_minutes`).
+ * The campaign-config write refuses anything outside
+ * [{@link AGENCY_BREAK_LIMIT_MIN_MINUTES}, {@link AGENCY_BREAK_LIMIT_MAX_MINUTES}].
+ */
+export const AGENCY_BREAK_LIMIT_MIN_MINUTES = 1;
+
+/** LF6: the longest `limit_minutes` a break reason may carry: four hours. */
+export const AGENCY_BREAK_LIMIT_MAX_MINUTES = 240;
+
+/**
+ * LF6: the floor's one limit for a break whose reason has none (a reason without
+ * `limit_minutes`, a reserved code, a code no catalog knows): the Live floor's 30-minute
+ * long-break rule (`long_break`), unchanged. Never applied to the soft phone's break, which is
+ * work, not a pause (docs/softphone.md §2).
+ */
+export const AGENCY_BREAK_DEFAULT_LIMIT_MINUTES = 30;
+
+/**
+ * Whether `value` is a break limit a campaign may store: a whole number of minutes in
+ * [{@link AGENCY_BREAK_LIMIT_MIN_MINUTES}, {@link AGENCY_BREAK_LIMIT_MAX_MINUTES}]. The one rule
+ * the campaign-config write refuses by, the catalog read keeps a stored limit by
+ * (`resolveBreakReasons`), and a console form can check before a round trip.
+ */
+export function isAgencyBreakLimitMinutes(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= AGENCY_BREAK_LIMIT_MIN_MINUTES
+    && value <= AGENCY_BREAK_LIMIT_MAX_MINUTES;
+}

@@ -7,6 +7,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENCY_ASSIGNMENT_ABSENT_AFTER_MINUTES,
+  AGENCY_LATE_CALLBACKS_KIND,
+  type AgencyLateCallbacksRefusalCode,
   type AgencyAssignmentProgress,
   type AgencyAssignmentProgressRow,
 } from '@magick-agency/contracts/api/agency/assignment';
@@ -34,6 +36,7 @@ import {
 } from '../../../agency/assignment/operation.js';
 import { guardSupervisedCampaign, refuse } from './shared.js';
 import { isUuid } from '../../../utils/uuid.js';
+import { sendRefusal } from '../helpers/refusal.js';
 
 const log = createChildLogger({ component: 'proxy-agency-assignment' });
 
@@ -62,6 +65,17 @@ function invalid(reply: FastifyReply, details: Record<string, string>): FastifyR
   return refuse(reply, 400, 'assignment_invalid', 'The assignment is not valid.', details);
 }
 
+/**
+ * LF7: the late-callbacks hand-off is not offered on a `pool` campaign, where no agent owns a
+ * callback (`409 late_callbacks_pool_mode`). True once it has replied.
+ */
+function refusePoolHandOff(reply: FastifyReply, campaign: AgencyCampaignRecord, op: CanonicalAssignment): boolean {
+  if (op.kind !== AGENCY_LATE_CALLBACKS_KIND || campaign.assignment_mode !== 'pool') return false;
+  sendRefusal<AgencyLateCallbacksRefusalCode>(reply, 409, 'late_callbacks_pool_mode',
+    'This campaign shares one queue: no agent owns a callback, so there are none to give to free agents.');
+  return true;
+}
+
 export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): Promise<void> {
   /** POST /campaigns/:id/assignments/preview — what an operation would do. Writes nothing. */
   app.post<CampaignParams>('/campaigns/:id/assignments/preview', {
@@ -71,6 +85,7 @@ export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): 
     if (!campaign) return reply;
     const parsed = parseAssignmentOperation(request.body, 'preview');
     if (!parsed.ok) return invalid(reply, parsed.details);
+    if (refusePoolHandOff(reply, campaign, parsed.op)) return reply;
     if (await refuseUnstaffed(reply, campaign, parsed.op)) return reply;
     return reply.code(200).send(await agencyAssignmentRepository.preview(parsed.op, scopeOf(campaign)));
   });
@@ -78,7 +93,9 @@ export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): 
   /**
    * POST /campaigns/:id/assignments — commit a previewed operation. Recomputed under row
    * locks; `409 preview_stale` with the fresh preview when it would differ from the token.
-   * One audit row (`agency_contacts.assigned`) per committed operation, ids only.
+   * One audit row (`agency_contacts.assigned`) per committed operation, ids only. The
+   * late-callbacks hand-off (LF7, `late_callbacks_to_live_agents`) is one of them: refused on a
+   * `pool` campaign, and its second press finds nothing left to move (`preview_stale`, no audit).
    */
   app.post<CampaignParams>('/campaigns/:id/assignments', {
     preHandler: requirePermission('agency.supervise'),
@@ -91,6 +108,7 @@ export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): 
     if (!parsed.ok) {
       return invalid(reply, Object.fromEntries(Object.entries(parsed.details).map(([k, v]) => [`operation.${k}`, v])));
     }
+    if (refusePoolHandOff(reply, campaign, parsed.op)) return reply;
     if (await refuseUnstaffed(reply, campaign, parsed.op)) return reply;
 
     const outcome = await agencyAssignmentRepository.commit({

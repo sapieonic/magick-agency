@@ -9,7 +9,7 @@
  */
 
 import type * as Core from '../../agency';
-import type { AgencyAgentState, AgencyContextDisplay, AgencyDisposition } from './agency';
+import type { AgencyAgentState, AgencyBreakReason, AgencyContextDisplay, AgencyDisposition } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
 import type {
   AgencyAssignmentMode,
@@ -558,6 +558,15 @@ export interface AgencyCampaign {
   sip_connection_id?: string | null;
   disposition_catalog?: AgencyDispositionEntry[];
   retry_policy?: AgencyRetryPolicy;
+  /**
+   * The campaign's OWN break reasons as stored (`agency_campaigns.break_reasons`): `[]` when it
+   * lists none, in which case its agents are offered the built-ins (`resolveBreakReasons`, LF20),
+   * which a read of the campaign does not fill in. Each entry may carry `limit_minutes` (LF6). A
+   * PATCH replaces the whole list; it is refused with a reserved code listed, or a limit out of
+   * 1–240 whole minutes (`details.break_reasons`, naming the entry's code). To clear a limit, leave
+   * the key out.
+   */
+  break_reasons?: AgencyBreakReason[];
   /**
    * Automatic outcomes for unanswered calls (decisions OD1–OD8): outcome → a code of
    * `disposition_catalog` the dialer stamps on an attempt that ends with that outcome

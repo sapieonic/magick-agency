@@ -397,3 +397,77 @@ async function superAdminToken(): Promise<string> {
   expect(res.statusCode, res.body).toBe(200);
   return res.json().token as string;
 }
+
+// LF7, LF21: "Give to free agents", through the real routes: refused on a pool campaign, then a
+// strict campaign's late callbacks of an away owner to the live agent, audited as every operation,
+// and a second press of the same preview moves nothing and writes no second audit row.
+describe('give late callbacks to free agents (late_callbacks_to_live_agents)', () => {
+  const HAND_OFF = { kind: 'late_callbacks_to_live_agents' };
+  let handOffCampaign: string;
+
+  beforeAll(async () => {
+    const { insertAgencyCampaign } = await import('../agency/agency-factories.js');
+    handOffCampaign = (await insertAgencyCampaign({
+      tenant_id: floor.tenant, account_id: floor.account, status: 'running', assignment_mode: 'pool', name: 'Hand-off',
+    }) as { id: string }).id;
+  });
+
+  it('is refused on a pool campaign, preview and commit alike (409 late_callbacks_pool_mode)', async () => {
+    const preview = await call(app(), 'POST', `/proxy/agency/campaigns/${handOffCampaign}/assignments/preview`, sup(), floor, HAND_OFF);
+    expect(preview.statusCode, preview.body).toBe(409);
+    expect(preview.json()).toMatchObject({ error: 'Conflict', code: 'late_callbacks_pool_mode' });
+    const commit = await call(app(), 'POST', `/proxy/agency/campaigns/${handOffCampaign}/assignments`, sup(), floor, {
+      operation: HAND_OFF, preview_token: 'v1.x',
+    });
+    expect(commit.statusCode, commit.body).toBe(409);
+    expect(commit.json().code).toBe('late_callbacks_pool_mode');
+  });
+
+  it('moves a strict campaign\'s late callbacks of an away owner to the live agent, audited once', async () => {
+    await getTestPool().query(`UPDATE agency_campaigns SET assignment_mode = 'strict' WHERE id = $1`, [handOffCampaign]);
+    const away = agent(3).id;
+    const receiver = agent(0).id;
+    await getTestPool().query(
+      'INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)',
+      [floor.tenant, floor.account, handOffCampaign, receiver]);
+    await getTestPool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE agent_user_id = $1 AND left_at IS NULL`, [receiver]);
+    await getTestPool().query(
+      `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state) VALUES ($1, $2, $3, $4, 'available')`,
+      [floor.tenant, floor.account, handOffCampaign, receiver]);
+    // Two inbound callbacks (a callback on any catalog), due 20 minutes ago, owned by the away agent.
+    const late = await seedContacts(handOffCampaign, 2, floor, '+91600');
+    await getTestPool().query(
+      `UPDATE agency_contacts SET assigned_user_id = $2, assigned_at = now(), callback_source = 'inbound',
+              callback_due_at = now() - interval '20 minutes', next_attempt_at = now() - interval '20 minutes'
+        WHERE id = ANY($1::uuid[])`, [late, away]);
+
+    const preview = await call(app(), 'POST', `/proxy/agency/campaigns/${handOffCampaign}/assignments/preview`, sup(), floor, HAND_OFF);
+    expect(preview.statusCode, preview.body).toBe(200);
+    const p = preview.json();
+    expect(p).toMatchObject({ kind: 'late_callbacks_to_live_agents', seed: null, moving: 2, live_agent_user_ids: [receiver] });
+
+    const commit = await call(app(), 'POST', `/proxy/agency/campaigns/${handOffCampaign}/assignments`, sup(), floor, {
+      operation: HAND_OFF, preview_token: p.preview_token,
+    });
+    expect(commit.statusCode, commit.body).toBe(200);
+    expect(commit.json()).toMatchObject({
+      kind: 'late_callbacks_to_live_agents', moved: 2,
+      per_agent: [{ agent_user_id: receiver, receiving: 2, giving: 0 }, { agent_user_id: away, receiving: 0, giving: 2 }],
+    });
+    expect(await ownedBy(receiver, handOffCampaign)).toBe(2);
+
+    const again = await call(app(), 'POST', `/proxy/agency/campaigns/${handOffCampaign}/assignments`, sup(), floor, {
+      operation: HAND_OFF, preview_token: p.preview_token,
+    });
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json()).toMatchObject({ code: 'preview_stale', preview: { kind: 'late_callbacks_to_live_agents', moving: 0 } });
+
+    const rows = (await audits('agency_contacts.assigned')).filter((r) => r.campaign_id === handOffCampaign);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ account_id: floor.account, actor_type: 'human' });
+    expect(rows[0]!.details).toMatchObject({ batch_id: commit.json().batch_id, kind: 'late_callbacks_to_live_agents', moved: 2 });
+    const { rows: history } = await getTestPool().query<{ reason: string; actor: string }>(
+      'SELECT reason, actor_user_id::text AS actor FROM agency_contact_assignment_events WHERE campaign_id = $1', [handOffCampaign]);
+    expect(history).toEqual([{ reason: 'reassign', actor: sup().id }, { reason: 'reassign', actor: sup().id }]);
+  });
+});

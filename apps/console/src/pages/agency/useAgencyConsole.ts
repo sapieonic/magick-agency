@@ -11,6 +11,7 @@ import { useServerClock, type ServerClock } from '../../hooks/useServerClock';
 import { audioTarget } from '../../utils/softphone/audioTarget';
 import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
+import { breakLimitFor } from '../../utils/agency/breakLimits';
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
 import { useBreakQueue } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
@@ -80,6 +81,12 @@ export interface AgencyConsoleState {
   catalog: AgencyDisposition[];
   breakReasons: AgencyBreakReason[];
   breakReasonLabel: string | null;
+  /**
+   * LF26: the limit, in minutes, of the break the agent is on, found by its code in the
+   * bootstrap's `break_reasons` as its label is; null with none, and always for a reserved reason
+   * (the soft phone's, the app's pauses), which never has one.
+   */
+  breakLimitMinutes: number | null;
 
   form: DispositionFormState;
   setForm: (next: DispositionFormState) => void;
@@ -476,6 +483,7 @@ export function useAgencyConsole(
     catalog: disposition.catalog,
     breakReasons: breaks.breakReasons,
     breakReasonLabel: labelFor(station.breakReasonCode),
+    breakLimitMinutes: breakLimitFor(station.breakReasonCode, breaks.breakReasons),
     form: disposition.form,
     setForm: disposition.setForm,
     blockAt: disposition.blockAt,

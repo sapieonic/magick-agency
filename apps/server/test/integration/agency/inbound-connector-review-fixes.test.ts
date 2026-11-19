@@ -105,7 +105,7 @@ async function agent(state: 'available' | 'wrapup' | 'on_call' | 'reserved' | 'b
   stations.add({
     sessionId: session.id as string, campaignId: sessionCampaign, tenantId: T, accountId: opts.accountId ?? A, agentUserId: userId,
     ...(opts.clientKind ? { clientKind: opts.clientKind } : {}),
-    ...(opts.canTakeInbound !== undefined ? { canTakeInbound: opts.canTakeInbound } : {}),
+    ...(opts.canTakeInbound !== undefined ? { caps: new Set(opts.canTakeInbound ? ['inbound'] as const : []) } : {}),
   });
   await agents.set(session.id as string, state, { leaseMs: 60_000 });
   return session.id as string;

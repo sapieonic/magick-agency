@@ -182,10 +182,10 @@ the station and refuses the others `409 station_on_other_device` unless they ask
 
 ## The station socket
 
-`/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8&caps=inbound`. `station_ws_url`
-is a path relative to the API origin; the app resolves it against `API_ORIGIN`
-(`Env.resolveStationUrl`). `caps=inbound` (see "Inbound calls") is sent on every connect, a re-minted
-one included.
+`/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8&caps=inbound,floor_assist`.
+`station_ws_url` is a path relative to the API origin; the app resolves it against `API_ORIGIN`
+(`Env.resolveStationUrl`). `caps=inbound` (see "Inbound calls") and `floor_assist` (see "Floor
+assist") are sent on every connect, a re-minted one included.
 
 - **`client=mobile`** tunes liveness and is written to `agency_agent_sessions.client_kind` (0006)
   on every attach. The server pings a mobile station every 3 s (`MOBILE_STATION_PROBE_MS`); a
@@ -1088,6 +1088,90 @@ phone. When iOS compiles, the design is:
   answers or the app opens, and re-reads the device status on every open.
 - **Blocked on** the first iOS compile, an Apple developer account and an APNs auth key.
 
+## Floor assist: Need help, a supervisor's messages, break limits
+
+The agent's half of the Live floor's Phase 3 (decisions LF4–LF6, LF11–LF20 for the server, the
+app's LF34–LF39). Need help is behind the client-exposed flag `agency_floor_assist_enabled`, read as
+`FeatureFlags.floorAssistEnabled` through `stationNeedHelpProvider`
+(`lib/features/station/station_providers.dart`); off, and while the flag map loads or failed, no
+control shows. A supervisor's message is shown whenever one arrives (the server sends one only while
+the flag is on). Break limits are not behind it.
+
+- **The capability.** The station declares `caps=inbound,floor_assist` on every connect; while
+  an attach must not answer a ring (N5, `declareInbound` off) it declares `floor_assist` alone
+  (`StationSocket.capabilities`). Without it the server sends a phone none of the three frames,
+  leaves `ready.help` out and refuses a supervisor's message `409 agent_not_live` (LF16, LF34).
+- **Need help** (`lib/features/station/parts/need_help.dart`, `NeedHelpCard`; core
+  `lib/core/station/floor_assist.dart`). On a call and in wrap-up (a campaign call or an inbound
+  one), "Need help" raises it (`POST /proxy/agency/sessions/:id/help`); open, the card says "Help
+  requested · Your supervisors can see it · asked 0:42 ago" with Cancel (`DELETE`). It has its own
+  stage, never the station's busy state, so asking for help never holds up hanging up or saving the
+  outcome. A request raised in wrap-up stays open after the outcome is saved (the server's rule): the
+  card shows it, and Cancel, on the waiting screen too, but offers no new raise there (LF35).
+  - **Which request.** One at a time, identified by its `raised_at`. It is open from the raise's
+    answer, or `ready.help` after a reconnect or a relaunch, until the `help_cleared` that names that
+    same instant, or the cancel's answer. A frame about another request never touches the one shown.
+    A `ready` with no `help` clears the one shown, with nothing said (the frame that ended it was
+    missed). The frames can beat the raise's own reply: while it is in flight, `help_answered` is
+    kept and `help_cleared` leaves its notice at once, and a reply naming a request already ended
+    (its `help_cleared` or the cancel's answer) opens nothing, so a slow reply never re-opens it.
+    A `help_cleared` with nothing shown and no raise in flight is remembered the same way, with
+    nothing said, and a `ready.help` naming a request already ended is stale and opens nothing: the
+    server does not remember which requests it cleared for a socket, so the app does.
+  - **How it ended** (LF35): `help_answered` says who and how; the `help_cleared {answered}` that
+    follows ends it and leaves a notice: "Anitha N is listening to your call." or "Anitha N answered
+    with a message.", "Your supervisor …" when the server sends no name, "A supervisor answered your
+    request for help." when the `help_answered` was missed. `expired`: "No supervisor answered within
+    15 minutes. Ask again if you still need help.", in the warning tone, the minutes from the
+    contract's `AGENCY_HELP_EXPIRY_MS` (`agencyHelpExpiryMs` in `agency_wire`, pinned to
+    `literals.json`'s `help_expiry_ms`). `cancelled` (the agent's own) and `session_ended` say
+    nothing. A notice stays until dismissed or the next raise.
+  - **A cancel that lost the race** (LF35): a supervisor's listen or message can answer the request
+    while the agent's cancel is on its way; the server's cancel then finds nothing open and answers
+    `help: null`, and `help_answered` and `help_cleared {answered}` can land before or after that
+    reply. In every order the agent is told who answered, as above, never only that it was
+    cancelled (the app says nothing on a cancel, as the console does not after an answer): an answer
+    held when the reply lands becomes the notice, and a `help_answered` or `help_cleared {answered}`
+    for the request the cancel ended, arriving after the reply, says it too.
+  - **Screen readers.** Only "Help requested" is a live region, said once as the request opens; the
+    ticking "asked 0:42 ago" is outside it (inside, it would be said every second over the
+    customer). Cancel is a button that acts, and while cancelling reads "Cancelling your request for
+    help", disabled.
+  - **Refusals** (LF37), in the card, never the station's action error line: `403
+    floor_assist_disabled` ("Need help is turned off for your workspace…"), `409 help_not_on_call`
+    ("You can ask for help during a call, or while you finish one."), `409 session_ended`, a 404 or
+    400 in the server's sentence, a 5xx or a body with no sentence ("didn't go through. Try again."),
+    no network ("didn't reach the server. Check your connection…"; a retried raise is idempotent on
+    the server), a 401 reported to the app gate as every station request's is. A refused cancel keeps
+    the request open, except `floor_assist_disabled` and `session_ended`, after which nothing the agent
+    can act on is open.
+- **A supervisor's message** (`lib/features/station/supervisor_message_banner.dart`, LF36): the
+  shell shows it at the top of every tab, over a call too, never as a dialog: plain text as sent
+  (never markup or a link), "Anitha N · 10:05" ("Your supervisor" with no name), on this device's
+  clock. Several queue, oldest first: the banner shows one and "2 more messages"; Dismiss shows the
+  next. Each id is shown once (a resent frame is ignored), at most 20 are held, and leaving the
+  station forgets them. Each is announced to a screen reader once as it arrives ("Message from Anitha
+  N: …", polite), sender and text together. The banner is not a live region: one would say a
+  message twice as it arrives and again on a second message or a dismissal, where nothing new
+  arrived. A soft-phone session gets them too: the core publishes them beside the shell's signals
+  (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
+- **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
+  `break_reasons`, found by the break's code as its label is), the break card counts down from the
+  `agent_state` frame's `since`: "4:30 left of your 15 min" (rounded up, as every countdown here, so
+  "0:00 left" never shows), then "Over your 15 min break by 2:05" in the warning tone, on the card's
+  one ticking clock. None on a reason with no limit, and never on a
+  reserved code (the app's own pauses, the soft phone), whatever a catalog says
+  (`StationViewMapper.breakLimitMinutes`). A limit edited mid-shift reaches the agent at their next
+  join (the server's rule).
+- Not done in the app (LF39): Need help on the soft phone's own screens (the Phone tab; the server
+  accepts a raise on a soft-phone call), a chime or vibration for a message, and telemetry events
+  for Need help (the console has none yet to match).
+
+Tests: `test/core/station/station_floor_assist_test.dart`,
+`test/features/station/station_floor_assist_test.dart`, `test/app/supervisor_message_banner_test.dart`,
+and the wire package's `station_test.dart`, `session_test.dart`, `platform_test.dart`. Not run on a
+phone (below).
+
 ## Inside the app
 
 ```
@@ -1196,7 +1280,7 @@ packages/
   - Grading lives in pure functions (`preflight_checks.dart`), separate from the measurements (`device_preflight_checks.dart`).
 - **Wire types.** `agency_wire` is written by hand against `packages/contracts`. Drift is caught from both sides:
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
-  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (62: the soft phone's, customer history's and inbound calls' included, with `station_capabilities`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
+  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (75: the soft phone's, customer history's, inbound calls' and floor assist's included, with `station_capabilities`, and one number, `help_expiry_ms`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling".
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
   - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
@@ -1301,6 +1385,11 @@ from the browser or file manager it was opened from.
   merging runs the release build; the first APK needs `MOBILE_ENV_STAGING` and the signing secrets,
   then a run by hand for `mobile-v0.12.0` or the next mobile release.
 - **The listening notice (2026-11-16/17) is widget-tested only**: the button, the sheet and `ListenFirstNoticeCard` have not been seen on a phone.
+- **Floor assist (2026-11-19) has run only against the fixtures and fakes.** Need help, the message
+  banner and the break countdown are unit- and widget-tested with the contract's sample frames in the
+  server's order (`flutter test`, `dart test`), and the server's side drives a simulated phone station
+  declaring `caps=floor_assist` (`floor-assist-e2e.test.ts`); nothing has run on a phone or against a
+  running server with this app build.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
   with the contract's sample frames and answers, played in the server's own frame order, not

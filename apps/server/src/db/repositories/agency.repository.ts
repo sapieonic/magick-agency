@@ -50,11 +50,28 @@ export type {
 } from './agency/listen-session.repository.js';
 export { AgencyListenHistoryRepository, agencyListenHistoryRepository, LISTEN_HISTORY_SQL } from './agency/listen-history.repository.js';
 export type { ListenHistoryQuery, ListenHistoryVisitRow } from './agency/listen-history.repository.js';
+export {
+  AgencyFloorAssistRepository,
+  agencyFloorAssistRepository,
+  HELP_SWEEP_BATCH,
+  LIVE_CALL_FOR_SESSION_SQL,
+  SWEEP_EXPIRED_SQL,
+} from './agency/floor-assist.repository.js';
+export type {
+  HelpAnswerResult,
+  HelpClearedRow,
+  HelpEndedRow,
+  HelpRaiseResult,
+  OpenHelpRow,
+  SupervisorMessageInsert,
+} from './agency/floor-assist.repository.js';
 export { AgencyLiveCallRepository, agencyLiveCallRepository } from './agency/live-call.repository.js';
 export { AgencyFloorRepository, agencyFloorRepository, FLOOR_ACTIVE_STATUSES } from './agency/floor.repository.js';
 export type { AgencyFloorRow } from './agency/floor.repository.js';
 export { AgencyPromiseSummaryRepository, agencyPromiseSummaryRepository } from './agency/promise-summary.repository.js';
 export type { AgencyPromiseSummaryRow } from './agency/promise-summary.repository.js';
+export { AgencyCallbacksRepository, agencyCallbacksRepository, callbacksPageStatement, CALLBACK_CANDIDATE_SQL } from './agency/callbacks.repository.js';
+export type { CallbacksListCampaignRow, CallbacksPageCampaign, CallbacksPageInput, CallbacksPageRow } from './agency/callbacks.repository.js';
 export type { AgencyLiveCallQuery, AgencyLiveCallRow } from './agency/live-call.repository.js';
 export { AgencyManualCallRepository, agencyManualCallRepository } from './agency/manual-call.repository.js';
 export type {
@@ -168,7 +185,7 @@ export {
   waitingContactSql,
 } from './agency/drilldown-sql.js';
 export type { ContactWaitingBucket } from './agency/drilldown-sql.js';
-export { contactListFilterConditions } from './agency/query-builders.js';
+export { contactListFilterConditions, toKeysetPage } from './agency/query-builders.js';
 export {
   AgencyInsightsRollupRepository,
   agencyInsightsRollupRepository,

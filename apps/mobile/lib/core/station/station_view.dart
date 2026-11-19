@@ -53,13 +53,17 @@ class BreakOption {
 /// The break the agent is on, or has queued for after this call.
 @immutable
 class BreakInfo {
-  const BreakInfo({required this.code, required this.label, this.since, this.rang = false, this.noRing});
+  const BreakInfo({required this.code, required this.label, this.since, this.rang = false, this.noRing, this.limitMinutes});
 
   final String code;
   final String label;
 
   /// When the break started (null for a queued break).
   final DateTime? since;
+
+  /// How long this break may last, in minutes (the campaign's reason, Live floor LF6, LF20): the
+  /// station counts down from [since]. Null for a reason with none, and always for a reserved one.
+  final int? limitMinutes;
 
   /// The reserved `device_away` break: the app paused the agent because it
   /// left the foreground. The UI shows "Paused · you left the app", not a break.
@@ -85,9 +89,10 @@ class BreakInfo {
       other.label == label &&
       other.since == since &&
       other.rang == rang &&
-      other.noRing == noRing;
+      other.noRing == noRing &&
+      other.limitMinutes == limitMinutes;
   @override
-  int get hashCode => Object.hash(code, label, since, rang, noRing);
+  int get hashCode => Object.hash(code, label, since, rang, noRing, limitMinutes);
 }
 
 /// One contact field for the screen pop.
@@ -659,6 +664,69 @@ class CustomerWaitingView {
   int get hashCode => Object.hash(callId, since, name, fromE164);
 }
 
+/// Where the agent's Need help stands (floor assist, LF4): nothing open, being asked for, open, or
+/// being cancelled.
+enum HelpStage { none, raising, open, cancelling }
+
+/// The tone of [HelpView.notice]: answered (a supervisor is on it) or a warning (nobody answered).
+enum HelpNoticeTone { success, warning }
+
+/// The agent's Need help on the station (floor assist, LF4, LF13–LF15). The control is offered on a
+/// call and in wrap-up while the account has floor assist on (the screen reads the flag); an open
+/// request, and the notice of how the last one ended, show wherever the station is.
+@immutable
+class HelpView {
+  const HelpView({this.stage = HelpStage.none, this.raisedAt, this.notice, this.noticeTone, this.error});
+
+  final HelpStage stage;
+
+  /// When the open request was raised (this device's clock); null with none open.
+  final DateTime? raisedAt;
+
+  /// How the last request ended, in words ("Anitha N is listening to your call."), until the agent
+  /// dismisses it or asks again; null for none.
+  final String? notice;
+  final HelpNoticeTone? noticeTone;
+
+  /// Why the last raise or cancel did not go through; null for none.
+  final String? error;
+
+  /// A request is open (or being cancelled): the screen says so and offers Cancel.
+  bool get isOpen => stage == HelpStage.open || stage == HelpStage.cancelling;
+
+  /// Anything to show outside a call: an open request, a notice or a refusal.
+  bool get hasNews => stage != HelpStage.none || notice != null || error != null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HelpView &&
+      other.stage == stage &&
+      other.raisedAt == raisedAt &&
+      other.notice == notice &&
+      other.noticeTone == noticeTone &&
+      other.error == error;
+  @override
+  int get hashCode => Object.hash(stage, raisedAt, notice, noticeTone, error);
+}
+
+/// A supervisor's message to the agent (floor assist, LF5): plain text, who sent it ("Your
+/// supervisor" when the server could not name them) and when (this device's clock).
+@immutable
+class SupervisorMessageView {
+  const SupervisorMessageView({required this.id, required this.text, required this.from, required this.sentAt});
+
+  final String id;
+  final String text;
+  final String from;
+  final DateTime sentAt;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SupervisorMessageView && other.id == id && other.text == text && other.from == from && other.sentAt == sentAt;
+  @override
+  int get hashCode => Object.hash(id, text, from, sentAt);
+}
+
 /// An action in flight, so its button shows progress and cannot double-fire.
 ///
 /// [redialing] lasts from the tap until the redial's call reaches the
@@ -712,6 +780,7 @@ class StationView {
     this.inbound,
     this.customerWaiting,
     this.inboundNotice,
+    this.help = const HelpView(),
   });
 
   final String campaignId;
@@ -790,6 +859,10 @@ class StationView {
   /// up first, it went back to the queue, ...), for 30 s or until the next call.
   final String? inboundNotice;
 
+  /// The agent's Need help (floor assist): its own stage, never [busy], so asking for help never
+  /// holds up hanging up or saving the outcome.
+  final HelpView help;
+
   /// The call on screen, campaign or inbound: what notes, dialogs and sheets are keyed by.
   String? get callId => call?.attemptId ?? inbound?.callId;
 
@@ -833,7 +906,8 @@ class StationView {
       other.myContactsOffered == myContactsOffered &&
       other.inbound == inbound &&
       other.customerWaiting == customerWaiting &&
-      other.inboundNotice == inboundNotice;
+      other.inboundNotice == inboundNotice &&
+      other.help == help;
 
   @override
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue, inbound]);
@@ -895,6 +969,16 @@ abstract interface class StationActions {
   Future<void> dismiss();
   void dismissActionError();
   void dismissMissedRelease();
+
+  /// Need help (floor assist, LF4): asks every supervisor of the account for help with the call on
+  /// screen or its wrap-up. Refusals land in [HelpView.error].
+  Future<void> raiseHelp();
+
+  /// Withdraws the open Need help request. Refusals land in [HelpView.error].
+  Future<void> cancelHelp();
+
+  /// Puts away [HelpView.notice] and [HelpView.error].
+  void dismissHelpNotice();
 }
 
 /// How [StationActions.leave] ended.
@@ -991,3 +1075,11 @@ final stationViewProvider = Provider<StationView?>((ref) => null);
 final stationActionsProvider = Provider<StationActions>(
   (ref) => throw UnimplementedError('stationActionsProvider is provided by the station core'),
 );
+
+/// A supervisor's messages to the agent (floor assist, LF5), oldest first, until dismissed: on a
+/// campaign station or a soft-phone session alike. The app shell shows them over every tab.
+/// Overridden by the station core; none without a session.
+final supervisorMessagesProvider = Provider<List<SupervisorMessageView>>((ref) => const []);
+
+/// Dismisses the message with that id. Overridden by the station core.
+final dismissSupervisorMessageProvider = Provider<void Function(String id)>((ref) => (_) {});

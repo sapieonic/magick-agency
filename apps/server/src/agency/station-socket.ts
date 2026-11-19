@@ -13,7 +13,12 @@ import type {
 import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
-import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, stationCanTakeInbound, type StationUpgradeQuery } from './station-upgrade.js';
+import {
+  DEFAULT_STATION_UPGRADE,
+  parseStationUpgradeQuery,
+  stationCaps,
+  type StationUpgradeQuery,
+} from './station-upgrade.js';
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
@@ -136,7 +141,7 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
  * is recorded on the socket for the bridge, which reads it at every attach of this socket
  * to a call (`core/bridge/browser-leg-media.ts`). `upgrade.client` tunes liveness and is
  * written to the session at attach. `upgrade.caps` decides, with the client kind, whether this
- * socket can take inbound calls (`stationCanTakeInbound`, IQ46): kept on the registry entry, never
+ * socket can take inbound calls (`stationCaps`, IQ46): kept on the registry entry, never
  * the session row.
  */
 export async function handleStationSocket(
@@ -502,10 +507,12 @@ export async function handleStationSocket(
     return;
   }
 
-  // This socket's own answer, never the session's (IQ46): a console always, a phone only with
-  // `caps=inbound`. Decides whether it is sent the inbound frames and offered inbound callers, and
-  // whether what the session held of an inbound call is let go below.
-  const canTakeInbound = stationCanTakeInbound(upgrade);
+  // This socket's own answer, never the session's (IQ46): a console has every capability, a phone
+  // those it declared. `inbound` decides whether it is sent the inbound frames and offered inbound
+  // callers, and whether what the session held of an inbound call is let go below; `floor_assist`
+  // (LF4, LF5) whether it is sent the floor assist frames and `ready.help`.
+  const caps = stationCaps(upgrade);
+  const canTakeInbound = caps.has('inbound');
   await runtime.stations.attach({
     sessionId,
     campaignId: session.campaign_id,
@@ -515,7 +522,7 @@ export async function handleStationSocket(
     ws: socket,
     // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
     clientKind: upgrade.client,
-    canTakeInbound,
+    caps,
   });
 
   // And the same question again, because `attach` has its own await (the ownership
@@ -583,10 +590,28 @@ export async function handleStationSocket(
       })
     : undefined;
 
+  // The session's open Need help (LF4, LF15), so a reloaded console still shows "Help requested":
+  // only to a station that hears how it ends (the floor assist frames). Read HERE, after `attach`
+  // registered this socket and beside the rehydrate (no await between the fence and `ready`), and
+  // with the repository's OPEN rule on the database's clock (LF12), never the attach's row and this
+  // process's clock: a request cleared after the attach's read was put back on screen by `ready`,
+  // its `help_cleared` already spent. A clear landing between this read and `ready` sends its frame
+  // to this socket first, and the client ignores a `ready.help` whose `raised_at` it has already
+  // seen cleared. Best effort: a failed read omits the field (the agent's next raise answers the
+  // open one).
+  const helpRead = caps.has('floor_assist')
+    ? Promise.resolve()
+      .then(() => runtime.floorAssist.openHelp({ id: sessionId, tenant_id: session.tenant_id, account_id: session.account_id }))
+      .catch((err: unknown) => {
+        log.warn({ err, sessionId }, 'Could not read the open Need help for ready');
+        return null;
+      })
+    : undefined;
+
   // Redis, or `break` — never the DB row. The rule and
-  // the reason live on the runtime; this is transport. Together with the queue read, which
-  // never rejects, so a rehydrate failure surfaces exactly as before.
-  const [resumedState, queue] = await Promise.all([runtime.rehydrateAgent(sessionId, attachedRow), queueRead]);
+  // the reason live on the runtime; this is transport. Together with the queue and help reads,
+  // which never reject, so a rehydrate failure surfaces exactly as before.
+  const [resumedState, queue, helpOpen] = await Promise.all([runtime.rehydrateAgent(sessionId, attachedRow), queueRead, helpRead]);
 
   // Re-adopt a call the previous socket dropped out of, if the window has not
   // lapsed. This is what makes a wifi blip survivable: the bridge disarms its
@@ -658,6 +683,7 @@ export async function handleStationSocket(
     ...(pendingBreak
       ? { pending_state: 'break' as const, pending_break_reason: pendingBreak.code }
       : {}),
+    ...(helpOpen ? { help: helpOpen } : {}),
     // The fence above narrows the window; this closes it. `ready` carries this
     // run's whole view of the session, so delivering it to a socket that built
     // its own is strictly worse than delivering it to nobody — the replacement

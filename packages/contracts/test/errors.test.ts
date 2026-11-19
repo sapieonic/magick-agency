@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
+  AGENCY_FLOOR_ASSIST_ERROR_CODES,
   AGENCY_INBOUND_ERROR_CODES,
   AGENCY_LISTEN_ERROR_CODES,
   AGENCY_LIVE_CALL_NUMBER_ERROR_CODES,
@@ -10,6 +11,7 @@ import {
   AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
+  type AgencyFloorAssistErrorCode,
   type AgencyInboundErrorCode,
   type AgencyListenErrorCode,
   type AgencyLiveCallNumberErrorCode,
@@ -418,5 +420,35 @@ describe('listen codes', () => {
       ...AGENCY_INBOUND_ERROR_CODES,
     ]);
     for (const code of AGENCY_LIVE_CALL_NUMBER_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Floor assist: Need help and supervisor messages (src/errors.ts §8, LF4, LF5).
+const _floorAssistExact: Equals<(typeof AGENCY_FLOOR_ASSIST_ERROR_CODES)[number], AgencyFloorAssistErrorCode> = true;
+const _floorAssistCoreAgrees: Equals<Core.AgencyFloorAssistErrorCode, AgencyFloorAssistErrorCode> = true;
+void [_floorAssistExact, _floorAssistCoreAgrees];
+
+describe('floor assist codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_FLOOR_ASSIST_ERROR_CODES]).toEqual([
+      'floor_assist_disabled',
+      'help_not_on_call',
+      'agent_not_live',
+      'message_invalid',
+    ]);
+    expectUnique(AGENCY_FLOOR_ASSIST_ERROR_CODES);
+  });
+
+  it('is the one list the dialer barrel re-exports, not a copy of it', async () => {
+    const core = await import('../src/agency');
+    expect(core.AGENCY_FLOOR_ASSIST_ERROR_CODES).toBe(AGENCY_FLOOR_ASSIST_ERROR_CODES);
+  });
+
+  it('do not overlap the action, soft-phone, inbound, report or listen unions: the session routes answer beside them', () => {
+    const others = new Set<string>([
+      ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES,
+      ...AGENCY_LISTEN_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_FLOOR_ASSIST_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

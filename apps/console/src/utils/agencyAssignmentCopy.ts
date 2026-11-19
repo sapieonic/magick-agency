@@ -11,6 +11,8 @@ import type {
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyCampaignStatus } from '../types/agency-campaign';
 import type { ClientExposedAgencyFlagKey } from '@magick-agency/contracts/flags';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { errorCode } from './agencyErrors';
 import { formatCount, plural } from './format/number';
 
 /**
@@ -167,6 +169,12 @@ export const ASSIGNMENT_REFUSAL_COPY: Record<AgencyAssignmentErrorCode, string> 
   contact_not_found: 'That contact is no longer on this campaign.',
   campaign_not_found: 'This campaign no longer exists, or isn’t in this account.',
 };
+
+/** A refusal in the console's words: ours for a known code, the server's otherwise. */
+export function assignmentRefusal(err: unknown, fallback: string): string {
+  const code = errorCode(err) as AgencyAssignmentErrorCode | null;
+  return code && code in ASSIGNMENT_REFUSAL_COPY ? ASSIGNMENT_REFUSAL_COPY[code] : getErrorMessage(err, fallback);
+}
 
 /** Who a contact belongs to, for the roster's "Assigned to" column. */
 export const UNASSIGNED_LABEL = 'Unassigned';

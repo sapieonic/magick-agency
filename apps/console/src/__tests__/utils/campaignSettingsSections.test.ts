@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   CAMPAIGN_SETTINGS_SECTIONS,
-  campaignHasAgentsSection,
   campaignSettingsSectionsFor,
 } from '../../utils/campaignSettingsSections';
 
@@ -52,15 +51,15 @@ describe('CAMPAIGN_SETTINGS_SECTIONS', () => {
 });
 
 describe('the sections a campaign’s page has', () => {
-  const all = { assignmentEnabled: true, inboundEnabled: true, assignmentLeftovers: false, canSupervise: true };
+  const all = { canSupervise: true };
   const ids = (ctx: typeof all) => campaignSettingsSectionsFor(ctx).map((s) => s.id);
 
-  it('has Agents only with contact assignment, inbound calls or assignment settings left over', () => {
-    expect(campaignHasAgentsSection({ assignmentEnabled: false, inboundEnabled: false, assignmentLeftovers: false })).toBe(false);
-    expect(campaignHasAgentsSection({ assignmentEnabled: true, inboundEnabled: false, assignmentLeftovers: false })).toBe(true);
-    expect(campaignHasAgentsSection({ assignmentEnabled: false, inboundEnabled: true, assignmentLeftovers: false })).toBe(true);
-    expect(campaignHasAgentsSection({ assignmentEnabled: false, inboundEnabled: false, assignmentLeftovers: true })).toBe(true);
-    expect(ids({ ...all, assignmentEnabled: false, inboundEnabled: false })).not.toContain('agents');
+  it('has Agents on every campaign: break limits are every campaign’s (LF27)', () => {
+    expect(ids(all)).toContain('agents');
+    expect(ids({ canSupervise: false })).toContain('agents');
+    expect(CAMPAIGN_SETTINGS_SECTIONS.find((s) => s.id === 'agents')?.keywords).toEqual(
+      expect.arrayContaining(['break limit', 'tea', 'lunch']),
+    );
   });
 
   it('has Lifecycle and uploads only at agency.supervise, and everything else always, in page order', () => {

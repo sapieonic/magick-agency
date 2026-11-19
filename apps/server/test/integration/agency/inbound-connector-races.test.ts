@@ -548,7 +548,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const c = connector();
     const phone = await agent('reserved');
     // An older app build: `client=mobile` with no `caps=inbound`.
-    Object.assign(stations.get(phone)!, { clientKind: 'mobile', canTakeInbound: false });
+    Object.assign(stations.get(phone)!, { clientKind: 'mobile', caps: new Set() });
     const closed = await agent('reserved');
     stations.get(closed)!.ws.readyState = 3;
     const softphone = await agent('reserved');
@@ -571,7 +571,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     await until('offered to the first', async () => (await row(call.id)).state === 'offered');
     const second = await agent('available');
     // An older build took the session over (its attach handler not yet run): only the bind sees it.
-    Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+    Object.assign(stations.get(first)!, { clientKind: 'mobile', caps: new Set() });
     await until('connected to the second agent', async () => (await row(call.id)).state === 'connected', 5000);
     expect(await row(call.id)).toMatchObject({ session_id: second, offer_count: 2 });
     expect(bridge.binds).toEqual([call.id]); // bound once: to the second agent, never to the replaced station
@@ -588,7 +588,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const realOffer = calls.offer.bind(calls);
     const spy = vi.spyOn(calls, 'offer').mockImplementation(async (...args: Parameters<typeof calls.offer>) => {
       const res = await realOffer(...args);
-      if (args[1] === first) Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+      if (args[1] === first) Object.assign(stations.get(first)!, { clientKind: 'mobile', caps: new Set() });
       return res;
     });
     try {
@@ -615,7 +615,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const realOffer = calls.offer.bind(calls);
     const offerSpy = vi.spyOn(calls, 'offer').mockImplementation(async (...args: Parameters<typeof calls.offer>) => {
       const res = await realOffer(...args);
-      if (args[1] === first) Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+      if (args[1] === first) Object.assign(stations.get(first)!, { clientKind: 'mobile', caps: new Set() });
       return res;
     });
     // SWE-M1's spine read fails closed (a busy session on `break`): it must not be asked here.
@@ -651,7 +651,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
       if (args[1] === first && !letGo) {
         // The older build's attach: the registry entry, then the station socket's let-go, with
         // nothing yet held for the session (the search's give-back runs after the account's lock).
-        Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+        Object.assign(stations.get(first)!, { clientKind: 'mobile', caps: new Set() });
         letGo = c.onStationCannotTakeInbound(first);
       }
       return res;
@@ -684,7 +684,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const { call } = await caller(c);
     await until('offered to the first', async () => (await row(call.id)).state === 'offered');
     await agent('available');
-    Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+    Object.assign(stations.get(first)!, { clientKind: 'mobile', caps: new Set() });
     // The bind's own cancel: the spine requeued and the field cleared, the agent's return under way.
     await until('the bind cancelled the offer', async () => (await row(call.id)).session_id !== first
       && (await agents.get(first))?.inboundCallId === null && !c.findCallForSession(first));
@@ -708,7 +708,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const { call } = await caller(c);
     await until('offered to the first', async () => (await row(call.id)).state === 'offered');
     const second = await agent('available');
-    Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+    Object.assign(stations.get(first)!, { clientKind: 'mobile', caps: new Set() });
     const at = Date.now();
     // Settles once the offer is cancelled and the agent returned (the station socket's `ready` waits on it).
     await c.onStationCannotTakeInbound(first);
@@ -725,7 +725,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const held = await caller(c);
     expect(c.expectHandover(ringingAgent, held.call.id)).toBe(true);
     expect(await c.takeOnRelease(ringingAgent)).toBe(true);
-    Object.assign(stations.get(ringingAgent)!, { clientKind: 'mobile', canTakeInbound: false });
+    Object.assign(stations.get(ringingAgent)!, { clientKind: 'mobile', caps: new Set() });
     await c.onStationCannotTakeInbound(ringingAgent);
     expect(await agents.get(ringingAgent)).toMatchObject({ state: 'available', inboundCallId: null });
     await drain();
@@ -736,7 +736,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
   it('a phone that declared caps=inbound can take the hand-over as a console can (IQ20 amended by IQ46)', async () => {
     const c = connector();
     const phone = await agent('reserved');
-    Object.assign(stations.get(phone)!, { clientKind: 'mobile', canTakeInbound: true });
+    Object.assign(stations.get(phone)!, { clientKind: 'mobile', caps: new Set(['inbound']) });
     bridge.preambleGate = gate().wait;
     const { call } = await caller(c);
     expect(c.expectHandover(phone, call.id)).toBe(true);
@@ -775,7 +775,7 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const c = connector({ publish: (e) => events.push(e as unknown as Record<string, unknown>), republishMs: 100 });
     // The owner on an older app build (no caps=inbound), busy; a team agent on a call, so the caller waits.
     const owner = await agent('wrapup');
-    Object.assign(stations.get(owner)!, { clientKind: 'mobile', canTakeInbound: false });
+    Object.assign(stations.get(owner)!, { clientKind: 'mobile', caps: new Set() });
     await agent('on_call');
     const strict = { ...route, sticky_mode: 'strict' as const };
     const { call } = await caller(c, {

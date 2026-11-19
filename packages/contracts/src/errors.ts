@@ -754,3 +754,48 @@ const _allLiveCallNumberCodesListed: AllListed<
   typeof AGENCY_LIVE_CALL_NUMBER_ERROR_CODES
 > = true;
 void _allLiveCallNumberCodesListed;
+
+// ─── 8. Floor assist refusals (Need help and supervisor messages) ───────────
+//
+// The codes of `POST`/`DELETE /proxy/agency/sessions/:id/help` and
+// `POST /proxy/agency/sessions/:id/messages` (LF4, LF5; shapes in `./agency/floor-assist.ts`). The
+// body is `{ error, code, message }`. HTTP status beside each code. A session that is not the
+// caller's own (Need help), or not in the caller's account (messages), is the agent routes'
+// uniform `404 { error: 'Not Found', message: 'Session not found' }`, with no code, so the answer
+// never says a session exists elsewhere; a Need help on a session that has ended is the action
+// union's `409 session_ended`.
+
+/** Why a Need help or a supervisor message was refused. */
+export type AgencyFloorAssistErrorCode =
+  /** 403. `agency_floor_assist_enabled` is off for the account (LF11). */
+  | 'floor_assist_disabled'
+  /** 409. Need help is raised during a call or wrap-up (a soft-phone call, live or owing its outcome, included). */
+  | 'help_not_on_call'
+  /**
+   * 409. The agent has no live station that can receive the message: no station socket attached
+   * (or the session has ended), or an app build that cannot show it. Nothing was shown.
+   */
+  | 'agent_not_live'
+  /** 400. The message's `text` is missing, empty after trimming, or longer than `AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS`. */
+  | 'message_invalid';
+
+/** Runtime list of {@link AgencyFloorAssistErrorCode}, in declaration order. */
+export const AGENCY_FLOOR_ASSIST_ERROR_CODES = [
+  'floor_assist_disabled',
+  'help_not_on_call',
+  'agent_not_live',
+  'message_invalid',
+] as const satisfies readonly AgencyFloorAssistErrorCode[];
+
+const _allFloorAssistCodesListed: AllListed<
+  AgencyFloorAssistErrorCode,
+  typeof AGENCY_FLOOR_ASSIST_ERROR_CODES
+> = true;
+void _allFloorAssistCodesListed;
+
+/** The body of a floor assist refusal. */
+export interface AgencyFloorAssistErrorResponse {
+  error: string;
+  code: AgencyFloorAssistErrorCode;
+  message: string;
+}

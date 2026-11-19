@@ -2356,17 +2356,53 @@ chips (a new "On soft phone"), Listen from a card, break overruns past 30 minute
 "Paused by" on the campaign cards. **Coming soon** (focusable `aria-disabled` buttons with a
 tooltip, `components/common/ComingSoon.tsx`, LF1): Need help on the console station, Talk to agent,
 Send reminder, Give to free agents, Join call, and the Need help chip. Not on the agent app.
-Phase 3 (Need help, messages, break limits, giving late callbacks to free agents, the
-account-wide Callbacks list) and Phase 4 (Join call, whisper, LF8) are under "Not built".
+Phase 3 replaced all of them but Join call (below); Phase 4 (Join call, whisper, LF8) is under
+"Not built".
 Known limits: the dialler-conversations count reads the day's attempts deployment-wide before it
 filters to the account (an account-first index would bound it); Will pay shows Successes for a
 moment until the promises read answers. Test counts below.
+
+### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF39 built as defaults, pending Manas)
+
+Phase 3 of the Live floor, as Manas decided LF4–LF7, on the console, the app and the server.
+**Need help** (LF4, LF11–LF16, LF24, LF28, LF35): the agent raises it on their own live session, on
+a call or in wrap-up, from the console station's action bar or the app's call and wrap-up screens
+(`POST`/`DELETE /proxy/agency/sessions/:id/help`; the session row's `help_*` columns,
+`0052_floor_assist.sql`). Every `agency.supervise` holder sees it on the floor read
+(`AgencyFloorAgent.help`, polled every 5 s, no push): it tops Needs you now, the agent's card goes
+red with a "Needs help" tag, and a chime sounds once per new request (on by default, muted per
+browser, LF31). It clears exactly once: a supervisor's listen going live on the agent's call, their
+message reaching the agent's station, the agent's cancel, 15 minutes (read on every read against
+the database's clock; a 15 s sweep in the primary sends the frame and writes the row), or the
+session ending; the station hears `help_answered` and `help_cleared`, each end is one audit row,
+and an expiry warns (`agy-help-unanswered`). **Messages** (LF5, LF17, LF25, LF29, LF36): Talk to
+agent and Send reminder (prefilled) are one dialog on the cards and break rows,
+`POST /proxy/agency/sessions/:id/messages`, 1 to 500 characters of plain text, sent as
+`supervisor_message` to the agent's console or app (a phone declares the `floor_assist` capability)
+or refused `409 agent_not_live`; kept 90 days in `agency_supervisor_messages`, one audit row each.
+Both sit behind `agency_floor_assist_enabled`, **off by default** (LF11). **Break limits** (LF6,
+LF20, LF26, LF27, LF33, LF37): an optional `limit_minutes` per break reason (1–240), edited in
+campaign Settings › Agents (now on every campaign), with built-ins Tea 15 and Lunch 30; the floor's
+long-break risk uses the reason's limit (30 minutes without one), and the station and the app count
+down. **Give late callbacks to free agents** (LF7, LF21, LF30): an assignment operation,
+`late_callbacks_to_live_agents`, previewed then committed, moving overdue callbacks whose owner is
+away to agents live on the campaign and not on a break, fewest due first; `strict` and `preferred`
+only (`409 late_callbacks_pool_mode`). **The account's Callbacks page** (LF22, LF23, LF32):
+`GET /proxy/agency/callbacks`, Overdue and Due later today across the account's active campaigns,
+keyset pages, the customer's name never the number (`0053_account_callbacks_index.sql`: 38 ms for
+the overdue page on 25 campaigns of 40,000 contacts, 3.4 s before it). Phase 4 (Join call, whisper,
+LF8) stays Coming soon. Known limits: the campaign Agents tab still flags breaks at the fixed 30
+minutes (its stats read carries no limit, LF33); Need help is not on the console's inbound and soft
+phone views nor the app's soft phone screens (LF24, LF39); the Callbacks page's campaign filter
+lists the board's first 25 campaigns. Test counts below.
 
 ## Test counts
 
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
 
 After the console's cleanup refactors (2026-11-19: one polled daily read for Today so far and the promises, `useNow` and one 5 s risk clock ranking the floor once for the cards and the break rows, derived rank and badge, one late-callbacks figure, Got it split once): `apps/console` 7652 (411 files), `pnpm lint` clean. After the PR review's fixes (2026-11-19: one polling core for the floor and the daily reads, Retry overtaking a read in flight, a stale card's Pause or Resume re-reading the board, the grouped calling-hours Got it held per campaign, Listen taking only the fields it reads, the agent cards' memo, the stop time stamped on the campaign row by `0051_campaign_stopping_at.sql`): `apps/console` 7666 (412 files); `apps/server` unit 10501 passed + 1 expected fail (530 files), `INTEGRATION_LANE=rest` 3046 passed + 9 expected fail + 2 skipped (277 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files); `packages/db` unit 457 (28 files), integration 835 (93 files); `packages/contracts` 551; `agency_wire` `dart test` 688, run on Dart 3.14.1 outside the Flutter workspace (the package copied with its `resolution: workspace` line removed, against this tree's fixtures); `pnpm lint` clean.
+
+**Live floor Phase 3, 2026-11-19.** Branch `claude-mgkvc/loving-wozniak-s4am09` (LF4–LF7, LF11–LF39; the 0052 and 0053 migrations; after three independent reviews' fixes), every suite run one after another on the final tree (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (74 vocabularies, 3 label maps). Unit: `apps/server` 10583 passed + 1 expected fail (533 files), `apps/console` 7815 (420 files), `apps/super-admin` 509 (37 files), `packages/contracts` 575 (18 files), `packages/domain` 283 (14 files), `packages/db` 457 (28 files), `packages/observability` 23 (5 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 848 (95 files); `apps/server` `INTEGRATION_LANE=rest` 3105 passed + 9 expected fail + 2 skipped (281 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 (8 files). Mobile, on Flutter 3.47.7: `flutter analyze` no issues, `flutter test` 2032, `agency_wire` `dart test` 718. `plivo-inbound-e2e.test.ts` failed in some rest-lane runs on a loaded machine while other agents ran integration in parallel (green alone and in this run); the late-callbacks race test was made to assert what LF21 promises and passed 20 runs of its file. After the `/simplify` cleanup (one statement per Need help transition, one flag snapshot and one rows read per floor poll, station capabilities as one set, the registry's help-clear memory moved to the clients, the staging names dropped, shared helpers reused), the same suites on the final tree: `apps/console` 7818 (420 files), `apps/server` unit 10583 passed + 1 expected fail (533 files), `INTEGRATION_LANE=rest` 3106 passed + 9 expected fail + 2 skipped (281 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 (8 files), `packages/db` 457 and 848 (95 files), `packages/contracts` 575, `apps/super-admin` 509, `packages/web-ui` 244, `packages/domain` 283, `packages/observability` 23, `flutter test` 2034, `agency_wire` 718, `flutter analyze` no issues; lint, build, grafana 34, release 10, tooling 20, literals up to date. After PR #102's review comments (an answer stamped no earlier than its raise, LF14; a listen's `by_name` trimmed and cut like `from_name`, LF15; a malformed session id on a supervisor message pinned as the uniform 404; a cancel that lost the race to a supervisor's answer now says who answered, LF35; the expiry's minutes from `AGENCY_HELP_EXPIRY_MS` through `literals.json`'s new `help_expiry_ms`; the Give dialog counting and naming only the agents who receive callbacks, LF30), every suite on the final tree: `apps/console` 7820 (420 files), `apps/server` unit 10584 passed + 1 expected fail (533 files), `INTEGRATION_LANE=rest` 3107 passed + 9 expected fail + 2 skipped (281 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 (8 files), `packages/db` 457 (28 files) and 848 (95 files), `packages/contracts` 576 (18 files), `apps/super-admin` 509, `packages/web-ui` 244, `packages/domain` 283, `packages/observability` 23, `flutter test` 2041, `agency_wire` 719, `flutter analyze` no issues; lint, build, grafana 34, release 10, tooling 20, `contracts-literals.mjs --check` up to date (75 vocabularies, 3 label maps).
 
 **The recording-host re-queue script removed, 2026-11-18.** Branch
 `claude-mgkvc/wizardly-dirac-gxwzam`, on the tree of this entry's commit, every suite run one after
@@ -3292,11 +3328,9 @@ files are listed in [`modules.md`](modules.md).
 
 ## Not built
 
-**Live floor** (LF4–LF8, open): Phase 3, Need help from a station, messages from a supervisor to
-an agent (Talk to agent, Send reminder), break limits per reason, giving late callbacks to free
-agents, the account-wide Callbacks list (its schema is a migration numbered 0052 or later); Phase 4, Join
-call and whisper (reopens "listen only"). Their controls are on the console as Coming soon; the
-agent app has none.
+**Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
+control on the cards. Phase 3's follow-ups: break limits on the campaign Agents tab (LF33), Need
+help on the console's inbound and soft phone views and the app's soft phone screens (LF24, LF39).
 
 **Launch work** (phase 10):
 
@@ -3406,7 +3440,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
-| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF4–LF8 (Phase 3 and 4); ratify LF1, LF9 and LF10 (`decisions.md`, "Live floor (LF)") |
+| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings); LF39 open. LF4–LF7 (Phase 3) decided 2026-11-19 and built (`decisions.md`, "Live floor (LF)") |
 
 ## Deployment invariants
 

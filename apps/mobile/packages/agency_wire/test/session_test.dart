@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:agency_wire/agency_wire.dart';
 import 'package:test/test.dart';
 
@@ -44,6 +46,25 @@ void main() {
       expect(b.retryContext, isNull);
       expect(b.breakReason, isNull, reason: 'offline: no break to name');
       expect(() => b.dispositionCatalog.add(b.dispositionCatalog.first), throwsUnsupportedError);
+    });
+
+    test('break limits (LF6, LF20): each reason\'s limit in minutes, none when absent', () {
+      final b = SessionBootstrap.fromJson(json);
+      expect(b.breakReasons.map((r) => (r.code, r.limitMinutes)), [('tea', 15), ('lunch', 30), ('training', null)]);
+    });
+
+    test('a limit outside the contract\'s rule (1 to 240 whole minutes) is read as none, never a lost catalog', () {
+      BreakReason r(Object? limit) => BreakReason.fromJson({'code': 'tea', 'label': 'Tea', 'limit_minutes': limit});
+      expect([r(1).limitMinutes, r(240).limitMinutes, r(15.0).limitMinutes], [1, 240, 15]);
+      for (final bad in <Object?>[0, 241, -5, 15.5, '15', null, true, double.infinity, double.negativeInfinity, double.nan]) {
+        expect(r(bad).limitMinutes, isNull, reason: '$bad');
+      }
+      // A number too large for a double decodes as infinity: dropped, never an UnsupportedError.
+      final huge = jsonDecode('{"code":"tea","label":"Tea","limit_minutes":1e400}') as Map<String, Object?>;
+      expect(BreakReason.fromJson(huge).limitMinutes, isNull);
+      expect(BreakReason.fromJson(const {'code': 'x', 'label': 'X'}).limitMinutes, isNull);
+      expect(r(15), const BreakReason(code: 'tea', label: 'Tea', limitMinutes: 15));
+      expect(r(15) == r(30), isFalse);
     });
 
     test('a retry campaign carries its banner, and a rehydrated session lands on break', () {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -11,7 +11,16 @@ import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { useAgentFloor } from '../../hooks/useAgentFloor';
 import { usePromisesToday } from '../../hooks/usePromisesToday';
 import { useNow } from '../../hooks/useNow';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { useHelpChime } from '../../hooks/useHelpChime';
+import { useLatestRef } from '../../hooks/useLatestRef';
+import { useAssignmentModes } from '../../hooks/useAssignmentModes';
 import { hasPermission } from '../../utils/permissions';
+import { agentDisplayName } from '../../utils/agencyAgentFloor';
+import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
+import { helpKeys, type MessageTarget } from '../../utils/agency/floorAssist';
+import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
+import { offersHandOff } from '../../utils/agency/lateCallbacks';
 import { holdsHomePermission } from '../../utils/consoleNav';
 import { homeAttention, sortByRank, HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
 import {
@@ -19,6 +28,7 @@ import {
   cardsFor,
   floorAgentsWorking,
   floorRowsFor,
+  helpItems,
   rankFloorCards,
   willPayByCampaign,
   willPayFor,
@@ -28,7 +38,9 @@ import { formatCount } from '../../utils/format/number';
 import { GetStarted } from './campaigns-home/GetStarted';
 import { LiveFloorHeader } from './live-floor/LiveFloorHeader';
 import { LiveFloorKpis } from './live-floor/LiveFloorKpis';
-import { NeedsYouNow, type BreaksChecked } from './live-floor/NeedsYouNow';
+import { NeedsYouNow, type BreaksChecked, type NeedsYouNowAssist, type NeedsYouNowHandOff } from './live-floor/NeedsYouNow';
+import { MessageDialog } from './live-floor/MessageDialog';
+import { LateCallbacksDialog } from './live-floor/LateCallbacksDialog';
 import { CampaignsPanel } from './live-floor/CampaignsPanel';
 import { AgentsPanel } from './live-floor/AgentsPanel';
 import styles from './live-floor/LiveFloor.module.css';
@@ -53,6 +65,13 @@ import styles from './live-floor/LiveFloor.module.css';
  * 5 s, and the same cards feed the grid, its chips and the breaks over the limit in Needs you now,
  * so a card's `long_break` and its row cross the limit together. A risk (a stripe, the order, Make
  * available, a break row) shows at most 5 s late; only the cards' time in state ticks every second.
+ *
+ * Phase 3 (LF4–LF7, LF28–LF33): Need help from the same floor read (its rows top Needs you now, the
+ * cards go red and first, a chime once per new request), Talk to agent and Send reminder through one
+ * message dialog, both only while floor assist's flag is on; and on late callbacks whose owner is
+ * away, "Give to free agents" on `strict` and `preferred` campaigns while contact assignment is on
+ * (each such campaign's mode read once, `useAssignmentModes`). No new timer: everything rides the
+ * 5 s risk clock and the reads the page already makes.
  */
 export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
@@ -78,6 +97,11 @@ export default function HomePage() {
     retryFloor();
   }, [reloadBoard, retryFloor]);
   const [params, setParams] = useSearchParams();
+  // Floor assist (LF11) and contact assignment: client-exposed flags, off with no provider.
+  const assistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG) && supervise;
+  const assignmentOn = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG) && supervise;
+  const [messageTarget, setMessageTarget] = useState<MessageTarget | null>(null);
+  const [giving, setGiving] = useState<{ id: string; name: string } | null>(null);
 
   const floorRows = agentFloor.floor?.agents;
   // The server's now (every anchor on the floor is the server's), moved every 5 s: the risks'
@@ -92,7 +116,44 @@ export default function HomePage() {
     () => (ranked ? breakOverrunItems(ranked, board.reads.map((r) => r.campaign), agentFloor.stale) : []),
     [ranked, board.reads, agentFloor.stale],
   );
-  const items = useMemo(() => (breaks.length === 0 ? attention : sortByRank([...attention, ...breaks])), [attention, breaks]);
+  const helps = useMemo(
+    () => (ranked ? helpItems(ranked, board.reads.map((r) => r.campaign), floorNowMs, agentFloor.stale) : []),
+    [ranked, board.reads, floorNowMs, agentFloor.stale],
+  );
+  const items = useMemo(
+    () => (breaks.length === 0 && helps.length === 0 ? attention : sortByRank([...attention, ...breaks, ...helps])),
+    [attention, breaks, helps],
+  );
+  // The chime hears every open request on the floor (not only the picked campaign's), once each.
+  const chime = useHelpChime(assistOn && floorRows ? helpKeys(floorRows) : null);
+  const { on: chimeOn, toggle: toggleChime } = chime;
+  // Moves on every floor read: held in a ref and read at Listen's click, so the memo below (and the
+  // memoised Needs you now) outlives a poll that changed nothing else.
+  const clockOffsetRef = useLatestRef(agentFloor.clockOffsetMs);
+  const assist = useMemo<NeedsYouNowAssist | null>(
+    () => (assistOn
+      ? { onMessage: setMessageTarget, clockOffsetMs: () => clockOffsetRef.current, chime: { on: chimeOn, toggle: toggleChime } }
+      : null),
+    [assistOn, clockOffsetRef, chimeOn, toggleChime],
+  );
+  // Give to free agents: the campaigns whose late-callbacks row names an away owner, and their modes.
+  const handOffCampaigns = useMemo(
+    () => attention.flatMap((item) => {
+      const read = item.handOff && item.campaign ? board.reads.find((r) => r.campaign.id === item.campaign!.id) : undefined;
+      return read ? [{ id: read.campaign.id, status: read.campaign.status }] : [];
+    }),
+    [attention, board.reads],
+  );
+  const { modes, markPool } = useAssignmentModes(handOffCampaigns, tenantId, accountId, assignmentOn);
+  const handOff = useMemo<NeedsYouNowHandOff | null>(() => {
+    if (!assignmentOn) return null;
+    const offered = new Set(handOffCampaigns.filter((c) => offersHandOff(modes[c.id])).map((c) => c.id));
+    return { offered, onGive: setGiving };
+  }, [assignmentOn, handOffCampaigns, modes]);
+  const agentName = useCallback((userId: string) => {
+    const row = floorRows?.find((r) => r.agent_user_id === userId);
+    return agentDisplayName(row ?? { agent_user_id: userId, agent_name: null });
+  }, [floorRows]);
   const picked = selectedCampaign(params.get(CAMPAIGN_FILTER_PARAM), board.reads);
   const pickedId = picked?.id ?? null;
   const shown = useMemo(() => readsFor(board.reads, pickedId), [board.reads, pickedId]);
@@ -163,6 +224,8 @@ export default function HomePage() {
               lastUpdated={lastUpdated}
               breaks={breaksChecked}
               onShowAll={showAll}
+              assist={assist}
+              handOff={handOff}
             />
             {noCampaigns ? (
               <GetStarted canCreate={canCreate} canInvite={hasPermission(role, 'user.invite')} />
@@ -174,7 +237,14 @@ export default function HomePage() {
           {!noCampaigns && (
             <AgentsPanel
               reads={shown}
-              floor={shownFloor && shownCards ? { rows: shownFloor, cards: shownCards, clockOffsetMs: agentFloor.clockOffsetMs, stale: agentFloor.stale, onChanged: agentFloor.reload } : null}
+              floor={shownFloor && shownCards ? {
+                rows: shownFloor,
+                cards: shownCards,
+                clockOffsetMs: agentFloor.clockOffsetMs,
+                stale: agentFloor.stale,
+                onChanged: agentFloor.reload,
+                onMessage: assistOn ? setMessageTarget : null,
+              } : null}
               floorFailed={agentFloor.status === 'error' || agentFloor.status === 'refused'}
               onRetryFloor={retryFloor}
             />
@@ -186,6 +256,20 @@ export default function HomePage() {
             </p>
           )}
         </>
+      )}
+
+      {messageTarget && assistOn && (
+        <MessageDialog key={messageTarget.sessionId} target={messageTarget} onClose={() => setMessageTarget(null)} />
+      )}
+      {giving && assignmentOn && (
+        <LateCallbacksDialog
+          key={giving.id}
+          campaign={giving}
+          agentName={agentName}
+          onClose={() => setGiving(null)}
+          onGiven={reloadBoard}
+          onPool={markPool}
+        />
       )}
     </div>
   );

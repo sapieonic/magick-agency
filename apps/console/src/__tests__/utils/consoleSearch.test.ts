@@ -369,23 +369,23 @@ describe('a campaign’s own pages', () => {
 describe('the campaign Settings sections search links to', () => {
   const ids = (gate: GateInput) => searchableCampaignSections(gate).map((s) => s.id);
 
-  it('leave Agents out when contact assignment and inbound calls are both off: the page hides it', () => {
+  it('offer Agents whatever the flags: every campaign’s page has it, for its break limits (LF27)', () => {
     const off = ALL_ON('account_admin', {
       isFlagEnabled: (f) => f !== 'agency_contact_assignment_enabled' && f !== 'agency_inbound_enabled',
     });
-    expect(ids(off)).not.toContain('agents');
-    expect(ids(ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_inbound_enabled' }))).toContain('agents');
-    expect(ids(ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_contact_assignment_enabled' }))).toContain('agents');
+    expect(ids(off)).toContain('agents');
+    expect(ids(ALL_ON('account_admin'))).toContain('agents');
   });
 
-  it('are offered by searchConsole only as the page has them', () => {
+  it('are offered by searchConsole as the page has them: a break limit finds Agents with the flags off', () => {
     const off = ALL_ON('account_admin', {
       isFlagEnabled: (f) => f !== 'agency_contact_assignment_enabled' && f !== 'agency_inbound_enabled',
     });
-    const input: SearchInput = { query: 'diwali assignment', gate: off, accountId: 'a-1', defaultCallingCode: '+91', campaigns: [{ id: 'c-1', name: 'Diwali renewals' }] };
-    expect(searchConsole(input).groups.flatMap((g) => g.results).map((r) => r.key)).not.toContain('campaign-section:c-1:agents');
-    expect(searchConsole({ ...input, gate: ALL_ON('account_admin') }).groups.flatMap((g) => g.results).map((r) => r.key))
-      .toContain('campaign-section:c-1:agents');
+    const input: SearchInput = { query: 'diwali break limit', gate: off, accountId: 'a-1', defaultCallingCode: '+91', campaigns: [{ id: 'c-1', name: 'Diwali renewals' }] };
+    expect(searchConsole(input).groups.flatMap((g) => g.results).map((r) => r.key)).toContain('campaign-section:c-1:agents');
+    // Lifecycle and uploads stays a supervisor's: below it, search does not link to it.
+    const agent = ALL_ON('agent');
+    expect(ids(agent)).not.toContain('roster-uploads');
   });
 });
 

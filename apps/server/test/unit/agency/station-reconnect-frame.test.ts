@@ -107,6 +107,10 @@ interface Harness {
   unannounced: { value: boolean };
   /** The state the rehydrate answers (default `wrapup`). */
   rehydrateAgent: ReturnType<typeof vi.fn>;
+  /** The session's open Need help as the repository reads it (`floorAssist.openHelp`; default none). */
+  openHelp: ReturnType<typeof vi.fn>;
+  /** The registry double's `send`, for a test that clears a request mid-attach. */
+  send: (sessionId: string, frame: any) => boolean;
 }
 
 async function harness(): Promise<Harness> {
@@ -159,6 +163,7 @@ async function harness(): Promise<Harness> {
         return true;
       }),
     },
+    floorAssist: { openHelp: vi.fn().mockResolvedValue(null) },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
@@ -186,7 +191,10 @@ async function harness(): Promise<Harness> {
   await app.register(websocket);
   await app.register(async (a) => registerStationSocket(a as never, runtime as never), { prefix: '/api/v1/agency' });
   await app.ready();
-  return { app, breaks, sent, wrapupState, activeAttempt, dialActivity, unannounced, rehydrateAgent: runtime.rehydrateAgent };
+  return {
+    app, breaks, sent, wrapupState, activeAttempt, dialActivity, unannounced, rehydrateAgent: runtime.rehydrateAgent,
+    openHelp: runtime.floorAssist.openHelp, send: runtime.stations.send,
+  };
 }
 
 /** Open the station socket and return the `ready` frame it produced. */
@@ -440,5 +448,59 @@ describe('a reconnect mid-ring is told the state the agent was last shown (late 
     h = await harness();
     h.rehydrateAgent.mockResolvedValue('reserved');
     expect((await ready(h)).state).toBe('reserved');
+  });
+});
+
+describe('a reconnect is told the session\'s open Need help (LF4, LF12, LF15)', () => {
+  // FALSIFIED: with `help` dropped from the frame the first case reds; with the capability check
+  // dropped, the phone case does; reading `help` from the attach's row again (the help read
+  // removed), the cleared-before-the-read case does.
+  const RAISED = new Date(Date.now() - 60_000);
+  const OPEN = { raised_at: RAISED.toISOString(), call_id: 'call-1' };
+
+  it('carries the open request the repository reads (its OPEN rule on the database clock): when it was raised and on which call', async () => {
+    h.openHelp.mockResolvedValue(OPEN);
+    expect((await ready(h)).help).toEqual(OPEN);
+    expect(h.openHelp).toHaveBeenCalledWith({ id: 'sess-1', tenant_id: 't1', account_id: 'a1' });
+  });
+
+  it('omits it when the repository finds none open (never raised, answered, cleared or past its 15 minutes)', async () => {
+    h.openHelp.mockResolvedValue(null);
+    expect('help' in (await ready(h))).toBe(false);
+  });
+
+  it('reads it after the socket is registered, never from the attach\'s row: a request cleared before the read is not shown', async () => {
+    // The attach's row still has it open (read before the clear); the repository, read after, does not.
+    repos.session.findById.mockResolvedValue({ ...SESSION, help_raised_at: RAISED, help_answered_at: null, help_call_id: 'call-1' });
+    h.openHelp.mockResolvedValue(null);
+    expect('help' in (await ready(h))).toBe(false);
+  });
+
+  it('a request read as open, then cleared before ready went out: its help_cleared reaches the socket first, and ready says what was read (the client ignores a ready.help it has seen cleared)', async () => {
+    h.openHelp.mockImplementation(async () => {
+      // The clear lands while the read is in flight: its UPDATE committed after the read's snapshot,
+      // its frame reaches the newly registered socket before `ready` does.
+      h.send('sess-1', { event: 'help_cleared', raised_at: OPEN.raised_at, reason: 'cancelled' });
+      return OPEN;
+    });
+    expect((await ready(h)).help).toEqual(OPEN);
+    const events = h.sent.map((f) => f.event);
+    expect(events.indexOf('help_cleared')).toBeLessThan(events.indexOf('ready'));
+  });
+
+  it('a failed read omits it, and ready is still sent', async () => {
+    h.openHelp.mockRejectedValue(new Error('pool down'));
+    const frame = await ready(h);
+    expect(frame.event).toBe('ready');
+    expect('help' in frame).toBe(false);
+  });
+
+  it('not to a phone that cannot receive the floor assist frames (which are what end it): not even read', async () => {
+    h.openHelp.mockResolvedValue(OPEN);
+    const ws = await h.app.injectWS('/api/v1/agency/station/sess-1?token=tok&client=mobile&caps=inbound');
+    await vi.waitFor(() => expect(h.sent.some((f) => f.event === 'ready')).toBe(true));
+    ws.terminate();
+    expect('help' in h.sent.find((f) => f.event === 'ready')).toBe(false);
+    expect(h.openHelp).not.toHaveBeenCalled();
   });
 });

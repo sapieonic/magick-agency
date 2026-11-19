@@ -4,13 +4,20 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { mayManageEveryCampaignDnc } from '../../utils/dncScopeWords';
 import { usePermission } from '../../hooks/usePermission';
-import { useAgencyConsole } from './useAgencyConsole';
-import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch } from './station/useStationJoin';
+import { useAgencyConsole, type AgencyConsoleState } from './useAgencyConsole';
+import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch, type StationJoin } from './station/useStationJoin';
 import { useStationExit } from './station/useStationExit';
 import { useStationShortcuts } from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
+import { useStationHelp, type StationHelp } from './station/useStationHelp';
+import {
+  FloorAssistAnnouncer,
+  SupervisorMessages,
+  useFloorAssistAnnouncer,
+} from '../../components/agency/SupervisorMessages';
+import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
 import { useInboundCall } from '../../hooks/useInboundCall';
@@ -102,9 +109,62 @@ export default function AgentConsolePage() {
   const [params] = useSearchParams();
   const campaignId = params.get('campaign') ?? '';
   const { tenantId, accountId, role } = useTenant();
-  const { user, memberships } = useAuth();
 
   const join = useStationJoin({ campaignId, tenantId, accountId, role });
+  const { bootstrap } = join;
+  const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
+  const { station } = cons;
+
+  /*
+    ── Floor assist (LF4, LF5, LF24–LF26) ──────────────────────────────────────
+    Need help, in the action bar while the flag is on, and supervisors' messages, laid over every
+    view of the station (the campaign's, an inbound call's, the soft phone's): a message reaches
+    the agent wherever they are, and never moves or covers the controls that act on the call.
+  */
+  const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
+  const help = useStationHelp({
+    offered: floorAssistOn,
+    sessionId: bootstrap?.session_id ?? null,
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    station,
+  });
+  /*
+    What supervisors say, out loud (LF25): held here, above every screen the station shows, and
+    rendered once after it, so moving between the campaign's screen, an inbound call and the soft
+    phone neither remounts the region nor says anything again. The card stack comes after the
+    screen's own controls, so it is after them in Tab order too.
+  */
+  const announced = useFloorAssistAnnouncer(station.supervisorMessages, help.announcement);
+
+  return (
+    <>
+      <StationScreen campaignId={campaignId} join={join} cons={cons} help={help} />
+      <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
+      <FloorAssistAnnouncer lines={announced} />
+    </>
+  );
+}
+
+/**
+ * What the station shows: the screen for a join that did not open (a conflict, the soft phone
+ * elsewhere, another device, an error), or the station on an inbound call, on the soft phone or on
+ * its campaign. The page renders it in one place, so moving between them leaves the page's floor
+ * assist (the cards and their live region) where it is.
+ */
+function StationScreen({
+  campaignId,
+  join,
+  cons,
+  help,
+}: {
+  campaignId: string;
+  join: StationJoin;
+  cons: AgencyConsoleState;
+  help: StationHelp;
+}) {
+  const { tenantId, accountId, role } = useTenant();
+  const { user, memberships } = useAuth();
   const { bootstrap } = join;
 
   const consoleRef = useRef<HTMLDivElement>(null);
@@ -125,7 +185,6 @@ export default function AgentConsolePage() {
   // escalation is gated behind this.
   const mayMarkDncTenantWide = mayManageEveryCampaignDnc(memberships ?? [], tenantId, accountId);
 
-  const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
   const { station, clock, audio } = cons;
   const { connection, agentState, live, release, dialing, missedPings } = station;
   const micNotice = agencyAudioNotice(audio.error);
@@ -546,11 +605,13 @@ export default function AgentConsolePage() {
       */}
       {micBanner}
 
-      {/* The rail is the ONLY polite live region on this screen. */}
+      {/* The rail is the call's one polite live region. (Floor assist has its own, LF25:
+          `FloorAssistAnnouncer`, for what supervisors say, never about the call.) */}
       <StateRail
         agentState={agentState}
         agentStateSince={station.agentStateSince}
         breakReasonLabel={cons.breakReasonLabel}
+        breakLimitMinutes={cons.breakLimitMinutes}
         connection={connection}
         live={live}
         release={release}
@@ -590,8 +651,9 @@ export default function AgentConsolePage() {
       ) : null}
 
       {/* Assertive region, used ONLY for connect, disconnect and the direct
-          result of a button the agent just pressed ( — exactly two live
-          regions, and this is the second). */}
+          result of a button the agent just pressed (the call has exactly two
+          live regions, and this is the second; floor assist's polite one,
+          LF25, is outside them). */}
       <div className={styles.srOnly} role="alert" aria-live="assertive">
         {cons.announcement}
       </div>
@@ -621,7 +683,8 @@ export default function AgentConsolePage() {
         the input, because the selector is deliberately not on the bootstrap.
 
         Not a live region: it is standing context, not an event, and the console
-        has exactly two live regions both spent on the call itself.
+        has exactly two live regions for the call, both spent on the call itself
+        (floor assist's, LF25, carries only what supervisors say).
       */}
       {bootstrap?.retry_context ? (
         <p className={styles.retryBanner} data-testid="retry-context">
@@ -722,6 +785,7 @@ export default function AgentConsolePage() {
         onHangup={hangup}
         hangupFailure={hangupFailure}
         softphoneAvailable={softphone.available}
+        help={help}
       />
 
       {/*

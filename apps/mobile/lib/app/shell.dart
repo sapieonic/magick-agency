@@ -5,10 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../core/ring/station_ring.dart' show ringNoticeProvider;
 import '../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../core/station/station_signals.dart';
+import '../core/station/station_view.dart' show supervisorMessagesProvider;
 import '../features/missed/missed_access.dart';
 import '../features/missed/missed_calls_copy.dart' show MissedCopy;
 import '../features/missed/missed_on_duty.dart';
 import '../features/ring/ring_notice_banner.dart';
+import '../features/station/supervisor_message_banner.dart';
 import 'routes.dart';
 
 /// The shell's branches, in the router's order (`routerProvider`). The set is
@@ -72,6 +74,9 @@ bool tabLabelFits(String label, {required double width, required TextStyle? styl
 ///   list; on the soft phone, so does the Phone tab (the soft phone is in the
 ///   station then). With a soft-phone session the Station tab is the campaign
 ///   list, which says the soft phone is open.
+///
+/// A supervisor's message (floor assist) shows above the tab, on every tab and over a call, until
+/// the agent dismisses it (`SupervisorMessageBanner`).
 ///
 /// My calls carries the open Missed calls as a badge (`missedCallsAccessProvider`):
 /// the Missed list is a segment of that tab, not a tab of its own. Held on the
@@ -176,8 +181,16 @@ class AppShell extends ConsumerWidget {
               },
               destinations: [for (final b in branches) destination(b)],
             );
+    // A supervisor's message (floor assist, LF5) sits at the top of every tab, over a call too:
+    // the banner takes the status bar's inset, and the tab below it no longer needs it.
+    final messageShown = ref.watch(supervisorMessagesProvider.select((m) => m.isNotEmpty));
     return Scaffold(
-      body: shell,
+      body: Column(
+        children: [
+          if (messageShown) const SafeArea(bottom: false, child: SupervisorMessageBanner()),
+          Expanded(key: const ValueKey('shell-body'), child: MediaQuery.removePadding(context: context, removeTop: messageShown, child: shell)),
+        ],
+      ),
       bottomNavigationBar: switch ((ringNotice, bar)) {
         (null, _) => bar,
         (final String notice, null) => SafeArea(top: false, child: RingNoticeBanner(text: notice)),

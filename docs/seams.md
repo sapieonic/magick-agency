@@ -43,7 +43,19 @@ in the agency plugin is `api/routes/proxy-agency-floor.routes.ts` (decision B28b
 `GET /proxy/agency/floor` and `GET /proxy/agency/promises/summary`, no path params (the routes
 validate their query with their own 400s), its hooks the session, the tenant context and
 `Cache-Control: no-store`; the floor reaches the internal `GET /api/v1/agency/floor` (owner `none`
-in `api/core-owners.ts`) through `callCore`.
+in `api/core-owners.ts`) through `callCore`. The newest is `api/routes/proxy-agency-floor-assist.routes.ts` (LF4,
+LF5): Need help's `POST`/`DELETE /proxy/agency/sessions/:id/help` and a supervisor's
+`POST /proxy/agency/sessions/:id/messages`, in a scope of their own whose malformed-id guard answers
+the agent routes' `Session not found`; its hooks the session and the tenant context; they reach the
+internal `POST /api/v1/agency/sessions/:id/help`, `…/help/cancel` (owner `session_param`) and
+`POST /api/v1/agency/supervisor-messages` (owner `body_session`) through `callCore`. Its background
+work is the Need help expiry sweep, started and stopped by `bootstrap/agency.ts` (the primary
+only). No seam is added or changed: the floor assist frames ride the station registry's `send`, and
+with media workers the station directory's (`station.send` over IPC), both typed
+`AgencyStationServerFrame`, of which they are members.
+Beside it, `api/routes/proxy-agency-callbacks.routes.ts`
+(decisions LF1, LF22): the account's `GET /proxy/agency/callbacks`, with the same hooks and gate,
+served by the public layer from SQL (no `callCore`), its query validated with its own 400.
 
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts` and
 by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:

@@ -1135,5 +1135,50 @@
       "dispositioned_on_behalf": false,
       "settled_at": null
     }
+  },
+  "ready_help_open": {
+    "event": "ready",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "state": "on_call",
+    "help": {
+      "raised_at": "2026-11-19T10:04:12.512Z",
+      "call_id": "5e0d4c3b-2a19-4f8e-b7d6-c5b4a3928170"
+    }
+  },
+  "supervisor_message": {
+    "event": "supervisor_message",
+    "id": "3f9a2c71-5b4e-4d8a-9c6f-0e1d2b3a4c5d",
+    "text": "Offer the 3-month plan, the waiver is approved.",
+    "from_name": "Anitha N",
+    "sent_at": "2026-11-19T10:05:40.118Z"
+  },
+  "supervisor_message_unnamed": {
+    "event": "supervisor_message",
+    "id": "7c1e4b2a-9d3f-4a6e-8b5c-2f0e1d3c4b5a",
+    "text": "Your Tea break is over, please come back",
+    "from_name": null,
+    "sent_at": "2026-11-19T10:31:02.004Z"
+  },
+  "help_answered_listen": {
+    "event": "help_answered",
+    "raised_at": "2026-11-19T10:04:12.512Z",
+    "by_name": "Anitha N",
+    "how": "listen"
+  },
+  "help_answered_message_unnamed": {
+    "event": "help_answered",
+    "raised_at": "2026-11-19T10:04:12.512Z",
+    "by_name": null,
+    "how": "message"
+  },
+  "help_cleared_answered": {
+    "event": "help_cleared",
+    "raised_at": "2026-11-19T10:04:12.512Z",
+    "reason": "answered"
+  },
+  "help_cleared_expired": {
+    "event": "help_cleared",
+    "raised_at": "2026-11-19T10:04:12.512Z",
+    "reason": "expired"
   }
 }

@@ -34,12 +34,6 @@ vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaignsPage: mocks.lis
 import { ConsoleLayout } from '../../components/layout/ConsoleLayout';
 
 function renderShell() {
-  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
   return render(
     <MemoryRouter initialEntries={['/settings/profile']}>
       <Routes>

@@ -152,6 +152,20 @@ export interface AgencyBreakReason {
    * branches on it. Present so the catalog does not need a second shape later.
    */
   is_paid?: boolean;
+  /**
+   * LF6, LF20: how long a break for this reason may last, in whole minutes,
+   * {@link AGENCY_BREAK_LIMIT_MIN_MINUTES} to {@link AGENCY_BREAK_LIMIT_MAX_MINUTES} (`isAgencyBreakLimitMinutes`).
+   * Absent: no limit of its own, and the floor's {@link AGENCY_BREAK_DEFAULT_LIMIT_MINUTES}-minute
+   * rule applies. The campaign-config write refuses a limit out of range or not a whole number; a
+   * reserved code (`RESERVED_BREAK_REASONS`) is refused from the catalog altogether, so it never has
+   * one. A stored limit the rule refuses is dropped when the catalog is read (`resolveBreakReasons`).
+   *
+   * **The agent's countdown.** The bootstrap's `break_reasons` carry it, so a station or the app
+   * finds the limit of the break it is on by the code it is told (`agent_state.break_reason`,
+   * `ready.break_reason`, the bootstrap's `break_reason`), as it finds the label, and counts down
+   * from `agent_state.since`, the anchor it already counts a break's time from.
+   */
+  limit_minutes?: number;
 }
 
 // ─── POST /api/v1/agency/sessions — session bootstrap ───────────────────────

@@ -18,6 +18,7 @@ import { badgeText } from '../badgeText';
 import { abandonmentTone } from './abandonmentCeiling';
 import { abandonmentRate, rateText, successRate, type InsightsRate } from './insights/rates';
 import { attentionFrom, type AttentionRangeWords, type CampaignAttentionFacts } from './insights/overview';
+import type { FloorLiveCall } from './liveFloorAgents';
 
 /**
  * The Home page's rules (decision B28, Home): what needs a supervisor now, the floor of each
@@ -50,7 +51,8 @@ export type HomeTone = 'danger' | 'warning' | 'info';
 
 /**
  * Where a row stands in Needs you now (decision LF9), most urgent first: an agent asking for help
- * (a customer is on the line; Phase 3, not yet a row), then what has stopped a campaign dialling
+ * (a customer is on the line; Phase 3, from the floor read: `helpItems` in `liveFloorAgents.ts`,
+ * LF28), then what has stopped a campaign dialling
  * (an automatic pause, a compliance or carrier stop: a stall in the danger tone), a break run over
  * the floor's limit (Phase 2, from the floor read: `breakOverrunItems` in `liveFloorAgents.ts`),
  * late callbacks, then any other danger, the warnings and last the information rows. The badge
@@ -62,10 +64,28 @@ const RANK_ORDER: Record<HomeRank, number> = Object.fromEntries(HOME_RANKS.map((
 
 /** A row's rank from its kind and tone ({@link HOME_RANKS}). */
 export function homeRank(item: Pick<HomeAttentionItem, 'kind' | 'tone'>): HomeRank {
+  if (item.kind.startsWith(HELP_KIND_PREFIX)) return 'help';
   if (item.kind.startsWith('stall:') && item.tone === 'danger') return 'stop';
   if (item.kind === 'callbacks-overdue') return 'late-callbacks';
   if (item.kind.startsWith('break-overrun')) return 'break-overrun';
   return item.tone;
+}
+
+/** A Need help row's kind: `help@<raised_at>`, so a new request is a new row (LF28). */
+export const HELP_KIND_PREFIX = 'help@';
+
+/**
+ * The agent a row is about (Need help, a break over its limit): the session a message goes to
+ * (Talk to agent and Send reminder, LF5, `POST /sessions/:id/messages`) and, for Need help on a
+ * call, the call Listen starts on.
+ */
+export interface HomeAgentRef {
+  sessionId: string;
+  name: string;
+  /** Send reminder's prefilled words; absent on a row offering Talk. */
+  reminder?: string;
+  /** The call in progress, as the card's Listen starts it; null when there is none. */
+  call?: FloorLiveCall | null;
 }
 
 /** One campaign a grouped row reviews (the default calling hours): its name and where to fix it. */
@@ -122,19 +142,18 @@ export interface HomeAttentionItem {
    */
   parts?: HomeAttentionItem[];
   /**
-   * An action that is planned and not built yet, shown as a disabled "Coming soon" control beside
-   * the row's link: a break overrun's "Send reminder", and on a campaign's late-callbacks row with
-   * overdue callbacks whose owner is away, "Give to free agents" (Phase 3's actions).
+   * The agent the row is about (Need help, a break over its limit): Live floor offers Listen, Talk
+   * to agent or Send reminder from it while floor assist is on (LF5, LF29).
    */
-  comingSoon?: { label: string; tooltip: string };
-}
-
-/**
- * "Give to free agents" on a campaign's late-callbacks row, for the overdue callbacks whose owner
- * is away: the ones a supervisor could give to agents who are free now (Phase 3; coming soon).
- */
-function handOffSoon(count: number): { label: string; tooltip: string } {
-  return { label: 'Give to free agents', tooltip: `Give the ${plural(count, 'late callback')} whose agent is away to agents who are free now.` };
+  agent?: HomeAgentRef;
+  /**
+   * On a campaign's late-callbacks row, the overdue callbacks whose owner is away (the board's
+   * `callbacks_overdue_absent_owner`): Live floor offers "Give to free agents" for them on a
+   * `strict` or `preferred` campaign while contact assignment is on (LF7, LF30). The preview's
+   * own count can differ (it reads presence, not the board's 15-minute absence, LF21). Present
+   * (true) only when there are some.
+   */
+  handOff?: true;
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -319,7 +338,7 @@ export function homeAttention(
         kind: rule.id,
         count: rule.count ?? null,
         ackable: true,
-        ...(absent > 0 ? { comingSoon: handOffSoon(absent) } : {}),
+        ...(absent > 0 ? { handOff: true as const } : {}),
       });
     }
   }
@@ -374,11 +393,15 @@ export function homeWaiting(items: readonly HomeAttentionItem[]): HomeAttentionI
  * What the sidebar's Home badge counts: the dangers and warnings. Never an information row (nothing
  * is wrong); never the missed calls, which the Inbound entry's own badge already counts (counting
  * them here too would show the same calls twice in the sidebar); and never a break over the limit
- * (LF10), which comes from the floor read on Live floor alone: a badge that counted those only
- * while that page is open would change its number by page.
+ * (LF10) or a Need help request (LF28), which come from the floor read on Live floor alone: a badge
+ * that counted those only while that page is open would change its number by page.
  */
 export function homeBadgeCount(items: readonly Pick<HomeAttentionItem, 'kind' | 'tone'>[]): number {
-  return items.filter((item) => item.tone !== 'info' && item.kind !== 'missed' && homeRank(item) !== 'break-overrun').length;
+  return items.filter((item) => {
+    if (item.tone === 'info' || item.kind === 'missed') return false;
+    const rank = homeRank(item);
+    return rank !== 'break-overrun' && rank !== 'help';
+  }).length;
 }
 
 /** What a screen reader hears beside the Home entry; `stale` when Home couldn't refresh it. */

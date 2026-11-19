@@ -116,12 +116,14 @@ export function floorRow(id: string, over: Partial<AgencyFloorAgent> = {}): Agen
     client_kind: 'web',
     break_reason: null,
     break_label: null,
+    break_limit_minutes: null,
     on_inbound_call: false,
     inbound_outcome_owed: false,
     wrapup_window_seconds: 60,
     call: null,
     calls_today: 12,
     left_at: null,
+    help: null,
     ...over,
   };
 }

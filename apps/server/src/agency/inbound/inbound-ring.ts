@@ -483,7 +483,7 @@ export class RingOffers {
       ring.acceptedDevice = by.deviceId;
       log.info({ inboundCallId: call.id, sessionId: ring.sessionId }, 'Inbound ring accepted');
       const station = this.deps.stations.get(ring.sessionId);
-      return { ok: true, sessionId: ring.sessionId, bindNow: !!station && station.canTakeInbound && station.ws.readyState === 1 };
+      return { ok: true, sessionId: ring.sessionId, bindNow: !!station && station.caps.has('inbound') && station.ws.readyState === 1 };
     }) ?? { ok: false, code: 'ring_not_offered' };
     if (!out.ok) return out;
     const ctx = await call.panel;

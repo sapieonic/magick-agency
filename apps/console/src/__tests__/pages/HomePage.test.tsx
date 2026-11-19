@@ -215,8 +215,8 @@ describe('the page', () => {
     expect(screen.getByTestId('home-chip-available').textContent).toBe('Ready 1');
     expect(screen.getByTestId('home-chip-wrapup').textContent).toBe('Choosing outcome 1');
     expect(screen.getByTestId('home-chip-break').textContent).toBe('Break 2');
-    // Need help cannot be raised yet: marked coming soon, with no count.
-    expect(screen.getByTestId('home-chip-help').textContent).toBe('Need helpComing soon');
+    // The board knows nothing of Need help requests (LF4): no chip for them here.
+    expect(screen.queryByTestId('home-chip-help')).toBeNull();
     expect(screen.getByText('Open a campaign’s Agents tab to see each agent:')).toBeTruthy();
     expect(screen.getByTestId('kpi-agents').textContent).toBe('Agents working6on the floor now');
   });
@@ -616,17 +616,21 @@ describe('Got it (acknowledged rows)', () => {
   });
 
   it('works without storage (a private window): the row is put aside for this page', async () => {
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
-    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError'); });
+    // Blocked site data: reaching `localStorage` at all throws. (A spy on `Storage.prototype` does
+    // not reach this environment's store, so it would leave the try/catch untested.)
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
     try {
       mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 1 })]));
       renderHome();
       fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
       expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
       expect(screen.getByTestId('home-acknowledged')).toBeTruthy();
+      // It did reach storage: read on render, written on Got it.
+      expect(blocked).toHaveBeenCalled();
     } finally {
-      setItem.mockRestore();
-      getItem.mockRestore();
+      blocked.mockRestore();
     }
   });
 });
@@ -768,20 +772,17 @@ describe('Needs you now, as Live floor shows it', () => {
     });
   });
 
-  it('offers "Give to free agents" on late callbacks whose agent is away, as a disabled control that is coming soon', async () => {
+  it('offers no "Give to free agents" while contact assignment is off, only the way to the campaign’s callbacks', async () => {
+    // No flags provider here: every flag reads off (the hand-off itself is HomePage.assist.test.tsx's).
     const away = onBoard('c1', { name: 'Gold' });
     away.allocation = { ...away.allocation!, callbacks_overdue: 4, callbacks_overdue_absent_owner: 4 };
     mocks.getAgencyHomeBoard.mockResolvedValue(board([away, onBoard('c2', { overdue: 2 })]));
     renderHome();
     const row = await screen.findByTestId('home-attention-callbacks-overdue:c1');
-    const give = within(row).getByRole('button', { name: 'Give to free agents' });
-    expect(give.getAttribute('aria-disabled')).toBe('true');
-    const described = document.getElementById(give.getAttribute('aria-describedby')!)!.textContent;
-    expect(described).toBe('Give the 4 late callbacks whose agent is away to agents who are free now. Coming soon.');
-    expect(within(row).getByText('Coming soon')).toBeTruthy();
-    // The existing way to the fix stays beside it.
+    expect(within(row).queryByRole('button', { name: /free agents/ })).toBeNull();
+    expect(within(row).queryByText('Coming soon')).toBeNull();
     expect(within(row).getByRole('link', { name: /Open callbacks/ }).getAttribute('href')).toBe('/agency/campaigns/c1/callbacks');
-    // Not on late callbacks whose owners are here.
-    expect(within(screen.getByTestId('home-attention-callbacks-overdue:c2')).queryByRole('button', { name: 'Give to free agents' })).toBeNull();
+    // No campaign's mode is read for an action that is not offered.
+    expect(mocks.getAgencyCampaign).not.toHaveBeenCalled();
   });
 });

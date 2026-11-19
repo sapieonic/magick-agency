@@ -3,6 +3,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { withRetry } from '../utils/retry.js';
 import { deleteFile, isStorageConfigured } from '../storage/s3.js';
+import { AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS } from '@magick-agency/contracts/agency';
 
 /*
  * Retention purge for call data:
@@ -25,6 +26,10 @@ import { deleteFile, isStorageConfigured } from '../storage/s3.js';
  *    clears the links stored before it (VoiceLink recorded on its own default and we kept the
  *    link) and any a future writer lets through. Its failure is the step's own: it is logged and
  *    reported, and the transcript and voicemail steps still run;
+ *  - the Live floor's supervisor messages (LF5): on every run, whatever the windows,
+ *    `agency_supervisor_messages` rows sent more than `AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS` (90)
+ *    ago are deleted, in batches; a fixed policy, not `AGENCY_RETENTION_DAYS`. Its failure is its
+ *    own step's, as the recording step's;
  *  - it is invoked by a timer in `bootstrap/analysis.ts`.
  * Deletes are batched, in FK-safe order, and the run posts a Slack summary.
  */
@@ -72,6 +77,25 @@ export const PURGE_TARGETS: PurgeTarget[] = [
   },
 ];
 
+/**
+ * Delete `target`'s rows older than `cutoff` in batches of {@link BATCH_SIZE} until a batch comes
+ * back short, telling `counted` each batch's rows as it commits; in dry-run mode, count them once.
+ */
+async function purgeTarget(target: PurgeTarget, cutoff: Date, dryRun: boolean, counted: (rows: number) => void): Promise<void> {
+  const pool = getPool();
+  if (dryRun) {
+    const result = await pool.query<{ n: number }>(target.countSql, [cutoff]);
+    counted(result.rows[0]?.n ?? 0);
+    return;
+  }
+  let deleted: number;
+  do {
+    const result = await pool.query(target.deleteSql, [cutoff, BATCH_SIZE]);
+    deleted = result.rowCount ?? 0;
+    counted(deleted);
+  } while (deleted === BATCH_SIZE);
+}
+
 export interface RetentionPurgeReport {
   dry_run: boolean;
   /** `AGENCY_RETENTION_DAYS`, or null when unset (no row purge ran). */
@@ -107,6 +131,13 @@ export interface RetentionPurgeReport {
   inbound_voicemails_deleted: number;
   /** Inbound voicemails whose object could not be deleted this run: their rows keep the key for the next. */
   inbound_voicemails_failed: number;
+  /**
+   * Supervisor messages older than 90 days deleted (LF5): every run, whatever the windows (that
+   * would be, in dry-run mode). On a failed step, the batches committed before it.
+   */
+  supervisor_messages_deleted: number;
+  /** Why the messages step failed this run, when it did; the other steps still ran. */
+  supervisor_messages_error?: string;
   error?: string;
 }
 
@@ -157,6 +188,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
     unrequested_recordings_cleared: 0,
     inbound_voicemails_deleted: 0,
     inbound_voicemails_failed: 0,
+    supervisor_messages_deleted: 0,
   };
 
   log.info(
@@ -165,25 +197,13 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
   );
 
   try {
-    const pool = getPool();
-
     if (cutoff) {
       for (const target of PURGE_TARGETS) {
         const reportKey = target.table;
-        if (dryRun) {
-          const result = await pool.query<{ n: number }>(target.countSql, [cutoff]);
-          report.tables[reportKey] = result.rows[0]?.n ?? 0;
-        } else {
-          let total = 0;
-          let deleted: number;
-          do {
-            const result = await pool.query(target.deleteSql, [cutoff, BATCH_SIZE]);
-            deleted = result.rowCount ?? 0;
-            total += deleted;
-          } while (deleted === BATCH_SIZE);
-          report.tables[reportKey] = total;
-          log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
-        }
+        let total = 0;
+        await purgeTarget(target, cutoff, dryRun, (rows) => { total += rows; });
+        report.tables[reportKey] = total;
+        if (!dryRun) log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
       }
     }
 
@@ -196,6 +216,16 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
       report.unrequested_recordings_error = err?.message ?? String(err);
       log.error({ err, recordingsCleared: report.unrequested_recordings_cleared },
         'Clearing recording links on calls that did not ask for one failed — the other retention steps still run; the next run carries on');
+    }
+
+    // Supervisor messages past 90 days (LF5): every run, whatever the windows. Its failure is its
+    // own, as the recording step's: the steps after it still run.
+    try {
+      await purgeSupervisorMessages(dryRun, report);
+    } catch (err: any) {
+      report.supervisor_messages_error = err?.message ?? String(err);
+      log.error({ err, messagesDeleted: report.supervisor_messages_deleted },
+        'Deleting supervisor messages past their 90 days failed — the other retention steps still run; the next run carries on');
     }
 
     // Transcript window: null conversation_log + transcript_meta on agency_calls
@@ -345,6 +375,42 @@ async function purgeUnrequestedRecordings(dryRun: boolean, report: RetentionPurg
   }
 }
 
+/**
+ * One batch of the messages step: $1 = cutoff, $2 = batch size. Picks with `MATERIALIZED … FOR
+ * UPDATE SKIP LOCKED` (packages/db/CLAUDE.md), so a batch deletes exactly the rows picked, on
+ * `idx_agency_supervisor_messages_sent_at` (0052).
+ */
+export const DELETE_OLD_SUPERVISOR_MESSAGES_SQL = `WITH old_messages AS MATERIALIZED (
+         SELECT id FROM agency_supervisor_messages
+          WHERE sent_at < $1
+          ORDER BY sent_at
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED
+       )
+       DELETE FROM agency_supervisor_messages m USING old_messages WHERE m.id = old_messages.id`;
+
+/** The messages step's target: its own table and cutoff, outside {@link PURGE_TARGETS}' window. */
+const SUPERVISOR_MESSAGES_TARGET: PurgeTarget = {
+  table: 'agency_supervisor_messages',
+  countSql: 'SELECT count(*)::int AS n FROM agency_supervisor_messages WHERE sent_at < $1',
+  deleteSql: DELETE_OLD_SUPERVISOR_MESSAGES_SQL,
+};
+
+/**
+ * The Live floor's supervisor messages (LF5): kept {@link AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS}
+ * days from when they were sent, then deleted, in batches ({@link purgeTarget}), adding each batch to
+ * `report.supervisor_messages_deleted` as it commits. A fixed policy (Manas, LF5), so it runs on
+ * every run whatever `AGENCY_RETENTION_DAYS` says. In dry-run mode it counts.
+ */
+async function purgeSupervisorMessages(dryRun: boolean, report: RetentionPurgeReport): Promise<void> {
+  const cutoff = new Date(Date.now() - AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  await purgeTarget(SUPERVISOR_MESSAGES_TARGET, cutoff, dryRun, (rows) => { report.supervisor_messages_deleted += rows; });
+  if (dryRun) return;
+  if (report.supervisor_messages_deleted > 0) {
+    log.info({ messagesDeleted: report.supervisor_messages_deleted }, 'Supervisor messages past their 90 days deleted');
+  }
+}
+
 /** Voicemails deleted per batch: each is one object delete, so far fewer than a row batch. */
 const VOICEMAIL_BATCH_SIZE = 200;
 
@@ -417,7 +483,7 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
 
   const title = report.error
     ? ':rotating_light: Retention purge FAILED'
-    : report.unrequested_recordings_error
+    : report.unrequested_recordings_error || report.supervisor_messages_error
       ? ':warning: Retention purge complete, one step failed'
       : report.dry_run
         ? ':mag: Retention purge — dry run'
@@ -434,6 +500,10 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
     `recording links cleared (calls that did not ask for one): ${report.unrequested_recordings_cleared.toLocaleString()}`,
     report.unrequested_recordings_error
       ? `recording links step FAILED (the other steps ran; the next run carries on): ${report.unrequested_recordings_error}`
+      : null,
+    `supervisor messages past 90 days ${report.dry_run ? 'matched' : 'deleted'}: ${report.supervisor_messages_deleted.toLocaleString()}`,
+    report.supervisor_messages_error
+      ? `supervisor messages step FAILED (the other steps ran; the next run carries on): ${report.supervisor_messages_error}`
       : null,
     `inbound voicemails ${report.dry_run ? 'matched' : 'deleted'}: ${report.inbound_voicemails_deleted.toLocaleString()}`,
     report.inbound_voicemails_failed > 0

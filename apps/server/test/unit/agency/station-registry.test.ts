@@ -215,12 +215,12 @@ describe('StationRegistry frame delivery', () => {
     const desk = fakeWs();
     // An older app build: `client=mobile` with no caps (the attach's default for a phone).
     await reg.attach({ sessionId: 'old', ws: old as any, ...ENTRY, clientKind: 'mobile' });
-    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', canTakeInbound: true });
+    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', caps: new Set(['inbound']) });
     await reg.attach({ sessionId: 'desk', ws: desk as any, ...ENTRY, agentUserId: 'u2' });
     try {
-      expect(reg.get('old')!.canTakeInbound).toBe(false);
-      expect(reg.get('capable')!.canTakeInbound).toBe(true);
-      expect(reg.get('desk')!.canTakeInbound).toBe(true);
+      expect(reg.get('old')!.caps.has('inbound')).toBe(false);
+      expect(reg.get('capable')!.caps.has('inbound')).toBe(true);
+      expect(reg.get('desk')!.caps.has('inbound')).toBe(true);
       // IQ56: the floor's column, from the stations held here; a session with none is absent.
       expect(reg.inboundCapabilityBySession(['old', 'capable', 'desk', 'elsewhere'])).toEqual(
         new Map([['old', false], ['capable', true], ['desk', true]]),
@@ -248,18 +248,55 @@ describe('StationRegistry frame delivery', () => {
     }
   });
 
+  it('sends the floor assist events (LF4, LF5) only to a station that can receive them: a console and a capable phone, never an older phone; canReceiveFloorAssist says which', async () => {
+    const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+    const phoneWs = () => Object.assign(fakeWs(), { on() {}, off() {}, ping() {} });
+    const old = phoneWs();
+    const capable = phoneWs();
+    const desk = fakeWs();
+    await reg.attach({ sessionId: 'old', ws: old as any, ...ENTRY, clientKind: 'mobile', caps: new Set(['inbound']) });
+    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', caps: new Set(['floor_assist']) });
+    await reg.attach({ sessionId: 'desk', ws: desk as any, ...ENTRY, agentUserId: 'u2' });
+    try {
+      expect(['old', 'capable', 'desk'].map((id) => reg.get(id)!.caps.has('floor_assist')))
+        .toEqual([false, true, true]);
+      expect(['old', 'capable', 'desk', 'elsewhere'].map((id) => reg.canReceiveFloorAssist(id))).toEqual([false, true, true, false]);
+      const frames = [
+        { event: 'supervisor_message', id: 'm1', text: 'Offer the 3-month plan', from_name: 'Anitha N', sent_at: '2026-11-19T10:00:00.000Z' },
+        { event: 'help_answered', raised_at: '2026-11-19T09:59:00.000Z', by_name: 'Anitha N', how: 'message' },
+        { event: 'help_cleared', raised_at: '2026-11-19T09:59:00.000Z', reason: 'answered' },
+      ] as const;
+      for (const frame of frames) {
+        expect(reg.send('old', frame), frame.event).toBe(false);
+        expect(reg.send('capable', frame), frame.event).toBe(true);
+        expect(reg.send('desk', frame), frame.event).toBe(true);
+      }
+      expect(old.sent).toEqual([]);
+      expect(desk.sent.map((f) => f.event)).toEqual(['supervisor_message', 'help_answered', 'help_cleared']);
+      // Everything else still reaches the older phone, the inbound frames included (it declared them).
+      expect(reg.send('old', { event: 'agent_state', state: 'available', since: '2026-11-19T10:00:00.000Z' })).toBe(true);
+      // A closed socket can receive nothing.
+      desk.readyState = 3;
+      expect(reg.canReceiveFloorAssist('desk')).toBe(false);
+    } finally {
+      await reg.detach('old');
+      await reg.detach('capable');
+      await reg.detach('desk');
+    }
+  });
+
   it('the capability belongs to the socket: a reattach states its own, and the detach reports the one it had', async () => {
     const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
     const phoneWs = () => Object.assign(fakeWs(), { on() {}, off() {}, ping() {}, close() {} });
     const detached: Array<{ sessionId: string; canTakeInbound: boolean }> = [];
-    reg.onDetached((_id, st) => detached.push({ sessionId: st.sessionId, canTakeInbound: st.canTakeInbound }));
+    reg.onDetached((_id, st) => detached.push({ sessionId: st.sessionId, canTakeInbound: st.caps.has('inbound') }));
     const first = phoneWs();
-    await reg.attach({ sessionId: 'p', ws: first as any, ...ENTRY, clientKind: 'mobile', canTakeInbound: true });
+    await reg.attach({ sessionId: 'p', ws: first as any, ...ENTRY, clientKind: 'mobile', caps: new Set(['inbound']) });
     expect(reg.send('p', { event: 'inbound_call', call: { id: 'c1' } } as any)).toBe(true);
     // An older build takes the session over (4409 to the first): no caps, so no inbound frames.
     const second = phoneWs();
     await reg.attach({ sessionId: 'p', ws: second as any, ...ENTRY, clientKind: 'mobile' });
-    expect(reg.get('p')!.canTakeInbound).toBe(false);
+    expect(reg.get('p')!.caps.has('inbound')).toBe(false);
     expect(reg.send('p', { event: 'inbound_call', call: { id: 'c1' } } as any)).toBe(false);
     expect(second.sent).toEqual([]);
     // A console on the same session: always can.

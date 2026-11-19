@@ -124,6 +124,11 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/sessions/:id/available',
   'POST /proxy/agency/sessions/:id/break',
   'POST /proxy/agency/sessions/:id/break/cancel',
+  // Floor assist (LF4): Need help on the agent's own session (`agency.station.connect`). Another
+  // agent's session is the internal handler's 404 (`requireOwnedSession`). The supervisor's
+  // `POST /sessions/:id/messages` is NOT here: it is `agency.supervise`.
+  'POST /proxy/agency/sessions/:id/help',
+  'DELETE /proxy/agency/sessions/:id/help',
   'POST /proxy/agency/sessions/:id/leave',
   'POST /proxy/agency/sessions/:id/redial',
   // Contact assignment: the agent's own contacts (`agency.contacts.own`, floored at `agent`).

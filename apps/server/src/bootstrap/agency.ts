@@ -153,6 +153,12 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
     logger.warn({ err }, 'Away-ring reconcile at boot failed — the next pass will retry'));
   agencyRuntime.awayRing.startReconcile(AWAY_RING_RECONCILE_MS);
 
+  // Floor assist (LF4): the Need help expiry sweep, here in the primary only (once per deployment).
+  // Every read already treats an expired request as cleared; the sweep sends `help_cleared` and
+  // writes the audit row. A pass now catches what expired while the server was down.
+  void agencyRuntime.floorAssist.sweep();
+  agencyRuntime.floorAssist.startSweep();
+
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
   // Main process only, like the rollup job: one assembler and one tick per deployment.
@@ -165,6 +171,8 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
     // Mode B: no new reconcile pass from here (its timer stops before any await).
     const awayRingStopped = agencyRuntime.awayRing.stop();
+    // Floor assist: no new expiry pass from here; the one in flight finishes before the runtime stops.
+    const helpSweepStopped = agencyRuntime.floorAssist.stopSweep();
     // First, synchronously: an arriving call now hears the fallback message rather than reaching
     // a stopping runtime. Its calls still held are then ended and settled (bounded) while the
     // runtime and the database are still up, before the runtime stops below.
@@ -180,6 +188,7 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
       // above may have ended absences), while the push sender and the pool are still up.
       await awayRingStopped;
       await agencyRuntime.awayRing.drain();
+      await helpSweepStopped;
       // The batch in flight commits or rolls back; marks left over are the next boot's.
       await insightsRollup.stop();
       // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents

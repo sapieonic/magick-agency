@@ -286,14 +286,19 @@ export async function requireOwnedSession(
     return null;
   }
   if (session.left_at) {
-    const err: AgencyActionErrorResponse = {
-      error: 'Session Ended', code: 'session_ended',
-      message: 'This session has ended. Start a new one.',
-    };
-    reply.code(409).send(err);
+    sendSessionEnded(reply);
     return null;
   }
   return session;
+}
+
+/** `409 session_ended`: the session the caller acts on has ended (re-bootstrap rather than retry). */
+export function sendSessionEnded(reply: FastifyReply): FastifyReply {
+  const err: AgencyActionErrorResponse = {
+    error: 'Session Ended', code: 'session_ended',
+    message: 'This session has ended. Start a new one.',
+  };
+  return reply.code(409).send(err);
 }
 
 /**
@@ -503,6 +508,8 @@ interface IdleSessionRuntime {
   awayRing?: {
     sendRingOff(agentUserId: string, deviceId: string | null, sessionId: string, reason: AgencyRingOffReason, awaySince: Date | null): void;
   };
+  /** Floor assist (LF4): the session's open Need help ends with it (`help_cleared { session_ended }`). Never throws. */
+  floorAssist?: { endWithSession(sessionId: string): Promise<void> };
 }
 
 /** The session fields {@link endIdleSessionElsewhere} reads (the join's refusal carries the whole row). */
@@ -511,14 +518,14 @@ type IdleSession = Pick<AgencyAgentSessionRecord, 'id' | 'tenant_id'>
 
 /**
  * Leave `session` (its lease `lease`, as the caller just read it): the lease cleared, the row left,
- * the station detached. A session on `away_ring` (`ring = 1`, or an absence in the row: its phone
+ * its open Need help ended (LF4), the station detached. A session on `away_ring` (`ring = 1`, or an absence in the row: its phone
  * parked, so whoever leaves it is not on that phone) tells that phone (`ring_off`, `left`), so its
  * "rings this phone" notification does not outlive the session. The agent's own `leave` and
  * {@link endIdleSessionElsewhere} both end a session this way; neither is a take-over (no other
  * device claimed the station), so neither says `taken_over`.
  */
 export async function leaveSession(
-  runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing'>,
+  runtime: Pick<IdleSessionRuntime, 'stations' | 'agents' | 'awayRing' | 'floorAssist'>,
   session: Omit<IdleSession, 'tenant_id'>,
   lease: { ring?: boolean } | null,
   leave: (sessionId: string) => Promise<void> = (id) => agencyAgentSessionRepository.leave(id),
@@ -527,6 +534,9 @@ export async function leaveSession(
   const awayRinging = lease?.ring === true || awaySince !== null;
   await runtime.agents.clear(session.id);
   await leave(session.id);
+  // The session's open Need help ends with it (LF4), before the detach, so a station still attached
+  // hears `help_cleared { session_ended }`.
+  await runtime.floorAssist?.endWithSession(session.id);
   await runtime.stations.detach(session.id);
   if (awayRinging && session.agent_user_id) {
     runtime.awayRing?.sendRingOff(session.agent_user_id, session.station_device_id ?? null, session.id, 'left', awaySince);

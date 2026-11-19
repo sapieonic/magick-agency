@@ -91,6 +91,12 @@ class FakeStationActions implements StationActions {
   void dismissActionError() => _rec('dismissActionError');
   @override
   void dismissMissedRelease() => _rec('dismissMissedRelease');
+  @override
+  Future<void> raiseHelp() => _rec('raiseHelp');
+  @override
+  Future<void> cancelHelp() => _rec('cancelHelp');
+  @override
+  void dismissHelpNotice() => _rec('dismissHelpNotice');
 }
 
 /// The session host's soft-phone actions the station calls (SP7: switch to the
@@ -283,6 +289,7 @@ Future<StationHarness> pumpStation(
   SoftphoneView softphone = const SoftphoneView(),
   bool contactAssignment = false,
   bool listenNotice = false,
+  bool needHelp = false,
   String? listenScope,
   KeyValueStore? store,
   List<Override> extra = const [],
@@ -323,6 +330,7 @@ Future<StationHarness> pumpStation(
       softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(availabilityHolder)),
       contactAssignmentEnabledProvider.overrideWithValue(contactAssignment),
       stationListenNoticeProvider.overrideWithValue(listenNotice),
+      stationNeedHelpProvider.overrideWithValue(needHelp),
       // Nobody to remember the one-time listening notice for unless a test names one.
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
@@ -464,6 +472,7 @@ StationView station({
   DialActivityView? dialActivity,
   bool myContactsOffered = false,
   List<DispositionOption>? dispositionOptions,
+  HelpView help = const HelpView(),
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -493,6 +502,7 @@ StationView station({
   queue: queue,
   dialActivity: dialActivity,
   myContactsOffered: myContactsOffered,
+  help: help,
 );
 
 const hungUpRelease = ReleaseView(

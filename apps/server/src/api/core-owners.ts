@@ -54,6 +54,10 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   // The agent's dial of one of their own contacts (`agency/my-contact-call.ts`): placed where
   // the agent's station is, as the redial.
   'POST /sessions/:id/my-contact-call': 'session_param',
+  // Floor assist's Need help (`agency/floor-assist.ts`, LF4): reads the agent's call and wrap-up,
+  // which live in the process holding the agent's station.
+  'POST /sessions/:id/help': 'session_param',
+  'POST /sessions/:id/help/cancel': 'session_param',
   'POST /attempts/:id/hangup': 'attempt_param',
   'POST /attempts/:id/disposition': 'attempt_param',
   'POST /attempts/:id/dnc': 'attempt_param',
@@ -118,6 +122,9 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   // same process, spends.
   'GET /live-calls': 'none',
   'POST /listen-grants': 'body_session',
+  // Floor assist's messages (LF5): whether a station that can receive the message is attached is
+  // known only to the process holding it, the owner of the body's `session_id`.
+  'POST /supervisor-messages': 'body_session',
   // The account's listening history (`agency/listen-history.ts`, docs/listening.md §12): SQL only.
   'GET /listen-history': 'none',
   // The Live floor (`agency/floor.ts`, decision B28b): SQL, and the station registry's Redis keys

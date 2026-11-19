@@ -151,6 +151,11 @@ export interface ListenSocketDeps {
    * (`superseded`). Null in one process, where every session is this registry's.
    */
   supersedeElsewhere?: ((session: ListenSessionHandle) => void) | null;
+  /**
+   * After a session went live (admitted, `ready` sent): the agent's open Need help is answered by
+   * this listen (LF4, `floor-assist.ts`). Optional; must not throw (it is caught all the same).
+   */
+  onListenLive?: (grant: ListenGrantPayload) => void;
   idleTimeoutMs?: number;
   /** How often the server pings the socket at the protocol level (LS22 d); default the client's ping interval. */
   pingIntervalMs?: number;
@@ -531,6 +536,7 @@ export async function handleListenSocket(
   });
   s.goLive();
   auditListen(deps, grant, 'agency_call.listen_started');
+  try { deps.onListenLive?.(grant); } catch (err) { log.warn({ err, listenId: grant.listenId }, 'The listen-live hook threw'); }
   log.info({ listenId: grant.listenId, callId: grant.callId, sessionId: grant.sessionId }, 'Listen session started');
   try { deps.supersedeElsewhere?.(s); } catch (err) { log.warn({ err, listenId: grant.listenId }, 'Cross-process supersede threw'); }
   return s;

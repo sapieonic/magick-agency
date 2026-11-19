@@ -169,7 +169,7 @@ Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provi
 
 Columns: `id`, `campaign_id`, `tenant_id`, `account_id`, `phone_e164`, `context`, `source_row_number`, `timezone`, `state`, `attempt_count`, `last_outcome`, `last_disposition`, `next_attempt_at`, `suppressed_reason`, `created_at`, `updated_at`, `our_fault_attempts`, `row_fingerprint`, `csv_line_number`, `source_contact_id`, `root_contact_id`.
 
-**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`); since 0035 one per agent across every tenant (`uq_agency_agent_live_agent`; 0035 also adds `station_device_id` and keeps the per-tenant index for rollback). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from).
+**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`); since 0035 one per agent across every tenant (`uq_agency_agent_live_agent`; 0035 also adds `station_device_id` and keeps the per-tenant index for rollback). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from). 0052 adds the Need help request (`help_raised_at`, `help_call_id`, `help_answered_at`, `help_answered_by`; see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`, `kind`, `client_kind`, `station_device_id`.
 
@@ -1623,6 +1623,61 @@ live server writes, for the moment the catalog change takes). **Down** drops it.
 lock timeout before the ADD COLUMN, down then up leaving the rows there null), the server's
 `test/integration/agency/home-status-change.test.ts` (the stamp, a second Stop, `stopped`, the
 board straight after Stop) and the down → up inventory suite.
+
+### 0052 — `migrations/0052_floor_assist.sql`
+
+The Live floor's Phase 3, floor assist (decisions LF4, LF5, LF11 onwards). **`agency_agent_sessions`**
+gains the session's Need help request: **`help_raised_at`** `TIMESTAMPTZ` (when the agent raised it;
+NULL when none: a cancel, an expiry or the session ending clears it), **`help_call_id`** `UUID` (the
+call it was raised on, `agency_calls.id`; NULL in wrap-up), **`help_answered_at`** `TIMESTAMPTZ` and
+**`help_answered_by`** `UUID` (a supervisor's answer: a listen going live, or a message reaching the
+station; kept with the raise after it), all nullable with no default, so the ADD COLUMNs are
+catalog-only; no foreign keys (`agency_calls` rows are purged; `users` as `agent_user_id`). A request is
+open while raised, not answered and under `AGENCY_HELP_EXPIRY_MS` (15 minutes) old: every read applies
+the expiry against `now()`, and the server's sweep clears the expired, which sends the frame and writes
+the audit row. Each transition is one conditional `UPDATE`, so a request ends exactly once. CHECK
+**`ck_agency_agent_sessions_help`** (answered with its answerer, an answer and a call only on a raised
+request, never answered before the raise) is added **NOT VALID**: it reads only the new columns, NULL on
+every row already there, so validating would read the table under ACCESS EXCLUSIVE to prove nothing; it
+is enforced on every write. **`idx_agency_agent_sessions_help_open`** `(tenant_id, account_id,
+help_raised_at) WHERE help_raised_at IS NOT NULL AND help_answered_at IS NULL`: the requests not
+answered (a handful), read by the floor per account and by the sweep across the deployment; none of its
+columns changes on a heartbeat or a state change, so those updates stay HOT (0038). It cannot be built
+beforehand (its columns are new): the build reads the sessions table once and writes an empty index.
+**`agency_supervisor_messages`** (new): one row per message a supervisor sent to an agent's station
+(Talk to agent, Send reminder, LF5): `id`, `tenant_id`, `account_id`, `session_id`, `agent_user_id`,
+`sender_user_id`, `text` (CHECK **`ck_agency_supervisor_messages_text`**: 1 to 500 characters, already
+trimmed), `sent_at` (default now), `delivered` (default false; set true once the frame was written to the
+station socket, so a row left false is a message the route answered `409 agent_not_live`). No foreign
+keys. **`idx_agency_supervisor_messages_sent_at`** `(sent_at)`: the retention purge deletes rows older
+than `AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS` (90) on every run. The Up starts with `SET LOCAL
+lock_timeout = '10s'` (ACCESS EXCLUSIVE on a table the live server writes). **Down** drops the table, the
+index, the CHECK and the columns. Repository
+`apps/server/src/db/repositories/agency/floor-assist.repository.ts`. **Tests**:
+`test/integration/db/floor-assist-migration.test.ts` (the columns, the CHECKs both ways, the index and the
+plan that reads it, the table, the lock timeout, down then up), the server's
+`test/integration/agency/floor-assist-repository.test.ts` (every transition exactly once, the expiry, the
+floor's read, the plans) and the down → up inventory suite.
+
+### 0053 — `migrations/0053_account_callbacks_index.sql`
+
+The account's callbacks list (decisions LF1, LF22: the Live floor's Callbacks page,
+`GET /proxy/agency/callbacks`). **`idx_agency_contacts_callbacks`** `(campaign_id,
+next_attempt_at, id) WHERE state = 'pending' AND (last_outcome = 'connected' OR callback_source IS
+NOT NULL)` on `agency_contacts`: the pending contacts whose last call was a conversation or that an
+inbound miss booked, a superset of the callbacks (`isCallbackSql`) and the size of the callbacks,
+not of the rosters. Each campaign's page of the list (`callbacksPageStatement`, which repeats the
+predicate byte for byte as `CALLBACK_CANDIDATE_SQL`) is one range of it; before it, the overdue
+page walked `idx_agency_contacts_dialable` over every pending contact due before now, the whole
+undialled roster (25 campaigns of 40,000 contacts: 3.4 s, against 38 ms on this index). `CREATE
+INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it
+`CONCURRENTLY` first; an invalid index left under the name by a failed concurrent build fails the
+migration. **Down** drops it, after the same `SET LOCAL lock_timeout = '10s'` (the drop takes
+ACCESS EXCLUSIVE on `agency_contacts`). **Tests**:
+`test/integration/db/account-callbacks-index-migration.test.ts` (the definition, the lock timeout
+on both sides, the invalid-index refusal, down then up), the server's `test/integration/agency/callbacks-list.test.ts` (each
+campaign's page on the index, never the dialable index, on seeded rosters) and the down → up
+inventory suite.
 
 ## Tests
 

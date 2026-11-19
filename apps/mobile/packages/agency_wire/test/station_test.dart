@@ -436,6 +436,95 @@ void main() {
     });
   });
 
+  group('floor assist (LF4, LF5, LF15)', () {
+    final raisedAt = DateTime.utc(2026, 11, 19, 10, 4, 12, 512);
+
+    test('supervisor_message: the text as sent, the sender, when; a null sender stays null', () {
+      final f = StationFrame.decode(fixtureText('station.json', 'supervisor_message')) as SupervisorMessageFrame;
+      expect(f.event, StationEvent.supervisorMessage);
+      expect(f.id, '3f9a2c71-5b4e-4d8a-9c6f-0e1d2b3a4c5d');
+      expect(f.text, 'Offer the 3-month plan, the waiver is approved.');
+      expect(f.fromName, 'Anitha N');
+      expect(f.sentAt, DateTime.utc(2026, 11, 19, 10, 5, 40, 118));
+      expect(f.toString(), isNot(contains('waiver')), reason: 'the text is never logged');
+      final unnamed = StationFrame.decode(fixtureText('station.json', 'supervisor_message_unnamed')) as SupervisorMessageFrame;
+      expect(unnamed.fromName, isNull);
+    });
+
+    test('help_answered: the request it answers, who and how; help_cleared: the request and why', () {
+      final a = StationFrame.decode(fixtureText('station.json', 'help_answered_listen')) as HelpAnsweredFrame;
+      expect([a.event, a.raisedAt, a.byName, a.how], [StationEvent.helpAnswered, raisedAt, 'Anitha N', HelpAnswerHow.listen]);
+      final m = StationFrame.decode(fixtureText('station.json', 'help_answered_message_unnamed')) as HelpAnsweredFrame;
+      expect([m.byName, m.how], [null, HelpAnswerHow.message]);
+      final c = StationFrame.decode(fixtureText('station.json', 'help_cleared_answered')) as HelpClearedFrame;
+      expect([c.event, c.raisedAt, c.reason], [StationEvent.helpCleared, raisedAt, HelpClearedReason.answered]);
+      final e = StationFrame.decode(fixtureText('station.json', 'help_cleared_expired')) as HelpClearedFrame;
+      expect(e.reason, HelpClearedReason.expired);
+      // The two frames about one request carry the same instant.
+      expect(a.raisedAt, c.raisedAt);
+    });
+
+    test('every cleared reason and answer how decodes; a new one is unknown with its raw string, never an UnknownFrame', () {
+      for (final r in HelpClearedReason.values.where((r) => !r.isUnknown)) {
+        final f = StationFrame.decode('{"event":"help_cleared","raised_at":"2026-11-19T10:04:12.512Z","reason":"${r.wire}"}');
+        expect((f as HelpClearedFrame).reason, r);
+      }
+      final later = StationFrame.decode('{"event":"help_cleared","raised_at":"2026-11-19T10:04:12.512Z","reason":"escalated"}');
+      expect([(later as HelpClearedFrame).reason, later.reasonRaw], [HelpClearedReason.unknown, 'escalated']);
+      final join = StationFrame.decode('{"event":"help_answered","raised_at":"2026-11-19T10:04:12.512Z","by_name":null,"how":"join"}');
+      expect([(join as HelpAnsweredFrame).how, join.howRaw], [HelpAnswerHow.unknown, 'join']);
+    });
+
+    test('a frame missing a required field is an UnknownFrame, never a throw', () {
+      for (final text in [
+        '{"event":"supervisor_message","id":"m","from_name":null,"sent_at":"2026-11-19T10:05:40.118Z"}',
+        '{"event":"supervisor_message","id":"m","text":"hi","from_name":null,"sent_at":"yesterday"}',
+        '{"event":"help_answered","by_name":"A","how":"listen"}',
+        '{"event":"help_cleared","raised_at":"2026-11-19T10:04:12.512Z"}',
+      ]) {
+        final f = StationFrame.decode(text);
+        expect(f, isA<UnknownFrame>(), reason: text);
+      }
+    });
+
+    test('ready carries the open request; absent when none; a malformed one is dropped, the snapshot kept', () {
+      final r = StationFrame.decode(fixtureText('station.json', 'ready_help_open')) as ReadyFrame;
+      expect(r.help, SessionHelp(raisedAt: raisedAt, callId: '5e0d4c3b-2a19-4f8e-b7d6-c5b4a3928170'));
+      expect(r.state, AgentState.onCall);
+      expect((StationFrame.decode(fixtureText('station.json', 'ready_first_join')) as ReadyFrame).help, isNull);
+      final broken = StationFrame.decode(
+        '{"event":"ready","session_id":"s","state":"on_call","help":{"raised_at":"soon","call_id":null}}',
+      );
+      expect(broken, isA<ReadyFrame>());
+      expect((broken as ReadyFrame).help, isNull);
+      expect(broken.state, AgentState.onCall);
+    });
+
+    test('the help routes\' answer: the open request after a raise (no call in wrap-up), none after a cancel', () {
+      final raised = HelpResponse.fromJson(fixture('floor-assist.json', 'help_response_raised'));
+      expect(raised.help, SessionHelp(raisedAt: raisedAt, callId: '5e0d4c3b-2a19-4f8e-b7d6-c5b4a3928170'));
+      expect(HelpResponse.fromJson(fixture('floor-assist.json', 'help_response_raised_in_wrapup')).help!.callId, isNull);
+      final cleared = HelpResponse.fromJson(fixture('floor-assist.json', 'help_response_cleared'));
+      expect([cleared.sessionId, cleared.help], [raised.sessionId, null]);
+      expect(() => HelpResponse.fromJson(const {'help': null}), throwsA(isA<WireFormatException>()));
+    });
+
+    test('the refusals read through floorAssistCode; session_ended stays an agency code', () {
+      expect(ErrorBody.fromJson(fixture('floor-assist.json', 'refusal_floor_assist_disabled')).floorAssistCode,
+          FloorAssistErrorCode.floorAssistDisabled);
+      expect(ErrorBody.fromJson(fixture('floor-assist.json', 'refusal_help_not_on_call')).floorAssistCode,
+          FloorAssistErrorCode.helpNotOnCall);
+      final ended = ErrorBody.fromJson(fixture('actions.json', 'error_session_ended'));
+      expect([ended.floorAssistCode, ended.code], [FloorAssistErrorCode.unknown, AgencyErrorCode.sessionEnded]);
+    });
+
+    test('the station capability is floor_assist, beside inbound in the caps= value', () {
+      expect(StationCapability.floorAssist.wire, 'floor_assist');
+      expect(StationCapability.queryValue([StationCapability.floorAssist, StationCapability.inbound]), 'inbound,floor_assist');
+      expect(StationCapability.queryValue([StationCapability.floorAssist]), 'floor_assist');
+    });
+  });
+
   group('StationFrame.decode: tolerance (never throws)', () {
     test('an unknown event is an UnknownFrame that keeps the event', () {
       final f = decodeAs<UnknownFrame>('{"event":"coach_whisper","text":"hi"}');

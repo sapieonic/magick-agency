@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { ComingSoonBadge, ComingSoonButton } from '../../components/common/ComingSoon';
+import { ComingSoonButton } from '../../components/common/ComingSoon';
 
 /**
  * The one "Coming soon" pattern: a real button that does nothing, reachable by keyboard, whose
@@ -74,10 +74,5 @@ describe('ComingSoonButton', () => {
     expect(screen.getByTestId('talk').getAttribute('data-dismissed')).toBe('true');
     fireEvent.blur(button);
     expect(screen.getByTestId('talk').hasAttribute('data-dismissed')).toBe(false);
-  });
-
-  it('the badge alone says Coming soon', () => {
-    render(<ComingSoonBadge />);
-    expect(screen.getByTestId('coming-soon').textContent).toBe('Coming soon');
   });
 });

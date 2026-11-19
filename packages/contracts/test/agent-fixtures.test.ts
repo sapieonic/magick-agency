@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type * as Core from '../src/agency';
+import { AGENCY_HELP_EXPIRY_MS } from '../src/agency/floor-assist';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLabels, buildLiterals, type LabelMap } from '../../../tooling/contracts-literals.mjs';
 import actions from '../fixtures/agent/actions.json';
 import customerHistory from '../fixtures/agent/customer-history.json';
+import floorAssist from '../fixtures/agent/floor-assist.json';
 import inbound from '../fixtures/agent/inbound.json';
 import labels from '../fixtures/agent/labels.json';
 import literals from '../fixtures/agent/literals.json';
@@ -183,6 +185,14 @@ const STATION = {
   customer_waiting_cleared: fits<Core.AgencyStationCustomerWaitingFrame>()(station.customer_waiting_cleared),
   // Mode B (IQ66): a push offer as the station's attach restates it, answered and not yet bound.
   inbound_call_push_accepted: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_push_accepted),
+  // Floor assist (LF4, LF5, LF15): sent once the app declares `caps=floor_assist`.
+  ready_help_open: fits<Core.AgencyStationReadyFrame>()(station.ready_help_open),
+  supervisor_message: fits<Core.AgencyStationSupervisorMessageFrame>()(station.supervisor_message),
+  supervisor_message_unnamed: fits<Core.AgencyStationSupervisorMessageFrame>()(station.supervisor_message_unnamed),
+  help_answered_listen: fits<Core.AgencyStationHelpAnsweredFrame>()(station.help_answered_listen),
+  help_answered_message_unnamed: fits<Core.AgencyStationHelpAnsweredFrame>()(station.help_answered_message_unnamed),
+  help_cleared_answered: fits<Core.AgencyStationHelpClearedFrame>()(station.help_cleared_answered),
+  help_cleared_expired: fits<Core.AgencyStationHelpClearedFrame>()(station.help_cleared_expired),
 };
 
 const STATION_CLIENT = {
@@ -314,6 +324,15 @@ const INBOUND = {
 
 // Mode B (IQ58–IQ74): the push devices, the ring pushes, the ring routes and the away-ring
 // refusals. The dialer contract's shapes (`agency/push-devices.ts`, `agency/inbound.ts`).
+// Floor assist (LF4, LF13, LF15): the agent's Need help raise and cancel, and their refusals.
+const FLOOR_ASSIST = {
+  help_response_raised: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_raised),
+  help_response_raised_in_wrapup: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_raised_in_wrapup),
+  help_response_cleared: fits<Core.AgencyHelpResponse>()(floorAssist.help_response_cleared),
+  refusal_floor_assist_disabled: fits<Core.AgencyFloorAssistErrorResponse>()(floorAssist.refusal_floor_assist_disabled),
+  refusal_help_not_on_call: fits<Core.AgencyFloorAssistErrorResponse>()(floorAssist.refusal_help_not_on_call),
+};
+
 const PUSH = {
   device_status_ringing: fits<Core.AgencyPushDeviceStatus>()(push.device_status_ringing),
   device_status_unregistered: fits<Core.AgencyPushDeviceStatus>()(push.device_status_unregistered),
@@ -617,10 +636,18 @@ const INBOUND_LITERAL_FIELDS: InboundField[] = [
   ...['refusal_ring_not_allowed', 'refusal_no_push_device'].map((s): InboundField => ['push', s, 'code', 'away_ring_refusal_codes']),
   ['session', 'break_request_away_ring', 'reason', 'reserved_break_codes'],
   ['session', 'session_state_away_ring', 'break_reason', 'reserved_break_codes'],
+  // Floor assist.
+  ['station', 'ready_help_open', 'state', 'agent_states'],
+  ...['help_answered_listen', 'help_answered_message_unnamed'].map((s): InboundField => ['station', s, 'how', 'help_answer_hows']),
+  ...['help_cleared_answered', 'help_cleared_expired'].map((s): InboundField => ['station', s, 'reason', 'help_cleared_reasons']),
+  ...Object.keys(floorAssist)
+    .filter((s) => s.startsWith('refusal_'))
+    .map((s): InboundField => ['floor-assist', s, 'code', 'floor_assist_error_codes']),
 ];
 
 const FILES: Record<string, Record<string, unknown>> = {
   station, session, softphone, actions, reads, platform, 'customer-history': customerHistory, inbound, push,
+  'floor-assist': floorAssist,
 };
 
 function at(value: unknown, path: string): unknown {
@@ -640,6 +667,7 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
       ['customer-history', customerHistory, CUSTOMER_HISTORY],
       ['inbound', inbound, INBOUND],
       ['push', push, PUSH],
+      ['floor-assist', floorAssist, FLOOR_ASSIST],
     ];
     for (const [name, file, checked] of registered) {
       expect(Object.keys(checked).sort(), `${name}.json`).toEqual(Object.keys(file).sort());
@@ -746,5 +774,9 @@ describe('fixtures/agent/literals.json', () => {
         INTERNAL_ERROR: 1011,
       },
     });
+  });
+
+  it('extracts the Need help expiry the app says in minutes, as the contract computes it', () => {
+    expect(buildLiterals()['help_expiry_ms']).toMatchObject({ values: AGENCY_HELP_EXPIRY_MS });
   });
 });

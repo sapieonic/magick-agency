@@ -9,6 +9,13 @@ import type {
   AgencyStationReadyFrame,
   AgencyStationReleasedFrame,
 } from '../types/agency';
+import type {
+  AgencyHelpAnswerHow,
+  AgencySessionHelp,
+  AgencyStationHelpAnsweredFrame,
+  AgencyStationHelpClearedFrame,
+  AgencyStationSupervisorMessageFrame,
+} from '@magick-agency/contracts/agency';
 import type { AgencyManualCall } from '../types/softphone';
 import { parseDialActivity } from './agencyStationIdle';
 import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../types/inbound';
@@ -102,7 +109,54 @@ export interface StationState {
    * when it delivers that frame and sends nothing to say so, so the client must.
    */
   dialActivity: AgencyDialActivity | null;
+  /**
+   * The agent's open Need help request (LF4, LF15): set by the HTTP answer to the agent's own
+   * raise (`help_set`), stated by `ready.help` on every (re)connect (a snapshot: absent means none
+   * is open), and ended only by a `help_cleared` whose `raised_at` is this one's, or by the
+   * agent's own cancel. A frame about any other request changes nothing (decision LF24); with
+   * nothing open, a `help_answered` is kept as the notice and a `help_cleared` is remembered in
+   * `helpEndedAt` (the raise's own answer may still be in flight, or have failed after the server
+   * took it).
+   */
+  help: AgencySessionHelp | null;
+  /**
+   * What the station says about the request it showed last, once something happened to it: a
+   * supervisor answered (`help_answered`, kept through the `help_cleared` that follows), or it
+   * lapsed unanswered (`help_cleared` `expired`). A cancel and a session end say nothing; a cancel
+   * landing after the answer keeps it. Cleared by the agent (Dismiss), by a new request, and by a
+   * `ready` that states a different open one.
+   */
+  helpNotice: StationHelpNotice | null;
+  /**
+   * The `raised_at` of the last request this station saw end (a `help_cleared`, even with nothing
+   * on screen, the agent's cancel, or a `ready` that no longer states it). An HTTP raise answer
+   * that lands after its own request was already ended by a frame names this one, and must not
+   * open it again.
+   */
+  helpEndedAt: string | null;
+  /**
+   * Supervisors' messages to this agent (`supervisor_message`, LF5), oldest first, each id once,
+   * until the agent dismisses it. Kept through a reconnect: a message is not state the server
+   * restates, and one the agent has not read yet is still unread. At most
+   * {@link SUPERVISOR_MESSAGES_HELD}; past that the oldest goes.
+   */
+  supervisorMessages: AgencyStationSupervisorMessageFrame[];
 }
+
+/** What the station says about its last Need help request (see `StationState.helpNotice`). */
+export type StationHelpNotice =
+  | {
+    kind: 'answered';
+    raised_at: string;
+    /** Who answered; null when the server could not read the name, or no `help_answered` came. */
+    by_name: string | null;
+    /** How; null when only the `help_cleared` (`answered`) arrived. */
+    how: AgencyHelpAnswerHow | null;
+  }
+  | { kind: 'expired'; raised_at: string };
+
+/** The most supervisor messages the station holds at once; past it the oldest is dropped. */
+export const SUPERVISOR_MESSAGES_HELD = 20;
 
 /** The agent states in which a sticky caller waits for this agent rather than going to them. */
 const BUSY_FOR_WAITING: ReadonlySet<AgencyAgentState> = new Set<AgencyAgentState>(['reserved', 'on_call', 'wrapup']);
@@ -129,6 +183,10 @@ export const INITIAL_STATION_STATE: StationState = {
   inboundCall: null,
   customerWaiting: null,
   dialActivity: null,
+  help: null,
+  helpNotice: null,
+  helpEndedAt: null,
+  supervisorMessages: [],
 };
 
 export type StationAction =
@@ -158,7 +216,19 @@ export type StationAction =
   /** A `customer_waiting` frame. */
   | { type: 'customer_waiting'; frame: AgencyStationCustomerWaitingFrame }
   /** A `dial_activity` frame for this station's campaign. */
-  | { type: 'dial_activity'; activity: AgencyDialActivity };
+  | { type: 'dial_activity'; activity: AgencyDialActivity }
+  /**
+   * The HTTP answer to the agent's own raise (the request now open) or cancel (`null`): the raise
+   * itself sends no frame (LF15), so its answer is what shows it.
+   */
+  | { type: 'help_set'; help: AgencySessionHelp | null }
+  | { type: 'help_answered'; frame: AgencyStationHelpAnsweredFrame }
+  | { type: 'help_cleared'; frame: AgencyStationHelpClearedFrame }
+  /** The agent dismissed what the station said about their last request. */
+  | { type: 'help_notice_dismissed' }
+  | { type: 'supervisor_message'; frame: AgencyStationSupervisorMessageFrame }
+  /** The agent dismissed one message. */
+  | { type: 'supervisor_message_dismissed'; id: string };
 
 /**
  * `state` itself when nothing in `changes` differs — so a frame that restates
@@ -223,6 +293,7 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         // `active_attempt` by contract; a call on screen wins if a server ever sent both.
         // Checked as the `dial_activity` frame is (`parseDialActivity`): malformed reads as absent.
         dialActivity: frame.active_attempt ? null : parseDialActivity(frame.dial_activity),
+        ...readyHelp(state, frame.help),
       };
       if (frame.state === 'wrapup') {
         // A deadline only when this replica still owns the timer; absent, the
@@ -369,6 +440,79 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       }
       return patch(state, { customerWaiting: action.frame });
 
+    case 'help_set': {
+      const { help } = action;
+      if (help === null) {
+        // The agent's cancel: the request ends here, and says nothing (they know). An answer that
+        // reached it first (`help_answered`, its `help_cleared` still on the way) is kept: the
+        // supervisor is listening in or wrote, whatever the cancel says.
+        if (state.help === null) return state;
+        const answered = answeredNoticeFor(state.helpNotice, state.help.raised_at);
+        return { ...state, help: null, helpNotice: answered, helpEndedAt: state.help.raised_at };
+      }
+      // A frame already ended this very request (it was answered or lapsed while the raise was in
+      // flight): the late answer must not open it again.
+      if (help.raised_at === state.helpEndedAt) return state;
+      // A raise while one is open answers the open one unchanged (LF13): nothing moves.
+      if (state.help?.raised_at === help.raised_at && state.help.call_id === help.call_id) return state;
+      // An answer that arrived before the raise's own answer is about this request: kept.
+      return {
+        ...state,
+        help: { raised_at: help.raised_at, call_id: help.call_id },
+        helpNotice: answeredNoticeFor(state.helpNotice, help.raised_at),
+      };
+    }
+
+    case 'help_answered': {
+      const { frame } = action;
+      // A late frame about an earlier request says nothing about the one on screen. With nothing
+      // on screen it may be about a request whose raise answer is still in flight (or failed after
+      // the server took it): the answer is kept, and shown.
+      if (state.help !== null && state.help.raised_at !== frame.raised_at) return state;
+      return {
+        ...state,
+        helpNotice: { kind: 'answered', raised_at: frame.raised_at, by_name: frame.by_name, how: frame.how },
+      };
+    }
+
+    case 'help_cleared': {
+      const { frame } = action;
+      // An answer that arrived first stays, and an answer told only by the clear is still an answer.
+      const answered: StationHelpNotice | null = frame.reason === 'answered'
+        ? answeredNoticeFor(state.helpNotice, frame.raised_at)
+          ?? { kind: 'answered', raised_at: frame.raised_at, by_name: null, how: null }
+        : null;
+      if (state.help === null) {
+        // Nothing on screen: remembered as ended, so a raise answer still in flight cannot open it
+        // (it would then stay open forever: no frame about it is coming). A lapse, a cancel or a
+        // session end says nothing about a request the station is not showing.
+        const helpNotice = answered ?? state.helpNotice;
+        if (state.helpEndedAt === frame.raised_at && helpNotice === state.helpNotice) return state;
+        return { ...state, helpNotice, helpEndedAt: frame.raised_at };
+      }
+      if (state.help.raised_at !== frame.raised_at) return state;
+      // `cancelled` (the agent's own, from another window or the answer racing this frame) and
+      // `session_ended` clear without a word.
+      const helpNotice: StationHelpNotice | null = answered
+        ?? (frame.reason === 'expired' ? { kind: 'expired', raised_at: frame.raised_at } : null);
+      return { ...state, help: null, helpNotice, helpEndedAt: frame.raised_at };
+    }
+
+    case 'help_notice_dismissed':
+      return patch(state, { helpNotice: null });
+
+    case 'supervisor_message': {
+      const { frame } = action;
+      if (state.supervisorMessages.some((m) => m.id === frame.id)) return state;
+      const next = [...state.supervisorMessages, frame];
+      return { ...state, supervisorMessages: next.slice(Math.max(0, next.length - SUPERVISOR_MESSAGES_HELD)) };
+    }
+
+    case 'supervisor_message_dismissed': {
+      const next = state.supervisorMessages.filter((m) => m.id !== action.id);
+      return next.length === state.supervisorMessages.length ? state : { ...state, supervisorMessages: next };
+    }
+
     case 'dial_activity': {
       // Compared by value, like `queue`: a restated activity must cost no render.
       const held = state.dialActivity;
@@ -380,4 +524,40 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       return { ...state, dialActivity: next };
     }
   }
+}
+
+/** The notice when it says that request `raisedAt` was answered, else null. */
+function answeredNoticeFor(notice: StationHelpNotice | null, raisedAt: string): StationHelpNotice | null {
+  return notice?.kind === 'answered' && notice.raised_at === raisedAt ? notice : null;
+}
+
+/**
+ * `ready.help`, the open request on (re)connect: a snapshot, so absence is the server saying none
+ * is open (it was answered, cancelled, lapsed or ended while the socket was away, and the frame
+ * that said so went to the socket that had gone). A request that ended unseen ends here without a
+ * word: the station cannot tell how. A different open request retires a notice about an older one.
+ * One stated with the `raised_at` of the request this station saw cleared (`helpEndedAt`) is stale,
+ * and read as none.
+ */
+function readyHelp(
+  state: StationState,
+  stated: AgencySessionHelp | undefined,
+): Pick<StationState, 'help' | 'helpNotice' | 'helpEndedAt'> {
+  // A request this station already saw end is not open, whatever a ready says: the server keeps no
+  // memory of the clears it sent, so a ready racing one can still state it.
+  const help = stated && typeof stated.raised_at === 'string' && stated.raised_at !== state.helpEndedAt
+    ? { raised_at: stated.raised_at, call_id: typeof stated.call_id === 'string' ? stated.call_id : null }
+    : null;
+  if (help === null) {
+    return {
+      help: null,
+      helpNotice: state.helpNotice,
+      helpEndedAt: state.help ? state.help.raised_at : state.helpEndedAt,
+    };
+  }
+  return {
+    help,
+    helpNotice: state.helpNotice && state.helpNotice.raised_at !== help.raised_at ? null : state.helpNotice,
+    helpEndedAt: state.helpEndedAt,
+  };
 }

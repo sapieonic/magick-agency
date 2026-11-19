@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCallOrigin, AgencyClientKind, AgencyAgentLiveState } from '@magick-agency/contracts/agency';
 import type { AgencyFloorTotals } from '@magick-agency/contracts/api/agency/floor';
+import type { AgencySessionHelp } from '@magick-agency/contracts/agency';
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import {
@@ -12,7 +13,8 @@ import {
   type AgencyLiveCallRow,
 } from '../../../db/repositories/agency.repository.js';
 import { matchName } from '../../../agency/inbound/match-name.js';
-import { floorBreakLabel, floorTotals, parseFloorFrom } from '../../../agency/floor.js';
+import { floorBreak, floorTotals, parseFloorFrom } from '../../../agency/floor.js';
+import { toSessionHelp } from '../../../agency/floor-assist.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { isUuid } from '../../../utils/uuid.js';
 import { ahtFor } from './live-calls.js';
@@ -34,6 +36,8 @@ const log = createChildLogger({ component: 'agency-floor' });
  *    `false`), and each agent's conversations since `from` (`callsToday`, kept
  *    {@link FLOOR_CALLS_TODAY_CACHE_MS} per account and `from`).
  *    The call carries the customer's name, never the number: the floor shows no numbers.
+ *    Each open session's open Need help (LF4, read with the rows, the expiry applied in the read),
+ *    whatever the floor assist flag says: the public layer reads it.
  */
 
 /**
@@ -80,12 +84,15 @@ export interface CoreFloorAgent {
   client_kind: AgencyClientKind | null;
   break_reason: string | null;
   break_label: string | null;
+  break_limit_minutes: number | null;
   on_inbound_call: boolean;
   inbound_outcome_owed: boolean;
   wrapup_window_seconds: number | null;
   call: CoreFloorCall | null;
   calls_today: number;
   left_at: string | null;
+  /** The open session's open Need help (LF4), whatever the flag says: the public route nulls it while the flag is off. */
+  help: AgencySessionHelp | null;
 }
 
 /** `GET /api/v1/agency/floor`. */
@@ -169,6 +176,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
 
     const agents: CoreFloorAgent[] = rows.map((r) => {
       const call = r.session_id ? callBySession.get(r.session_id) : undefined;
+      const onBreak = floorBreak(r.break_reason, r.break_reasons);
       return {
         agent_user_id: r.agent_user_id,
         session_id: r.session_id,
@@ -179,7 +187,8 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
         connected: r.session_id ? connected.get(r.session_id) ?? null : null,
         client_kind: r.client_kind,
         break_reason: r.break_reason,
-        break_label: floorBreakLabel(r.break_reason, r.break_reasons),
+        break_label: onBreak.label,
+        break_limit_minutes: onBreak.limit_minutes,
         on_inbound_call: r.on_inbound_call,
         inbound_outcome_owed: r.inbound_outcome_owed,
         wrapup_window_seconds: r.wrapup_seconds,
@@ -197,6 +206,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
           : null,
         calls_today: callsTodayByAgent.get(r.agent_user_id) ?? 0,
         left_at: r.left_at ? new Date(r.left_at).toISOString() : null,
+        help: r.help_raised_at ? toSessionHelp({ raised_at: r.help_raised_at, call_id: r.help_call_id }) : null,
       };
     });
     const body: CoreFloorResponse = { agents, totals: floorTotals(rows), as_of: now.toISOString() };

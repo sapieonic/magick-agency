@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type * as Api from '../src/api/agency/index';
 import type { Same } from './type-equals';
+import type { AgencySessionHelp } from '../src/agency/floor-assist';
 
 /**
  * The console wire types that DIFFER from the dialer contract are derived from it
@@ -112,6 +113,8 @@ interface OldAgencyStationReadyFrame {
   missed_release?: Api.AgencyMissedRelease;
   pending_state?: Api.AgencyAgentState;
   pending_break_reason?: string;
+  // Added deliberately (Live floor Phase 3, LF4): the open Need help request at reconnect.
+  help?: AgencySessionHelp;
 }
 
 interface OldAgencySupervisorAgent {

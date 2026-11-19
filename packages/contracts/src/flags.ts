@@ -330,9 +330,30 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency live call listening: whether calls that are not being recorded may be listened to (off: recorded calls only)',
   },
+
+  // ── Floor assist: Need help and supervisor messages (LF4, LF5, LF11) ─────────
+  //
+  // Gates Need help (an agent's raise and cancel, `POST`/`DELETE /proxy/agency/sessions/:id/help`:
+  // `403 floor_assist_disabled`) and a supervisor's messages to an agent's station
+  // (`POST /proxy/agency/sessions/:id/messages`, the same refusal), and the floor read's `help`
+  // (null on every row while off). It does NOT gate break limits, giving late callbacks to free
+  // agents or the callbacks list: their gates are permissions. Off by default (LF11): a super admin
+  // turns it on per tenant or account with an override row. An ordinary flag (no handling policy):
+  // neither surface hears or records a call. Client-exposed: the console shows Need help, Talk and
+  // Send reminder from it, and the app its Need help.
+  agency_floor_assist_enabled: {
+    key: 'agency_floor_assist_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_FLOOR_ASSIST', // staging: FF_AGENCY_FLOOR_ASSIST=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console and the app show/hide Need help, Talk to agent and Send reminder
+    owner: 'voice',
+    description: 'Agency floor assist: agents ask for help from their station, and supervisors send them messages (Talk to agent, Send reminder)',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The eleven agency flag keys. */
+/** The twelve agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -347,6 +368,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_inbound_ring_enabled',
   'agency_live_listen_enabled',
   'agency_live_listen_unrecorded',
+  'agency_floor_assist_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

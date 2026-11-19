@@ -6,6 +6,7 @@ import {
   AGENCY_FLOOR_RISK_RANK,
   agentDisplayName,
   agentsOnShift,
+  breakLimitMinutesOf,
   floorRisk,
   isOnSoftphone,
   isWarningRisk,
@@ -18,8 +19,9 @@ import type { ListenCall } from '../listen/liveCallsTable';
 import { formatAmountShort, sumPromiseAmounts } from '../format/promise';
 import { formatCount, plural } from '../format/number';
 import { elapsedSince } from '../agencyClock';
-import type { HomeAttentionItem, HomeCampaignRead, HomeCampaignRef } from './home';
+import { HELP_KIND_PREFIX, type HomeAttentionItem, type HomeCampaignRead, type HomeCampaignRef } from './home';
 import type { AgentsWorking } from './liveFloor';
+import { helpAgo, reminderText } from './floorAssist';
 
 /**
  * Live floor's agents (decision B28b, Phase 2): the account's floor read (`GET /floor`, one row per
@@ -134,7 +136,12 @@ export function floorCard(row: AgencyFloorAgent, now: number): FloorCard {
     row,
     agent,
     state: floorCardState(row),
-    risk: floorRisk(agent, now, { wrapupSeconds: row.wrapup_window_seconds, ahtSeconds: row.call?.aht_seconds ?? null }),
+    // The break reason's own limit (LF6, LF20); the floor's 30 minutes without one.
+    risk: floorRisk(agent, now, {
+      wrapupSeconds: row.wrapup_window_seconds,
+      ahtSeconds: row.call?.aht_seconds ?? null,
+      breakLimitMinutes: row.break_limit_minutes,
+    }),
     displayName: agentDisplayName(row),
     elapsedMs: elapsedSince(floorTimerAnchor(row), 0, now),
   };
@@ -144,8 +151,16 @@ const STATE_ORDER: Record<FloorCardState, number> = Object.fromEntries(
   FLOOR_CARD_STATES.map((state, i) => [state, i]),
 ) as Record<FloorCardState, number>;
 
+/** When the agent raised their open Need help request (LF4), in ms; null with none open. */
+function helpRaisedMs(row: AgencyFloorAgent): number | null {
+  if (!row.help) return null;
+  const at = Date.parse(row.help.raised_at);
+  return Number.isFinite(at) ? at : 0;
+}
+
 /**
- * The cards in the order a supervisor reads them: the campaign floor's risk order first
+ * The cards in the order a supervisor reads them: an agent asking for help first, the longest
+ * waiting first (LF28: a customer is on the line), then the campaign floor's risk order
  * (`AGENCY_FLOOR_RISK_ORDER`), longest in its state first within a warning, then the chips' order
  * of states (on a call, ready, choosing outcome, break, offline), then by name and user id, so a
  * poll never reshuffles two cards that compare equal. The input is never mutated.
@@ -154,6 +169,13 @@ export function rankFloorCards(rows: readonly AgencyFloorAgent[], now: number): 
   return rows
     .map((row) => floorCard(row, now))
     .sort((a, b) => {
+      const helpA = helpRaisedMs(a.row);
+      const helpB = helpRaisedMs(b.row);
+      if (helpA !== null || helpB !== null) {
+        if (helpA === null) return 1;
+        if (helpB === null) return -1;
+        if (helpA !== helpB) return helpA - helpB;
+      }
       const rank = AGENCY_FLOOR_RISK_RANK[a.risk] - AGENCY_FLOOR_RISK_RANK[b.risk];
       if (rank !== 0) return rank;
       if (a.risk !== 'none') {
@@ -187,12 +209,15 @@ function sameFields(a: object, b: object): boolean {
   return keys.every((key) => Object.is((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 
+/** The fields of a row that hold an object, each compared field by field (one level). */
+const OBJECT_FIELDS: ReadonlySet<keyof AgencyFloorAgent> = new Set(['call', 'help']);
+
 /**
  * Whether two reads of an agent's row say the same: every field the same, and the call in progress
- * the same field by field (the one object on a row). The floor read answers new objects on every
- * poll, so the grid keeps the last row while this holds and a card that shows nothing new skips its
- * render. A field added later that holds an object compares by reference: a needless render, never
- * a stale card.
+ * and the open Need help request (LF4) the same field by field (the objects on a row). The floor
+ * read answers new objects on every poll, so the grid keeps the last row while this holds and a
+ * card that shows nothing new skips its render. A field added later that holds an object compares
+ * by reference: a needless render, never a stale card.
  */
 export function sameFloorRow(a: AgencyFloorAgent, b: AgencyFloorAgent): boolean {
   if (a === b) return true;
@@ -202,24 +227,33 @@ export function sameFloorRow(a: AgencyFloorAgent, b: AgencyFloorAgent): boolean 
     const x = a[key];
     const y = b[key];
     if (Object.is(x, y)) continue;
-    if (key === 'call' && a.call && b.call && sameFields(a.call, b.call)) continue;
+    if (OBJECT_FIELDS.has(key) && x && y && typeof x === 'object' && typeof y === 'object' && sameFields(x, y)) continue;
     return false;
   }
   return true;
 }
 
-/** How many rows in each state, and in all. */
-export function floorStateCounts(rows: readonly AgencyFloorAgent[]): { total: number; counts: Record<FloorCardState, number> } {
+/**
+ * How many rows in each state, in all, and asking for help (LF4: a request is not a state, the
+ * agent is on a call or in wrap-up as well, so the help count overlaps the states').
+ */
+export function floorStateCounts(rows: readonly AgencyFloorAgent[]): { total: number; help: number; counts: Record<FloorCardState, number> } {
   const counts: Record<FloorCardState, number> = { on_call: 0, available: 0, wrapup: 0, softphone: 0, break: 0, offline: 0 };
-  for (const row of rows) counts[floorCardState(row)] += 1;
-  return { total: rows.length, counts };
+  let help = 0;
+  for (const row of rows) {
+    counts[floorCardState(row)] += 1;
+    if (row.help) help += 1;
+  }
+  return { total: rows.length, help, counts };
 }
 
-/** The grid's chip filter: every card, or one state's. */
-export type FloorChipFilter = 'all' | FloorCardState;
+/** The grid's chip filter: every card, those asking for help, or one state's. */
+export type FloorChipFilter = 'all' | 'help' | FloorCardState;
 
 export function cardsInState(cards: readonly FloorCard[], filter: FloorChipFilter): readonly FloorCard[] {
-  return filter === 'all' ? cards : cards.filter((card) => card.state === filter);
+  if (filter === 'all') return cards;
+  if (filter === 'help') return cards.filter((card) => card.row.help);
+  return cards.filter((card) => card.state === filter);
 }
 
 /** "Mobile app" and the rest: the badges the campaign floor shows beside a state. */
@@ -313,8 +347,12 @@ export function offersMakeAvailable(card: Pick<FloorCard, 'row' | 'risk'>): bool
   return owesInboundOutcome(card.row) && card.row.state !== 'wrapup';
 }
 
-/** A card's stripe: a warning's colour when it carries one, else its state's. */
-export function stripeTone(card: Pick<FloorCard, 'risk' | 'state'>): FloorCardState | 'risk' | 'lost' {
+/**
+ * A card's stripe: Need help's danger tone while the agent is asking (LF28, with its "Needs help"
+ * tag: never colour alone), else a warning's colour when it carries one, else its state's.
+ */
+export function stripeTone(card: Pick<FloorCard, 'risk' | 'state'> & { row?: Pick<AgencyFloorAgent, 'help'> }): FloorCardState | 'risk' | 'lost' | 'help' {
+  if (card.row?.help) return 'help';
   if (card.risk === 'disconnected') return 'lost';
   if (isWarningRisk(card.risk)) return 'risk';
   return card.state;
@@ -326,10 +364,40 @@ export function stripeTone(card: Pick<FloorCard, 'risk' | 'state'>): FloorCardSt
 export const BREAK_OVERRUN_STEP_MINUTES = 15;
 
 /**
- * One row per agent on a break past the floor's one limit (`LONG_BREAK_SECONDS`, 30 minutes; the
- * campaign floor's `long_break` risk, so never the soft phone): "Priya M on Tea for 42 min", a
- * warning ranked `break-overrun` (LF9, `homeRank` reads it from the kind), with a coming-soon Send
- * reminder.
+ * Why a break is over, in one line (LF6): its reason's limit, or the floor's rule for a reason
+ * with none ("The limit for Tea is 15 min.").
+ */
+export function breakOverrunDetail(breakLabel: string | null, breakLimitMinutes: number | null | undefined): string {
+  if (typeof breakLimitMinutes === 'number') {
+    return `The limit for ${breakLabel ?? 'this break'} is ${formatCount(breakLimitMinutesOf(breakLimitMinutes))} min.`;
+  }
+  return `It has no limit of its own, so it is flagged after ${formatCount(breakLimitMinutesOf(null))} min.`;
+}
+
+/**
+ * A floor row's Needs you now campaign, named as the board names it (else as the floor read does),
+ * and its action: open that campaign's floor, or the campaigns list for a row on none.
+ */
+function floorRowCampaign(
+  row: Pick<AgencyFloorAgent, 'campaign_id' | 'campaign_name'>,
+  campaigns: readonly HomeCampaignRef[],
+): Pick<HomeAttentionItem, 'campaign' | 'action' | 'to'> {
+  const campaign = row.campaign_id
+    ? { id: row.campaign_id, name: campaigns.find((c) => c.id === row.campaign_id)?.name ?? row.campaign_name ?? 'Campaign' }
+    : null;
+  return {
+    campaign,
+    action: 'Open the floor',
+    to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
+  };
+}
+
+/**
+ * One row per agent on a break past its limit (the reason's `break_limit_minutes`, else the floor's
+ * 30 minutes, LF6; the campaign floor's `long_break` risk, so never the soft phone): "Priya M on Tea
+ * for 22 min", "The limit for Tea is 15 min.", a warning ranked `break-overrun` (LF9, `homeRank`
+ * reads it from the kind). Its agent (`agent`) carries Send reminder's words, offered while floor
+ * assist is on (LF29).
  *
  * - **Got it**: the row's kind carries the break's start, so a new break is a new row; its count is
  *   the seconds the break has run and its `worseBy` {@link BREAK_OVERRUN_STEP_MINUTES} minutes of
@@ -354,24 +422,69 @@ export function breakOverrunItems(
     if (card.risk !== 'long_break' || card.elapsedMs === null) return [];
     const { row } = card;
     const minutes = Math.floor(card.elapsedMs / 60_000);
-    const campaign = row.campaign_id
-      ? { id: row.campaign_id, name: campaigns.find((c) => c.id === row.campaign_id)?.name ?? row.campaign_name ?? 'Campaign' }
-      : null;
     return [{
       id: `break-overrun:${row.agent_user_id}`,
       tone: 'warning' as const,
-      campaign,
       title: `${card.displayName} on ${row.break_label ?? 'a break'} for ${formatCount(minutes)} min`,
-      detail: 'Any break over 30 minutes is flagged. Limits per break reason are coming soon.',
+      detail: breakOverrunDetail(row.break_label, row.break_limit_minutes),
       at: null,
-      action: 'Open the floor',
-      to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
+      ...floorRowCampaign(row, campaigns),
       stale,
       kind: `break-overrun@${row.state_since ?? ''}`,
       count: Math.floor(card.elapsedMs / 1000),
       worseBy: BREAK_OVERRUN_STEP_MINUTES * 60,
       ackable: true,
-      comingSoon: { label: 'Send reminder', tooltip: `Remind ${card.displayName} that their break is over.` },
+      ...(row.session_id
+        ? { agent: { sessionId: row.session_id, name: card.displayName, reminder: reminderText(row.break_label, row.break_limit_minutes) } }
+        : {}),
+    }];
+  });
+}
+
+// ── Needs you now: Need help (LF4, LF28) ────────────────────────────────────
+
+/** What the agent was doing when they asked: "on a call with Ramesh Goud", "after the call". */
+function helpDetail(card: FloorCard): string {
+  const { row } = card;
+  if (row.call) return `on a call with ${customerLabel({ customer_name: row.call.customer_name, origin: row.call.origin })}`;
+  if (card.state === 'wrapup') return owesInboundOutcome(row) ? 'after an inbound call' : 'after the call';
+  return 'on the floor';
+}
+
+/**
+ * One row per agent with an open Need help request (the floor read's `help`, null on every row
+ * while the flag is off, LF11): "Ravi Kumar pressed Need help 2 min ago", what they were on, ranked
+ * `help` (LF9: first of all, a customer is on the line), in the danger tone.
+ *
+ * - **Kind** `help@<raised_at>`: a request raised again after an answer is a new row.
+ * - **No "Got it"** (LF28): the request ends on a response (a listen going live or a message, LF14),
+ *   the agent's cancel or after 15 minutes; putting it aside would answer nobody.
+ * - Its agent (`agent`) carries the call Listen starts on and the session Talk writes to.
+ * - From the page's cards, on its one 5 s clock (the server's), as the break rows; marked not
+ *   refreshed with the floor; never on the sidebar badge (the floor is Live floor's read alone).
+ */
+export function helpItems(
+  cards: readonly FloorCard[],
+  campaigns: readonly HomeCampaignRef[],
+  now: number,
+  stale = false,
+): HomeAttentionItem[] {
+  return cards.flatMap((card) => {
+    const { row } = card;
+    if (!row.help || row.session_id === null) return [];
+    const ago = helpAgo(row.help.raised_at, now);
+    return [{
+      id: `help:${row.agent_user_id}`,
+      tone: 'danger' as const,
+      title: `${card.displayName} pressed Need help${ago ? ` ${ago}` : ''}`,
+      detail: helpDetail(card),
+      at: null,
+      ...floorRowCampaign(row, campaigns),
+      stale,
+      kind: `${HELP_KIND_PREFIX}${row.help.raised_at}`,
+      count: null,
+      ackable: false,
+      agent: { sessionId: row.session_id, name: card.displayName, call: liveCallOf(row) },
     }];
   });
 }

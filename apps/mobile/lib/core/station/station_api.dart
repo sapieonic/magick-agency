@@ -103,6 +103,27 @@ final class StationApi {
     return _tryDecode(body, RedialResponse.fromJson);
   }
 
+  /// Need help (LF4, `POST /sessions/:id/help`): the open request (just raised, or already open).
+  /// The answer is the authority for the request on screen; one that does not decode is null (the
+  /// next `ready` restates it). Refusals are [ApiHttpError]s (`floor_assist_disabled`,
+  /// `help_not_on_call`, `session_ended`).
+  Future<HelpResponse?> raiseHelp(String sessionId) async {
+    final body = await _post(_client, '$_base/sessions/$sessionId/help', timeout: const Duration(seconds: 10));
+    return _tryDecode(body, HelpResponse.fromJson);
+  }
+
+  /// Cancels the open Need help (`DELETE /sessions/:id/help`): `help: null` whether or not one was open.
+  Future<HelpResponse?> cancelHelp(String sessionId) async {
+    final Object? body;
+    try {
+      body = await _client.delete('$_base/sessions/$sessionId/help', timeout: const Duration(seconds: 10));
+    } on ApiUnauthorized catch (e) {
+      _onUnauthorized?.call(e);
+      rethrow;
+    }
+    return _tryDecode(body, HelpResponse.fromJson);
+  }
+
   Future<HangupResponse?> hangup(String attemptId) async {
     final body = await _post(_client, '$_base/attempts/$attemptId/hangup');
     return _tryDecode(body, HangupResponse.fromJson);

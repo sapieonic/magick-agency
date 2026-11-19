@@ -9,6 +9,10 @@ import type {
   AgencyAssignmentPreview,
   AgencyAssignmentProgress,
   AgencyAssignmentResult,
+  AgencyLateCallbacksCommitRequest,
+  AgencyLateCallbacksPreview,
+  AgencyLateCallbacksResult,
+  AgencyLateCallbacksToLiveAgents,
   AgencyMyContact,
   AgencyMyContactsQuery,
   AgencyMyContactsSummary,
@@ -64,6 +68,42 @@ export async function commitAssignment(
   accountId?: string,
 ): Promise<AgencyAssignmentResult> {
   return apiFetch<AgencyAssignmentResult>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/assignments`,
+    { method: 'POST', body: JSON.stringify(request) },
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * Give late callbacks to free agents (LF7, LF21), previewed: the same route as every operation,
+ * with the hand-off's own kind. Refused `409 late_callbacks_pool_mode` on a `pool` campaign.
+ */
+export async function previewLateCallbacks(
+  campaignId: string,
+  operation: AgencyLateCallbacksToLiveAgents,
+  tenantId: string,
+  accountId: string,
+): Promise<AgencyLateCallbacksPreview> {
+  return apiFetch<AgencyLateCallbacksPreview>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/assignments/preview`,
+    { method: 'POST', body: JSON.stringify(operation) },
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * The hand-off, committed with its preview's token. Refused `409 preview_stale` with the fresh
+ * preview (a second press finds nothing left to move), and `409 late_callbacks_pool_mode`.
+ */
+export async function commitLateCallbacks(
+  campaignId: string,
+  request: AgencyLateCallbacksCommitRequest,
+  tenantId: string,
+  accountId: string,
+): Promise<AgencyLateCallbacksResult> {
+  return apiFetch<AgencyLateCallbacksResult>(
     `${AGENCY_BASE}/campaigns/${campaignId}/assignments`,
     { method: 'POST', body: JSON.stringify(request) },
     tenantId,

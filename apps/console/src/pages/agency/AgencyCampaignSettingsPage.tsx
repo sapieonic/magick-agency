@@ -48,6 +48,14 @@ import {
   type CampaignRecordingState,
 } from '../../utils/agencyCampaignRecording';
 import { CampaignBehaviourSection } from '../campaigns/agency/CampaignBehaviourSection';
+import { BreakLimitsEditor } from '../campaigns/agency/BreakLimitsEditor';
+import {
+  breakReasonsErrors,
+  breakReasonsFormOf,
+  breakReasonsPayload,
+  sameBreakLimits,
+  type BreakReasonsForm,
+} from '../../utils/agency/breakLimits';
 import { focusFirstFieldError } from '../campaigns/agency/configFieldErrors';
 import { CallerIdPicker } from './CallerIdPicker';
 import { CampaignCarrierField } from '../../components/agency/CampaignCarrierField';
@@ -114,6 +122,7 @@ function formOfCampaign(record: AgencyCampaign): CampaignSettingsForm {
     carrier: carrierOfCampaign(record),
     recording: recordingStateFromCampaign(record),
     config: configFromCampaign(record),
+    breakReasons: breakReasonsFormOf(record.break_reasons),
   };
 }
 
@@ -134,6 +143,8 @@ export function AgencyCampaignSettingsPage() {
   /** The carrier account the form holds; seeded from the campaign on load and save. */
   const [carrier, setCarrier] = useState<CarrierChoice>(SERVICE_CARRIER);
   const [recording, setRecording] = useState<CampaignRecordingState | null>(null);
+  /** The break reasons' limits (Settings › Agents, LF27). */
+  const [breakReasons, setBreakReasons] = useState<BreakReasonsForm | null>(null);
   /** The form as last loaded or saved: what Discard puts back and the bar counts against. */
   const [saved, setSaved] = useState<CampaignSettingsForm | null>(null);
   /** Bumped by Discard, to remount the fields (the caller-ID picker prunes on a carrier change). */
@@ -206,6 +217,7 @@ export function AgencyCampaignSettingsPage() {
     setCallerIds([...form.callerIds]);
     setCarrier(form.carrier);
     setRecording(form.recording);
+    setBreakReasons(form.breakReasons ?? null);
     setAssignmentResetPending(false);
   }, []);
 
@@ -320,6 +332,8 @@ export function AgencyCampaignSettingsPage() {
       setFieldErrors(missing);
       return;
     }
+    // A break limit the rule refuses is said on its row as it is typed, and holds Save the same way.
+    if (breakReasons && Object.keys(breakReasonsErrors(breakReasons)).length > 0) return;
 
     setSaving(true);
     setSaveError(null);
@@ -363,6 +377,14 @@ export function AgencyCampaignSettingsPage() {
     // The name the same way: an untouched name is not sent back over a newer one.
     const trimmedName = name.trim();
     const sendName = !saved || trimmedName !== saved.name;
+    /*
+      The break reasons only when a limit changed (LF27): the list is replaced whole, so an
+      untouched one is not sent back over someone else's newer edit, and a campaign on the
+      built-ins keeps them (served at read time, never written) until a limit is set.
+    */
+    const sendBreakReasons = breakReasons !== null
+      && saved?.breakReasons !== undefined
+      && !sameBreakLimits(saved.breakReasons, breakReasons);
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -378,6 +400,7 @@ export function AgencyCampaignSettingsPage() {
           ...buildConfigPayload(config, assignmentScope),
           ...recordingFields,
           ...(sendName ? { name: trimmedName } : {}),
+          ...(sendBreakReasons ? { break_reasons: breakReasonsPayload(breakReasons) } : {}),
           ...(sendCallerIds ? { caller_ids: callerIds } : {}),
           ...(sendCarrier
             ? {
@@ -470,6 +493,7 @@ export function AgencyCampaignSettingsPage() {
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
     tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
+    breakReasons,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -483,16 +507,12 @@ export function AgencyCampaignSettingsPage() {
 
   /*
     The sections this campaign's page has, in page order, by the rule search reads too
-    (`campaignSettingsSectionsFor`). Agents only with something in it (contact-assignment
-    settings left from before the flag went off count: the reset notice lives there).
+    (`campaignSettingsSectionsFor`). Agents on every campaign: its break limits are every
+    campaign's (LF27); contact-assignment settings left from before the flag went off show their
+    reset notice there too.
   */
   const assignmentLeftovers = campaign && !assignmentEnabled ? storedAssignmentLeftovers(campaign) : [];
-  const sections = campaignSettingsSectionsFor({
-    assignmentEnabled,
-    inboundEnabled,
-    assignmentLeftovers: assignmentLeftovers.length > 0,
-    canSupervise,
-  });
+  const sections = campaignSettingsSectionsFor({ canSupervise });
   const agentsVisible = sections.some((section) => section.id === 'agents');
   const historyVisible = sections.some((section) => section.id === 'roster-uploads');
   /*
@@ -509,8 +529,10 @@ export function AgencyCampaignSettingsPage() {
 
   /* What is unsaved, setting by setting; it drives the bar and the guard on leaving. */
   const changes = useMemo(
-    () => (saved && config && recording ? changedSettings(saved, { name, callerIds, carrier, recording, config }) : []),
-    [saved, name, callerIds, carrier, recording, config],
+    () => (saved && config && recording
+      ? changedSettings(saved, { name, callerIds, carrier, recording, config, ...(breakReasons ? { breakReasons } : {}) })
+      : []),
+    [saved, name, callerIds, carrier, recording, config, breakReasons],
   );
   const leaveGuard = useUnsavedChangesGuard(canEdit && changes.length > 0);
 
@@ -522,9 +544,10 @@ export function AgencyCampaignSettingsPage() {
   // A name or caller ID taken away is said on its field as soon as it happens, and holds Save,
   // as a calling-hours mistake does.
   const missing = canEdit ? missingBasics(name, callerIds) : {};
+  const breakLimitsInvalid = canEdit && breakReasons !== null && Object.keys(breakReasonsErrors(breakReasons)).length > 0;
   const nameError = missing['name'] ?? fieldErrors['name'];
   const callerIdsError = missing['caller_ids'] ?? fieldErrors['caller_ids'];
-  const saveBlock = block ?? (Object.keys(missing).length > 0 ? 'invalid_fields' : null);
+  const saveBlock = block ?? (Object.keys(missing).length > 0 || breakLimitsInvalid ? 'invalid_fields' : null);
   /*
     Contact assignment turned off after a campaign was set up with it: pacing still
     follows what the campaign stores (CA9 gates the surface, never the runtime), and
@@ -795,10 +818,12 @@ export function AgencyCampaignSettingsPage() {
                 id="agents"
                 title="Agents"
                 helper={assignmentEnabled
-                  ? `How contacts are assigned to agents${inboundEnabled ? ', and whether customers who ring in reach their agent first' : ''}.`
+                  ? `How contacts are assigned to agents${inboundEnabled ? ', whether customers who ring in reach their agent first' : ''}, and how long agents’ breaks may last.`
                   : inboundEnabled
-                    ? 'Whether this campaign’s customers who ring in reach their agent first.'
-                    : 'Contact assignment settings this campaign still uses.'}
+                    ? 'Whether this campaign’s customers who ring in reach their agent first, and how long agents’ breaks may last.'
+                    : assignmentLeftovers.length > 0
+                      ? 'Contact assignment settings this campaign still uses, and how long agents’ breaks may last.'
+                      : 'How long agents’ breaks may last.'}
               >
                 {assignmentLeftovers.length > 0 && (
                   <div className={styles.liveNote} role="note" data-testid="assignment-off-notice">
@@ -843,6 +868,14 @@ export function AgencyCampaignSettingsPage() {
                   assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
                   inbound={inboundEnabled}
                 />
+                {breakReasons ? (
+                  <BreakLimitsEditor
+                    value={breakReasons}
+                    onChange={setBreakReasons}
+                    serverError={fieldErrors['break_reasons'] ?? null}
+                    readOnly={!canEdit}
+                  />
+                ) : null}
               </ComposerSection>
             )}
           </Fragment>

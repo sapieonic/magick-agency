@@ -46,7 +46,9 @@ import { InboundCallService } from './inbound/inbound-disposition.js';
 import { AwayRingService, returnFromAwayRing } from './away-ring.js';
 import { config } from '../config/index.js';
 import { agencyConfigSchema } from '../config/blocks/agency.js';
-import { agencyListenSessionRepository } from '../db/repositories/agency.repository.js';
+import { agencyFloorAssistRepository, agencyListenSessionRepository } from '../db/repositories/agency.repository.js';
+import { FloorAssistService } from './floor-assist.js';
+import { agentNamesOrNone } from './agency-agent-identity.js';
 import { platformAuditLogger } from '../audit/platform/audit-logger.js';
 import { ListenRegistry, type ListenLimits, type ListenSessionHandle } from './listen/listen-registry.js';
 import { ListenTokenStore } from './listen/listen-token.js';
@@ -181,6 +183,11 @@ export class AgencyRuntime {
   /** The bridge, for the listener socket's tap (the seam member `openListenTap`). */
   private readonly listenBridge: Pick<WebRtcBridgeManager, 'openListenTap' | 'hasActiveCall'>;
   /**
+   * Floor assist (LF4, LF5; `floor-assist.ts`): Need help's transitions, their frames, audit rows and
+   * metrics, the expiry sweep (started by the primary's bootstrap), and supervisor messages.
+   */
+  readonly floorAssist: FloorAssistService;
+  /**
    * Set by a multi-process server: end a supervisor's sessions held by OTHER processes past their
    * cap after an admission here (`listen.revoke` over IPC). Null in one process.
    */
@@ -310,6 +317,29 @@ export class AgencyRuntime {
     this.listenTokens = new ListenTokenStore(redis, keyPrefix, listen.tokenTtlMs);
     this.listenFaultBudget = listen.faultBudget;
     this.listenBridge = bridge;
+    // Frames go wherever the station is held: this process's registry, or (the primary of a
+    // multi-process server: the expiry sweep, a session ended by another tenant's join) the media
+    // workers' directory. Whether a message has a station to go to is this process's own question:
+    // the message route runs where the session's station is. The repository is read per call, as
+    // the listen rows' (a runtime built over a mocked agency barrel must still construct).
+    const assistStations = options.pacingStations ?? this.stations;
+    this.floorAssist = new FloorAssistService({
+      repo: {
+        raise: (input) => agencyFloorAssistRepository.raise(input),
+        cancel: (sessionId, tenantId, expiryMs) => agencyFloorAssistRepository.cancel(sessionId, tenantId, expiryMs),
+        answer: (sessionId, tenantId, byUserId, expiryMs) => agencyFloorAssistRepository.answer(sessionId, tenantId, byUserId, expiryMs),
+        endWithSession: (sessionId, expiryMs) => agencyFloorAssistRepository.endWithSession(sessionId, expiryMs),
+        expireDue: (expiryMs) => agencyFloorAssistRepository.expireDue(expiryMs),
+        openForSession: (sessionId, tenantId, accountId, expiryMs) =>
+          agencyFloorAssistRepository.openForSession(sessionId, tenantId, accountId, expiryMs),
+        insertMessage: (input) => agencyFloorAssistRepository.insertMessage(input),
+        markDelivered: (id) => agencyFloorAssistRepository.markDelivered(id),
+      },
+      send: (sessionId, frame) => assistStations.send(sessionId, frame),
+      canReceive: (sessionId) => this.stations.canReceiveFloorAssist(sessionId),
+      names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'floor assist'),
+      audit: (entry) => platformAuditLogger.log(entry),
+    });
     // A queued `away_ring` applied by the one release path (a break asked for while hidden during a
     // call or wrap-up, IQ72), with or without a station socket.
     this.dialer.registerAwayRing({ applyQueued: (sessionId) => this.awayRing.applyQueued(sessionId) });
@@ -932,6 +962,10 @@ export class AgencyRuntime {
       audit: (entry) => platformAuditLogger.log(entry),
       replicaId: this.replicaId,
       supersedeElsewhere: this.supersedeListensElsewhere,
+      // A listen going live answers the agent's open Need help (LF4, `how: 'listen'`).
+      onListenLive: (grant) => {
+        void this.floorAssist.answer({ sessionId: grant.sessionId, tenantId: grant.tenantId, byUserId: grant.listenerUserId, how: 'listen' });
+      },
     };
   }
 

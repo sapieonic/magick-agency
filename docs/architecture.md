@@ -487,7 +487,16 @@ every account the caller belongs to (CH2) where every internal handler is single
   staffed on the campaign (`pacing/callback-fallback.ts`), every 30 s per campaign, in the
   background: the tick starts the sweep and plans without waiting for it, one sweep per campaign
   runs at a time, a move wakes the campaign (`contacts_changed`), and `stop()` waits for one in
-  flight within the tick drain bound. *Agent*:
+  flight within the tick drain bound. The supervisor's "Give to free agents" (LF7, LF21) is one more
+  operation on the same routes, `late_callbacks_to_live_agents`: the sweep's selection with no grace
+  (`lateCallbackSql` in `assignment-sql.ts`, the one selection both read, the sweep passing its grace:
+  overdue callbacks whose owner has no session present on the campaign), dealt
+  to the staffed agents present on it, fewest callbacks due first (`lateCallbackQuotas`, read inside
+  the commit's transaction), planned, locked, gated and written by the one planner; refused on
+  `pool` (`409 late_callbacks_pool_mode`). It and the sweep never both move a callback: the commit
+  locks its rows `FOR NO KEY UPDATE`, which the sweep's `SKIP LOCKED` pick passes over, and a
+  callback the sweep took first is in the pool, outside the re-plan, so the commit is stale.
+  *Agent*:
   the My contacts reads, the set-based reopen of not-reached contacts
   (`agent-retry.repository.ts`) and the per-contact call, which runs in the process holding the
   station (`agency/my-contact-call.ts`, `session_param`) on the campaign's normal dial path with
@@ -1024,6 +1033,44 @@ a rate-limit key and never an auth input.
   Measured on a seeded account of 540 agents over 25 running campaigns in a deployment of 600,000
   attempts: the floor's rows 5–7 ms, its calls 1.5 ms, today's conversations 35 ms (the window's
   attempts; kept 30 s per account), the promises summary under 2 ms.
+
+  **Live floor Phase 3, floor assist (LF4, LF5, LF11–LF19).** Behind `agency_floor_assist_enabled`
+  (off by default). `api/routes/proxy-agency-floor-assist.routes.ts` serves the agent's Need help
+  (`POST`/`DELETE /proxy/agency/sessions/:id/help`, `agency.station.connect`, the caller's own session)
+  and a supervisor's message (`POST /proxy/agency/sessions/:id/messages`, `agency.supervise`), each
+  through `callCore` to `api/routes/agency/floor-assist.ts`, which runs in the process holding the
+  agent's station (owners `session_param` and `body_session`, `api/core-owners.ts`). The rules and
+  side effects are one service per process, `agency/floor-assist.ts` (`runtime.floorAssist`): every
+  Need help transition is one statement on the session row
+  (`db/repositories/agency/floor-assist.repository.ts`, `0052_floor_assist.sql`), and only a row it
+  returned gets its frame (`help_answered`, `help_cleared`), audit row and metric, so a request ends
+  exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (read
+  with the floor's rows, `FLOOR_ROWS_SQL`; the console's 5 s poll), never a push. A listen answers it when the listener socket goes live
+  (`listen-socket.ts`'s `onListenLive`), a message when the agent's station took its
+  `supervisor_message` frame; the session ending clears it in `leaveSession`; the 15-minute expiry is
+  applied on every read against the database's clock, and a sweep in the primary every 15 s
+  (`bootstrap/agency.ts`) clears the expired ones, sending the frame and writing the row. The floor
+  assist frames go only to a station that can receive them (`floor_assist` in `StationRegistry`'s
+  `caps`: a console, or a phone declaring `caps=floor_assist`, as the app does), so a message with no such station is `409 agent_not_live`. Messages are
+  kept in `agency_supervisor_messages` and deleted after 90 days by the retention purge
+  (`maintenance/retention-purge.ts`, every run). With media workers the sweep's frames reach the
+  worker holding the station through the station directory (`cluster/station-directory.ts`'s
+  `send`, IPC `station.send`).
+
+  **Live floor Phase 3 (server, break limits and callbacks; LF6, LF7, LF20–LF22).** A break reason
+  may carry `limit_minutes` (1–240, `campaign-config.ts`'s `validateBreakReasons`, at the write;
+  the built-ins give Tea 15 and Lunch 30, served at read time, so a campaign's saved list is never
+  rewritten); the floor row carries the limit of the reason each agent is on
+  (`break_limit_minutes`, `breakLimitMinutes` in `packages/domain/src/break-manager.ts`) and the
+  station's bootstrap carries every reason's, so the console's long-break risk and the agent's
+  countdown read the same number (30 minutes without one). The account's callbacks list,
+  `GET /proxy/agency/callbacks` (`api/routes/proxy-agency-callbacks.routes.ts`, its own plugin, SQL
+  only), reads the account's active campaigns, then one keyset page of their open callbacks by due
+  time (`db/repositories/agency/callbacks.repository.ts`: per campaign a LATERAL on
+  `idx_agency_contacts_callbacks`, the 0053 migration's index of the pending contacts that may be
+  callbacks), naming the customer, never the number, and whether each owner is live (the CA5
+  rule). Measured on 25 active campaigns of 40,000 contacts: 38 ms for the overdue page, 2 ms for
+  today's (3.4 s for the overdue page before the index).
 
 ## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
 

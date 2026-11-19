@@ -190,6 +190,30 @@ API layer from the three call tables. Neither has a dialer counterpart. Home's b
 window the session's wrap-up actually takes, not the campaign's configured `wrapup_seconds` that
 `AgencyCampaign` carries: on an inbound wrap-up it is the window captured on the inbound call
 (IQ52), and a timerless campaign (`wrapup_seconds = 0`) serves null, as a soft-phone session does.
+`AgencyFloorAgent.help` (LF4) is the dialer contract's `AgencySessionHelp` (`../../agency/floor-assist.ts`,
+the same type the station's `ready.help` carries) on the open request only: the internal handler
+answers it whatever the flag says, and the public route serves null on every row while
+`agency_floor_assist_enabled` is off for the account (or cannot be read). Optional in the type only,
+so a client written before Phase 3 compiles; the server always sends it. Floor assist's own shapes
+(`AgencyHelpResponse`, `AgencySupervisorMessageRequest` and `…Response`, the three station frames,
+`AgencyFloorAssistErrorCode` in `../../errors.ts` §8) are dialer-contract only: the public routes relay
+the internal handlers' answers unchanged, so they have no console twin here. The three frames
+(`supervisor_message`, `help_answered`, `help_cleared`) are members of both server-frame unions, the
+dialer's `AgencyStationServerFrame` and this one, as the dialer's types unchanged; they were staged
+outside both until the app could decode them (LF16), and `AgencyStationCapability` gained
+`floor_assist` with them (the app's station declares `caps=floor_assist`).
+
+Live floor Phase 3, break limits and callbacks (decisions LF6, LF7, LF20–LF22).
+`AgencyBreakReason.limit_minutes` (optional, 1–240 whole minutes) is declared once, in the dialer
+contract (`agency/session.ts`), and re-exported here like the rest of `AgencyBreakReason`: the
+bootstrap's `break_reasons` carry it, which is how a station finds the limit of the break it is on.
+`AgencyFloorAgent.break_limit_minutes` is computed by the internal `GET /agency/floor` from the
+session's campaign catalog (its label and limit resolved once, `floorBreak`; the built-ins when it lists
+none) and passed through by the public route; required, null when there is none, as is `help`. `callbacks.ts` (`GET /proxy/agency/callbacks`, `AgencyCallbacksPage`) is assembled by the public
+API layer from the contacts table (SQL only); it has no dialer counterpart. The late-callbacks
+hand-off (`AgencyLateCallbacksToLiveAgents` and its preview, commit, result and refusal types in
+`assignment.ts`) is served by the public API layer like every assignment operation, so it has none
+either.
 
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,

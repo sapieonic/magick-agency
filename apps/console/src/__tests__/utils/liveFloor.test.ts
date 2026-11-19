@@ -10,7 +10,6 @@ import {
   attentionFor,
   boardIsPartial,
   lateCallbacksText,
-  callbackRows,
   callbacksBadgeLabel,
   callsLiveText,
   campaignCards,
@@ -284,21 +283,6 @@ describe('the agents', () => {
 });
 
 describe('the Callbacks page and badge', () => {
-  it('lists every active campaign, most late first, one not known last', () => {
-    const rows = callbackRows([
-      read('a', { overdue: 1 }),
-      read('b', { allocation: null }),
-      read('c', { allocation: allocationFacts({ callbacks_overdue: 5, callbacks_overdue_absent_owner: 2 }) }),
-      read('d'),
-    ]);
-    expect(rows.map((r) => [r.campaign.id, r.overdue, r.ownerAway])).toEqual([
-      ['c', 5, 2],
-      ['a', 1, 0],
-      ['d', 0, 0],
-      ['b', null, 0],
-    ]);
-  });
-
   it('is a lower bound past the board’s cap, in figures and in words', () => {
     expect(lateCallbacksText(4, false)).toBe('4');
     expect(lateCallbacksText(4, true)).toBe('4+');

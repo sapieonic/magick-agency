@@ -395,6 +395,27 @@ describe('reassign, unassign, rebalance', () => {
   });
 });
 
+describe('rebalance\'s plan leaves out what no receiver covers', () => {
+  it('a contact past every receiver\'s range (quotas read before the backlog grew) is not in the plan: not matched, not unchanged', async () => {
+    // Rebalance's own rule, untouched by the late-callbacks hand-off (whose plan keeps such a row as
+    // unchanged; LF21). FALSIFIED: with rebalance's plan keeping uncovered rows as
+    // `COALESCE(…, from_user_id)` this reds (6 plan rows, 2 of them staying put).
+    const { params } = await import('../../../src/db/repositories/agency/query-builders.js');
+    const ids = await seed(6);
+    await getTestPool().query(`UPDATE agency_contacts SET assigned_user_id = $2, assigned_at = now() WHERE id = ANY($1::uuid[])`, [ids, agents[0]]);
+    const bind = params();
+    // The giver may give all 6, but the receivers' ranges end at 4.
+    const { ctes } = repo.planCtes(op({ kind: 'rebalance', agent_user_ids: agents.slice(0, 3) }), scope(), bind, {
+      givers: [{ agent: agents[0]!, give: 6 }],
+      receivers: [{ agent: agents[1]!, end: 2 }, { agent: agents[2]!, end: 4 }],
+    });
+    const { rows } = await getTestPool().query<{ to_user_id: string | null }>(
+      `WITH ${ctes} SELECT to_user_id::text AS to_user_id FROM plan`, bind.values);
+    expect(rows).toHaveLength(4);
+    expect(rows.every((r) => r.to_user_id === agents[1] || r.to_user_id === agents[2])).toBe(true);
+  });
+});
+
 describe('unstaff (CA6)', () => {
   it('return_to_pool moves the open contacts and skips live ones; keep moves nothing; a campaign with none is silent', async () => {
     const keep = await insertAgencyCampaign({ on_unstaff: 'keep' }) as { id: string };

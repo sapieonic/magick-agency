@@ -116,7 +116,7 @@ function makeStations(owned: Record<string, string>, cannotTakeInbound: readonly
     broadcast: vi.fn(() => 0),
     sessionIdsForCampaign: vi.fn(() => Object.keys(owned)),
     get: vi.fn((id: string) => (id in owned
-      ? { sessionId: id, campaignId: owned[id], canTakeInbound: !cannotTakeInbound.includes(id) }
+      ? { sessionId: id, campaignId: owned[id], caps: new Set(cannotTakeInbound.includes(id) ? [] : ['inbound']) }
       : undefined)),
   };
 }
@@ -1321,10 +1321,9 @@ describe('PacingEngine rounds: inbound_waiting holds agents back for waiting inb
     expect(reservedIds(agents).sort()).toEqual(['s1', 's3']);
   });
 
-  it('a station whose capability is not known here (no `canTakeInbound`: the media workers` directory) is never held back', async () => {
+  it('a station with no capability known here (an empty `caps`: the media workers` directory) is never held back', async () => {
     const agents = makeAgents({ s1: 'available' });
-    const stations = makeStations({ s1: 'camp-1' });
-    stations.get.mockImplementation((id: string) => (id === 's1' ? { sessionId: id, campaignId: 'camp-1' } : undefined) as never);
+    const stations = makeStations({ s1: 'camp-1' }, ['s1']);
     const r = track(rig({ stations, agents }));
     lead(r.e);
     r.bus.publish(waiting({ n: 1 }));

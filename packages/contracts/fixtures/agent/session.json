@@ -72,12 +72,14 @@
       {
         "code": "tea",
         "label": "Tea break",
-        "is_paid": true
+        "is_paid": true,
+        "limit_minutes": 15
       },
       {
         "code": "lunch",
         "label": "Lunch",
-        "is_paid": false
+        "is_paid": false,
+        "limit_minutes": 30
       },
       {
         "code": "training",

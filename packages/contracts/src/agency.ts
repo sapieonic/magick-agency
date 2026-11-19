@@ -59,6 +59,12 @@
  *      `string | null`: `leave` answers it for a soft-phone session, which has no
  *      campaign. It no longer extends `AgencyCampaignScoped`; every other
  *      campaign-scoped response still does.
+ *
+ * **Live floor amendment (2026-11-19, decisions LF4, LF5, LF16).** `AgencyStationServerFrame`
+ * gains the floor assist frames (`supervisor_message`, `help_answered`, `help_cleared`,
+ * `./agency/floor-assist.ts`), and `AgencyStationCapability` gains `floor_assist`: a phone is sent
+ * those frames only when its upgrade declares it. The union was already declared non-exhaustive,
+ * so a client that ignores an unknown `event` is unaffected.
  */
 
 export * from './agency/enums';
@@ -79,4 +85,7 @@ export * from './agency/inbound';
 export * from './agency/push-devices';
 export * from './agency/promise';
 export * from './agency/listen';
+export * from './agency/floor-assist';
 export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';
+export type { AgencyFloorAssistErrorCode, AgencyFloorAssistErrorResponse } from './errors';
+export { AGENCY_FLOOR_ASSIST_ERROR_CODES } from './errors';

@@ -116,6 +116,10 @@ abstract final class StationCopy {
   static String breakTitle(String? label) => label == null || label.trim().isEmpty ? 'On break' : 'On break — $label';
   static const breakHint = 'Press End break when you’re ready.';
   static String breakFor(String clock) => 'On break for $clock';
+
+  /// The reason's limit (Live floor LF6): time left, then time over, against the minutes allowed.
+  static String breakLeft(String clock, int limit) => '$clock left of your $limit min';
+  static String breakOver(String clock, int limit) => 'Over your $limit min break by $clock';
   static const endBreak = 'End break';
   static const endingBreak = 'Ending break…';
 
@@ -375,6 +379,25 @@ abstract final class StationCopy {
     final parts = name.trim().split(RegExp(r'\s+'));
     return parts.isEmpty ? name : parts.first;
   }
+
+  // ── Need help (floor assist, LF4) ──
+  static const needHelp = 'Need help';
+  static const needHelpHint = 'Every supervisor on your account will see that you asked.';
+  static const askingForHelp = 'Asking for help…';
+  static const helpRequested = 'Help requested';
+  static String helpRequestedFor(String clock) => 'Your supervisors can see it · asked $clock ago';
+  static const cancelHelp = 'Cancel';
+  static const cancellingHelp = 'Cancelling…';
+  static const cancelHelpLabel = 'Cancel your request for help';
+  static const cancellingHelpLabel = 'Cancelling your request for help';
+  static const dismissHelp = 'Dismiss';
+
+  // ── A supervisor's message (floor assist, LF5) ──
+  static String messageFrom(String from, String time) => '$from · $time';
+  static String messageAnnouncement(String from, String text) => 'Message from $from: $text';
+  static String moreMessages(int n) => n == 1 ? '1 more message' : '$n more messages';
+  static const dismissMessage = 'Dismiss';
+  static const dismissMessageLabel = 'Dismiss this message';
 }
 
 /// What the station says about an inbound call, in the console's words

@@ -8,7 +8,7 @@ import { testWorkers } from '../../tooling/test-env.js';
  * server-side PTTL), or on a forked server's own liveness timers (the mobile stations file: the 10 s grace and the 8 s
  * deferred hangup, which have no overrides; the mobile inbound file: the 8 s deferred
  * hangup ending an inbound call; the listen load check: paced audio and the 30 s listener idle
- * bound). CI runs them as their own job beside the
+ * bound; Need help's expiry sweep on its real timer). CI runs them as their own job beside the
  * rest: INTEGRATION_LANE=wall-clock runs only these, =rest runs everything else, unset
  * runs all.
  */
@@ -25,6 +25,9 @@ const WALL_CLOCK_FILES = [
   // (LISTENER_SOFT_LIMIT_MAX_MS, LS17 b). Its timing bounds also fare better in this lane, beside
   // files that mostly wait, than in the busy rest.
   'test/integration/load/listen-media-load.test.ts',
+  // Need help's expiry (LF4) on real time: a 1.5 s expiry on the database's clock and the sweep's
+  // real timer, about 3 s of waiting.
+  'test/integration/agency/floor-assist-expiry-wall-clock.test.ts',
 ];
 
 const lane = process.env['INTEGRATION_LANE'] || undefined;

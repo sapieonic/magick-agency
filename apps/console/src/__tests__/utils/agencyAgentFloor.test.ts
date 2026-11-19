@@ -11,11 +11,12 @@ import {
   CALL_OVERRUN_AHT_MULTIPLE,
   FORCE_AVAILABLE_CONFIRM,
   FORCE_AVAILABLE_REASON_MAX,
-  LONG_BREAK_SECONDS,
   WRAPUP_OVERRUN_GRACE_SECONDS,
   agentDisplayName,
+  breakLimitMinutesOf,
   canForceAvailable,
   floorRisk,
+  floorRiskNote,
   floorRiskSummary,
   floorStateLabel,
   floorStateSlices,
@@ -30,6 +31,10 @@ import {
   type AgencyFloorRisk,
 } from '../../utils/agencyAgentFloor';
 import type { AgencyAgentLiveState, AgencySupervisorAgent } from '../../types/agency-campaign';
+import { AGENCY_BREAK_DEFAULT_LIMIT_MINUTES } from '@magick-agency/contracts/agency/breaks';
+
+/** The floor's one break rule, in seconds: rank 3 for a break with no limit of its own. */
+const LONG_BREAK_SECONDS = AGENCY_BREAK_DEFAULT_LIMIT_MINUTES * 60;
 
 /**
  * The agent floor's derivations.
@@ -160,6 +165,36 @@ describe('floorRisk — the thresholds', () => {
     expect(floorRisk(over, NOW, THRESHOLDS)).toBe('long_break');
     const under = agent({ state: 'break', break_reason: 'Lunch', state_since: ago(LONG_BREAK_SECONDS - 1) });
     expect(floorRisk(under, NOW, THRESHOLDS)).toBe('none');
+  });
+
+  it('rank 3 follows the break reason’s own limit (LF6), and the 30-minute rule without one', () => {
+    const tea = (seconds: number) => agent({ state: 'break', break_reason: 'tea', state_since: ago(seconds) });
+    const LIMITED = { ...THRESHOLDS, breakLimitMinutes: 15 };
+    expect(floorRisk(tea(15 * 60 + 1), NOW, LIMITED)).toBe('long_break');
+    expect(floorRisk(tea(15 * 60 - 1), NOW, LIMITED)).toBe('none');
+    // A limit longer than 30 minutes holds past the floor's rule.
+    expect(floorRisk(tea(40 * 60), NOW, { ...THRESHOLDS, breakLimitMinutes: 45 })).toBe('none');
+    expect(floorRisk(tea(45 * 60 + 1), NOW, { ...THRESHOLDS, breakLimitMinutes: 45 })).toBe('long_break');
+    // None, null or nonsense: 30 minutes.
+    for (const breakLimitMinutes of [undefined, null, 0, -5, Number.NaN]) {
+      expect(floorRisk(tea(16 * 60), NOW, { ...THRESHOLDS, breakLimitMinutes })).toBe('none');
+      expect(floorRisk(tea(LONG_BREAK_SECONDS + 1), NOW, { ...THRESHOLDS, breakLimitMinutes })).toBe('long_break');
+    }
+    expect(breakLimitMinutesOf(null)).toBe(30);
+    expect(breakLimitMinutesOf(15)).toBe(15);
+  });
+
+  it('rank 3 never fires for the soft phone, whatever limit is passed', () => {
+    const hours = agent({ state: 'break', break_reason: 'soft_phone', state_since: ago(LONG_BREAK_SECONDS * 4) });
+    expect(floorRisk(hours, NOW, { ...THRESHOLDS, breakLimitMinutes: 1 })).toBe('none');
+  });
+
+  it('says a long break’s limit when it has one, and the 30-minute sentence when not', () => {
+    expect(floorRiskNote('long_break', 15, 'Tea')).toBe('Past the 15-minute limit for Tea.');
+    expect(floorRiskNote('long_break', 45, null)).toBe('Past the 45-minute limit for this break.');
+    expect(floorRiskNote('long_break', null, 'Tea')).toBe('On break for more than 30 minutes.');
+    expect(floorRiskNote('wrapup_overrun', 15, 'Tea')).toBe(AGENCY_FLOOR_RISK_NOTE.wrapup_overrun);
+    expect(floorRiskNote('none')).toBeNull();
   });
 
   it('rank 3 never fires for the soft phone: that break is the agent working calls by hand', () => {

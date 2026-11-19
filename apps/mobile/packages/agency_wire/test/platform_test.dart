@@ -85,6 +85,15 @@ void main() {
       expect(FeatureFlags.fromJson(const {}).isOn(FeatureFlags.liveListenEnabled), isFalse);
     });
 
+    test('floor assist has its key, the contract fixture\'s, off there and off when absent', () {
+      final map = fixture('platform.json', 'feature_flags');
+      expect(FeatureFlags.floorAssistEnabled, 'agency_floor_assist_enabled');
+      expect(map[FeatureFlags.floorAssistEnabled], isFalse);
+      expect(FeatureFlags.fromJson(map).isOn(FeatureFlags.floorAssistEnabled), isFalse);
+      expect(FeatureFlags.fromJson({FeatureFlags.floorAssistEnabled: true}).isOn(FeatureFlags.floorAssistEnabled), isTrue);
+      expect(FeatureFlags.fromJson(const {}).isOn(FeatureFlags.floorAssistEnabled), isFalse);
+    });
+
     test('values are booleans, numbers or strings', () {
       expect(FeatureFlags.fromJson({'a': 3, 'b': 'x'}).values, {'a': 3, 'b': 'x'});
       expect(() => FeatureFlags.fromJson({'a': null}), throwsA(isA<WireFormatException>()));

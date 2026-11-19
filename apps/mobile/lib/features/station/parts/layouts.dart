@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/theme/tokens.dart';
 import 'banners.dart';
 import 'call_band.dart';
+import 'need_help.dart';
 
 /// The two page shapes the station uses.
 ///
@@ -33,6 +34,8 @@ class IdleLayout extends StatelessWidget {
                 const IdleLinkBanner(),
                 const MicProblemBanner(),
                 const MissedReleaseCard(),
+                // Need help raised in a wrap-up stays open after it (LF13): seen and cancellable here.
+                const NeedHelpCard(idle: true),
                 ...body,
               ],
             ),
@@ -62,7 +65,14 @@ class CallLayout extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [const ListenFirstNoticeCard(onCall: true), const StationTopNotices(), const MicProblemBanner(), const MissedReleaseCard(), ...body],
+              children: [
+                const ListenFirstNoticeCard(onCall: true),
+                const StationTopNotices(),
+                const MicProblemBanner(),
+                const MissedReleaseCard(),
+                const NeedHelpCard(),
+                ...body,
+              ],
             ),
           ),
         ),
