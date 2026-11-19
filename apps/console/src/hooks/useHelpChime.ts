@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLatestRef } from './useLatestRef';
 import { newHelpKeys, readHelpChimeOn, writeHelpChimeOn } from '../utils/agency/floorAssist';
 import { playHelpChime, unlockHelpChime } from '../utils/agency/helpChime';
 
@@ -18,8 +19,7 @@ import { playHelpChime, unlockHelpChime } from '../utils/agency/helpChime';
  */
 export function useHelpChime(keys: readonly string[] | null): { on: boolean; toggle: () => void } {
   const [on, setOn] = useState(readHelpChimeOn);
-  const onRef = useRef(on);
-  onRef.current = on;
+  const onRef = useLatestRef(on);
   const seen = useRef<Set<string> | null>(null);
   const joined = keys === null ? null : keys.join('\n');
 
