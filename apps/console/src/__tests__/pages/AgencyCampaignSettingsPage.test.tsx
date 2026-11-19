@@ -1308,13 +1308,13 @@ describe('the settings sections', () => {
     await screen.findByTestId('settings-section-nav');
 
     expect(navIds()).toEqual([
-      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#roster-uploads',
+      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#agents', '#roster-uploads',
     ]);
     for (const href of navIds()) {
       expect(document.getElementById(href!.slice(1)), href!).toBeTruthy();
     }
-    // Agents has nothing in it with contact assignment and inbound both off, so it is not offered.
-    expect(document.getElementById('agents')).toBeNull();
+    // Agents is there with contact assignment and inbound both off: it holds the break limits (LF27).
+    expect(document.getElementById('agents')?.querySelector('[data-testid="break-limits"]')).toBeTruthy();
     // The nav and the page agree on order: each anchor follows the one before it.
     const anchors = navIds().map((href) => document.getElementById(href!.slice(1))!);
     for (let i = 1; i < anchors.length; i += 1) {

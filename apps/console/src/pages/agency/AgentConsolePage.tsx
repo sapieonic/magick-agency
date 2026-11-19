@@ -11,6 +11,9 @@ import { useStationShortcuts } from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
+import { useStationHelp } from './station/useStationHelp';
+import { SupervisorMessages } from '../../components/agency/SupervisorMessages';
+import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
 import { useInboundCall } from '../../hooks/useInboundCall';
@@ -204,6 +207,28 @@ export default function AgentConsolePage() {
     tenantId,
     accountId,
   });
+
+  /*
+    ── Floor assist (LF4, LF5, LF24–LF26) ──────────────────────────────────────
+    Need help, in the action bar while the flag is on, and supervisors' messages, laid over every
+    view of the station (the campaign's, an inbound call's, the soft phone's): a message reaches
+    the agent wherever they are, and never moves or covers the controls that act on the call.
+  */
+  const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
+  const help = useStationHelp({
+    offered: floorAssistOn,
+    sessionId: bootstrap?.session_id ?? null,
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    station,
+  });
+  const supervisorMessages = (
+    <SupervisorMessages
+      messages={station.supervisorMessages}
+      onDismiss={station.dismissSupervisorMessage}
+      helpAnnouncement={help.announcement}
+    />
+  );
 
   const softphone = useStationSoftphone({
     bootstrap,
@@ -402,6 +427,7 @@ export default function AgentConsolePage() {
           missedPings={missedPings}
         />
         {micBanner}
+        {supervisorMessages}
         <InboundCallView
           ib={inbound}
           call={inbound.call}
@@ -472,6 +498,7 @@ export default function AgentConsolePage() {
           }
         />
         {micBanner}
+        {supervisorMessages}
         <SoftphoneView
           sp={softphone.sp}
           connection={connection}
@@ -546,11 +573,13 @@ export default function AgentConsolePage() {
       */}
       {micBanner}
 
-      {/* The rail is the ONLY polite live region on this screen. */}
+      {/* The rail is the call's one polite live region. (Floor assist has its own, LF25:
+          `SupervisorMessages`, for what supervisors say, never about the call.) */}
       <StateRail
         agentState={agentState}
         agentStateSince={station.agentStateSince}
         breakReasonLabel={cons.breakReasonLabel}
+        breakLimitMinutes={cons.breakLimitMinutes}
         connection={connection}
         live={live}
         release={release}
@@ -590,8 +619,9 @@ export default function AgentConsolePage() {
       ) : null}
 
       {/* Assertive region, used ONLY for connect, disconnect and the direct
-          result of a button the agent just pressed ( — exactly two live
-          regions, and this is the second). */}
+          result of a button the agent just pressed (the call has exactly two
+          live regions, and this is the second; floor assist's polite one,
+          LF25, is outside them). */}
       <div className={styles.srOnly} role="alert" aria-live="assertive">
         {cons.announcement}
       </div>
@@ -621,7 +651,8 @@ export default function AgentConsolePage() {
         the input, because the selector is deliberately not on the bootstrap.
 
         Not a live region: it is standing context, not an event, and the console
-        has exactly two live regions both spent on the call itself.
+        has exactly two live regions for the call, both spent on the call itself
+        (floor assist's, LF25, carries only what supervisors say).
       */}
       {bootstrap?.retry_context ? (
         <p className={styles.retryBanner} data-testid="retry-context">
@@ -722,7 +753,10 @@ export default function AgentConsolePage() {
         onHangup={hangup}
         hangupFailure={hangupFailure}
         softphoneAvailable={softphone.available}
+        help={help}
       />
+
+      {supervisorMessages}
 
       {/*
         The shared `ConfirmDialog`, not a console-local one: it already owns the

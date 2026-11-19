@@ -8,7 +8,12 @@ import type {
   AgencyStationErrorFrame,
   AgencyStationReleasedFrame,
 } from '../../types/agency';
-import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
+import type {
+  AgencySessionHelp,
+  AgencyStationMediaFormat,
+  AgencyStationSupervisorMessageFrame,
+} from '@magick-agency/contracts/agency';
+import type { StationHelpNotice } from '../../utils/agencyStationReducer';
 import type { AgencyManualCall } from '../../types/softphone';
 import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../../types/inbound';
 import type { AgencyUplinkFrame } from '../../utils/agencyMedia';
@@ -247,6 +252,18 @@ export interface UseAgencyStationResult {
    * console smooths the gap between one dial and the next (`useDialActivityDisplay`).
    */
   dialActivity: AgencyDialActivity | null;
+  /**
+   * Floor assist (LF4, LF15): the agent's open Need help request, as the raise's answer, `ready`
+   * and `help_cleared` state it; what the station says about the last one (answered, lapsed);
+   * and the supervisors' messages not yet dismissed, oldest first. See `StationState`.
+   */
+  help: AgencySessionHelp | null;
+  helpNotice: StationHelpNotice | null;
+  supervisorMessages: readonly AgencyStationSupervisorMessageFrame[];
+  /** The raise's answer (the open request) or the cancel's (`null`): the raise sends no frame. */
+  setHelp: (help: AgencySessionHelp | null) => void;
+  dismissHelpNotice: () => void;
+  dismissSupervisorMessage: (id: string) => void;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
   reconnect: () => void;
   /**

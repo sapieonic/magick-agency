@@ -972,14 +972,71 @@ button.fatalEscape {
   opacity: 0.75;
 }
 
-/* Need help (coming soon): never on a phone's bar, whose wrapped rows it would reflow. */
+/*
+ * Need help (LF24): the button, then what it says. Last in the bar, so if the bar wraps it is this
+ * slot that goes to a row of its own, never Hang up. Its words start from nothing and wrap in place
+ * (as the stated reasons below do), so a long "lapsed" notice never widens the bar.
+ */
 .needHelp {
   display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
 }
 
+.needHelpButton[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* An open request: the same control, now the way to cancel it, marked in the warning tone. */
+.needHelpButton[data-open='true'] {
+  border-color: var(--warning, #d29922);
+  color: var(--warning, #d29922);
+}
+
+.needHelpStatus,
+.needHelpRefusal {
+  flex: 1 1 0;
+  min-width: 8rem;
+  max-width: max-content;
+  font-size: 0.875rem;
+}
+
+.needHelpStatus[data-tone='open'] {
+  color: var(--warning, #d29922);
+  font-weight: 600;
+}
+
+.needHelpStatus[data-tone='notice'] {
+  color: var(--text-primary);
+}
+
+.needHelpRefusal {
+  color: var(--warning, #d29922);
+}
+
+.needHelpDismiss {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+/* A phone: the slot is a row of its own under Hang up, the button the full width of it. */
 @media (max-width: 767px) {
-  .needHelp {
-    display: none;
+  .actionBar > .needHelp {
+    flex: 1 1 100%;
+  }
+
+  .needHelpButton {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }
 

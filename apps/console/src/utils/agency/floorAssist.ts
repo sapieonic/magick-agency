@@ -1,4 +1,3 @@
-import type { ClientExposedAgencyFlagKey } from '@magick-agency/contracts/flags';
 import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
 import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
@@ -8,16 +7,11 @@ import { formatCount } from '../format/number';
 
 /**
  * Floor assist on the supervisor's Live floor (decisions LF4, LF5, LF28–LF33): Need help's row, card
- * and chime, Talk to agent and Send reminder. Pure, so each rule is tested where it is made.
- */
-
-/**
- * The flag (LF11): off by default, client-exposed. With it off the floor read's `help` is null on
+ * and chime, Talk to agent and Send reminder. Pure, so each rule is tested where it is made. The
+ * flag is the station's (`floorAssistFlag.ts`, LF11): with it off the floor read's `help` is null on
  * every row and the message route answers `403 floor_assist_disabled`, so Live floor shows no Talk,
- * no Send reminder, no Need help chip and no sound toggle. Typed against the contracts so a renamed
- * flag fails to compile.
+ * no Send reminder, no Need help chip and no sound toggle.
  */
-export const FLOOR_ASSIST_FLAG: ClientExposedAgencyFlagKey = 'agency_floor_assist_enabled';
 
 /** The longest message, in characters as the reader sees them (code points, LF17). */
 export const MESSAGE_MAX_CHARS = AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS;

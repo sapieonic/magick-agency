@@ -6,11 +6,12 @@ import { QueuedBreakPill } from './QueuedBreakPill';
 import { CustomerWaitingPill } from './inbound/CustomerWaitingPill';
 import { DncControl, type DncControlHandle } from './DncControl';
 import { HoldToConfirmButton } from './HoldToConfirmButton';
-import { ComingSoonButton } from '../common/ComingSoon';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { DISPOSITION_BLOCK_COPY } from '../../utils/agencyDispositionForm';
 import type { DncScope } from '../../utils/agencyDncCopy';
 import type { AgencyConsoleState } from '../../pages/agency/useAgencyConsole';
+import type { StationHelp } from '../../pages/agency/station/useStationHelp';
+import { STATION_HELP_COPY } from '../../utils/agency/stationHelp';
 import styles from './AgentStation.module.css';
 
 /**
@@ -75,6 +76,7 @@ export function StationActionBar({
   onHangup,
   hangupFailure,
   softphoneAvailable = false,
+  help,
 }: {
   cons: AgencyConsoleState;
   /**
@@ -95,6 +97,11 @@ export function StationActionBar({
   };
   onHangup: () => void;
   hangupFailure: string | null;
+  /**
+   * Need help (`useStationHelp`, LF4, LF24). Shown only while `agency_floor_assist_enabled` is on
+   * (`help.offered`); optional so every existing caller and test is unaffected.
+   */
+  help?: StationHelp;
 }) {
   // Tab order within the bar is fixed: Break → (Soft phone) → Save → Hang up.
   const menuReasons = softphoneAvailable
@@ -228,26 +235,50 @@ export function StationActionBar({
       ) : null}
 
       {/*
-        Need help: an agent will be able to ask a supervisor for help during a call. Nothing is
-        behind it yet, so it is a button marked coming soon (`aria-disabled`, so it stays focusable
-        and a keyboard user can read why it does nothing) and bound to no shortcut. Last in the bar,
-        in the DOM and in the tab order, after Hang up: it is never a Tab stop between Mute and Hang
-        up, and when the bar runs out of room it is Need help that wraps, never Hang up. Compact (the
-        dashed border marks it; the tooltip says it is coming), so it takes no badge's width.
-        Rendered in every state (the geometry rule: controls disable, they never appear and vanish),
-        and left out of a phone's bar (the CSS), whose wrapped rows it would reflow.
+        Need help (LF4, LF24). Last in the bar, in the DOM and in the tab order, after Hang up: it is
+        never a Tab stop between Mute and Hang up, and when the bar runs out of room it is Need help
+        that wraps, never Hang up. Bound to no shortcut.
+
+        ONE button for the request's life: it raises, and once a request is open the same node
+        cancels it (its label says which), so focus stays where the agent pressed. Not offered off a
+        call (the server's `help_not_on_call` rule): `aria-disabled`, never `disabled`, so it stays
+        focusable and a keyboard agent can read why. Rendered in every call state (controls
+        disable, they never appear and vanish), and only while the flag is on, which does not change
+        under a shift. What it says (open, answered, lapsed) sits after it, so nothing before it moves.
       */}
-      <span className={styles.needHelp}>
-        <ComingSoonButton
-          compact
-          className={styles.mute}
-          tooltip="Ask a supervisor for help during a call. Coming soon."
-          testId="need-help"
-        >
-          <LifeBuoy size={15} aria-hidden="true" style={{ marginRight: 6 }} />
-          Need help
-        </ComingSoonButton>
-      </span>
+      {help?.offered ? (
+        <div className={styles.needHelp} data-testid="need-help">
+          <button
+            type="button"
+            className={`${styles.mute} ${styles.needHelpButton}`}
+            data-open={help.open ? 'true' : undefined}
+            aria-disabled={help.busy || help.blockedReason !== null || undefined}
+            aria-describedby={help.blockedReason ? 'need-help-reason' : undefined}
+            title={help.blockedReason ?? (help.open ? undefined : STATION_HELP_COPY.raiseHint)}
+            onClick={help.press}
+            data-testid="need-help-button"
+          >
+            <LifeBuoy size={15} aria-hidden="true" style={{ marginRight: 6 }} />
+            {help.label}
+          </button>
+          {help.blockedReason ? (
+            <span id="need-help-reason" className={styles.srOnly}>{help.blockedReason}</span>
+          ) : null}
+          {help.status ? (
+            <span className={styles.needHelpStatus} data-tone={help.open ? 'open' : 'notice'} data-testid="need-help-status">
+              {help.status}
+            </span>
+          ) : null}
+          {help.dismissible ? (
+            <button type="button" className={styles.needHelpDismiss} onClick={help.dismiss} data-testid="need-help-dismiss">
+              {STATION_HELP_COPY.dismiss}
+            </button>
+          ) : null}
+          {help.refusal ? (
+            <span className={styles.needHelpRefusal} data-testid="need-help-refusal">{help.refusal}</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
