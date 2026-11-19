@@ -180,6 +180,34 @@ export function cardsFor(cards: readonly FloorCard[], campaignId: string | null)
   return campaignId === null ? cards : cards.filter((card) => card.row.campaign_id === campaignId);
 }
 
+/** Every field the same (`Object.is`): one level, no further. */
+function sameFields(a: object, b: object): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) => Object.is((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+}
+
+/**
+ * Whether two reads of an agent's row say the same: every field the same, and the call in progress
+ * the same field by field (the one object on a row). The floor read answers new objects on every
+ * poll, so the grid keeps the last row while this holds and a card that shows nothing new skips its
+ * render. A field added later that holds an object compares by reference: a needless render, never
+ * a stale card.
+ */
+export function sameFloorRow(a: AgencyFloorAgent, b: AgencyFloorAgent): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a) as (keyof AgencyFloorAgent)[];
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const key of keys) {
+    const x = a[key];
+    const y = b[key];
+    if (Object.is(x, y)) continue;
+    if (key === 'call' && a.call && b.call && sameFields(a.call, b.call)) continue;
+    return false;
+  }
+  return true;
+}
+
 /** How many rows in each state, and in all. */
 export function floorStateCounts(rows: readonly AgencyFloorAgent[]): { total: number; counts: Record<FloorCardState, number> } {
   const counts: Record<FloorCardState, number> = { on_call: 0, available: 0, wrapup: 0, softphone: 0, break: 0, offline: 0 };
@@ -279,14 +307,14 @@ export function liveCallOf(row: AgencyFloorAgent): FloorLiveCall | null {
  * is writing. The drawer's own rule (`canForceAvailable`) is wider on purpose: it is reached on
  * purpose, from one agent; a red button on every card is not.
  */
-export function offersMakeAvailable(card: FloorCard): boolean {
+export function offersMakeAvailable(card: Pick<FloorCard, 'row' | 'risk'>): boolean {
   if (card.row.session_id === null) return false;
   if (card.risk === 'wrapup_overrun') return true;
   return owesInboundOutcome(card.row) && card.row.state !== 'wrapup';
 }
 
 /** A card's stripe: a warning's colour when it carries one, else its state's. */
-export function stripeTone(card: FloorCard): FloorCardState | 'risk' | 'lost' {
+export function stripeTone(card: Pick<FloorCard, 'risk' | 'state'>): FloorCardState | 'risk' | 'lost' {
   if (card.risk === 'disconnected') return 'lost';
   if (isWarningRisk(card.risk)) return 'risk';
   return card.state;

@@ -19,6 +19,7 @@ import {
   liveCallOf,
   offersMakeAvailable,
   rankFloorCards,
+  sameFloorRow,
   stripeTone,
   supervisorAgentOf,
   willPayByCampaign,
@@ -218,6 +219,18 @@ describe('a card', () => {
     const full = liveCallOf(floorRow('a', { state: 'on_call', call: CALL({ listenable: false, not_listenable_reason: 'listen_limit_call' }) }))!;
     expect(notListenableCopy(full.not_listenable_reason, full.listeners?.length)).toBe('This call has reached its listening limit');
     expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, full.listeners?.length)).toBe('That call has reached its listening limit.');
+  });
+});
+
+describe('a row read again (sameFloorRow)', () => {
+  it('is the same when every field and the call’s fields are, whatever the objects', () => {
+    const row = floorRow('a', { state: 'on_call', call: CALL() });
+    expect(sameFloorRow(row, structuredClone(row))).toBe(true);
+    expect(sameFloorRow(floorRow('a'), structuredClone(floorRow('a')))).toBe(true);
+    expect(sameFloorRow(row, { ...row, calls_today: row.calls_today + 1 })).toBe(false);
+    expect(sameFloorRow(row, { ...row, call: { ...row.call!, listenable: false } })).toBe(false);
+    expect(sameFloorRow(row, { ...row, call: null })).toBe(false);
+    expect(sameFloorRow({ ...row, call: null }, { ...row, call: null })).toBe(true);
   });
 });
 

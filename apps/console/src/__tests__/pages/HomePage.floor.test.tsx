@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   canListen: true,
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
+  // The real rule, counted: an agent card calls it once each time it renders.
+  floorBadges: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({
@@ -42,6 +44,11 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../hooks/useMissedCallsAccess', () => ({
   useMissedCallsAccess: () => ({ available: false, count: null, inboundOn: true, settled: true }),
 }));
+vi.mock('../../utils/agency/liveFloorAgents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/agency/liveFloorAgents')>();
+  mocks.floorBadges.mockImplementation(actual.floorBadges);
+  return { ...actual, floorBadges: mocks.floorBadges };
+});
 vi.mock('../../components/listen/ListenProvider', () => ({
   useListen: () => ({ canListen: mocks.canListen, listen: mocks.listen }),
 }));
@@ -359,6 +366,34 @@ describe('the drawer from Live floor', () => {
     const facts = await screen.findByTestId('agent-drawer-facts');
     expect(within(facts).getByText('Conversations today')).toBeTruthy();
     expect(within(facts).queryByText('Calls this shift')).toBeNull();
+  });
+});
+
+describe('the grid on a new read', () => {
+  const noop = () => {};
+  const grid = (rows: AgencyFloorAgent[], now: number, offset: number) => (
+    <MemoryRouter>
+      <AgentGrid cards={rankFloorCards(rows, now)} filter="all" clockOffsetMs={offset} onChanged={noop} />
+    </MemoryRouter>
+  );
+  const renders = () => mocks.floorBadges.mock.calls.length;
+
+  it('re-renders no card for a floor equal to the last on the same risks, and only the card whose row changed', () => {
+    const rows = FLOOR().agents;
+    const now = Date.now();
+    const view = render(grid(rows, now, 0));
+    const first = renders();
+    expect(first).toBe(rows.length);
+    // The next poll: every row a new object with the same content, 5 s on the risk clock, the
+    // read's clock offset a few ms off.
+    view.rerender(grid(structuredClone(rows), now + 5_000, 4));
+    expect(renders()).toBe(first);
+    // One agent's figure moves: that card alone.
+    const next = structuredClone(rows);
+    next[0] = { ...next[0]!, calls_today: next[0]!.calls_today + 1 };
+    view.rerender(grid(next, now + 10_000, 4));
+    expect(renders()).toBe(first + 1);
+    expect(screen.getByTestId('home-agent-ravi').textContent).toContain('43 conversations today');
   });
 });
 
