@@ -2,8 +2,8 @@
  * The agency repository's shared SQL fragments: every spelling more than one
  * repository file must emit byte-identically (the phone-digits prefilter, the
  * resolved campaign zone, the occupancy intervals, the five attempt metrics, the
- * campaign INSERT column list, a session's unsettled inbound call). A leaf: it
- * imports nothing from this folder.
+ * campaign INSERT column list, a session's unsettled inbound call, a session's open Need
+ * help). A leaf: it imports nothing from this folder.
  */
 // What counts as a conversion, as SQL. A leaf module for the same reason
 // `ABANDONED_ATTEMPT_PREDICATE_SQL` is one: the campaign roll-up and the agent
@@ -13,6 +13,17 @@ import { successDispositionSql } from '@magick-agency/domain/success-disposition
 import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { INBOUND_MATCH_NAME_COLUMNS } from '../../../agency/inbound/match-name.js';
+
+/** Need help (LF4): the session row's request is open, raised and not answered. Bare column names. */
+export const HELP_OPEN_SQL = 'help_raised_at IS NOT NULL AND help_answered_at IS NULL';
+
+/**
+ * A session's Need help request is open and fresh: raised less than `$n` ms (the expiry) ago, on
+ * the database's clock. Over the session row's bare column names: the rule every read applies (the
+ * station's `ready.help`, `floor-assist.repository.ts`; the floor's rows, `floor.repository.ts`).
+ */
+export const helpOpenSql = (param: string): string =>
+  `${HELP_OPEN_SQL} AND help_raised_at > now() - ${param}::bigint * interval '1 millisecond'`;
 
 /**
  * "This roster row's number, digits only" — the PREFILTER for

@@ -51,8 +51,7 @@ import { AGENCY_INBOUND_OUTCOME_LAPSE_MS, type AgencyBreakReason } from '@magick
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { AGENCY_HELP_EXPIRY_MS } from '@magick-agency/contracts/agency';
-import { CONVERSATION_ATTEMPT_SQL, inboundUnsettledCallLateralSql } from './sql-fragments.js';
-import { helpOpenSql } from './floor-assist.repository.js';
+import { CONVERSATION_ATTEMPT_SQL, helpOpenSql, inboundUnsettledCallLateralSql } from './sql-fragments.js';
 
 /** The campaign statuses whose staffed agents are on the floor with no session: Home's active set, the same list. */
 export const FLOOR_ACTIVE_STATUSES = AGENCY_HOME_ACTIVE_STATUSES;

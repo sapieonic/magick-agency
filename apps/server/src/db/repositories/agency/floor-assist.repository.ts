@@ -25,19 +25,7 @@
  * waits for it.
  */
 import { getPool } from '@magick-agency/db';
-
-/** Open: raised and not answered. */
-const OPEN = 'help_raised_at IS NOT NULL AND help_answered_at IS NULL';
-
-/** Raised less than `$n` ms ago. */
-const fresh = (param: string) => `help_raised_at > now() - ${param}::bigint * interval '1 millisecond'`;
-
-/**
- * A session's request is open and fresh (`$n` the expiry in ms), over the session row's bare column
- * names: the rule every read applies (the station's `ready.help` here, the floor's rows in
- * `floor.repository.ts`), on the database's clock.
- */
-export const helpOpenSql = (param: string): string => `${OPEN} AND ${fresh(param)}`;
+import { HELP_OPEN_SQL as OPEN, helpOpenSql } from './sql-fragments.js';
 
 /** Raised `$n` ms ago or more: expired. */
 const expired = (param: string) => `help_raised_at <= now() - ${param}::bigint * interval '1 millisecond'`;
