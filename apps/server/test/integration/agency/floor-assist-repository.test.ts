@@ -322,6 +322,8 @@ describe('each request ends exactly once', () => {
     try {
       await answering.query('BEGIN');
       const answerNow = (await answering.query<{ now: Date }>('SELECT now()')).rows[0]!.now;
+      // A gap a Date (milliseconds) can see between the answer's now() and the raise's.
+      await raising.query('SELECT pg_sleep(0.02)');
       await raising.query('BEGIN');
       pinned.client = raising;
       const raisedAgain = await raise(s);
