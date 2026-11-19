@@ -50,6 +50,7 @@ import HomePage from '../../pages/agency/HomePage';
 import { AgentGrid } from '../../pages/agency/live-floor/AgentGrid';
 import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
 import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
+import { rankFloorCards } from '../../utils/agency/liveFloorAgents';
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -309,7 +310,7 @@ describe('the drawer from Live floor', () => {
   function renderGrid(rows: AgencyFloorAgent[]) {
     const grid = (next: AgencyFloorAgent[]) => (
       <MemoryRouter>
-        <AgentGrid rows={next} filter="all" clockOffsetMs={0} onChanged={() => {}} />
+        <AgentGrid cards={rankFloorCards(next, Date.now())} filter="all" clockOffsetMs={0} onChanged={() => {}} />
       </MemoryRouter>
     );
     const view = render(grid(rows));
@@ -325,7 +326,7 @@ describe('the drawer from Live floor', () => {
     // Still stuck, a later state change and a name the lookup has now: the open drawer says so.
     rerender([stuck({ agent_name: 'Divya Sharma', state_since: minutesAgo(2) })]);
     expect(screen.getByRole('dialog').textContent).toContain('Divya Sharma');
-    // The grid's second was taken before this floor: 2:00 or a hair under.
+    // The drawer's second was taken before this floor: 2:00 or a hair under.
     expect(screen.getByTestId('agent-drawer-elapsed').textContent).toMatch(/^(1:59|2:0\d)$/);
   });
 

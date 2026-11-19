@@ -7,6 +7,7 @@ import {
   breakOverrunItems,
   callsTodayText,
   cardsFor,
+  cardsInState,
   floorAgentsWorking,
   floorBadges,
   floorCard,
@@ -26,7 +27,7 @@ import {
 } from '../../utils/agency/liveFloorAgents';
 import { statusChangeLine } from '../../utils/agency/liveFloor';
 import { formatAmountShort, sumPromiseAmounts } from '../../utils/format/promise';
-import { sortByRank, homeBadgeCount } from '../../utils/agency/home';
+import { sortByRank, homeBadgeCount, homeRank } from '../../utils/agency/home';
 import { ackOf, stillAcknowledged } from '../../utils/agency/homeAcks';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import { listenRefusalMessage, notListenableCopy } from '../../utils/listen/listenCopy';
@@ -137,14 +138,18 @@ describe('the cards’ order', () => {
     const rows = [floorRow('a'), floorRow('b', { state: 'reserved' }), floorRow('c', { state: 'on_call', call: CALL() }), floorRow('d', { session_id: null, state: 'offline', state_since: null })];
     expect(floorStateCounts(rows)).toEqual({ total: 4, counts: { on_call: 2, available: 1, wrapup: 0, softphone: 0, break: 0, offline: 1 } });
     const cards = rankFloorCards(rows, NOW);
-    expect(cardsFor(cards, 'on_call').map((c) => c.row.agent_user_id)).toEqual(['b', 'c']);
-    expect(cardsFor(cards, 'all')).toHaveLength(4);
+    expect(cardsInState(cards, 'on_call').map((c) => c.row.agent_user_id)).toEqual(['b', 'c']);
+    expect(cardsInState(cards, 'all')).toHaveLength(4);
   });
 
   it('narrows to a campaign’s sessions: soft-phone sessions and absent agents name none', () => {
     const rows = [floorRow('a'), floorRow('b', { campaign_id: 'c2' }), floorRow('c', { campaign_id: null })];
     expect(floorRowsFor(rows, 'c1').map((r) => r.agent_user_id)).toEqual(['a']);
     expect(floorRowsFor(rows, null)).toHaveLength(3);
+    // The ranked cards narrow by the same rule, keeping their order.
+    const cards = rankFloorCards([...rows, floorRow('d', { state: 'break', state_since: ago(40) })], NOW);
+    expect(cardsFor(cards, 'c1').map((c) => c.row.agent_user_id)).toEqual(['d', 'a']);
+    expect(cardsFor(cards, null)).toBe(cards);
   });
 });
 
@@ -211,24 +216,25 @@ describe('breaks over the limit, in Needs you now', () => {
     expect(item).toMatchObject({
       id: 'break-overrun:p',
       tone: 'warning',
-      rank: 'break-overrun',
       title: 'Priya M on Tea for 42 min',
       detail: 'Any break over 30 minutes is flagged. Limits per break reason are coming soon.',
       campaign: { id: 'c1', name: 'Q4 collections' },
       to: '/agency/campaigns/c1/agents',
-      badge: false,
       ackable: true,
       // How long the break has run, in seconds; a "Got it" holds for 15 minutes more of it.
       count: 42 * 60,
       worseBy: 15 * 60,
       comingSoon: { label: 'Send reminder', tooltip: 'Remind Priya M that their break is over.' },
     });
+    expect(homeRank(item!)).toBe('break-overrun');
     expect(homeBadgeCount([item!])).toBe(0);
   });
 
   it('sits after what stopped a campaign and before late callbacks (LF9)', () => {
     const [brk] = breakOverrunItems(rankFloorCards([floorRow('p', { state: 'break', state_since: ago(42) })], NOW), campaigns);
-    const sorted = sortByRank([{ ...brk!, id: 'late', rank: 'late-callbacks' as const }, brk!, { ...brk!, id: 'stop', rank: 'stop' as const }]);
+    const late = { ...brk!, id: 'late', kind: 'callbacks-overdue', tone: 'danger' as const };
+    const stop = { ...brk!, id: 'stop', kind: 'stall:dnc_unavailable', tone: 'danger' as const };
+    const sorted = sortByRank([late, brk!, stop]);
     expect(sorted.map((i) => i.id)).toEqual(['stop', 'break-overrun:p', 'late']);
   });
 
@@ -269,10 +275,10 @@ describe('the tiles from the floor and the promises', () => {
   };
 
   it('takes Agents working from the floor’s totals, or one campaign’s rows of its staffed agents', () => {
-    expect(floorAgentsWorking(floor, null, [])).toEqual({ working: 2, assigned: 7 });
+    expect(floorAgentsWorking(floor, floor.agents, null, [])).toEqual({ working: 2, assigned: 7 });
     const reads = [{ campaign: campaign('c1'), stats: null, staffing: { staffed: 4, online: 1 }, allocation: null, today: null, settings: null, stale: false }];
-    expect(floorAgentsWorking(floor, 'c1', reads)).toEqual({ working: 1, assigned: 4 });
-    expect(floorAgentsWorking(floor, 'c2', reads)).toEqual({ working: 1, assigned: null });
+    expect(floorAgentsWorking(floor, floorRowsFor(floor.agents, 'c1'), 'c1', reads)).toEqual({ working: 1, assigned: 4 });
+    expect(floorAgentsWorking(floor, floorRowsFor(floor.agents, 'c2'), 'c2', reads)).toEqual({ working: 1, assigned: null });
   });
 
   const summary = (over: Partial<AgencyPromisesSummaryResponse> = {}): AgencyPromisesSummaryResponse => ({

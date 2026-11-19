@@ -8,6 +8,7 @@ import {
   FLOOR_CARD_LABELS,
   FLOOR_CARD_STATES,
   floorStateCounts,
+  type FloorCard,
   type FloorChipFilter,
 } from '../../../utils/agency/liveFloorAgents';
 import { formatCount } from '../../../utils/format/number';
@@ -18,6 +19,8 @@ import styles from './LiveFloor.module.css';
 /** The floor read as the panel needs it (`useAgentFloor`, narrowed to the shown campaigns). */
 export interface AgentsPanelFloor {
   rows: readonly AgencyFloorAgent[];
+  /** The same rows as cards, in the page's one ranking (`rankFloorCards` on its risk clock). */
+  cards: readonly FloorCard[];
   clockOffsetMs: number;
   stale: boolean;
   onChanged: () => void;
@@ -56,7 +59,7 @@ export function AgentsPanel({
         {floor?.stale && <span className={styles.staleTag} data-testid="home-agents-stale">Not refreshed</span>}
       </div>
       {floor ? (
-        <AgentGrid rows={floor.rows} filter={filter} clockOffsetMs={floor.clockOffsetMs} onChanged={floor.onChanged} />
+        <AgentGrid cards={floor.cards} filter={filter} clockOffsetMs={floor.clockOffsetMs} onChanged={floor.onChanged} />
       ) : (
         <BoardFloor reads={reads} failed={floorFailed} onRetry={onRetryFloor} />
       )}

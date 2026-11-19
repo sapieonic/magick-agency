@@ -1,12 +1,12 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { BellRing, Headphones, LogIn, MessageCircle, Smartphone, TriangleAlert } from 'lucide-react';
 import { formatTime } from '@magick-agency/web-ui/format';
-import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
 import { AgentFloorDrawer } from '../../../components/agency/AgentFloorDrawer';
 import { ComingSoonButton } from '../../../components/common/ComingSoon';
 import { useListen } from '../../../components/listen/ListenProvider';
+import { useNow, usePageVisible } from '../../../hooks/useNow';
 import { AGENCY_FLOOR_RISK_NOTE, AGENCY_FLOOR_TICK_MS, INBOUND_CALL_FLOOR_LABEL, isWarningRisk } from '../../../utils/agencyAgentFloor';
-import { formatDuration } from '../../../utils/agencyClock';
+import { elapsedSince, formatDuration } from '../../../utils/agencyClock';
 import { initialsFor } from '../../../utils/initials';
 import { listenToLabel, notListenableCopy } from '../../../utils/listen/listenCopy';
 import { SOFTPHONE_BREAK_REASON_LABEL } from '../../../types/softphone';
@@ -14,13 +14,12 @@ import {
   FLOOR_CARD_LABELS,
   CONVERSATIONS_TODAY_NOTE,
   callsTodayText,
-  cardsFor,
+  cardsInState,
   floorBadges,
-  floorNow,
   floorNowLine,
+  floorTimerAnchor,
   liveCallOf,
   offersMakeAvailable,
-  rankFloorCards,
   stripeTone,
   type FloorCard,
   type FloorChipFilter,
@@ -28,22 +27,9 @@ import {
 import styles from './LiveFloor.module.css';
 
 /**
- * The shared second: every card's clock repaints together, once a second. It is the server's clock
- * (`floorNow`, the viewer's corrected by the floor read's offset), since every anchor it measures is
- * the server's.
- */
-function useFloorNow(clockOffsetMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), AGENCY_FLOOR_TICK_MS);
-    return () => clearInterval(timer);
-  }, []);
-  return floorNow(now, clockOffsetMs);
-}
-
-/**
- * The account's agents as cards (Phase 2, from the floor read), ranked as the campaign floor ranks
- * (`rankFloorCards`): who needs a look first, then by state. `filter` is the chips' choice.
+ * The account's agents as cards (Phase 2, from the floor read), in the page's one ranking
+ * (`rankFloorCards`, on the page's 5 s risk clock, the server's): who needs a look first, then by
+ * state. `cards` are the shown campaign's; `filter` is the chips' choice.
  *
  * A card's actions: Listen when the call can be listened to (the Live calls list's own start, so
  * the shell's listening bar takes over; a disabled Listen with the list's reason when it cannot;
@@ -56,51 +42,45 @@ function useFloorNow(clockOffsetMs: number): number {
  * Make available (an outcome saved, a break taken), so nobody forces a return the agent already made.
  */
 export function AgentGrid({
-  rows,
+  cards,
   filter,
   clockOffsetMs,
   onChanged,
 }: {
-  rows: readonly AgencyFloorAgent[];
+  cards: readonly FloorCard[];
   filter: FloorChipFilter;
   clockOffsetMs: number;
   onChanged: () => void;
 }) {
-  const now = useFloorNow(clockOffsetMs);
-  const ranked = useMemo(() => rankFloorCards(rows, now), [rows, now]);
-  const cards = useMemo(() => cardsFor(ranked, filter), [ranked, filter]);
+  const shown = useMemo(() => cardsInState(cards, filter), [cards, filter]);
   const [forcingId, setForcingId] = useState<string | null>(null);
+  const makeAvailable = useCallback((sessionId: string | null) => setForcingId(sessionId), []);
   // From this floor, every time: the card at the click is a snapshot the next poll may contradict.
-  const found = forcingId === null ? undefined : ranked.find((card) => card.row.session_id === forcingId);
+  const found = forcingId === null ? undefined : cards.find((card) => card.row.session_id === forcingId);
   const forcing = found && offersMakeAvailable(found) ? found : null;
   useEffect(() => {
     if (forcingId !== null && forcing === null) setForcingId(null);
   }, [forcingId, forcing]);
 
-  if (cards.length === 0) {
+  if (shown.length === 0) {
     return (
       <p className={styles.quiet} data-testid="home-agent-grid-empty">
-        {rows.length === 0 ? 'No agents are on the floor or assigned to an active campaign.' : 'No agent is in this state right now.'}
+        {cards.length === 0 ? 'No agents are on the floor or assigned to an active campaign.' : 'No agent is in this state right now.'}
       </p>
     );
   }
   return (
     <>
       <ul className={styles.agentGrid} data-testid="home-agent-grid">
-        {cards.map((card) => (
-          <AgentCard key={card.row.agent_user_id} card={card} clockOffsetMs={clockOffsetMs} onMakeAvailable={() => setForcingId(card.row.session_id)} />
+        {shown.map((card) => (
+          <AgentCard key={card.row.agent_user_id} card={card} clockOffsetMs={clockOffsetMs} onMakeAvailable={makeAvailable} />
         ))}
       </ul>
       {forcing && (
-        <AgentFloorDrawer
+        <ForcingDrawer
           key={forcing.agent.session_id}
-          // The analytics event's campaign; a soft-phone session has none.
-          campaignId={forcing.row.campaign_id ?? ''}
-          agent={forcing.agent}
-          now={now}
-          canSupervise
-          sort="risk"
-          callsLabel="Conversations today"
+          card={forcing}
+          clockOffsetMs={clockOffsetMs}
           onClose={() => setForcingId(null)}
           onForced={() => {
             setForcingId(null);
@@ -112,10 +92,45 @@ export function AgentGrid({
   );
 }
 
-function AgentCard({ card, clockOffsetMs, onMakeAvailable }: {
+/** The campaign floor's drawer, on its own second (the server's) while it is open. */
+function ForcingDrawer({ card, clockOffsetMs, onClose, onForced }: {
   card: FloorCard;
   clockOffsetMs: number;
-  onMakeAvailable: () => void;
+  onClose: () => void;
+  onForced: () => void;
+}) {
+  const now = useNow(AGENCY_FLOOR_TICK_MS) + clockOffsetMs;
+  return (
+    <AgentFloorDrawer
+      // The analytics event's campaign; a soft-phone session has none.
+      campaignId={card.row.campaign_id ?? ''}
+      agent={card.agent}
+      now={now}
+      canSupervise
+      sort="risk"
+      callsLabel="Conversations today"
+      onClose={onClose}
+      onForced={onForced}
+    />
+  );
+}
+
+/**
+ * Time in the state, or on the call, from the server's anchor: the only thing on the floor's
+ * one-second clock, so a tick repaints these digits and nothing else, and none while the tab is
+ * hidden (it reads the time again on the way back).
+ */
+const Elapsed = memo(function Elapsed({ anchor, offset }: { anchor: string | null; offset: number }) {
+  const now = useNow(AGENCY_FLOOR_TICK_MS, usePageVisible());
+  const elapsedMs = elapsedSince(anchor, 0, now + offset);
+  return <>{elapsedMs === null ? '—' : formatDuration(elapsedMs)}</>;
+});
+
+const AgentCard = memo(function AgentCard({ card, clockOffsetMs, onMakeAvailable }: {
+  card: FloorCard;
+  clockOffsetMs: number;
+  /** Opens Make available's drawer for a session: one setter for every card, so a card re-renders only when it changes. */
+  onMakeAvailable: (sessionId: string | null) => void;
 }) {
   const { row, displayName, risk, state } = card;
   const listen = useListen();
@@ -150,7 +165,7 @@ function AgentCard({ card, clockOffsetMs, onMakeAvailable }: {
       <div className={styles.agentNow}>
         <span>{floorNowLine(row, formatTime)}</span>
         <span className={styles.agentClock} data-over={isWarningRisk(risk) && risk !== 'disconnected' ? 'true' : undefined}>
-          {card.elapsedMs === null ? '—' : formatDuration(card.elapsedMs)}
+          <Elapsed anchor={floorTimerAnchor(row)} offset={clockOffsetMs} />
         </span>
       </div>
 
@@ -202,7 +217,7 @@ function AgentCard({ card, clockOffsetMs, onMakeAvailable }: {
             </ComingSoonButton>
           )}
           {offersMakeAvailable(card) && (
-            <button type="button" className={`btn-danger ${styles.smallButton}`} onClick={onMakeAvailable} aria-label={`Make ${displayName} available`}>
+            <button type="button" className={`btn-danger ${styles.smallButton}`} onClick={() => onMakeAvailable(row.session_id)} aria-label={`Make ${displayName} available`}>
               Make available
             </button>
           )}
@@ -210,4 +225,4 @@ function AgentCard({ card, clockOffsetMs, onMakeAvailable }: {
       </div>
     </li>
   );
-}
+});

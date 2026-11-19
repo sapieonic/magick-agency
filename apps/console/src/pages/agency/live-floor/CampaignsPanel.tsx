@@ -1,26 +1,19 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { memo, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Pause, Play, Send, TriangleAlert } from 'lucide-react';
-import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { getAgencyCampaign } from '../../../api/agencyCampaigns';
 import { useTenant } from '../../../contexts/TenantContext';
 import { campaignCards, type LiveFloorCampaignCard } from '../../../utils/agency/liveFloor';
 import type { HomeCampaignRead } from '../../../utils/agency/home';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import { formatCount } from '../../../utils/format/number';
+import { formatTimeOrDate } from '../../../utils/format/date';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import { useCampaignLifecycle } from '../campaign-detail/useCampaignLifecycle';
 import styles from './LiveFloor.module.css';
 
-/** What another read adds to a card: "71 will pay" from the promises summary (B28b). */
-export interface CampaignCardExtras {
-  willPay?: number;
-}
-
 /** A time on today's date ("11:03 am"), else the date and time. */
-function whenShort(iso: string): string {
-  return new Date(iso).toDateString() === new Date().toDateString() ? formatTime(iso) : formatDate(iso);
-}
+const whenShort = (iso: string) => formatTimeOrDate(iso, new Date());
 
 /**
  * Campaigns: one card per active campaign on the board (or the one picked), with its status, its
@@ -29,16 +22,17 @@ function whenShort(iso: string): string {
  * gate for the lifecycle buttons (`canControl`), so the buttons need no other check. A card's
  * action is the header's own (`useCampaignLifecycle`: the click lock, the re-read before Resume,
  * the refusals and their toasts); Pause and Resume ask for no confirmation there, so none here.
- * The board is read again after a change. `extras` is Phase 2's seam, by campaign id.
+ * The board is read again after a change. `willPay` is each promise-recording campaign's
+ * count from the promises summary (`willPayByCampaign`, B28b): its card says "71 will pay".
  */
-export function CampaignsPanel({
+export const CampaignsPanel = memo(function CampaignsPanel({
   reads,
   onChanged,
-  extras,
+  willPay,
 }: {
   reads: readonly HomeCampaignRead[];
   onChanged: () => void;
-  extras?: Readonly<Record<string, CampaignCardExtras>>;
+  willPay?: Readonly<Record<string, number>>;
 }) {
   const cards = useMemo(() => campaignCards(reads, whenShort), [reads]);
   const running = reads.filter((r) => r.campaign.status === 'running').length;
@@ -55,7 +49,7 @@ export function CampaignsPanel({
       {cards.length > 0 ? (
         <ul className={styles.campaignList} data-testid="home-campaigns">
           {cards.map((card) => (
-            <CampaignCard key={card.campaign.id} card={card} onChanged={onChanged} extras={extras?.[card.campaign.id]} />
+            <CampaignCard key={card.campaign.id} card={card} onChanged={onChanged} willPay={willPay?.[card.campaign.id]} />
           ))}
         </ul>
       ) : (
@@ -65,12 +59,12 @@ export function CampaignsPanel({
       )}
     </section>
   );
-}
+});
 
-function CampaignCard({ card, onChanged, extras }: {
+function CampaignCard({ card, onChanged, willPay }: {
   card: LiveFloorCampaignCard;
   onChanged: () => void;
-  extras?: CampaignCardExtras;
+  willPay?: number;
 }) {
   const { tenantId, accountId } = useTenant();
   const { campaign } = card;
@@ -96,7 +90,7 @@ function CampaignCard({ card, onChanged, extras }: {
     reload: onChanged,
     fromTab: 'live_floor',
   });
-  const subParts = [card.callsLive, extras?.willPay !== undefined ? `${formatCount(extras.willPay)} will pay` : null]
+  const subParts = [card.callsLive, willPay !== undefined ? `${formatCount(willPay)} will pay` : null]
     .filter((part): part is string => Boolean(part));
 
   return (

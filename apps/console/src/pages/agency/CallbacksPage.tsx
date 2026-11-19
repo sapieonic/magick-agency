@@ -11,11 +11,9 @@ import { campaignTabHref } from '../../utils/agencyCampaignTabs';
 import {
   CALLBACKS_ERROR,
   CALLBACKS_REFUSED,
-  boardIsPartial,
   callbackRows,
   callbacksSummary,
-  lateCallbacks,
-  lateCallbacksUnknown,
+  lateCallbacksFigure,
 } from '../../utils/agency/liveFloor';
 import { HOME_CAMPAIGN_CAP } from '../../utils/agency/home';
 import { formatCount } from '../../utils/format/number';
@@ -42,11 +40,7 @@ export default function CallbacksPage() {
   if (!supervise) return <Navigate to="/agency" replace />;
 
   // Never an all-clear it did not read (B28a): every campaign on the board, and every one's known.
-  const summary = callbacksSummary({
-    total: lateCallbacks(board.reads),
-    partial: boardIsPartial(board),
-    unknown: lateCallbacksUnknown(board.reads),
-  });
+  const summary = callbacksSummary(lateCallbacksFigure(board));
   const lastUpdated = board.lastUpdatedAt === null ? null : formatTime(new Date(board.lastUpdatedAt).toISOString());
 
   return (

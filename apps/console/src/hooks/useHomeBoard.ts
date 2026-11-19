@@ -4,7 +4,7 @@ import { ApiError } from '../api/client';
 import { REFRESH_MS } from '../utils/agencyCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
 import { splitAcknowledged } from '../utils/agency/homeAcks';
-import { boardIsPartial, lateCallbacks, lateCallbacksUnknown } from '../utils/agency/liveFloor';
+import { lateCallbacksFigure } from '../utils/agency/liveFloor';
 import { useHomeAcks } from './useHomeAcks';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { MISSED_COUNT_POLL_MS } from './useMissedCallsCount';
@@ -352,8 +352,8 @@ export function useHomeBadgeCount(
 }
 
 /**
- * The Callbacks entry's badge: every active campaign's overdue callbacks (`lateCallbacks`, the
- * figure Live floor's Late callbacks tile shows), from the shared board at the badge's period, so
+ * The Callbacks entry's badge: every active campaign's overdue callbacks (`lateCallbacksFigure`,
+ * the figure Live floor's Late callbacks tile and the Callbacks page show), from the shared board at the badge's period, so
  * it adds no request beside Live floor's or the Home badge's. No "Got it" here: a promised call
  * that is late stays late. Stale as the Home badge is: the last count, said to be old.
  */
@@ -363,11 +363,12 @@ export function useCallbacksBadgeCount(
   role: string | null | undefined,
 ): HomeBadge & { partial: boolean } {
   const board = useHomeBoard({ tenantId, accountId, role, enabled: true, intervalMs: HOME_SLOW_MS });
+  // A lower bound: the board reads the first 25 active campaigns, and a campaign whose callbacks
+  // are not known adds nothing to the sum.
+  const figure = board.status === 'ready' ? lateCallbacksFigure(board) : null;
   return {
-    count: board.status === 'ready' ? lateCallbacks(board.reads) : null,
+    count: figure?.count ?? null,
     stale: board.status === 'ready' && board.stale,
-    // A lower bound: the board reads the first 25 active campaigns, and a campaign whose callbacks
-    // are not known adds nothing to the sum.
-    partial: board.status === 'ready' && (boardIsPartial(board) || lateCallbacksUnknown(board.reads) > 0),
+    partial: figure?.lowerBound ?? false,
   };
 }

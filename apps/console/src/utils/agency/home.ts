@@ -57,7 +57,7 @@ export type HomeTone = 'danger' | 'warning' | 'info';
  * does not read it: it counts tones, not places.
  */
 export const HOME_RANKS = ['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info'] as const;
-export type HomeRank = (typeof HOME_RANKS)[number];
+type HomeRank = (typeof HOME_RANKS)[number];
 const RANK_ORDER: Record<HomeRank, number> = Object.fromEntries(HOME_RANKS.map((rank, i) => [rank, i])) as Record<HomeRank, number>;
 
 /** A row's rank from its kind and tone ({@link HOME_RANKS}). */
@@ -90,12 +90,6 @@ export interface HomeAttentionItem {
   action: string;
   /** Where the fix is. */
   to: string;
-  /**
-   * Whether the sidebar's Home badge counts it: a danger or a warning about a campaign. Never an
-   * information row (nothing is wrong), and never the missed calls, which the Inbound entry's
-   * own badge already counts.
-   */
-  badge: boolean;
   /** Its campaign's figures are the last good read's: this read could not refresh them. */
   stale: boolean;
   /**
@@ -116,14 +110,6 @@ export interface HomeAttentionItem {
    * the server stops counting): "until it gets worse" could never bring it back.
    */
   ackable: boolean;
-  /** Its place in the list ({@link homeRank}). */
-  rank: HomeRank;
-  /**
-   * Overdue callbacks whose owner is away, on a campaign's late-callbacks row: the ones a
-   * supervisor could give to agents who are free now (Phase 3's action; Live floor shows it as
-   * coming soon). Absent on every other row, and when none is.
-   */
-  handOff?: { count: number };
   /**
    * The campaigns a grouped row stands for, each with its fix (`groupCallingHours` in
    * `liveFloor.ts`): the row's action opens this list instead of following `to`.
@@ -131,9 +117,18 @@ export interface HomeAttentionItem {
   review?: HomeReviewCampaign[];
   /**
    * An action that is planned and not built yet, shown as a disabled "Coming soon" control beside
-   * the row's link (a break overrun's "Send reminder", Phase 3).
+   * the row's link: a break overrun's "Send reminder", and on a campaign's late-callbacks row with
+   * overdue callbacks whose owner is away, "Give to free agents" (Phase 3's actions).
    */
   comingSoon?: { label: string; tooltip: string };
+}
+
+/**
+ * "Give to free agents" on a campaign's late-callbacks row, for the overdue callbacks whose owner
+ * is away: the ones a supervisor could give to agents who are free now (Phase 3; coming soon).
+ */
+function handOffSoon(count: number): { label: string; tooltip: string } {
+  return { label: 'Give to free agents', tooltip: `Give the ${plural(count, 'late callback')} whose agent is away to agents who are free now.` };
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -264,7 +259,7 @@ export function homeAttentionFacts(read: HomeCampaignRead): CampaignAttentionFac
  *    (that row already says it).
  *
  * And the account's open missed inbound calls, when the reader gets the Missed list (a warning:
- * someone should call them back; not counted by the Home badge, see `badge`).
+ * someone should call them back; not counted by the Home badge, see {@link homeBadgeCount}).
  *
  * The page splits it ({@link homeNeeds}, {@link homeWaiting}); the badge counts
  * {@link homeBadgeCount}.
@@ -292,13 +287,11 @@ export function homeAttention(
         at: 'paused_at' in stall ? stall.paused_at : null,
         action: route.action,
         to: campaignTabHref(route.tab, campaign.id),
-        badge: route.tone !== 'info',
         stale: read.stale,
         // An automatic pause is one occurrence: resumed and paused again, it is a new row to see.
         kind: 'paused_at' in stall ? `stall:${stall.code}@${stall.paused_at}` : `stall:${stall.code}`,
         count: null,
         ackable: true,
-        rank: homeRank({ kind: `stall:${stall.code}`, tone: route.tone }),
       });
     }
 
@@ -316,13 +309,11 @@ export function homeAttention(
         at: null,
         action: OPEN_TAB[rule.tab],
         to: campaignTabHref(rule.tab, campaign.id, RANGE_RULES.has(rule.id) ? '?range=today' : ''),
-        badge: rule.tone !== 'info',
         stale: read.stale,
         kind: rule.id,
         count: rule.count ?? null,
         ackable: true,
-        rank: homeRank({ kind: rule.id, tone: rule.tone }),
-        ...(absent > 0 ? { handOff: { count: absent } } : {}),
+        ...(absent > 0 ? { comingSoon: handOffSoon(absent) } : {}),
       });
     }
   }
@@ -341,26 +332,22 @@ export function homeAttention(
       at: null,
       action: 'Open missed calls',
       to: '/agency/inbound/missed',
-      // The Inbound entry's badge counts these already; counting them here too would show the
-      // same calls twice in the sidebar.
-      badge: false,
       stale: false,
       kind: 'missed',
       count: open.open,
       // Past 99 the count is capped and can no longer grow, so a "Got it" would hold all day.
       ackable: !many,
-      rank: 'warning',
     });
   }
 
   return sortByRank(items);
 }
 
-/** The list in {@link HOME_RANKS} order; stable, so campaigns keep their Campaigns-page order within a rank. */
-export function sortByRank<T extends Pick<HomeAttentionItem, 'rank'>>(items: readonly T[]): T[] {
+/** The list in {@link HOME_RANKS} order ({@link homeRank}); stable, so campaigns keep their Campaigns-page order within a rank. */
+export function sortByRank<T extends Pick<HomeAttentionItem, 'kind' | 'tone'>>(items: readonly T[]): T[] {
   return items
-    .map((item, index) => ({ item, index }))
-    .sort((a, b) => RANK_ORDER[a.item.rank] - RANK_ORDER[b.item.rank] || a.index - b.index)
+    .map((item, index) => ({ item, index, rank: RANK_ORDER[homeRank(item)] }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map(({ item }) => item);
 }
 
@@ -377,9 +364,15 @@ export function homeWaiting(items: readonly HomeAttentionItem[]): HomeAttentionI
   return items.filter((item) => item.tone === 'info');
 }
 
-/** What the sidebar's Home badge counts: the rows with `badge` (dangers and warnings, no missed calls). */
-export function homeBadgeCount(items: readonly HomeAttentionItem[]): number {
-  return items.filter((item) => item.badge).length;
+/**
+ * What the sidebar's Home badge counts: the dangers and warnings. Never an information row (nothing
+ * is wrong); never the missed calls, which the Inbound entry's own badge already counts (counting
+ * them here too would show the same calls twice in the sidebar); and never a break over the limit
+ * (LF10), which comes from the floor read on Live floor alone: a badge that counted those only
+ * while that page is open would change its number by page.
+ */
+export function homeBadgeCount(items: readonly Pick<HomeAttentionItem, 'kind' | 'tone'>[]): number {
+  return items.filter((item) => item.tone !== 'info' && item.kind !== 'missed' && homeRank(item) !== 'break-overrun').length;
 }
 
 /** What a screen reader hears beside the Home entry; `stale` when Home couldn't refresh it. */

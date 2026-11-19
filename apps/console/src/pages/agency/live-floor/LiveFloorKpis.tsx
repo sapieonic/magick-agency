@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Kpi } from '../../../components/common/Kpi';
 import type { HomeBoard } from '../../../hooks/useHomeBoard';
@@ -8,23 +7,15 @@ import {
   agentsWorking,
   agentsWorkingSub,
   answeredLine,
-  lateCallbacks,
-  lateCallbacksUnknown,
+  lateCallbacksFigure,
   lateCallbacksText,
   todayFor,
   type AgentsWorking,
 } from '../../../utils/agency/liveFloor';
+import { willPayLine, type WillPay } from '../../../utils/agency/liveFloorAgents';
 import { CALLBACKS_PATH } from '../../../utils/consoleNav';
 import { formatCount } from '../../../utils/format/number';
 import styles from './LiveFloor.module.css';
-
-/** One tile's figures, for a tile a later phase supplies (`outcome`). */
-export interface LiveFloorTile {
-  label: string;
-  value: ReactNode;
-  sub?: ReactNode;
-  testId?: string;
-}
 
 const DASH = '—';
 
@@ -33,9 +24,10 @@ const DASH = '—';
  * customers reached, successes) need Today so far, which is its own read and shows whatever became
  * of the board's. With a campaign picked, every tile is that campaign's.
  *
- * Seams for Phase 2: `agents` replaces the board's sum with the floor read's figure (its
- * `assigned` turns the line into "of N assigned"), and `outcome` replaces the Successes tile (with
- * "Will pay" once the account records promises). Each is one prop; nothing else changes.
+ * Phase 2's reads: `agents` replaces the board's sum with the floor read's figure (its
+ * `assigned` turns the line into "of N assigned"), and `willPay` (the promises summary over the
+ * shown campaigns, `willPayFor`) makes the Successes tile Will pay while a shown campaign records
+ * promises. Late callbacks are `lateCallbacksFigure`'s, as on the Callbacks page and the badge.
  */
 export function LiveFloorKpis({
   board,
@@ -43,28 +35,26 @@ export function LiveFloorKpis({
   today,
   campaignId,
   agents,
-  outcome,
-  partial = false,
+  willPay = null,
 }: {
-  board: Pick<HomeBoard, 'status'>;
+  board: Pick<HomeBoard, 'status' | 'activeTotal' | 'reads'>;
+  /** The shown campaigns' reads (`readsFor`): every board read, or the one campaign picked. */
   reads: readonly HomeCampaignRead[];
   today: TodayState;
   campaignId: string | null;
   agents?: AgentsWorking;
-  outcome?: LiveFloorTile;
-  /** The board left active campaigns out (its cap): an account-wide late count is a lower bound. */
-  partial?: boolean;
+  /** Will pay over the shown campaigns, or null (Successes then). */
+  willPay?: WillPay | null;
 }) {
   const boardReady = board.status === 'ready';
   const working = agents ?? agentsWorking(reads);
   // The floor read's figure stands on its own; the board's sum needs the board.
   const workingKnown = agents !== undefined || boardReady;
-  const late = boardReady ? lateCallbacks(reads) : null;
-  // One campaign picked is one campaign's whole figure; the account's past the cap is "4+", and so
-  // is a sum that leaves out a campaign whose callbacks are not known: never a plain 0 it did not read.
-  const capped = partial && campaignId === null;
-  const unknown = late === null ? 0 : lateCallbacksUnknown(reads);
-  const lateBound = capped || unknown > 0;
+  // "4+" past the board's cap (the account's figure only) or with a campaign not known; never a plain 0 it did not read.
+  const lateFigure = boardReady ? lateCallbacksFigure(board, campaignId) : null;
+  const late = lateFigure?.count ?? null;
+  const capped = lateFigure?.capped ?? false;
+  const lateBound = lateFigure?.lowerBound ?? false;
   const lateText = late === null ? DASH : lateCallbacksText(late, lateBound);
   const lateSaid = late === null
     ? 'not known'
@@ -96,8 +86,8 @@ export function LiveFloorKpis({
           sub={figures ? answeredLine(figures) : undefined}
           testId="kpi-reached"
         />
-        {outcome ? (
-          <Kpi look="outlined" label={outcome.label} value={outcome.value} sub={outcome.sub} testId={outcome.testId ?? 'kpi-outcome'} />
+        {willPay ? (
+          <Kpi look="outlined" label="Will pay" value={formatCount(willPay.promises)} sub={willPayLine(willPay)} testId="kpi-outcome" />
         ) : (
           <Kpi
             look="outlined"

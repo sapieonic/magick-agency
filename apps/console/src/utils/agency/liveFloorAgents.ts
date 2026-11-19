@@ -5,6 +5,7 @@ import type { AgencySupervisorAgent } from '../../types/agency-campaign';
 import {
   AGENCY_FLOOR_RISK_RANK,
   agentDisplayName,
+  agentsOnShift,
   floorRisk,
   isOnSoftphone,
   isWarningRisk,
@@ -14,9 +15,10 @@ import {
 import { campaignTabHref } from '../agencyCampaignTabs';
 import { customerLabel } from '../listen/listenCopy';
 import { formatAmountShort, sumPromiseAmounts } from '../format/promise';
-import { formatCount } from '../format/number';
+import { formatCount, plural } from '../format/number';
+import { elapsedSince } from '../agencyClock';
 import type { HomeAttentionItem, HomeCampaignRead, HomeCampaignRef } from './home';
-import { CHOOSING_OUTCOME_LABEL, type AgentsWorking } from './liveFloor';
+import type { AgentsWorking } from './liveFloor';
 
 /**
  * Live floor's agents (decision B28b, Phase 2): the account's floor read (`GET /floor`, one row per
@@ -29,6 +31,12 @@ import { CHOOSING_OUTCOME_LABEL, type AgentsWorking } from './liveFloor';
  * row's `wrapup_window_seconds` and its call's `aht_seconds`), where the campaign floor has one set
  * for every row. So "Past wrap-up" means here what it means on the campaign's Agents tab.
  */
+
+/**
+ * The wrap-up state's words on Live floor only, for now: the agent is filing the call's outcome.
+ * The campaign Agents tab keeps "Wrapping up" until the wording is decided for every screen.
+ */
+export const CHOOSING_OUTCOME_LABEL = 'Choosing outcome';
 
 /**
  * The chips' and cards' states, in the chips' order. A call being connected counts as on a call.
@@ -113,23 +121,12 @@ export function floorTimerAnchor(row: AgencyFloorAgent): string | null {
 }
 
 /**
- * The server's now, from the viewer's: the floor read's offset (`useAgentFloor().clockOffsetMs`,
- * the server's clock minus the viewer's) added to the viewer's clock. Every anchor on a floor row is
- * the server's, so the cards' clocks, the wrap-up and break thresholds and the break rows are
- * measured against this, as the Live calls list corrects its time on call; a viewer whose clock runs
+ * One row's card at `now`, the SERVER's now: the viewer's clock plus the floor read's offset
+ * (`useAgentFloor().clockOffsetMs`, the server's clock minus the viewer's). Every anchor on a floor
+ * row is the server's, so the cards' clocks, the wrap-up and break thresholds and the break rows are
+ * measured against it, as the Live calls list corrects its time on call; a viewer whose clock runs
  * fast would otherwise see every agent minutes further on.
  */
-export function floorNow(viewerNow: number, clockOffsetMs: number): number {
-  return viewerNow + clockOffsetMs;
-}
-
-function elapsedFrom(anchor: string | null, now: number): number | null {
-  if (!anchor) return null;
-  const at = Date.parse(anchor);
-  return Number.isFinite(at) ? Math.max(0, now - at) : null;
-}
-
-/** One row's card at `now`, the server's now ({@link floorNow}). */
 export function floorCard(row: AgencyFloorAgent, now: number): FloorCard {
   const agent = supervisorAgentOf(row);
   return {
@@ -138,7 +135,7 @@ export function floorCard(row: AgencyFloorAgent, now: number): FloorCard {
     state: floorCardState(row),
     risk: floorRisk(agent, now, { wrapupSeconds: row.wrapup_window_seconds, ahtSeconds: row.call?.aht_seconds ?? null }),
     displayName: agentDisplayName(row),
-    elapsedMs: elapsedFrom(floorTimerAnchor(row), now),
+    elapsedMs: elapsedSince(floorTimerAnchor(row), 0, now),
   };
 }
 
@@ -169,12 +166,17 @@ export function rankFloorCards(rows: readonly AgencyFloorAgent[], now: number): 
 }
 
 /**
- * The rows the page shows: one campaign's, or all. A soft-phone session and a staffed agent with no
- * open session name no campaign, so a campaign filter leaves them out (the floor read does not say
- * which campaigns an absent agent is staffed on).
+ * The rows the page shows: one campaign's, or all (the same list, never copied). A soft-phone
+ * session and a staffed agent with no open session name no campaign, so a campaign filter leaves
+ * them out (the floor read does not say which campaigns an absent agent is staffed on).
  */
-export function floorRowsFor(rows: readonly AgencyFloorAgent[], campaignId: string | null): AgencyFloorAgent[] {
-  return campaignId === null ? [...rows] : rows.filter((row) => row.campaign_id === campaignId);
+export function floorRowsFor(rows: readonly AgencyFloorAgent[], campaignId: string | null): readonly AgencyFloorAgent[] {
+  return campaignId === null ? rows : rows.filter((row) => row.campaign_id === campaignId);
+}
+
+/** The ranked cards the page shows: {@link floorRowsFor}'s rule over cards, keeping their order. */
+export function cardsFor(cards: readonly FloorCard[], campaignId: string | null): readonly FloorCard[] {
+  return campaignId === null ? cards : cards.filter((card) => card.row.campaign_id === campaignId);
 }
 
 /** How many rows in each state, and in all. */
@@ -187,12 +189,12 @@ export function floorStateCounts(rows: readonly AgencyFloorAgent[]): { total: nu
 /** The grid's chip filter: every card, or one state's. */
 export type FloorChipFilter = 'all' | FloorCardState;
 
-export function cardsFor(cards: readonly FloorCard[], filter: FloorChipFilter): FloorCard[] {
-  return filter === 'all' ? [...cards] : cards.filter((card) => card.state === filter);
+export function cardsInState(cards: readonly FloorCard[], filter: FloorChipFilter): readonly FloorCard[] {
+  return filter === 'all' ? cards : cards.filter((card) => card.state === filter);
 }
 
 /** "Mobile app" and the rest: the badges the campaign floor shows beside a state. */
-export interface FloorBadges {
+interface FloorBadges {
   mobile: boolean;
   inbound: boolean;
   softphone: boolean;
@@ -234,7 +236,7 @@ export function floorNowLine(row: AgencyFloorAgent, formatTime: (iso: string) =>
  * "conversations", never "calls", which the Calls today tile counts as dials.
  */
 export function callsTodayText(count: number): string {
-  return count === 1 ? '1 conversation today' : `${formatCount(count)} conversations today`;
+  return `${plural(count, 'conversation')} today`;
 }
 
 /** What {@link callsTodayText} counts, for its tooltip and the drawer. */
@@ -301,17 +303,20 @@ export const BREAK_OVERRUN_STEP_MINUTES = 15;
 /**
  * One row per agent on a break past the floor's one limit (`LONG_BREAK_SECONDS`, 30 minutes; the
  * campaign floor's `long_break` risk, so never the soft phone): "Priya M on Tea for 42 min", a
- * warning ranked `break-overrun` (LF9), with a coming-soon Send reminder.
+ * warning ranked `break-overrun` (LF9, `homeRank` reads it from the kind), with a coming-soon Send
+ * reminder.
  *
  * - **Got it**: the row's kind carries the break's start, so a new break is a new row; its count is
  *   the seconds the break has run and its `worseBy` {@link BREAK_OVERRUN_STEP_MINUTES} minutes of
  *   them, so a put-aside row comes back once the break has run a quarter of an hour longer than
- *   when it was put aside (to the break clock's 30 s), whenever in the break that was.
- * - **Measured at `now`**, the caller's clock, so the minutes keep counting between floor reads
- *   and while they fail (then the rows are `stale`); the kind and id never move with them.
- * - **Not on the sidebar badge** (`badge: false`): the badge reads only the shared board, at a
- *   minute on every page, and the floor is read on Live floor alone (5 s, one row per agent). A
- *   badge that counted these only while Live floor is open would change its number by page. The
+ *   when it was put aside (to the floor's 5 s risk clock), whenever in the break that was.
+ * - **Measured on the cards' clock**: the page ranks the floor once on its 5 s risk clock and hands
+ *   the same cards to the grid and here, so a card's `long_break` and its row cross the limit
+ *   together, and the minutes keep counting between floor reads and while they fail (then the rows
+ *   are `stale`); the kind and id never move with them.
+ * - **Not on the sidebar badge**: the badge counts only the shared board's rows (`homeAttention`),
+ *   at a minute on every page, and the floor is read on Live floor alone (5 s, one row per agent).
+ *   A badge that counted these only while Live floor is open would change its number by page. The
  *   page's own "Needs you now" count does include them.
  */
 export function breakOverrunItems(
@@ -336,13 +341,11 @@ export function breakOverrunItems(
       at: null,
       action: 'Open the floor',
       to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
-      badge: false,
       stale,
       kind: `break-overrun@${row.state_since ?? ''}`,
       count: Math.floor(card.elapsedMs / 1000),
       worseBy: BREAK_OVERRUN_STEP_MINUTES * 60,
       ackable: true,
-      rank: 'break-overrun' as const,
       comingSoon: { label: 'Send reminder', tooltip: `Remind ${card.displayName} that their break is over.` },
     }];
   });
@@ -352,16 +355,18 @@ export function breakOverrunItems(
 
 /**
  * Agents working from the floor read: everyone on shift, of everyone assigned, each person once
- * (the server's `totals`). With a campaign picked: that campaign's rows on shift, of the agents
- * staffed on it (the board's `staffing.staffed`, one campaign so nobody counted twice).
+ * (the server's `totals`). With a campaign picked: its rows (`shown`, {@link floorRowsFor}) on shift
+ * (`agentsOnShift`), of the agents staffed on it (the board's `staffing.staffed`, one campaign so
+ * nobody counted twice).
  */
 export function floorAgentsWorking(
   floor: AgencyFloorResponse,
+  shown: readonly AgencyFloorAgent[],
   campaignId: string | null,
   reads: readonly HomeCampaignRead[],
 ): AgentsWorking {
   if (campaignId === null) return { working: floor.totals.on_shift, assigned: floor.totals.assigned };
-  const working = floor.agents.filter((row) => row.campaign_id === campaignId && row.state !== 'offline').length;
+  const working = agentsOnShift(shown) ?? 0;
   const staffed = reads.find((r) => r.campaign.id === campaignId)?.staffing?.staffed ?? null;
   return { working, assigned: staffed === null ? null : Math.max(staffed, working) };
 }

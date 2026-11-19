@@ -20,7 +20,11 @@ export interface AgentFloor {
   floor: AgencyFloorResponse | null;
   /** The reads have failed for more than {@link FLOOR_STALE_PERIODS} periods since the last that answered. */
   stale: boolean;
-  /** Server clock correction from the last answer's `as_of` (ms, subtracted from server instants), for Listen. */
+  /**
+   * Server clock correction from the last answer's `as_of` (ms: the server's clock minus the
+   * viewer's, subtracted from server instants). Live floor measures everything on the floor by it:
+   * the cards' clocks, the risks and the break rows (the viewer's now plus it), and Listen.
+   */
   clockOffsetMs: number;
   reload: () => void;
 }

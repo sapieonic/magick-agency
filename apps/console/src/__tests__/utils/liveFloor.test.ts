@@ -26,7 +26,7 @@ import {
   selectedCampaign,
   todayFor,
 } from '../../utils/agency/liveFloor';
-import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../../utils/agency/home';
+import { homeAttention, homeBadgeCount, homeRank, type HomeCampaignRead, type HomeMissed } from '../../utils/agency/home';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import type { AgencyHomeActiveStatus } from '@magick-agency/contracts/api/agency/home';
 import { allocationFacts, campaign, settingsFacts, stats, STAFFED, todayFacts } from '../helpers/home';
@@ -87,16 +87,24 @@ describe('the campaign filter', () => {
       { available: true, count: { open: 3, open_capped: false, has_rows: true } },
       fmt,
     );
-    const { shown, elsewhere } = attentionFor(items, 'c1');
-    expect(shown.map((i) => i.id)).toEqual(['callbacks-overdue:c1']);
+    const { open, elsewhere } = attentionFor(items, 'c1');
+    expect(open.map((i) => i.id)).toEqual(['callbacks-overdue:c1']);
     // c2's late callbacks and the account's missed calls; not c2's calling hours (information).
     expect(elsewhere).toBe(2);
-    expect(attentionFor(items, null)).toEqual({ shown: items, elsewhere: 0 });
+    expect(attentionFor(items, null)).toEqual({ open: groupCallingHours(items), acknowledged: [], elsewhere: 0 });
     // A row the reader put aside is not something the filter hides from them.
     const c2 = items.find((i) => i.id === 'callbacks-overdue:c2')!;
     expect(attentionFor(items, 'c1', { [c2.id]: ackOf(c2) }).elsewhere).toBe(1);
     // Until it gets worse.
     expect(attentionFor(items, 'c1', { [c2.id]: { ...ackOf(c2), count: 0 } }).elsewhere).toBe(2);
+    // The picked campaign's calling hours are the grouped row, put aside under its own id.
+    const picked = attentionFor(items, 'c2');
+    expect(picked.open.map((i) => i.id)).toEqual(['callbacks-overdue:c2', 'calling-hours-default']);
+    expect(picked.elsewhere).toBe(2);
+    const grouped = picked.open[1]!;
+    const aside = attentionFor(items, 'c2', { [grouped.id]: ackOf(grouped) });
+    expect(aside.open.map((i) => i.id)).toEqual(['callbacks-overdue:c2']);
+    expect(aside.acknowledged.map((i) => i.id)).toEqual(['calling-hours-default']);
   });
 });
 
@@ -112,8 +120,6 @@ describe('the default calling hours, grouped', () => {
     const row = grouped[1]!;
     expect(row).toMatchObject({
       tone: 'info',
-      rank: 'info',
-      badge: false,
       campaign: null,
       title: '3 campaigns still use the default calling hours',
       action: 'Review',
@@ -121,6 +127,8 @@ describe('the default calling hours, grouped', () => {
       count: 3,
       ackable: true,
     });
+    expect(homeRank(row)).toBe('info');
+    expect(homeBadgeCount([row])).toBe(0);
     expect(row.detail).toBe(items.find((i) => i.id === 'calling-hours-default:c1')!.detail);
     expect(row.review).toEqual([
       { id: 'c1', name: 'Q4', to: '/agency/campaigns/c1/settings#calling-hours' },
@@ -266,18 +274,18 @@ describe('the Callbacks page and badge', () => {
   });
 
   it('gives the Callbacks page an all-clear only when every campaign was read, all of them', () => {
-    expect(callbacksSummary({ total: 0, partial: false, unknown: 0 })).toBe('No callback is late right now.');
-    expect(callbacksSummary({ total: 5, partial: false, unknown: 0 })).toBe('5 callbacks late across the active campaigns.');
+    expect(callbacksSummary({ count: 0, capped: false, unknown: 0 })).toBe('No callback is late right now.');
+    expect(callbacksSummary({ count: 5, capped: false, unknown: 0 })).toBe('5 callbacks late across the active campaigns.');
     // A campaign not known: never "no callback is late".
-    expect(callbacksSummary({ total: 0, partial: false, unknown: 1 })).toBe('No late callbacks found, but 1 campaign’s callbacks aren’t known.');
-    expect(callbacksSummary({ total: 3, partial: false, unknown: 2 })).toBe('At least 3 callbacks late. 2 campaigns’ callbacks aren’t known.');
+    expect(callbacksSummary({ count: 0, capped: false, unknown: 1 })).toBe('No late callbacks found, but 1 campaign’s callbacks aren’t known.');
+    expect(callbacksSummary({ count: 3, capped: false, unknown: 2 })).toBe('At least 3 callbacks late. 2 campaigns’ callbacks aren’t known.');
     // Past the board's cap: never "at least 0".
-    expect(callbacksSummary({ total: 0, partial: true, unknown: 0 })).toBe('No late callbacks found in the first 25 active campaigns.');
-    expect(callbacksSummary({ total: 4, partial: true, unknown: 0 })).toBe('At least 4 callbacks late, in the first 25 active campaigns.');
-    expect(callbacksSummary({ total: 0, partial: true, unknown: 1 })).toBe('No late callbacks found in the first 25 active campaigns, but 1 campaign’s callbacks aren’t known.');
+    expect(callbacksSummary({ count: 0, capped: true, unknown: 0 })).toBe('No late callbacks found in the first 25 active campaigns.');
+    expect(callbacksSummary({ count: 4, capped: true, unknown: 0 })).toBe('At least 4 callbacks late, in the first 25 active campaigns.');
+    expect(callbacksSummary({ count: 0, capped: true, unknown: 1 })).toBe('No late callbacks found in the first 25 active campaigns, but 1 campaign’s callbacks aren’t known.');
     // None known at all.
-    expect(callbacksSummary({ total: null, partial: false, unknown: 2 })).toBe('Late callbacks couldn’t be read for any campaign.');
-    expect(callbacksSummary({ total: null, partial: false, unknown: 0 })).toBeNull();
+    expect(callbacksSummary({ count: null, capped: false, unknown: 2 })).toBe('Late callbacks couldn’t be read for any campaign.');
+    expect(callbacksSummary({ count: null, capped: false, unknown: 0 })).toBeNull();
   });
 
   it('says the count to a screen reader, and nothing at zero', () => {

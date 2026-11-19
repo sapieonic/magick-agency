@@ -3,7 +3,7 @@ import type { AgencyHomeCampaignStats } from '@magick-agency/contracts/api/agenc
 import { agencyCampaignControls, type AgencyCampaignAction } from '../agencyCampaignControls';
 import { campaignTabHref } from '../agencyCampaignTabs';
 import { stallCopy } from '../agencyHealthStrip';
-import { dateFormatter, formatClockTime } from '../format/date';
+import { dateFormatter, formatClockTime, formatDayMonth } from '../format/date';
 import { formatCount, plural } from '../format/number';
 import { badgeText } from '../badgeText';
 import { listWorkedRing } from './overview/pulse';
@@ -11,14 +11,16 @@ import { insightsRate, rateText } from './insights/rates';
 import {
   HOME_CAMPAIGN_CAP,
   NO_DIALS_TODAY,
-  homeRank,
   type HomeAttentionItem,
   type HomeCampaignRead,
   type HomeCampaignRef,
   type HomeReviewCampaign,
   type TodayTotals,
 } from './home';
-import { stillAcknowledged, type HomeAck } from './homeAcks';
+import { splitAcknowledged, type HomeAck } from './homeAcks';
+import { CHOOSING_OUTCOME_LABEL, FLOOR_CARD_LABELS } from './liveFloorAgents';
+
+export { CHOOSING_OUTCOME_LABEL };
 
 /**
  * Live floor (decision LF1): the supervisor's landing page, `/agency/home`, which used to be called
@@ -40,21 +42,14 @@ import { stillAcknowledged, type HomeAck } from './homeAcks';
 /** The page's name, in the sidebar, the breadcrumb and its heading. */
 export const LIVE_FLOOR_TITLE = 'Live floor';
 
-/**
- * The wrap-up state's words on Live floor only, for now: the agent is filing the call's outcome.
- * The campaign Agents tab keeps "Wrapping up" until the wording is decided for every screen.
- */
-export const CHOOSING_OUTCOME_LABEL = 'Choosing outcome';
-
 // ── The header's clock ──────────────────────────────────────────────────────
 
 const WEEKDAY: Intl.DateTimeFormatOptions = { weekday: 'short' };
-const DAY_MONTH: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
 
 /** "Wed 18 Nov" and "02:15 pm", on the reader's calendar and clock, in the console's locale. */
 export function liveFloorClock(now: Date): { date: string; time: string } {
   return {
-    date: `${dateFormatter(WEEKDAY).format(now)} ${dateFormatter(DAY_MONTH).format(now)}`,
+    date: `${dateFormatter(WEEKDAY).format(now)} ${formatDayMonth(now)}`,
     time: formatClockTime(now),
   };
 }
@@ -78,35 +73,42 @@ export function selectedCampaign(param: string | null, reads: readonly HomeCampa
   return reads.find((r) => r.campaign.id === param)?.campaign ?? null;
 }
 
-/** The reads the page shows: one campaign's, or all of them. */
-export function readsFor(reads: readonly HomeCampaignRead[], campaignId: string | null): HomeCampaignRead[] {
-  return campaignId === null ? [...reads] : reads.filter((r) => r.campaign.id === campaignId);
+/** The reads the page shows: one campaign's, or all of them (the same list, never copied). */
+export function readsFor(reads: readonly HomeCampaignRead[], campaignId: string | null): readonly HomeCampaignRead[] {
+  return campaignId === null ? reads : reads.filter((r) => r.campaign.id === campaignId);
 }
 
 // ── Needs you now ───────────────────────────────────────────────────────────
 
 /** Where a campaign's calling hours are set: its Settings, on the section's anchor. */
-export function callingHoursHref(campaignId: string): string {
+function callingHoursHref(campaignId: string): string {
   return `${campaignTabHref('settings', campaignId)}#calling-hours`;
 }
 
 /**
- * The rows about one campaign, or every row; and how many rows that need the reader (not
- * information) the filter leaves out, so a filter never hides a problem without saying so. The
- * account's own rows (missed calls) are about no campaign, so a filter leaves them out too. A row
- * the reader put aside with "Got it" (`acks`, still holding) is not one the filter hides from them,
- * so it is not counted.
+ * Needs you now's rows for one campaign, or for all: the rows still to show (`open`) and the ones
+ * the reader put aside with "Got it" (`acknowledged`, still holding), each in the list's order, with
+ * the campaigns on the default calling hours grouped into one row ({@link groupCallingHours}, over
+ * the rows shown); and how many rows that need the reader (not information) the filter leaves out,
+ * so a filter never hides a problem without saying so. The account's own rows (missed calls) are
+ * about no campaign, so a filter leaves them out too. A row put aside is not one the filter hides
+ * from the reader, so it is not counted. Every row is split once, the shown and the left out alike.
  */
 export function attentionFor(
   items: readonly HomeAttentionItem[],
   campaignId: string | null,
   acks: Readonly<Record<string, HomeAck>> = {},
-): { shown: HomeAttentionItem[]; elsewhere: number } {
-  if (campaignId === null) return { shown: [...items], elsewhere: 0 };
-  const shown = items.filter((item) => item.campaign?.id === campaignId);
-  const elsewhere = items.filter((item) =>
-    item.campaign?.id !== campaignId && item.tone !== 'info' && !stillAcknowledged(item, acks[item.id])).length;
-  return { shown, elsewhere };
+): { open: HomeAttentionItem[]; acknowledged: HomeAttentionItem[]; elsewhere: number } {
+  const picked = campaignId === null ? items : items.filter((item) => item.campaign?.id === campaignId);
+  const left = campaignId === null ? [] : items.filter((item) => item.campaign?.id !== campaignId);
+  const split = splitAcknowledged([...groupCallingHours(picked), ...left], acks);
+  // The grouped row names no campaign, so the rows left out are told apart by who they are.
+  const leftOut = new Set(left);
+  return {
+    open: split.open.filter((item) => !leftOut.has(item)),
+    acknowledged: split.acknowledged.filter((item) => !leftOut.has(item)),
+    elsewhere: split.open.filter((item) => leftOut.has(item) && item.tone !== 'info').length,
+  };
 }
 
 /**
@@ -137,12 +139,10 @@ export function groupCallingHours(items: readonly HomeAttentionItem[]): HomeAtte
     at: null,
     action: 'Review',
     to: rows.length === 1 ? review[0]!.to : '/agency/campaigns',
-    badge: false,
     stale: rows.some((row) => row.stale),
     kind: 'calling-hours-default',
     count: rows.length,
     ackable: true,
-    rank: homeRank({ kind: 'calling-hours-default', tone: 'info' }),
     review,
   };
   const out: HomeAttentionItem[] = [];
@@ -184,7 +184,8 @@ export function agentsWorkingSub(figure: AgentsWorking): string {
 /**
  * Late callbacks: each campaign's overdue callbacks (the allocation's `callbacks_overdue`, the
  * Callbacks tab badge's figure), summed. Null when no campaign's allocation is known, so the tile
- * shows a dash rather than a reassuring zero it never read.
+ * shows a dash rather than a reassuring zero it never read. Screens read it through
+ * {@link lateCallbacksFigure}.
  */
 export function lateCallbacks(reads: readonly HomeCampaignRead[]): number | null {
   const known = reads.filter((r) => r.allocation !== null);
@@ -200,18 +201,56 @@ export function lateCallbacksUnknown(reads: readonly HomeCampaignRead[]): number
   return reads.filter((r) => r.allocation === null).length;
 }
 
+/** Whether the board's campaigns are only some of the active ones (the cap). */
+export function boardIsPartial(board: { activeTotal: number; reads: readonly unknown[] }): boolean {
+  return board.activeTotal > board.reads.length;
+}
+
+/** The late-callbacks figure every screen shows: the tile, the Callbacks page, the badge and the menu dot. */
+export interface LateCallbacksFigure {
+  /** Overdue callbacks over the campaigns whose allocation is known; null when none is ({@link lateCallbacks}). */
+  count: number | null;
+  /** How many campaigns' callbacks are not known ({@link lateCallbacksUnknown}). */
+  unknown: number;
+  /** The board left active campaigns out (its cap): only the account's figure, never one campaign's. */
+  capped: boolean;
+  /**
+   * The count is a lower bound ("4+", "at least 4"): capped, or a campaign's callbacks are not
+   * known. Never with no count: a dash bounds nothing.
+   */
+  lowerBound: boolean;
+}
+
+/**
+ * Late callbacks over the board's campaigns, or one campaign picked (`campaignId`). One campaign
+ * picked is that campaign's whole figure, so the board's cap does not apply to it; the account's
+ * past the cap is a lower bound, and so is a sum that leaves out a campaign whose callbacks are not
+ * known: never a plain 0 it did not read (B28a).
+ */
+export function lateCallbacksFigure(
+  board: { activeTotal: number; reads: readonly HomeCampaignRead[] },
+  campaignId: string | null = null,
+): LateCallbacksFigure {
+  const reads = readsFor(board.reads, campaignId);
+  const count = lateCallbacks(reads);
+  const unknown = lateCallbacksUnknown(reads);
+  const capped = campaignId === null && boardIsPartial(board);
+  return { count, unknown, capped, lowerBound: count !== null && (capped || unknown > 0) };
+}
+
 /** "1 campaign's callbacks aren't known", "2 campaigns' …". */
 function unknownCallbacksText(unknown: number): string {
   return unknown === 1 ? '1 campaign’s callbacks aren’t known' : `${formatCount(unknown)} campaigns’ callbacks aren’t known`;
 }
 
 /**
- * The Callbacks page's summary line. "No callback is late right now" only when every active
- * campaign was read (not past the board's cap, `partial`) and every one's allocation is known
- * (`unknown` 0): B28a's never-an-all-clear rule. Otherwise a lower bound in words, never
- * "at least 0". Null with no campaign at all (the list says so).
+ * The Callbacks page's summary line, from the account's {@link lateCallbacksFigure}. "No callback
+ * is late right now" only when every active campaign was read (not past the board's cap,
+ * `capped`) and every one's allocation is known (`unknown` 0): B28a's never-an-all-clear rule.
+ * Otherwise a lower bound in words, never "at least 0". Null with no campaign at all (the list says
+ * so).
  */
-export function callbacksSummary({ total, partial, unknown }: { total: number | null; partial: boolean; unknown: number }): string | null {
+export function callbacksSummary({ count: total, capped: partial, unknown }: Pick<LateCallbacksFigure, 'count' | 'capped' | 'unknown'>): string | null {
   if (total === null) return unknown > 0 ? 'Late callbacks couldn’t be read for any campaign.' : null;
   if (!partial && unknown === 0) {
     return total === 0 ? 'No callback is late right now.' : `${plural(total, 'callback')} late across the active campaigns.`;
@@ -266,11 +305,6 @@ export function lateCallbacksText(count: number, partial: boolean): string {
   return partial && text !== '99+' ? `${text}+` : text;
 }
 
-/** Whether the board's campaigns are only some of the active ones (the cap). */
-export function boardIsPartial(board: { activeTotal: number; reads: readonly unknown[] }): boolean {
-  return board.activeTotal > board.reads.length;
-}
-
 /** What a screen reader hears beside the Callbacks entry: "4 callbacks overdue"; null at zero. */
 export function callbacksBadgeLabel(count: number | null, stale = false, partial = false): string | null {
   const text = badgeText(count);
@@ -312,7 +346,7 @@ export function answeredLine(totals: Pick<TodayTotals, 'conversations' | 'dials'
 // ── The campaign cards ──────────────────────────────────────────────────────
 
 /** How much of a campaign's list is done, by the Active cards' list-worked rule (`listWorkedRing`). */
-export interface ListDone {
+interface ListDone {
   known: boolean;
   /** 0–100, null when not known. */
   percent: number | null;
@@ -340,7 +374,7 @@ export function listDone(
 /** "4 calls live" (the board's `attempts_live`); never "of N lines": a campaign has no line limit of its own (MC1). */
 export function callsLiveText(stats: Pick<AgencyHomeCampaignStats, 'attempts_live'> | null): string | null {
   if (!stats || typeof stats.attempts_live !== 'number') return null;
-  return stats.attempts_live === 1 ? '1 call live' : `${formatCount(stats.attempts_live)} calls live`;
+  return `${plural(stats.attempts_live, 'call')} live`;
 }
 
 /** Pause or Resume, when the campaign header would offer it live (`agencyCampaignControls`); never Stop here. */
@@ -408,17 +442,13 @@ export function campaignCards(
 
 // ── The agents ──────────────────────────────────────────────────────────────
 
-export type AgentChipId = 'on_call' | 'available' | 'wrapup' | 'break';
+type AgentChipId = 'on_call' | 'available' | 'wrapup' | 'break';
 
-/** The chips, in the mock's order; colours by state are the page's (CSS). */
-export const AGENT_CHIPS: ReadonlyArray<{ id: AgentChipId; label: string }> = [
-  { id: 'on_call', label: 'On a call' },
-  { id: 'available', label: 'Ready' },
-  { id: 'wrapup', label: CHOOSING_OUTCOME_LABEL },
-  { id: 'break', label: 'Break' },
-];
+/** The chips, in the mock's order, in the floor cards' words; colours by state are the page's (CSS). */
+export const AGENT_CHIPS: ReadonlyArray<{ id: AgentChipId; label: string }> = (['on_call', 'available', 'wrapup', 'break'] as const)
+  .map((id) => ({ id, label: FLOOR_CARD_LABELS[id] }));
 
-export interface AgentChipCounts {
+interface AgentChipCounts {
   /** Everyone on the floor (`agents_live` summed). */
   total: number;
   counts: Record<AgentChipId, number>;

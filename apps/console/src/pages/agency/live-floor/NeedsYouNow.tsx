@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { memo, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Bell,
@@ -21,24 +21,17 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { useHomeAcks } from '../../../hooks/useHomeAcks';
 import { useTenant } from '../../../contexts/TenantContext';
 import { homeNeeds, homeWaiting, type HomeAttentionItem } from '../../../utils/agency/home';
-import { splitAcknowledged } from '../../../utils/agency/homeAcks';
-import { attentionFor, groupCallingHours } from '../../../utils/agency/liveFloor';
+import { attentionFor } from '../../../utils/agency/liveFloor';
+import { formatTimeOrDate } from '../../../utils/format/date';
 import { formatCount, plural } from '../../../utils/format/number';
 import { ComingSoonButton } from '../../../components/common/ComingSoon';
 import styles from './LiveFloor.module.css';
 
 /** Whether Needs you now could check breaks over the limit (the floor read): see `breaks`. */
 export type BreaksChecked = 'checked' | 'checking' | 'unchecked';
-
-/** A time on today's date, else the date and time. */
-function when(iso: string, now: Date): string {
-  const at = new Date(iso);
-  return at.toDateString() === now.toDateString() ? formatTime(iso) : formatDate(iso);
-}
 
 /** The row's icon, by what it is about. */
 function rowIcon(item: HomeAttentionItem): LucideIcon {
@@ -68,7 +61,7 @@ function rowIcon(item: HomeAttentionItem): LucideIcon {
  * (not counting rows put aside). Never an all-clear from a read it could not refresh, nor while the
  * floor, where breaks over the limit come from, is unread (`breaks`).
  */
-export function NeedsYouNow({
+export const NeedsYouNow = memo(function NeedsYouNow({
   items,
   campaignId,
   campaignName,
@@ -93,8 +86,7 @@ export function NeedsYouNow({
   const { tenantId, accountId } = useTenant();
   // "Got it" (B28a): rows the reader put aside, until they get worse or tomorrow.
   const { acks, acknowledge } = useHomeAcks(tenantId, accountId);
-  const { shown, elsewhere } = attentionFor(items, campaignId, acks);
-  const { open, acknowledged } = splitAcknowledged(groupCallingHours(shown), acks);
+  const { open, acknowledged, elsewhere } = attentionFor(items, campaignId, acks);
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const needs = homeNeeds(open);
   const waiting = homeWaiting(open);
@@ -183,7 +175,7 @@ export function NeedsYouNow({
       )}
     </section>
   );
-}
+});
 
 /** One row; `onAcknowledge` offers "Got it" (left out on a row already put aside). */
 function AttentionRow({ item, now, onAcknowledge }: {
@@ -209,7 +201,7 @@ function AttentionRow({ item, now, onAcknowledge }: {
           {item.campaign && <span aria-hidden="true">{' · '}</span>}
           {item.at && (
             <>
-              <time dateTime={item.at}>{when(item.at, now)}</time>
+              <time dateTime={item.at}>{formatTimeOrDate(item.at, now)}</time>
               <span aria-hidden="true">{' · '}</span>
             </>
           )}
@@ -245,15 +237,6 @@ function AttentionRow({ item, now, onAcknowledge }: {
             testId={`home-soon-${item.id}`}
           >
             {item.comingSoon.label}
-          </ComingSoonButton>
-        )}
-        {item.handOff && (
-          <ComingSoonButton
-            className={`btn-secondary ${styles.smallButton}`}
-            tooltip={`Give the ${plural(item.handOff.count, 'late callback')} whose agent is away to agents who are free now.`}
-            testId={`home-handoff-${item.id}`}
-          >
-            Give to free agents
           </ComingSoonButton>
         )}
         {item.review ? (
