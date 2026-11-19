@@ -290,7 +290,9 @@ export const ORIGIN_LABELS = AGENCY_CALL_ORIGIN_LABELS;
  * The Campaign column: the campaign's name; a soft-phone call not logged to one is "Soft phone";
  * an inbound call is "Inbound: <route>".
  */
-export function campaignCellLabel(call: Pick<AgencyLiveCall, 'origin' | 'campaign_name' | 'inbound_route_name'>): string {
+export function campaignCellLabel(
+  call: Pick<AgencyLiveCall, 'origin' | 'campaign_name'> & Partial<Pick<AgencyLiveCall, 'inbound_route_name'>>,
+): string {
   if (call.origin === 'inbound') {
     return call.inbound_route_name ? `${LIVE_CALLS_COPY.inbound}: ${call.inbound_route_name}` : LIVE_CALLS_COPY.inbound;
   }

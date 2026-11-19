@@ -60,6 +60,11 @@ export interface AgentFloorDrawerProps {
   onClose: () => void;
   /** Called after a successful force-return so the page re-reads the floor. */
   onForced: () => void;
+  /**
+   * What `calls_handled` counts where the drawer was opened from: the campaign floor's session
+   * ("Calls this shift"), or Live floor's dialler conversations since midnight.
+   */
+  callsLabel?: string;
 }
 
 /** "Connected", "Disconnected", or the honest third answer. */
@@ -83,6 +88,7 @@ export function AgentFloorDrawer({
   sort,
   onClose,
   onForced,
+  callsLabel = 'Calls this shift',
 }: AgentFloorDrawerProps) {
   const { tenantId, accountId } = useTenant();
   const { showToast, showErrorToast } = useToast();
@@ -173,7 +179,7 @@ export function AgentFloorDrawer({
             </dd>
           </div>
           <div className={styles.fact}>
-            <dt>Calls this shift</dt>
+            <dt>{callsLabel}</dt>
             <dd>{formatCount(agent.calls_handled)}</dd>
           </div>
           <div className={styles.fact}>

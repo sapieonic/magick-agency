@@ -1,11 +1,12 @@
 import type { RefObject } from 'react';
-import { Phone } from 'lucide-react';
+import { LifeBuoy, Phone } from 'lucide-react';
 import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { BreakMenu, type BreakMenuHandle } from './BreakMenu';
 import { QueuedBreakPill } from './QueuedBreakPill';
 import { CustomerWaitingPill } from './inbound/CustomerWaitingPill';
 import { DncControl, type DncControlHandle } from './DncControl';
 import { HoldToConfirmButton } from './HoldToConfirmButton';
+import { ComingSoonButton } from '../common/ComingSoon';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { DISPOSITION_BLOCK_COPY } from '../../utils/agencyDispositionForm';
 import type { DncScope } from '../../utils/agencyDncCopy';
@@ -204,13 +205,16 @@ export function StationActionBar({
         {cons.audio.muted ? 'Unmute' : 'Mute'}
       </button>
 
-      <HoldToConfirmButton
-        attemptId={cons.station.live?.attempt.attempt_id ?? null}
-        enabled={Boolean(cons.station.live)}
-        disabledReason={cons.station.live ? null : 'No call in progress'}
-        reserveReasonLine
-        onConfirm={onHangup}
-      />
+      {/* Pushed to the far end of the bar (`.hangup`), away from everything else an agent presses. */}
+      <div className={styles.hangup}>
+        <HoldToConfirmButton
+          attemptId={cons.station.live?.attempt.attempt_id ?? null}
+          enabled={Boolean(cons.station.live)}
+          disabledReason={cons.station.live ? null : 'No call in progress'}
+          reserveReasonLine
+          onConfirm={onHangup}
+        />
+      </div>
 
       {/*
         `role="alert"`, unlike the DNC outcome's polite region: this says the
@@ -222,6 +226,28 @@ export function StationActionBar({
           {hangupFailure}
         </span>
       ) : null}
+
+      {/*
+        Need help: an agent will be able to ask a supervisor for help during a call. Nothing is
+        behind it yet, so it is a button marked coming soon (`aria-disabled`, so it stays focusable
+        and a keyboard user can read why it does nothing) and bound to no shortcut. Last in the bar,
+        in the DOM and in the tab order, after Hang up: it is never a Tab stop between Mute and Hang
+        up, and when the bar runs out of room it is Need help that wraps, never Hang up. Compact (the
+        dashed border marks it; the tooltip says it is coming), so it takes no badge's width.
+        Rendered in every state (the geometry rule: controls disable, they never appear and vanish),
+        and left out of a phone's bar (the CSS), whose wrapped rows it would reflow.
+      */}
+      <span className={styles.needHelp}>
+        <ComingSoonButton
+          compact
+          className={styles.mute}
+          tooltip="Ask a supervisor for help during a call. Coming soon."
+          testId="need-help"
+        >
+          <LifeBuoy size={15} aria-hidden="true" style={{ marginRight: 6 }} />
+          Need help
+        </ComingSoonButton>
+      </span>
     </div>
   );
 }

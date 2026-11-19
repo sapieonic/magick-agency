@@ -9,7 +9,9 @@ import { localDay, type HomeAttentionItem, type HomeTone } from './home';
  *    else's Home changes, and the next person to sign in on this browser starts with none.
  *  - **Until it gets worse**: a row stays aside while its kind (the stall's code, the rule) and
  *    its tone are the same and its count has not grown. A count that falls stays aside; a new
- *    kind, another tone or a higher count brings the row back, and back onto the badge. An
+ *    kind, another tone or a higher count brings the row back, and back onto the badge. A row
+ *    that says how much growth is worse (`worseBy`: a break over the limit counts its seconds and
+ *    comes back after 15 more minutes of them) holds until its count has grown that much. An
  *    automatic pause's kind carries its instant, so a campaign resumed and paused again is back.
  *    A row whose count cannot grow (`ackable` false: missed calls past 99) is never put aside.
  *  - **Until tomorrow**: every acknowledgement is dropped at the viewer's next local midnight,
@@ -43,15 +45,18 @@ export function ackOf(item: Pick<HomeAttentionItem, 'kind' | 'tone' | 'count'>):
   return { kind: item.kind, tone: item.tone, count: item.count };
 }
 
-/** What the rules read of a row; `ackable` absent counts as offered. */
-type AckedRow = Pick<HomeAttentionItem, 'kind' | 'tone' | 'count'> & { ackable?: boolean };
+/** What the rules read of a row; `ackable` absent counts as offered, `worseBy` absent as 1. */
+type AckedRow = Pick<HomeAttentionItem, 'kind' | 'tone' | 'count'> & { ackable?: boolean; worseBy?: number };
 
-/** Whether a row is still aside under `ack`: one that may be, same kind and tone, and no more of it. */
+/**
+ * Whether a row is still aside under `ack`: one that may be, same kind and tone, and its count not
+ * grown by `worseBy` (1: any growth) past the acknowledged one.
+ */
 export function stillAcknowledged(item: AckedRow, ack: HomeAck | undefined): boolean {
   if (item.ackable === false) return false;
   if (!ack || ack.kind !== item.kind || ack.tone !== item.tone) return false;
   if (ack.count === null || item.count === null) return ack.count === item.count;
-  return item.count <= ack.count;
+  return item.count < ack.count + (item.worseBy ?? 1);
 }
 
 /** Today's acknowledgements from what was stored: none from another day or from anything unreadable. */

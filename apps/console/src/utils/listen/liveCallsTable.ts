@@ -1,5 +1,5 @@
 import { CALL_OVERRUN_AHT_MULTIPLE, agentDisplayName } from '../agencyAgentFloor';
-import { LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, maskedNumberLabel } from './listenCopy';
+import { LIVE_CALLS_COPY, ORIGIN_LABELS, campaignCellLabel, customerLabel, maskedNumberLabel } from './listenCopy';
 import type { AgencyCallOrigin, AgencyLiveCall } from '../../types/live-calls';
 import type { ListenTarget } from './listenSessionReducer';
 import { sortedFilterOptions, type FilterOption } from './filterOptions';
@@ -145,8 +145,30 @@ export function liveCallFilterOptions(
   return { agents: sortedFilterOptions(agents, keep.agent), campaigns: sortedFilterOptions(campaigns, keep.campaign) };
 }
 
+/**
+ * What a listen reads of the call it starts on (`ListenProvider.listen`, {@link listenTargetFor}):
+ * a Live calls row satisfies it whole. The number, the inbound route and the listeners are what
+ * the Live calls list has and Live floor's cards do not (the floor read carries no number, LF3, no
+ * route and no listener list), so they are optional, never made up: without a number the bar names
+ * the customer, without a route an inbound call is "Inbound", and without listeners a refused start
+ * on a full call gives no count.
+ */
+export type ListenCall = Pick<
+  AgencyLiveCall,
+  'call_id' | 'origin' | 'correlation_id' | 'campaign_id' | 'campaign_name' | 'agent_user_id' | 'agent_name' | 'customer_name' | 'connected_at'
+> & Partial<Pick<AgencyLiveCall, 'inbound_route_name' | 'customer_phone_masked' | 'customer_phone_withheld' | 'listeners'>>;
+
+/** The bar's customer: "Withheld", else the masked number, else (no number given) the customer's name. */
+function listenCustomerLabel(call: ListenCall): string {
+  if (call.customer_phone_withheld) return LIVE_CALLS_COPY.withheld;
+  if (call.customer_phone_masked !== undefined) {
+    return maskedNumberLabel({ customer_phone_masked: call.customer_phone_masked, customer_phone_withheld: false });
+  }
+  return customerLabel(call);
+}
+
 /** What the listening bar keeps about a call when a listen starts. */
-export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): ListenTarget {
+export function listenTargetFor(call: ListenCall, clockOffsetMs: number): ListenTarget {
   return {
     callId: call.call_id,
     origin: call.origin,
@@ -154,7 +176,7 @@ export function listenTargetFor(call: AgencyLiveCall, clockOffsetMs: number): Li
     campaignId: call.campaign_id,
     campaignLabel: campaignCellLabel(call),
     agentName: agentName(call),
-    customerMasked: maskedNumberLabel(call),
+    customerMasked: listenCustomerLabel(call),
     connectedAt: call.connected_at,
     clockOffsetMs,
   };

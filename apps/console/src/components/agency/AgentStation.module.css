@@ -972,8 +972,22 @@ button.fatalEscape {
   opacity: 0.75;
 }
 
-/* Pushes hang-up to the far end, away from everything else an agent presses. */
-.actionBar > *:last-child {
+/* Need help (coming soon): never on a phone's bar, whose wrapped rows it would reflow. */
+.needHelp {
+  display: inline-flex;
+}
+
+@media (max-width: 767px) {
+  .needHelp {
+    display: none;
+  }
+}
+
+/* Pushes hang-up to the far end, away from everything else an agent presses. Only Need help
+   (and a hang-up failure) come after it, so if the bar wraps it is they that go, never Hang up. */
+.actionBar > .hangup {
+  display: flex;
+  flex-direction: column;
   margin-left: auto;
 }
 

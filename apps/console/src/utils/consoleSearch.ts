@@ -107,9 +107,11 @@ export interface SearchGroup {
  * finds it.
  */
 const PAGE_KEYWORDS: Record<string, readonly string[]> = {
-  // What needs the supervisor is on Home, not in an email: these words find it before the
+  // What needs the supervisor is on Live floor, not in an email: these words find it before the
   // Email notifications setting (pages are listed before settings).
-  'home:home': ['attention', 'needs attention', 'what needs me', 'alerts', 'notifications', 'today', 'floor', 'stalled', 'paused', 'overdue'],
+  // "Home" until it became Live floor (LF1): the old name still finds it.
+  'home:home': ['home', 'attention', 'needs attention', 'needs you now', 'what needs me', 'alerts', 'notifications', 'today', 'floor', 'stalled', 'paused', 'overdue', 'dashboard'],
+  'callbacks:callbacks': ['callbacks', 'call-backs', 'call backs', 'follow-ups', 'late callbacks', 'overdue callbacks'],
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
   'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
   'campaigns:live': ['live', 'live calls', 'in progress', 'listen', 'listen in', 'monitor', 'calls'],

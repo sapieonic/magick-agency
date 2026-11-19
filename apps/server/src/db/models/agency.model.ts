@@ -191,6 +191,14 @@ export interface AgencyCampaignRecord {
    */
   ended_at: Date | null;
   /**
+   * When Stop moved the campaign to `stopping` (0051). NULL = never stopped, or it entered
+   * `stopping` before 0051. First-write-wins on the way into `stopping`, in the same statement as
+   * the stamps beside it, and kept on `stopped`, so it is the instant the supervisor pressed Stop,
+   * not when the drain finished ({@link ended_at}). Home's `status_changed.at` for a stopping
+   * campaign (decision B28b).
+   */
+  stopping_at: Date | null;
+  /**
    * LEGACY spelling of {@link ended_at}. Same value, always.
    *
    * Kept rather than dropped for the reason `agency_contacts.source_row_number`

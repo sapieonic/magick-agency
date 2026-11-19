@@ -97,6 +97,13 @@ notice's monitoring words; load-checked at 6 and 20 listeners on 100 calls, and 
 ([`listening.md`](listening.md) §10; test counts in `status.md`). Not yet run in a real browser,
 against a real carrier, on a phone or with its alerts applied.
 
+Live floor (2026-11-18, LF1–LF10 and B28b, defaults pending Manas): the supervisor's Home is
+rebuilt as the Live floor: tiles, Needs you now beside the active campaigns, an agent card grid
+from one account-wide floor read, promises to pay and "Will pay", who paused a campaign, and a
+Callbacks section. Phase 3 (Need help, messages to agents, break limits, giving late callbacks to
+free agents) and Phase 4 (Join call, whisper) are Coming soon controls only
+([`status.md`](status.md)).
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and

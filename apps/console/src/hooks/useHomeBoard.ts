@@ -4,6 +4,7 @@ import { ApiError } from '../api/client';
 import { REFRESH_MS } from '../utils/agencyCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
 import { splitAcknowledged } from '../utils/agency/homeAcks';
+import { lateCallbacksFigure } from '../utils/agency/liveFloor';
 import { useHomeAcks } from './useHomeAcks';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { MISSED_COUNT_POLL_MS } from './useMissedCallsCount';
@@ -40,8 +41,8 @@ export interface HomeBoardOptions {
  */
 export const HOME_BOARD_ERROR = 'We couldn’t load what needs your attention. Try again in a moment.';
 
-/** What Home says when the server refuses the board (403: the role or the dialer changed). */
-export const HOME_BOARD_REFUSED = 'Home isn’t available to you in this account right now.';
+/** What Live floor says when the server refuses the board (403: the role or the dialer changed). */
+export const HOME_BOARD_REFUSED = 'Live floor isn’t available to you in this account right now.';
 
 /**
  * A board is stale once its reads have failed for more than this many of its periods since the
@@ -144,6 +145,8 @@ function read(board: Board, kind: Kind): Promise<void> {
           allocation: kept('allocation'),
           today: kept('today'),
           settings: c.settings,
+          // Optional on the wire's older servers: absent reads as nothing known.
+          statusChanged: c.status_changed ?? null,
           stale,
         };
       });
@@ -345,5 +348,27 @@ export function useHomeBadgeCount(
       ? homeBadgeCount(splitAcknowledged(homeAttention(board.reads, missed, () => ''), acks).open)
       : null,
     stale: board.status === 'ready' && board.stale,
+  };
+}
+
+/**
+ * The Callbacks entry's badge: every active campaign's overdue callbacks (`lateCallbacksFigure`,
+ * the figure Live floor's Late callbacks tile and the Callbacks page show), from the shared board at the badge's period, so
+ * it adds no request beside Live floor's or the Home badge's. No "Got it" here: a promised call
+ * that is late stays late. Stale as the Home badge is: the last count, said to be old.
+ */
+export function useCallbacksBadgeCount(
+  tenantId: string | null | undefined,
+  accountId: string | null | undefined,
+  role: string | null | undefined,
+): HomeBadge & { partial: boolean } {
+  const board = useHomeBoard({ tenantId, accountId, role, enabled: true, intervalMs: HOME_SLOW_MS });
+  // A lower bound: the board reads the first 25 active campaigns, and a campaign whose callbacks
+  // are not known adds nothing to the sum.
+  const figure = board.status === 'ready' ? lateCallbacksFigure(board) : null;
+  return {
+    count: figure?.count ?? null,
+    stale: board.status === 'ready' && board.stale,
+    partial: figure?.lowerBound ?? false,
   };
 }

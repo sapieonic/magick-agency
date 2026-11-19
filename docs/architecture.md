@@ -899,7 +899,8 @@ a rate-limit key and never an auth input.
 - **One console shell** (decision B28). Every signed-in page outside the agent's full-viewport
   surfaces (`/station`, `/dialer/*`) renders in `ConsoleLayout` (`components/layout/`), mounted
   by `ConsoleShell` in `App.tsx`. The sidebar has the tenant and account context block (the
-  existing switchers), Home, the work sections Campaigns, Inbound, Reports and Do Not Call, Take
+  existing switchers), Live floor (Home, B28a, redesigned: LF1–LF10), the work sections Campaigns,
+  Callbacks, Inbound, Reports and Do Not Call, Take
   calls (a link out to `/dialer` for whoever takes calls without supervising), then Settings at
   the foot of the same Main landmark, and the version; the top bar has a breadcrumb (on a phone
   the current page with a back arrow to the nearest crumb above it that is not this page), one search field and the profile
@@ -930,13 +931,29 @@ a rate-limit key and never an auth input.
   call pages show "Listened to by". All behind `agency.supervise` and the flag
   `agency_live_listen_enabled`. The agent's station and soft phone show the "Monitoring and
   recording" line while the flag is on.
-- **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
+- **Live floor**, Home until LF1 (`/agency/home`, `pages/agency/HomePage.tsx` over
+  `pages/agency/live-floor/*` and the pure rules in `utils/agency/liveFloor.ts`; B28, LF1). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
   switch lands there too; a dedicated agent lands on `/dialer`, a viewer or operator on the campaign
   list, `agencyLandingPath` in `utils/consoleNav.ts`) and the first sidebar entry, with a badge
   counting the dangers and warnings on its list (not a waiting campaign, and not the missed calls
   the Inbound badge carries).
-  Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
+  A header with the date, a minute clock, a campaign filter (client side over the board, kept in
+  `?campaign=`) and New campaign; five tiles (agents working, calls today, customers reached as a
+  share of dials, successes, late callbacks linking to Callbacks); **Needs you now** beside one card
+  per active campaign (calls live, list done, its stall, Pause or Resume through the header's
+  `useCampaignLifecycle`); and the agents' state chips with a link to each campaign's Agents tab.
+  Needs you now is ordered by LF9 (`HOME_RANKS`), groups the campaigns on the default calling hours
+  into one row, and offers a coming-soon "Give to free agents" on late callbacks whose owner is
+  away. Phase 2 (B28b) adds the account's floor (`hooks/useAgentFloor.ts`, `GET /proxy/agency/floor`
+  every 5 s on this page alone): a card per agent (`live-floor/AgentGrid.tsx`, the campaign floor's
+  risk rules per row in `utils/agency/liveFloorAgents.ts`) filtered by the state chips, Listen,
+  Make available and the coming-soon Talk, Join call and Send reminder; breaks over 30 minutes in
+  Needs you now (not on the sidebar badge, which reads the board alone); Agents working "of N
+  assigned"; and today's promises (`hooks/usePromisesToday.ts`) as Will pay and each card's "N will
+  pay", with who paused a campaign from the board's `status_changed`. **Callbacks** (`/agency/callbacks`, `pages/agency/CallbacksPage.tsx`, Live floor's gate)
+  lists each active campaign's late callbacks from the same board, with a danger-tone sidebar badge.
+  Before LF1 the page had three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
   every row of the campaign Overview's "Needs your attention" run over the board with today for its
   range figures (`attentionFrom`, shared, not copied), the account's open missed calls), each
   linking to the campaign tab or page that fixes it, derived on every refresh
@@ -992,6 +1009,21 @@ a rate-limit key and never an auth input.
   the apps' guards scan only their own `src/`.
 - **Server branding guard**: `apps/server/test/unit/branding/no-parent-brand.test.ts` scans
   `apps/server/src` and `packages/*/src` with comments stripped.
+
+  **Live floor (server reads, B28b).** The page that replaces Home reads, besides the board (which
+  now names who paused or stopped each campaign and when, `status_changed`), two account-wide reads
+  from `api/routes/proxy-agency-floor.routes.ts`: `GET /proxy/agency/floor?from=` (one row per
+  person: every open session in the account and every agent staffed on an active campaign with
+  none; the call in progress from the live calls list's own read, with the customer's name and
+  never the number, listenable only while listening is on; conversations since `from` as the grouped
+  stats count them; on-shift and assigned people), served through `callCore` by the internal
+  `api/routes/agency/floor.ts` over `db/repositories/agency/floor.repository.ts`; and
+  `GET /proxy/agency/promises/summary?from=&to=` (the promises to pay recorded in the window on
+  the three call tables, per campaign, summed exactly, on the indexes `0050_promise_summary_indexes.sql` adds; and the active
+  campaigns that record promises), over `db/repositories/agency/promise-summary.repository.ts`.
+  Measured on a seeded account of 540 agents over 25 running campaigns in a deployment of 600,000
+  attempts: the floor's rows 5–7 ms, its calls 1.5 ms, today's conversations 35 ms (the window's
+  attempts; kept 30 s per account), the promises summary under 2 ms.
 
 ## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
 

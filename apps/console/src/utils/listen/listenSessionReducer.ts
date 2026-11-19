@@ -36,7 +36,10 @@ export interface ListenTarget {
   campaignLabel: string;
   /** The agent's display name. */
   agentName: string;
-  /** The masked number, or "Withheld" for a caller who withheld theirs (`maskedNumberLabel`). */
+  /**
+   * The masked number, or "Withheld" for a caller who withheld theirs (`maskedNumberLabel`); the
+   * customer's name for a call started from Live floor, which carries no number (`listenTargetFor`).
+   */
   customerMasked: string;
   /** ISO-8601, server clock: the call's time-on-call anchor. */
   connectedAt: string;

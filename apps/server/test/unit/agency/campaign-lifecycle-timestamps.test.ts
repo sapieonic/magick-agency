@@ -177,6 +177,20 @@ describe('ended_at is stamped on entry to a TERMINAL status', () => {
   });
 });
 
+describe('stopping_at is stamped on entry to `stopping` (0051), first-write-wins', () => {
+  it('stamps it from the TARGET, the stored value FIRST, and leaves it on every other transition', async () => {
+    await new AgencyCampaignRepository().transitionStatus('camp-1', ['running', 'paused'], 'stopping');
+    const sql = sqlOf();
+    // Home's "Stopping, by Ravi at 11:03" (B28b) reads this, not the Stop's audit row, which the
+    // route writes after the transition without waiting for it. First-write-wins, so a second Stop
+    // (were one accepted) cannot move it, and `stopping → stopped` keeps it.
+    expect(sql).toContain("stopping_at = CASE WHEN $3 = 'stopping'");
+    expect(sql).toContain('COALESCE(stopping_at, now())');
+    expect(sql).toContain('ELSE stopping_at END');
+    expect(sql).not.toMatch(/COALESCE\(now\(\), stopping_at\)/);
+  });
+});
+
 describe('last_transition_by answers "who caused the CURRENT status"', () => {
   it('writes the actor when one is supplied', async () => {
     await new AgencyCampaignRepository().transitionStatus(

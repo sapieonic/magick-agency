@@ -82,11 +82,12 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('the work sections', () => {
-  it('offers a supervisor Home, Campaigns, Inbound, Reports and Do Not Call, in that order', async () => {
+  it('offers a supervisor Live floor, Campaigns, Callbacks, Inbound, Reports and Do Not Call, in that order', async () => {
     await renderAt();
-    expect(navLabels()).toEqual(['Home', 'Campaigns', 'Inbound', 'Reports', 'Do Not Call']);
+    expect(navLabels()).toEqual(['Live floor', 'Campaigns', 'Callbacks', 'Inbound', 'Reports', 'Do Not Call']);
     expect(href('console-nav-home')).toBe('/agency/home');
     expect(href('console-nav-campaigns')).toBe('/agency/campaigns');
+    expect(href('console-nav-callbacks')).toBe('/agency/callbacks');
     expect(href('console-nav-inbound')).toBe('/agency/inbound/missed');
     expect(href('console-nav-reports')).toBe('/agency/analytics');
     expect(href('console-nav-dnc')).toBe('/agency/dnc');

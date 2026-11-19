@@ -79,7 +79,7 @@ export function agencyGate(gate: Gate): Gate {
   };
 }
 
-export type ConsoleSectionId = 'home' | 'campaigns' | 'inbound' | 'reports' | 'dnc' | 'dialer';
+export type ConsoleSectionId = 'home' | 'campaigns' | 'callbacks' | 'inbound' | 'reports' | 'dnc' | 'dialer';
 
 /**
  * The agent's own workspace, outside the shell (a full-viewport surface): the campaigns to take
@@ -87,7 +87,11 @@ export type ConsoleSectionId = 'home' | 'campaigns' | 'inbound' | 'reports' | 'd
  */
 export const DIALER_PATH = '/dialer';
 
-/** The supervisor's Home page: what needs them, the floor, and today so far. */
+/**
+ * The supervisor's landing page, Live floor (decision LF1; "Home" until the redesign, and still
+ * `home` in its ids and its URL, so links and emailed reports keep working): what needs them, the
+ * campaigns and the floor, and today so far.
+ */
 export const HOME_PATH = '/agency/home';
 
 /**
@@ -110,6 +114,14 @@ export function canSeeHome(input: GateInput): boolean {
 export function holdsHomePermission(role: Role | undefined): boolean {
   return hasPermission(role, HOME_PERMISSION);
 }
+
+/**
+ * The account's callbacks (decision LF1): for now each active campaign's overdue callbacks from
+ * Live floor's board, linking to the campaign's Callbacks tab; one list of them all is coming.
+ * Gated as Live floor is, because it reads the same board's supervisor-only parts.
+ */
+export const CALLBACKS_PATH = '/agency/callbacks';
+export const CALLBACKS_GATE: Gate = HOME_GATE;
 
 /**
  * Where `/agency` sends this person (`AgencyHomeRedirect`), and so where every door
@@ -191,9 +203,9 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   /* First, and active only on its own URL. Its badge counts what needs the supervisor. */
   {
     id: 'home',
-    label: 'Home',
+    label: 'Live floor',
     paths: [HOME_PATH],
-    tabs: [{ id: 'home', label: 'Home', to: HOME_PATH, gate: HOME_GATE }],
+    tabs: [{ id: 'home', label: 'Live floor', to: HOME_PATH, gate: HOME_GATE }],
   },
   {
     id: 'campaigns',
@@ -236,6 +248,13 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         gate: agencyGate({ permission: 'agency.supervise' }),
       },
     ],
+  },
+  /* Its badge counts every active campaign's overdue callbacks (danger tone). */
+  {
+    id: 'callbacks',
+    label: 'Callbacks',
+    paths: [CALLBACKS_PATH],
+    tabs: [{ id: 'callbacks', label: 'Callbacks', to: CALLBACKS_PATH, gate: CALLBACKS_GATE }],
   },
   {
     id: 'inbound',

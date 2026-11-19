@@ -10,6 +10,7 @@ import type {
   AgencyHomeCampaignStats,
 } from '@magick-agency/contracts/api/agency/home';
 import type { HomeCampaignRef } from '../../utils/agency/home';
+import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
 
 /** Home's fixtures: a campaign, a stats payload with an empty, idle floor, and the board. */
 export function campaign(id: string, status: AgencyHomeActiveStatus = 'running', name = `Campaign ${id}`): HomeCampaignRef {
@@ -74,10 +75,13 @@ export function onBoard(
     today?: AgencyAttentionRangeFigures | null;
     /** Null: the board of a reader below `agency.supervise` (with the other insights parts null). */
     settings?: AgencyAttentionSettings | null;
+    /** When and by whom a paused or stopping campaign got there (B28b); null unless given. */
+    statusChanged?: AgencyHomeCampaign['status_changed'];
   } = {},
 ): AgencyHomeCampaign {
   return {
     ...campaign(id, over.status ?? 'running', over.name),
+    status_changed: over.statusChanged ?? null,
     stats: over.stats === undefined ? stats() : over.stats,
     staffing: over.staffing === undefined ? STAFFED : over.staffing,
     allocation: over.overdue === null ? null : allocationFacts({ callbacks_overdue: over.overdue ?? 0 }),
@@ -95,5 +99,29 @@ export function board(
     campaigns,
     active_total: over.active_total ?? campaigns.length,
     any_campaign: over.any_campaign ?? campaigns.length > 0,
+  };
+}
+
+/** One floor row (`GET /floor`): a ready agent on campaign c1 for a minute, unless given. */
+export function floorRow(id: string, over: Partial<AgencyFloorAgent> = {}): AgencyFloorAgent {
+  return {
+    agent_user_id: id,
+    agent_name: `Agent ${id.toUpperCase()}`,
+    session_id: `s-${id}`,
+    campaign_id: 'c1',
+    campaign_name: 'Q4',
+    state: 'available',
+    state_since: new Date(Date.now() - 60_000).toISOString(),
+    connected: true,
+    client_kind: 'web',
+    break_reason: null,
+    break_label: null,
+    on_inbound_call: false,
+    inbound_outcome_owed: false,
+    wrapup_window_seconds: 60,
+    call: null,
+    calls_today: 12,
+    left_at: null,
+    ...over,
   };
 }

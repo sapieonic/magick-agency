@@ -33,4 +33,11 @@ describe('Kpi', () => {
     expect(kpi.querySelector('[data-withheld]')?.getAttribute('data-withheld')).toBe('true');
     expect(kpi.children).toHaveLength(2);
   });
+
+  it('carries a danger tone only when asked (Live floor’s late callbacks above zero)', () => {
+    const { rerender } = render(<Kpi label="Late callbacks" value="4" look="outlined" tone="danger" testId="kpi" />);
+    expect(screen.getByTestId('kpi').getAttribute('data-tone')).toBe('danger');
+    rerender(<Kpi label="Late callbacks" value="0" look="outlined" testId="kpi" />);
+    expect(screen.getByTestId('kpi').hasAttribute('data-tone')).toBe(false);
+  });
 });

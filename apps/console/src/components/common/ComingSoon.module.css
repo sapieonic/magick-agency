@@ -1,0 +1,83 @@
+/* The one "Coming soon" mark (`ComingSoon.tsx`). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Focusable on purpose (`aria-disabled`, not `disabled`), so it looks inert but takes focus. */
+.wrap > button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.wrap > button[aria-disabled='true']:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The explanation: kept as the button's description, out of sight and out of the layout (it
+   must add no scrollable width) until hover or focus. */
+.tip {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.wrap:hover > .tip,
+.wrap:focus-within > .tip {
+  bottom: calc(100% + 6px);
+  /* Grows leftwards from the control's right edge: these controls sit at the right of a card or a bar. */
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 240px;
+  height: auto;
+  margin: 0;
+  padding: 6px 9px;
+  overflow: visible;
+  clip: auto;
+  border-radius: 6px;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.wrap[data-dismissed='true'] > .tip {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+/* An icon button in a tight row: the button is marked, not followed by a badge. */
+.compact > button[aria-disabled='true'] {
+  border-style: dashed;
+}

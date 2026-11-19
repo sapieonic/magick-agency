@@ -150,11 +150,37 @@ export function attentionSettings(settings: AgencyAttentionSettings): AgencyAtte
   };
 }
 
+/**
+ * When a paused or stopping campaign entered that status, and who put it there ("Paused by Anitha
+ * at 11:03"). Read from the campaign row the board lists anyway (decision B28b):
+ *  - `paused`: `paused_at`, which every pause writes (a supervisor's and the automatic ones: the
+ *    abandonment guardrail, the carrier-account pauses); the actor is `last_transition_by_*`,
+ *    which every transition writes and an automatic pause clears (`by_user_id` null).
+ *  - `stopping`: the actor is the row's as above (only a person presses Stop); `at` is the row's
+ *    `stopping_at`, which the transition into `stopping` stamps (`0051_campaign_stopping_at.sql`,
+ *    first-write-wins, so a second Stop would not move it), or null for a campaign that entered
+ *    `stopping` before 0051.
+ * Not withheld below `agency.supervise`: the campaign list already serves the actor
+ * (`last_transition_by`) to every reader of the campaign.
+ */
+export interface AgencyHomeStatusChange {
+  /** ISO-8601. When the campaign entered its status; null only for a stopping campaign that entered it before 0051 stamped it. */
+  at: string | null;
+  /** Who did it; null for an automatic pause, or when the transition recorded nobody. */
+  by_user_id: string | null;
+  /** Their name now (the identity lookup every agency read uses), else the name recorded with the transition; null when neither is known. */
+  by_name: string | null;
+  /** The dialer paused it by itself (`pause_reason` other than `supervisor`: the guardrail or the carrier account). Always false for `stopping`. */
+  automatic: boolean;
+}
+
 /** One active campaign on the board. */
 export interface AgencyHomeCampaign {
   id: string;
   name: string;
   status: AgencyHomeActiveStatus;
+  /** For a `paused` or `stopping` campaign, when and by whom ({@link AgencyHomeStatusChange}); null while running. */
+  status_changed: AgencyHomeStatusChange | null;
   /** Null when the stats read failed. */
   stats: AgencyHomeCampaignStats | null;
   /** Assigned agents and how many are on the floor now; null when that read failed, or below `agency.supervise`. */

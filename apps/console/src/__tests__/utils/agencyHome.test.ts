@@ -6,6 +6,8 @@ import {
   menuAttentionLabel,
   homeAttention,
   homeBadgeCount,
+  homeRank,
+  HOME_RANKS,
   homeFloor,
   homeNeeds,
   homeWaiting,
@@ -198,7 +200,7 @@ describe('the Overview’s other rows (B28a: Home never disagrees with the page 
     const items = homeAttention([read('c1', { staffing: { staffed: 0, online: 0 } })], NO_MISSED, fmt);
     expect(items).toEqual([expect.objectContaining({
       id: 'no-agents:c1', tone: 'warning', title: 'No agents online', detail: 'Nobody is assigned to this campaign yet.',
-      to: '/agency/campaigns/c1/agents', action: 'Open the floor', badge: true,
+      to: '/agency/campaigns/c1/agents', action: 'Open the floor',
     })]);
     expect(homeBadgeCount(items)).toBe(1);
     // Assigned agents who are all signed out: the same row.
@@ -210,7 +212,8 @@ describe('the Overview’s other rows (B28a: Home never disagrees with the page 
 
   it('contacts held by agents who are away', () => {
     const [item] = homeAttention([read('c1', { allocation: allocationFacts({ held_by_absent: 4 }) })], NO_MISSED, fmt);
-    expect(item).toMatchObject({ id: 'held-by-absent:c1', tone: 'warning', title: '4 due contacts held by agents who are away', badge: true });
+    expect(item).toMatchObject({ id: 'held-by-absent:c1', tone: 'warning', title: '4 due contacts held by agents who are away' });
+    expect(homeBadgeCount([item!])).toBe(1);
   });
 
   it('today’s carrier failures and missing recordings, opening Health on Today', () => {
@@ -222,7 +225,7 @@ describe('the Overview’s other rows (B28a: Home never disagrees with the page 
       NO_MISSED,
       fmt,
     );
-    expect(items.map((i) => [i.id, i.tone, i.title, i.to, i.badge])).toEqual([
+    expect(items.map((i) => [i.id, i.tone, i.title, i.to, homeBadgeCount([i]) === 1])).toEqual([
       ['carrier-failures:c1', 'info', '3 dials failed at the carrier', '/agency/campaigns/c1/health?range=today', false],
       ['recordings-missing:c1', 'info', '3 connected calls with no recording', '/agency/campaigns/c1/health?range=today', false],
     ]);
@@ -232,7 +235,8 @@ describe('the Overview’s other rows (B28a: Home never disagrees with the page 
 
   it('calling hours left at the default, as information', () => {
     const items = homeAttention([read('c1', { settings: settingsFacts({ calling_hours_default: true }) })], NO_MISSED, fmt);
-    expect(items).toEqual([expect.objectContaining({ id: 'calling-hours-default:c1', tone: 'info', to: '/agency/campaigns/c1/settings', badge: false })]);
+    expect(items).toEqual([expect.objectContaining({ id: 'calling-hours-default:c1', tone: 'info', to: '/agency/campaigns/c1/settings' })]);
+    expect(homeBadgeCount(items)).toBe(0);
   });
 
   it('a part not known yet says nothing (no guess)', () => {
@@ -296,17 +300,48 @@ describe('the list', () => {
     expect(homeAttention([read('c1'), read('c2', { status: 'paused' })], NO_MISSED, fmt)).toEqual([]);
   });
 
-  it('puts danger first, then warnings (missed calls last among them), then information, keeping campaign order within a tone', () => {
+  it('puts what stopped a campaign first, then late callbacks, the other dangers, warnings (missed calls last among them), then information (LF9), keeping campaign order within a rank', () => {
     const items = homeAttention(
       [
         read('a', { stats: stats({ stall: STALLS.outside_calling_hours }) }),
         read('b', { stats: stats({ stall: STALLS.no_agents_available }), overdue: 2 }),
         read('c', { stats: stats({ stall: STALLS.auto_paused_carrier }) }),
+        read('d', { stats: stats({ abandoned_24h: 5, answered_24h: 100 }), overdue: 1 }),
+        read('e', { stats: stats({ stall: STALLS.dnc_unavailable }) }),
       ],
       { available: true, count: { open: 1, open_capped: false, has_rows: true } },
       fmt,
     );
-    expect(items.map((i) => i.id)).toEqual(['callbacks-overdue:b', 'stall:c', 'stall:b', 'missed', 'stall:a']);
+    expect(items.map((i) => [i.id, homeRank(i)])).toEqual([
+      ['stall:c', 'stop'],
+      ['stall:e', 'stop'],
+      ['callbacks-overdue:b', 'late-callbacks'],
+      ['callbacks-overdue:d', 'late-callbacks'],
+      ['abandonment:d', 'danger'],
+      ['stall:b', 'warning'],
+      ['missed', 'warning'],
+      ['stall:a', 'info'],
+    ]);
+  });
+
+  it('ranks by kind and tone: a stall in the danger tone stops dialling, a warning stall does not', () => {
+    expect(homeRank({ kind: 'stall:auto_paused_abandonment@2026-11-11T09:12:00Z', tone: 'danger' })).toBe('stop');
+    expect(homeRank({ kind: 'stall:concurrency_saturated', tone: 'warning' })).toBe('warning');
+    expect(homeRank({ kind: 'callbacks-overdue', tone: 'danger' })).toBe('late-callbacks');
+    expect(homeRank({ kind: 'abandonment', tone: 'danger' })).toBe('danger');
+    expect(homeRank({ kind: 'calling-hours-default', tone: 'info' })).toBe('info');
+    // Need help and break overruns (Phase 3) have their places waiting, in LF9's order.
+    expect(HOME_RANKS).toEqual(['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info']);
+  });
+
+  it('marks late callbacks whose owner is away, which a supervisor could give to free agents', () => {
+    const [late] = homeAttention([read('c1', { allocation: allocationFacts({ callbacks_overdue: 4, callbacks_overdue_absent_owner: 3 }) })], NO_MISSED, fmt);
+    expect(late).toMatchObject({
+      id: 'callbacks-overdue:c1',
+      comingSoon: { label: 'Give to free agents', tooltip: 'Give the 3 late callbacks whose agent is away to agents who are free now.' },
+    });
+    const [owned] = homeAttention([read('c1', { allocation: allocationFacts({ callbacks_overdue: 4 }) })], NO_MISSED, fmt);
+    expect(owned!.comingSoon).toBeUndefined();
   });
 
   it('splits into what needs the reader and what is only waiting (nothing wrong)', () => {
@@ -346,7 +381,7 @@ describe('what the Home badge counts', () => {
     // callbacks-overdue:b, stall:b, stall:c, abandonment:c, abandonment:d — not stall:a, not missed.
     expect(items).toHaveLength(7);
     expect(homeBadgeCount(items)).toBe(5);
-    expect(items.filter((i) => i.badge).map((i) => i.id).sort()).toEqual(
+    expect(items.filter((i) => homeBadgeCount([i]) === 1).map((i) => i.id).sort()).toEqual(
       ['abandonment:c', 'abandonment:d', 'callbacks-overdue:b', 'stall:b', 'stall:c'],
     );
   });

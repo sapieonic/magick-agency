@@ -109,7 +109,7 @@ function guideTips(events: readonly NotificationEventPreference[]): string[] {
 
 export default function NotificationSettingsPage() {
   const { tenantId } = useTenant();
-  /* Home lists what needs a supervisor now; point there only for a reader Home is offered to. */
+  /* Live floor lists what needs a supervisor now; point there only for a reader it is offered to. */
   const homeShown = passesGate(HOME_GATE, useNavGate());
   const { showToast, showErrorToast } = useToast();
 
@@ -281,9 +281,9 @@ export default function NotificationSettingsPage() {
         <aside className={styles.homeAside} data-testid="notifications-home-aside">
           <p>
             Looking for what needs you right now? Paused campaigns, overdue callbacks and missed calls
-            are listed on Home, under Needs your attention.
+            are listed on Live floor, under Needs you now.
           </p>
-          <Link to={HOME_PATH} className={styles.homeAsideLink}>Go to Home</Link>
+          <Link to={HOME_PATH} className={styles.homeAsideLink}>Go to Live floor</Link>
         </aside>
       )}
 

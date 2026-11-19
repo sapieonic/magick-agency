@@ -36,6 +36,7 @@ import { AgentFloorDrawer } from './AgentFloorDrawer';
 import { formatCount } from '../../utils/format/number';
 import styles from './AgentFloor.module.css';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { useNow } from '../../hooks/useNow';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 
 /**
@@ -92,27 +93,6 @@ export interface AgentFloorProps {
   canSupervise: boolean;
   /** Re-read the campaign after a forced return, so the floor reflects it. */
   onForced: () => void;
-}
-
-/**
- * A repainting `now`.
- *
- * Kept in this file rather than in the pure module because it is a lifecycle
- * concern, and out of the rows so the whole table shares one timer instead of
- * running one per agent.
- */
-function useTickingNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    // Re-read on mount/activation too: a tab restored from the background can be
-    // arbitrarily far from the last painted value, and waiting a full second to
-    // correct it shows a stale duration at the worst moment.
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), AGENCY_FLOOR_TICK_MS);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
 }
 
 /** `state_since` that will not parse renders no digits — never `0:00`. */
@@ -420,7 +400,7 @@ export function AgentFloor({ campaignId, stats, wrapupSeconds, canSupervise, onF
 
   const agents = stats?.agents;
   const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
-  const now = useTickingNow((agents?.length ?? 0) > 0);
+  const now = useNow(AGENCY_FLOOR_TICK_MS, (agents?.length ?? 0) > 0);
   const summary = stateSummary(stats?.agents_by_state);
 
   const ranked = useMemo(

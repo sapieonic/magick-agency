@@ -409,7 +409,7 @@ describe('the child campaign row', () => {
     for (const column of [
       'status', 'started_at', 'ended_at', 'completed_at', 'contacts_total',
       'last_transition_by_user_id', 'last_transition_by_name',
-      'pause_reason', 'paused_at', 'pause_abandonment_rate_pct',
+      'pause_reason', 'paused_at', 'pause_abandonment_rate_pct', 'stopping_at',
     ]) {
       expect(columns, `${column} describes the parent's run`).not.toContain(column);
     }

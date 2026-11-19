@@ -122,8 +122,9 @@ beforeEach(() => {
     today: vi.fn(async () => TODAY),
   };
   const liveStats = vi.fn(async () => answer(payload()));
-  deps = { liveStats, insights: reads };
-  viewer = { liveStats, insights: null };
+  const names = vi.fn(async () => new Map<string, string | null>());
+  deps = { liveStats, insights: reads, names };
+  viewer = { liveStats, insights: null, names };
 });
 
 afterEach(() => {
@@ -139,7 +140,7 @@ describe('the board', () => {
     expect(board.any_campaign).toBe(true);
     expect(board.campaigns).toEqual([
       {
-        id: 'r1', name: 'Campaign r1', status: 'running',
+        id: 'r1', name: 'Campaign r1', status: 'running', status_changed: null,
         stats: {
           stall: null, abandoned_24h: 1, answered_24h: 40, abandonment_ceiling_pct: 3, agents_live: 0,
           agents_by_state: { offline: 0, available: 0, reserved: 0, on_call: 0, wrapup: 0, break: 0 },
@@ -154,6 +155,64 @@ describe('the board', () => {
       },
       expect.objectContaining({ id: 'p1', status: 'paused', allocation: ALLOCATION }),
     ]);
+  });
+
+  it('names who paused or stopped a campaign, and when (B28b), from the row and the identity lookup', async () => {
+    const PAUSED_AT = new Date('2026-11-12T05:33:00.000Z');
+    const STOPPED_AT = new Date('2026-11-12T06:00:00.000Z');
+    list([
+      row('r1', 'running', { last_transition_by_user_id: 'u-start', last_transition_by_name: 'Starter' } as Partial<AgencyCampaignRecord>),
+      row('s1', 'stopping', {
+        stopping_at: STOPPED_AT, last_transition_by_user_id: 'u-stop', last_transition_by_name: 'Old Name',
+      } as Partial<AgencyCampaignRecord>),
+      // Entered `stopping` before 0051 stamped it: no time.
+      row('s2', 'stopping', { stopping_at: null, last_transition_by_user_id: 'u-stop' } as Partial<AgencyCampaignRecord>),
+      row('p1', 'paused', {
+        pause_reason: 'supervisor', paused_at: PAUSED_AT, last_transition_by_user_id: 'u-anitha', last_transition_by_name: 'Anitha (then)',
+      } as Partial<AgencyCampaignRecord>),
+      row('p2', 'paused', {
+        pause_reason: 'abandonment_ceiling', paused_at: PAUSED_AT, last_transition_by_user_id: null, last_transition_by_name: null,
+      } as Partial<AgencyCampaignRecord>),
+      row('p3', 'paused', {
+        pause_reason: 'supervisor', paused_at: PAUSED_AT, last_transition_by_user_id: 'u-gone', last_transition_by_name: 'Recorded',
+      } as Partial<AgencyCampaignRecord>),
+    ]);
+    deps.names = vi.fn(async () => new Map<string, string | null>([['u-anitha', 'Anitha'], ['u-stop', 'Stopper']]));
+    const board = await computeHomeBoard(SCOPE, deps);
+    const changed = Object.fromEntries(board.campaigns.map((c) => [c.id, c.status_changed]));
+    expect(changed).toEqual({
+      r1: null,
+      s1: { at: STOPPED_AT.toISOString(), by_user_id: 'u-stop', by_name: 'Stopper', automatic: false },
+      s2: { at: null, by_user_id: 'u-stop', by_name: 'Stopper', automatic: false },
+      p1: { at: PAUSED_AT.toISOString(), by_user_id: 'u-anitha', by_name: 'Anitha', automatic: false },
+      p2: { at: PAUSED_AT.toISOString(), by_user_id: null, by_name: null, automatic: true },
+      // The lookup has no name now: the one the transition recorded.
+      p3: { at: PAUSED_AT.toISOString(), by_user_id: 'u-gone', by_name: 'Recorded', automatic: false },
+    });
+    // One name lookup for the paused and stopping campaigns' actors; the times are the rows' own.
+    expect(deps.names).toHaveBeenCalledTimes(1);
+    expect([...(deps.names as ReturnType<typeof vi.fn>).mock.calls[0]![0]]).toEqual(['u-stop', 'u-stop', 'u-anitha', null, 'u-gone']);
+  });
+
+  it('looks up no names for a running board', async () => {
+    list([row('r1', 'running')]);
+    const board = await computeHomeBoard(SCOPE, viewer);
+    expect(board.campaigns[0]!.status_changed).toBeNull();
+    expect(viewer.names).not.toHaveBeenCalled();
+  });
+
+  it('serves the recorded name and the row\'s stop time when the name lookup fails, never a failed board; and serves it to a viewer too', async () => {
+    const STOPPED_AT = new Date('2026-11-12T06:00:00.000Z');
+    list([
+      row('s1', 'stopping', {
+        stopping_at: STOPPED_AT, last_transition_by_user_id: 'u-stop', last_transition_by_name: 'Recorded',
+      } as Partial<AgencyCampaignRecord>),
+    ]);
+    viewer.names = vi.fn(async () => { throw new Error('users down'); });
+    const board = await computeHomeBoard(SCOPE, viewer);
+    expect(board.campaigns[0]!.status_changed).toEqual({
+      at: STOPPED_AT.toISOString(), by_user_id: 'u-stop', by_name: 'Recorded', automatic: false,
+    });
   });
 
   it('serves the campaign’s recording and calling-hours settings as the insights summary does', async () => {

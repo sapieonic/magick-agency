@@ -101,9 +101,10 @@ function isCoreLiveCalls(body: unknown): body is { calls: CoreLiveCall[]; as_of:
  * Why `userId` may not listen to `call` now, or null when they may (their permission is the
  * caller's to check). The grant's own order: their own call, LS4, then the cap. A supervisor
  * already listening to the call is not refused by their own session (a new listen supersedes it).
+ * Also the Live floor's rule for its calls (`proxy-agency-floor.routes.ts`).
  */
 export function notListenableReason(
-  call: Pick<CoreLiveCall, 'agent_user_id' | 'recording' | 'listeners'>,
+  call: Pick<CoreLiveCall, 'agent_user_id' | 'recording'> & { listeners: ReadonlyArray<{ user_id: string }> },
   userId: string,
   unrecordedAllowed: boolean,
   maxPerCall: number,

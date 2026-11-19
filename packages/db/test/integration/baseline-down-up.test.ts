@@ -89,6 +89,8 @@ const ALL_MIGRATIONS = [
   '0047_listen_sessions',
   '0048_listen_sessions_unverified',
   '0049_listen_history_index',
+  '0050_promise_summary_indexes',
+  '0051_campaign_stopping_at',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

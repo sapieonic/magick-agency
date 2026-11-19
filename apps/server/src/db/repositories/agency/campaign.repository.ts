@@ -534,6 +534,10 @@ export class AgencyCampaignRepository {
    *     is absorbing (no `from` list anywhere names `completed`/`stopped`), so the
    *     COALESCE is belt-and-braces rather than load-bearing; it costs nothing and
    *     it means a future re-open cannot silently restamp an end that happened.
+   *   * `stopping_at` — first-write-wins on the way into `stopping` (0051), the
+   *     instant Stop was pressed; kept on `stopped`. Home's board reads it (B28b)
+   *     rather than the Stop's audit row, which the route writes afterwards
+   *     without waiting.
    *   * `completed_at` — the LEGACY spelling of `ended_at`, written from the SAME
    *     `CASE` so the two cannot drift. It is retained because it is already
    *     on the wire, and its name is wrong for a `stopped` campaign.
@@ -595,6 +599,12 @@ export class AgencyCampaignRepository {
               completed_at = CASE WHEN $3 IN ('completed','stopped')
                                   THEN COALESCE(completed_at, now())
                                   ELSE completed_at END,
+              -- When Stop was pressed (0051; Home's status_changed.at, B28b).
+              -- First-write-wins like started_at: a second Stop, were one
+              -- accepted, cannot move it, and stopping -> stopped keeps it.
+              stopping_at = CASE WHEN $3 = 'stopping'
+                                 THEN COALESCE(stopping_at, now())
+                                 ELSE stopping_at END,
               -- Written UNCONDITIONALLY -- except for the ONE transition whose
               -- cause is on the row already.
               --

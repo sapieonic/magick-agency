@@ -51,7 +51,7 @@
   line-height: 1.45;
 }
 
-/* Home's Today so far. */
+/* Live floor's tiles. */
 .outlined {
   padding: 12px 14px;
   border: 1px solid var(--border-light);
@@ -68,4 +68,14 @@
 
 .outlined .sub {
   font-weight: 500;
+}
+
+/* A figure that is a problem now. */
+.kpi[data-tone='danger'] {
+  background: var(--danger-subtle);
+  border-color: var(--danger-border);
+}
+
+.kpi[data-tone='danger'] .value {
+  color: var(--danger);
 }

@@ -382,6 +382,32 @@ describe('campaign lifecycle audit trail', () => {
     await app.close();
   });
 
+  it.each([
+    ['start', 'agency_campaign.started'],
+    ['pause', 'agency_campaign.paused'],
+    ['resume', 'agency_campaign.resumed'],
+    ['stop', 'agency_campaign.stopped'],
+  ])('audits %s sent with an upper-case id under the canonical lower-case id (the activity trail reads it by it)', async (route, action) => {
+    // The edge accepts a UUID in either case and Postgres casts both alike, but the audit's
+    // `campaign_id` is TEXT: an upper-case row would be missed by every lower-case read of it
+    // (the campaign's activity trail). The plugin's edge hook lower-cases a
+    // UUID-shaped param (`rejectPathEscapingParams` → `canonicalUuid`) before the route reads it.
+    const id = '0F8FAD5B-D9CB-469F-A165-70867728950E';
+    mocks.proxyToCore.mockResolvedValue({ status: 200, body: { id: id.toLowerCase(), status: 'stopping' }, headers: new Headers() });
+    const app = await buildApp();
+
+    const res = await app.inject({ method: 'POST', url: `${PREFIX}/campaigns/${id}/${route}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action,
+      resource_id: id.toLowerCase(),
+      campaign_id: id.toLowerCase(),
+      details: { campaign_id: id.toLowerCase(), status: 'stopping' },
+    }));
+    await app.close();
+  });
+
   it.each(['start', 'pause', 'resume', 'stop'])(
     'does NOT audit %s when the internal handler answers a 4xx',
     async (route) => {

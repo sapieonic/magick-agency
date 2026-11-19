@@ -61,11 +61,12 @@ const sectionIds = (i: GateInput) => visibleSections(i).map((s) => s.section.id)
 const settingsIds = (i: GateInput) => visibleSettingsGroups(i).flatMap((g) => g.entries.map((e) => e.id));
 
 describe('the work sections', () => {
-  it('offers a supervisor Home and all four, in order, each opening its first page', () => {
+  it('offers a supervisor Live floor, Callbacks and the four, in order, each opening its first page', () => {
     const shown = visibleSections(input('account_admin'));
     expect(shown.map((s) => [s.section.label, s.href])).toEqual([
-      ['Home', '/agency/home'],
+      ['Live floor', '/agency/home'],
       ['Campaigns', '/agency/campaigns'],
+      ['Callbacks', '/agency/callbacks'],
       ['Inbound', '/agency/inbound/missed'],
       ['Reports', '/agency/analytics'],
       ['Do Not Call', '/agency/dnc'],
@@ -100,7 +101,7 @@ describe('the work sections', () => {
   });
 
   it('drops Inbound when the missed-calls rule says there is nothing to read', () => {
-    expect(sectionIds(input('account_admin', { missed: false }))).toEqual(['home', 'campaigns', 'reports', 'dnc']);
+    expect(sectionIds(input('account_admin', { missed: false }))).toEqual(['home', 'campaigns', 'callbacks', 'reports', 'dnc']);
   });
 
   it('keeps Reports on Analytics alone with the reports flag off', () => {
@@ -566,6 +567,23 @@ describe('Home (B28)', () => {
     expect(activeNavId('/agency')).toBeNull();
     expect(activeNavId('/agency/campaigns')).toBe('campaigns');
     expect(tabBarFor('/agency/home', input('account_admin'))).toBeNull();
-    expect(breadcrumbFor('/agency/home')).toEqual([{ label: 'Home' }]);
+    expect(breadcrumbFor('/agency/home')).toEqual([{ label: 'Live floor' }]);
+  });
+});
+
+describe('Callbacks (LF1)', () => {
+  it('is gated as Live floor is, active on its own URL, with no tab bar, its own breadcrumb', () => {
+    for (const role of ['account_admin', 'tenant_admin', 'tenant_owner'] as const) {
+      expect(sectionIds(input(role))).toContain('callbacks');
+    }
+    for (const role of ['viewer', 'operator', 'agent', undefined] as const) {
+      expect(sectionIds(input(role))).not.toContain('callbacks');
+    }
+    expect(sectionIds(input('tenant_owner', { flagsOff: ['agency_dialer_enabled'] }))).not.toContain('callbacks');
+    expect(activeNavId('/agency/callbacks')).toBe('callbacks');
+    // A campaign's own Callbacks tab stays under Campaigns.
+    expect(activeNavId('/agency/campaigns/c-1/callbacks')).toBe('campaigns');
+    expect(tabBarFor('/agency/callbacks', input('account_admin'))).toBeNull();
+    expect(breadcrumbFor('/agency/callbacks')).toEqual([{ label: 'Callbacks' }]);
   });
 });

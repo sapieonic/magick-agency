@@ -1,3 +1,4 @@
+import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { DISPLAY_LOCALE } from './number';
 
 /**
@@ -49,6 +50,14 @@ export function formatDayMonth(date: Date): string {
 /** `16 Oct 2026`, on the reader's calendar. */
 export function formatDayMonthYear(date: Date): string {
   return dateFormatter(DAY_MONTH_YEAR).format(date);
+}
+
+/**
+ * An instant as a time when it fell on `now`'s calendar day ("11:03 am"), else as its date and
+ * time: Live floor's Needs you now rows and its campaign cards.
+ */
+export function formatTimeOrDate(iso: string, now: Date): string {
+  return new Date(iso).toDateString() === now.toDateString() ? formatTime(iso) : formatDate(iso);
 }
 
 /** `09:05 am`, on the reader's clock. */

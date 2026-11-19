@@ -1181,7 +1181,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     from_status: AgencyCampaignStatus;
     to_status: AgencyCampaignStatus;
     confirmed: boolean;
-    from_tab: CampaignTabId;
+    /** The campaign tab whose header it was taken from, or `live_floor` for a Live floor card. */
+    from_tab: CampaignTabId | 'live_floor';
   };
   /** {@link trackAgencyCampaignLifecycleFailed} */
   agency_campaign_lifecycle_failed: {

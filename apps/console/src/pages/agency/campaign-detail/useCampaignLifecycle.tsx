@@ -27,20 +27,26 @@ const CONFIRM_COPY: Partial<Record<Action, { title: string; message: string }>> 
   },
 };
 
+/** Where a lifecycle action can be taken: a campaign tab's header, or a card on Live floor. */
+export type CampaignLifecycleOrigin = CampaignTabId | 'live_floor';
+
 export interface CampaignLifecycleSource {
   id: string | undefined;
   tenantId: string | null;
   accountId: string | null;
-  /** The campaign as of the latest write or read — current at click time, not at the last paint. */
-  campaignRef: { readonly current: AgencyCampaign | null };
+  /**
+   * The campaign as of the latest write or read — current at click time, not at the last paint.
+   * Only its status is read, so Live floor's cards pass the board's.
+   */
+  campaignRef: { readonly current: Pick<AgencyCampaign, 'status'> | null };
   /** Re-read the campaign row alone (the Start / Resume preflight and the 409 repair). */
-  refreshCampaign: () => Promise<AgencyCampaign | null>;
+  refreshCampaign: () => Promise<Pick<AgencyCampaign, 'status'> | null>;
   /** Paint a campaign the server just answered with, and fence off every older read. */
   commitCampaign: (campaign: AgencyCampaign) => void;
   /** Re-read whatever the page shows after a transition. */
   reload: () => void;
-  /** The tab the action was taken from, for `agency_campaign_lifecycle_action`. */
-  fromTab: CampaignTabId;
+  /** The tab the action was taken from (or Live floor's campaign card), for `agency_campaign_lifecycle_action`. */
+  fromTab: CampaignLifecycleOrigin;
 }
 
 export interface CampaignLifecycle {
@@ -54,7 +60,7 @@ export interface CampaignLifecycle {
 
 /**
  * Start, pause, resume and stop from the campaign header, on whichever campaign page shows
- * it (the Monitor tabs and Settings). The page supplies how it reads and paints the campaign;
+ * it (the Monitor tabs and Settings), and Pause and Resume from Live floor's campaign cards. The page supplies how it reads and paints the campaign;
  * this owns the click lock, the Stop confirmation, the refusals and the analytics.
  */
 export function useCampaignLifecycle({

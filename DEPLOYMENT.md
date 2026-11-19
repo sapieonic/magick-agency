@@ -904,8 +904,12 @@ leave there (the database still holds them to one live session).
 migration blocks writes to its table while it builds. `0039_retention_purge_indexes.sql` adds two
 on `agency_calls` and `agency_inbound_calls`: if `agency_calls` holds more than about a million
 rows, build them `CONCURRENTLY` first with the server running ([`db-hygiene.md`](db-hygiene.md)
-§2). `0038_table_storage_settings.sql` to `0040_drop_duplicate_indexes.sql` change storage
-settings and indexes only, so going back past them needs no `migrate:down`.
+§2). `0050_promise_summary_indexes.sql` (the Live floor's promises summary) adds three, one on
+`agency_call_attempts`: if that table holds more than about a million rows, build them the same
+way first. `0038_table_storage_settings.sql` to `0040_drop_duplicate_indexes.sql` change storage
+settings and indexes only, so going back past them needs no `migrate:down`. Nor does
+`0051_campaign_stopping_at.sql`: an older image ignores the nullable `stopping_at` and reads a stop's
+time from its audit row again.
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,
 `0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is
