@@ -92,6 +92,7 @@ const ALL_MIGRATIONS = [
   '0050_promise_summary_indexes',
   '0051_campaign_stopping_at',
   '0052_floor_assist',
+  '0053_account_callbacks_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

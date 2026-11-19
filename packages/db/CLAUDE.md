@@ -24,7 +24,8 @@ before writing a repository or a migration.
   their `access_unverified` end reason and `live_at`, 0049 the listening history's index of an
   account's live sessions by start, 0050 the promises summary's indexes of each call table's promises
   by when their outcome was written, 0051 the campaign's `stopping_at`, when Stop was pressed, 0052 floor assist: the session's Need help
-  columns and the supervisor messages table). node-pg-migrate,
+  columns and the supervisor messages table, 0053 the account's callbacks list's index of
+  the pending contacts that may be callbacks, by due time). node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).

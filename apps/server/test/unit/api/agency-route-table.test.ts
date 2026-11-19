@@ -125,6 +125,9 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /proxy/agency/sessions/:_/help', 'Need help raised on the agent\'s own session (LF4; console and app clients to come)'],
   ['DELETE /proxy/agency/sessions/:_/help', 'Need help cancelled (LF4; console and app clients to come)'],
   ['POST /proxy/agency/sessions/:_/messages', 'a supervisor\'s message to an agent\'s station, Talk to agent and Send reminder (LF5; console client to come)'],
+  // The Live floor's account-wide callbacks list (LF22): the console's Callbacks page calls it once
+  // Phase 3's console lands; that change moves it to the console path inventory.
+  ['GET /proxy/agency/callbacks', 'the account\'s callbacks list (LF22; the console\'s Callbacks page, Phase 3)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */

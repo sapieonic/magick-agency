@@ -8,6 +8,7 @@ import { proxyAgencyStationRoutes } from './routes/proxy-agency-station.routes.j
 import { proxyAgencyListenRoutes } from './routes/proxy-agency-listen.routes.js';
 import { proxyAgencyLiveCallsRoutes } from './routes/proxy-agency-live-calls.routes.js';
 import { proxyAgencyFloorRoutes } from './routes/proxy-agency-floor.routes.js';
+import { proxyAgencyCallbacksRoutes } from './routes/proxy-agency-callbacks.routes.js';
 import { proxyAgencyFloorAssistRoutes } from './routes/proxy-agency-floor-assist.routes.js';
 import { proxyAgencyListenHistoryRoutes } from './routes/proxy-agency-listen-history.routes.js';
 import { dncAvailabilityProbe } from '../agency/dnc-availability.js';
@@ -231,6 +232,12 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
       { onlyUnder: `${P.proxyAgency}/sessions/` },
     ));
     await scope.register(proxyAgencyFloorAssistRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── The account's callbacks (`proxy-agency-callbacks.routes.ts`, decisions LF1, LF22): the Live ──
+  // floor's Callbacks page. No path params; the query is validated by the route (400 with its code).
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyCallbacksRoutes, { prefix: P.proxyAgency });
   });
 
   // ── The account's listening history (`proxy-agency-listen-history.routes.ts`, docs/listening.md §12) ──

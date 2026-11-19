@@ -72,7 +72,7 @@ beforeAll(async () => {
     users[name] = (await insertUser() as Id).id;
   }
   c1 = await insertAgencyCampaign({ status: 'running', name: 'Renewals', wrapup_seconds: 45,
-    break_reasons: JSON.stringify([{ code: 'tea', label: 'Tea', is_paid: true }]) });
+    break_reasons: JSON.stringify([{ code: 'tea', label: 'Tea', is_paid: true, limit_minutes: 12 }]) });
   c2 = await insertAgencyCampaign({ status: 'paused', name: 'Paused one' });
   c3 = await insertAgencyCampaign({ status: 'completed', name: 'Done' });
   cx = await insertAgencyCampaign({ status: 'running', account_id: OTHER_ACCOUNT, name: 'Elsewhere' });
@@ -152,7 +152,7 @@ describe('floorRows', () => {
       session_id: sessions['soft'], campaign_id: null, campaign_name: null, wrapup_seconds: null, break_reasons: null,
       state: 'break', break_reason: 'soft_phone', staffed: false,
     });
-    expect(byUser.get(users['tea']!)).toMatchObject({ state: 'break', break_reason: 'tea', break_reasons: [{ code: 'tea', label: 'Tea', is_paid: true }] });
+    expect(byUser.get(users['tea']!)).toMatchObject({ state: 'break', break_reason: 'tea', break_reasons: [{ code: 'tea', label: 'Tea', is_paid: true, limit_minutes: 12 }] });
     // A stale reason is not served off a break.
     expect(byUser.get(users['onCompleted']!)).toMatchObject({ campaign_id: c3.id, state: 'available', break_reason: null, staffed: false });
     expect(byUser.get(users['inbound']!)).toMatchObject({ on_inbound_call: true, inbound_outcome_owed: false });
@@ -318,7 +318,8 @@ describe('the internal handler, GET /floor', () => {
     expect(of('onCall')).toEqual({
       agent_user_id: users['onCall'], session_id: sessions['onCall'], campaign_id: c1.id, campaign_name: 'Renewals',
       state: 'on_call', state_since: ago(90_000).toISOString(), connected: true, client_kind: 'mobile',
-      break_reason: null, break_label: null, on_inbound_call: false, inbound_outcome_owed: false, wrapup_window_seconds: 45,
+      break_reason: null, break_label: null, break_limit_minutes: null, on_inbound_call: false, inbound_outcome_owed: false,
+      wrapup_window_seconds: 45,
       call: {
         call_id: liveCallId, origin: 'campaign', correlation_id: expect.any(String), customer_name: 'Ada Lovelace',
         connected_at: ago(80_000).toISOString(), aht_seconds: expect.anything(), recording: true, listener_user_ids: [],
@@ -326,8 +327,11 @@ describe('the internal handler, GET /floor', () => {
       calls_today: 5, left_at: null, help: null,
     });
     expect(JSON.stringify(body)).not.toContain('9811122233');
-    expect(of('soft')).toMatchObject({ break_reason: 'soft_phone', break_label: 'Soft phone', campaign_id: null, call: null });
-    expect(of('tea')).toMatchObject({ break_label: 'Tea', connected: false });
+    // LF6, LF20: the soft phone's break has no limit (never a long break); Tea has its catalog's.
+    expect(of('soft')).toMatchObject({ break_reason: 'soft_phone', break_label: 'Soft phone', break_limit_minutes: null, campaign_id: null, call: null });
+    expect(of('tea')).toMatchObject({ break_label: 'Tea', break_limit_minutes: 12, connected: false });
+    // Not on a break: no limit, whatever the column's last reason (`lunch`, a built-in with one).
+    expect(of('onCompleted')).toMatchObject({ break_reason: null, break_limit_minutes: null });
     expect(of('never')).toMatchObject({ connected: null, calls_today: 0, left_at: null, call: null });
     expect(of('leftToday')).toMatchObject({ calls_today: 1, left_at: ago(2 * HOUR).toISOString() });
     expect(body.totals).toEqual({

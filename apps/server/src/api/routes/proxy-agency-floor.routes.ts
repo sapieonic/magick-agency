@@ -188,6 +188,7 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
           client_kind: rest.client_kind,
           break_reason: rest.break_reason,
           break_label: rest.break_label,
+          break_limit_minutes: rest.break_limit_minutes,
           on_inbound_call: rest.on_inbound_call,
           inbound_outcome_owed: rest.inbound_outcome_owed,
           wrapup_window_seconds: rest.wrapup_window_seconds,
