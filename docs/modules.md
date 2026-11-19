@@ -1996,7 +1996,7 @@ Files: `ListenBar.module.css`, `ListenBar.tsx`, `ListenProvider.tsx`, `ListenedT
 | `apps/console/src/__tests__/utils/listen/listenSessionReducer.test.ts` (every transition: start, grant, ready, each way it ends, stale attempts, the 15 s window, the first attach's own 15 s, the three-failure bound across `ready`s and its fresh count after 10 s live, a listen withdrawn here (`revoked`, `turned_off`) and a re-grant refused `feature_disabled`, access that could not be checked (4503) and its Try again, Try again, the bar's flags) | 60 |
 | `apps/console/src/__tests__/utils/listen/listenSessionController.test.ts` (grant → socket → ready, audio only while live, ping every 10 s, stop, supersede, destroy, reconnect with a fresh grant, a shutdown's close with no `ended` through masked and unanswered re-grants, the window, a first grant or socket that never answers, an unopenable socket, 4503 stopping with no reconnect until Try again) | 19 |
 | `apps/console/src/__tests__/utils/listen/listenPlayback.test.ts` (the cushion, per-leg queues and decoders, a burst never overlapping one leg, meter before mute, volume, level, silence, blocked: frames dropped on a frozen clock with no resume per frame, no burst on "Turn sound on", an interruption stopping the queue, release, a refused context, reset, close; no microphone, at run time and in the source) | 24 |
-| `apps/console/src/__tests__/utils/listen/liveCallsTable.test.ts` (sort, filters and the chosen agent or campaign kept on offer, Clear filters' rule, ended rows, amber, the listen target, "Open call" by origin and none for inbound, the words (a full call counted from the row, never the cap; "No name" and "Unknown caller"; "Updated just now"), the page's intro, a bare 503) | 25 |
+| `apps/console/src/__tests__/utils/listen/liveCallsTable.test.ts` (sort, filters and the chosen agent or campaign kept on offer, Clear filters' rule, ended rows, amber, the listen target (a call with no number, from Live floor, named by its customer), "Open call" by origin and none for inbound, the words (a full call counted from the row, never the cap; "No name" and "Unknown caller"; "Updated just now"), the page's intro, a bare 503) | 26 |
 | `apps/console/src/__tests__/api/liveCalls.test.ts` | 13 |
 | `apps/console/src/__tests__/components/LiveCallsTable.test.tsx` (… Clear filters, a chosen agent kept after their call ends, "+N" past three listeners, no pill at zero, the `ph-no-capture` boundary, an older read answering late, a withheld number "Withheld" with no Show, a reveal answered `404 live_call_number_withheld`) | 33 |
 | `apps/console/src/__tests__/components/ListenBar.test.tsx` (the confirmation, every bar state, Esc, mutes, the volume with storage blocked, the toast, a second listen, the account switch and unmount (socket and context closed), phone width, "Open call" by origin (none for inbound), Stop beside Connecting and Reconnecting, Connection lost's Close, the flag or the permission going here, a re-grant refused `feature_disabled`, a full call's toast, a shutdown's close with no `ended`; the audio released on Stop, supersede and revoke and resumed by Listen and Try again; no Web Audio refused; focus; the ended reason in the live region; "The call ended before you joined."; the `ph-no-capture` boundary; access that could not be checked (4503) with Try again at both widths and Dismiss; a withheld caller in the bar) | 60 |
@@ -2259,8 +2259,8 @@ Files: `SoftphoneCallDetailPage.tsx`, `SoftphoneCallsPage.tsx`, `closeSoftphoneS
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/pages/SoftphoneSupervisor.test.tsx` | 18 |
-| `apps/console/src/__tests__/pages/HomePage.test.tsx` | 43 |
-| `apps/console/src/__tests__/pages/HomePage.floor.test.tsx` (Live floor's Phase 2: the cards ranked and filtered, Listen, Make available and its drawer read from each floor, the coming-soon controls, the fallback, Retry after a refusal, the server's clock, breaks over the limit off the badge and their Got it, a break crossing the limit on its card and in Needs you now together, Agents working, Will pay, who paused) | 25 |
+| `apps/console/src/__tests__/pages/HomePage.test.tsx` (and a card's stale Pause or Resume reading the board at once; the grouped calling-hours Got it held per campaign across the filter) | 47 |
+| `apps/console/src/__tests__/pages/HomePage.floor.test.tsx` (Live floor's Phase 2: the cards ranked and filtered, Listen, Make available and its drawer read from each floor, the coming-soon controls, the fallback, Retry after a refusal, the server's clock, breaks over the limit off the badge and their Got it, a break crossing the limit on its card and in Needs you now together, an equal read re-rendering no card, Agents working, Will pay, who paused) | 26 |
 | `apps/console/src/__tests__/pages/CallbacksPage.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` | 11 |
 | `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` | 8 |
@@ -2394,8 +2394,8 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/softphoneRingback.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyHome.test.ts` | 55 |
 | `apps/console/src/__tests__/utils/homeAcks.test.ts` | 8 |
-| `apps/console/src/__tests__/utils/liveFloor.test.ts` | 24 |
-| `apps/console/src/__tests__/utils/liveFloorAgents.test.ts` | 22 |
+| `apps/console/src/__tests__/utils/liveFloor.test.ts` | 27 |
+| `apps/console/src/__tests__/utils/liveFloorAgents.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 82 |
 
