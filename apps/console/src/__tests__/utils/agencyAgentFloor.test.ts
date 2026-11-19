@@ -11,7 +11,6 @@ import {
   CALL_OVERRUN_AHT_MULTIPLE,
   FORCE_AVAILABLE_CONFIRM,
   FORCE_AVAILABLE_REASON_MAX,
-  LONG_BREAK_SECONDS,
   WRAPUP_OVERRUN_GRACE_SECONDS,
   agentDisplayName,
   breakLimitMinutesOf,
@@ -32,6 +31,10 @@ import {
   type AgencyFloorRisk,
 } from '../../utils/agencyAgentFloor';
 import type { AgencyAgentLiveState, AgencySupervisorAgent } from '../../types/agency-campaign';
+import { AGENCY_BREAK_DEFAULT_LIMIT_MINUTES } from '@magick-agency/contracts/agency/breaks';
+
+/** The floor's one break rule, in seconds: rank 3 for a break with no limit of its own. */
+const LONG_BREAK_SECONDS = AGENCY_BREAK_DEFAULT_LIMIT_MINUTES * 60;
 
 /**
  * The agent floor's derivations.
