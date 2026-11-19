@@ -375,6 +375,24 @@ export function breakOverrunDetail(breakLabel: string | null, breakLimitMinutes:
 }
 
 /**
+ * A floor row's Needs you now campaign, named as the board names it (else as the floor read does),
+ * and its action: open that campaign's floor, or the campaigns list for a row on none.
+ */
+function floorRowCampaign(
+  row: Pick<AgencyFloorAgent, 'campaign_id' | 'campaign_name'>,
+  campaigns: readonly HomeCampaignRef[],
+): Pick<HomeAttentionItem, 'campaign' | 'action' | 'to'> {
+  const campaign = row.campaign_id
+    ? { id: row.campaign_id, name: campaigns.find((c) => c.id === row.campaign_id)?.name ?? row.campaign_name ?? 'Campaign' }
+    : null;
+  return {
+    campaign,
+    action: 'Open the floor',
+    to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
+  };
+}
+
+/**
  * One row per agent on a break past its limit (the reason's `break_limit_minutes`, else the floor's
  * 30 minutes, LF6; the campaign floor's `long_break` risk, so never the soft phone): "Priya M on Tea
  * for 22 min", "The limit for Tea is 15 min.", a warning ranked `break-overrun` (LF9, `homeRank`
@@ -404,25 +422,20 @@ export function breakOverrunItems(
     if (card.risk !== 'long_break' || card.elapsedMs === null) return [];
     const { row } = card;
     const minutes = Math.floor(card.elapsedMs / 60_000);
-    const campaign = row.campaign_id
-      ? { id: row.campaign_id, name: campaigns.find((c) => c.id === row.campaign_id)?.name ?? row.campaign_name ?? 'Campaign' }
-      : null;
     return [{
       id: `break-overrun:${row.agent_user_id}`,
       tone: 'warning' as const,
-      campaign,
       title: `${card.displayName} on ${row.break_label ?? 'a break'} for ${formatCount(minutes)} min`,
       detail: breakOverrunDetail(row.break_label, row.break_limit_minutes),
       at: null,
-      action: 'Open the floor',
-      to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
+      ...floorRowCampaign(row, campaigns),
       stale,
       kind: `break-overrun@${row.state_since ?? ''}`,
       count: Math.floor(card.elapsedMs / 1000),
       worseBy: BREAK_OVERRUN_STEP_MINUTES * 60,
       ackable: true,
       ...(row.session_id
-        ? { agent: { sessionId: row.session_id, agentUserId: row.agent_user_id, name: card.displayName, reminder: reminderText(row.break_label, row.break_limit_minutes) } }
+        ? { agent: { sessionId: row.session_id, name: card.displayName, reminder: reminderText(row.break_label, row.break_limit_minutes) } }
         : {}),
     }];
   });
@@ -459,24 +472,19 @@ export function helpItems(
   return cards.flatMap((card) => {
     const { row } = card;
     if (!row.help || row.session_id === null) return [];
-    const campaign = row.campaign_id
-      ? { id: row.campaign_id, name: campaigns.find((c) => c.id === row.campaign_id)?.name ?? row.campaign_name ?? 'Campaign' }
-      : null;
     const ago = helpAgo(row.help.raised_at, now);
     return [{
       id: `help:${row.agent_user_id}`,
       tone: 'danger' as const,
-      campaign,
       title: `${card.displayName} pressed Need help${ago ? ` ${ago}` : ''}`,
       detail: helpDetail(card),
       at: null,
-      action: 'Open the floor',
-      to: campaign ? campaignTabHref('agents', campaign.id) : '/agency/campaigns',
+      ...floorRowCampaign(row, campaigns),
       stale,
       kind: `${HELP_KIND_PREFIX}${row.help.raised_at}`,
       count: null,
       ackable: false,
-      agent: { sessionId: row.session_id, agentUserId: row.agent_user_id, name: card.displayName, call: liveCallOf(row) },
+      agent: { sessionId: row.session_id, name: card.displayName, call: liveCallOf(row) },
     }];
   });
 }

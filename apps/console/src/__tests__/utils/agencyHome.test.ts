@@ -339,7 +339,7 @@ describe('the list', () => {
 
   it('marks late callbacks whose owner is away, which a supervisor could give to free agents', () => {
     const [late] = homeAttention([read('c1', { allocation: allocationFacts({ callbacks_overdue: 4, callbacks_overdue_absent_owner: 3 }) })], NO_MISSED, fmt);
-    expect(late).toMatchObject({ id: 'callbacks-overdue:c1', handOff: { count: 3 } });
+    expect(late).toMatchObject({ id: 'callbacks-overdue:c1', handOff: true });
     const [owned] = homeAttention([read('c1', { allocation: allocationFacts({ callbacks_overdue: 4 }) })], NO_MISSED, fmt);
     expect(owned!.handOff).toBeUndefined();
   });
