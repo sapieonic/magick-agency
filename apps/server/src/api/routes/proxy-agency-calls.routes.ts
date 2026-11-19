@@ -219,9 +219,9 @@ const NON_ANALYTICS_CALL_FIELDS = [
   'provider', 'provider_call_id', 'status', 'outcome',
   'error_code', 'error_message', 'initiated_by', 'metadata',
   'recording_requested', 'recording_url', 'recording_duration_seconds',
-  // Kept when analytics is off: it says whether analysis RAN, not what it found.
-  // See `shapeDetailResponse`.
-  'analysis_profile_id', 'analysis_status',
+  // Kept when analytics is off: they say whether analysis RAN (or why it cannot run yet),
+  // not what it found. See `shapeDetailResponse`.
+  'analysis_profile_id', 'analysis_status', 'analysis_delay',
   'answered_at', 'ended_at', 'duration_seconds', 'talk_time_seconds',
   'created_at', 'updated_at',
 ] as const;

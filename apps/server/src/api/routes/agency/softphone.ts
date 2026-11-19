@@ -49,6 +49,7 @@ import { dncRepository } from '../../../dnc/dnc.repository.js';
 import { callingWindowState } from '../../../agency/calling-hours.js';
 import { defaultPhoneCountryCode } from '../../../utils/phone-normalizer.js';
 import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.js';
+import { analysisDelayForRecord } from '../helpers/analysis-delay.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
@@ -480,7 +481,9 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const media = row.webrtc_call_id
       ? await webrtcCallRepository.findByIdScoped(row.webrtc_call_id, actor.tenantId, actor.accountId, 'agency')
       : null;
-    const shownMedia = actor.supervise && media ? formatWebRtcCallResponse(media, softphoneRecordingPath(row.id)) : null;
+    const shownMedia = actor.supervise && media
+      ? formatWebRtcCallResponse(media, softphoneRecordingPath(row.id), await analysisDelayForRecord(media))
+      : null;
     // The overridden entry as the refusal showed it, so the detail names its reach,
     // reason and date rather than an id. Tenant-scoped read; enrichment, so a failed
     // read (or an entry since removed) is NULL, never a 500.

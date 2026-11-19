@@ -20,6 +20,39 @@ import type {
   DialerTranscriptEntry,
   TranscriptMeta,
 } from '../models/agency-call.model.js';
+import type { DialerAnalysisDelay } from '@magick-agency/contracts/api/agency/webrtc-call';
+
+/**
+ * The `error_code` {@link DialerAnalysisJobRepository.requeueRateLimited} writes: the AI
+ * vendor refused the request (a rate limit, an exhausted quota, a billing stop). One
+ * constant, so the write and {@link analysisDelaySql}'s read cannot drift apart.
+ */
+export const RATE_LIMITED_ERROR_CODE = 'RATE_LIMITED';
+
+/**
+ * True while the AI vendor is refusing: some queued job's last run ended in a vendor
+ * refusal ({@link RATE_LIMITED_ERROR_CODE}). The vendor and its keys are server-wide and
+ * one breaker pauses every claim while it refuses (D10), so no queued job runs until a
+ * probe gets through, including one never yet tried. It turns false once those jobs are
+ * claimed again (a claim moves them out of `queued`) or a later run of each overwrites the
+ * code. Uncorrelated, so Postgres evaluates it once per statement (an InitPlan), over the
+ * queued rows of `idx_dialer_analysis_jobs_runnable`.
+ */
+export const VENDOR_REFUSING_SQL = `EXISTS (
+  SELECT 1 FROM dialer_analysis_jobs vendor_refused
+  WHERE vendor_refused.status = 'queued' AND vendor_refused.error_code = '${RATE_LIMITED_ERROR_CODE}')`;
+
+/**
+ * Why the summary of the job aliased `job` is waiting rather than being written, as the
+ * wire's `analysis_delay` (`DialerAnalysisDelay`): `'vendor_unavailable'` when the job is
+ * queued while the vendor refuses ({@link VENDOR_REFUSING_SQL}), else NULL (NULL too when
+ * there is no job: a LEFT JOIN's NULL status). Never the vendor's words: those stay in
+ * `error_message` and the logs. Shared by {@link DialerAnalysisJobRepository.analysisDelayFor}
+ * and the soft-phone list read, so every surface says the same.
+ */
+export function analysisDelaySql(job: string): string {
+  return `CASE WHEN ${job}.status = 'queued' AND ${VENDOR_REFUSING_SQL} THEN 'vendor_unavailable' END`;
+}
 
 /**
  * Durable DB primitives for the dialer-analysis job. The runner/worker built on
@@ -111,6 +144,20 @@ export class DialerAnalysisJobRepository {
       [callId],
     );
     return result.rows[0] ?? null;
+  }
+
+  /**
+   * Why this call's summary is held up ({@link analysisDelaySql}), or null when it is not
+   * (no job, a job running or finished, or a vendor that is answering). The call detail
+   * reads it for a call whose `analysis_status` is `pending`.
+   */
+  async analysisDelayFor(callId: string): Promise<DialerAnalysisDelay | null> {
+    const pool = getPool();
+    const result = await pool.query<{ delay: DialerAnalysisDelay | null }>(
+      `SELECT ${analysisDelaySql('j')} AS delay FROM dialer_analysis_jobs j WHERE j.call_id = $1`,
+      [callId],
+    );
+    return result.rows[0]?.delay ?? null;
   }
 
   /** Support/internal listing ("why is there no summary"). Scoped when tenant given. */
@@ -509,7 +556,7 @@ export class DialerAnalysisJobRepository {
              attempts = GREATEST(attempts - 1, 0),
              attempts_total = GREATEST(attempts_total - 1, 0),
              next_attempt_at = now() + ($3::int * INTERVAL '1 second'),
-             error_code = 'RATE_LIMITED',
+             error_code = '${RATE_LIMITED_ERROR_CODE}',
              error_message = $4
          WHERE id = $1 AND claim_generation = $2 AND status IN ('transcribing','analyzing')
          RETURNING call_id

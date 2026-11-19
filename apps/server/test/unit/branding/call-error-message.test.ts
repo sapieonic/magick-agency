@@ -41,7 +41,7 @@ const row = (error_code: string | null, error_message: string | null) => ({
 
 describe('a failed call`s error, as a tenant sees it', () => {
   it.each(RAW)('%s: a vendor-free British sentence, never the raw text', (code, raw) => {
-    const shown = formatWebRtcCallResponse(row(code, raw), '/rec').error_message;
+    const shown = formatWebRtcCallResponse(row(code, raw), '/rec', null).error_message;
     expect(shown).toBeTruthy();
     expect(shown).not.toBe(raw);
     expect(shown).not.toMatch(VENDOR);
@@ -49,13 +49,13 @@ describe('a failed call`s error, as a tenant sees it', () => {
     // PL15: a carrier account is the service's to fix, so never "ask your administrator".
     expect(shown).not.toMatch(/administrator/i);
     // The code itself is a wire identifier and still goes out as is.
-    expect(formatWebRtcCallResponse(row(code, raw), '/rec').error_code).toBe(code);
+    expect(formatWebRtcCallResponse(row(code, raw), '/rec', null).error_code).toBe(code);
   });
 
   it('an unknown code, or a message with no code, is the generic sentence; no error at all is null', () => {
     expect(tenantCallErrorMessage('SOMETHING_NEW', 'raw')).toBe(UNKNOWN_CALL_ERROR_MESSAGE);
     expect(tenantCallErrorMessage(null, 'Plivo hangup error 503')).toBe(UNKNOWN_CALL_ERROR_MESSAGE);
     expect(tenantCallErrorMessage(null, null)).toBeNull();
-    expect(formatWebRtcCallResponse(row(null, null), '/rec').error_message).toBeNull();
+    expect(formatWebRtcCallResponse(row(null, null), '/rec', null).error_message).toBeNull();
   });
 });

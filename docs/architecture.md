@@ -809,6 +809,14 @@ every account the caller belongs to (CH2) where every internal handler is single
   `source_url`), the service uploads them once and deletes the upload after, and heartbeats the
   job's claim before every request so a slow run is not recovered from under it; profiles in
   `call_analysis_profiles`, served at `/proxy/call-analysis-profiles`.
+- **Why a summary is waiting** (decision AD1): a call's `analysis_status` stays `pending` for as
+  long as its job is `queued`, which includes every day the AI vendor refuses (a rate-limited
+  requeue uses no attempt). The call reads (the attempt detail, the soft-phone detail's media leg
+  and list rows) add `analysis_delay`: `vendor_unavailable` while the job is queued and some queued
+  job's last run was refused (`error_code = 'RATE_LIMITED'`, written by `requeueRateLimited`;
+  `analysisDelaySql` in `dialer-analysis-job.repository.ts`), else null. The console then says the
+  summary is delayed until the AI service is back, instead of that it is being written. Only the
+  category leaves the server; the vendor's words stay in `error_message` and the logs.
 - **Playback**: `/api/v1/webrtc-recordings/:id` with an HMAC-signed query (`utils/recording-url.ts`,
   `RECORDING_URL_SIGNING_SECRET`), fetched through the same per-carrier access; a refused access
   answers 404 `recording_unavailable`.

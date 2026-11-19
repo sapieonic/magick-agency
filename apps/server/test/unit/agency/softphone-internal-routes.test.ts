@@ -53,6 +53,8 @@ vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () =>
 vi.mock('@magick-agency/db/repositories/call-analysis-profile.repository', () => ({ callAnalysisProfileRepository: repos.profiles }));
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({ webrtcCallRepository: repos.calls }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: repos.accounts }));
+const { analysisJobs } = vi.hoisted(() => ({ analysisJobs: { analysisDelayFor: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/dialer-analysis-job.repository', () => ({ dialerAnalysisJobRepository: analysisJobs }));
 const { tenants } = vi.hoisted(() => ({ tenants: { findById: vi.fn() } }));
 vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({ tenantRepository: tenants }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
@@ -316,6 +318,21 @@ describe('GET /softphone/calls/:id and its recording', () => {
     expect(available.call_availability).toBe('available');
     expect(available.media.recording_url).toBe(`/api/v1/agency/softphone/calls/${CALL}/recording`);
     expect(repos.calls.findByIdScoped).toHaveBeenCalledWith(LEG, TENANT, ACCOUNT, 'agency');
+  });
+
+  it('says why the media leg\'s pending summary is held up, read from the analysis queue only while pending', async () => {
+    repos.manual.findById.mockResolvedValue(row());
+    repos.calls.findByIdScoped.mockResolvedValue({ id: LEG, recording_url: 'https://rec', analysis_status: 'pending' });
+    analysisJobs.analysisDelayFor.mockResolvedValue('vendor_unavailable');
+    const delayed = (await get(`/softphone/calls/${CALL}?actor_user_id=${AGENT}&supervise=true`)).json();
+    expect(delayed.media).toMatchObject({ analysis_status: 'pending', analysis_delay: 'vendor_unavailable' });
+    expect(analysisJobs.analysisDelayFor).toHaveBeenCalledWith(LEG);
+
+    analysisJobs.analysisDelayFor.mockClear();
+    repos.calls.findByIdScoped.mockResolvedValue({ id: LEG, recording_url: 'https://rec', analysis_status: 'completed' });
+    const done = (await get(`/softphone/calls/${CALL}?actor_user_id=${AGENT}&supervise=true`)).json();
+    expect(done.media.analysis_delay).toBeNull();
+    expect(analysisJobs.analysisDelayFor).not.toHaveBeenCalled();
   });
 
   it('an agent reading their own call gets the record, never the media leg (recording, transcript, analysis)', async () => {

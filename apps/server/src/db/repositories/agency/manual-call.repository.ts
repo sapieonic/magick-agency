@@ -22,6 +22,8 @@
  */
 import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
+import { analysisDelaySql } from '@magick-agency/db/repositories/dialer-analysis-job.repository';
+import type { DialerAnalysisDelay } from '@magick-agency/contracts/api/agency/webrtc-call';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import {
   SOFTPHONE_OUTCOME_LAPSE_MS,
@@ -124,10 +126,14 @@ export interface AgencyManualCallListFilters {
 
 /**
  * A row of the two list reads: the wire row plus its media leg's `analysis_status`
- * (NULL when there is no leg, it was purged, or analysis never ran). The console's
+ * (NULL when there is no leg, it was purged, or analysis never ran) and, beside a
+ * `pending` one, `analysis_delay` (why it is held up: `analysisDelaySql`). The console's
  * `AgencyManualCallListRow` (`packages/contracts/src/api/agency/softphone.ts`).
  */
-export type AgencyManualCallListRow = AgencyManualCall & { analysis_status: string | null };
+export type AgencyManualCallListRow = AgencyManualCall & {
+  analysis_status: string | null;
+  analysis_delay: DialerAnalysisDelay | null;
+};
 
 /** Why {@link AgencyManualCallRepository.recordDisposition} refused. */
 export type AgencyManualCallDispositionRefusal =
@@ -712,14 +718,20 @@ export class AgencyManualCallRepository {
     // The media leg's summary status rides on each row (the list's Summary column): a
     // LEFT JOIN on the row's own `webrtc_call_id`, bound to the same tenant and account,
     // so a purged leg (no FK, independent retention) reads as NULL and never drops the row.
+    // Its analysis job (unique per call) says why a `pending` one is held up, as the call
+    // detail does (`analysisDelaySql`, one definition for both).
     const { rows } = await getPool().query<
-      AgencyManualCallJoinedRow & { cursor_at: string; analysis_status: string | null }
+      AgencyManualCallJoinedRow & {
+        cursor_at: string; analysis_status: string | null; analysis_delay: DialerAnalysisDelay | null;
+      }
     >(
       `SELECT ${WIRE_SELECT_SQL}, ac.analysis_status AS analysis_status,
+              CASE WHEN ac.analysis_status = 'pending' THEN ${analysisDelaySql('aj')} END AS analysis_delay,
               ${keysetAtSql('m.created_at')} AS cursor_at
          FROM ${WIRE_FROM_SQL}
          LEFT JOIN agency_calls ac
            ON ac.id = m.webrtc_call_id AND ac.tenant_id = m.tenant_id AND ac.account_id = m.account_id
+         LEFT JOIN dialer_analysis_jobs aj ON aj.call_id = ac.id
         WHERE ${conditions.join(' AND ')}
         ORDER BY m.created_at DESC, m.id DESC
         LIMIT ${bind.add(input.limit + 1)}`,
@@ -728,6 +740,7 @@ export class AgencyManualCallRepository {
     return toKeysetPage(rows, input.limit, (row) => ({
       ...projectManualCallRow(row),
       analysis_status: row.analysis_status ?? null,
+      analysis_delay: row.analysis_delay ?? null,
     }));
   }
 }

@@ -49,7 +49,7 @@ import { BOOTSTRAP, CAMPAIGN, manualCall } from '../helpers/softphone';
 import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 import type { WebRtcCallRecord } from '../../types/webrtc-call';
 import type { AgencyManualCallListRow } from '../../types/softphone';
-import { ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
+import { ANALYSIS_DELAY_MESSAGES, ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
 
 /**
  * The supervisor's soft-phone surfaces (`docs/softphone.md` §7): the account
@@ -211,6 +211,23 @@ describe('Soft-phone calls (the account list)', () => {
     expect(status('mc-free').textContent).toBe(ANALYSIS_STATUS_LABELS.pending);
     expect(status('mc-free').getAttribute('title')).toBe(ANALYSIS_STATUS_MESSAGES.pending);
     expect(status('mc-wait').textContent).toBe('—');
+  });
+
+  it('says a summary held up by the AI service is delayed, beside one that is simply pending', async () => {
+    mocks.listManualCalls.mockResolvedValue({
+      rows: [
+        { ...TAGGED_ROW, analysis_status: 'pending', analysis_delay: 'vendor_unavailable' },
+        { ...UNTAGGED, analysis_status: 'pending', analysis_delay: null },
+      ],
+      next_cursor: null,
+      limit: 50,
+    });
+    await renderList();
+    const status = (id: string) => within(screen.getByTestId(`softphone-row-${id}`)).getByTestId('summary-status');
+    expect(status('mc-tag').textContent).toBe('Delayed');
+    expect(status('mc-tag').getAttribute('title')).toBe(ANALYSIS_DELAY_MESSAGES.vendor_unavailable);
+    expect(status('mc-free').textContent).toBe(ANALYSIS_STATUS_LABELS.pending);
+    expect(status('mc-free').getAttribute('title')).toBe(ANALYSIS_STATUS_MESSAGES.pending);
   });
 
   it('leaves the Summary column out when the account has analysis off', async () => {

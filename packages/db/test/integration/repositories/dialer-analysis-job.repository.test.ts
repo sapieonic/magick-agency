@@ -8,8 +8,9 @@ import { insertWebrtcCall } from '../setup/factories.js';
  * is RECORDED and that the job table has no settlement column; the final case
  * covers queue depth and that a completed job is not reclaimed. Also covered end
  * to end: every mirrored `analysis_status` transition, `recoverStale` failing at
- * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited`, `list` and
- * `msUntilNextRunnable` (the worker's next-due timer).
+ * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited`, `list`,
+ * `msUntilNextRunnable` (the worker's next-due timer) and `analysisDelayFor` (why a
+ * pending summary is held up).
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: repo } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
@@ -191,6 +192,55 @@ describe('dialerAnalysisJobRepository (integration)', () => {
       status: 'queued', attempts: 0, error_code: 'RATE_LIMITED', error_message: reason.slice(0, 2000),
     });
     expect(await callStatus(b.id)).toBe('pending');
+  });
+
+  it('analysisDelayFor: every queued job is vendor_unavailable while a queued job was refused, and none otherwise', async () => {
+    const delay = (call: { id: string }) => repo.analysisDelayFor(call.id);
+    expect(await delay({ id: '99999999-9999-4999-8999-999999999999' })).toBeNull();
+
+    const a = await callWithRecording();
+    const b = await callWithRecording();
+    const c = await callWithRecording();
+    const aJob = await enqueue(a);
+    await enqueue(b);
+    const cJob = await enqueue(c);
+    // An ordinary queue: nothing held up.
+    for (const call of [a, b, c]) expect(await delay(call)).toBeNull();
+
+    // A's run is refused by the vendor and requeued through the runner's own write.
+    const [aClaim] = await repo.claimRunnable(1);
+    expect(aClaim!.id).toBe(aJob.id);
+    expect(await repo.requeueRateLimited(aJob.id, aClaim!.claim_generation, 60, 'rate-limited (transcribe, gemini): credits depleted')).toBe(true);
+    expect(await callStatus(a.id)).toBe('pending');
+    // B is claimed (running now), C has never been tried: the breaker holds it all the same.
+    const [bClaim] = await repo.claimRunnable(1);
+    expect(bClaim!.call_id).toBe(b.id);
+    expect(await delay(a)).toBe('vendor_unavailable');
+    expect(await delay(b)).toBeNull();
+    expect(await delay(c)).toBe('vendor_unavailable');
+
+    // Another tenant's call waits behind the same server-wide vendor.
+    const other = await callWithRecording({
+      tenant_id: '88888888-8888-4888-8888-888888888888', account_id: '77777777-7777-4777-8777-777777777777',
+    });
+    await enqueue(other);
+    expect(await delay(other)).toBe('vendor_unavailable');
+
+    // A queued job requeued for an ordinary failure is no refusal.
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET error_code = 'TRANSCRIPTION_FAILED' WHERE id = $1`, [aJob.id]);
+    expect(await delay(c)).toBeNull();
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET error_code = 'RATE_LIMITED' WHERE id = $1`, [aJob.id]);
+    expect(await delay(c)).toBe('vendor_unavailable');
+
+    // The vendor answers again: the refused job is claimed for its next run, and nothing is held.
+    // (The never-tried jobs, NULL `next_attempt_at`, would be claimed first: set them later.)
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() + interval '1 hour' WHERE status = 'queued'`);
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 minute' WHERE id = $1`, [aJob.id]);
+    const [aAgain] = await repo.claimRunnable(1);
+    expect(aAgain!.id).toBe(aJob.id);
+    expect(await delay(a)).toBeNull();
+    expect(await delay(c)).toBeNull();
+    expect((await repo.findById(cJob.id))!.status).toBe('queued');
   });
 
   it('exposes queue depth, lookups and the support listing', async () => {
