@@ -2389,6 +2389,18 @@ their own branch. Test counts below.
 
 After the console's cleanup refactors (2026-11-19: one polled daily read for Today so far and the promises, `useNow` and one 5 s risk clock ranking the floor once for the cards and the break rows, derived rank and badge, one late-callbacks figure, Got it split once): `apps/console` 7652 (411 files), `pnpm lint` clean. After the PR review's fixes (2026-11-19: one polling core for the floor and the daily reads, Retry overtaking a read in flight, a stale card's Pause or Resume re-reading the board, the grouped calling-hours Got it held per campaign, Listen taking only the fields it reads, the agent cards' memo, the stop time stamped on the campaign row by `0051_campaign_stopping_at.sql`): `apps/console` 7666 (412 files); `apps/server` unit 10501 passed + 1 expected fail (530 files), `INTEGRATION_LANE=rest` 3046 passed + 9 expected fail + 2 skipped (277 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files); `packages/db` unit 457 (28 files), integration 835 (93 files); `packages/contracts` 551; `agency_wire` `dart test` 688, run on Dart 3.14.1 outside the Flutter workspace (the package copied with its `resolution: workspace` line removed, against this tree's fixtures); `pnpm lint` clean.
 
+**Live floor Phase 3, Need help and supervisor messages (server), 2026-11-19.** Branch
+`claude-mgkvc/loving-wozniak-s4am09` (LF4, LF5, LF11–LF19; the 0052 migration), every suite run one
+after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root:
+`pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10,
+`pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps:
+unchanged, the floor assist frames being staged, LF16). Unit: `apps/server` 10548 passed + 1
+expected fail (532 files), `packages/contracts` 555 (16 files), `packages/db` 457 (28 files).
+Integration: `packages/db` 842 (94 files); `apps/server` `INTEGRATION_LANE=rest` 3076 passed + 9
+expected fail + 2 skipped (279 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 passed
+(8 files). `agency_wire` (`dart test`, Dart 3.13.5) 688 passed. Every guard test added was
+mutation-checked (16 mutations, each red, restored with `git checkout`).
+
 **The recording-host re-queue script removed, 2026-11-18.** Branch
 `claude-mgkvc/wizardly-dirac-gxwzam`, on the tree of this entry's commit, every suite run one after
 another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root:
