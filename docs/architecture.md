@@ -775,7 +775,21 @@ every account the caller belongs to (CH2) where every internal handler is single
   flight, generation-matched.
 - **Runner** (`core/dialer-analysis-runner.ts`): load the call, take config from the job's profile
   snapshot, resume an existing transcript or fetch and transcribe the recording, persist, run the
-  LLM analysis, complete in one transaction.
+  LLM analysis, complete in one transaction. A transcript covering under 80 % of the call's
+  recorded duration is a truncated fetch (a carrier serving the file before it is finished): the
+  runner re-fetches it in the same attempt (`DIALER_ANALYSIS_RECORDING_FETCH_RETRIES`, default 2,
+  delay doubling from `DIALER_ANALYSIS_RECORDING_FETCH_RETRY_DELAY_SECONDS`), then requeues it
+  `AUDIO_TOO_SHORT`, an attempt used. A transcription is paid for, so audio is transcribed once:
+  a fetch whose bytes (length and SHA-256) match audio already found truncated, in this attempt or
+  the previous one, is not transcribed and counts as still truncated; only different audio is
+  transcribed. The previous attempt's fingerprint travels in the requeued job's `error_message`
+  (`[recording sha256=… bytes=… covered=…s]`, read back only under `error_code = AUDIO_TOO_SHORT`,
+  so a rate-limited requeue or a manual retry transcribes afresh). The job keeps all its attempts:
+  a later attempt of an unchanged file costs a fetch, not a transcription, and still catches a
+  carrier that finishes late. Loki (component `dialer-analysis-runner`): "Skipped transcribing a
+  dialer recording identical to audio already found truncated" (`transcriptionSkipped`,
+  `sincePreviousAttempt`) per skip; "Dialer recording still truncated after in-attempt retries"
+  carries the attempt's `transcriptions` and `recordingUnchanged`.
 - **AI client layer** (`ai/`): the one place AI requests go out. `createAiClient` builds an
   `AiClient` for `openai_compatible` (OpenAI or any Chat Completions endpoint), `azure_openai` or
   `gemini` (native SDK, Files API); each does one request (the OpenAI SDK's own retries are off)

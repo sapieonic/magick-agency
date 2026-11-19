@@ -552,7 +552,7 @@ Files: `analysis.service.ts`, `bridge-analysis-hooks.ts`, `dimension-presets.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/analysis/pipeline.test.ts` | ~12 |
+| `apps/server/test/integration/analysis/pipeline.test.ts` (with an unchanged truncated recording transcribed once over every attempt) | ~13 |
 | `apps/server/test/integration/analysis/worker-pool.test.ts` | ~2 |
 | `apps/server/test/unit/analysis/analysis.service.test.ts` | 22 |
 | `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 17 |
@@ -984,7 +984,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`) | 49 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`, and a fetch identical to audio already found truncated never transcribed again) | 55 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
 | `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 26 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |

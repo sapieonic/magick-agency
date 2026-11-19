@@ -12,6 +12,8 @@
  *  - role mapping agent→assistant, customer→user, unknown→user.
  *  - snapshot used, never a live profile lookup, even if the profile was deactivated.
  *  - stale claim_generation write rejected: persist fence false ⇒ abandon.
+ *  - truncated recordings: re-fetched in-attempt; a fetch identical to audio already
+ *    found truncated (in this attempt or the previous one) is never transcribed again.
  *  - the runner NEVER throws.
  *
  * Mocking: vi.hoisted + vi.mock with ESM .js imports.
@@ -94,7 +96,15 @@ vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => 
 const { mockAuditLogger } = vi.hoisted(() => ({ mockAuditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: mockAuditLogger }));
 
-import { DialerAnalysisRunner, rateLimitCauseOf, toAnalysisEntries, type DialerAnalysisConfig } from '../../../src/core/dialer-analysis-runner.js';
+import { createHash } from 'node:crypto';
+import {
+  DialerAnalysisRunner,
+  formatTruncatedAudio,
+  rateLimitCauseOf,
+  toAnalysisEntries,
+  truncatedAudioOf,
+  type DialerAnalysisConfig,
+} from '../../../src/core/dialer-analysis-runner.js';
 import { TranscriptionError } from '../../../src/transcription/types.js';
 import { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import { AiError } from '../../../src/ai/index.js';
@@ -225,8 +235,25 @@ function makeAnalysisService(result = analysisResult()) {
   return { analyze: vi.fn().mockResolvedValue(result) };
 }
 
+/** Successive fetches return these bodies in turn; the last one repeats. */
+function fetchReturns(...bodies: string[]): void {
+  let n = 0;
+  mockFetchRecordingBytes.mockImplementation(async () => ({
+    bytes: Buffer.from(bodies[Math.min(n++, bodies.length - 1)]!),
+    mimeType: 'audio/wav',
+  }));
+}
+
+/** The fingerprint the runner keeps of a fetched body. */
+function fingerprint(body: string): { bytes: number; sha256: string } {
+  const bytes = Buffer.from(body);
+  return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFetchRecordingBytes.mockReset();
+  mockFetchRecordingBytes.mockResolvedValue({ bytes: Buffer.from('audio'), mimeType: 'audio/wav' });
   mockWebrtcRepo.findById.mockResolvedValue(makeCall());
   mockJobRepo.markSkipped.mockResolvedValue(true);
   mockJobRepo.heartbeat.mockResolvedValue(true);
@@ -554,7 +581,8 @@ describe('DialerAnalysisRunner.run', () => {
 
   it('re-fetches a truncated recording in-attempt and succeeds on the retry', async () => {
     const cfg = { ...CFG, recordingFetchRetries: 2, recordingFetchRetryDelaySeconds: 0 } as DialerAnalysisConfig;
-    // First fetch is truncated (40s of 100s), second returns the full recording.
+    // First fetch is truncated (40s of 100s), second returns the full (longer) recording.
+    fetchReturns('short audio', 'the whole recording');
     const transcribe = vi.fn()
       .mockResolvedValueOnce({
         entries: [{ role: 'agent', content: 'hi', start_seconds: 0, end_seconds: 40 }],
@@ -573,6 +601,8 @@ describe('DialerAnalysisRunner.run', () => {
     await runner.run(makeJob({ attempts: 1 }));
 
     expect(transcribe).toHaveBeenCalledTimes(2);
+    // The second transcription was of the re-fetched (different) audio.
+    expect((transcribe.mock.calls[1]![0] as { audio: Buffer }).audio.toString()).toBe('the whole recording');
     // The retry is transparent: the job completes normally and never burns an attempt.
     expect(mockJobRepo.persistTranscript).toHaveBeenCalledTimes(1);
     expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledTimes(1);
@@ -582,7 +612,9 @@ describe('DialerAnalysisRunner.run', () => {
 
   it('gives up as retryable AUDIO_TOO_SHORT once the in-attempt re-fetches are exhausted', async () => {
     const cfg = { ...CFG, recordingFetchRetries: 2, recordingFetchRetryDelaySeconds: 0 } as DialerAnalysisConfig;
-    // Always truncated — the carrier never finalizes within the retry window.
+    // Always truncated — the carrier is still writing (each fetch differs) but never
+    // finishes within the retry window, so every fetch is new audio and transcribed.
+    fetchReturns('audio 1', 'audio 12', 'audio 123');
     const transcribe = vi.fn().mockResolvedValue({
       entries: [{ role: 'agent', content: 'hi', start_seconds: 0, end_seconds: 40 }],
       detectedLanguage: 'English', durationSeconds: 40, model: 'gemini-2.5-flash', diarizationFailed: false,
@@ -597,8 +629,120 @@ describe('DialerAnalysisRunner.run', () => {
 
     expect(transcribe).toHaveBeenCalledTimes(3); // initial + 2 retries
     expect(mockJobRepo.persistTranscript).not.toHaveBeenCalled();
-    // Still retryable — the job backs off and tries again later, not terminal.
+    // Still retryable — the job backs off and tries again later, not terminal. The
+    // message carries the last audio transcribed, for the next attempt.
     expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
+    expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] }))
+      .toEqual({ ...fingerprint('audio 123'), coveredSeconds: 40 });
+  });
+
+  // ── identical audio is never transcribed twice ─────────────────────────────
+  // A transcription is paid for. A re-fetch that returns the bytes already found
+  // truncated (in this attempt or the job's previous one) is not transcribed again.
+
+  describe('a re-fetch that returns audio already found truncated', () => {
+    const SHORT = {
+      entries: [{ role: 'agent', content: 'hi', start_seconds: 0, end_seconds: 40 }],
+      detectedLanguage: 'English', durationSeconds: 40, model: 'gemini-2.5-flash', diarizationFailed: false,
+    };
+    const FULL = {
+      entries: [{ role: 'agent', content: 'full call', start_seconds: 0, end_seconds: 98 }],
+      detectedLanguage: 'English', durationSeconds: 98, model: 'gemini-2.5-flash', diarizationFailed: false,
+    };
+    const retries = (n: number) => ({ ...CFG, recordingFetchRetries: n, recordingFetchRetryDelaySeconds: 0 } as DialerAnalysisConfig);
+    const runner = (transcribe: ReturnType<typeof vi.fn>, cfg: DialerAnalysisConfig) => new DialerAnalysisRunner({
+      transcriber: makeTranscriber({ transcribe }) as never,
+      analysisService: makeAnalysisService() as never,
+      config: cfg,
+    });
+    /** The job as its previous attempt left it: requeued AUDIO_TOO_SHORT with that audio's fingerprint. */
+    const requeuedShort = (body: string, coveredSeconds = 40) => makeJob({
+      attempts: 2,
+      error_code: 'AUDIO_TOO_SHORT',
+      error_message: `transcribed 40s of an expected 100s recording after 2 re-fetch(es) (likely a truncated fetch) ${formatTruncatedAudio({ ...fingerprint(body), coveredSeconds })}`,
+    });
+
+    it('is not transcribed again: one transcription, every re-fetch skipped, still a retryable AUDIO_TOO_SHORT', async () => {
+      // The default fetch returns the same bytes every time: the file is not changing.
+      const transcribe = vi.fn().mockResolvedValue(SHORT);
+
+      expect(await runner(transcribe, retries(2)).run(makeJob({ attempts: 1 }))).toBe('retry');
+
+      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3); // initial + 2 re-fetches
+      expect(transcribe).toHaveBeenCalledTimes(1);
+      expect(mockJobRepo.persistTranscript).not.toHaveBeenCalled();
+      expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] }))
+        .toEqual({ ...fingerprint('audio'), coveredSeconds: 40 });
+      expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+    });
+
+    it('a re-fetch of longer audio after an identical one is still transcribed, and succeeds', async () => {
+      fetchReturns('short audio', 'short audio', 'the whole recording');
+      const transcribe = vi.fn().mockResolvedValueOnce(SHORT).mockResolvedValueOnce(FULL);
+
+      expect(await runner(transcribe, retries(2)).run(makeJob({ attempts: 1 }))).toBe('completed');
+
+      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3);
+      expect(transcribe).toHaveBeenCalledTimes(2); // the identical middle fetch was skipped
+      expect((transcribe.mock.calls[1]![0] as { audio: Buffer }).audio.toString()).toBe('the whole recording');
+      expect(mockJobRepo.persistTranscript).toHaveBeenCalledOnce();
+      expect(mockJobRepo.persistTranscript.mock.calls[0]![3].conversation_log).toEqual(FULL.entries);
+      expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
+      expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    });
+
+    it("the next attempt does not transcribe the previous attempt's audio either", async () => {
+      const transcribe = vi.fn().mockResolvedValue(FULL);
+
+      // No in-attempt re-fetch: one fetch, the same bytes the previous attempt found short.
+      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio'))).toBe('retry');
+      expect(transcribe).not.toHaveBeenCalled();
+      // Requeued as before (an attempt used; rate limits are not involved), the fingerprint kept.
+      expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] }))
+        .toEqual({ ...fingerprint('audio'), coveredSeconds: 40 });
+
+      // With re-fetches: every one is skipped while the file stays the same.
+      vi.clearAllMocks();
+      expect(await runner(transcribe, retries(2)).run(requeuedShort('audio'))).toBe('retry');
+      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3);
+      expect(transcribe).not.toHaveBeenCalled();
+
+      // The last attempt fails the job as before, still without a transcription.
+      vi.clearAllMocks();
+      expect(await runner(transcribe, retries(2)).run({ ...requeuedShort('audio'), attempts: 3 })).toBe('failed');
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(mockJobRepo.markFailed).toHaveBeenCalledWith('job-1', 'call-1', 5, 'AUDIO_TOO_SHORT', expect.any(String));
+    });
+
+    it('the next attempt transcribes audio that changed since, and completes', async () => {
+      fetchReturns('the whole recording');
+      const transcribe = vi.fn().mockResolvedValue(FULL);
+
+      expect(await runner(transcribe, retries(2)).run(requeuedShort('short audio'))).toBe('completed');
+
+      expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
+      expect(transcribe).toHaveBeenCalledOnce();
+      expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
+    });
+
+    it("the previous attempt's audio is transcribed again when the call's duration no longer finds it short", async () => {
+      // 40 s covered: short of 100 s, not of 45 s (the carrier corrected the duration).
+      mockWebrtcRepo.findById.mockResolvedValue(makeCall({ recording_duration_seconds: 45 }));
+      const transcribe = vi.fn().mockResolvedValue(SHORT);
+
+      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio'))).toBe('completed');
+      expect(transcribe).toHaveBeenCalledOnce();
+    });
+
+    it('a fingerprint under any other error code is not read: a rate limit or a manual retry since then transcribes', async () => {
+      const transcribe = vi.fn().mockResolvedValue(FULL);
+      const job = { ...requeuedShort('audio'), error_code: 'RATE_LIMITED' };
+
+      expect(await runner(transcribe, retries(0)).run(job)).toBe('completed');
+      expect(transcribe).toHaveBeenCalledOnce();
+    });
   });
 
   it('does not re-fetch an empty transcript (silent recording is not a truncation)', async () => {
@@ -812,9 +956,11 @@ describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', (
     const budget = new RecordingByteBudget(1000 * 1024 * 1024);
     const lease = budget.tryAcquire(cfg.maxRecordingBytes * 2)!;
     const atFetch: number[] = [];
+    // The re-fetch returns the longer, finished file.
+    const bodies = ['audio', 'audio, all of it'];
     mockFetchRecordingBytes.mockImplementation(async () => {
       atFetch.push(lease.bytes);
-      return { bytes: Buffer.from('audio'), mimeType: 'audio/wav' };
+      return { bytes: Buffer.from(bodies[atFetch.length - 1]!), mimeType: 'audio/wav' };
     });
     const transcribe = vi.fn()
       .mockResolvedValueOnce({ entries: [{ role: 'agent', content: 'hi', start_seconds: 0, end_seconds: 40 }], detectedLanguage: 'en', durationSeconds: 40, model: 'm', diarizationFailed: false })
