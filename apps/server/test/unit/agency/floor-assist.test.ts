@@ -262,6 +262,18 @@ describe('sendMessage', () => {
     });
     expect(JSON.stringify(deps.audits)).not.toContain('3-month');
     expect(metrics.message).toHaveBeenCalledWith('delivered');
+    // The answer names the sender the message already carried: no second read of the name.
+    expect(deps.names).not.toHaveBeenCalled();
+  });
+
+  it('the delivered mark and the help answer run together: neither waits for the other', async () => {
+    // FALSIFIED: run one after the other, the mark never settles (it waits for the answer) and this times out.
+    let answering!: () => void;
+    const answerStarted = new Promise<void>((resolve) => { answering = resolve; });
+    repo['answer']!.mockImplementation(async () => { answering(); return { ...ended(), expired: false, answered_at: new Date(RAISED.getTime() + 1_000) }; });
+    repo['markDelivered']!.mockImplementation(async () => { await answerStarted; });
+    expect(await send()).toMatchObject({ ok: true });
+    expect(events().map((f) => f['event'])).toEqual(['supervisor_message', 'help_answered', 'help_cleared']);
   });
 
   it('the socket refused the frame after the check: the row stays undelivered, audited so, agent_not_live, no help answered', async () => {

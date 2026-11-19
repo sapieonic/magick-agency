@@ -175,9 +175,13 @@ export class FloorAssistService {
 
   /**
    * A supervisor answered the session's open request (`how`). False when none was open. Never
-   * throws: an answer is a side effect of a listen or a message, which it must not fail.
+   * throws: an answer is a side effect of a listen or a message, which it must not fail. `byName` is
+   * the answerer's name when the caller has read it already (a message's `from_name`); absent, it
+   * is read here.
    */
-  async answer(input: { sessionId: string; tenantId: string; byUserId: string; how: AgencyHelpAnswerHow }): Promise<boolean> {
+  async answer(input: {
+    sessionId: string; tenantId: string; byUserId: string; how: AgencyHelpAnswerHow; byName?: string | null;
+  }): Promise<boolean> {
     try {
       const row = await this.deps.repo.answer(input.sessionId, input.tenantId, input.byUserId, this.expiryMs);
       if (!row) return false;
@@ -192,7 +196,9 @@ export class FloorAssistService {
         raised_at: raisedAt.toISOString(), how: input.how, answered_by: input.byUserId,
         ...(row.call_id ? { call_id: row.call_id } : {}),
       });
-      const byName = (await this.deps.names([input.byUserId], input.tenantId)).get(input.byUserId) ?? null;
+      const byName = input.byName !== undefined
+        ? input.byName
+        : (await this.deps.names([input.byUserId], input.tenantId)).get(input.byUserId) ?? null;
       this.frame(row.session_id, { event: 'help_answered', raised_at: raisedAt.toISOString(), by_name: byName, how: input.how });
       this.frame(row.session_id, { event: 'help_cleared', raised_at: raisedAt.toISOString(), reason: 'answered' });
       log.info({ sessionId: row.session_id, how: input.how, seconds }, 'Need help answered');
@@ -272,17 +278,26 @@ export class FloorAssistService {
       event: 'supervisor_message', id: stored.id, text: input.text, from_name: input.fromName, sent_at: sentAt.toISOString(),
     });
     // Delivered: the agent has it. The mark, the metric, the audit row and the answer below are each
-    // best effort and independent, so the supervisor is told it was delivered whatever fails.
-    if (delivered) await this.markDelivered(stored.id, session.id);
+    // best effort and independent (the mark and the answer run together; neither throws), so the
+    // supervisor is told it was delivered whatever fails. The answer's own audit row follows the
+    // message's: it is written only after its statement returns.
+    const delivering = delivered
+      ? Promise.all([
+        this.markDelivered(stored.id, session.id),
+        this.answer({
+          sessionId: session.id, tenantId: session.tenant_id, byUserId: input.senderUserId, how: 'message', byName: input.fromName,
+        }),
+      ])
+      : null;
     this.safely(() => trackSupervisorMessage(delivered ? 'delivered' : 'agent_not_live'));
     this.audit(session, 'agency_session.message_sent', { actor_type: 'human', user_id: input.senderUserId }, {
       message_id: stored.id, agent_user_id: session.agent_user_id, delivered, length: [...input.text].length,
     });
-    if (!delivered) {
+    if (!delivering) {
       log.info({ sessionId: session.id, messageId: stored.id }, 'Supervisor message not taken by the station; answered agent_not_live');
       return { ok: false, code: 'agent_not_live' };
     }
-    await this.answer({ sessionId: session.id, tenantId: session.tenant_id, byUserId: input.senderUserId, how: 'message' });
+    await delivering;
     return { ok: true, id: stored.id, sent_at: sentAt };
   }
 
