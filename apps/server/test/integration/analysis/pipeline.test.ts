@@ -10,7 +10,8 @@ import { insertWebrtcCall } from '../../../../../packages/db/test/integration/se
  * table. This does, with the REAL recording fetcher (only
  * global `fetch` is stubbed) and fake transcriber / analysis service (Gemini, Sarvam and
  * OpenAI are never called). Cases: skip, resume, truncation-retry and
- * backoff on real rows, `analysis_audio_seconds` recorded, off-list recording host a
+ * backoff on real rows (the same bytes rescued by their second transcription), an unchanged
+ * truncated recording transcribed twice over every attempt, `analysis_audio_seconds` recorded, off-list recording host a
  * permanent failure. "One real recording transcribed and analysed on the pilot account" is
  * NOT attempted (no vendor account; see docs/seams.md).
  *
@@ -162,9 +163,35 @@ describe('dialer analysis pipeline over real Postgres', () => {
     expect((await jobs.findById(job.id))!.attempts).toBe(1);
 
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, [job.id]);
+    // The SAME bytes again (the file never changed): found short once, they are transcribed
+    // once more (TR1), and this transcript covers the call: the first was the transcriber's miss.
     short.transcribe.mockResolvedValue({ entries: ENTRIES(98), detectedLanguage: 'en', durationSeconds: 98, model: 'fake', diarizationFailed: false });
     await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'completed', attempts: 2, analysis_audio_seconds: 98 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(short.transcribe).toHaveBeenCalledTimes(2);
+    expect((short.transcribe.mock.calls[1]![0] as { audio: Buffer }).audio.toString()).toBe('mp3');
+    await w.gracefulShutdown();
+  });
+
+  it('TRUNCATION, UNCHANGED RECORDING: the same audio is transcribed twice over the job, then never again', async () => {
+    const { call, job } = await newCall();
+    const short = makeTranscriber({ entries: ENTRIES(40), durationSeconds: 40 });
+    const { w } = worker(short);
+    // Every attempt the job has; the fingerprint and its count go through the real row's error_message.
+    const transcriptionsAfter: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      await sweep(w);
+      transcriptionsAfter.push(short.transcribe.mock.calls.length);
+      await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 second' WHERE id = $1 AND status = 'queued'`, [job.id]);
+    }
+    const failed = (await jobs.findById(job.id))!;
+    expect(failed).toMatchObject({ status: 'failed', attempts: 3, error_code: 'AUDIO_TOO_SHORT' });
+    expect(failed.error_message).toMatch(/\[recording sha256=[0-9a-f]{64} bytes=3 covered=40s shortCount=2\]$/);
+    expect((await callRow(call.id)).analysis_status).toBe('failed');
+    expect(fetch).toHaveBeenCalledTimes(3);
+    // Attempts 1 and 2 transcribed; the last attempt fetched the same bytes and did not.
+    expect(transcriptionsAfter).toEqual([1, 2, 2]);
     await w.gracefulShutdown();
   });
 

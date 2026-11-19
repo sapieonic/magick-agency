@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ANALYSIS_DELAY_LABELS,
+  ANALYSIS_DELAY_MESSAGES,
   ANALYSIS_STATUS_COLORS,
+  ANALYSIS_STATUS_MESSAGES,
   ANALYSIS_STATUS_LABELS,
   ANALYSIS_STATUS_TOOLTIPS,
   SENTIMENT_LABELS,
   getSentimentColor,
   needsAnalysisStatusCard,
+  shownAnalysisDelay,
 } from '../../utils/vocabulary';
 
 describe('analysis vocabulary — sentiment', () => {
@@ -56,5 +60,28 @@ describe('analysis vocabulary — all summary states', () => {
     expect(needsAnalysisStatusCard('future_summary_state')).toBe(true);
     expect(ANALYSIS_STATUS_LABELS.future_summary_state).toBeUndefined();
     expect(ANALYSIS_STATUS_COLORS.future_summary_state).toBeUndefined();
+  });
+});
+
+describe('analysis vocabulary — a summary held up by the AI service', () => {
+  it('says it is delayed and will be written, never that it is being written', () => {
+    expect(ANALYSIS_DELAY_MESSAGES.vendor_unavailable).toBe(
+      'Summary delayed: the AI service is not available right now. '
+      + 'It will be written automatically when it is back.',
+    );
+    expect(ANALYSIS_DELAY_MESSAGES.vendor_unavailable).not.toBe(ANALYSIS_STATUS_MESSAGES.pending);
+    expect(ANALYSIS_DELAY_LABELS.vendor_unavailable).toBe('Delayed');
+  });
+
+  it.each([
+    ['pending', 'vendor_unavailable', 'vendor_unavailable'],
+    ['pending', null, null],
+    ['pending', undefined, null],
+    ['pending', 'a_reason_this_console_predates', null],
+    ['failed', 'vendor_unavailable', null],
+    ['awaiting_recording', 'vendor_unavailable', null],
+    [null, 'vendor_unavailable', null],
+  ])('status %s with delay %s shows %s', (status, delay, shown) => {
+    expect(shownAnalysisDelay(status, delay)).toBe(shown);
   });
 });

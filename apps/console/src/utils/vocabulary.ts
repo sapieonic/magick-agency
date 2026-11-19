@@ -10,6 +10,8 @@
 // Covers the status, token, sentiment and analysis vocabulary the agency call
 // detail uses. There are no broadcast channel or AI pipeline labels.
 
+import type { DialerAnalysisDelay } from '../types/webrtc-call';
+
 /** Which kind of thing a status describes — changes some labels (e.g. completed). */
 export type StatusScope = 'job' | 'call' | 'message';
 
@@ -226,6 +228,39 @@ export const ANALYSIS_STATUS_MESSAGES: Record<string, string> = {
     "The phone provider never delivered a recording, so we couldn't create a summary.",
   deleted: 'The transcript and summary for this call were deleted.',
 };
+
+/**
+ * What a `pending` summary says instead when the server reports why it is held up
+ * (`analysis_delay`). Keyed by the wire's `DialerAnalysisDelay`. `vendor_unavailable`: the
+ * AI service is refusing the server's requests (a rate limit, used-up credits, a billing
+ * stop), so "we're writing the summary" would be untrue for as long as that lasts, which
+ * has been days. Never the vendor's reason: the server does not send it.
+ */
+export const ANALYSIS_DELAY_MESSAGES: Record<DialerAnalysisDelay, string> = {
+  vendor_unavailable:
+    'Summary delayed: the AI service is not available right now. '
+    + 'It will be written automatically when it is back.',
+};
+
+/** The short label a list shows for a held-up summary, beside `ANALYSIS_STATUS_LABELS`. */
+export const ANALYSIS_DELAY_LABELS: Record<DialerAnalysisDelay, string> = {
+  vendor_unavailable: 'Delayed',
+};
+
+/**
+ * The delay a summary state shows, or null. Only beside `pending`: a delay sent with any
+ * other state (a stale read, an older server) is ignored rather than contradicting it, and
+ * an unknown value is ignored too, so the ordinary copy is the fallback.
+ */
+export function shownAnalysisDelay(
+  status: string | null | undefined,
+  delay: string | null | undefined,
+): DialerAnalysisDelay | null {
+  if (status !== 'pending' || !delay) return null;
+  return Object.hasOwn(ANALYSIS_DELAY_MESSAGES, delay)
+    ? delay as DialerAnalysisDelay
+    : null;
+}
 
 /**
  * What to say when the summary is on screen and the transcript is not.

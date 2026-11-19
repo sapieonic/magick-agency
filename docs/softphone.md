@@ -371,7 +371,7 @@ from `audit` (a success without the envelope is a 502).
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
 | `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf. The same code again is a replay: notes and callback last-write-wins, and a corrected callback moves the `next_attempt_at` of the contact this call settled while it is still `pending` on that code (`rescheduleFromManualReplay`, as the station's replay moves its contact through `releaseFromDisposition`); no DNC mark, settlement or claim release repeats, and its audit row carries `replay: true` |
 | `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else the call's account (`scope: 'account'`); never tenant-wide |
-| `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `contact_id` (the roster contact the call matched, claimed or linked, settled calls included: `idx_agency_manual_calls_contact_history`; an agent still sees only their own calls), `from`, `to` (exclusive). Rows carry `agent_name` and the media leg's `analysis_status` |
+| `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `contact_id` (the roster contact the call matched, claimed or linked, settled calls included: `idx_agency_manual_calls_contact_history`; an agent still sees only their own calls), `from`, `to` (exclusive). Rows carry `agent_name`, the media leg's `analysis_status` and, beside a `pending` one, `analysis_delay` (`vendor_unavailable` while the AI service refuses, decision AD1) |
 | `GET /softphone/calls/:id` | `softphone.dial` | `AgencyManualCallDetail`: the call (contact context, prior attempts, `agent_name`), `dispositioned_by_name`, the override notes, `call_availability`, and — with supervise only — the media leg (recording, transcript, AI analysis) with the attempt detail's entitlement strip (`allow_recording`, `analyze_calls` of the account). An agent reading their own call gets the call record with `media: null`: a call's media is `agency.supervise`'s, as a campaign call's is (`rbac.ts`); the internal handler and the public route both withhold it |
 | `GET /softphone/calls/:id/recording` | `agency.supervise` | the bytes through the authenticated proxy (no signed URL), range forwarded; 403 `capability_disabled` without `allow_recording`; 404 `call_never_placed` / `call_purged` / no recording; any call of the account. An agent's own call is refused too (RBAC 403; the internal handler refuses a non-supervise actor itself) |
 | `GET /softphone/settings` | `softphone.dial` | `{ settings }` |
@@ -488,6 +488,18 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   the screen; the number is filled once it settles. Every rule of a typed number applies, the DNC
   check and its override note included (SP1). Live on a campaign, the page shows its
   `session_on_campaign` screen and the prefill is not carried through the switch.
+- **Inbound calls (a stopgap).** An agent on the soft phone is on `break/soft_phone`, which is
+  never offered an inbound caller, and a caller nobody on a campaign station could take overflows
+  at once to a Missed row ([`inbound.md`](inbound.md) §4.3, §5.1); taking one on the soft phone is
+  P3's (§12, "Remaining"). So that a call that never rang does not read as a fault, the dial
+  column says so under Call while the soft phone is ready to dial (not during a call, not in
+  finish mode): "Inbound calls don’t ring on the soft phone. They go to agents on a campaign
+  station, or to Missed calls if none is free." then "Join a campaign to take them." on
+  `/dialer/phone`, or "Return to your campaign to take them." on a campaign switched to the soft
+  phone (`SoftphoneInboundNotice`, `role="note"`, never announced). It shows while the account's
+  `agency_inbound_enabled` flag is on: whether the account has a route or a linked number is read
+  only with `agency.inbound.write`, so an agent cannot see it, and no read was added for a note.
+  The agent app's Phone tab has no such note yet.
 - **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
   agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
   disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`
@@ -538,7 +550,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
 - **Supervisor.** **Soft-phone calls** in the agency sidebar (`agency.supervise`): a stats strip
   over the listed rows, filters (dates, agent, "Logged to" including "Not logged", what happened,
   status including "Waiting for an outcome", number), keyset paging, a Summary column from
-  `analysis_status` (hidden when the account's analytics capability is off), DNC / hours override
+  `analysis_status` ("Delayed" when `analysis_delay` says the AI service is refusing; hidden when
+  the account's analytics capability is off), DNC / hours override
   badges. The call detail reuses the call view (summary, sentiment, custom dimensions, recording,
   transcript) plus the outcome, who saved it (with the on-behalf marker) and the agent's call
   details, each labelled with its source (Agent / AI), and any override note with the DNC entry it

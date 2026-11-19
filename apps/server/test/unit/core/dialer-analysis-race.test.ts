@@ -20,6 +20,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
+import { makeJobRecord } from '../../helpers/dialer-analysis-job.js';
 
 /**
  * In-memory model of the dialer-analysis job repo's guarded semantics — only the
@@ -33,15 +34,11 @@ class InMemoryJobs {
   enqueueFromCall(callId: string, recordingUrl: string | null, createdAt = new Date()): DialerAnalysisJobRecord | null {
     const existing = [...this.jobs.values()].find((j) => j.call_id === callId);
     if (existing) return existing; // ON CONFLICT (call_id) DO NOTHING
-    const job: DialerAnalysisJobRecord = {
+    const job = makeJobRecord({
       id: `job-${++this.seq}`, call_id: callId, tenant_id: 't', account_id: 'a',
-      profile_id: null, profile_snapshot: null, analysis_language: null,
       status: recordingUrl ? 'queued' : 'awaiting_recording',
-      attempts: 0, attempts_total: 0, claim_generation: 0,
-      claimed_at: null, heartbeat_at: null, next_attempt_at: null,
-      analysis_audio_seconds: null,
-      error_code: null, error_message: null, created_at: createdAt, updated_at: createdAt,
-    };
+      created_at: createdAt, updated_at: createdAt,
+    });
     this.jobs.set(job.id, job);
     return job;
   }

@@ -24,6 +24,7 @@ import type { AgencyAttemptRow } from '@magick-agency/contracts/agency';
 // this plugin reads under `'agency'`.
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
 import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.js';
+import { analysisDelayForRecord } from '../helpers/analysis-delay.js';
 import { isDirectRecordingProvider } from '../../../utils/recording-url-resolver.js';
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
@@ -289,6 +290,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
           ? formatWebRtcCallResponse(
               found.call,
               agencyRecordingPath(request.params.id, found.attempt.id),
+              await analysisDelayForRecord(found.call),
             )
           : null,
         call_availability: found.availability,

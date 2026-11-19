@@ -7,6 +7,7 @@
  * LLM-observability emitters come from `analytics/posthog.ts` and
  * `analytics/llm-observability.ts`.
  */
+import { createHash } from 'node:crypto';
 import type { AppConfig } from '../config/schema.js';
 import { dialerAnalysisJobRepository } from '@magick-agency/db/repositories/dialer-analysis-job.repository';
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
@@ -55,6 +56,14 @@ export type DialerAnalysisConfig = NonNullable<AppConfig['dialerAnalysis']>;
 
 /** Below this fraction of the DB-reported duration, a fetched recording is treated as truncated. */
 const AUDIO_SHORTFALL_RATIO = 0.8;
+/**
+ * Transcriptions of the same bytes that must come back short before those bytes are no
+ * longer transcribed (decision TR1). "Short" is judged from the transcript's own
+ * timestamps, which a transcriber can get wrong on complete audio (an early stop,
+ * squeezed timestamps), so identical audio gets one more transcription before it is
+ * taken as truly truncated.
+ */
+const SHORT_TRANSCRIPTIONS_BEFORE_SKIP = 2;
 /** Base backoff (s) for a retryable transcribe/analyze failure — doubled per attempt, capped. */
 const RETRY_BACKOFF_BASE_SECONDS = 30;
 const RETRY_BACKOFF_CAP_SECONDS = 1800;
@@ -253,6 +262,7 @@ export class DialerAnalysisRunner {
           recordingUrl: call.recording_url,
           recordingDurationSeconds: recordingDurationSeconds ?? null,
           languageHint: job.analysis_language ?? snapshot?.language_hint ?? undefined,
+          previouslyTruncated: truncatedAudioOf(job),
         }, lease);
 
         // Empty transcript ⇒ a silent / hold-music recording: a legitimate no-op.
@@ -398,8 +408,8 @@ export class DialerAnalysisRunner {
   }
 
   /**
-   * Fetch the recording and transcribe it, retrying in-attempt on a truncated or
-   * failed fetch (the pre-finalization race).
+   * Fetch the recording and transcribe it, retrying in-attempt on a truncated
+   * fetch (the pre-finalization race).
    *
    * A carrier can hand us a `recording_url` a moment before the file is finalized;
    * fetching then returns SHORT audio, which would otherwise be transcribed and
@@ -411,9 +421,15 @@ export class DialerAnalysisRunner {
    * on it would push genuinely-retryable work into terminal `failed`. A retryable
    * error that survives the loop is rethrown and handled normally.
    *
+   * A transcription is paid for (decision TR1): bytes already found short twice, in this
+   * attempt or a previous `AUDIO_TOO_SHORT` one (`previouslyTruncated`), are not
+   * transcribed again and count as still truncated; identical audio found short once is
+   * transcribed once more, and different audio always is.
+   *
    * Every truncation is logged at WARN with the coverage ratio so a systematically
    * late-finalizing carrier is identifiable in Loki (`grep dialer-analysis-runner`
-   * + `recordingTruncated`) rather than showing up as mysteriously short summaries.
+   * + `recordingTruncated`) rather than showing up as mysteriously short summaries;
+   * every transcription skipped is logged at INFO with `transcriptionSkipped`.
    */
   private async fetchAndTranscribe(ctx: {
     callId: string;
@@ -424,15 +440,26 @@ export class DialerAnalysisRunner {
     recordingUrl: string;
     recordingDurationSeconds: number | null;
     languageHint: string | undefined;
+    /** The audio the job's previous attempt transcribed and found truncated, when it ended so. */
+    previouslyTruncated: TruncatedAudio | null;
   }, lease: RecordingLease): Promise<{ result: TranscriptionResult; audio: AnalysisAudio }> {
     const {
       callId, jobId, generation, recordingUrl,
-      recordingDurationSeconds, languageHint,
+      recordingDurationSeconds, languageHint, previouslyTruncated,
     } = ctx;
     // `?? 0` so a config object without the knob still fetches once (never zero times).
     const maxRetries = this.cfg.recordingFetchRetries ?? 0;
     const retryDelaySeconds = this.cfg.recordingFetchRetryDelaySeconds ?? 15;
-    let lastTruncation: { covered: number; expected: number } | null = null;
+    // No positive duration (`0`) finds nothing short, so nothing is ever found truncated.
+    const expectedSeconds = recordingDurationSeconds ?? 0;
+    const isShort = (covered: number): boolean =>
+      expectedSeconds > 0 && covered < expectedSeconds * AUDIO_SHORTFALL_RATIO;
+    // The last audio transcribed and found truncated, with how many of its transcriptions
+    // came back short. The previous attempt's counts only while it would still be short
+    // against the call's duration as it reads now.
+    let lastTruncated: TruncatedAudio | null =
+      previouslyTruncated && isShort(previouslyTruncated.coveredSeconds) ? previouslyTruncated : null;
+    let transcriptions = 0;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
@@ -440,9 +467,10 @@ export class DialerAnalysisRunner {
         const delayMs = retryDelaySeconds * 1000 * 2 ** (attempt - 1);
         log.warn({
           callId, jobId, attempt, maxRetries, delayMs,
-          coveredSeconds: lastTruncation?.covered,
-          expectedSeconds: lastTruncation?.expected,
-          recordingTruncated: lastTruncation != null,
+          coveredSeconds: lastTruncated?.coveredSeconds,
+          expectedSeconds: lastTruncated ? recordingDurationSeconds : undefined,
+          recordingTruncated: lastTruncated != null,
+          shortTranscriptions: lastTruncated?.shortCount,
         }, 'Re-fetching dialer recording (previous fetch failed or was truncated)');
         await sleep(delayMs);
         // The last fetch shrank the lease to its size; a re-fetch can be longer (the
@@ -459,58 +487,112 @@ export class DialerAnalysisRunner {
 
       await this.assertClaimActive(jobId, generation);
 
-      const transcribeStart = Date.now();
-      const result: TranscriptionResult = await this.transcriber.transcribe(
-        {
-          audio: fetched.bytes,
-          mimeType: fetched.mimeType,
-          languageHint,
-          // Mono carrier recording today; forward-looking — no channel map.
-          channelRoles: undefined,
-          expectedDurationSeconds: recordingDurationSeconds ?? undefined,
-        },
-        async () => {
-          await this.assertClaimActive(jobId, generation);
-        },
-      );
-      this.observeStage('transcribe', (Date.now() - transcribeStart) / 1000);
+      // These bytes are the audio last found truncated (a re-fetch the carrier did not change).
+      const sameAsTruncated = sameTruncatedAudio(lastTruncated, fetched.bytes);
+      const skipped = skipsTranscription(sameAsTruncated);
+      if (skipped) {
+        log.info({
+          callId, jobId, attempt, maxRetries,
+          recordingBytes: sameAsTruncated.bytes,
+          recordingSha256: sameAsTruncated.sha256,
+          coveredSeconds: sameAsTruncated.coveredSeconds,
+          expectedSeconds: recordingDurationSeconds,
+          shortTranscriptions: sameAsTruncated.shortCount,
+          // Nothing transcribed yet: still the previous attempt's audio.
+          sincePreviousAttempt: transcriptions === 0,
+          recordingTruncated: true,
+          transcriptionSkipped: true,
+        }, 'Skipped transcribing a dialer recording identical to audio already found truncated');
+        lastTruncated = sameAsTruncated; // the same object: narrows it for the exit below
+      } else {
+        const transcribeStart = Date.now();
+        transcriptions++;
+        const result: TranscriptionResult = await this.transcriber.transcribe(
+          {
+            audio: fetched.bytes,
+            mimeType: fetched.mimeType,
+            languageHint,
+            // Mono carrier recording today; forward-looking — no channel map.
+            channelRoles: undefined,
+            expectedDurationSeconds: recordingDurationSeconds ?? undefined,
+          },
+          async () => {
+            await this.assertClaimActive(jobId, generation);
+          },
+        );
+        this.observeStage('transcribe', (Date.now() - transcribeStart) / 1000);
 
-      const audio: AnalysisAudio = { bytes: fetched.bytes, mimeType: fetched.mimeType };
+        const audio: AnalysisAudio = { bytes: fetched.bytes, mimeType: fetched.mimeType };
 
-      // An empty transcript is a legitimate silent recording, not a truncation —
-      // hand it back so the caller can `skip` it (retrying would never help).
-      if (result.entries.length === 0) return { result, audio };
+        // An empty transcript is a legitimate silent recording, not a truncation —
+        // hand it back so the caller can `skip` it (retrying would never help).
+        if (result.entries.length === 0) return { result, audio };
 
-      // Duration cross-check: far less transcribed audio than the DB reports
-      // means we very likely fetched a pre-finalization (truncated) file.
-      if (recordingDurationSeconds && recordingDurationSeconds > 0) {
+        // Duration cross-check: far less transcribed audio than the DB reports
+        // means we very likely fetched a pre-finalization (truncated) file.
         const covered = coveredSeconds(result.entries, result.durationSeconds);
-        if (covered < recordingDurationSeconds * AUDIO_SHORTFALL_RATIO) {
-          lastTruncation = { covered, expected: recordingDurationSeconds };
-          if (attempt < maxRetries) continue;
-          // Retries exhausted — surface it as retryable so the job backs off and
-          // tries again later (the carrier may still be finalizing).
-          log.error({
-            callId, jobId, coveredSeconds: covered, expectedSeconds: recordingDurationSeconds,
-            coverageRatio: Number((covered / recordingDurationSeconds).toFixed(2)),
-            retriesUsed: maxRetries, recordingTruncated: true,
-          }, 'Dialer recording still truncated after in-attempt retries');
-          throw new TranscriptionError(
-            'AUDIO_TOO_SHORT',
-            `transcribed ${covered.toFixed(0)}s of an expected ${recordingDurationSeconds}s recording after ${maxRetries} re-fetch(es) (likely a truncated fetch)`,
-            true,
-          );
+        if (!isShort(covered)) {
+          if (attempt > 0 || lastTruncated) {
+            log.info({
+              callId, jobId, attempt, turns: result.entries.length, transcriptions,
+              recordingBytes: fetched.bytes.length,
+              // The same bytes as the audio found truncated: the earlier short transcript was the
+              // transcriber's miss, not a truncated file (TR1).
+              recordingUnchanged: sameAsTruncated != null,
+              // `lastTruncated` is replaced only by a short transcript, so before this attempt's
+              // second transcription it is still the one carried in from the previous attempt.
+              sincePreviousAttempt: lastTruncated != null && transcriptions === 1,
+            }, 'Dialer recording re-fetch succeeded');
+          }
+          return { result, audio };
         }
+        lastTruncated = shortTranscription(fetched.bytes, sameAsTruncated, covered);
       }
 
-      if (attempt > 0) {
-        log.info({ callId, jobId, attempt, turns: result.entries.length }, 'Dialer recording re-fetch succeeded');
-      }
-      return { result, audio };
+      if (attempt < maxRetries) continue;
+      // Retries exhausted — surface it as retryable so the job backs off and
+      // tries again later (the carrier may still be finalizing).
+      throw this.stillTruncated(ctx, expectedSeconds, lastTruncated, {
+        maxRetries, transcriptions, unchanged: sameAsTruncated != null, skipped,
+      });
     }
 
     // Unreachable: the loop either returns or throws.
     throw new TranscriptionError('TRANSCRIPTION_FAILED', 'recording fetch retry loop exited unexpectedly', true);
+  }
+
+  /**
+   * The retryable `AUDIO_TOO_SHORT` an attempt ends with once its re-fetches are spent,
+   * logged at ERROR. Its message ends with the truncated audio's fingerprint and its
+   * count of short transcriptions ({@link formatTruncatedAudio}); the requeue keeps it in
+   * `error_message`, so the next attempt knows how often those bytes were found short.
+   */
+  private stillTruncated(
+    { callId, jobId }: { callId: string; jobId: string },
+    expected: number,
+    truncated: TruncatedAudio,
+    run: { maxRetries: number; transcriptions: number; unchanged: boolean; skipped: boolean },
+  ): TranscriptionError {
+    const covered = truncated.coveredSeconds;
+    log.error({
+      callId, jobId, coveredSeconds: covered, expectedSeconds: expected,
+      coverageRatio: Number((covered / expected).toFixed(2)),
+      retriesUsed: run.maxRetries, recordingTruncated: true,
+      // Paid transcriptions this attempt made (0 when every fetch matched the previous attempt's audio).
+      transcriptions: run.transcriptions,
+      recordingBytes: truncated.bytes,
+      // Transcriptions of these same bytes found short, over this attempt and the ones before.
+      shortTranscriptions: truncated.shortCount,
+      // The last fetch returned the same bytes as audio already found truncated.
+      recordingUnchanged: run.unchanged,
+      // ...and was not transcribed, those bytes having been found short too often (TR1).
+      transcriptionSkipped: run.skipped,
+    }, 'Dialer recording still truncated after in-attempt retries');
+    return new TranscriptionError(
+      'AUDIO_TOO_SHORT',
+      `transcribed ${covered.toFixed(0)}s of an expected ${expected}s recording after ${run.maxRetries} re-fetch(es) (likely a truncated fetch) ${formatTruncatedAudio(truncated)}`,
+      true,
+    );
   }
 
   /** Refresh liveness and abort immediately when this claim generation lost ownership. */
@@ -606,6 +688,70 @@ export function toAnalysisEntries(entries: DialerTranscriptEntry[]): Conversatio
 function dialerRoleToAnalysisRole(role: DialerSpeakerRole): ConversationEntry['role'] {
   // agent → assistant, customer → user, unknown → user (analysis speaks assistant/user).
   return role === 'agent' ? 'assistant' : 'user';
+}
+
+/**
+ * Audio transcribed and found truncated: its fingerprint (length and SHA-256), how much
+ * of the call its last transcript covered, and how many transcriptions of these bytes
+ * came back short.
+ */
+interface TruncatedAudio {
+  bytes: number;
+  sha256: string;
+  coveredSeconds: number;
+  shortCount: number;
+}
+
+function sha256Of(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * `last` when `bytes` are its audio, else null. The hash (up to `maxRecordingBytes`, on
+ * the event loop) runs only when the lengths match.
+ */
+function sameTruncatedAudio(last: TruncatedAudio | null, bytes: Buffer): TruncatedAudio | null {
+  return last && last.bytes === bytes.length && last.sha256 === sha256Of(bytes) ? last : null;
+}
+
+/**
+ * The same bytes as audio already found short on every transcription allowed: another
+ * would pay for the same short transcript, so it is not transcribed (TR1).
+ */
+function skipsTranscription(same: TruncatedAudio | null): same is TruncatedAudio {
+  return same != null && same.shortCount >= SHORT_TRANSCRIPTIONS_BEFORE_SKIP;
+}
+
+/** Audio whose transcript came back short: identical audio adds to its count, different audio starts one. */
+function shortTranscription(bytes: Buffer, same: TruncatedAudio | null, coveredSeconds: number): TruncatedAudio {
+  return same
+    ? { ...same, coveredSeconds, shortCount: same.shortCount + 1 }
+    : { bytes: bytes.length, sha256: sha256Of(bytes), coveredSeconds, shortCount: 1 };
+}
+
+/**
+ * The truncated audio's fingerprint and count of short transcriptions, as the tail of an
+ * `AUDIO_TOO_SHORT` message. The requeue keeps the message in the job's `error_message`
+ * (a support field no client reads) and the next attempt reads it back with
+ * {@link truncatedAudioOf}, so the fingerprint needs no column of its own.
+ */
+export function formatTruncatedAudio(t: TruncatedAudio): string {
+  return `[recording sha256=${t.sha256} bytes=${t.bytes} covered=${Number(t.coveredSeconds.toFixed(1))}s shortCount=${t.shortCount}]`;
+}
+
+const TRUNCATED_AUDIO_TAG = /\[recording sha256=([0-9a-f]{64}) bytes=(\d+) covered=(\d+(?:\.\d+)?)s shortCount=(\d+)\]$/;
+
+/**
+ * The audio the job's previous attempt found truncated, read from the job's last error
+ * when that attempt ended `AUDIO_TOO_SHORT`; otherwise null. A rate-limited requeue and a
+ * manual retry replace the error, and the fingerprint with it: the next attempt then
+ * transcribes whatever it fetches.
+ */
+export function truncatedAudioOf(job: Pick<DialerAnalysisJobRecord, 'error_code' | 'error_message'>): TruncatedAudio | null {
+  if (job.error_code !== 'AUDIO_TOO_SHORT' || !job.error_message) return null;
+  const m = TRUNCATED_AUDIO_TAG.exec(job.error_message);
+  if (!m) return null;
+  return { sha256: m[1]!, bytes: Number(m[2]), coveredSeconds: Number(m[3]), shortCount: Math.max(1, Number(m[4])) };
 }
 
 /** The actual audio span covered by the transcript — a truncation signal. */

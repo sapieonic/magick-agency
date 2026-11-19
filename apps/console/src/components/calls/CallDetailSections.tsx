@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Mic,
   Download,
+  Clock,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { retryAnalysis, fetchRecordingBlobUrl } from '../../api/calls';
@@ -18,8 +19,10 @@ import { loadTranscriptVisible, saveTranscriptVisible } from '../../utils/transc
 // render identically whether mounted on the Calls page or the IVR session page.
 import styles from '../../pages/calls/CallDetailPage.module.css';
 import {
+  ANALYSIS_DELAY_MESSAGES,
   ANALYSIS_STATUS_MESSAGES,
   getSentimentColor,
+  shownAnalysisDelay,
 } from '../../utils/vocabulary';
 
 // Re-exported for the existing importers of this module; the implementation now
@@ -357,6 +360,13 @@ interface AnalysisStatusCardProps {
    * ANALYSIS_NO_RECORDING otherwise), which the caller alone can determine.
    */
   canRetry?: boolean;
+  /**
+   * The call's `analysis_delay`: why a `pending` summary is held up. When it is one the
+   * console knows, its sentence replaces the pending copy (and `messages.pending`), with a
+   * clock rather than a spinner: nothing is being written while the AI service refuses.
+   * Ignored beside any other status.
+   */
+  delay?: string | null;
 }
 
 /** Default per-status copy — the existing AI-call wording, unchanged. */
@@ -377,6 +387,7 @@ export function AnalysisStatusCard({
   messages,
   retryLabel = 'Retry Analysis',
   canRetry,
+  delay,
 }: AnalysisStatusCardProps) {
   const { tenantId, accountId } = useTenant();
   const [retrying, setRetrying] = useState(false);
@@ -400,7 +411,10 @@ export function AnalysisStatusCard({
     }
   };
 
-  const copy = { ...DEFAULT_ANALYSIS_MESSAGES, ...messages }[status];
+  const shownDelay = shownAnalysisDelay(status, delay);
+  const copy = shownDelay
+    ? ANALYSIS_DELAY_MESSAGES[shownDelay]
+    : { ...DEFAULT_ANALYSIS_MESSAGES, ...messages }[status];
   const working = WORKING_ANALYSIS_STATUSES.has(status);
   const showRetry = canRetry ?? status === 'failed';
 
@@ -413,7 +427,9 @@ export function AnalysisStatusCard({
       {working ? (
         <div className={styles.analysisStatusBox} role="status" aria-atomic="true">
           <div className={styles.analysisStatusPending}>
-            <LoadingSpinner size="sm" decorative />
+            {shownDelay
+              ? <Clock size={16} aria-hidden="true" data-testid="analysis-delay-icon" />
+              : <LoadingSpinner size="sm" decorative />}
             {copy}
           </div>
         </div>

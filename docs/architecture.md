@@ -775,7 +775,32 @@ every account the caller belongs to (CH2) where every internal handler is single
   flight, generation-matched.
 - **Runner** (`core/dialer-analysis-runner.ts`): load the call, take config from the job's profile
   snapshot, resume an existing transcript or fetch and transcribe the recording, persist, run the
-  LLM analysis, complete in one transaction.
+  LLM analysis, complete in one transaction. A transcript covering under 80 % of the call's
+  recorded duration is a truncated fetch (a carrier serving the file before it is finished): the
+  runner re-fetches it in the same attempt (`DIALER_ANALYSIS_RECORDING_FETCH_RETRIES`, default 2,
+  delay doubling from `DIALER_ANALYSIS_RECORDING_FETCH_RETRY_DELAY_SECONDS`), then requeues it
+  `AUDIO_TOO_SHORT`, an attempt used. A transcription is paid for, so the same audio is
+  transcribed at most twice across attempts that each end `AUDIO_TOO_SHORT` (decision TR1): a
+  fetch whose bytes (length and SHA-256) match audio already found truncated is transcribed once
+  more, since "short" is read from the
+  transcript's own timestamps and a transcriber can stop early on a complete file; once those
+  bytes have come back short twice, in this attempt or earlier ones, a fetch of them is not
+  transcribed and counts as still truncated. Different audio is always transcribed, and starts its
+  own count. The fingerprint and its count travel in the requeued job's `error_message`
+  (`[recording sha256=… bytes=… covered=…s shortCount=N]`; a tag without `shortCount`, written
+  before it existed, reads as 1), read back only under `error_code = AUDIO_TOO_SHORT` and only while
+  the call's current `recording_duration_seconds` still finds it short, so a rate-limited requeue
+  or a manual retry transcribes afresh, as does any other ending in between (a retryable
+  `TRANSCRIPTION_FAILED` from a vendor 5xx or timeout, a re-fetch that throws). The job keeps all
+  its attempts: an unchanged truncated file costs 2 transcriptions over a run of `AUDIO_TOO_SHORT`
+  attempts, later attempts a fetch each, at worst 2 per attempt when other endings come between,
+  and a carrier that finishes late is still caught. Loki (component `dialer-analysis-runner`):
+  "Skipped transcribing a dialer recording identical to audio already found truncated" (`transcriptionSkipped`,
+  `shortTranscriptions`, `sincePreviousAttempt`) per skip; "Dialer recording still truncated after
+  in-attempt retries" carries the attempt's `transcriptions`, `shortTranscriptions`,
+  `recordingUnchanged` (the last fetch matched the truncated audio) and `transcriptionSkipped`;
+  "Dialer recording re-fetch succeeded" carries `recordingUnchanged` (a second transcription of
+  the same bytes rescued a transcriber's miss).
 - **AI client layer** (`ai/`): the one place AI requests go out. `createAiClient` builds an
   `AiClient` for `openai_compatible` (OpenAI or any Chat Completions endpoint), `azure_openai` or
   `gemini` (native SDK, Files API); each does one request (the OpenAI SDK's own retries are off)
@@ -795,6 +820,20 @@ every account the caller belongs to (CH2) where every internal handler is single
   `source_url`), the service uploads them once and deletes the upload after, and heartbeats the
   job's claim before every request so a slow run is not recovered from under it; profiles in
   `call_analysis_profiles`, served at `/proxy/call-analysis-profiles`.
+- **Why a summary is waiting** (decision AD1): a call's `analysis_status` stays `pending` for as
+  long as its job is `queued`, which includes every day the AI vendor refuses (a rate-limited
+  requeue uses no attempt). The call reads (the attempt detail, the soft-phone detail's media leg
+  and list rows) add `analysis_delay`: `vendor_unavailable` while the job is queued and the
+  vendor's newest answer was a refusal, else null: the newest refusal of a queued job
+  (`vendor_refused_at`, stamped only by `requeueRateLimited` with `error_code = 'RATE_LIMITED'`) is
+  newer than the newest completion (`completed_at`, stamped by `completeWithAnalysis`), each read
+  from the end of a partial index (0054, 0055; `analysisDelaySql` in
+  `dialer-analysis-job.repository.ts`). The first summary written after the last refusal clears it
+  while the refused jobs, claimed last, still drain; a graceful requeue or stale recovery keeps a
+  refusal's time. The breaker lives in the analysis worker's process, so the routes read the
+  database rather than its state. The console then says the
+  summary is delayed until the AI service is back, instead of that it is being written. Only the
+  category leaves the server; the vendor's words stay in `error_message` and the logs.
 - **Playback**: `/api/v1/webrtc-recordings/:id` with an HMAC-signed query (`utils/recording-url.ts`,
   `RECORDING_URL_SIGNING_SECRET`), fetched through the same per-carrier access; a refused access
   answers 404 `recording_unavailable`.

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-18.
+"is it done". As of 2026-11-19.
 
 ## Summary
 
@@ -2396,7 +2396,61 @@ minutes (its stats read carries no limit, LF33); Need help is not on the console
 phone views nor the app's soft phone screens (LF24, LF39); the Callbacks page's campaign filter
 lists the board's first 25 campaigns. Test counts below.
 
+### Staging reports of 2026-11-17: a stuck summary, short recordings, inbound on the soft phone 2026-11-19 (AD1, AD2, TR1)
+
+A tester reported on staging that call summaries stayed on "We're listening to the call and
+writing the summary." and that inbound calls never rang on the soft phone. Grafana showed the
+summaries' cause: from 2026-11-05 Gemini refused every transcription with HTTP 402
+`RESOURCE_EXHAUSTED` ("Your prepayment credits are depleted"), a billing stop the server treats as
+a rate limit, so 1,384 jobs waited, requeued without using an attempt. After the credits came back
+(2026-11-18 17:07 UTC) the queue drained by 22:00 UTC, leaving 283 jobs failed `AUDIO_TOO_SHORT`
+after about 2,700 paid transcriptions of recordings that were cut short. Inbound on the soft phone
+is the design (`inbound.md` §4.3, §5.1; soft-phone pickup is P3). Changes:
+- **Summary delayed** (AD1, AD2): the call reads carry `analysis_delay: 'vendor_unavailable'`
+  beside `pending` while the AI vendor's newest answer is a refusal (the newest refusal of a queued
+  job is newer than the newest completion of any job), so the console says "Summary delayed: the
+  AI service is not available right now. It will be written automatically when it is back." on the
+  attempt and soft-phone call pages and "Delayed" in the soft-phone list. Server-wide by design
+  (the vendor keys are). Migrations `0054_analysis_vendor_answers.sql` (`vendor_refused_at`,
+  `completed_at`) and `0055_analysis_vendor_answer_indexes.sql` (two partial indexes, one index
+  probe each side). No vendor words reach the API; no Dart change (the app does not read it).
+- **Short recordings** (TR1): the runner fingerprints each fetched recording (bytes and SHA-256)
+  and transcribes identical audio at most twice, within an attempt and across attempts that each
+  end `AUDIO_TOO_SHORT` (the count rides in the job's `error_message` tag under that code, so any
+  other ending in between, a vendor 5xx or timeout, a re-fetch that throws, a rate limit or a manual
+  retry, starts it afresh); new or longer audio is always transcribed. An unchanged cut-short
+  recording costs 2 transcriptions per job when every attempt ends short (down from about 9), at
+  worst 2 per attempt.
+- **Alert text**: `agy-analysis-vendor-refusing` and its runbook cover Gemini's 402 prepaid-credit
+  stop (no quota ids) as well as a 429. **Not applied:** the rule is still missing from Grafana
+  Cloud (404 on 2026-11-19); it needs `terraform apply` in `grafana/`.
+- **Soft phone**: a note under Call, while the inbound flag is on and the soft phone is idle, that
+  inbound calls ring only on a campaign station. The agent app's Phone tab has the same gap
+  (`softphone.md` §7).
+Kept as it was: a refusing vendor is waited for indefinitely without using attempts (on staging
+every requeued job completed once the vendor answered). Reviewed by a fresh-context reviewer; its
+findings (one short transcript failing a complete recording for good, the delay staying on through
+a drain, the scan behind it, a missing `modules.md` entry) are fixed with tests. Mutation-checked,
+each red then restored. Not verified: a real Gemini transcription, the real UI in a browser, the
+query plan on production-sized data. Test counts below.
+
 ## Test counts
+
+**Staging reports of 2026-11-17, 2026-11-19.** Branch `claude-mgkvc/happy-hypatia-6n4t7z`, rebased
+onto main after #102 (Live floor Phase 3) and #103, its migrations renumbered 0054 and 0055, on the
+tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and Redis on
+6383 run locally, not in Docker; `mpg123` and `sndfile-programs` installed). From the root:
+`pnpm lint` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit:
+`apps/server` 10606 passed + 1 expected fail (533 files), `apps/console` 7838 (421 files),
+`packages/db` 457 (28 files), `packages/contracts` 576 (18 files). Integration: `packages/db` 857
+(96 files); `apps/server` `INTEGRATION_LANE=rest` 3109 passed + 9 expected fail + 2 skipped (281
+files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 passed (8 files). Every run was green
+the first time. The changed files' own counts are in [`modules.md`](modules.md). After the
+clean-up commit (no behaviour change; the test for a count-less TR1 tag removed, the tag having
+never left this branch): `pnpm lint` clean; unit `apps/server` 10605 passed + 1 expected fail (533
+files), `apps/console` 7838 (421 files), `packages/db` 457 (28 files); integration `packages/db`
+857 (96 files), `apps/server` `INTEGRATION_LANE=rest` 3109 passed + 9 expected fail + 2 skipped
+(281 files passed, 2 skipped), all green the first time.
 
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
 
@@ -3441,6 +3495,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 | Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings); LF39 open. LF4–LF7 (Phase 3) decided 2026-11-19 and built (`decisions.md`, "Live floor (LF)") |
+| Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice across attempts that end short, at worst 2 per attempt); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
 
 ## Deployment invariants
 

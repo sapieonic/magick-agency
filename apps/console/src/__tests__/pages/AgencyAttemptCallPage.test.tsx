@@ -193,6 +193,35 @@ describe('the page carries the agency record, not generic call facts', () => {
   });
 });
 
+describe('a summary waiting on the AI service says so', () => {
+  const DELAYED = 'Summary delayed: the AI service is not available right now. '
+    + 'It will be written automatically when it is back.';
+  const WRITING = "We're listening to the call and writing the summary.";
+
+  it('says the summary is delayed, not being written, while the AI service refuses', async () => {
+    mocks.getAgencyAttemptCall.mockResolvedValue(detail({
+      call: {
+        ...CALL, analysis_status: 'pending', analysis_delay: 'vendor_unavailable',
+        call_analysis: null, conversation_log: null,
+      },
+    }));
+    renderPage();
+
+    expect(await screen.findByText(DELAYED)).toBeTruthy();
+    expect(screen.queryByText(WRITING)).toBeNull();
+  });
+
+  it('keeps the ordinary copy for a summary that is simply next in line', async () => {
+    mocks.getAgencyAttemptCall.mockResolvedValue(detail({
+      call: { ...CALL, analysis_status: 'pending', analysis_delay: null, call_analysis: null, conversation_log: null },
+    }));
+    renderPage();
+
+    expect(await screen.findByText(WRITING)).toBeTruthy();
+    expect(screen.queryByText(DELAYED)).toBeNull();
+  });
+});
+
 describe('the affordances that cannot work are not offered', () => {
   it('offers no retry on a failed summary, and never calls the AI endpoint', async () => {
     mocks.getAgencyAttemptCall.mockResolvedValue(detail({

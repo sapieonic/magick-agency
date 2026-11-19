@@ -65,6 +65,16 @@ export type DialerAnalysisStatus =
   | 'deleted';
 
 /**
+ * Why a `pending` summary is waiting rather than being written. One value today:
+ * `vendor_unavailable`, the AI service is refusing the server's requests (a rate limit,
+ * an exhausted quota, a billing stop), so the worker holds every queued job until it
+ * answers again. Derived on the server from the analysis queue (`analysisDelaySql`,
+ * `packages/db`), never stored on the call; the vendor's own words stay in the job row
+ * and the logs. NULL or absent: nothing is holding it up beyond its turn.
+ */
+export type DialerAnalysisDelay = 'vendor_unavailable';
+
+/**
  * The overall-sentiment vocabulary the dialer runtime emits. Scalar form of the sentiment
  * `label` buried in the `call_analysis` blob — surfaced flat on the LIST row as
  * `analysis_sentiment_label` (see below) so the list can render sentiment
@@ -173,6 +183,12 @@ export interface WebRtcCallRecord {
   analysis_profile_id?: string | null;
   /** Summary lifecycle. Absent/null on calls placed before the feature existed. */
   analysis_status?: DialerAnalysisStatus | null;
+  /**
+   * Set only while `analysis_status` is `pending` and the summary is held up (see
+   * {@link DialerAnalysisDelay}); NULL otherwise. Kept when `agency.analytics` is off,
+   * like `analysis_status`: it says whether analysis can run, not what it found.
+   */
+  analysis_delay?: DialerAnalysisDelay | null;
   /**
    * List-safe scalar sentiment. The dialer runtime extracts the overall-sentiment `label` out
    * of the detail-only `call_analysis` JSONB server-side and returns it flat on

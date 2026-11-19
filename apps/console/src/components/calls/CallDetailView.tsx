@@ -456,6 +456,7 @@ export function CallDetailView({
       {analysisEnabled && needsAnalysisStatusCard(call.analysis_status) && (
         <AnalysisStatusCard
           status={call.analysis_status!}
+          delay={call.analysis_delay}
           callId={call.id}
           title={analysisTitle}
           messages={analysisMessages}
