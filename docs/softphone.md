@@ -488,6 +488,18 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   the screen; the number is filled once it settles. Every rule of a typed number applies, the DNC
   check and its override note included (SP1). Live on a campaign, the page shows its
   `session_on_campaign` screen and the prefill is not carried through the switch.
+- **Inbound calls (a stopgap).** An agent on the soft phone is on `break/soft_phone`, which is
+  never offered an inbound caller, and a caller nobody on a campaign station could take overflows
+  at once to a Missed row ([`inbound.md`](inbound.md) §4.3, §5.1); taking one on the soft phone is
+  P3's (§12, "Remaining"). So that a call that never rang does not read as a fault, the dial
+  column says so under Call while the soft phone is ready to dial (not during a call, not in
+  finish mode): "Inbound calls don’t ring on the soft phone. They go to agents on a campaign
+  station, or to Missed calls if none is free." then "Join a campaign to take them." on
+  `/dialer/phone`, or "Return to your campaign to take them." on a campaign switched to the soft
+  phone (`SoftphoneInboundNotice`, `role="note"`, never announced). It shows while the account's
+  `agency_inbound_enabled` flag is on: whether the account has a route or a linked number is read
+  only with `agency.inbound.write`, so an agent cannot see it, and no read was added for a note.
+  The agent app's Phone tab has no such note yet.
 - **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
   agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
   disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`
