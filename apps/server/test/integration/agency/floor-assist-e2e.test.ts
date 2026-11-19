@@ -413,7 +413,7 @@ describe('Need help, end to end', () => {
 });
 
 describe('messages, end to end', () => {
-  it('agents and operators are refused (403); another account\'s and another tenant\'s supervisors get the uniform 404; nothing stored or sent', async () => {
+  it('agents and operators are refused (403); another account\'s and another tenant\'s supervisors, and a malformed id, get the uniform 404; nothing stored or sent', async () => {
     const call = await liveCall();
     const sid = call.station.sessionId;
     for (const role of ['agent', 'operator']) {
@@ -434,6 +434,10 @@ describe('messages, end to end', () => {
       const res = await http(who, 'POST', `/proxy/agency/sessions/${sid}/messages`, { text: 'hello' }, scope);
       expect([res.statusCode, res.json()]).toEqual([404, { error: 'Not Found', message: 'Session not found' }]);
     }
+    // A malformed id, with a valid text, the same (the agency plugin's malformed-id guard on the
+    // session paths), never the internal schema's `message_invalid`.
+    const malformed = await http(supervisor, 'POST', '/proxy/agency/sessions/not-a-uuid/messages', { text: 'hello' });
+    expect([malformed.statusCode, malformed.json()]).toEqual([404, { error: 'Not Found', message: 'Session not found' }]);
     const stored = await pool().query('SELECT count(*)::int AS n FROM agency_supervisor_messages');
     expect(stored.rows[0]).toEqual({ n: 0 });
     expect(helpFrames(call.station)).toEqual([]);
