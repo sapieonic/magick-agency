@@ -3,7 +3,6 @@ import type {
   AgencyCallbackSource,
   AgencyCallbacksDue,
 } from '@magick-agency/contracts/api/agency/callbacks';
-import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { errorStatus } from '../agencyErrors';
 import { CALLBACKS_ERROR, CALLBACKS_REFUSED } from './liveFloor';
 
@@ -43,15 +42,6 @@ export function callbackCustomer(row: Pick<AgencyAccountCallback, 'customer_name
 export function callbackOwner(row: Pick<AgencyAccountCallback, 'owner'>): { name: string; live: boolean | null } {
   if (!row.owner) return { name: 'Shared queue', live: null };
   return { name: row.owner.name?.trim() || 'Former member', live: row.owner.live };
-}
-
-/**
- * When it is due, in the reader's own zone (the zone their other times are in; the campaign's own
- * zone decides which day "today" is on the server, LF22): the time alone when it falls on the
- * reader's today, else the date and time.
- */
-export function callbackDueText(dueAt: string, now: Date): string {
-  return new Date(dueAt).toDateString() === now.toDateString() ? formatTime(dueAt) : formatDate(dueAt);
 }
 
 /** The link to the contact in its campaign (the roster's contact page). */

@@ -18,13 +18,13 @@ import {
   appendCallbackRows,
   callbackContactHref,
   callbackCustomer,
-  callbackDueText,
   callbackOwner,
   callbackRowKey,
   callbacksDueOf,
   callbacksEmptyText,
   callbacksErrorText,
 } from '../../utils/agency/accountCallbacks';
+import { formatTimeOrDate } from '../../utils/format/date';
 import styles from './live-floor/LiveFloor.module.css';
 import own from './CallbacksPage.module.css';
 
@@ -214,7 +214,7 @@ export default function CallbacksPage() {
                           <div>
                             <dt>Due</dt>
                             <dd data-tone={due === 'overdue' ? 'danger' : undefined}>
-                              <time dateTime={row.due_at} title={formatDate(row.due_at)}>{callbackDueText(row.due_at, now)}</time>
+                              <time dateTime={row.due_at} title={formatDate(row.due_at)}>{formatTimeOrDate(row.due_at, now)}</time>
                             </dd>
                           </div>
                           <div>
