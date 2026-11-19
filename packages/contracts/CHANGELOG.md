@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.25.0...contracts-v0.26.0) (2026-11-19)
+
+
+### Features
+
+* **console,server,mobile:** the Live floor's Phase 3 ([#102](https://github.com/sapieonic/magick-agency/issues/102)) ([8ef92ac](https://github.com/sapieonic/magick-agency/commit/8ef92acfc0262adaa4a6c2af0771ef327eea824c))
+
 ## [0.25.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.24.0...contracts-v0.25.0) (2026-11-19)
 
 

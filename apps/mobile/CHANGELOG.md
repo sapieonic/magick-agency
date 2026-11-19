@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.15.0...mobile-v0.16.0) (2026-11-19)
+
+
+### Features
+
+* **console,server,mobile:** the Live floor's Phase 3 ([#102](https://github.com/sapieonic/magick-agency/issues/102)) ([8ef92ac](https://github.com/sapieonic/magick-agency/commit/8ef92acfc0262adaa4a6c2af0771ef327eea824c))
+
 ## [0.15.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.14.0...mobile-v0.15.0) (2026-11-17)
 
 

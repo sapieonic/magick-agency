@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.12.2...domain-v0.13.0) (2026-11-19)
+
+
+### Features
+
+* **console,server,mobile:** the Live floor's Phase 3 ([#102](https://github.com/sapieonic/magick-agency/issues/102)) ([8ef92ac](https://github.com/sapieonic/magick-agency/commit/8ef92acfc0262adaa4a6c2af0771ef327eea824c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.26.0
+
 ## [0.12.2](https://github.com/sapieonic/magick-agency/compare/domain-v0.12.1...domain-v0.12.2) (2026-11-19)
 
 
