@@ -186,7 +186,11 @@ describe('the agent cards', () => {
     await screen.findByTestId('home-agent-grid');
     fireEvent.click(within(screen.getByTestId('home-agent-ravi')).getByRole('button', { name: 'Listen to Ravi Kumar’s call' }));
     expect(mocks.listen).toHaveBeenCalledTimes(1);
-    expect(mocks.listen.mock.calls[0]![0]).toMatchObject({ call_id: 'call-1', agent_session_id: 's-ravi', customer_phone_masked: 'Ramesh Goud' });
+    expect(mocks.listen.mock.calls[0]![0]).toMatchObject({ call_id: 'call-1', agent_user_id: 'ravi', customer_name: 'Ramesh Goud' });
+    // Nothing made up to look like a Live calls row: no number, recording or listener list.
+    expect(mocks.listen.mock.calls[0]![0]).not.toHaveProperty('customer_phone_masked');
+    expect(mocks.listen.mock.calls[0]![0]).not.toHaveProperty('recording');
+    expect(mocks.listen.mock.calls[0]![0]).not.toHaveProperty('listeners');
     const refused = within(screen.getByTestId('home-agent-kiran')).getByRole('button', { name: 'Listen to Kiran J’s call' });
     expect(refused.hasAttribute('disabled')).toBe(true);
     expect(document.getElementById(refused.getAttribute('aria-describedby')!)!.textContent).toBeTruthy();

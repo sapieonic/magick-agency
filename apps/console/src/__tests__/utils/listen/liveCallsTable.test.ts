@@ -149,6 +149,15 @@ describe('what a listen starts with', () => {
     });
   });
 
+  it('a call with no number (one started from Live floor) names the customer, and an inbound one without its route says Inbound', () => {
+    const { customer_phone_masked: _masked, customer_phone_withheld: _withheld, inbound_route_name: _route, recording: _recording, listeners: _listeners, ...floor } = A;
+    expect(listenTargetFor({ ...floor, customer_name: 'Ramesh Goud' }, 0).customerMasked).toBe('Ramesh Goud');
+    expect(listenTargetFor({ ...floor, customer_name: null }, 0).customerMasked).toBe('No name');
+    expect(listenTargetFor({ ...floor, origin: 'inbound', campaign_id: null, campaign_name: null }, 0).campaignLabel).toBe('Inbound');
+    // A withheld number still says so where the row says it.
+    expect(listenTargetFor({ ...A, customer_phone_withheld: true }, 0).customerMasked).toBe('Withheld');
+  });
+
   it('Open call: the attempt for a dialler call, the soft-phone call page for a soft-phone call', () => {
     expect(liveCallPagePath(A, true)).toBe('/agency/campaigns/c-1/attempts/att-a');
     expect(liveCallPagePath(C, true)).toBe('/agency/softphone/calls/man-c');

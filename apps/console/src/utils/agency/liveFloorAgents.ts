@@ -14,6 +14,7 @@ import {
 } from '../agencyAgentFloor';
 import { campaignTabHref } from '../agencyCampaignTabs';
 import { customerLabel } from '../listen/listenCopy';
+import type { ListenCall } from '../listen/liveCallsTable';
 import { formatAmountShort, sumPromiseAmounts } from '../format/promise';
 import { formatCount, plural } from '../format/number';
 import { elapsedSince } from '../agencyClock';
@@ -242,8 +243,16 @@ export function callsTodayText(count: number): string {
 /** What {@link callsTodayText} counts, for its tooltip and the drawer. */
 export const CONVERSATIONS_TODAY_NOTE = 'Dialler conversations since midnight. Soft-phone and inbound calls are not counted.';
 
-/** The Live calls list's row for a floor row's call, so Listen starts exactly as it does there. */
-export function liveCallOf(row: AgencyFloorAgent): AgencyLiveCall | null {
+/** A card's call: what a listen reads (`ListenCall`), and whether it can be listened to and why not. */
+export type FloorLiveCall = ListenCall & Pick<AgencyLiveCall, 'listenable' | 'not_listenable_reason'>;
+
+/**
+ * The call a card's Listen starts on, as the Live calls list starts one, from what the floor
+ * carries and nothing made up: no number (LF3; the listening bar names the customer), no inbound
+ * route and no listener list (so a full call says "This call has reached its listening limit",
+ * never a made-up "0 supervisors are already listening"). None without an open session's call.
+ */
+export function liveCallOf(row: AgencyFloorAgent): FloorLiveCall | null {
   const { call } = row;
   if (!call || row.session_id === null || row.client_kind === null) return null;
   return {
@@ -252,24 +261,12 @@ export function liveCallOf(row: AgencyFloorAgent): AgencyLiveCall | null {
     correlation_id: call.correlation_id,
     campaign_id: row.campaign_id,
     campaign_name: row.campaign_name,
-    inbound_route_name: null,
     agent_user_id: row.agent_user_id,
     agent_name: row.agent_name,
-    agent_session_id: row.session_id,
-    client_kind: row.client_kind,
     customer_name: call.customer_name,
-    // The floor carries no number (LF3): the listening bar names the customer instead.
-    customer_phone_masked: customerLabel({ customer_name: call.customer_name, origin: call.origin }),
-    customer_phone_withheld: false,
     connected_at: call.connected_at,
-    aht_seconds: call.aht_seconds,
-    recording: false,
     listenable: call.listenable,
     not_listenable_reason: call.not_listenable_reason,
-    // The floor names no listeners. Empty, every listener count reads "none to count", so a full
-    // call says "This call has reached its listening limit" (and a refused start the same), never
-    // a made-up "0 supervisors are already listening".
-    listeners: [],
   };
 }
 

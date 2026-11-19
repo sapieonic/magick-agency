@@ -11,10 +11,9 @@ import { browserStorage } from '../../utils/browserStorage';
 import { LIVE_LISTEN_FLAG } from '../../utils/listen/liveListenFlag';
 import { LISTEN_CONFIRM, LISTEN_REFUSAL_FALLBACK, listenRefusalMessage } from '../../utils/listen/listenCopy';
 import { LISTEN_AGENT_SILENCE_MS } from '../../utils/listen/listenPlayback';
-import { listenTargetFor } from '../../utils/listen/liveCallsTable';
+import { listenTargetFor, type ListenCall } from '../../utils/listen/liveCallsTable';
 import type { ListenSessionController } from '../../utils/listen/listenSessionController';
 import type { ListenSessionState } from '../../utils/listen/listenSessionReducer';
-import type { AgencyLiveCall } from '../../types/live-calls';
 
 /**
  * The one listen of this console shell (`docs/listening.md` §9). `ConsoleLayout` mounts it around
@@ -55,8 +54,11 @@ export interface ListenContextValue {
   state: ListenSessionState;
   controller: ListenSessionController;
   playback: ListenPlayback;
-  /** Listen to `call` (after the first-use confirmation, the first time in this browser). */
-  listen: (call: AgencyLiveCall, clockOffsetMs: number) => void;
+  /**
+   * Listen to `call` (after the first-use confirmation, the first time in this browser): a Live
+   * calls row, or a Live floor card's call, which carries only what a listen reads (`ListenCall`).
+   */
+  listen: (call: ListenCall, clockOffsetMs: number) => void;
   stop: () => void;
   /**
    * "Try again" after "Connection lost", or after a listen whose access could not be checked
@@ -158,10 +160,10 @@ export function ListenProvider({ children }: { children: ReactNode }) {
     else if (!mayListen) controller.withdraw('revoked');
   }, [flagTurnedOff, mayListen, controller]);
 
-  const [pending, setPending] = useState<{ call: AgencyLiveCall; offset: number } | null>(null);
+  const [pending, setPending] = useState<{ call: ListenCall; offset: number } | null>(null);
 
   const begin = useCallback(
-    (call: AgencyLiveCall, offset: number) => {
+    (call: ListenCall, offset: number) => {
       // A browser that cannot play the sound gets no grant, no session row and no bar.
       if (!engine.ensure()) {
         showToast?.(LISTEN_REFUSAL_FALLBACK.noAudio, 'error');
@@ -169,14 +171,15 @@ export function ListenProvider({ children }: { children: ReactNode }) {
       }
       // Inside the click: the gesture lets the browser run the context.
       void engine.resume();
-      startedListeners.current = call.listeners.length;
+      // A call started from Live floor names no listeners: its refusal gives no count.
+      startedListeners.current = call.listeners?.length;
       controller.start(listenTargetFor(call, offset));
     },
     [engine, controller, showToast],
   );
 
   const listen = useCallback(
-    (call: AgencyLiveCall, offset: number) => {
+    (call: ListenCall, offset: number) => {
       if (!canListen) return;
       if (confirmedHere()) begin(call, offset);
       else setPending({ call, offset });

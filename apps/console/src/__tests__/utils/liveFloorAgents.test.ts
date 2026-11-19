@@ -31,6 +31,7 @@ import { sortByRank, homeBadgeCount, homeRank } from '../../utils/agency/home';
 import { ackOf, stillAcknowledged } from '../../utils/agency/homeAcks';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import { listenRefusalMessage, notListenableCopy } from '../../utils/listen/listenCopy';
+import { listenTargetFor } from '../../utils/listen/liveCallsTable';
 import { campaign, floorRow } from '../helpers/home';
 
 /**
@@ -195,14 +196,28 @@ describe('a card', () => {
     expect(stripeTone(floorCard(floorRow('a'), NOW))).toBe('available');
   });
 
-  it('starts Listen with the Live calls list’s row, naming the customer where the list shows a number', () => {
-    const call = liveCallOf(floorRow('a', { state: 'on_call', call: CALL() }))!;
-    expect(call).toMatchObject({ call_id: 'call-1', agent_session_id: 's-a', customer_phone_masked: 'Ramesh Goud', listenable: true, listeners: [] });
+  it('starts Listen with what a listen reads, and nothing the floor does not carry', () => {
+    const call = liveCallOf(floorRow('a', { agent_name: 'Asha K', campaign_name: 'Q4', state: 'on_call', call: CALL() }))!;
+    expect(call).toEqual({
+      call_id: 'call-1',
+      origin: 'campaign',
+      correlation_id: 'att-1',
+      campaign_id: 'c1',
+      campaign_name: 'Q4',
+      agent_user_id: 'a',
+      agent_name: 'Asha K',
+      customer_name: 'Ramesh Goud',
+      connected_at: call.connected_at,
+      listenable: true,
+      not_listenable_reason: null,
+    });
+    // No number on the floor (LF3): the listening bar names the customer instead.
+    expect(listenTargetFor(call, 0)).toMatchObject({ callId: 'call-1', campaignLabel: 'Q4', agentName: 'Asha K', customerMasked: 'Ramesh Goud' });
     expect(liveCallOf(floorRow('a'))).toBeNull();
     // With no listener list, a full call's copy needs no count, on the card and on a refused start.
     const full = liveCallOf(floorRow('a', { state: 'on_call', call: CALL({ listenable: false, not_listenable_reason: 'listen_limit_call' }) }))!;
-    expect(notListenableCopy(full.not_listenable_reason, full.listeners.length)).toBe('This call has reached its listening limit');
-    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, full.listeners.length)).toBe('That call has reached its listening limit.');
+    expect(notListenableCopy(full.not_listenable_reason, full.listeners?.length)).toBe('This call has reached its listening limit');
+    expect(listenRefusalMessage({ status: 409, code: 'listen_limit_call' }, full.listeners?.length)).toBe('That call has reached its listening limit.');
   });
 });
 
