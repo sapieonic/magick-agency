@@ -127,7 +127,7 @@ describe('which callbacks move', () => {
   it('only overdue callbacks whose owner is away; never one not yet due, not a callback, in the pool, or a present owner\'s', async () => {
     const away = randomUUID();
     await staff(away);
-    const present = await liveAgent('break'); // on a break is present: keeps their callbacks
+    const present = await liveAgent('break'); // on a break is present: keeps their callbacks (but receives none)
     const receiver = await liveAgent('available');
 
     const late = await callback(away, 30);
@@ -142,13 +142,13 @@ describe('which callbacks move', () => {
 
     const p = await preview();
     expect(p).toMatchObject({ kind: 'late_callbacks_to_live_agents', seed: null, matched: 2, moving: 2, skipped_live: 0, to_pool: 0 });
-    // The present owner (on a break) could receive too: live is present, not "available".
-    expect(new Set(p.live_agent_user_ids)).toEqual(new Set([present, receiver]));
+    // The present owner on a break keeps theirs and is not a receiver: free agents only (LF21).
+    expect(p.live_agent_user_ids).toEqual([receiver]);
 
     const done = await commit(p.preview_token);
     expect(done.ok).toBe(true);
     expect(done.ok && done.result).toMatchObject({ kind: 'late_callbacks_to_live_agents', moved: 2, skipped_live: 0, to_pool: 0 });
-    for (const moved of [late, inbound]) expect([present, receiver]).toContain(await ownerOf(moved.id));
+    for (const moved of [late, inbound]) expect(await ownerOf(moved.id)).toBe(receiver);
     for (const kept of [notYet, notCallback, reachedNot, inFlight, dnc]) expect(await ownerOf(kept.id)).toBe(away);
     expect(await ownerOf(inPool.id)).toBeNull();
     expect(await ownerOf(presentOwners.id)).toBe(present);
@@ -224,6 +224,41 @@ describe('who receives', () => {
     const done = await commit(p.preview_token);
     expect(done.ok && done.result.per_agent).toEqual(p.per_agent);
     expect(await Promise.all(late.map((c) => ownerOf(c.id)))).toEqual([idle, idle, idle, idle, busy]);
+  });
+
+  it('never an agent on a break, whatever the reason (lunch, tea, device_away, Mode B\'s away_ring): only the free ones receive', async () => {
+    // FALSIFIED: with `s.state <> 'break'` taken out of the receivers' read, the four on a break are
+    // receivers too and this reds.
+    const away = randomUUID();
+    const late = await Promise.all([1, 2, 3, 4, 5, 6].map((m) => callback(away, m)));
+    const onBreak: string[] = [];
+    for (const reason of ['lunch', 'tea', 'device_away', 'away_ring']) {
+      const id = randomUUID();
+      await staff(id);
+      await insertAgentSession(campaign.id, { agent_user_id: id, state: 'break', break_reason: reason });
+      onBreak.push(id);
+    }
+    const free = await liveAgent('available');
+    const onCall = await liveAgent('on_call');
+    const p = await preview();
+    expect(new Set(p.live_agent_user_ids)).toEqual(new Set([free, onCall]));
+    expect(p.per_agent.filter((a) => a.receiving > 0).map((a) => a.agent_user_id).sort()).toEqual([free, onCall].sort());
+    expect((await commit(p.preview_token)).ok).toBe(true);
+    for (const c of late) expect([free, onCall]).toContain(await ownerOf(c.id));
+    for (const id of onBreak) expect((await events()).some((e) => e.to_user_id === id)).toBe(false);
+  });
+
+  it('only agents on a break: nobody is free, so nothing would move and the preview lists no one', async () => {
+    const away = randomUUID();
+    const late = await callback(away, 10);
+    for (const reason of ['lunch', 'device_away']) {
+      const id = randomUUID();
+      await staff(id);
+      await insertAgentSession(campaign.id, { agent_user_id: id, state: 'break', break_reason: reason });
+    }
+    const p = await preview();
+    expect(p).toMatchObject({ matched: 1, moving: 0, unchanged: 1, live_agent_user_ids: [], per_agent: [] });
+    expect(await ownerOf(late.id)).toBe(away);
   });
 
   it('nobody live: nothing would move, and the preview says nobody could receive', async () => {

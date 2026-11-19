@@ -32,7 +32,8 @@
 -- retried) instead of queueing the dialler's writes behind the wait.
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
--- Drops it; the list falls back to the dialable index (correct, slower).
+-- Drops it; the list falls back to the dialable index (correct, slower). DROP INDEX takes ACCESS
+-- EXCLUSIVE on agency_contacts, so the same `SET LOCAL lock_timeout = '10s'` first.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).
@@ -66,5 +67,7 @@ END
 $$;
 
 -- Down Migration
+
+SET LOCAL lock_timeout = '10s';
 
 DROP INDEX IF EXISTS idx_agency_contacts_callbacks;

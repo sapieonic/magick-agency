@@ -1672,9 +1672,10 @@ page walked `idx_agency_contacts_dialable` over every pending contact due before
 undialled roster (25 campaigns of 40,000 contacts: 3.4 s, against 38 ms on this index). `CREATE
 INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it
 `CONCURRENTLY` first; an invalid index left under the name by a failed concurrent build fails the
-migration. **Down** drops it. **Tests**:
-`test/integration/db/account-callbacks-index-migration.test.ts` (the definition, the invalid-index
-refusal, down then up), the server's `test/integration/agency/callbacks-list.test.ts` (each
+migration. **Down** drops it, after the same `SET LOCAL lock_timeout = '10s'` (the drop takes
+ACCESS EXCLUSIVE on `agency_contacts`). **Tests**:
+`test/integration/db/account-callbacks-index-migration.test.ts` (the definition, the lock timeout
+on both sides, the invalid-index refusal, down then up), the server's `test/integration/agency/callbacks-list.test.ts` (each
 campaign's page on the index, never the dialable index, on seeded rosters) and the down → up
 inventory suite.
 

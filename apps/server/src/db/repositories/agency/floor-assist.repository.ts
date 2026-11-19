@@ -97,7 +97,11 @@ function clearSql(where: string, opts: { limit?: string; skipLocked?: boolean } 
               target.help_raised_at AS raised_at, target.help_call_id AS call_id`;
 }
 
-/** The expired requests, oldest first, at most `$2`: the sweep (and the raise's own first step, `$3` one session). Exported for its plan test. */
+/**
+ * The expired requests, oldest first, at most `$2`, waiting on rows another transaction holds: one
+ * session's (`$3`), the first step of every transition on it (`expireDue` with a `sessionId`), or
+ * every session's when `$3` is null. Not the sweep's, which is {@link SWEEP_EXPIRED_SQL}.
+ */
 export const EXPIRE_DUE_SQL = clearSql(`${OPEN} AND ${expired('$1')} AND ($3::uuid IS NULL OR id = $3::uuid)`, { limit: '$2', skipLocked: false });
 
 /** The sweep's batch: as {@link EXPIRE_DUE_SQL}, skipping rows another transaction holds. Exported for its plan test. */

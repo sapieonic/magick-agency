@@ -34,10 +34,20 @@
  * that can receive the frame is attached here. None: `agent_not_live`, nothing stored. One: the row
  * is written (`delivered` false), the frame sent, the row marked delivered, an open request answered
  * (`message`); a frame the socket refused in between leaves the row undelivered and answers
- * `agent_not_live`. One audit row per stored message, with whether it was delivered.
+ * `agent_not_live`. One audit row per stored message, with whether it was delivered. Once the
+ * socket took the frame the message HAS been delivered, so nothing after it fails the send: the
+ * mark is tried twice and, failing both, logged and counted
+ * (`agency_supervisor_message_mark_failures_total`), leaving a row that reads `delivered` false for
+ * a message the agent was shown (the audit row's `delivered: true` is the record then); the metric,
+ * the audit row and the help answer are each attempted whatever the others did.
  */
 import { createChildLogger } from '@magick-agency/observability';
-import { trackHelpCleared, trackHelpRaised, trackSupervisorMessage } from '@magick-agency/observability/metrics/agency';
+import {
+  trackHelpCleared,
+  trackHelpRaised,
+  trackSupervisorMessage,
+  trackSupervisorMessageMarkFailed,
+} from '@magick-agency/observability/metrics/agency';
 import {
   AGENCY_HELP_EXPIRY_MS,
   AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS,
@@ -71,7 +81,7 @@ export interface FloorAssistSession {
 
 export interface FloorAssistDeps {
   repo: Pick<AgencyFloorAssistRepository,
-    'raise' | 'cancel' | 'answer' | 'endWithSession' | 'expireDue' | 'insertMessage' | 'markDelivered'>;
+    'raise' | 'cancel' | 'answer' | 'endWithSession' | 'expireDue' | 'openForSession' | 'insertMessage' | 'markDelivered'>;
   /** Send a frame to the session's station wherever it is held; false when none took it. */
   send(sessionId: string, frame: StationFrame): boolean;
   /** Whether THIS process holds the session's station, open and able to receive the floor assist frames. */
@@ -99,21 +109,6 @@ export type SupervisorMessageOutcome =
 /** The wire shape of an open request. */
 export function toSessionHelp(row: Pick<OpenHelpRow, 'raised_at' | 'call_id'>): AgencySessionHelp {
   return { raised_at: new Date(row.raised_at).toISOString(), call_id: row.call_id };
-}
-
-/**
- * The session row's open request as the station's `ready` carries it, or undefined: raised, not
- * answered, under `expiryMs` old at `nowMs`. The row's columns, read with the attach's own read.
- */
-export function openHelpOfSession(
-  row: { help_raised_at?: Date | string | null; help_answered_at?: Date | string | null; help_call_id?: string | null },
-  nowMs: number,
-  expiryMs: number = AGENCY_HELP_EXPIRY_MS,
-): AgencySessionHelp | undefined {
-  if (!row.help_raised_at || row.help_answered_at) return undefined;
-  const raisedAt = new Date(row.help_raised_at);
-  if (nowMs - raisedAt.getTime() >= expiryMs) return undefined;
-  return { raised_at: raisedAt.toISOString(), call_id: row.help_call_id ?? null };
 }
 
 type HelpAuditAction =
@@ -156,6 +151,17 @@ export class FloorAssistService {
       log.info({ sessionId: session.id, tenantId: session.tenant_id, callId: result.help.call_id }, 'Need help raised');
     }
     return { raised: result.raised, help: result.help ? toSessionHelp(result.help) : null };
+  }
+
+  /**
+   * The session's open request as the station's `ready` carries it (`ready.help`, LF15), or null:
+   * the repository's OPEN rule on the database's clock (LF12), never this process's. The station
+   * attach reads it after its socket is registered, so a request cleared after this read has its
+   * `help_cleared` sent to that socket (`StationRegistry.helpClearedOn`).
+   */
+  async openHelp(session: Pick<FloorAssistSession, 'id' | 'tenant_id' | 'account_id'>): Promise<AgencySessionHelp | null> {
+    const row = await this.deps.repo.openForSession(session.id, session.tenant_id, session.account_id, this.expiryMs);
+    return row ? toSessionHelp(row) : null;
   }
 
   /** The agent cancels their open request; false when none was open. */
@@ -267,7 +273,9 @@ export class FloorAssistService {
     const delivered = this.deps.send(session.id, {
       event: 'supervisor_message', id: stored.id, text: input.text, from_name: input.fromName, sent_at: sentAt.toISOString(),
     });
-    if (delivered) await this.deps.repo.markDelivered(stored.id);
+    // Delivered: the agent has it. The mark, the metric, the audit row and the answer below are each
+    // best effort and independent, so the supervisor is told it was delivered whatever fails.
+    if (delivered) await this.markDelivered(stored.id, session.id);
     this.safely(() => trackSupervisorMessage(delivered ? 'delivered' : 'agent_not_live'));
     this.audit(session, 'agency_session.message_sent', { actor_type: 'human', user_id: input.senderUserId }, {
       message_id: stored.id, agent_user_id: session.agent_user_id, delivered, length: [...input.text].length,
@@ -281,6 +289,22 @@ export class FloorAssistService {
   }
 
   // ── Internals ──────────────────────────────────────────────────────────────
+
+  /** Mark a delivered message's row, trying once more on a failure; never throws (LF17). */
+  private async markDelivered(messageId: string, sessionId: string): Promise<void> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await this.deps.repo.markDelivered(messageId);
+        return;
+      } catch (err) {
+        if (attempt === 2) {
+          log.warn({ err, sessionId, messageId },
+            'A message the station took could not be marked delivered; its row reads delivered = false (the audit row says delivered)');
+          this.safely(() => trackSupervisorMessageMarkFailed());
+        }
+      }
+    }
+  }
 
   /** The session's request, if it is past the expiry: expired now (and audited) before anything else reads or changes it. */
   private async expireSession(sessionId: string): Promise<void> {
@@ -330,12 +354,42 @@ export class FloorAssistService {
 
 // ── The routes' rules (pure) ─────────────────────────────────────────────────
 
-/** A message's text as stored: trimmed, 1 to `AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS` code points; null when it is not one. */
+/**
+ * The characters a message may not hold (LF17): the C0 controls but tab and line feed (`U+0000`,
+ * which Postgres cannot store in `text`, among them), DEL, and a lone UTF-16 surrogate (which is no
+ * character at all, and would be stored as U+FFFD). A carriage return is not among them: it is
+ * turned into a line feed first.
+ */
+const MESSAGE_FORBIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F]|\p{Cs}/u;
+
+/**
+ * A message's text as stored, or null when it is not one (`400 message_invalid`): line breaks made
+ * `\n` (`\r\n` and a lone `\r`), trimmed, then 1 to `AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS` code points
+ * holding none of {@link MESSAGE_FORBIDDEN} (refused, never stripped: what the agent reads is what
+ * the supervisor wrote). The public layer and the internal handler both apply it.
+ */
 export function normaliseMessageText(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
-  const text = raw.trim();
+  const text = raw.replace(/\r\n?/g, '\n').trim();
+  if (MESSAGE_FORBIDDEN.test(text)) return null;
   const chars = [...text].length;
   return chars >= 1 && chars <= AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS ? text : null;
+}
+
+/** The longest sender name a message's frame carries, in code points; a longer one is cut ({@link senderNameForFrame}). */
+export const SENDER_NAME_MAX_CHARS = 120;
+
+/**
+ * The sender's display name as a message's frame carries it (`from_name`): trimmed, cut to
+ * {@link SENDER_NAME_MAX_CHARS} code points (never inside a surrogate pair) with an ellipsis; null
+ * for none or an empty one. The name is read on the server, so a long one is shortened, never a
+ * reason to refuse the message.
+ */
+export function senderNameForFrame(name: string | null | undefined): string | null {
+  const trimmed = name?.trim();
+  if (!trimmed) return null;
+  const chars = [...trimmed];
+  return chars.length <= SENDER_NAME_MAX_CHARS ? trimmed : `${chars.slice(0, SENDER_NAME_MAX_CHARS - 1).join('').trimEnd()}…`;
 }
 
 /** The refusals' sentences (British English; the console and the app key their own copy off `code`). */

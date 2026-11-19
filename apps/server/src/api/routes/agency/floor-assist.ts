@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createChildLogger } from '@magick-agency/observability';
 import { SOFTPHONE_BREAK_REASON, type AgencyHelpResponse, type AgencySupervisorMessageResponse } from '@magick-agency/contracts/agency';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
-import { FLOOR_ASSIST_REFUSAL_MESSAGES, normaliseMessageText } from '../../../agency/floor-assist.js';
+import { FLOOR_ASSIST_REFUSAL_MESSAGES, normaliseMessageText, senderNameForFrame } from '../../../agency/floor-assist.js';
 import type { AgencyAgentSessionRecord } from '../../../db/models/agency.model.js';
 import {
   agencyAgentSessionRepository,
@@ -57,7 +57,8 @@ const messageBodySchema = z.object({
   session_id: z.string().uuid(),
   text: z.string(),
   sender_user_id: z.string().uuid(),
-  from_name: z.string().max(500).nullable(),
+  // The public layer read it on the server and cut it already; cut again here, never refused (LF17).
+  from_name: z.string().nullable().transform((name) => senderNameForFrame(name)),
 }).strict();
 
 const SESSION_NOT_FOUND = { error: 'Not Found', message: 'Session not found' } as const;

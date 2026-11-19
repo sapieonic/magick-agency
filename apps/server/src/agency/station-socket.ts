@@ -20,7 +20,6 @@ import {
   stationCanTakeInbound,
   type StationUpgradeQuery,
 } from './station-upgrade.js';
-import { openHelpOfSession } from './floor-assist.js';
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
@@ -593,10 +592,27 @@ export async function handleStationSocket(
       })
     : undefined;
 
+  // The session's open Need help (LF4, LF15), so a reloaded console still shows "Help requested":
+  // only to a station that hears how it ends (the floor assist frames). Read HERE, after `attach`
+  // registered this socket and beside the rehydrate (no await between the fence and `ready`), and
+  // with the repository's OPEN rule on the database's clock (LF12), never the attach's row and this
+  // process's clock: a request cleared after the attach's read was put back on screen by `ready`,
+  // its `help_cleared` already spent. A clear landing between this read and `ready` sent its frame
+  // to this socket, which the registry remembers (`helpClearedOn`, checked at `ready`). Best effort:
+  // a failed read omits the field (the agent's next raise answers the open one).
+  const helpRead = canTakeFloorAssist
+    ? Promise.resolve()
+      .then(() => runtime.floorAssist.openHelp({ id: sessionId, tenant_id: session.tenant_id, account_id: session.account_id }))
+      .catch((err: unknown) => {
+        log.warn({ err, sessionId }, 'Could not read the open Need help for ready');
+        return null;
+      })
+    : undefined;
+
   // Redis, or `break` — never the DB row. The rule and
-  // the reason live on the runtime; this is transport. Together with the queue read, which
-  // never rejects, so a rehydrate failure surfaces exactly as before.
-  const [resumedState, queue] = await Promise.all([runtime.rehydrateAgent(sessionId, attachedRow), queueRead]);
+  // the reason live on the runtime; this is transport. Together with the queue and help reads,
+  // which never reject, so a rehydrate failure surfaces exactly as before.
+  const [resumedState, queue, helpOpen] = await Promise.all([runtime.rehydrateAgent(sessionId, attachedRow), queueRead, helpRead]);
 
   // Re-adopt a call the previous socket dropped out of, if the window has not
   // lapsed. This is what makes a wifi blip survivable: the bridge disarms its
@@ -650,9 +666,8 @@ export async function handleStationSocket(
   const shownState = resumedState === 'reserved' && !activeAttempt && runtime.dialer.hasUnannouncedAttempt(sessionId)
     ? 'available'
     : resumedState;
-  // The session's open Need help (LF4), from the attach's own read of the row, so a reloaded console
-  // still shows "Help requested". Only to a station that hears how it ends (the floor assist frames).
-  const openHelp = canTakeFloorAssist ? openHelpOfSession(session, Date.now()) : undefined;
+  // The open Need help read above, unless its `help_cleared` reached this socket since (LF15).
+  const openHelp = helpOpen && !runtime.stations.helpClearedOn(sessionId, socket, helpOpen.raised_at) ? helpOpen : undefined;
   const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,

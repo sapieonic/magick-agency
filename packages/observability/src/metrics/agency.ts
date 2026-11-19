@@ -1186,6 +1186,10 @@ export const agencySupervisorMessagesTotal = counter<'result'>(meter, 'agency_su
   description: 'Supervisor messages to an agent\'s station (Talk to agent, Send reminder), by result: delivered, or agent_not_live (no live station could receive it)',
 });
 
+export const agencySupervisorMessageMarkFailuresTotal = counter(meter, 'agency_supervisor_message_mark_failures_total', {
+  description: 'Supervisor messages a station took whose row could not be marked delivered (tried twice): the supervisor was told it was delivered, the audit row says so, and the stored row still reads delivered = false',
+});
+
 /** One request raised. */
 export function trackHelpRaised(): void {
   agencyHelpRequestsRaisedTotal.inc();
@@ -1200,4 +1204,9 @@ export function trackHelpCleared(reason: HelpClearedMetricReason, answerSeconds?
 /** One message sent, or refused for want of a station. */
 export function trackSupervisorMessage(result: SupervisorMessageResult): void {
   agencySupervisorMessagesTotal.inc({ result });
+}
+
+/** A delivered message whose row could not be marked delivered. */
+export function trackSupervisorMessageMarkFailed(): void {
+  agencySupervisorMessageMarkFailuresTotal.inc();
 }

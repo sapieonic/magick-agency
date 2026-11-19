@@ -158,36 +158,91 @@ describe('the 15-minute expiry, against the database clock', () => {
 });
 
 describe('each request ends exactly once', () => {
-  it('answer, cancel, end with the session and the sweep racing for one request: exactly one wins, every round', async () => {
-    for (let round = 0; round < 12; round++) {
-      const s = await session();
+  /**
+   * Every transition on one session at once, the sweep (twice) and the session's own expiry among
+   * them, over requests on BOTH sides of the expiry: `due` ones backdated a minute past it, `fresh`
+   * ones a minute short of it, so which side each request is on never depends on how long a round
+   * trip takes. Answers, per session, which calls won.
+   */
+  async function raceAll(sessions: Array<{ s: Session; due: boolean }>) {
+    for (const { s, due } of sessions) {
       await raise(s);
-      // Due in a moment: the sweep can take it only once it is due, the others only before.
-      const answerer = randomUUID();
-      const results = await Promise.all([
-        repo.answer(s.id, T, answerer, EXPIRY),
-        repo.cancel(s.id, T, EXPIRY),
-        repo.endWithSession(s.id, EXPIRY),
-        repo.answer(s.id, T, randomUUID(), EXPIRY),
-      ]);
-      expect(results.filter((r) => r !== null), `round ${round}`).toHaveLength(1);
-      expect(await repo.expireDue(EXPIRY, { sweep: true })).toEqual([]);
+      await backdate(s, due ? EXPIRY + 60_000 : EXPIRY - 60_000);
+    }
+    const perSession = sessions.map(({ s }) => [
+      repo.answer(s.id, T, randomUUID(), EXPIRY).then((r) => (r ? 'answer' : null)),
+      repo.cancel(s.id, T, EXPIRY).then((r) => (r ? 'cancel' : null)),
+      repo.endWithSession(s.id, EXPIRY).then((r) => (r ? 'end' : null)),
+      repo.answer(s.id, T, randomUUID(), EXPIRY).then((r) => (r ? 'answer' : null)),
+      repo.expireDue(EXPIRY, { sessionId: s.id }).then((r) => r.map((x) => x.session_id)),
+    ] as const);
+    const [flat, sweepA, sweepB] = await Promise.all([
+      Promise.all(perSession.flatMap((calls) => calls)),
+      repo.expireDue(EXPIRY, { sweep: true }),
+      repo.expireDue(EXPIRY, { sweep: true }),
+    ]);
+    const expiredBy = [...sweepA, ...sweepB].map((r) => r.session_id);
+    return sessions.map(({ s }, i) => {
+      const results = flat.slice(i * 5, i * 5 + 5);
+      const transitions = results.slice(0, 4).filter((r): r is 'answer' | 'cancel' | 'end' => typeof r === 'string');
+      const ownExpiry = (results[4] as string[]).filter((id) => id === s.id).length;
+      const swept = expiredBy.filter((id) => id === s.id).length;
+      return { transitions, expired: ownExpiry + swept };
+    });
+  }
+
+  it('answer, cancel, end with the session, its own expiry and two sweeps racing: exactly one wins every request; a due one only by an expiry, a fresh one never by one', async () => {
+    // FALSIFIED: with `fresh()` dropped from the answer's WHERE, a due request is answered as well
+    // as expired (two winners); with `SKIP LOCKED` and the OPEN recheck taken out of the sweep's
+    // pick, a fresh request answered mid-sweep is also expired.
+    for (let round = 0; round < 6; round++) {
+      const sessions = await Promise.all([true, false, true, false].map(async (due) => ({ s: await session(), due })));
+      const outcome = await raceAll(sessions);
+      sessions.forEach(({ due }, i) => {
+        const { transitions, expired } = outcome[i]!;
+        const label = `round ${round}, session ${i} (${due ? 'due' : 'fresh'}): ${JSON.stringify(outcome[i])}`;
+        expect(transitions.length + expired, label).toBe(1);
+        if (due) expect(expired, label).toBe(1);
+        else expect(expired, label).toBe(0);
+      });
+      // Nothing is left for a later sweep: each request ended in the race.
+      expect(await repo.expireDue(EXPIRY, { sweep: true }), `round ${round}`).toEqual([]);
     }
   });
 
-  it('the sweep and an answer at the edge: one or the other, never both', async () => {
-    for (let round = 0; round < 12; round++) {
+  it('the sweep and an answer racing: past the expiry the sweep takes it, short of it the answer does, never both; at the edge itself, at most one', async () => {
+    // Both sides deterministically (a minute either side of the expiry, so no round trip moves a
+    // request across it), several sessions at once per round; then the edge itself, where either
+    // may win but never both.
+    for (let round = 0; round < 4; round++) {
+      const sides = [true, false, true, false, true, false];
+      const sessions = await Promise.all(sides.map(() => session()));
+      for (const [i, s] of sessions.entries()) {
+        await raise(s);
+        await backdate(s, sides[i] ? EXPIRY + 60_000 : EXPIRY - 60_000);
+      }
+      const [answers, swept] = await Promise.all([
+        Promise.all(sessions.map((s) => repo.answer(s.id, T, randomUUID(), EXPIRY))),
+        repo.expireDue(EXPIRY, { sweep: true }),
+      ]);
+      const sweptIds = new Set(swept.map((r) => r.session_id));
+      sessions.forEach((s, i) => {
+        const label = `round ${round}, session ${i} (${sides[i] ? 'past' : 'short'})`;
+        expect(answers[i] !== null, label).toBe(!sides[i]);
+        expect(sweptIds.has(s.id), label).toBe(sides[i]);
+      });
+    }
+    for (let round = 0; round < 6; round++) {
       const s = await session();
       await raise(s);
-      // Expired on the database clock: the answer refuses it, the sweep takes it; never both.
       await backdate(s, EXPIRY + (round % 2 === 0 ? 1 : -1) * 5);
       const [answered, swept] = await Promise.all([
         repo.answer(s.id, T, randomUUID(), EXPIRY),
         repo.expireDue(EXPIRY, { sweep: true }),
       ]);
-      // Never both. (Neither is possible: a sweep that ran just before the edge and an answer just after it.)
-      expect([answered !== null, swept.length === 1].filter(Boolean).length, `round ${round}`).toBeLessThanOrEqual(1);
-      if (answered === null && swept.length === 0) expect(await repo.expireDue(EXPIRY, { sweep: true })).toHaveLength(1);
+      expect([answered !== null, swept.length === 1].filter(Boolean).length, `edge round ${round}`).toBeLessThanOrEqual(1);
+      // Neither (the sweep ran just short of the edge, the answer just past it): a later sweep takes it.
+      if (answered === null && swept.length === 0) expect(await repo.expireDue(EXPIRY, { sweep: true }), `edge round ${round}`).toHaveLength(1);
     }
   });
 

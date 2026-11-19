@@ -51,6 +51,8 @@ import { startVoice } from '../../../src/bootstrap/voice.js';
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { agencyAgentSessionRepository } from '../../../src/db/repositories/agency.repository.js';
+import { callCore } from '../../../src/api/core-dispatch.js';
+import { SENDER_NAME_MAX_CHARS } from '../../../src/agency/floor-assist.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
 import { carrierScripts, type CallStep, type LeadRequest } from '../../mocks/voicelink/index.js';
@@ -418,12 +420,39 @@ describe('messages, end to end', () => {
     expect(await auditActions(sid)).toEqual([]);
   });
 
-  it('400 message_invalid on an empty or too long text', async () => {
+  it('400 message_invalid on an empty or too long text, or one holding a NUL or another control character, at the public layer and the internal handler alike; nothing stored', async () => {
+    // FALSIFIED: with the forbidden-character check removed from `normaliseMessageText`, the NUL
+    // cases answer 500 (Postgres refuses `\u0000` in text, 22021), not 400.
     const call = await liveCall();
-    for (const text of ['   ', 'x'.repeat(501)]) {
-      const res = await http(supervisor, 'POST', `/proxy/agency/sessions/${call.station.sessionId}/messages`, { text });
-      expect([res.statusCode, res.json().code]).toEqual([400, 'message_invalid']);
+    const sid = call.station.sessionId;
+    for (const text of ['   ', 'x'.repeat(501), 'Offer\u0000 the plan', '\u0000', 'Ring\u0007 back']) {
+      const res = await http(supervisor, 'POST', `/proxy/agency/sessions/${sid}/messages`, { text });
+      expect([res.statusCode, res.json().code], JSON.stringify(text)).toEqual([400, 'message_invalid']);
+      const internal = await callCore({
+        method: 'POST', path: '/agency/supervisor-messages', tenantId: TENANT, accountId: ACCOUNT,
+        body: { session_id: sid, text, sender_user_id: supervisor.id, from_name: supervisor.name },
+      });
+      expect([internal.status, (internal.body as { code?: string }).code], `internal ${JSON.stringify(text)}`).toEqual([400, 'message_invalid']);
     }
+    expect((await pool().query('SELECT count(*)::int AS n FROM agency_supervisor_messages')).rows[0]).toEqual({ n: 0 });
+    expect(helpFrames(call.station)).toEqual([]);
+  });
+
+  it('a sender whose display name is very long: the message is delivered, the name cut in the frame (never 400)', async () => {
+    // FALSIFIED: with the internal schema's 500-character cap on `from_name` back and the public
+    // layer's cut removed, this answers 400 message_invalid.
+    const call = await liveCall();
+    const longName = await user('account_admin');
+    await pool().query('UPDATE users SET display_name = $2 WHERE id = $1', [longName.id, 'Anitha '.repeat(120)]);
+    const res = await http(longName, 'POST', `/proxy/agency/sessions/${call.station.sessionId}/messages`, { text: 'Offer the plan' });
+    expect(res.statusCode, res.body).toBe(201);
+    const frame = await waitFor('the message frame', () => helpFrames(call.station).find((f) => f['event'] === 'supervisor_message'));
+    const fromName = frame['from_name'] as string;
+    // At most the frame's length (a space before the cut is trimmed, so it can be one shorter).
+    expect([...fromName].length).toBeLessThanOrEqual(SENDER_NAME_MAX_CHARS);
+    expect([...fromName].length).toBeGreaterThan(SENDER_NAME_MAX_CHARS - 3);
+    expect(fromName.startsWith('Anitha Anitha')).toBe(true);
+    expect(fromName.endsWith('…')).toBe(true);
   });
 
   it('409 agent_not_live with no station attached, and on a session that has left; nothing stored', async () => {
