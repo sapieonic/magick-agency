@@ -1,6 +1,7 @@
 import type { CampaignConfigState } from './agencyCampaignConfigForm';
 import type { CampaignRecordingState } from './agencyCampaignRecording';
 import { sameCarrier, type CarrierChoice } from './agencyCarriers';
+import { sameBreakLimits, type BreakReasonsForm } from './agency/breakLimits';
 
 /**
  * Everything the campaign Settings form holds, as of the last load or save (the baseline) or
@@ -12,6 +13,11 @@ export interface CampaignSettingsForm {
   carrier: CarrierChoice;
   recording: CampaignRecordingState;
   config: CampaignConfigState;
+  /**
+   * The break reasons' limits (Settings › Agents, LF27): one setting however many limits changed,
+   * as the outcome catalogue is. Optional: the campaign builder does not edit them.
+   */
+  breakReasons?: BreakReasonsForm;
 }
 
 /** Whether two caller-ID pools hold the same numbers (the picker appends, so order is incidental). */
@@ -78,5 +84,8 @@ export function changedSettings(saved: CampaignSettingsForm, now: CampaignSettin
 
   if (saved.recording.record !== now.recording.record) changed.push('recording.record');
   if (saved.recording.profileId !== now.recording.profileId) changed.push('recording.profileId');
+  if (saved.breakReasons && now.breakReasons && !sameBreakLimits(saved.breakReasons, now.breakReasons)) {
+    changed.push('breakReasons');
+  }
   return changed;
 }

@@ -16,6 +16,12 @@
   white-space: nowrap;
 }
 
+/* A break past its reason's limit (LF26): the warning tone, and weight, so it does not rely on hue. */
+.elapsed[data-over='true'] {
+  color: var(--warning, #d29922);
+  font-weight: 600;
+}
+
 .presence {
   /* 40px  Geometry is frozen: this must not change between states,
      because a control that moves 12px is a misclick and a misclick on this

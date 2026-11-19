@@ -16,7 +16,7 @@ import type {
   AgencyNotesResponse,
   AgencyDncResponse,
 } from '../types/agency';
-import type { AgencyRedialResponse } from '@magick-agency/contracts/agency';
+import type { AgencyHelpResponse, AgencyRedialResponse } from '@magick-agency/contracts/agency';
 import type {
   AgencyAgentAssignment,
   AgencyAssignedAgent,
@@ -155,6 +155,42 @@ export async function setAgentBreak(
   return apiFetch<AgencySessionStateResponse>(
     `${AGENCY_BASE}/sessions/${sessionId}/break`,
     { method: 'POST', body: JSON.stringify({ reason }) },
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * Need help (LF4, LF13): ask the account's supervisors for help, on the agent's own session.
+ *
+ * Only on a call or in wrap-up (`409 help_not_on_call` otherwise). Raising again while one is open
+ * changes nothing and answers the open one, so a double press is harmless. The answer's `help` is
+ * what the station shows: the raise sends no frame of its own (LF15). Refusals:
+ * `403 floor_assist_disabled`, `409 help_not_on_call`, `409 session_ended`,
+ * `400 account_scope_required`, and the uniform `404` for a session that is not the caller's.
+ */
+export async function raiseHelp(
+  sessionId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyHelpResponse> {
+  return apiFetch<AgencyHelpResponse>(
+    `${AGENCY_BASE}/sessions/${sessionId}/help`,
+    { method: 'POST' },
+    tenantId,
+    accountId,
+  );
+}
+
+/** Cancel the agent's Need help. Answers `help: null` whether or not one was open (same guards as the raise). */
+export async function cancelHelp(
+  sessionId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyHelpResponse> {
+  return apiFetch<AgencyHelpResponse>(
+    `${AGENCY_BASE}/sessions/${sessionId}/help`,
+    { method: 'DELETE' },
     tenantId,
     accountId,
   );
