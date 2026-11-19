@@ -264,39 +264,11 @@ export function callbacksSummary({ count: total, capped: partial, unknown }: Pic
   return `At least ${plural(total, 'callback')} late${partial ? `,${where}` : ''}.${unknown > 0 ? ` ${unknownCallbacksText(unknown)}.` : ''}`;
 }
 
-/** The Callbacks page's own words when the board does not load (never Live floor's "what needs your attention"). */
-export const CALLBACKS_ERROR = 'We couldn’t load the late callbacks. Try again in a moment.';
+/** The Callbacks page's own words when its list does not load (never Live floor's "what needs your attention"). */
+export const CALLBACKS_ERROR = 'We couldn’t load the callbacks. Try again in a moment.';
 
-/** The Callbacks page's own words when the server refuses the board (403). */
+/** The Callbacks page's own words when the server refuses its list (403). */
 export const CALLBACKS_REFUSED = 'Callbacks aren’t available to you in this account right now.';
-
-/** One campaign on the Callbacks page: its overdue callbacks and how many belong to an agent who is away. */
-export interface CallbackRow {
-  campaign: HomeCampaignRef;
-  /** Null when its allocation is not known. */
-  overdue: number | null;
-  ownerAway: number;
-  stale: boolean;
-}
-
-/**
- * The Callbacks page's rows: every active campaign on the board, the most overdue first (one
- * not known yet last), the board's own order otherwise.
- */
-export function callbackRows(reads: readonly HomeCampaignRead[]): CallbackRow[] {
-  return reads
-    .map((read, index) => ({
-      row: {
-        campaign: read.campaign,
-        overdue: read.allocation?.callbacks_overdue ?? null,
-        ownerAway: read.allocation?.callbacks_overdue_absent_owner ?? 0,
-        stale: read.stale,
-      },
-      index,
-    }))
-    .sort((a, b) => (b.row.overdue ?? -1) - (a.row.overdue ?? -1) || a.index - b.index)
-    .map(({ row }) => row);
-}
 
 /**
  * A late-callbacks figure as shown: the count, or "4+" when it is a lower bound (the board left

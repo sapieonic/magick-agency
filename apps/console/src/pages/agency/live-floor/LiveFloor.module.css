@@ -831,3 +831,61 @@
 .avatar[data-state='softphone'],
 .stateTag[data-state='softphone'] { background: color-mix(in srgb, var(--teal) 14%, transparent); color: var(--teal); }
 .chip[data-state='softphone'] > i { background: var(--teal); }
+
+/* ── Floor assist (Phase 3: LF4, LF5, LF28–LF31) ─────────────────────────── */
+
+/* Need help: the card in the danger tone, with its "Needs help" tag (never colour alone). */
+.agentCard[data-stripe='help'] {
+  --stripe: var(--danger);
+  background: var(--danger-subtle);
+}
+
+.agentBadgeHelp {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--danger);
+  color: #fff;
+}
+
+/* The message dialog and the hand-off dialog. */
+.dialogFooter {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.counter {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.counter[data-state='invalid'] {
+  color: var(--warning);
+}
+
+.handOff {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.handOffQuestion {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.handOffStale {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--warning);
+}

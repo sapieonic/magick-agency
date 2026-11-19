@@ -8,6 +8,7 @@ import {
   callsTodayText,
   cardsFor,
   cardsInState,
+  breakOverrunDetail,
   floorAgentsWorking,
   floorBadges,
   floorCard,
@@ -16,6 +17,7 @@ import {
   floorRowsFor,
   floorStateCounts,
   floorTimerAnchor,
+  helpItems,
   liveCallOf,
   offersMakeAvailable,
   rankFloorCards,
@@ -42,6 +44,8 @@ import { campaign, floorRow } from '../helpers/home';
 
 const NOW = Date.parse('2026-11-18T14:00:00Z');
 const ago = (minutes: number, seconds = 0) => new Date(NOW - minutes * 60_000 - seconds * 1000).toISOString();
+
+const HELP = (raisedAt = ago(1), callId: string | null = 'call-1') => ({ raised_at: raisedAt, call_id: callId });
 
 const CALL = (over: Partial<NonNullable<AgencyFloorAgent['call']>> = {}): NonNullable<AgencyFloorAgent['call']> => ({
   call_id: 'call-1',
@@ -138,10 +142,26 @@ describe('the cards’ order', () => {
 
   it('filters by the chips, counting each state from the rows', () => {
     const rows = [floorRow('a'), floorRow('b', { state: 'reserved' }), floorRow('c', { state: 'on_call', call: CALL() }), floorRow('d', { session_id: null, state: 'offline', state_since: null })];
-    expect(floorStateCounts(rows)).toEqual({ total: 4, counts: { on_call: 2, available: 1, wrapup: 0, softphone: 0, break: 0, offline: 1 } });
+    expect(floorStateCounts(rows)).toEqual({ total: 4, help: 0, counts: { on_call: 2, available: 1, wrapup: 0, softphone: 0, break: 0, offline: 1 } });
     const cards = rankFloorCards(rows, NOW);
     expect(cardsInState(cards, 'on_call').map((c) => c.row.agent_user_id)).toEqual(['b', 'c']);
     expect(cardsInState(cards, 'all')).toHaveLength(4);
+  });
+
+  it('counts the agents asking for help beside their state, and filters to them (LF4)', () => {
+    const rows = [floorRow('a'), floorRow('c', { state: 'on_call', call: CALL(), help: HELP() }), floorRow('w', { state: 'wrapup', help: HELP(ago(2)) })];
+    expect(floorStateCounts(rows)).toEqual({ total: 3, help: 2, counts: { on_call: 1, available: 1, wrapup: 1, softphone: 0, break: 0, offline: 0 } });
+    expect(cardsInState(rankFloorCards(rows, NOW), 'help').map((c) => c.row.agent_user_id)).toEqual(['w', 'c']);
+  });
+
+  it('puts an agent asking for help first, the longest waiting first, over every risk (LF28)', () => {
+    const rows = [
+      floorRow('stuck', { state: 'wrapup', state_since: ago(10), wrapup_window_seconds: 30 }),
+      floorRow('new', { state: 'on_call', call: CALL(), help: HELP(ago(1)) }),
+      floorRow('ready'),
+      floorRow('old', { state: 'wrapup', state_since: ago(3), help: HELP(ago(3)) }),
+    ];
+    expect(rankFloorCards(rows, NOW).map((c) => c.row.agent_user_id)).toEqual(['old', 'new', 'stuck', 'ready']);
   });
 
   it('narrows to a campaign’s sessions: soft-phone sessions and absent agents name none', () => {
@@ -232,12 +252,72 @@ describe('a row read again (sameFloorRow)', () => {
     expect(sameFloorRow(row, { ...row, call: null })).toBe(false);
     expect(sameFloorRow({ ...row, call: null }, { ...row, call: null })).toBe(true);
   });
+
+  it('compares Need help field by field too, so an open request alone renders no card again (LF4)', () => {
+    const row = floorRow('a', { state: 'on_call', call: CALL(), help: HELP() });
+    expect(sameFloorRow(row, structuredClone(row))).toBe(true);
+    expect(sameFloorRow(row, { ...row, help: null })).toBe(false);
+    expect(sameFloorRow({ ...row, help: null }, row)).toBe(false);
+    expect(sameFloorRow(row, { ...row, help: { ...row.help!, raised_at: ago(4) } })).toBe(false);
+    expect(sameFloorRow(row, { ...row, help: { ...row.help!, call_id: null } })).toBe(false);
+  });
+});
+
+describe('Need help, in Needs you now (LF4, LF28)', () => {
+  const campaigns = [campaign('c1', 'running', 'Q4 collections')];
+
+  it('is a danger row ranked first, naming the agent, how long ago and what they were on, with no “Got it”', () => {
+    const cards = rankFloorCards([
+      floorRow('r', { agent_name: 'Ravi Kumar', state: 'on_call', call: CALL(), help: HELP(ago(2.5)) }),
+      floorRow('d', { agent_name: 'Divya S', state: 'wrapup', help: HELP(ago(0.5), null) }),
+      floorRow('x'),
+    ], NOW);
+    const items = helpItems(cards, campaigns, NOW);
+    expect(items.map((i) => i.title)).toEqual(['Ravi Kumar pressed Need help 2 min ago', 'Divya S pressed Need help under a minute ago']);
+    const [ravi, divya] = items;
+    expect(ravi).toMatchObject({
+      id: 'help:r',
+      tone: 'danger',
+      detail: 'on a call with Ramesh Goud',
+      campaign: { id: 'c1', name: 'Q4 collections' },
+      ackable: false,
+      kind: `help@${ago(2.5)}`,
+      agent: { sessionId: 's-r', agentUserId: 'r', name: 'Ravi Kumar' },
+    });
+    // Listen starts on the call as the card's does; no number.
+    expect(ravi!.agent!.call).toMatchObject({ call_id: 'call-1', customer_name: 'Ramesh Goud' });
+    expect(ravi!.agent!.reminder).toBeUndefined();
+    expect(divya).toMatchObject({ detail: 'after the call', agent: { call: null } });
+    expect(homeRank(ravi!)).toBe('help');
+    // Above what stopped a campaign, and never on the sidebar badge.
+    const stop = { ...ravi!, id: 'stop', kind: 'stall:dnc_unavailable' };
+    expect(sortByRank([stop, ravi!]).map((i) => i.id)).toEqual(['help:r', 'stop']);
+    expect(homeBadgeCount([ravi!])).toBe(0);
+  });
+
+  it('is none while the flag is off (the server sends help: null), nor for a row with no session', () => {
+    const cards = rankFloorCards([floorRow('r', { state: 'on_call', call: CALL(), help: null }), floorRow('o', { session_id: null, help: HELP() })], NOW);
+    expect(helpItems(cards, campaigns, NOW)).toEqual([]);
+  });
+
+  it('is a new row for a request raised again, and stale while the floor is', () => {
+    const first = helpItems(rankFloorCards([floorRow('r', { help: HELP(ago(3)) })], NOW), campaigns, NOW)[0]!;
+    const again = helpItems(rankFloorCards([floorRow('r', { help: HELP(ago(1)) })], NOW), campaigns, NOW, true)[0]!;
+    expect(again.kind).not.toBe(first.kind);
+    expect(again.stale).toBe(true);
+  });
+
+  it('turns the card red (the danger stripe), over any warning', () => {
+    const [card] = rankFloorCards([floorRow('w', { state: 'wrapup', state_since: ago(10), wrapup_window_seconds: 30, help: HELP() })], NOW);
+    expect(card!.risk).toBe('wrapup_overrun');
+    expect(stripeTone(card!)).toBe('help');
+  });
 });
 
 describe('breaks over the limit, in Needs you now', () => {
   const campaigns = [campaign('c1', 'running', 'Q4 collections')];
 
-  it('is a warning ranked as a break overrun, with a coming-soon Send reminder, left off the badge', () => {
+  it('is a warning ranked as a break overrun, carrying Send reminder’s agent and words, left off the badge', () => {
     const cards = rankFloorCards([floorRow('p', { agent_name: 'Priya M', state: 'break', break_label: 'Tea', state_since: ago(42) }), floorRow('q', { state: 'break', state_since: ago(29) })], NOW);
     const [item, ...rest] = breakOverrunItems(cards, campaigns);
     expect(rest).toEqual([]);
@@ -245,17 +325,47 @@ describe('breaks over the limit, in Needs you now', () => {
       id: 'break-overrun:p',
       tone: 'warning',
       title: 'Priya M on Tea for 42 min',
-      detail: 'Any break over 30 minutes is flagged. Limits per break reason are coming soon.',
+      detail: 'It has no limit of its own, so it is flagged after 30 min.',
       campaign: { id: 'c1', name: 'Q4 collections' },
       to: '/agency/campaigns/c1/agents',
       ackable: true,
       // How long the break has run, in seconds; a "Got it" holds for 15 minutes more of it.
       count: 42 * 60,
       worseBy: 15 * 60,
-      comingSoon: { label: 'Send reminder', tooltip: 'Remind Priya M that their break is over.' },
+      agent: {
+        sessionId: 's-p',
+        agentUserId: 'p',
+        name: 'Priya M',
+        reminder: 'Hi, your Tea break has gone past 30 minutes. Please come back to your station when you can. Thank you!',
+      },
     });
+    expect(item).not.toHaveProperty('comingSoon');
     expect(homeRank(item!)).toBe('break-overrun');
     expect(homeBadgeCount([item!])).toBe(0);
+  });
+
+  it('follows the break reason’s own limit (LF6), naming it, and the 30-minute rule without one', () => {
+    const tea = (minutes: number, limit: number | null) => floorRow('p', {
+      agent_name: 'Priya M', state: 'break', break_reason: 'tea', break_label: 'Tea', break_limit_minutes: limit, state_since: ago(minutes),
+    });
+    // Tea's 15 minutes: over at 16, not at 14.
+    const [over] = breakOverrunItems(rankFloorCards([tea(16, 15)], NOW), campaigns);
+    expect(over).toMatchObject({ title: 'Priya M on Tea for 16 min', detail: 'The limit for Tea is 15 min.' });
+    expect(over!.agent!.reminder).toBe('Hi, your Tea break (15 minutes) is over. Please come back to your station when you can. Thank you!');
+    expect(breakOverrunItems(rankFloorCards([tea(14, 15)], NOW), campaigns)).toEqual([]);
+    // No limit of its own: the floor's 30 minutes, as before.
+    expect(breakOverrunItems(rankFloorCards([tea(16, null)], NOW), campaigns)).toEqual([]);
+    expect(breakOverrunItems(rankFloorCards([tea(31, null)], NOW), campaigns)).toHaveLength(1);
+    // A floor read from before Phase 3 sends no field at all: the 30-minute rule.
+    const { break_limit_minutes: _gone, ...older } = tea(16, 15);
+    expect(breakOverrunItems(rankFloorCards([older as AgencyFloorAgent], NOW), campaigns)).toEqual([]);
+    expect(breakOverrunDetail(null, 45)).toBe('The limit for this break is 45 min.');
+  });
+
+  it('never flags the soft phone, whatever limit a row carried', () => {
+    const softphone = floorRow('s', { state: 'break', break_reason: 'soft_phone', break_label: 'Soft phone', break_limit_minutes: 1, state_since: ago(90) });
+    expect(rankFloorCards([softphone], NOW)[0]!.risk).toBe('none');
+    expect(breakOverrunItems(rankFloorCards([softphone], NOW), campaigns)).toEqual([]);
   });
 
   it('sits after what stopped a campaign and before late callbacks (LF9)', () => {

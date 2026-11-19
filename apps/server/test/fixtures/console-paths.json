@@ -2787,6 +2787,20 @@
       "reason": "Live floor: the promises to pay recorded over a window, per campaign, served by the public API layer (decision B28b; contracts api/agency/promises.ts)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/messages",
+      "source": "apps/console/src/api/agencyFloorAssist.ts",
+      "status": "served",
+      "reason": "Live floor: a supervisor's message to an agent's station, Talk to agent and Send reminder (decisions LF5, LF17, LF29; agency.supervise, the agency_floor_assist_enabled flag; contracts agency/floor-assist.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/callbacks",
+      "source": "apps/console/src/api/agencyFloorAssist.ts",
+      "status": "served",
+      "reason": "Callbacks page: the account's open callbacks, overdue or due later today, keyset paged, never a number (decisions LF22, LF32; agency.supervise; contracts api/agency/callbacks.ts)"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/customers/options",
       "source": "apps/console/src/api/customerHistory.ts",

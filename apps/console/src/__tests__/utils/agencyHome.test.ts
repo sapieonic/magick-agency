@@ -330,18 +330,18 @@ describe('the list', () => {
     expect(homeRank({ kind: 'callbacks-overdue', tone: 'danger' })).toBe('late-callbacks');
     expect(homeRank({ kind: 'abandonment', tone: 'danger' })).toBe('danger');
     expect(homeRank({ kind: 'calling-hours-default', tone: 'info' })).toBe('info');
-    // Need help and break overruns (Phase 3) have their places waiting, in LF9's order.
+    // Need help (LF28) tops everything, whatever its tone.
+    expect(homeRank({ kind: 'help@2026-11-19T09:00:00Z', tone: 'danger' })).toBe('help');
+    expect(homeRank({ kind: 'help@2026-11-19T09:00:00Z', tone: 'info' })).toBe('help');
+    // LF9's order.
     expect(HOME_RANKS).toEqual(['help', 'stop', 'break-overrun', 'late-callbacks', 'danger', 'warning', 'info']);
   });
 
   it('marks late callbacks whose owner is away, which a supervisor could give to free agents', () => {
     const [late] = homeAttention([read('c1', { allocation: allocationFacts({ callbacks_overdue: 4, callbacks_overdue_absent_owner: 3 }) })], NO_MISSED, fmt);
-    expect(late).toMatchObject({
-      id: 'callbacks-overdue:c1',
-      comingSoon: { label: 'Give to free agents', tooltip: 'Give the 3 late callbacks whose agent is away to agents who are free now.' },
-    });
+    expect(late).toMatchObject({ id: 'callbacks-overdue:c1', handOff: { count: 3 } });
     const [owned] = homeAttention([read('c1', { allocation: allocationFacts({ callbacks_overdue: 4 }) })], NO_MISSED, fmt);
-    expect(owned!.comingSoon).toBeUndefined();
+    expect(owned!.handOff).toBeUndefined();
   });
 
   it('splits into what needs the reader and what is only waiting (nothing wrong)', () => {

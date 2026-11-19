@@ -116,8 +116,8 @@ export function holdsHomePermission(role: Role | undefined): boolean {
 }
 
 /**
- * The account's callbacks (decision LF1): for now each active campaign's overdue callbacks from
- * Live floor's board, linking to the campaign's Callbacks tab; one list of them all is coming.
+ * The account's callbacks (decisions LF1, LF22, LF32): one list of every active campaign's open
+ * callbacks, overdue or due later today, from `GET /proxy/agency/callbacks`.
  * Gated as Live floor is, because it reads the same board's supervisor-only parts.
  */
 export const CALLBACKS_PATH = '/agency/callbacks';
