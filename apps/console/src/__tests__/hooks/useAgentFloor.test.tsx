@@ -52,6 +52,23 @@ describe('useAgentFloor', () => {
     expect(api.getAgencyFloor).toHaveBeenCalledTimes(2);
   });
 
+  it('reads at once on Retry while a tick’s read is in flight, and never lands that older answer', async () => {
+    const { result } = renderHook(() => useAgentFloor('t-1', 'a-1', true));
+    await flush();
+    const answers: Array<(v: unknown) => void> = [];
+    api.getAgencyFloor.mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }));
+    await flush(FLOOR_POLL_MS);
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(2);
+    // Make available's `onChanged` (or Retry) while the tick's read, asked before it, is on its way.
+    act(() => result.current.reload());
+    expect(api.getAgencyFloor).toHaveBeenCalledTimes(3);
+    await act(async () => answers[1]!(floor(6)));
+    expect(result.current).toMatchObject({ status: 'ready', floor: { totals: { on_shift: 6 } } });
+    // The tick's read, asked before the change, answers last: it never lands.
+    await act(async () => answers[0]!(floor(1)));
+    expect(result.current).toMatchObject({ status: 'ready', floor: { totals: { on_shift: 6 } } });
+  });
+
   it('keeps the last floor through failed reads, and says it is stale after two periods', async () => {
     const { result } = renderHook(() => useAgentFloor('t-1', 'a-1', true));
     await flush();
