@@ -309,7 +309,8 @@ describe('the rules', () => {
 
   it('a message holds no control character Postgres or the agent cannot use: NUL and the other C0 controls refused, never stripped (LF17)', () => {
     // FALSIFIED: with the forbidden-character test removed, the NUL cases red (and the route then
-    // reached Postgres with a NUL: a 500, `22021`).
+    // reached Postgres with a NUL: `22021`, which the agency error handler answers a bare 400
+    // "Invalid input" with no `message_invalid` code).
     for (const bad of ['a\u0000b', '\u0000', 'Offer\u0007 the plan', 'x\u001by', 'x\u007fy', 'x\u000by', 'x\ud800y', 'x\udc00']) {
       expect(normaliseMessageText(bad), JSON.stringify(bad)).toBeNull();
     }

@@ -422,7 +422,8 @@ describe('messages, end to end', () => {
 
   it('400 message_invalid on an empty or too long text, or one holding a NUL or another control character, at the public layer and the internal handler alike; nothing stored', async () => {
     // FALSIFIED: with the forbidden-character check removed from `normaliseMessageText`, the NUL
-    // cases answer 500 (Postgres refuses `\u0000` in text, 22021), not 400.
+    // case reds: Postgres refuses `\u0000` in text (22021), which the agency error handler answers
+    // a bare 400 "Invalid input" with no code, not `message_invalid`.
     const call = await liveCall();
     const sid = call.station.sessionId;
     for (const text of ['   ', 'x'.repeat(501), 'Offer\u0000 the plan', '\u0000', 'Ring\u0007 back']) {
