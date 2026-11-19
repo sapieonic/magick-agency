@@ -73,7 +73,7 @@ describe('Need help expires on the real clock', () => {
       await service.stopSweep();
     }
     const expired = frames.filter(([, f]) => f['reason'] === 'expired');
-    expect(expired).toEqual([[left.id, { event: 'help_cleared', raised_at: raisedLeft.help!.raised_at, reason: 'expired' }]]);
+    expect(expired).toEqual([[left.id, { event: 'help_cleared', raised_at: raisedLeft!.raised_at, reason: 'expired' }]]);
     expect(audits.filter((a) => a['action'] === 'agency_session.help_expired').map((a) => a['resource_id'])).toEqual([left.id]);
     const { rows } = await getTestPool().query(
       'SELECT id, help_raised_at IS NULL AS cleared, help_answered_at IS NOT NULL AS answered FROM agency_agent_sessions WHERE id = ANY($1::uuid[]) ORDER BY id',

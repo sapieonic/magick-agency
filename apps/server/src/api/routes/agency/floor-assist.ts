@@ -76,12 +76,12 @@ export async function registerFloorAssistRoutes(sub: FastifyInstance, runtime: A
       log.warn({ err, sessionId: session.id }, 'Could not read the call Need help was raised on; raising it without one');
       return null;
     });
-    const out = await runtime.floorAssist.raise(session, callId);
-    if (!out.help) {
+    const help = await runtime.floorAssist.raise(session, callId);
+    if (!help) {
       // The session left between the ownership check and the raise.
       return reply.code(409).send({ error: 'Session Ended', code: 'session_ended', message: 'This session has ended. Start a new one.' });
     }
-    const body: AgencyHelpResponse = { session_id: session.id, help: out.help };
+    const body: AgencyHelpResponse = { session_id: session.id, help };
     return reply.send(body);
   });
 

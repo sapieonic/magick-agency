@@ -71,7 +71,7 @@ const events = () => deps.frames.map(([, f]) => f);
 describe('raise', () => {
   it('raises once: the open request answered, one audit row by the agent, one metric; no frame (the HTTP answer says it)', async () => {
     const out = await service().raise(SESSION, 'call-1');
-    expect(out).toEqual({ raised: true, help: { raised_at: RAISED.toISOString(), call_id: 'call-1' } });
+    expect(out).toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1' });
     expect(repo['raise']).toHaveBeenCalledWith({
       sessionId: SESSION.id, tenantId: 't-1', accountId: 'a-1', callId: 'call-1', expiryMs: AGENCY_HELP_EXPIRY_MS,
     });
@@ -86,7 +86,7 @@ describe('raise', () => {
 
   it('raising again while one is open is idempotent: the open one answered, no audit row, no metric', async () => {
     repo['raise']!.mockResolvedValue({ raised: false, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expired: null });
-    expect(await service().raise(SESSION, 'call-2')).toEqual({ raised: false, help: { raised_at: RAISED.toISOString(), call_id: null } });
+    expect(await service().raise(SESSION, 'call-2')).toEqual({ raised_at: RAISED.toISOString(), call_id: null });
     expect(deps.audits).toEqual([]);
     expect(metrics.raised).not.toHaveBeenCalled();
   });
@@ -106,7 +106,7 @@ describe('raise', () => {
 
   it('a session that left meanwhile: no help, nothing written', async () => {
     repo['raise']!.mockResolvedValue({ raised: false, help: null, expired: null });
-    expect(await service().raise(SESSION, null)).toEqual({ raised: false, help: null });
+    expect(await service().raise(SESSION, null)).toBeNull();
     expect(deps.audits).toEqual([]);
   });
 });
@@ -210,11 +210,9 @@ describe('every clearing path: the frames, one audit row, one metric', () => {
       const s = service();
       s.startSweep(1_000);
       s.startSweep(1_000);
-      expect(s.isSweepArmed()).toBe(true);
       await vi.advanceTimersByTimeAsync(3_000);
       expect(repo['expireDue']).toHaveBeenCalledTimes(3);
       await s.stopSweep();
-      expect(s.isSweepArmed()).toBe(false);
       await vi.advanceTimersByTimeAsync(3_000);
       expect(repo['expireDue']).toHaveBeenCalledTimes(3);
     } finally {

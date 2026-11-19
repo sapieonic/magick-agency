@@ -94,14 +94,6 @@ export interface FloorAssistDeps {
   expiryMs?: number;
 }
 
-/** What a raise answers. */
-export interface HelpRaiseOutcome {
-  /** True when this call raised it; false when one was open already, or nothing could be raised. */
-  raised: boolean;
-  /** The open request, or null when the session has left. */
-  help: AgencySessionHelp | null;
-}
-
 /** What a message send answers. */
 export type SupervisorMessageOutcome =
   | { ok: true; id: string; sent_at: Date }
@@ -136,8 +128,12 @@ export class FloorAssistService {
 
   // ── Need help ──────────────────────────────────────────────────────────────
 
-  /** The agent raises a request on their own session (the route has checked it is theirs, live, on a call or in wrap-up). */
-  async raise(session: FloorAssistSession, callId: string | null): Promise<HelpRaiseOutcome> {
+  /**
+   * The agent raises a request on their own session (the route has checked it is theirs, live, on a
+   * call or in wrap-up). Answers the open request (the one just raised, or the one already open), or
+   * null when the session has left.
+   */
+  async raise(session: FloorAssistSession, callId: string | null): Promise<AgencySessionHelp | null> {
     const result = await this.deps.repo.raise({
       sessionId: session.id, tenantId: session.tenant_id, accountId: session.account_id, callId, expiryMs: this.expiryMs,
     });
@@ -150,7 +146,7 @@ export class FloorAssistService {
       });
       log.info({ sessionId: session.id, tenantId: session.tenant_id, callId: result.help.call_id }, 'Need help raised');
     }
-    return { raised: result.raised, help: result.help ? toSessionHelp(result.help) : null };
+    return result.help ? toSessionHelp(result.help) : null;
   }
 
   /**
@@ -251,10 +247,6 @@ export class FloorAssistService {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
     if (this.sweeping) await this.sweeping;
-  }
-
-  isSweepArmed(): boolean {
-    return this.sweepTimer !== null;
   }
 
   // ── Messages ───────────────────────────────────────────────────────────────
