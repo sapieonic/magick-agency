@@ -300,7 +300,7 @@ export function callbackRows(reads: readonly HomeCampaignRead[]): CallbackRow[] 
 
 /**
  * A late-callbacks figure as shown: the count, or "4+" when it is a lower bound (the board left
- * campaigns out: it reads the first 25 active ones, `activeTotal` past them; or a campaign's
+ * campaigns out: it reads the first `HOME_CAMPAIGN_CAP` active ones, `activeTotal` past them; or a campaign's
  * callbacks are not known), so a sum over some campaigns is never read as the account's. "99+"
  * past 99 either way.
  */

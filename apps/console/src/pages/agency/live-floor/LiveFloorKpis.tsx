@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { Kpi } from '../../../components/common/Kpi';
 import type { HomeBoard } from '../../../hooks/useHomeBoard';
 import type { TodayState } from '../../../hooks/useTodaySoFar';
-import { todaySuccessLine, type HomeCampaignRead } from '../../../utils/agency/home';
+import { HOME_CAMPAIGN_CAP, todaySuccessLine, type HomeCampaignRead } from '../../../utils/agency/home';
 import {
   agentsWorking,
   agentsWorkingSub,
@@ -107,7 +107,7 @@ export function LiveFloorKpis({
             look="outlined"
             label="Late callbacks"
             value={lateText}
-            sub={capped ? 'in the first 25 active campaigns' : lateBound ? 'some campaigns not read' : 'promised time has passed'}
+            sub={capped ? `in the first ${HOME_CAMPAIGN_CAP} active campaigns` : lateBound ? 'some campaigns not read' : 'promised time has passed'}
             tone={late !== null && late > 0 ? 'danger' : undefined}
           />
         </Link>
