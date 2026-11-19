@@ -156,14 +156,15 @@ export function attentionSettings(settings: AgencyAttentionSettings): AgencyAtte
  *  - `paused`: `paused_at`, which every pause writes (a supervisor's and the automatic ones: the
  *    abandonment guardrail, the carrier-account pauses); the actor is `last_transition_by_*`,
  *    which every transition writes and an automatic pause clears (`by_user_id` null).
- *  - `stopping`: the actor is the row's as above (only a person presses Stop); the row keeps no
- *    stamp of the stop, so `at` is when the Stop's audit row (`agency_campaign.stopped`) was
- *    written, or null when there is none.
+ *  - `stopping`: the actor is the row's as above (only a person presses Stop); `at` is the row's
+ *    `stopping_at`, which the transition into `stopping` stamps (`0051_campaign_stopping_at.sql`,
+ *    first-write-wins, so a second Stop would not move it), or null for a campaign that entered
+ *    `stopping` before 0051.
  * Not withheld below `agency.supervise`: the campaign list already serves the actor
  * (`last_transition_by`) to every reader of the campaign.
  */
 export interface AgencyHomeStatusChange {
-  /** ISO-8601. When the campaign entered its status; null only for a stopping campaign whose Stop left no audit row. */
+  /** ISO-8601. When the campaign entered its status; null only for a stopping campaign that entered it before 0051 stamped it. */
   at: string | null;
   /** Who did it; null for an automatic pause, or when the transition recorded nobody. */
   by_user_id: string | null;

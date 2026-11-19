@@ -161,7 +161,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 ### Dialer
 
-**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below). 0019 lets `pause_reason` be `carrier_auth`, 0020 `carrier_account_unavailable`, 0021 `carrier_refusing_calls`.
+**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below). 0019 lets `pause_reason` be `carrier_auth`, 0020 `carrier_account_unavailable`, 0021 `carrier_refusing_calls`. 0051 adds `stopping_at` (when Stop was pressed; see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
@@ -1604,6 +1604,25 @@ names by a failed concurrent build fails the migration. **Down** drops them. **T
 `test/integration/db/promise-summary-indexes-migration.test.ts` (the definitions, the invalid-index
 refusal, down then up), the server's `test/integration/agency/promise-summary-repository.test.ts`
 (the summary on each index by tenant and account) and the down → up inventory suite.
+
+### 0051 — `migrations/0051_campaign_stopping_at.sql`
+
+When Stop moved a campaign to `stopping` (decision B28b: Home's "Stopping, by … at …").
+**`agency_campaigns.stopping_at`** `TIMESTAMPTZ` (new, nullable, no default, so the ADD COLUMN is
+catalog-only): stamped by `transitionStatus` on the way into `stopping`, first-write-wins
+(`COALESCE(stopping_at, now())`, the statement's instant, so equal to that transition's
+`updated_at`), left alone by every other transition, so a second Stop would not move it and
+`stopping → stopped` keeps it. Home's board reads it instead of the Stop's `agency_campaign.stopped`
+audit row, which the route writes after the transition without waiting for it. No backfill: a
+campaign already `stopping` when it is applied reads null, and Home shows that stop with no time (a
+drain of the calls in flight, so it is `stopped` soon after). The column flows onto the campaign
+response like every other (`formatAgencyCampaignResponse` derives from the row); no wire type
+declares it. The Up starts with `SET LOCAL lock_timeout = '10s'` (ACCESS EXCLUSIVE on a table the
+live server writes, for the moment the catalog change takes). **Down** drops it. **Tests**:
+`test/integration/db/campaign-stopping-at-migration.test.ts` (the column and its comment, the Up's
+lock timeout before the ADD COLUMN, down then up leaving the rows there null), the server's
+`test/integration/agency/home-status-change.test.ts` (the stamp, a second Stop, `stopped`, the
+board straight after Stop) and the down → up inventory suite.
 
 ## Tests
 

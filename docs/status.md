@@ -2350,8 +2350,9 @@ account-wide one). **Phase 2** (B28b): one account-wide floor read, `GET /proxy/
 `GET /proxy/agency/promises/summary` across attempts, manual and inbound calls (migration
 `0050_promise_summary_indexes.sql`, three partial indexes built `CONCURRENTLY` in production:
 `db-hygiene.md`, `DEPLOYMENT.md`), and who paused or stopped a campaign on Home's board
-(`status_changed`). On the console: the agent card grid with state chips (a new "On soft phone"),
-Listen from a card, break overruns past 30 minutes as Needs you now rows, Will pay per campaign,
+(`status_changed`; a stop's time from `agency_campaigns.stopping_at`, which the transition into
+`stopping` stamps, `0051_campaign_stopping_at.sql`). On the console: the agent card grid with state
+chips (a new "On soft phone"), Listen from a card, break overruns past 30 minutes as Needs you now rows, Will pay per campaign,
 "Paused by" on the campaign cards. **Coming soon** (focusable `aria-disabled` buttons with a
 tooltip, `components/common/ComingSoon.tsx`, LF1): Need help on the console station, Talk to agent,
 Send reminder, Give to free agents, Join call, and the Need help chip. Not on the agent app.
@@ -3293,7 +3294,7 @@ files are listed in [`modules.md`](modules.md).
 
 **Live floor** (LF4–LF8, open): Phase 3, Need help from a station, messages from a supervisor to
 an agent (Talk to agent, Send reminder), break limits per reason, giving late callbacks to free
-agents, the account-wide Callbacks list (its schema is a migration numbered 0051 or later); Phase 4, Join
+agents, the account-wide Callbacks list (its schema is a migration numbered 0052 or later); Phase 4, Join
 call and whisper (reopens "listen only"). Their controls are on the console as Coming soon; the
 agent app has none.
 
