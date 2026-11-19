@@ -37,6 +37,7 @@ import { listenToLabel } from '../../../utils/listen/listenCopy';
 import { attentionFor } from '../../../utils/agency/liveFloor';
 import { formatTimeOrDate } from '../../../utils/format/date';
 import { formatCount, plural } from '../../../utils/format/number';
+import { FloorPane } from './FloorPane';
 import styles from './LiveFloor.module.css';
 
 /** Whether Needs you now could check breaks over the limit (the floor read): see `breaks`. */
@@ -95,7 +96,9 @@ export const HELP_CHIME_LABEL = 'Need help sound';
  * callbacks whose owner is away, "Give to free agents" where it is offered (`handOff`). With a
  * campaign picked it shows that campaign's rows and says how many it leaves out
  * (not counting rows put aside). Never an all-clear from a read it could not refresh, nor while the
- * floor, where breaks over the limit come from, is unread (`breaks`).
+ * floor, where breaks over the limit come from, is unread (`breaks`). A `FloorPane`, like Campaigns
+ * beside it: a long list scrolls inside the card, with "N more items below", rather than pushing
+ * the agents' panel down the page.
  */
 export const NeedsYouNow = memo(function NeedsYouNow({
   items,
@@ -135,10 +138,14 @@ export const NeedsYouNow = memo(function NeedsYouNow({
   const now = new Date();
 
   return (
-    <section className={`${styles.card} ${styles.attentionCard}`} aria-labelledby="home-attention-heading">
-      <div className={styles.cardHead}>
-        <h2 id="home-attention-heading" className={styles.cardTitle}>
-          <Bell size={18} aria-hidden="true" />
+    <FloorPane
+      headingId="home-attention-heading"
+      icon={Bell}
+      className={styles.attentionCard}
+      moreNoun="item"
+      testId="home-attention-pane"
+      title={(
+        <>
           Needs you now
           {needs.length > 0 && (
             <span className={styles.count} data-testid="home-attention-count">
@@ -146,26 +153,30 @@ export const NeedsYouNow = memo(function NeedsYouNow({
               <span className="sr-only">{`, ${formatCount(needs.length)}`}</span>
             </span>
           )}
-        </h2>
-        <p className={styles.cardNote}>Each item clears itself once it’s fixed. “Got it” hides one until it gets worse, or until tomorrow</p>
-        {assist && (
-          <button
-            type="button"
-            className={`btn-secondary ${styles.smallButton}`}
-            aria-pressed={assist.chime.on}
-            onClick={assist.chime.toggle}
-            title="Play a sound when an agent presses Need help. Kept for this browser."
-            data-testid="home-help-chime"
-          >
-            {assist.chime.on ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
-            {/* The name stays "Need help sound" whatever the state: `aria-pressed` says on or off,
-                and a name that changed too would say it twice ("…sound off, not pressed"). */}
-            {HELP_CHIME_LABEL}
-            <span aria-hidden="true">{assist.chime.on ? ' on' : ' off'}</span>
-          </button>
-        )}
-      </div>
-
+        </>
+      )}
+      head={(
+        <>
+          <p className={styles.cardNote}>Each item clears itself once it’s fixed. “Got it” hides one until it gets worse, or until tomorrow</p>
+          {assist && (
+            <button
+              type="button"
+              className={`btn-secondary ${styles.smallButton}`}
+              aria-pressed={assist.chime.on}
+              onClick={assist.chime.toggle}
+              title="Play a sound when an agent presses Need help. Kept for this browser."
+              data-testid="home-help-chime"
+            >
+              {assist.chime.on ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
+              {/* The name stays "Need help sound" whatever the state: `aria-pressed` says on or off,
+                  and a name that changed too would say it twice ("…sound off, not pressed"). */}
+              {HELP_CHIME_LABEL}
+              <span aria-hidden="true">{assist.chime.on ? ' on' : ' off'}</span>
+            </button>
+          )}
+        </>
+      )}
+    >
       {needs.length > 0 ? (
         <ul className={styles.attentionList} data-testid="home-attention">
           {needs.map((item) => (
@@ -231,7 +242,7 @@ export const NeedsYouNow = memo(function NeedsYouNow({
           )}
         </div>
       )}
-    </section>
+    </FloorPane>
   );
 });
 
@@ -252,7 +263,7 @@ function AttentionRow({ item, now, onAcknowledge, assist = null, handOff = null 
   const [reviewing, setReviewing] = useState(false);
   const reviewId = useId();
   return (
-    <li className={styles.attentionRow} data-tone={item.tone} data-testid={`home-attention-${item.id}`}>
+    <li className={styles.attentionRow} data-tone={item.tone} data-pane-item data-testid={`home-attention-${item.id}`}>
       <span className={styles.rowIcon} aria-hidden="true">
         <Icon size={18} />
       </span>

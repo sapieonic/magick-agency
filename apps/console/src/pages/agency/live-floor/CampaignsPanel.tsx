@@ -10,6 +10,7 @@ import { formatCount } from '../../../utils/format/number';
 import { formatTimeOrDate } from '../../../utils/format/date';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import { useCampaignLifecycle } from '../campaign-detail/useCampaignLifecycle';
+import { FloorPane } from './FloorPane';
 import styles from './LiveFloor.module.css';
 
 /** A time on today's date ("11:03 am"), else the date and time. */
@@ -24,7 +25,9 @@ const whenShort = (iso: string) => formatTimeOrDate(iso, new Date());
  * the refusals and their toasts); Pause and Resume ask for no confirmation there, so none here.
  * The board is read again after a change, and at once when the card's re-read of the campaign
  * (before Resume, after a 409) finds a status other than the board's. `willPay` is each promise-recording campaign's
- * count from the promises summary (`willPayByCampaign`, B28b): its card says "71 will pay".
+ * count from the promises summary (`willPayByCampaign`, B28b): its card says "71 will pay". A
+ * `FloorPane`, like Needs you now beside it: many campaigns scroll inside the card, with "N more
+ * campaigns below", rather than pushing the agents' panel down the page.
  */
 export const CampaignsPanel = memo(function CampaignsPanel({
   reads,
@@ -38,15 +41,19 @@ export const CampaignsPanel = memo(function CampaignsPanel({
   const cards = useMemo(() => campaignCards(reads, whenShort), [reads]);
   const running = reads.filter((r) => r.campaign.status === 'running').length;
   return (
-    <section className={styles.card} aria-labelledby="home-campaigns-heading">
-      <div className={styles.cardHead}>
-        <h2 id="home-campaigns-heading" className={styles.cardTitle}>
-          <Send size={18} aria-hidden="true" />
+    <FloorPane
+      headingId="home-campaigns-heading"
+      icon={Send}
+      moreNoun="campaign"
+      testId="home-campaigns-pane"
+      title={(
+        <>
           Campaigns
           {reads.length > 0 && <span className={styles.cardTitleNote}>{`${running} running`}</span>}
-        </h2>
-        <Link to="/agency/campaigns" className={styles.cardLink}>All campaigns</Link>
-      </div>
+        </>
+      )}
+      head={<Link to="/agency/campaigns" className={styles.cardLink}>All campaigns</Link>}
+    >
       {cards.length > 0 ? (
         <ul className={styles.campaignList} data-testid="home-campaigns">
           {cards.map((card) => (
@@ -58,7 +65,7 @@ export const CampaignsPanel = memo(function CampaignsPanel({
           No campaign is running or paused.
         </p>
       )}
-    </section>
+    </FloorPane>
   );
 });
 
@@ -104,7 +111,7 @@ function CampaignCard({ card, onChanged, willPay }: {
     .filter((part): part is string => Boolean(part));
 
   return (
-    <li className={styles.campaign} data-testid={`home-campaign-${campaign.id}`}>
+    <li className={styles.campaign} data-pane-item data-testid={`home-campaign-${campaign.id}`}>
       <div className={styles.campaignTop}>
         <Link to={card.to} className={styles.campaignName2}>{campaign.name}</Link>
         {card.stale && <span className={styles.staleTag} data-testid="home-floor-stale">Not refreshed</span>}
