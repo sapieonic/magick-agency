@@ -4,6 +4,7 @@ import 'package:meta/meta.dart';
 
 import '../softphone/softphone_host.dart';
 import 'station_signals.dart';
+import 'station_view.dart' show SupervisorMessageView;
 
 /// The one session the station core hosts: a campaign station (from the
 /// join's [SessionBootstrap]) or a soft-phone session (from
@@ -147,18 +148,23 @@ bool urlCarriesToken(String url) => RegExp(r'[?&]token=[^&]+').hasMatch(url);
 /// campaign view's contract is unchanged.
 @immutable
 final class StationHost {
-  const StationHost({this.signals = const StationSignals(), this.softphone});
+  const StationHost({this.signals = const StationSignals(), this.softphone, this.messages = const []});
 
   static const none = StationHost();
 
   final StationSignals signals;
   final SoftphoneHostView? softphone;
 
-  @override
-  bool operator ==(Object other) => other is StationHost && other.signals == signals && other.softphone == softphone;
+  /// A supervisor's messages to the agent (floor assist), for the shell's banner on every tab:
+  /// the same list instance until one arrives or is dismissed.
+  final List<SupervisorMessageView> messages;
 
   @override
-  int get hashCode => Object.hash(signals, softphone);
+  bool operator ==(Object other) =>
+      other is StationHost && other.signals == signals && other.softphone == softphone && identical(other.messages, messages);
+
+  @override
+  int get hashCode => Object.hash(signals, softphone, identityHashCode(messages));
 }
 
 /// The slot [StationHost] is written to. Only the station controller sets it.

@@ -108,6 +108,7 @@ class StationViewMapper {
     bool awayRang = false,
     String? awayNoRing,
     bool dialGapHeld = false,
+    HelpView help = const HelpView(),
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -133,6 +134,7 @@ class StationViewMapper {
         rang: rang,
         // Paused rather than rung, though ringing is on for this phone: why it won't ring.
         noRing: !rang && code == wire.ReservedBreakCode.deviceAway.wire ? awayNoRing : null,
+        limitMinutes: breakLimitMinutes(code, breakReasons),
       );
     }
     final queued = pendingBreakCode == null
@@ -172,6 +174,7 @@ class StationViewMapper {
       inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure),
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
+      help: help,
     );
   }
 
@@ -338,6 +341,17 @@ class StationViewMapper {
       if (r.code == code) return r.label;
     }
     return humaniseCode(code);
+  }
+
+  /// The limit of the break [code] is (LF6, LF20): the campaign's reason's, found by its code as
+  /// its label is. None for a reserved code (the app's own pauses, the soft phone), whatever a
+  /// catalog says, nor for a code the catalog does not list.
+  static int? breakLimitMinutes(String code, List<wire.BreakReason> reasons) {
+    if (code.isEmpty || wire.ReservedBreakCode.tryFromWire(code) != null) return null;
+    for (final r in reasons) {
+      if (r.code == code) return r.limitMinutes;
+    }
+    return null;
   }
 
   List<BreakOption> _breakOptionsFor(List<wire.BreakReason> reasons) {

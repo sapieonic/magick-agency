@@ -86,12 +86,12 @@ class _Harness {
 }
 
 void main() {
-  test('the first connect uses the bootstrap token, adds client=mobile&media=alaw8&caps=inbound, X-Client and 3 s protocol pings', () {
+  test('the first connect uses the bootstrap token, adds client=mobile&media=alaw8&caps=inbound,floor_assist, X-Client and 3 s protocol pings', () {
     fakeAsync((async) {
       final h = _Harness(async)..openFirst();
       final t = h.connector.last;
       expect(t.url.scheme, 'wss');
-      expect(t.url.queryParameters, {'token': 'boot', 'client': 'mobile', 'media': 'alaw8', 'caps': 'inbound'});
+      expect(t.url.queryParameters, {'token': 'boot', 'client': 'mobile', 'media': 'alaw8', 'caps': 'inbound,floor_assist'});
       expect(t.headers['x-client'], startsWith('magick-agency-mobile/'));
       expect(t.pingInterval, const Duration(seconds: 3));
       expect(h.mints, 0, reason: 'never mint ahead of need');
@@ -100,24 +100,24 @@ void main() {
     });
   });
 
-  test('declareInbound off: every connect, however it starts, leaves out caps; back on, the next declares it', () {
+  test('declareInbound off: every connect, however it starts, declares floor_assist alone; back on, the next declares inbound too', () {
     fakeAsync((async) {
       final h = _Harness(async);
       h.socket.declareInbound = false;
       h.openFirst();
-      expect(h.connector.last.url.queryParameters, {'token': 'boot', 'client': 'mobile', 'media': 'alaw8'});
+      expect(h.connector.last.url.queryParameters, {'token': 'boot', 'client': 'mobile', 'media': 'alaw8', 'caps': 'floor_assist'});
       // A drop's retry and a parked socket's resume connect without it too.
       h.dropAndMeasure();
-      expect(h.connector.last.url.queryParameters.containsKey('caps'), isFalse);
+      expect(h.connector.last.url.queryParameters['caps'], 'floor_assist');
       h.socket.park();
       h.socket.setKeepAlive(false);
       h.socket.setKeepAlive(true);
       async.flushMicrotasks();
-      expect(h.connector.last.url.queryParameters.containsKey('caps'), isFalse);
+      expect(h.connector.last.url.queryParameters['caps'], 'floor_assist');
       h.socket.declareInbound = true;
       h.socket.reconnect();
       async.flushMicrotasks();
-      expect(h.connector.last.url.queryParameters['caps'], 'inbound');
+      expect(h.connector.last.url.queryParameters['caps'], 'inbound,floor_assist');
       h.socket.dispose();
     });
   });
@@ -162,8 +162,8 @@ void main() {
         async.flushMicrotasks();
         expect(h.mints, 1);
         expect(h.connector.last.url.queryParameters['token'], 'mint1');
-        // Every connect declares inbound calls, a re-minted one included.
-        expect(h.connector.last.url.queryParameters['caps'], 'inbound');
+        // Every connect declares inbound calls and floor assist, a re-minted one included.
+        expect(h.connector.last.url.queryParameters['caps'], 'inbound,floor_assist');
         expect(h.state, StationConnection.open);
         h.socket.dispose();
       });

@@ -29,6 +29,14 @@ final stationListenNoticeProvider = Provider<bool>(
   (ref) => ref.watch(featureFlagProvider(FeatureFlags.liveListenEnabled)),
 );
 
+/// Whether the station offers Need help on a call and in wrap-up (floor assist, LF4): the
+/// client-exposed flag [FeatureFlags.floorAssistEnabled] (LF11). Off while the flag map loads or
+/// failed, so the control never flickers on. A supervisor's message is shown whatever it says: the
+/// server sends one only while it is on.
+final stationNeedHelpProvider = Provider<bool>(
+  (ref) => ref.watch(featureFlagProvider(FeatureFlags.floorAssistEnabled)),
+);
+
 /// Whose one-time listening notice it is: the signed-in agent and their account
 /// ([agentWorkspaceProvider], `user:tenant:account`), or null with nobody signed in to one. Per
 /// account, because the flag is: an agent told in one account is told again in another that turns

@@ -122,8 +122,9 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // Floor assist (the Live floor's Phase 3, LF4, LF5; `proxy-agency-floor-assist.routes.ts`): served
   // ahead of their clients. The console's station and Live floor and the app's station call them in
   // their own Phase 3 change, which moves each into `console-paths.json` as it gains its caller.
-  ['POST /proxy/agency/sessions/:_/help', 'Need help raised on the agent\'s own session (LF4; console and app clients to come)'],
-  ['DELETE /proxy/agency/sessions/:_/help', 'Need help cancelled (LF4; console and app clients to come)'],
+  // The mobile app's station calls both (its Phase 3 change; `apps/mobile/lib/core/station/station_api.dart`).
+  ['POST /proxy/agency/sessions/:_/help', 'Need help raised on the agent\'s own session (LF4; the mobile app\'s station; console client to come)'],
+  ['DELETE /proxy/agency/sessions/:_/help', 'Need help cancelled (LF4; the mobile app\'s station; console client to come)'],
   ['POST /proxy/agency/sessions/:_/messages', 'a supervisor\'s message to an agent\'s station, Talk to agent and Send reminder (LF5; console client to come)'],
   // The Live floor's account-wide callbacks list (LF22): the console's Callbacks page calls it once
   // Phase 3's console lands; that change moves it to the console path inventory.
