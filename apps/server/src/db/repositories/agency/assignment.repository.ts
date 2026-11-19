@@ -43,12 +43,14 @@ import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
-import type {
-  AgencyAssignmentAgentDelta,
-  AgencyAssignmentEvent,
-  AgencyAssignmentPreview,
-  AgencyAssignmentReason,
-  AgencyAssignmentResult,
+import {
+  AGENCY_LATE_CALLBACKS_KIND,
+  type AgencyAssignmentAgentDelta,
+  type AgencyAssignmentEvent,
+  type AgencyAssignmentPreview,
+  type AgencyAssignmentResult,
+  type AgencyLateCallbacksPreview,
+  type AgencyLateCallbacksResult,
 } from '@magick-agency/contracts/api/agency/assignment';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import {
@@ -56,14 +58,18 @@ import {
   commitDrift,
   decodePreviewToken,
   encodePreviewToken,
+  historyReasonOf,
+  lateCallbackQuotas,
   rebalanceQuotas,
   seedOf,
   type CanonicalAssignment,
+  type LateCallbackLoad,
+  type LateCallbackQuotas,
   type PlanFingerprint,
   type RebalanceLoad,
   type RebalanceQuotas,
 } from '../../../agency/assignment/operation.js';
-import { contactBucketSql, LIVE_STATES_SQL, openContactSql, returnToPoolSql } from './assignment-sql.js';
+import { contactBucketSql, LIVE_STATES_SQL, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import { params } from './query-builders.js';
 import { iso } from './projections.js';
 import { contactPhoneDigitsSql } from './sql-fragments.js';
@@ -94,8 +100,19 @@ interface PlanSpec {
   writeGuard: string;
 }
 
-/** A plan's own clauses for each operation kind (rebalance has its own chain). */
-function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' }>, bind: Bind): PlanSpec {
+/** The late-callbacks hand-off's operation (LF7). */
+type LateCallbacksOp = Extract<CanonicalAssignment, { kind: typeof AGENCY_LATE_CALLBACKS_KIND }>;
+
+/** What a plan needs read before it: rebalance's quotas, the hand-off's receivers; nothing for the rest. */
+type PlanQuotas = RebalanceQuotas | LateCallbackQuotas;
+
+/** A preview as either family answers it. */
+export type AnyAssignmentPreview = AgencyAssignmentPreview | AgencyLateCallbacksPreview;
+/** A committed operation as either family answers it. */
+export type AnyAssignmentResult = AgencyAssignmentResult | AgencyLateCallbacksResult;
+
+/** A plan's own clauses for each operation kind (rebalance and the hand-off have their own chains). */
+function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' | typeof AGENCY_LATE_CALLBACKS_KIND }>, bind: Bind): PlanSpec {
   const notLive = `c.state NOT IN ${LIVE_STATES_SQL}`;
   // "Open" (CA2): pending and not DNC — a contact something will still dial.
   const open = openContactSql('c');
@@ -207,10 +224,11 @@ export function planCtes(
   op: CanonicalAssignment,
   scope: AssignmentCampaignScope,
   bind: Bind,
-  quotas?: RebalanceQuotas,
+  quotas?: PlanQuotas,
 ): { ctes: string; writeGuard: string } {
   const campaign = bind.add(scope.campaignId);
-  if (op.kind === 'rebalance') return rebalanceCtes(op, scope, campaign, bind, quotas!);
+  if (op.kind === 'rebalance') return rebalanceCtes(op, scope, campaign, bind, quotas as RebalanceQuotas);
+  if (op.kind === AGENCY_LATE_CALLBACKS_KIND) return lateCallbackCtes(op, scope, campaign, bind, quotas as LateCallbackQuotas);
 
   const spec = specFor(op, bind);
   const rn = spec.order.kind === 'roster' ? `, row_number() OVER (ORDER BY ${ROSTER_ORDER_SQL}) AS rn` : '';
@@ -309,16 +327,86 @@ function rebalanceCtes(
                 OVER (ORDER BY giv.idx, giv.ord DESC, giv.gkey, giv.gi ROWS UNBOUNDED PRECEDING))::bigint - giv.size AS cum_start
         FROM giv WHERE giv.end_in_giver <= giv.give
     )`;
+  // A callback no receiver's range covers (nobody live, or the count grew since the quotas were
+  // read) stays with its owner: planned but unchanged, so `matched` is every late callback of an
+  // away owner and `moving` the ones dealt.
   const plan = `plan AS MATERIALIZED (
-      SELECT t.* FROM (
-        SELECT cum.id, cum.from_user_id,
-               (SELECT r.uid FROM unnest(${recv}::uuid[], ${ends}::int[]) AS r(uid, e)
-                 WHERE cum.cum_start < r.e ORDER BY r.e LIMIT 1) AS to_user_id,
-               cum.size, cum.gi
-          FROM cum) t
-       WHERE t.to_user_id IS NOT NULL
+      SELECT cum.id, cum.from_user_id,
+             COALESCE((SELECT r.uid FROM unnest(${recv}::uuid[], ${ends}::int[]) AS r(uid, e)
+                        WHERE cum.cum_start < r.e ORDER BY r.e LIMIT 1), cum.from_user_id) AS to_user_id,
+             cum.size, cum.gi
+        FROM cum
     )`;
   return { ctes: [sel, nl, giv, cum, plan].join(',\n    '), writeGuard: `c.state = 'pending'` };
+}
+
+/**
+ * The callbacks the late-callbacks hand-off (LF7, LF21) moves, on contact `c` of the campaign bound
+ * at `campaignParam`: open (`pending`), owned, due at or before now, waiting on a callback (the
+ * owner's `callback` bucket, `contactBucketSql`: a booked callback, or an inbound one), and whose
+ * owner has no session present on the campaign (`presentSessionSql`). CA5's own selection
+ * (`fallBackOverdueCallbacks`) with no grace: the supervisor's "now". Parenthesised.
+ */
+export function lateCallbackSql(alias: string, campaignParam: string, codesParam: string): string {
+  const c = alias;
+  return `(${c}.campaign_id = ${campaignParam}::uuid
+          AND ${c}.state = 'pending'
+          AND ${c}.assigned_user_id IS NOT NULL
+          AND ${c}.next_attempt_at <= now()
+          AND ${contactBucketSql(c, codesParam)} = 'callback'
+          AND NOT EXISTS (
+            SELECT 1 FROM agency_agent_sessions s
+             WHERE s.campaign_id = ${campaignParam}::uuid AND s.agent_user_id = ${c}.assigned_user_id
+               AND ${presentSessionSql('s')}))`;
+}
+
+/**
+ * The hand-off's chain: the late callbacks of away owners ({@link lateCallbackSql}), in groups of
+ * one number (`group_same_number`), oldest due first, cut into the receivers' cumulative quotas
+ * (`lateCallbackQuotas`: the live agents, fewest due first). A group goes whole to the receiver
+ * whose range its start falls in; one no range covers stays put (`unchanged`). Nothing in it is
+ * live (`pending` only), so `skipped_live` is 0.
+ */
+function lateCallbackCtes(
+  op: LateCallbacksOp,
+  scope: AssignmentCampaignScope,
+  campaign: string,
+  bind: Bind,
+  quotas: LateCallbackQuotas,
+): { ctes: string; writeGuard: string } {
+  const codes = bind.add(scope.callbackCodes);
+  const recv = bind.add(quotas.receivers.map((r) => r.agent));
+  const ends = bind.add(quotas.receivers.map((r) => r.end));
+  const sel = `sel AS MATERIALIZED (
+      SELECT c.id, c.assigned_user_id AS from_user_id, false AS live,
+             ${groupKeySql(op.group)} AS gkey, c.next_attempt_at AS due_at
+        FROM agency_contacts c
+       WHERE ${lateCallbackSql('c', campaign, codes)}
+    )`;
+  const nl = `nl AS (
+      SELECT s.id, s.from_user_id, s.gkey,
+             count(*) OVER (PARTITION BY s.gkey) AS size,
+             min(s.due_at) OVER (PARTITION BY s.gkey) AS ord,
+             row_number() OVER (PARTITION BY s.gkey ORDER BY s.id) AS gi
+        FROM sel s
+    )`;
+  const cum = `cum AS (
+      SELECT nl.*,
+             (sum(CASE WHEN nl.gi = 1 THEN nl.size ELSE 0 END)
+                OVER (ORDER BY nl.ord, nl.gkey, nl.gi ROWS UNBOUNDED PRECEDING))::bigint - nl.size AS cum_start
+        FROM nl
+    )`;
+  // A callback no receiver's range covers (nobody live, or the count grew since the quotas were
+  // read) stays with its owner: planned but unchanged, so `matched` is every late callback of an
+  // away owner and `moving` the ones dealt.
+  const plan = `plan AS MATERIALIZED (
+      SELECT cum.id, cum.from_user_id,
+             COALESCE((SELECT r.uid FROM unnest(${recv}::uuid[], ${ends}::int[]) AS r(uid, e)
+                        WHERE cum.cum_start < r.e ORDER BY r.e LIMIT 1), cum.from_user_id) AS to_user_id,
+             cum.size, cum.gi
+        FROM cum
+    )`;
+  return { ctes: [sel, nl, cum, plan].join(',\n    '), writeGuard: `c.state = 'pending'` };
 }
 
 /** `mv` (each plan row and whether it moves) and the aggregate the token pins. */
@@ -350,8 +438,8 @@ interface FingerprintRow extends PlanFingerprint {
 class StalePlan extends Error {}
 
 export type AssignmentCommitOutcome =
-  | { ok: true; result: AgencyAssignmentResult }
-  | { ok: false; preview: AgencyAssignmentPreview };
+  | { ok: true; result: AnyAssignmentResult }
+  | { ok: false; preview: AnyAssignmentPreview };
 
 /** Per-campaign outcome of an unstaff (CA6). */
 export interface UnstaffReturn {
@@ -395,10 +483,56 @@ export class AgencyAssignmentRepository {
   }
 
   /** What `op` would do now. Writes nothing. */
-  async preview(op: CanonicalAssignment, scope: AssignmentCampaignScope): Promise<AgencyAssignmentPreview> {
-    const quotas = op.kind === 'rebalance' ? await this.rebalanceQuotas(getPool(), op, scope) : undefined;
+  async preview(op: CanonicalAssignment, scope: AssignmentCampaignScope): Promise<AnyAssignmentPreview> {
+    const quotas = await this.quotasFor(getPool(), op, scope);
     const fp = await this.fingerprint(getPool(), op, scope, quotas);
-    return toPreview(op, fp);
+    return toPreview(op, fp, quotas);
+  }
+
+  /** What a plan reads before it: rebalance's quotas, the hand-off's receivers; nothing for the rest. */
+  private async quotasFor(db: Queryable, op: CanonicalAssignment, scope: AssignmentCampaignScope): Promise<PlanQuotas | undefined> {
+    if (op.kind === 'rebalance') return this.rebalanceQuotas(db, op, scope);
+    if (op.kind === AGENCY_LATE_CALLBACKS_KIND) return this.lateCallbackQuotas(db, scope);
+    return undefined;
+  }
+
+  /**
+   * The hand-off's receivers (LF7, LF21): the agents live on the campaign (a session present on it,
+   * `presentSessionSql`, the rule CA5 reads) with an active staffing row (only staffed agents receive
+   * contacts), each with their callbacks due now on the campaign; and how many late callbacks of
+   * away owners there are to deal ({@link lateCallbackSql}). Dealt fewest due first
+   * (`lateCallbackQuotas`).
+   */
+  private async lateCallbackQuotas(db: Queryable, scope: AssignmentCampaignScope): Promise<LateCallbackQuotas> {
+    const bind = params();
+    const campaign = bind.add(scope.campaignId);
+    const tenant = bind.add(scope.tenantId);
+    const codes = bind.add(scope.callbackCodes);
+    const { rows } = await db.query<LateCallbackLoad & { total: number }>(
+      `WITH live AS (
+         SELECT DISTINCT s.agent_user_id AS uid
+           FROM agency_agent_sessions s
+          WHERE s.campaign_id = ${campaign}::uuid AND ${presentSessionSql('s')}
+            AND EXISTS (
+              SELECT 1 FROM agency_campaign_agents a
+               WHERE a.tenant_id = ${tenant}::uuid AND a.campaign_id = ${campaign}::uuid
+                 AND a.user_id = s.agent_user_id AND a.unassigned_at IS NULL)
+       ),
+       late AS (SELECT count(*)::int AS n FROM agency_contacts c WHERE ${lateCallbackSql('c', campaign, codes)})
+       SELECT l.uid::text AS agent,
+              (SELECT count(*) FROM agency_contacts c
+                WHERE c.campaign_id = ${campaign}::uuid AND c.assigned_user_id = l.uid
+                  AND c.state = 'pending' AND c.next_attempt_at <= now()
+                  AND ${contactBucketSql('c', codes)} = 'callback')::int AS due,
+              (SELECT n FROM late) AS total
+         FROM live l
+       UNION ALL
+       -- One row with no agent, so the count is read even when nobody is live.
+       SELECT NULL, 0, (SELECT n FROM late)`,
+      bind.values,
+    );
+    const total = rows[0]?.total ?? 0;
+    return lateCallbackQuotas(rows.filter((r) => r.agent !== null), total);
   }
 
   /**
@@ -413,6 +547,8 @@ export class AgencyAssignmentRepository {
     actorUserId: string | null;
   }): Promise<AssignmentCommitOutcome> {
     const { op, scope } = input;
+    // LF7: the hand-off's history rows are `reassign` (`historyReasonOf`).
+    const reason = historyReasonOf(op);
     const expected = decodePreviewToken(input.token, op);
     // A token for another operation (or none at all) is stale before anything is locked.
     if (!expected) return { ok: false, preview: await this.preview(op, scope) };
@@ -421,7 +557,7 @@ export class AgencyAssignmentRepository {
     try {
       const outcome = await withTransaction(async (client, tx) => {
         await client.query(`SET LOCAL lock_timeout = '10s'`);
-        const quotas = op.kind === 'rebalance' ? await this.rebalanceQuotas(client, op, scope) : undefined;
+        const quotas = await this.quotasFor(client, op, scope);
 
         const lockBind = params();
         const lock = planCtes(op, scope, lockBind, quotas);
@@ -486,7 +622,7 @@ export class AgencyAssignmentRepository {
              INSERT INTO agency_contact_assignment_events
                (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
              SELECT ${bind.add(scope.tenantId)}::uuid, ${bind.add(scope.campaignId)}::uuid, u.id, u.from_user_id,
-                    u.to_user_id, ${actor}::uuid, ${bind.add(op.kind satisfies AgencyAssignmentReason)}, ${bind.add(batchId)}::uuid
+                    u.to_user_id, ${actor}::uuid, ${bind.add(reason)}, ${bind.add(batchId)}::uuid
                FROM upd u
              RETURNING 1)
            SELECT fp.*, (SELECT ok FROM gate) AS ok, (SELECT count(*) FROM ins)::int AS written FROM fp`,
@@ -495,7 +631,7 @@ export class AgencyAssignmentRepository {
         const row = rows[0]!;
         if (!row.ok) {
           await tx.rollback();
-          return { ok: false as const, preview: toPreview(op, row) };
+          return { ok: false as const, preview: toPreview(op, row, quotas) };
         }
         // Every planned move was locked; a shortfall means a row changed anyway. Roll back.
         if (row.written !== row.moving) throw new StalePlan();
@@ -508,7 +644,7 @@ export class AgencyAssignmentRepository {
             skipped_live: row.skipped_live,
             unchanged: row.planned - row.moving,
             to_pool: row.to_pool,
-            per_agent: sortDeltas(op, row.per_agent),
+            per_agent: sortDeltas(op, row.per_agent, op.kind === AGENCY_LATE_CALLBACKS_KIND ? (quotas as LateCallbackQuotas).live : agentOrder(op)),
           },
         };
       }, { pool: getPool() });
@@ -532,7 +668,7 @@ export class AgencyAssignmentRepository {
     db: Queryable,
     op: CanonicalAssignment,
     scope: AssignmentCampaignScope,
-    quotas: RebalanceQuotas | undefined,
+    quotas: PlanQuotas | undefined,
   ): Promise<FingerprintRow> {
     const bind = params();
     const plan = planCtes(op, scope, bind, quotas);
@@ -731,8 +867,15 @@ export class AgencyAssignmentRepository {
   }
 }
 
-function sortDeltas(op: CanonicalAssignment, deltas: readonly AgencyAssignmentAgentDelta[]): AgencyAssignmentAgentDelta[] {
-  const order = agentOrder(op);
+/**
+ * `per_agent` in the operation's own agent order, then by id. The hand-off names no agents: its
+ * receivers come first, fewest due first as dealt (`order`), then the away owners by id.
+ */
+function sortDeltas(
+  op: CanonicalAssignment,
+  deltas: readonly AgencyAssignmentAgentDelta[],
+  order: readonly string[] = agentOrder(op),
+): AgencyAssignmentAgentDelta[] {
   const rank = (id: string) => {
     const i = order.indexOf(id);
     return i === -1 ? order.length : i;
@@ -740,19 +883,27 @@ function sortDeltas(op: CanonicalAssignment, deltas: readonly AgencyAssignmentAg
   return [...deltas].sort((a, b) => rank(a.agent_user_id) - rank(b.agent_user_id) || a.agent_user_id.localeCompare(b.agent_user_id));
 }
 
-function toPreview(op: CanonicalAssignment, fp: FingerprintRow): AgencyAssignmentPreview {
-  return {
-    kind: op.kind,
+function toPreview(op: CanonicalAssignment, fp: FingerprintRow, quotas?: PlanQuotas): AnyAssignmentPreview {
+  const common = {
     preview_token: encodePreviewToken(op, fp),
-    seed: seedOf(op),
     matched: fp.planned + fp.skipped_live,
     moving: fp.moving,
     skipped_live: fp.skipped_live,
     unchanged: fp.planned - fp.moving,
     to_pool: fp.to_pool,
-    per_agent: sortDeltas(op, fp.per_agent),
     same_number_groups: fp.groups,
   };
+  if (op.kind === AGENCY_LATE_CALLBACKS_KIND) {
+    const live = (quotas as LateCallbackQuotas | undefined)?.live ?? [];
+    return {
+      ...common,
+      kind: op.kind,
+      seed: null,
+      per_agent: sortDeltas(op, fp.per_agent, live),
+      live_agent_user_ids: live,
+    };
+  }
+  return { ...common, kind: op.kind, seed: seedOf(op), per_agent: sortDeltas(op, fp.per_agent) };
 }
 
 export const agencyAssignmentRepository = new AgencyAssignmentRepository();

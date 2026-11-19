@@ -239,6 +239,94 @@ export interface AgencyAssignmentStaleRefusal extends AgencyAssignmentErrorRespo
   preview: AgencyAssignmentPreview;
 }
 
+// ─── Supervisor: give late callbacks to free agents (LF7) ───────────────────
+
+/**
+ * The kind of the late-callbacks hand-off (decisions LF7, LF21): the Live floor's "Give to free
+ * agents". Posted to the same two routes as every other operation, preview then commit:
+ *
+ *  - `POST /campaigns/:id/assignments/preview` {@link AgencyLateCallbacksToLiveAgents} →
+ *    {@link AgencyLateCallbacksPreview};
+ *  - `POST /campaigns/:id/assignments` {@link AgencyLateCallbacksCommitRequest} →
+ *    {@link AgencyLateCallbacksResult}.
+ *
+ * The gate is the routes' own: `agency.supervise`, the campaign in the caller's tenant and account,
+ * the `agency_contact_assignment_enabled` flag (`403 assignment_disabled`; strict and preferred
+ * modes exist only under it). Not the Live floor's assist flag.
+ *
+ * **What moves.** Every callback of the campaign that is overdue (due at or before now, the CA5
+ * fallback's rule with no grace: "now") and whose owner is away (no session present on the
+ * campaign: joined and not `offline`, the rule CA5 and the progress read's `live` share), to the
+ * agents live on the campaign (a present session and an active staffing row), fewest callbacks due
+ * first: the dealing evens out the receivers' due callbacks, the oldest callbacks going to the agent
+ * with the fewest, and contacts on one number stay together (`group_same_number`, default true). A
+ * callback already in the pool is not moved, nor one whose owner is present (on a break included).
+ *
+ * **Refusals.** On a `pool` campaign: `409` {@link AgencyLateCallbacksRefusal} (no agent owns a
+ * callback there). Otherwise the operations' own: `assignment_invalid`, `preview_stale` (the commit
+ * recomputed under row locks and the plan differs from the token; the body's `preview` is an
+ * {@link AgencyLateCallbacksPreview}). A second press of a committed hand-off is `preview_stale`
+ * with a fresh preview moving nothing: nothing is moved twice, and no audit row is written for it.
+ *
+ * **Audited** as every operation: one `agency_contacts.assigned` row (`kind:
+ * 'late_callbacks_to_live_agents'`, the batch id, the counts and `per_agent`), and one history row
+ * per moved contact, reason `reassign` (actor: the supervisor).
+ *
+ * Declared beside {@link AgencyAssignmentOperation}, not in it, so the roster's operation menus and
+ * labels keyed by {@link AgencyAssignmentKind} stay exactly the supervisor's own seven.
+ */
+export const AGENCY_LATE_CALLBACKS_KIND = 'late_callbacks_to_live_agents' as const;
+
+/** The hand-off's operation: no agents named, the server picks the live ones. */
+export interface AgencyLateCallbacksToLiveAgents extends AgencyAssignmentGrouping {
+  kind: typeof AGENCY_LATE_CALLBACKS_KIND;
+}
+
+/** The hand-off's preview: the operations' preview, plus who could receive. */
+export interface AgencyLateCallbacksPreview extends Omit<AgencyAssignmentPreview, 'kind' | 'seed'> {
+  kind: typeof AGENCY_LATE_CALLBACKS_KIND;
+  /** Always null: the dealing is by load, not a random order. */
+  seed: null;
+  /**
+   * The agents live on the campaign who could receive, fewest callbacks due first (ties by id):
+   * empty when nobody is live, so nothing would move ("No agent is free on this campaign").
+   * `per_agent` lists the ones the plan gives callbacks to (`receiving`), and the away owners
+   * (`giving`).
+   */
+  live_agent_user_ids: string[];
+}
+
+export interface AgencyLateCallbacksCommitRequest {
+  operation: AgencyLateCallbacksToLiveAgents;
+  preview_token: string;
+}
+
+/** A committed hand-off: how many moved and to whom (`per_agent`). */
+export interface AgencyLateCallbacksResult extends Omit<AgencyAssignmentResult, 'kind'> {
+  kind: typeof AGENCY_LATE_CALLBACKS_KIND;
+}
+
+/** `409 preview_stale` on a hand-off: the fresh preview. */
+export interface AgencyLateCallbacksStaleRefusal extends AgencyAssignmentErrorResponse {
+  code: 'preview_stale';
+  preview: AgencyLateCallbacksPreview;
+}
+
+/**
+ * The hand-off's own refusal, beside {@link AgencyAssignmentErrorCode}:
+ *  - `late_callbacks_pool_mode` (409): the campaign is in `pool` mode, where no agent owns a
+ *    callback, so there is nothing to hand off (LF7: not offered on `pool`).
+ */
+export type AgencyLateCallbacksRefusalCode = 'late_callbacks_pool_mode';
+export const AGENCY_LATE_CALLBACKS_REFUSAL_CODES = ['late_callbacks_pool_mode'] as const;
+
+/** A refusal of the hand-off: `{ error, code, message }`. */
+export interface AgencyLateCallbacksRefusal {
+  error: string;
+  code: AgencyLateCallbacksRefusalCode;
+  message: string;
+}
+
 // ─── Supervisor: progress per agent ─────────────────────────────────────────
 
 /**
@@ -598,4 +686,5 @@ const _bucketsListed: AllListed<AgencyMyContactBucket, typeof AGENCY_MY_CONTACT_
 const _blocksListed: AllListed<AgencyAgentRetryBlock, typeof AGENCY_AGENT_RETRY_BLOCKS> = true;
 const _assignmentCodesListed: AllListed<AgencyAssignmentErrorCode, typeof AGENCY_ASSIGNMENT_ERROR_CODES> = true;
 const _retryCodesListed: AllListed<AgencyAgentRetryErrorCode, typeof AGENCY_AGENT_RETRY_ERROR_CODES> = true;
-void [_kindsListed, _bucketsListed, _blocksListed, _assignmentCodesListed, _retryCodesListed];
+const _lateCallbacksCodesListed: AllListed<AgencyLateCallbacksRefusalCode, typeof AGENCY_LATE_CALLBACKS_REFUSAL_CODES> = true;
+void [_kindsListed, _bucketsListed, _blocksListed, _assignmentCodesListed, _retryCodesListed, _lateCallbacksCodesListed];

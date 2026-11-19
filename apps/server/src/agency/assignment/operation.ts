@@ -23,9 +23,11 @@ import {
   AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX,
   AGENCY_ASSIGNMENT_COUNT_MAX,
   AGENCY_ASSIGNMENT_RANGE_MAX,
+  AGENCY_LATE_CALLBACKS_KIND,
   type AgencyAssignmentOperation,
+  type AgencyLateCallbacksToLiveAgents,
 } from '@magick-agency/contracts/api/agency/assignment';
-import type { AgencyContactState } from '@magick-agency/contracts/agency';
+import type { AgencyAssignmentReason, AgencyContactState } from '@magick-agency/contracts/agency';
 import { UUID_RE } from '../../utils/uuid.js';
 import { CONTACT_STATES } from '../spine-filters.js';
 
@@ -63,6 +65,8 @@ export const assignmentOperationSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('reassign'), from_user_id: uuid, to_user_id: uuid, count: count.optional(), ...grouping }).strict(),
   z.object({ kind: z.literal('unassign'), from_user_id: uuid.optional(), count: count.optional(), contact_ids: contactIds.optional(), ...grouping }).strict(),
   z.object({ kind: z.literal('rebalance'), agent_user_ids: agentList.refine((ids) => ids.length >= 2, 'name at least two agents'), ...grouping }).strict(),
+  // LF7: the late-callbacks hand-off names no agents; the server picks the live ones.
+  z.object({ kind: z.literal(AGENCY_LATE_CALLBACKS_KIND), ...grouping }).strict(),
 ]).superRefine((o, ctx) => {
   if (o.kind === 'reassign' && o.from_user_id.toLowerCase() === o.to_user_id.toLowerCase()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'must differ from from_user_id', path: ['to_user_id'] });
@@ -90,7 +94,8 @@ export type CanonicalAssignment =
   | { kind: 'range'; agent: string; contactIds: string[]; group: boolean }
   | { kind: 'reassign'; from: string; to: string; count: number | null; group: boolean }
   | { kind: 'unassign'; from: string | null; count: number | null; contactIds: string[] | null; group: boolean }
-  | { kind: 'rebalance'; agents: string[]; group: boolean };
+  | { kind: 'rebalance'; agents: string[]; group: boolean }
+  | { kind: typeof AGENCY_LATE_CALLBACKS_KIND; group: boolean };
 
 export interface CanonicalContactFilter {
   states: AgencyContactState[] | null;
@@ -131,7 +136,7 @@ export function zodDetails(error: z.ZodError, rootKey = 'operation'): Record<str
 export function parseAssignmentOperation(raw: unknown, phase: 'preview' | 'commit'): AssignmentParse {
   const parsed = assignmentOperationSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, details: zodDetails(parsed.error) };
-  const o = parsed.data as AgencyAssignmentOperation;
+  const o = parsed.data as AgencyAssignmentOperation | AgencyLateCallbacksToLiveAgents;
   const group = o.group_same_number ?? true;
   const needsSeed = o.kind === 'random_split' || (o.kind === 'filter' && o.agent_user_ids.length > 1);
   if (needsSeed && phase === 'commit' && !('seed' in o && o.seed)) {
@@ -179,6 +184,8 @@ export function parseAssignmentOperation(raw: unknown, phase: 'preview' | 'commi
       };
     case 'rebalance':
       return { ok: true, op: { kind: o.kind, agents: o.agent_user_ids.map(lower), group } };
+    case AGENCY_LATE_CALLBACKS_KIND:
+      return { ok: true, op: { kind: o.kind, group } };
   }
 }
 
@@ -196,7 +203,20 @@ export function receivingAgents(op: CanonicalAssignment): string[] {
       return [op.to];
     case 'unassign':
       return [];
+    // LF7: the receivers are the live, staffed agents the plan itself reads; none is named.
+    case AGENCY_LATE_CALLBACKS_KIND:
+      return [];
   }
+}
+
+/**
+ * The reason each moved contact's history row records. Every operation's own kind, but the
+ * late-callbacks hand-off (LF7, LF21), which is recorded as `reassign`: a supervisor moved a
+ * contact from one agent to another. The 0009 CHECK (and its `VARCHAR(20)`) accepts no other
+ * value, and the operation itself is named on its audit row (`kind`), which shares the batch id.
+ */
+export function historyReasonOf(op: CanonicalAssignment): AgencyAssignmentReason {
+  return op.kind === AGENCY_LATE_CALLBACKS_KIND ? 'reassign' : op.kind;
 }
 
 /** The seed a preview reports: the random order's, else null. */
@@ -209,6 +229,54 @@ export function agentOrder(op: CanonicalAssignment): string[] {
   if (op.kind === 'reassign') return [op.from, op.to];
   if (op.kind === 'unassign') return op.from ? [op.from] : [];
   return receivingAgents(op);
+}
+
+// ─── The late-callbacks hand-off's dealing (LF7, LF21) ──────────────────────
+
+/** One live agent and their callbacks due now on the campaign. */
+export interface LateCallbackLoad {
+  agent: string;
+  due: number;
+}
+
+/** The receivers, fewest due first, with cumulative quota ends; and every live agent, in that order. */
+export interface LateCallbackQuotas {
+  receivers: Array<{ agent: string; end: number }>;
+  live: string[];
+}
+
+/**
+ * "Fewest callbacks due first" (LF7): `total` callbacks dealt to the live agents so each ends as
+ * close to level as it can, never taking from anyone. Water-filling: the agents with the fewest due
+ * are raised first, one level at a time, until the callbacks run out; what is left when they are
+ * level goes one each, fewest-first order (ties by agent id), so no two receivers differ by more
+ * than one beyond their starting loads. Returns the receivers (a quota above 0) in that order with
+ * cumulative ends, which the plan cuts the callbacks into, oldest due first. Pure.
+ */
+export function lateCallbackQuotas(loads: readonly LateCallbackLoad[], total: number): LateCallbackQuotas {
+  const sorted = [...loads].sort((a, b) => a.due - b.due || (a.agent < b.agent ? -1 : a.agent > b.agent ? 1 : 0));
+  const live = sorted.map((l) => l.agent);
+  const k = sorted.length;
+  if (k === 0 || total <= 0) return { receivers: [], live };
+  // The first `m` agents are the ones raised: include the next while raising everyone before it to
+  // its load costs no more than `total`.
+  let m = 1;
+  let sum = sorted[0]!.due;
+  while (m < k && sorted[m]!.due * m - sum <= total) {
+    sum += sorted[m]!.due;
+    m += 1;
+  }
+  const level = Math.floor((total + sum) / m);
+  const extra = total + sum - level * m;
+  const receivers: LateCallbackQuotas['receivers'] = [];
+  let end = 0;
+  for (let j = 0; j < m; j += 1) {
+    const give = level - sorted[j]!.due + (j < extra ? 1 : 0);
+    if (give <= 0) continue;
+    end += give;
+    receivers.push({ agent: sorted[j]!.agent, end });
+  }
+  return { receivers, live };
 }
 
 // ─── The plan fingerprint and the token ─────────────────────────────────────

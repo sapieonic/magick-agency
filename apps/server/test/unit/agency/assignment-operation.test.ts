@@ -11,6 +11,8 @@ import {
   type CanonicalAssignment,
   type PlanFingerprint,
   commitDrift,
+  historyReasonOf,
+  lateCallbackQuotas,
 } from '../../../src/agency/assignment/operation.js';
 
 /**
@@ -164,5 +166,84 @@ describe('rebalanceQuotas', () => {
   it('does nothing when already balanced', () => {
     expect(rebalanceQuotas([{ agent: A, backlog: 5, movable: 5 }, { agent: B, backlog: 4, movable: 4 }]))
       .toEqual({ givers: [], receivers: [] });
+  });
+});
+
+// LF7, LF21: the late-callbacks hand-off's operation and its dealing, fewest due first.
+describe('the late-callbacks hand-off (LF7)', () => {
+  it('parses with no agents named, grouping by number unless told not to', () => {
+    expect(ok({ kind: 'late_callbacks_to_live_agents' })).toEqual({ kind: 'late_callbacks_to_live_agents', group: true });
+    expect(ok({ kind: 'late_callbacks_to_live_agents', group_same_number: false }, 'commit'))
+      .toEqual({ kind: 'late_callbacks_to_live_agents', group: false });
+  });
+
+  it('refuses any field it does not take: it never names agents', () => {
+    for (const extra of [{ agent_user_ids: [A] }, { seed: 'abc' }, { count: 3 }]) {
+      const r = parseAssignmentOperation({ kind: 'late_callbacks_to_live_agents', ...extra }, 'preview');
+      expect(r.ok, JSON.stringify(extra)).toBe(false);
+    }
+  });
+
+  it('names no receiving agent to check for staffing, and records its moves as reassign', () => {
+    const op = ok({ kind: 'late_callbacks_to_live_agents' });
+    expect(receivingAgents(op)).toEqual([]);
+    expect(agentOrder(op)).toEqual([]);
+    expect(historyReasonOf(op)).toBe('reassign');
+    expect(historyReasonOf(ok({ kind: 'rebalance', agent_user_ids: [A, B] }))).toBe('rebalance');
+  });
+
+  it('its token is its own: a token minted for another kind is no token for it', () => {
+    const fp: PlanFingerprint = { planned: 3, moving: 3, to_pool: 0, skipped_live: 0, groups: 0, digest: '7' };
+    const late = ok({ kind: 'late_callbacks_to_live_agents' });
+    expect(decodePreviewToken(encodePreviewToken(late, fp), late)).toEqual(fp);
+    expect(decodePreviewToken(encodePreviewToken(ok({ kind: 'rebalance', agent_user_ids: [A, B] }), fp), late)).toBeNull();
+  });
+});
+
+describe('lateCallbackQuotas: fewest callbacks due first', () => {
+  it('raises the emptiest agents first, then shares what is left one each', () => {
+    // A has none due, B two, C five; four callbacks: A gets three, B one (both end at 3), C none.
+    expect(lateCallbackQuotas([{ agent: C, due: 5 }, { agent: B, due: 2 }, { agent: A, due: 0 }], 4)).toEqual({
+      receivers: [{ agent: A, end: 3 }, { agent: B, end: 4 }],
+      live: [A, B, C],
+    });
+    // Five: level 3 with one over, to the first in order (A).
+    expect(lateCallbackQuotas([{ agent: A, due: 0 }, { agent: B, due: 2 }, { agent: C, due: 5 }], 5).receivers)
+      .toEqual([{ agent: A, end: 4 }, { agent: B, end: 5 }]);
+    // Twelve: everyone reaches 6 (6 + 4 + 1 = 11), the twelfth to A.
+    expect(lateCallbackQuotas([{ agent: A, due: 0 }, { agent: B, due: 2 }, { agent: C, due: 5 }], 12).receivers)
+      .toEqual([{ agent: A, end: 7 }, { agent: B, end: 11 }, { agent: C, end: 12 }]);
+  });
+
+  it('breaks ties by agent id, and deals evenly among equals', () => {
+    expect(lateCallbackQuotas([{ agent: C, due: 1 }, { agent: A, due: 1 }, { agent: B, due: 1 }], 7)).toEqual({
+      receivers: [{ agent: A, end: 3 }, { agent: B, end: 5 }, { agent: C, end: 7 }],
+      live: [A, B, C],
+    });
+  });
+
+  it('gives every callback away, no more, and leaves every receiver within one of the level', () => {
+    for (let total = 0; total <= 30; total += 1) {
+      const loads = [{ agent: A, due: 4 }, { agent: B, due: 0 }, { agent: C, due: 9 }];
+      const { receivers } = lateCallbackQuotas(loads, total);
+      expect(receivers.at(-1)?.end ?? 0, String(total)).toBe(total);
+      const after = new Map(loads.map((l) => [l.agent, l.due]));
+      let prev = 0;
+      for (const r of receivers) {
+        after.set(r.agent, after.get(r.agent)! + (r.end - prev));
+        prev = r.end;
+      }
+      const raised = loads.filter((l) => after.get(l.agent)! > l.due).map((l) => after.get(l.agent)!);
+      if (raised.length > 0) {
+        expect(Math.max(...raised) - Math.min(...raised), String(total)).toBeLessThanOrEqual(1);
+        // Nobody is left more than one below a raised agent (the extras go to the fewest at the start).
+        for (const v of after.values()) expect(v, String(total)).toBeGreaterThanOrEqual(Math.max(...raised) - 1);
+      }
+    }
+  });
+
+  it('deals nothing with nobody live or nothing late', () => {
+    expect(lateCallbackQuotas([], 5)).toEqual({ receivers: [], live: [] });
+    expect(lateCallbackQuotas([{ agent: A, due: 2 }], 0)).toEqual({ receivers: [], live: [A] });
   });
 });

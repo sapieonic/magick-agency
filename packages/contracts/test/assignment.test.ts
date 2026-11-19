@@ -18,6 +18,8 @@ import {
   AGENCY_ASSIGNMENT_ERROR_CODES,
   AGENCY_ASSIGNMENT_KINDS,
   AGENCY_ASSIGNMENT_RANGE_MAX,
+  AGENCY_LATE_CALLBACKS_KIND,
+  AGENCY_LATE_CALLBACKS_REFUSAL_CODES,
   AGENCY_MY_CONTACT_BUCKETS,
 } from '../src/api/agency/assignment';
 
@@ -90,5 +92,21 @@ describe('contact assignment vocabularies', () => {
       columnValues: AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX,
       columnValueLength: AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX,
     }).toEqual({ range: 500, agents: 200, count: 1_000_000, columnName: 200, columnValues: 100, columnValueLength: 500 });
+  });
+});
+
+// LF7, LF21: the late-callbacks hand-off sits beside the supervisor's seven kinds, never among them.
+describe('the late-callbacks hand-off (LF7)', () => {
+  it('has its own kind and refusal, outside the operations\' kinds and codes', () => {
+    expect(AGENCY_LATE_CALLBACKS_KIND).toBe('late_callbacks_to_live_agents');
+    expect(AGENCY_ASSIGNMENT_KINDS as readonly string[]).not.toContain(AGENCY_LATE_CALLBACKS_KIND);
+    expect([...AGENCY_LATE_CALLBACKS_REFUSAL_CODES]).toEqual(['late_callbacks_pool_mode']);
+    for (const code of AGENCY_LATE_CALLBACKS_REFUSAL_CODES) {
+      expect(AGENCY_ASSIGNMENT_ERROR_CODES as readonly string[]).not.toContain(code);
+    }
+  });
+
+  it('records its moves under an existing history reason (the 0009 CHECK accepts it)', () => {
+    expect(AGENCY_ASSIGNMENT_REASONS).toContain('reassign');
   });
 });
