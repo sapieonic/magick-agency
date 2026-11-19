@@ -2436,17 +2436,16 @@ query plan on production-sized data. Test counts below.
 
 ## Test counts
 
-**Staging reports of 2026-11-17, 2026-11-19.** Branch `claude-mgkvc/happy-hypatia-6n4t7z`, on the
+**Staging reports of 2026-11-17, 2026-11-19.** Branch `claude-mgkvc/happy-hypatia-6n4t7z`, rebased
+onto main after #102 (Live floor Phase 3) and #103, its migrations renumbered 0054 and 0055, on the
 tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and Redis on
 6383 run locally, not in Docker; `mpg123` and `sndfile-programs` installed). From the root:
 `pnpm lint` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit:
-`apps/server` 10523 passed + 1 expected fail (530 files), `apps/console` 7684 (413 files),
-`packages/db` 457 (28 files), `packages/contracts` 551 (16 files). Integration: `packages/db` 844
-(94 files); `apps/server` `INTEGRATION_LANE=rest` 3048 passed + 9 expected fail + 2 skipped (277
-files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The wall-clock lane
-went red once before this green run, on `cluster/mobile-stations.test.ts` ("the worker probes a
-handed-off phone…"), a timing check this change does not touch. The changed files' own counts are
-in [`modules.md`](modules.md).
+`apps/server` 10606 passed + 1 expected fail (533 files), `apps/console` 7838 (421 files),
+`packages/db` 457 (28 files), `packages/contracts` 576 (18 files). Integration: `packages/db` 857
+(96 files); `apps/server` `INTEGRATION_LANE=rest` 3109 passed + 9 expected fail + 2 skipped (281
+files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 31 passed (8 files). Every run was green
+the first time. The changed files' own counts are in [`modules.md`](modules.md).
 
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
 
