@@ -779,17 +779,25 @@ every account the caller belongs to (CH2) where every internal handler is single
   recorded duration is a truncated fetch (a carrier serving the file before it is finished): the
   runner re-fetches it in the same attempt (`DIALER_ANALYSIS_RECORDING_FETCH_RETRIES`, default 2,
   delay doubling from `DIALER_ANALYSIS_RECORDING_FETCH_RETRY_DELAY_SECONDS`), then requeues it
-  `AUDIO_TOO_SHORT`, an attempt used. A transcription is paid for, so audio is transcribed once:
-  a fetch whose bytes (length and SHA-256) match audio already found truncated, in this attempt or
-  the previous one, is not transcribed and counts as still truncated; only different audio is
-  transcribed. The previous attempt's fingerprint travels in the requeued job's `error_message`
-  (`[recording sha256=… bytes=… covered=…s]`, read back only under `error_code = AUDIO_TOO_SHORT`,
-  so a rate-limited requeue or a manual retry transcribes afresh). The job keeps all its attempts:
-  a later attempt of an unchanged file costs a fetch, not a transcription, and still catches a
-  carrier that finishes late. Loki (component `dialer-analysis-runner`): "Skipped transcribing a
-  dialer recording identical to audio already found truncated" (`transcriptionSkipped`,
-  `sincePreviousAttempt`) per skip; "Dialer recording still truncated after in-attempt retries"
-  carries the attempt's `transcriptions` and `recordingUnchanged`.
+  `AUDIO_TOO_SHORT`, an attempt used. A transcription is paid for, so the same audio is
+  transcribed at most twice per job (decision TR1): a fetch whose bytes (length and SHA-256) match
+  audio already found truncated is transcribed once more, since "short" is read from the
+  transcript's own timestamps and a transcriber can stop early on a complete file; once those
+  bytes have come back short twice, in this attempt or earlier ones, a fetch of them is not
+  transcribed and counts as still truncated. Different audio is always transcribed, and starts its
+  own count. The fingerprint and its count travel in the requeued job's `error_message`
+  (`[recording sha256=… bytes=… covered=…s shortCount=N]`; a tag without `shortCount`, written
+  before it existed, reads as 1), read back only under `error_code = AUDIO_TOO_SHORT` and only while
+  the call's current `recording_duration_seconds` still finds it short, so a rate-limited requeue
+  or a manual retry transcribes afresh. The job keeps all its attempts: an unchanged truncated
+  file costs at most 2 transcriptions over the job, later attempts a fetch each, and a carrier that
+  finishes late is still caught. Loki (component `dialer-analysis-runner`): "Skipped transcribing
+  a dialer recording identical to audio already found truncated" (`transcriptionSkipped`,
+  `shortTranscriptions`, `sincePreviousAttempt`) per skip; "Dialer recording still truncated after
+  in-attempt retries" carries the attempt's `transcriptions`, `shortTranscriptions`,
+  `recordingUnchanged` (the last fetch matched the truncated audio) and `transcriptionSkipped`;
+  "Dialer recording re-fetch succeeded" carries `recordingUnchanged` (a second transcription of
+  the same bytes rescued a transcriber's miss).
 - **AI client layer** (`ai/`): the one place AI requests go out. `createAiClient` builds an
   `AiClient` for `openai_compatible` (OpenAI or any Chat Completions endpoint), `azure_openai` or
   `gemini` (native SDK, Files API); each does one request (the OpenAI SDK's own retries are off)

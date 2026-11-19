@@ -12,8 +12,9 @@
  *  - role mapping agent→assistant, customer→user, unknown→user.
  *  - snapshot used, never a live profile lookup, even if the profile was deactivated.
  *  - stale claim_generation write rejected: persist fence false ⇒ abandon.
- *  - truncated recordings: re-fetched in-attempt; a fetch identical to audio already
- *    found truncated (in this attempt or the previous one) is never transcribed again.
+ *  - truncated recordings: re-fetched in-attempt; identical audio found short once is
+ *    transcribed once more (a transcriber miss on a complete file is rescued), and once
+ *    found short twice (in this attempt or earlier ones) is never transcribed again (TR1).
  *  - the runner NEVER throws.
  *
  * Mocking: vi.hoisted + vi.mock with ESM .js imports.
@@ -610,6 +611,41 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
   });
 
+  it('re-transcribes IDENTICAL audio once when its first transcript came back short, and succeeds (a transcriber miss, TR1)', async () => {
+    const cfg = { ...CFG, recordingFetchRetries: 2, recordingFetchRetryDelaySeconds: 0 } as DialerAnalysisConfig;
+    // The file is complete and every fetch returns the same bytes, but the first
+    // transcript stops at 40 s of 100 s (an early stop, squeezed timestamps). The second
+    // transcription of the very same bytes covers the call.
+    const transcribe = vi.fn()
+      .mockResolvedValueOnce({
+        entries: [{ role: 'agent', content: 'hi', start_seconds: 0, end_seconds: 40 }],
+        detectedLanguage: 'English', durationSeconds: 40, model: 'gemini-2.5-flash', diarizationFailed: false,
+      })
+      .mockResolvedValueOnce({
+        entries: [{ role: 'agent', content: 'full call', start_seconds: 0, end_seconds: 98 }],
+        detectedLanguage: 'English', durationSeconds: 98, model: 'gemini-2.5-flash', diarizationFailed: false,
+      });
+    const runner = new DialerAnalysisRunner({
+      transcriber: makeTranscriber({ transcribe }) as never,
+      analysisService: makeAnalysisService() as never,
+      config: cfg,
+    });
+
+    expect(await runner.run(makeJob({ attempts: 1 }))).toBe('completed');
+
+    expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(2);
+    expect(transcribe).toHaveBeenCalledTimes(2);
+    expect((transcribe.mock.calls[0]![0] as { audio: Buffer }).audio.toString()).toBe('audio');
+    expect((transcribe.mock.calls[1]![0] as { audio: Buffer }).audio.toString()).toBe('audio');
+    expect(mockJobRepo.persistTranscript).toHaveBeenCalledTimes(1);
+    expect(mockJobRepo.persistTranscript.mock.calls[0]![3].conversation_log).toEqual([
+      { role: 'agent', content: 'full call', start_seconds: 0, end_seconds: 98 },
+    ]);
+    expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledTimes(1);
+    expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+  });
+
   it('gives up as retryable AUDIO_TOO_SHORT once the in-attempt re-fetches are exhausted', async () => {
     const cfg = { ...CFG, recordingFetchRetries: 2, recordingFetchRetryDelaySeconds: 0 } as DialerAnalysisConfig;
     // Always truncated — the carrier is still writing (each fetch differs) but never
@@ -630,15 +666,16 @@ describe('DialerAnalysisRunner.run', () => {
     expect(transcribe).toHaveBeenCalledTimes(3); // initial + 2 retries
     expect(mockJobRepo.persistTranscript).not.toHaveBeenCalled();
     // Still retryable — the job backs off and tries again later, not terminal. The
-    // message carries the last audio transcribed, for the next attempt.
+    // message carries the last audio transcribed (found short once), for the next attempt.
     expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
     expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] }))
-      .toEqual({ ...fingerprint('audio 123'), coveredSeconds: 40 });
+      .toEqual({ ...fingerprint('audio 123'), coveredSeconds: 40, shortCount: 1 });
   });
 
-  // ── identical audio is never transcribed twice ─────────────────────────────
-  // A transcription is paid for. A re-fetch that returns the bytes already found
-  // truncated (in this attempt or the job's previous one) is not transcribed again.
+  // ── identical audio: transcribed at most twice per job (TR1) ───────────────
+  // A transcription is paid for. Identical audio found short once is transcribed once
+  // more (the transcriber may have missed on a complete file); once found short twice
+  // (in this attempt or the job's earlier ones) it is not transcribed again.
 
   describe('a re-fetch that returns audio already found truncated', () => {
     const SHORT = {
@@ -655,63 +692,97 @@ describe('DialerAnalysisRunner.run', () => {
       analysisService: makeAnalysisService() as never,
       config: cfg,
     });
-    /** The job as its previous attempt left it: requeued AUDIO_TOO_SHORT with that audio's fingerprint. */
-    const requeuedShort = (body: string, coveredSeconds = 40) => makeJob({
+    /** The job as its previous attempt left it: requeued AUDIO_TOO_SHORT with that audio's fingerprint and count. */
+    const requeuedShort = (body: string, shortCount: number, coveredSeconds = 40) => makeJob({
       attempts: 2,
       error_code: 'AUDIO_TOO_SHORT',
-      error_message: `transcribed 40s of an expected 100s recording after 2 re-fetch(es) (likely a truncated fetch) ${formatTruncatedAudio({ ...fingerprint(body), coveredSeconds })}`,
+      error_message: `transcribed 40s of an expected 100s recording after 2 re-fetch(es) (likely a truncated fetch) ${formatTruncatedAudio({ ...fingerprint(body), coveredSeconds, shortCount })}`,
     });
+    /** The tag the requeue just wrote, read back as the next attempt reads it. */
+    const requeuedTag = () => truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] });
 
-    it('is not transcribed again: one transcription, every re-fetch skipped, still a retryable AUDIO_TOO_SHORT', async () => {
+    it('is transcribed twice, then not again: every later re-fetch skipped, still a retryable AUDIO_TOO_SHORT', async () => {
       // The default fetch returns the same bytes every time: the file is not changing.
       const transcribe = vi.fn().mockResolvedValue(SHORT);
 
-      expect(await runner(transcribe, retries(2)).run(makeJob({ attempts: 1 }))).toBe('retry');
+      expect(await runner(transcribe, retries(3)).run(makeJob({ attempts: 1 }))).toBe('retry');
 
-      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3); // initial + 2 re-fetches
-      expect(transcribe).toHaveBeenCalledTimes(1);
+      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(4); // initial + 3 re-fetches
+      expect(transcribe).toHaveBeenCalledTimes(2); // the 3rd and 4th fetches were skipped
       expect(mockJobRepo.persistTranscript).not.toHaveBeenCalled();
       expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
-      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] }))
-        .toEqual({ ...fingerprint('audio'), coveredSeconds: 40 });
+      expect(requeuedTag()).toEqual({ ...fingerprint('audio'), coveredSeconds: 40, shortCount: 2 });
       expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
     });
 
-    it('a re-fetch of longer audio after an identical one is still transcribed, and succeeds', async () => {
-      fetchReturns('short audio', 'short audio', 'the whole recording');
-      const transcribe = vi.fn().mockResolvedValueOnce(SHORT).mockResolvedValueOnce(FULL);
+    it('a re-fetch of longer audio after skipped identical ones is still transcribed, and succeeds', async () => {
+      fetchReturns('short audio', 'short audio', 'short audio', 'the whole recording');
+      const transcribe = vi.fn().mockResolvedValueOnce(SHORT).mockResolvedValueOnce(SHORT).mockResolvedValueOnce(FULL);
 
-      expect(await runner(transcribe, retries(2)).run(makeJob({ attempts: 1 }))).toBe('completed');
+      expect(await runner(transcribe, retries(3)).run(makeJob({ attempts: 1 }))).toBe('completed');
 
-      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3);
-      expect(transcribe).toHaveBeenCalledTimes(2); // the identical middle fetch was skipped
-      expect((transcribe.mock.calls[1]![0] as { audio: Buffer }).audio.toString()).toBe('the whole recording');
+      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(4);
+      expect(transcribe).toHaveBeenCalledTimes(3); // the third identical fetch was skipped
+      expect((transcribe.mock.calls[2]![0] as { audio: Buffer }).audio.toString()).toBe('the whole recording');
       expect(mockJobRepo.persistTranscript).toHaveBeenCalledOnce();
       expect(mockJobRepo.persistTranscript.mock.calls[0]![3].conversation_log).toEqual(FULL.entries);
       expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
       expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
     });
 
-    it("the next attempt does not transcribe the previous attempt's audio either", async () => {
+    it('across attempts: the count rides in the requeue, so an unchanged file is transcribed twice per job, the final attempt included', async () => {
+      // No in-attempt re-fetch: each attempt fetches once, and gets the same bytes.
+      const transcribe = vi.fn().mockResolvedValue(SHORT);
+
+      // Attempt 1: transcribed, short once.
+      expect(await runner(transcribe, retries(0)).run(makeJob({ attempts: 1 }))).toBe('retry');
+      const first = mockJobRepo.requeueForRetry.mock.calls[0]![4] as string;
+      expect(requeuedTag()).toEqual({ ...fingerprint('audio'), coveredSeconds: 40, shortCount: 1 });
+
+      // Attempt 2: the same bytes, found short once, are transcribed once more; short twice.
+      vi.clearAllMocks();
+      expect(await runner(transcribe, retries(0)).run(makeJob({ attempts: 2, error_code: 'AUDIO_TOO_SHORT', error_message: first }))).toBe('retry');
+      expect(transcribe).toHaveBeenCalledOnce();
+      const second = mockJobRepo.requeueForRetry.mock.calls[0]![4] as string;
+      expect(requeuedTag()).toEqual({ ...fingerprint('audio'), coveredSeconds: 40, shortCount: 2 });
+
+      // Attempt 3, the last: not transcribed; the job fails as before.
+      vi.clearAllMocks();
+      expect(await runner(transcribe, retries(0)).run(makeJob({ attempts: 3, error_code: 'AUDIO_TOO_SHORT', error_message: second }))).toBe('failed');
+      expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(mockJobRepo.markFailed).toHaveBeenCalledWith('job-1', 'call-1', 5, 'AUDIO_TOO_SHORT', expect.any(String));
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.markFailed.mock.calls[0]![4] }))
+        .toEqual({ ...fingerprint('audio'), coveredSeconds: 40, shortCount: 2 });
+    });
+
+    it('across attempts: audio the previous attempt found short once is transcribed again, and a complete transcript completes the job', async () => {
       const transcribe = vi.fn().mockResolvedValue(FULL);
 
-      // No in-attempt re-fetch: one fetch, the same bytes the previous attempt found short.
-      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio'))).toBe('retry');
+      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio', 1))).toBe('completed');
+      expect(transcribe).toHaveBeenCalledOnce();
+      expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
+    });
+
+    it('the next attempt does not transcribe audio found short twice, on every re-fetch and on the last attempt', async () => {
+      const transcribe = vi.fn().mockResolvedValue(FULL);
+
+      // No in-attempt re-fetch: one fetch, the same bytes earlier attempts found short twice.
+      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio', 2))).toBe('retry');
       expect(transcribe).not.toHaveBeenCalled();
-      // Requeued as before (an attempt used; rate limits are not involved), the fingerprint kept.
+      // Requeued as before (an attempt used; rate limits are not involved), the fingerprint and count kept.
       expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
-      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: mockJobRepo.requeueForRetry.mock.calls[0]![4] }))
-        .toEqual({ ...fingerprint('audio'), coveredSeconds: 40 });
+      expect(requeuedTag()).toEqual({ ...fingerprint('audio'), coveredSeconds: 40, shortCount: 2 });
 
       // With re-fetches: every one is skipped while the file stays the same.
       vi.clearAllMocks();
-      expect(await runner(transcribe, retries(2)).run(requeuedShort('audio'))).toBe('retry');
+      expect(await runner(transcribe, retries(2)).run(requeuedShort('audio', 2))).toBe('retry');
       expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3);
       expect(transcribe).not.toHaveBeenCalled();
 
       // The last attempt fails the job as before, still without a transcription.
       vi.clearAllMocks();
-      expect(await runner(transcribe, retries(2)).run({ ...requeuedShort('audio'), attempts: 3 })).toBe('failed');
+      expect(await runner(transcribe, retries(2)).run({ ...requeuedShort('audio', 2), attempts: 3 })).toBe('failed');
       expect(transcribe).not.toHaveBeenCalled();
       expect(mockJobRepo.markFailed).toHaveBeenCalledWith('job-1', 'call-1', 5, 'AUDIO_TOO_SHORT', expect.any(String));
     });
@@ -720,11 +791,21 @@ describe('DialerAnalysisRunner.run', () => {
       fetchReturns('the whole recording');
       const transcribe = vi.fn().mockResolvedValue(FULL);
 
-      expect(await runner(transcribe, retries(2)).run(requeuedShort('short audio'))).toBe('completed');
+      expect(await runner(transcribe, retries(2)).run(requeuedShort('short audio', 2))).toBe('completed');
 
       expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
       expect(transcribe).toHaveBeenCalledOnce();
       expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
+    });
+
+    it('different audio found short starts its own count: transcribed twice before it is skipped', async () => {
+      // The previous attempt found other bytes short twice; this attempt's file differs.
+      const transcribe = vi.fn().mockResolvedValue(SHORT);
+
+      expect(await runner(transcribe, retries(2)).run(requeuedShort('older audio', 2))).toBe('retry');
+      expect(mockFetchRecordingBytes).toHaveBeenCalledTimes(3);
+      expect(transcribe).toHaveBeenCalledTimes(2);
+      expect(requeuedTag()).toEqual({ ...fingerprint('audio'), coveredSeconds: 40, shortCount: 2 });
     });
 
     it("the previous attempt's audio is transcribed again when the call's duration no longer finds it short", async () => {
@@ -732,16 +813,41 @@ describe('DialerAnalysisRunner.run', () => {
       mockWebrtcRepo.findById.mockResolvedValue(makeCall({ recording_duration_seconds: 45 }));
       const transcribe = vi.fn().mockResolvedValue(SHORT);
 
-      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio'))).toBe('completed');
+      expect(await runner(transcribe, retries(0)).run(requeuedShort('audio', 2))).toBe('completed');
       expect(transcribe).toHaveBeenCalledOnce();
     });
 
     it('a fingerprint under any other error code is not read: a rate limit or a manual retry since then transcribes', async () => {
       const transcribe = vi.fn().mockResolvedValue(FULL);
-      const job = { ...requeuedShort('audio'), error_code: 'RATE_LIMITED' };
+      const job = { ...requeuedShort('audio', 2), error_code: 'RATE_LIMITED' };
 
       expect(await runner(transcribe, retries(0)).run(job)).toBe('completed');
       expect(transcribe).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('the AUDIO_TOO_SHORT tag (formatTruncatedAudio, truncatedAudioOf)', () => {
+    const sha = 'a'.repeat(64);
+
+    it('round-trips the fingerprint, coverage and count at the end of the message', () => {
+      const t = { sha256: sha, bytes: 1234, coveredSeconds: 40.25, shortCount: 2 };
+      const message = `transcribed 40s of an expected 100s recording ${formatTruncatedAudio(t)}`;
+      expect(message.endsWith(`[recording sha256=${sha} bytes=1234 covered=40.3s shortCount=2]`)).toBe(true);
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: message }))
+        .toEqual({ sha256: sha, bytes: 1234, coveredSeconds: 40.3, shortCount: 2 });
+    });
+
+    it('reads a tag written before the count existed as one short transcription', () => {
+      const message = `transcribed 40s of an expected 100s recording [recording sha256=${sha} bytes=1234 covered=40s]`;
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: message }))
+        .toEqual({ sha256: sha, bytes: 1234, coveredSeconds: 40, shortCount: 1 });
+    });
+
+    it('reads nothing under another error code, without a message, or without the tag at its end', () => {
+      const tagged = `x [recording sha256=${sha} bytes=1 covered=1s shortCount=2]`;
+      expect(truncatedAudioOf({ error_code: 'RATE_LIMITED', error_message: tagged })).toBeNull();
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: null })).toBeNull();
+      expect(truncatedAudioOf({ error_code: 'AUDIO_TOO_SHORT', error_message: `${tagged} trailing` })).toBeNull();
     });
   });
 

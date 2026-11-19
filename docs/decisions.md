@@ -747,6 +747,7 @@ are IQ67, the take-over ending `away_ring` is OS3).
 | — | Inbound retention for a UK pilot | Voicemails and the inbound spine age out on `AGENCY_RETENTION_DAYS`, unset by default (rows kept). Decide the window under UK GDPR, and how one voicemail is deleted on request | Manas |
 | LF1–LF39 | Live floor | LF2 (the currency), LF3 (customer names on the cards), LF8 (Join call, whisper) and LF39 open; LF4–LF7 decided 2026-11-19 and built (Phase 3); LF1, LF9, LF10 and Phase 3's defaults LF11–LF38 built, pending ratification (§"Live floor (LF)") | Manas |
 | AD1–AD2 | A call summary delayed by the AI service | Built, pending ratification (§"Summary delayed by the AI service (AD)"): every queued summary reads delayed while any queued job's last run was refused, whichever tenant's | Manas (ratify) |
+| TR1 | Truncated recordings: how often the same audio is transcribed | Built, pending ratification (§"Truncated recordings (TR)"): identical bytes are transcribed at most twice per job, then taken as truly truncated | Manas (ratify) |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |
 
@@ -973,3 +974,20 @@ to 13 days. Decided 2026-11-19 while fixing that copy:
 |---|---|---|
 | AD1 | The signal. A call's summary is `analysis_delay: 'vendor_unavailable'` when its job is `queued` and some queued job's last run was refused by the vendor (`error_code = 'RATE_LIMITED'`, the code `requeueRateLimited` writes; `analysisDelaySql`, `packages/db`), else null; derived on each read, nothing stored, no migration. Not only the call's own job: the vendor and its keys are the server's, and one breaker holds every claim while it refuses (D10), so a job not yet tried (one probe per pause, so they pile up while it lasts) waits for the same reason. Calls of every tenant read the same refusal. It clears once the refused jobs are claimed again, up to one breaker pause (15 min at most) after the vendor answers. Read for a `pending` call only: the attempt detail, the soft-phone detail's media leg, the soft-phone list rows | **Default, pending Manas** |
 | AD2 | What reaches a reader. Only the category: never the vendor's words, its quota or billing detail (they stay in `error_message` and the logs, #96). The console says "Summary delayed: the AI service is not available right now. It will be written automatically when it is back." with a clock in place of the spinner, and "Delayed" in the soft-phone list; ordinary pending keeps its copy. Kept for a tenant without `agency.analytics`, like `analysis_status`. The mobile app does not read it | **Default, pending Manas** |
+
+## Truncated recordings (TR)
+
+A transcript covering under 80 % of the call's recorded duration is taken as a truncated fetch (a
+carrier serving the file before it is finished) and re-fetched, in the attempt and on later
+attempts (`docs/architecture.md`, the analysis runner). Each transcription is paid for, and most
+re-fetches of an unfinished file return the very same bytes: before the fingerprint, an unchanged
+truncated recording cost up to ~9 transcriptions per job. Fingerprinting each fetch (length and
+SHA-256) and never transcribing bytes already found short cut that to 1, but "short" is read from
+the transcript itself (the largest `end_seconds` the transcriber returned), and for Gemini those
+timestamps are written by the model: a short transcript of a complete file can be the
+transcriber's miss (an early stop, squeezed timestamps), which a second transcription of the same
+bytes used to rescue. Decided 2026-11-19 on review of that change:
+
+| ID | Decision | Status |
+|---|---|---|
+| TR1 | Identical audio gets one re-transcription. A fetch whose bytes match the audio last found short is transcribed again while those bytes have come back short only once; once they have come back short twice, in this attempt or the job's earlier ones, a fetch of them is not transcribed and counts as still truncated. Different audio is always transcribed and starts its own count. The fingerprint and the count ride in the `AUDIO_TOO_SHORT` requeue's `error_message` (`[recording sha256=… bytes=… covered=…s shortCount=N]`, a tag without the count read as 1), read only under that error code and only while the call's current duration still finds it short, so a rate-limited requeue or a manual retry starts afresh. The trade-off: an unchanged truncated recording costs at most 2 transcriptions per job (was ~9 before the fingerprint, 1 with it), and a transcriber's miss on a complete file is rescued when the second transcription covers the call; a transcriber that misses twice on the same bytes is not tried a third time, and the job fails `AUDIO_TOO_SHORT` (a manual retry starts afresh) | **Default, pending Manas** |

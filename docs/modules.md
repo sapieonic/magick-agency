@@ -552,7 +552,7 @@ Files: `analysis.service.ts`, `bridge-analysis-hooks.ts`, `dimension-presets.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/analysis/pipeline.test.ts` (with an unchanged truncated recording transcribed once over every attempt) | ~13 |
+| `apps/server/test/integration/analysis/pipeline.test.ts` (with identical truncated audio rescued by its second transcription, and an unchanged truncated recording transcribed twice over every attempt, TR1) | ~13 |
 | `apps/server/test/integration/analysis/worker-pool.test.ts` | ~2 |
 | `apps/server/test/unit/analysis/analysis.service.test.ts` | 22 |
 | `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 17 |
@@ -985,7 +985,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`, and a fetch identical to audio already found truncated never transcribed again) | 55 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`, and identical audio found short transcribed once more, then never again once found short twice, the count carried across attempts in the `AUDIO_TOO_SHORT` tag, TR1) | 62 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
 | `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 26 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
@@ -2002,11 +2002,12 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 
 The soft phone's screen (docs/softphone.md §7). `SoftphoneView` is the rail, three columns and action bar in the station's frozen geometry, mounted by two hosts: `/dialer/phone` and the campaign station once `agent_state` reports `break/soft_phone`; both pass it the same `useSoftphone` state, and the socket, microphone and header stay the host's. `SoftphoneRail` is the station rail's band, tints and timer with the soft phone's five states (Ready, Dialing, Ringing, On call, Outcome needed) and no End break. Column 1 is `DialPad` (number input, keypad, caller ID, Call; once placed, who is called from where, the SP3 warning while ringing and "Without one, it closes in m:ss" from `outcome_due_at`); column 2 `CallDetailsColumn` (the "Log to" campaign, fixed once dialled, the matched roster contact) with `CallFieldsForm` (the account's call fields by declared type, required markers tied to the input); column 3 `OutcomeColumn` (recent calls while idle, each with its day, then the station's `DispositionPad` and notes). `SoftphoneActionBar` is Save outcome, Mark DNC, Mute, Hang up (the station's order) in every state, disabled with a stated reason, Hang up hold-to-confirm. `OverrideDialog` is "Call anyway" for a DNC hit (SP1) or a closed calling window (SP2): what matched, and a 10–500 character note. `SoftphoneHeader` (with `SoftphoneDisclosures`, also used in the station's header) carries the agent's screens, locked while a call is unsettled, recording, mute, where the call is logged and the connection. `useSoftphoneShortcuts` is the window keyboard: in Ready digits type and Enter calls; on a call `1`–`9` pick an outcome, `M`, `N`, `C`, `D` (the Mark DNC confirmation), `Ctrl`/`⌘`+`Enter`, and `E` twice to hang up; keys in a field or a focused `<select>` are ignored. `SoftphoneCallsList` is the one calls list (stats strip, filters, keyset paging, Summary column) behind the supervisor's list, a campaign's Soft-phone calls tab and the agent's My calls tab; Clear goes back to the view it opened on (today for the supervisor's list).
 
-Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeColumn.tsx`, `OverrideDialog.tsx`, `SoftphoneActionBar.tsx`, `SoftphoneCallsList.module.css`, `SoftphoneCallsList.tsx`, `SoftphoneHeader.tsx`, `SoftphoneRail.tsx`, `SoftphoneView.module.css`, `SoftphoneView.tsx`, `useSoftphoneShortcuts.ts`
+Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeColumn.tsx`, `OverrideDialog.tsx`, `SoftphoneActionBar.tsx`, `SoftphoneCallsList.module.css`, `SoftphoneCallsList.tsx`, `SoftphoneHeader.tsx`, `SoftphoneInboundNotice.tsx`, `SoftphoneRail.tsx`, `SoftphoneView.module.css`, `SoftphoneView.tsx`, `useSoftphoneShortcuts.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | ~59 |
+| `apps/console/src/__tests__/components/SoftphoneInboundNotice.test.tsx` (the note under Call while inbound calls are on: hidden with the flag off, the soft-phone page's and the campaign host's words, gone during a call and in finish mode) | 5 |
 
 `SoftphoneView.test.tsx` drives the view through `useSoftphone` with a fake station socket (`__tests__/helpers/fakeSocket.ts`, `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
 
