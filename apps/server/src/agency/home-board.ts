@@ -325,20 +325,26 @@ async function floorsOf(rows: AgencyCampaignRecord[]): Promise<Map<string, strin
   }
 }
 
+/** A campaign Home says got to its status (`status_changed`): a paused or a stopping one. */
+type HeldCampaign = AgencyCampaignRecord & { status: 'paused' | 'stopping' };
+
+function isHeld(campaign: AgencyCampaignRecord): campaign is HeldCampaign {
+  return campaign.status === 'paused' || campaign.status === 'stopping';
+}
+
 /**
  * When and by whom a paused or stopping campaign got there (decision B28b), from its row: a pause's
  * `paused_at` (every pause writes it, the automatic ones too) and `pause_reason` (anything but
  * `supervisor` is the dialer's own), the transition's actor (`last_transition_by_*`, which every
  * transition writes and an automatic pause clears); a stop's time from its audit row (`stoppedAt`,
  * the row keeps none). The name is the identity lookup's now (`names`), else the one the transition
- * recorded. Null for any other status.
+ * recorded. Any other status has none (`statusChangesOf` reads only these).
  */
-export function homeStatusChange(
-  campaign: AgencyCampaignRecord,
+function homeStatusChange(
+  campaign: HeldCampaign,
   names: ReadonlyMap<string, string | null>,
   stoppedAt: ReadonlyMap<string, Date>,
-): AgencyHomeStatusChange | null {
-  if (campaign.status !== 'paused' && campaign.status !== 'stopping') return null;
+): AgencyHomeStatusChange {
   const byUserId = campaign.last_transition_by_user_id ?? null;
   const byName = byUserId ? names.get(byUserId) ?? campaign.last_transition_by_name ?? null : null;
   if (campaign.status === 'paused') {
@@ -356,14 +362,15 @@ export function homeStatusChange(
 
 /**
  * {@link homeStatusChange} for every listed campaign: one name lookup for the actors of the paused
- * and stopping ones, one audit read for the stopping ones (only when there are any). A failed read
- * serves what the rows alone give (the recorded name, no stop time), never a failed board.
+ * and stopping ones, one audit read for the stopping ones (`stopAuditedAt` makes no query without
+ * any). A failed read serves what the rows alone give (the recorded name, no stop time), never a
+ * failed board.
  */
 async function statusChangesOf(
   rows: AgencyCampaignRecord[],
   deps: HomeBoardDeps,
 ): Promise<Map<string, AgencyHomeStatusChange>> {
-  const held = rows.filter((c) => c.status === 'paused' || c.status === 'stopping');
+  const held = rows.filter(isHeld);
   if (held.length === 0) return new Map();
   const tenantId = held[0]!.tenant_id;
   const stopping = held.filter((c) => c.status === 'stopping').map((c) => c.id);
@@ -372,19 +379,12 @@ async function statusChangesOf(
       log.warn({ err, read: 'status_actor_names' }, 'Home board read failed; serving the recorded names');
       return new Map<string, string | null>();
     }),
-    stopping.length === 0
-      ? Promise.resolve(new Map<string, Date>())
-      : agencyCampaignRepository.stopAuditedAt(tenantId, stopping).catch((err: unknown) => {
-        log.warn({ err, read: 'stop_audited_at' }, 'Home board read failed; serving no stop time');
-        return new Map<string, Date>();
-      }),
+    agencyCampaignRepository.stopAuditedAt(tenantId, stopping).catch((err: unknown) => {
+      log.warn({ err, read: 'stop_audited_at' }, 'Home board read failed; serving no stop time');
+      return new Map<string, Date>();
+    }),
   ]);
-  const out = new Map<string, AgencyHomeStatusChange>();
-  for (const campaign of held) {
-    const change = homeStatusChange(campaign, names, stoppedAt);
-    if (change) out.set(campaign.id, change);
-  }
-  return out;
+  return new Map(held.map((campaign) => [campaign.id, homeStatusChange(campaign, names, stoppedAt)]));
 }
 
 async function readCampaigns(rows: AgencyCampaignRecord[], deps: HomeBoardDeps): Promise<AgencyHomeCampaign[]> {
