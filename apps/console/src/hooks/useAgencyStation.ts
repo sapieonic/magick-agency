@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type {
-  AgencySessionHelp,
-  AgencyStationFloorAssistFrame,
-  AgencyStationMediaFormat,
-} from '@magick-agency/contracts/agency';
+import type { AgencySessionHelp, AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 import { AGENCY_HELP_ANSWER_HOWS, AGENCY_HELP_CLEARED_REASONS } from '@magick-agency/contracts/agency';
 import type { AgencyAgentState, AgencyStationServerFrame } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
@@ -453,14 +449,10 @@ export function useAgencyStation(
        * work most likely to grow.
        */
       const receivedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      /*
-        The floor assist frames (LF15) are their own union until the app's change moves them into
-        `AgencyStationServerFrame`; a console station is sent them either way (LF16), and after the
-        move this union is the same type.
-      */
-      let frame: AgencyStationServerFrame | AgencyStationFloorAssistFrame;
+      // The floor assist frames (LF15) are members of `AgencyStationServerFrame` (LF16).
+      let frame: AgencyStationServerFrame;
       try {
-        frame = JSON.parse(raw) as AgencyStationServerFrame | AgencyStationFloorAssistFrame;
+        frame = JSON.parse(raw) as AgencyStationServerFrame;
       } catch {
         // Non-JSON is ignored by contract, not an error.
         logDiagnostic('unparseable', raw.slice(0, 200));
