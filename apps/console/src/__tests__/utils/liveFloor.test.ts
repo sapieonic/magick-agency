@@ -26,7 +26,7 @@ import {
   selectedCampaign,
   todayFor,
 } from '../../utils/agency/liveFloor';
-import { homeAttention, homeBadgeCount, homeRank, type HomeCampaignRead, type HomeMissed } from '../../utils/agency/home';
+import { homeAttention, homeBadgeCount, homeRank, type HomeAttentionItem, type HomeCampaignRead, type HomeMissed } from '../../utils/agency/home';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
 import type { AgencyHomeActiveStatus } from '@magick-agency/contracts/api/agency/home';
 import { allocationFacts, campaign, settingsFacts, stats, STAFFED, todayFacts } from '../helpers/home';
@@ -97,14 +97,56 @@ describe('the campaign filter', () => {
     expect(attentionFor(items, 'c1', { [c2.id]: ackOf(c2) }).elsewhere).toBe(1);
     // Until it gets worse.
     expect(attentionFor(items, 'c1', { [c2.id]: { ...ackOf(c2), count: 0 } }).elsewhere).toBe(2);
-    // The picked campaign's calling hours are the grouped row, put aside under its own id.
+    // The picked campaign's calling hours are the grouped row, put aside under the campaign's own id.
     const picked = attentionFor(items, 'c2');
     expect(picked.open.map((i) => i.id)).toEqual(['callbacks-overdue:c2', 'calling-hours-default']);
     expect(picked.elsewhere).toBe(2);
     const grouped = picked.open[1]!;
-    const aside = attentionFor(items, 'c2', { [grouped.id]: ackOf(grouped) });
+    expect(grouped.parts!.map((i) => i.id)).toEqual(['calling-hours-default:c2']);
+    const acks = Object.fromEntries(grouped.parts!.map((part) => [part.id, ackOf(part)]));
+    const aside = attentionFor(items, 'c2', acks);
     expect(aside.open.map((i) => i.id)).toEqual(['callbacks-overdue:c2']);
     expect(aside.acknowledged.map((i) => i.id)).toEqual(['calling-hours-default']);
+  });
+});
+
+describe('"Got it" on the grouped calling-hours row', () => {
+  const items = homeAttention(
+    [read('c1', { name: 'Q4', settings: DEFAULT_HOURS }), read('c2', { name: 'Gold', settings: DEFAULT_HOURS }), read('c3', { name: 'Card', settings: DEFAULT_HOURS })],
+    NO_MISSED,
+    fmt,
+  );
+  const ackParts = (row: HomeAttentionItem) =>
+    Object.fromEntries(row.parts!.map((part) => [part.id, ackOf(part)]));
+
+  it('holds per campaign: given with one campaign picked, the row comes back without it when the filter is cleared', () => {
+    const picked = attentionFor(items, 'c1').open[0]!;
+    const acks = ackParts(picked);
+    expect(Object.keys(acks)).toEqual(['calling-hours-default:c1']);
+    const all = attentionFor(items, null, acks);
+    expect(all.open).toHaveLength(1);
+    expect(all.open[0]).toMatchObject({ id: 'calling-hours-default', count: 2, title: '2 campaigns still use the default calling hours' });
+    expect(all.open[0]!.review!.map((c) => c.id)).toEqual(['c2', 'c3']);
+    // What was put aside is listed as such, for the campaign it was given for.
+    expect(all.acknowledged.map((i) => i.review!.map((c) => c.id))).toEqual([['c1']]);
+  });
+
+  it('is put aside while every campaign it covers is, and a campaign newly on the default hours brings it back', () => {
+    const acks = ackParts(attentionFor(items, null).open[0]!);
+    expect(attentionFor(items, null, acks).open).toEqual([]);
+    expect(attentionFor(items, 'c2', acks).open).toEqual([]);
+    const more = homeAttention(
+      [read('c1', { settings: DEFAULT_HOURS }), read('c2', { settings: DEFAULT_HOURS }), read('c3', { settings: DEFAULT_HOURS }), read('c4', { name: 'New', settings: DEFAULT_HOURS })],
+      NO_MISSED,
+      fmt,
+    );
+    const back = attentionFor(more, null, acks);
+    expect(back.open.map((i) => i.review!.map((c) => c.name))).toEqual([['New']]);
+  });
+
+  it('ignores an acknowledgement stored under the grouped id before acks were held per campaign', () => {
+    const stale = { 'calling-hours-default': { kind: 'calling-hours-default', tone: 'info' as const, count: 5 } };
+    expect(attentionFor(items, null, stale).open.map((i) => i.id)).toEqual(['calling-hours-default']);
   });
 });
 

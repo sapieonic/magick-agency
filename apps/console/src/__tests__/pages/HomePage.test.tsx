@@ -708,6 +708,66 @@ describe('Needs you now, as Live floor shows it', () => {
     await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('0'));
   });
 
+  describe('"Got it" on the grouped calling-hours row (held per campaign)', () => {
+    const hours = { calling_hours_default: true, record_calls: false, calling_window_start: '09:00', calling_window_end: '20:00', calling_days: [1, 2, 3, 4, 5] };
+    const reviewed = () => within(screen.getByTestId('home-review-calling-hours-default')).getAllByRole('link', { hidden: true }).map((a) => a.textContent);
+
+    it('given with a campaign picked, holds for that campaign once the filter is cleared', async () => {
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([
+        onBoard('c1', { name: 'Q4', settings: hours }),
+        onBoard('c2', { name: 'Gold', settings: hours }),
+        onBoard('c3', { name: 'Card', settings: hours }),
+      ]));
+      renderHome('/agency/home?campaign=c1');
+      const row = await screen.findByTestId('home-attention-calling-hours-default');
+      fireEvent.click(within(row).getByRole('button', { name: 'Got it: 1 campaign still uses the default calling hours' }));
+      expect(screen.queryByTestId('home-attention-calling-hours-default')).toBeNull();
+      const stored = JSON.parse(window.localStorage.getItem(homeAcksKey('u-1', 't-1', 'a-1'))!);
+      expect(Object.keys(stored.acks)).toEqual(['calling-hours-default:c1']);
+
+      fireEvent.change(screen.getByRole('combobox', { name: 'Show campaign' }), { target: { value: '' } });
+      // The other two were never put aside; Q4 was, and stays aside.
+      const back = screen.getByTestId('home-attention-calling-hours-default');
+      expect(back.textContent).toContain('2 campaigns still use the default calling hours');
+      expect(reviewed()).toEqual(['Gold', 'Card']);
+    });
+
+    it('given over every campaign, puts the row aside until a new campaign is on the default hours', async () => {
+      vi.useFakeTimers();
+      try {
+        mocks.getAgencyHomeBoard.mockResolvedValue(board([
+          onBoard('c1', { name: 'Q4', settings: hours }),
+          onBoard('c2', { name: 'Gold', settings: hours }),
+        ]));
+        renderHome();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        fireEvent.click(within(screen.getByTestId('home-attention-calling-hours-default')).getByRole('button', { name: /Got it/ }));
+        expect(screen.queryByTestId('home-attention-calling-hours-default')).toBeNull();
+        expect(within(screen.getByTestId('home-acknowledged')).getByRole('button', { name: '1 acknowledged · Show' })).toBeTruthy();
+        // The same campaigns on the next read: still aside.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
+        });
+        expect(screen.queryByTestId('home-attention-calling-hours-default')).toBeNull();
+        // A campaign newly on the default hours: the row is back, for it alone.
+        mocks.getAgencyHomeBoard.mockResolvedValue(board([
+          onBoard('c1', { name: 'Q4', settings: hours }),
+          onBoard('c2', { name: 'Gold', settings: hours }),
+          onBoard('c3', { name: 'Card', settings: hours }),
+        ]));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
+        });
+        expect(screen.getByTestId('home-attention-calling-hours-default').textContent).toContain('1 campaign still uses the default calling hours');
+        expect(reviewed()).toEqual(['Card']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('offers "Give to free agents" on late callbacks whose agent is away, as a disabled control that is coming soon', async () => {
     const away = onBoard('c1', { name: 'Gold' });
     away.allocation = { ...away.allocation!, callbacks_overdue: 4, callbacks_overdue_absent_owner: 4 };

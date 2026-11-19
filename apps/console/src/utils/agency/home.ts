@@ -116,6 +116,12 @@ export interface HomeAttentionItem {
    */
   review?: HomeReviewCampaign[];
   /**
+   * The rows a grouped row stands for, one per campaign (`groupCallingHours` in `liveFloor.ts`).
+   * A "Got it" on the grouped row puts each aside under its own id, so it holds per campaign
+   * whatever the campaign filter was, and the group shows only the campaigns not put aside.
+   */
+  parts?: HomeAttentionItem[];
+  /**
    * An action that is planned and not built yet, shown as a disabled "Coming soon" control beside
    * the row's link: a break overrun's "Send reminder", and on a campaign's late-callbacks row with
    * overdue callbacks whose owner is away, "Give to free agents" (Phase 3's actions).

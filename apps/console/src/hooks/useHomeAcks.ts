@@ -86,7 +86,7 @@ export const resetHomeAcksForTests = resetHomeAcks;
 export interface HomeAcks {
   /** Today's acknowledgements, by row id. */
   acks: Readonly<Record<string, HomeAck>>;
-  /** Put a row aside until it gets worse or tomorrow. */
+  /** Put a row aside until it gets worse or tomorrow; a grouped row, each row it stands for (`parts`). */
   acknowledge: (item: HomeAttentionItem) => void;
 }
 
@@ -110,7 +110,9 @@ export function useHomeAcks(tenantId: string | null | undefined, accountId: stri
   const acknowledge = useCallback((item: HomeAttentionItem) => {
     if (!key) return;
     const day = homeAckDay(new Date());
-    write(key, { day, acks: { ...todaysAcks(memory.get(key) ?? readStored(key), day), [item.id]: ackOf(item) } });
+    const acks = { ...todaysAcks(memory.get(key) ?? readStored(key), day) };
+    for (const row of item.parts ?? [item]) acks[row.id] = ackOf(row);
+    write(key, { day, acks });
   }, [key]);
 
   return { acks, acknowledge };

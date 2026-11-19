@@ -88,26 +88,27 @@ function callingHoursHref(campaignId: string): string {
 /**
  * Needs you now's rows for one campaign, or for all: the rows still to show (`open`) and the ones
  * the reader put aside with "Got it" (`acknowledged`, still holding), each in the list's order, with
- * the campaigns on the default calling hours grouped into one row ({@link groupCallingHours}, over
- * the rows shown); and how many rows that need the reader (not information) the filter leaves out,
- * so a filter never hides a problem without saying so. The account's own rows (missed calls) are
- * about no campaign, so a filter leaves them out too. A row put aside is not one the filter hides
- * from the reader, so it is not counted. Every row is split once, the shown and the left out alike.
+ * the campaigns on the default calling hours grouped into one row ({@link groupCallingHours}); and
+ * how many rows that need the reader (not information) the filter leaves out, so a filter never
+ * hides a problem without saying so. The account's own rows (missed calls) are about no campaign,
+ * so a filter leaves them out too. A row put aside is not one the filter hides from the reader, so
+ * it is not counted. Every row is split once, the shown and the left out alike.
+ *
+ * Rows are split before they are grouped: a calling-hours "Got it" is held per campaign (LF9), so
+ * the open group stands for the campaigns not put aside and a second group, under Acknowledged, for
+ * those that are. A filter changes which campaigns a group covers, never what was put aside.
  */
 export function attentionFor(
   items: readonly HomeAttentionItem[],
   campaignId: string | null,
   acks: Readonly<Record<string, HomeAck>> = {},
 ): { open: HomeAttentionItem[]; acknowledged: HomeAttentionItem[]; elsewhere: number } {
-  const picked = campaignId === null ? items : items.filter((item) => item.campaign?.id === campaignId);
-  const left = campaignId === null ? [] : items.filter((item) => item.campaign?.id !== campaignId);
-  const split = splitAcknowledged([...groupCallingHours(picked), ...left], acks);
-  // The grouped row names no campaign, so the rows left out are told apart by who they are.
-  const leftOut = new Set(left);
+  const split = splitAcknowledged(items, acks);
+  const isPicked = (item: HomeAttentionItem) => campaignId === null || item.campaign?.id === campaignId;
   return {
-    open: split.open.filter((item) => !leftOut.has(item)),
-    acknowledged: split.acknowledged.filter((item) => !leftOut.has(item)),
-    elsewhere: split.open.filter((item) => leftOut.has(item) && item.tone !== 'info').length,
+    open: groupCallingHours(split.open.filter(isPicked)),
+    acknowledged: groupCallingHours(split.acknowledged.filter(isPicked)),
+    elsewhere: split.open.filter((item) => !isPicked(item) && item.tone !== 'info').length,
   };
 }
 
@@ -115,8 +116,10 @@ export function attentionFor(
  * One row for every campaign still on the default calling hours, where the Overview's rule makes
  * one per campaign: "3 campaigns still use the default calling hours", whose Review opens the list
  * of them, each to its Settings' calling hours. Information, so the badge never counted these.
- * The row takes the place of the first it replaces; every other row is left as it was. A "Got it"
- * holds against how many campaigns there are, so one more brings it back.
+ * The row takes the place of the first it replaces; every other row is left as it was. It carries
+ * the rows it replaces (`parts`): its "Got it" puts each campaign aside under the campaign's own
+ * id ({@link attentionFor} splits before it groups), so a campaign newly on the default hours
+ * brings the row back, for that campaign.
  */
 export function groupCallingHours(items: readonly HomeAttentionItem[]): HomeAttentionItem[] {
   const rows = items.filter((item) => item.kind === 'calling-hours-default' && item.campaign);
@@ -144,6 +147,7 @@ export function groupCallingHours(items: readonly HomeAttentionItem[]): HomeAtte
     count: rows.length,
     ackable: true,
     review,
+    parts: rows,
   };
   const out: HomeAttentionItem[] = [];
   let placed = false;
