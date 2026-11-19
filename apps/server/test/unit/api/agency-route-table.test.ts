@@ -119,6 +119,9 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /proxy/agency/inbound/calls/:_/ring/decline', 'mobile app native ring Decline (Mode B, token only)'],
   ['POST /proxy/agency/inbound/calls/:_/ring/accept', 'mobile app takes a ring it answered (Mode B)'],
   ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
+  // The Live floor's account-wide callbacks list (LF22): the console's Callbacks page calls it once
+  // Phase 3's console lands; that change moves it to the console path inventory.
+  ['GET /proxy/agency/callbacks', 'the account\'s callbacks list (LF22; the console\'s Callbacks page, Phase 3)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */

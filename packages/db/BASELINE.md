@@ -1624,6 +1624,25 @@ lock timeout before the ADD COLUMN, down then up leaving the rows there null), t
 `test/integration/agency/home-status-change.test.ts` (the stamp, a second Stop, `stopped`, the
 board straight after Stop) and the down → up inventory suite.
 
+### 0053 — `migrations/0053_account_callbacks_index.sql`
+
+The account's callbacks list (decisions LF1, LF22: the Live floor's Callbacks page,
+`GET /proxy/agency/callbacks`). **`idx_agency_contacts_callbacks`** `(campaign_id,
+next_attempt_at, id) WHERE state = 'pending' AND (last_outcome = 'connected' OR callback_source IS
+NOT NULL)` on `agency_contacts`: the pending contacts whose last call was a conversation or that an
+inbound miss booked, a superset of the callbacks (`isCallbackSql`) and the size of the callbacks,
+not of the rosters. Each campaign's page of the list (`callbacksPageStatement`, which repeats the
+predicate byte for byte as `CALLBACK_CANDIDATE_SQL`) is one range of it; before it, the overdue
+page walked `idx_agency_contacts_dialable` over every pending contact due before now, the whole
+undialled roster (25 campaigns of 40,000 contacts: 3.4 s, against 38 ms on this index). `CREATE
+INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`, so a deployment may build it
+`CONCURRENTLY` first; an invalid index left under the name by a failed concurrent build fails the
+migration. **Down** drops it. **Tests**:
+`test/integration/db/account-callbacks-index-migration.test.ts` (the definition, the invalid-index
+refusal, down then up), the server's `test/integration/agency/callbacks-list.test.ts` (each
+campaign's page on the index, never the dialable index, on seeded rosters) and the down → up
+inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

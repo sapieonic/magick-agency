@@ -55,6 +55,8 @@ export { AgencyFloorRepository, agencyFloorRepository, FLOOR_ACTIVE_STATUSES } f
 export type { AgencyFloorRow } from './agency/floor.repository.js';
 export { AgencyPromiseSummaryRepository, agencyPromiseSummaryRepository } from './agency/promise-summary.repository.js';
 export type { AgencyPromiseSummaryRow } from './agency/promise-summary.repository.js';
+export { AgencyCallbacksRepository, agencyCallbacksRepository, callbacksPageStatement, CALLBACK_CANDIDATE_SQL } from './agency/callbacks.repository.js';
+export type { CallbacksListCampaignRow, CallbacksPageCampaign, CallbacksPageInput, CallbacksPageRow } from './agency/callbacks.repository.js';
 export type { AgencyLiveCallQuery, AgencyLiveCallRow } from './agency/live-call.repository.js';
 export { AgencyManualCallRepository, agencyManualCallRepository } from './agency/manual-call.repository.js';
 export type {

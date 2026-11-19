@@ -191,6 +191,19 @@ window the session's wrap-up actually takes, not the campaign's configured `wrap
 `AgencyCampaign` carries: on an inbound wrap-up it is the window captured on the inbound call
 (IQ52), and a timerless campaign (`wrapup_seconds = 0`) serves null, as a soft-phone session does.
 
+Live floor Phase 3, break limits and callbacks (decisions LF6, LF7, LF20–LF22).
+`AgencyBreakReason.limit_minutes` (optional, 1–240 whole minutes) is declared once, in the dialer
+contract (`agency/session.ts`), and re-exported here like the rest of `AgencyBreakReason`: the
+bootstrap's `break_reasons` carry it, which is how a station finds the limit of the break it is on.
+`AgencyFloorAgent.break_limit_minutes` is computed by the internal `GET /agency/floor` from the
+session's campaign catalog (`breakLimitMinutes`, the built-ins when it lists none) and passed through
+by the public route; optional on the wire type only so a client built before it reads its absence as
+null. `callbacks.ts` (`GET /proxy/agency/callbacks`, `AgencyCallbacksPage`) is assembled by the public
+API layer from the contacts table (SQL only); it has no dialer counterpart. The late-callbacks
+hand-off (`AgencyLateCallbacksToLiveAgents` and its preview, commit, result and refusal types in
+`assignment.ts`) is served by the public API layer like every assignment operation, so it has none
+either.
+
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 `AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.
