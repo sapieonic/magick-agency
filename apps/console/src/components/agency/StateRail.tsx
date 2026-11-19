@@ -51,6 +51,8 @@ export interface StateRailProps {
   /** `agent_state.since` — the break elapsed anchor. */
   agentStateSince: string | null;
   breakReasonLabel: string | null;
+  /** The break reason's limit in minutes (LF26), for the presence region's countdown; optional. */
+  breakLimitMinutes?: number | null;
   connection: StationConnection;
   live: LiveAttempt | null;
   release: AgencyStationReleasedFrame | null;
@@ -333,6 +335,7 @@ export function StateRail({
   agentState,
   agentStateSince,
   breakReasonLabel,
+  breakLimitMinutes = null,
   connection,
   live,
   release,
@@ -455,6 +458,7 @@ export function StateRail({
         since={agentStateSince}
         clockOffsetMs={clock.offsetMs}
         breakReasonLabel={breakReasonLabel}
+        breakLimitMinutes={breakLimitMinutes}
         busy={presenceBusy || connection !== 'open'}
         onGoAvailable={onGoAvailable}
         onEndBreak={onEndBreak}

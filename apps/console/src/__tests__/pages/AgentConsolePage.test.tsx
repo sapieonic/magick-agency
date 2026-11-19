@@ -524,53 +524,27 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(breakIdx).toBeGreaterThanOrEqual(0);
     expect(saveIdx).toBeGreaterThan(breakIdx);
     expect(hangupIdx).toBeGreaterThan(saveIdx);
-    // Need help (coming soon) is reachable, so a keyboard user can learn why it does nothing: last,
-    // after Hang up, so it is never a Tab stop between Mute and Hang up.
-    const helpIdx = names.findIndex((n) => n.includes('Need help'));
-    expect(helpIdx).toBeGreaterThan(hangupIdx);
+    // Need help is floor assist's, off here (no flag provider): not in the bar at all. Its own
+    // order, last after Hang up, is pinned with the flag on (`AgentConsolePage.floorAssist.test.tsx`).
+    expect(names.findIndex((n) => n.includes('Need help'))).toBe(-1);
   });
 
-  it('shows Need help on a call as an inert control marked coming soon, which nothing presses', async () => {
+  it('offers no Need help while floor assist is off, and keeps Hang up at the far end of the bar', async () => {
     await onCall();
-    const button = screen.getByRole('button', { name: /Need help/ });
-    // A real button marked disabled (focusable, so its tooltip can be read), never a link that goes nowhere.
-    expect(button.tagName).toBe('BUTTON');
-    expect(button.getAttribute('aria-disabled')).toBe('true');
-    const description = button.getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)?.textContent).join(' ');
-    expect(description).toBe('Ask a supervisor for help during a call. Coming soon.');
-    const wrap = screen.getByTestId('need-help');
-    expect(within(wrap).getByRole('tooltip').textContent).toBe('Ask a supervisor for help during a call. Coming soon.');
-    // Compact: the dashed button is the mark, no badge beside it to widen the bar.
-    expect(within(wrap).queryByTestId('coming-soon')).toBeNull();
-    // Last in the action bar, after Hang up: should the bar wrap, Need help goes to a second row,
-    // never Hang up.
-    // The bar: Need help's slot (its `needHelp` span) is one of its children.
-    const bar = wrap.parentElement!.parentElement!;
-    const order = Array.from(bar.querySelectorAll('button')).map((b) => b.textContent?.trim() ?? '');
-    const muteIdx = order.findIndex((n) => n === 'Mute' || n === 'Unmute');
-    const helpIdx = order.findIndex((n) => n.includes('Need help'));
-    const hangupIdx = order.findIndex((n) => n.startsWith('Hang up'));
-    expect(hangupIdx).toBeGreaterThan(muteIdx);
-    expect(helpIdx).toBeGreaterThan(hangupIdx);
-    expect(helpIdx).toBe(order.length - 1);
-    // Hang up is still pushed to the far end of the controls before it, not Need help.
+    expect(screen.queryByRole('button', { name: /Need help/ })).toBeNull();
+    expect(screen.queryByTestId('need-help')).toBeNull();
+    // Hang up is still pushed to the far end of the controls before it.
     const css = readFileSync(resolve(__dirname, '../../components/agency/AgentStation.module.css'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '');
     expect(css).toMatch(/\.actionBar > \.hangup \{[^}]*margin-left: auto;/);
     expect(css).not.toMatch(/\.actionBar > \*:last-child/);
-    const hangup = screen.getByRole('button', { name: /Hang up/ });
-    expect(Array.from(bar.children).find((child) => child.contains(hangup))!.className).toMatch(/hangup/);
-    // The shortcuts are as they were: Ctrl+Enter still saves, and nothing reaches the button.
+    // The shortcuts are as they were: Ctrl+Enter still saves.
     press('1');
     act(() => {
       fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true });
     });
     await act(async () => {});
     expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
-    // Pressing it does nothing either.
-    fireEvent.click(button);
-    expect(mocks.hangupAttempt).not.toHaveBeenCalled();
-    expect(button.getAttribute('aria-disabled')).toBe('true');
   });
 });
 

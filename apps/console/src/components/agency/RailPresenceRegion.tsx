@@ -51,6 +51,12 @@ export interface RailPresenceRegionProps {
   clockOffsetMs: number;
   /** Label of the break reason in effect, for the rail's sub-text. */
   breakReasonLabel?: string | null;
+  /**
+   * LF6, LF20, LF26: the break reason's limit, in minutes, when it has one (the bootstrap's
+   * `break_reasons`, found by code). With one, the region counts down to it and then says how far
+   * over the break is; without (no limit of its own, a reserved reason), it counts up, as ever.
+   */
+  breakLimitMinutes?: number | null;
   /** True while a presence request is in flight. */
   busy: boolean;
   onGoAvailable: () => void;
@@ -79,6 +85,7 @@ export function RailPresenceRegion({
   since,
   clockOffsetMs,
   breakReasonLabel,
+  breakLimitMinutes = null,
   busy,
   onGoAvailable,
   onEndBreak,
@@ -94,17 +101,18 @@ export function RailPresenceRegion({
   // Recomputed from the server anchor on every repaint — never decremented, never
   // counted from a local start instant. A five-minute break must not read as four.
   const elapsedMs = onBreak ? elapsedSince(since, clockOffsetMs, Date.now()) : null;
+  const time = breakTime(elapsedMs, breakLimitMinutes);
 
   return (
     <div className={styles.region}>
       {onBreak && (
-        <span className={styles.elapsed}>
+        <span className={styles.elapsed} data-over={time.over ? 'true' : undefined} data-testid="break-time">
           {breakReasonLabel ? `${breakReasonLabel} · ` : ''}
           {/*
             `data-testid` rather than a label lookup: this string changes four
             times a second and the tests need to prove it is still changing.
           */}
-          <span data-testid="break-elapsed">{elapsedMs === null ? '—' : formatDuration(elapsedMs)}</span>
+          <span data-testid="break-elapsed">{time.text}</span>
         </span>
       )}
 
@@ -136,4 +144,20 @@ export function RailPresenceRegion({
       )}
     </div>
   );
+}
+
+/**
+ * What the break's clock reads (LF26). No limit: the time on break, counting up. A limit: the time
+ * left, counting down ("4:21 left"), and once it has run out how far over the break is, in whole
+ * minutes begun ("over by 3 min": a minute and a second over is two), which the region shows in the
+ * warning tone. Both from the same server anchor, so the countdown and the floor's long-break risk
+ * cross the limit together.
+ */
+export function breakTime(elapsedMs: number | null, limitMinutes: number | null): { text: string; over: boolean } {
+  if (elapsedMs === null) return { text: '—', over: false };
+  if (limitMinutes === null) return { text: formatDuration(elapsedMs), over: false };
+  const leftMs = limitMinutes * 60_000 - elapsedMs;
+  if (leftMs > 0) return { text: `${formatDuration(leftMs)} left`, over: false };
+  const overMinutes = Math.max(1, Math.ceil(-leftMs / 60_000));
+  return { text: `over by ${overMinutes} min`, over: true };
 }
