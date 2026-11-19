@@ -332,16 +332,12 @@ final class BreakReason {
     code: j.str('code'),
     label: j.str('label'),
     isPaid: j.boolOrNull('is_paid'),
-    limitMinutes: _limit(j['limit_minutes']),
+    limitMinutes: _limit(j.tryInteger('limit_minutes')),
   );
 
   /// The limit as the contract allows it (a whole number, 1 to 240), else none:
   /// a limit the station cannot count down is not worth losing the catalog over.
-  /// Finite first: `1e400` decodes as infinity, which `toInt` refuses.
-  static int? _limit(Object? v) {
-    final n = v is int ? v : (v is double && v.isFinite && v == v.roundToDouble() ? v.toInt() : null);
-    return n != null && n >= minLimitMinutes && n <= maxLimitMinutes ? n : null;
-  }
+  static int? _limit(int? n) => n != null && n >= minLimitMinutes && n <= maxLimitMinutes ? n : null;
 
   /// `AGENCY_BREAK_LIMIT_MIN_MINUTES` / `AGENCY_BREAK_LIMIT_MAX_MINUTES` (`agency/breaks.ts`).
   static const minLimitMinutes = 1;

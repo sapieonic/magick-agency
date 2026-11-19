@@ -30,7 +30,8 @@ Map<String, Object?> asJsonMap(Object? value, [String what = 'body']) {
 
 int? _int(Object? v) {
   if (v is int) return v;
-  // A JSON number with a fractional part of zero (`10.0`) is still a count.
+  // A JSON number with a fractional part of zero (`10.0`) is still a count. Finite first: `1e400`
+  // decodes as infinity, which `toInt` refuses.
   if (v is double && v.isFinite && v == v.truncateToDouble()) return v.toInt();
   return null;
 }
@@ -57,6 +58,10 @@ extension WireRead on Map<String, Object?> {
     if (v == null) return null;
     return _int(v) ?? (throw _bad(k, 'integer or null', v));
   }
+
+  /// An integer as [integer] reads one, or null for anything else (absent, a
+  /// string, a fraction, infinity): for a field not worth failing the body over.
+  int? tryInteger(String k) => _int(this[k]);
 
   /// Epoch milliseconds: any JSON number, truncated.
   int epochMs(String k) {
