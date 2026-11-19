@@ -2,7 +2,8 @@
  * The agency repository's shared SQL fragments: every spelling more than one
  * repository file must emit byte-identically (the phone-digits prefilter, the
  * resolved campaign zone, the occupancy intervals, the five attempt metrics, the
- * campaign INSERT column list). A leaf: it imports nothing from this folder.
+ * campaign INSERT column list, a session's unsettled inbound call). A leaf: it
+ * imports nothing from this folder.
  */
 // What counts as a conversion, as SQL. A leaf module for the same reason
 // `ABANDONED_ATTEMPT_PREDICATE_SQL` is one: the campaign roll-up and the agent
@@ -64,6 +65,28 @@ export function inboundFromDigitsSql(alias: string): string {
  */
 export function inboundNumberBusySql(alias: string): string {
   return `${alias}.from_e164 IS NOT NULL AND ((${alias}.state <> 'ended' AND ${alias}.state <> 'arrived') OR (${alias}.bridged_at IS NOT NULL AND ${alias}.settled_at IS NULL))`;
+}
+
+/**
+ * The session's unsettled inbound call, if any, as a `LEFT JOIN LATERAL` aliased `ib`: one probe of
+ * `uq_agency_inbound_calls_session_unsettled` (0027), which holds at most one per session.
+ * `sessionId` is the caller's session id column (`s.id`). Both floors read it, the campaign's
+ * (`campaign-stats.ts` `supervisorAgents`) and the account's (`floor.repository.ts`), so they agree:
+ *  - `ib.on_call`: offered to or connected with the session (docs/inbound.md §6);
+ *  - `ib.outcome_owed`: the agent took it, it has ended and still owes its outcome (the inbound
+ *    wrap-up);
+ *  - `ib.wrapup_seconds`: the window captured on the call (IQ52; NULL: none captured).
+ * Every column is NULL without such a call: COALESCE the flags.
+ */
+export function inboundUnsettledCallLateralSql(sessionId: string): string {
+  return `LEFT JOIN LATERAL (
+      SELECT ib.state IN ('offered', 'connected') AS on_call,
+             (ib.state = 'ended' AND ib.bridged_at IS NOT NULL) AS outcome_owed,
+             ib.wrapup_seconds
+        FROM agency_inbound_calls ib
+       WHERE ib.session_id = ${sessionId} AND ib.settled_at IS NULL
+       LIMIT 1
+    ) ib ON true`;
 }
 
 /**

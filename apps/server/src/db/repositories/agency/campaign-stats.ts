@@ -68,6 +68,7 @@ import {
   VOICEMAIL_DISPOSITION_CODE,
   WRAPUP_MEASURED_RESOLUTIONS_SQL,
   ahtSecondsSql,
+  inboundUnsettledCallLateralSql,
   readAttemptMetrics,
 } from './sql-fragments.js';
 import {
@@ -579,18 +580,9 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
               COALESCE(ib.on_call, false) AS on_inbound_call,
               COALESCE(ib.outcome_owed, false) AS inbound_outcome_owed
          FROM agency_agent_sessions s
-         -- The session's unsettled inbound call, if any: one probe of
-         -- uq_agency_inbound_calls_session_unsettled (0027), which holds at most one per session.
-         -- on_call: offered to or connected with the session (docs/inbound.md §6);
-         -- outcome_owed: the agent took it, it has ended and still owes its outcome (the inbound
-         -- wrap-up).
-         LEFT JOIN LATERAL (
-           SELECT ib.state IN ('offered', 'connected') AS on_call,
-                  (ib.state = 'ended' AND ib.bridged_at IS NOT NULL) AS outcome_owed
-             FROM agency_inbound_calls ib
-            WHERE ib.session_id = s.id AND ib.settled_at IS NULL
-            LIMIT 1
-         ) ib ON true
+         -- The session's unsettled inbound call, if any (on_call, outcome_owed): the account
+         -- floor's own lateral (sql-fragments.ts).
+         ${inboundUnsettledCallLateralSql('s.id')}
          LEFT JOIN agency_call_attempts a
                 ON a.reserved_agent_id = s.id
         WHERE s.campaign_id = $1

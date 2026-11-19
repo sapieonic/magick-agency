@@ -46,10 +46,10 @@
  */
 import { getPool } from '@magick-agency/db';
 import type { AgencyAgentLiveState, AgencyClientKind } from '@magick-agency/contracts/agency';
-import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_OUTCOME_LAPSE_MS, type AgencyBreakReason } from '@magick-agency/contracts/agency';
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
-import { CONVERSATION_ATTEMPT_SQL } from './sql-fragments.js';
+import { CONVERSATION_ATTEMPT_SQL, inboundUnsettledCallLateralSql } from './sql-fragments.js';
 
 /** The campaign statuses whose staffed agents are on the floor with no session: Home's active set, the same list. */
 export const FLOOR_ACTIVE_STATUSES = AGENCY_HOME_ACTIVE_STATUSES;
@@ -64,7 +64,8 @@ export interface AgencyFloorRow {
   /**
    * The window the session's wrap-up takes, in seconds: on an inbound wrap-up (`inbound_outcome_owed`)
    * the one captured on the inbound call (IQ52, `agency_inbound_calls.wrapup_seconds`), else the
-   * inbound default; otherwise the campaign's `wrapup_seconds`. Null without a campaign, and for a
+   * inbound default, never past the backstop (`inboundOutcomeWindowMs`'s rule; the captured window's
+   * CHECK, 10..600 s, keeps it well inside); otherwise the campaign's `wrapup_seconds`. Null without a campaign, and for a
    * timerless campaign (`wrapup_seconds = 0`: no countdown, so nothing to be past).
    */
   wrapup_seconds: number | null;
@@ -84,7 +85,11 @@ export interface AgencyFloorRow {
   left_at: Date | null;
 }
 
-/** The floor's rows: $1 tenant, $2 account, $3 `from`, $4 the active statuses. Exported for its plan test. */
+/**
+ * The floor's rows: $1 tenant, $2 account, $3 `from`, $4 the active statuses, $5 the inbound default
+ * window in seconds ({@link INBOUND_DEFAULT_WRAPUP_SECONDS}), $6 the inbound backstop in ms
+ * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}). Exported for its plan test.
+ */
 export const FLOOR_ROWS_SQL = `
   WITH open_sessions AS (
     SELECT DISTINCT ON (s.agent_user_id)
@@ -101,9 +106,10 @@ export const FLOOR_ROWS_SQL = `
   )
   SELECT o.id AS session_id, o.agent_user_id, o.campaign_id, cam.name AS campaign_name,
          -- The window the session's wrap-up takes: on an inbound wrap-up (its call ended and owes
-         -- its outcome) the one captured on the call (IQ52), else the inbound default; otherwise
-         -- the campaign's, and none for a timerless campaign (wrapup_seconds = 0: no countdown).
-         CASE WHEN ib.outcome_owed THEN COALESCE(ib.wrapup_seconds, ${INBOUND_DEFAULT_WRAPUP_SECONDS})
+         -- its outcome) the one captured on the call (IQ52), else the inbound default, never past
+         -- the backstop (inbound-wrapup.ts inboundOutcomeWindowMs); otherwise the campaign's, and
+         -- none for a timerless campaign (wrapup_seconds = 0: no countdown).
+         CASE WHEN ib.outcome_owed THEN LEAST(COALESCE(ib.wrapup_seconds, $5::int), $6::int / 1000)
               WHEN cam.wrapup_seconds > 0 THEN cam.wrapup_seconds
          END AS wrapup_seconds,
          cam.break_reasons,
@@ -117,16 +123,9 @@ export const FLOOR_ROWS_SQL = `
          NULL::timestamptz AS left_at
     FROM open_sessions o
     LEFT JOIN agency_campaigns cam ON cam.id = o.campaign_id AND cam.tenant_id = $1::uuid
-    -- The session's unsettled inbound call (uq_agency_inbound_calls_session_unsettled holds at most
-    -- one): the per-campaign floor's own rule (campaign-stats.ts supervisorAgents).
-    LEFT JOIN LATERAL (
-      SELECT ib.state IN ('offered', 'connected') AS on_call,
-             (ib.state = 'ended' AND ib.bridged_at IS NOT NULL) AS outcome_owed,
-             ib.wrapup_seconds
-        FROM agency_inbound_calls ib
-       WHERE ib.session_id = o.id AND ib.settled_at IS NULL
-       LIMIT 1
-    ) ib ON true
+    -- The session's unsettled inbound call (on_call, outcome_owed, its captured window): the
+    -- per-campaign floor's own lateral (campaign-stats.ts supervisorAgents; sql-fragments.ts).
+    ${inboundUnsettledCallLateralSql('o.id')}
   UNION ALL
   SELECT NULL::uuid, st.agent_user_id, NULL::uuid, NULL::varchar, NULL::int, NULL::jsonb,
          'offline'::varchar, NULL::timestamptz, NULL::varchar, NULL::varchar, false, false, true,
@@ -177,7 +176,9 @@ export const FLOOR_CALLS_TODAY_SQL = `
 export class AgencyFloorRepository {
   /** The account's floor rows: open sessions first, then the staffed agents with none; each by agent. */
   async floorRows(tenantId: string, accountId: string, from: Date): Promise<AgencyFloorRow[]> {
-    const { rows } = await getPool().query<AgencyFloorRow>(FLOOR_ROWS_SQL, [tenantId, accountId, from, [...FLOOR_ACTIVE_STATUSES]]);
+    const { rows } = await getPool().query<AgencyFloorRow>(FLOOR_ROWS_SQL, [
+      tenantId, accountId, from, [...FLOOR_ACTIVE_STATUSES], INBOUND_DEFAULT_WRAPUP_SECONDS, AGENCY_INBOUND_OUTCOME_LAPSE_MS,
+    ]);
     const out = rows.map((r): AgencyFloorRow => ({
       ...r,
       wrapup_seconds: r.wrapup_seconds === null ? null : Number(r.wrapup_seconds),
