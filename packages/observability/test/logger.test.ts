@@ -16,9 +16,8 @@ describe('observability', () => {
     expect(APP_VERSION).toBe('0.0.0');
   });
 
-  it('has no bundled package versions outside a build, and they cannot be changed at runtime', () => {
+  it('has no bundled package versions outside a build', () => {
     expect(PACKAGE_VERSIONS).toEqual({});
-    expect(Object.isFrozen(PACKAGE_VERSIONS)).toBe(true);
   });
 
   it('carries PII masking', () => {

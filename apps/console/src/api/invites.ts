@@ -228,7 +228,7 @@ function responseStatus(res: Response, body: unknown): InviteUnavailableStatus |
 export async function getInvite(token: string): Promise<InviteLookup> {
   const url = ENDPOINTS.invites.get(token);
   const res = await fetch(url, {
-    headers: { ...CLIENT_HEADERS },
+    headers: CLIENT_HEADERS,
   });
   const body = await readBody(res);
 

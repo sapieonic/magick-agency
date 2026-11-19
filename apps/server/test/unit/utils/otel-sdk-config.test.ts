@@ -154,13 +154,6 @@ describe('buildResourceAttributes', () => {
     });
   });
 
-  it('drops a package entry whose name could not be an attribute segment, or with no version', () => {
-    const attrs = buildResourceAttributes({}, {
-      version, hostname, packageVersions: { 'db.x': '1.0.0', 'Db': '1.0.0', '': '1.0.0', domain: '' },
-    });
-    expect(Object.keys(attrs).filter((k) => k.startsWith('magick_agency.'))).toEqual([]);
-  });
-
   it('only the exact string "true" enables it (same convention as OTEL_ENABLED)', () => {
     for (const v of ['1', 'yes', 'TRUE', 'false', '']) {
       expect(buildResourceAttributes({ OTEL_SERVICE_INSTANCE_ID_ENABLED: v }, { version, hostname }))

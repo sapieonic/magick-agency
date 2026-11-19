@@ -18,8 +18,6 @@ Object.defineProperty(window, 'location', {
 });
 
 import { saFetch, setToken, clearToken, SuperAdminApiError, superAdminLogin } from '../../api/super-admin';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { ORIGINATOR_HEADER, ORIGINATOR } from '../../config';
 import { splitRequestId } from '@magick-agency/web-ui/errors';
 
@@ -207,14 +205,13 @@ describe('saFetch — originator header', () => {
   });
 
   // `X-Client: <originator>/<version>`: which super-admin build sent it, for the server's logs.
-  it('is sent with X-Client naming super-admin and its package.json version', async () => {
+  it('is sent with X-Client naming super-admin and its version', async () => {
     mocks.fetch.mockResolvedValue(makeOkResponse());
 
     await saFetch('/super-admin/me');
 
-    const { version } = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8')) as { version: string };
     const [, opts] = mocks.fetch.mock.calls[0]!;
-    expect((opts as RequestInit & { headers: Record<string, string> }).headers['X-Client']).toBe(`magick-agency-super-admin/${version}`);
+    expect((opts as RequestInit & { headers: Record<string, string> }).headers['X-Client']).toBe(`${ORIGINATOR}/${__APP_VERSION__}`);
   });
 });
 

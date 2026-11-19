@@ -181,9 +181,8 @@ async function main(): Promise<void> {
   // before the startup reap.
   await app.listen({ port: config.server.port, host: config.server.host });
   // Every record already carries `version` (the logger's base) and the OTel resource carries
-  // `service.version` and each bundled package's version; the version in the message makes each
-  // deploy one readable line in Grafana, and `packages` names every bundled package's release on
-  // stdout too, where there is no resource.
+  // `service.version`; the version in the message makes each deploy one readable line in Grafana.
+  // `packages`: the bundled packages' versions on stdout, where there is no OTel resource.
   logger.info(
     { port: config.server.port, otelExport: config.otel.exporting, packages: PACKAGE_VERSIONS },
     `magick-agency v${APP_VERSION} listening`,

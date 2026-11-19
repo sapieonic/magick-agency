@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { ORIGINATOR_HEADER, ORIGINATOR } from '../../config';
 
 // Mock global fetch before importing the modules under test.
@@ -113,17 +111,9 @@ describe('x-mgkvc-originator header — raw-fetch endpoints', () => {
 
 });
 
-// `X-Client: <originator>/<version>`: which console build sent the request, read by the
-// server into `clientApp` / `clientVersion` on every log line. The version is the console's
-// own package.json version (release-please's), not a number repeated here.
+// `X-Client: <originator>/<version>` (web-ui's `clientHeaders`), on every path that reaches the API.
 describe('X-Client header', () => {
-  const { version } = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8')) as { version: string };
-  const expected = `${ORIGINATOR}/${version}`;
-
-  it('names the console and its package.json version', () => {
-    expect(version).toMatch(/^\d+\.\d+\.\d+/);
-    expect(expected).toBe(`magick-agency-console/${version}`);
-  });
+  const expected = `${ORIGINATOR}/${__APP_VERSION__}`;
 
   it('is sent on apiFetch alongside a caller\'s own headers', async () => {
     mocks.fetch.mockResolvedValue(okJson());

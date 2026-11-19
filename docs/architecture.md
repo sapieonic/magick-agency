@@ -869,11 +869,11 @@ bucket has the same body and `retry-after`, and counts `rate_limit_rejected_tota
 (`user` for the per-user bucket). No bucket is keyed on a client-supplied header. The IP buckets
 key on `request.ip`, which trusts exactly `TRUST_PROXY_HOPS` proxies (Q9).
 
-The mobile app names itself in `X-Client` (`magick-agency-mobile/<semver>+<build> (<ios|android>
-<osver>; <model>)`); the console and super-admin send `<originator>/<version>`
-(`magick-agency-console/<version>`), which is still `web` with the name and version read (any other
-single `<name>/<version>` is read the same way, as the caller's claim), and anything else is a bare
-`web` (`utils/client-header.ts`). An app-wide `onRequest` hook (`api/middleware/client-log-context.ts`)
+`X-Client` reads like a User-Agent, `<app>/<version>[ <detail>]` (`utils/client-header.ts`). The
+mobile app sends `magick-agency-mobile/<semver>+<build> (<ios|android> <osver>; <model>)` and is
+`mobile`; the console and super-admin send `<originator>/<version>` (`clientHeaders`,
+`packages/web-ui`) and are `web` with the name and version read; any other app named that way is
+read the same, as the caller's claim, and a header in no such shape is a bare `web`. An app-wide `onRequest` hook (`api/middleware/client-log-context.ts`)
 puts it on every log line the request produces as `client`, with `clientApp` / `clientVersion` for
 an app that names itself and `clientPlatform` for the mobile app, through the ambient log context.
 It is never a rate-limit key and never an auth input.

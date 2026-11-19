@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { buildSync } from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { bundledPackageVersions } from '../../../scripts/package-versions.mjs';
+import { assertBundled, bundledPackageVersions, readWorkspaceManifest } from '../../../scripts/package-versions.mjs';
 
 /**
  * The versions the server build injects (`scripts/build.mjs`) and the observability package
@@ -14,8 +14,6 @@ const serverPkg = JSON.parse(readFileSync(new URL('../../../package.json', impor
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
 };
-const readManifest = (name: string) =>
-  JSON.parse(readFileSync(new URL(`../../../node_modules/${name}/package.json`, import.meta.url), 'utf8')) as { version: string };
 
 describe('bundledPackageVersions', () => {
   it('names each workspace dependency by its short name, sorted, with its own version', () => {
@@ -30,14 +28,30 @@ describe('bundledPackageVersions', () => {
   it('leaves out devDependencies: the report renderer is loaded at runtime, never bundled', () => {
     // The premise: the renderer is a workspace devDependency of the server.
     expect(serverPkg.devDependencies['@magick-agency/report-renderer']).toBe('workspace:*');
-    const versions = bundledPackageVersions(serverPkg, readManifest);
+    const versions = bundledPackageVersions(serverPkg);
     expect(versions).not.toHaveProperty('report-renderer');
-    expect(versions).toEqual({
-      contracts: readManifest('@magick-agency/contracts').version,
-      db: readManifest('@magick-agency/db').version,
-      domain: readManifest('@magick-agency/domain').version,
-      observability: readManifest('@magick-agency/observability').version,
-    });
+    expect(versions).toEqual(Object.fromEntries(
+      ['contracts', 'db', 'domain', 'observability'].map((n) => [n, readWorkspaceManifest(`@magick-agency/${n}`).version]),
+    ));
+  });
+
+  it('refuses a version that is not one, so nothing downstream re-checks it', () => {
+    const pkg = { dependencies: { '@magick-agency/db': 'workspace:*' } };
+    expect(() => bundledPackageVersions(pkg, () => ({ version: '' }))).toThrow(/@magick-agency\/db/);
+    expect(() => bundledPackageVersions(pkg, () => ({ version: undefined }))).toThrow(/@magick-agency\/db/);
+  });
+});
+
+describe('assertBundled', () => {
+  const metafile = { inputs: { 'src/index.ts': {}, '../../packages/db/src/pool.ts': {}, '../../packages/contracts/src/a.ts': {} } };
+
+  it('passes when the list is exactly what esbuild inlined', () => {
+    expect(() => assertBundled(metafile, { contracts: '1', db: '2' })).not.toThrow();
+  });
+
+  it('fails the build on drift either way', () => {
+    expect(() => assertBundled(metafile, { db: '2' })).toThrow(/bundled but not listed \[contracts\]/);
+    expect(() => assertBundled(metafile, { contracts: '1', db: '2', domain: '3' })).toThrow(/listed but not bundled \[domain\]/);
   });
 });
 
@@ -52,14 +66,11 @@ describe('the injected versions, read back by @magick-agency/observability', () 
     return mod.exports as { APP_VERSION: string; PACKAGE_VERSIONS: Record<string, string> };
   }
 
-  it('reads the build\'s values, frozen', () => {
-    const { APP_VERSION, PACKAGE_VERSIONS } = load({
+  it('reads the build\'s values', () => {
+    expect(load({
       __MAGICK_AGENCY_VERSION__: JSON.stringify('9.9.9'),
       __MAGICK_AGENCY_PACKAGE_VERSIONS__: JSON.stringify({ contracts: '1.0.0', db: '2.0.0' }),
-    });
-    expect(APP_VERSION).toBe('9.9.9');
-    expect(PACKAGE_VERSIONS).toEqual({ contracts: '1.0.0', db: '2.0.0' });
-    expect(Object.isFrozen(PACKAGE_VERSIONS)).toBe(true);
+    })).toEqual({ APP_VERSION: '9.9.9', PACKAGE_VERSIONS: { contracts: '1.0.0', db: '2.0.0' } });
   });
 
   it('falls back to the sentinel and no packages without a build', () => {

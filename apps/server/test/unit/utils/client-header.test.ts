@@ -25,8 +25,8 @@ describe('parseClientHeader', () => {
     expect(parseClientHeader('magick-agency-mobile/')).toEqual({ kind: 'mobile', app });
   });
 
-  it('is web for no header and for anything that is neither the mobile app nor a named web UI', () => {
-    for (const value of [undefined, null, '', '   ', 'Mozilla/5.0 (X11; Linux x86_64)', 'x magick-agency-mobile/1.0', 'curl/8.5.0 extra']) {
+  it('is a bare web for no header and for one not in the `<app>/<version>` shape', () => {
+    for (const value of [undefined, null, '', '   ', 'x magick-agency-mobile/1.0', 'magick-agency-mobile', 'Mozilla 5.0']) {
       expect(parseClientHeader(value as string | undefined), String(value)).toEqual({ kind: 'web' });
     }
   });
@@ -39,21 +39,21 @@ describe('parseClientHeader', () => {
     // Any brand id the console accepts (`VALID_BRAND_ID`: digits first, underscores) is read.
     expect(parseClientHeader('acme_co-console/1.0.0')).toEqual({ kind: 'web', app: 'acme_co-console', version: '1.0.0' });
     expect(parseClientHeader('9dots-super-admin/2.0.0')).toEqual({ kind: 'web', app: '9dots-super-admin', version: '2.0.0' });
-    // Any other single `<name>/<version>` is logged as the caller gave it: not proof it is ours.
+    // Any other `<name>/<version>` is logged as the caller gave it: not proof it is ours.
     expect(parseClientHeader('curl/8.5.0')).toEqual({ kind: 'web', app: 'curl', version: '8.5.0' });
+    // A detail after the token is allowed for any app, and only the mobile app's names a platform.
+    expect(parseClientHeader('Mozilla/5.0 (X11; Linux x86_64)')).toEqual({ kind: 'web', app: 'mozilla', version: '5.0' });
+    expect(parseClientHeader('magick-agency-console/1.0.0 (ios 17)')).toEqual({ kind: 'web', app: 'magick-agency-console', version: '1.0.0' });
   });
 
   it('never lets a web header carry anything but a plain name and version', () => {
-    for (const value of [
-      'magick-agency-console/0.29.0"}\n{"x":1',
-      'magick-agency-console"x/0.29.0',
-      'magick-agency-console/',
-      '/0.29.0',
-      '-console/1.0.0',
-      `${'a'.repeat(65)}/1.0.0`,
-      `magick-agency-console/${'9'.repeat(41)}`,
-    ]) {
+    // A name that is not one: nothing is read.
+    for (const value of ['magick-agency-console"x/0.29.0', '/0.29.0', '-console/1.0.0', `${'a'.repeat(65)}/1.0.0`]) {
       expect(parseClientHeader(value), value).toEqual({ kind: 'web' });
+    }
+    // A version that is not one: the name alone.
+    for (const value of ['magick-agency-console/0.29.0"}\n{"x":1', 'magick-agency-console/', `magick-agency-console/${'9'.repeat(41)}`]) {
+      expect(parseClientHeader(value), value).toEqual({ kind: 'web', app: 'magick-agency-console' });
     }
   });
 
@@ -65,6 +65,6 @@ describe('parseClientHeader', () => {
   it('bounds what it parses: a huge header costs nothing and yields no version', () => {
     const huge = `magick-agency-mobile/${'9'.repeat(100_000)}`;
     expect(parseClientHeader(huge)).toEqual({ kind: 'mobile', app: 'magick-agency-mobile' });
-    expect(parseClientHeader(`magick-agency-console/${'9'.repeat(100_000)}`)).toEqual({ kind: 'web' });
+    expect(parseClientHeader(`magick-agency-console/${'9'.repeat(100_000)}`)).toEqual({ kind: 'web', app: 'magick-agency-console' });
   });
 });

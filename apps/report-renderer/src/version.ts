@@ -11,15 +11,5 @@ export const RENDERER_VERSION: string = packageJson.version;
  */
 declare const __REPORT_RENDERER_PACKAGE_VERSIONS__: Record<string, string> | undefined;
 
-function readPackageVersions(): Readonly<Record<string, string>> {
-  try {
-    if (typeof __REPORT_RENDERER_PACKAGE_VERSIONS__ === 'object' && __REPORT_RENDERER_PACKAGE_VERSIONS__ !== null) {
-      return Object.freeze({ ...__REPORT_RENDERER_PACKAGE_VERSIONS__ });
-    }
-  } catch {
-    /* fall through to empty */
-  }
-  return Object.freeze({});
-}
-
-export const BUNDLED_PACKAGE_VERSIONS = readPackageVersions();
+export const BUNDLED_PACKAGE_VERSIONS: Readonly<Record<string, string>> =
+  typeof __REPORT_RENDERER_PACKAGE_VERSIONS__ === 'undefined' ? {} : __REPORT_RENDERER_PACKAGE_VERSIONS__;

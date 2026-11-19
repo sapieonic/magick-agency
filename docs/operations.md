@@ -1658,7 +1658,8 @@ END_COMMIT_OVERRIDE
   reports `0.0.0`.
 
   The workspace packages bundled into the server (`contracts`, `db`, `domain`, `observability`:
-  its `dependencies`, `apps/server/scripts/package-versions.mjs`) each have their own
+  its `dependencies`, `apps/server/scripts/package-versions.mjs`; the build fails if that list
+  and what esbuild inlined ever differ) each have their own
   release-please version. The same build injects them (`PACKAGE_VERSIONS`), and each is a
   resource attribute, `magick_agency.package.<name>.version` (a hyphen in the name is `_`), so
   every exported record carries all of them; Loki keeps them as
@@ -1676,9 +1677,9 @@ END_COMMIT_OVERRIDE
 - **Which client sent a request.** Every server line a request produces carries `client` (`web`
   or `mobile`) and, for an app that names itself in `X-Client`, `clientApp` and `clientVersion`:
   the mobile app (`magick-agency-mobile/<semver>+<build>`), the console
-  (`magick-agency-console/<version>`) and super-admin (`magick-agency-super-admin/<version>`).
-  Any other single `<name>/<version>` is logged as the caller sent it, so `clientApp` is a claim,
-  not proof. The console's station and listener WebSockets are opened by the browser, which
+  (`magick-agency-console/<version>`) and super-admin (`magick-agency-super-admin/<version>`),
+  both through `clientHeaders` (`packages/web-ui`). Any other `<name>/<version>[ <detail>]` is
+  logged as the caller sent it, so `clientApp` is a claim, not proof. The console's station and listener WebSockets are opened by the browser, which
   cannot set the header, so their lines say `client` alone (the mobile app's station socket
   sends it). The console's PostHog events carry `$app_version`, the property the mobile app's
   PostHog SDK sets.
@@ -1687,6 +1688,10 @@ END_COMMIT_OVERRIDE
   carries `renderer_version`, which the report run keeps.
 - **Traces and metrics.** The same `service.version` and package resource attributes are on every
   span and on `target_info`.
+- **Packages inside a web build.** The console and super-admin bundle `web-ui`, `contracts` and
+  (the console) `domain`, whose versions no request carries. release-please's `node-workspace`
+  plugin bumps an app whenever a package it depends on releases, so the app's version names its
+  release, and that release's `.release-please-manifest.json` gives every package's version.
 - **The UIs.** The console and the super-admin console each show their own version (`v0.2.0`) at
   the foot of the sidebar, in the platform shell (expanded or collapsed to its rail), the agency
   shell and the super-admin shell (`AppVersion`, `packages/web-ui`). The agent surfaces have no

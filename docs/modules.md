@@ -1329,8 +1329,8 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
-| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 37 |
-| `apps/server/test/unit/build/package-versions.test.ts` (the bundled packages' versions the build injects: `dependencies` only, never the runtime-loaded renderer; read back by `@magick-agency/observability`) | 4 |
+| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 36 |
+| `apps/server/test/unit/build/package-versions.test.ts` (the bundled packages' versions the build injects: `dependencies` only, never the runtime-loaded renderer, checked against what esbuild inlined; read back by `@magick-agency/observability`) | 7 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
 | `apps/server/test/unit/utils/recording-proxy.test.ts` (with Plivo's regional media hosts proxied and a host with an empty label refused) | 48 |
 | `apps/server/test/unit/utils/recording-proxy-diagnosis.test.ts` (RC1 404 for a call that did not ask; RC3 every "could not reach" answer's status, `reason`, log fields and counter, hosts only, never the URL; the 504 headers timeout; RC4 redirect hosts off by default, exact, hops only, no credential) | 21 |
@@ -1790,14 +1790,16 @@ for both clients (`apiErrorBody.ts`: `parseApiErrorBody`, field-level `details` 
 generic `message`), date and number formatting (`format.ts`), customer-facing carrier aliases
 and, beside them, the vendors' own names that only super-admin's `operatorCarrierName` reads
 (`telephonyProviders.ts`), a bounded `allSettled`-style fan-out (`concurrency.ts`:
-`mapWithConcurrency`), and the stylesheet both apps' `main.tsx` import (`global.css`: theme tokens,
-base elements, `.toast-container`).
+`mapWithConcurrency`), the headers every API request carries (`clientHeaders.ts`: the originator and
+`X-Client: <originator>/<version>`, the server's log context), and the stylesheet both apps'
+`main.tsx` import (`global.css`: theme tokens, base elements, `.toast-container`).
 
-Files: `apiErrorBody.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.css`, `telephonyProviders.ts`
+Files: `apiErrorBody.ts`, `clientHeaders.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.css`, `telephonyProviders.ts`
 
 | Test file | Cases |
 |---|---|
 | `packages/web-ui/test/apiErrorBody.test.ts` | 14 |
+| `packages/web-ui/test/clientHeaders.test.ts` | 1 |
 | `packages/web-ui/test/concurrency.test.ts` | 9 |
 | `packages/web-ui/test/errors.test.ts` | 21 |
 | `packages/web-ui/test/format.test.ts` | 50 |
@@ -1898,7 +1900,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts` (a
 | `apps/console/src/__tests__/api/error-analytics.test.ts` | 5 |
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
-| `apps/console/src/__tests__/api/originator-header.test.ts` | 8 |
+| `apps/console/src/__tests__/api/originator-header.test.ts` | 7 |
 | `apps/console/src/__tests__/api/reports.test.ts` | 13 |
 | `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
 | `apps/console/src/__tests__/api/stationDevice.test.ts` | 5 |
@@ -2648,7 +2650,7 @@ Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts
 
 | Test file | Cases |
 |---|---|
-| `apps/report-renderer/test/lambda.test.ts` | 14 |
+| `apps/report-renderer/test/lambda.test.ts` | 13 |
 | `apps/report-renderer/test/build-lambda.test.ts` | 2 |
 | `apps/report-renderer/test/chromium-layer.test.ts` | 1 |
 

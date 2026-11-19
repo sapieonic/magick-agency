@@ -142,18 +142,6 @@ export function processInstanceSuffix(env: Env): string | null {
   return positive(env['MEDIA_WORKERS']) || analysisChildren ? 'primary' : null;
 }
 
-/** A bundled package's name as it may appear in an attribute key. */
-const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
-
-/**
- * The resource attribute carrying a bundled workspace package's version. A hyphen in the
- * package's name is `_` (OTel's separator within a name component, and what Loki and
- * Prometheus would make of it anyway).
- */
-export function packageVersionAttribute(name: string): string {
-  return `magick_agency.package.${name.replaceAll('-', '_')}.version`;
-}
-
 export function buildResourceAttributes(
   env: Env,
   opts: { version: string; hostname: () => string; packageVersions?: Readonly<Record<string, string>> },
@@ -164,12 +152,10 @@ export function buildResourceAttributes(
     [ATTR_SERVICE_VERSION]: opts.version,
     [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: env['OTEL_ENVIRONMENT'] || env['NODE_ENV'] || 'development',
   };
-  // Every workspace package bundled into this build, with its own release-please version
-  // (`magick_agency.package.db.version`, …; `magick_agency_package_db_version` in Loki and on
-  // `target_info`; apps/server/scripts/package-versions.mjs decides which are bundled). A resource attribute rides on every exported log, span and metric at no
-  // per-series cost, so a line in Grafana names the release of each package behind it.
+  // Each bundled workspace package's version (`magick_agency.package.db.version`; a hyphen in a
+  // name is `_`), on every exported log, span and metric at no per-series cost.
   for (const [name, version] of Object.entries(opts.packageVersions ?? {})) {
-    if (PACKAGE_NAME.test(name) && version) attrs[packageVersionAttribute(name)] = version;
+    attrs[`magick_agency.package.${name.replaceAll('-', '_')}.version`] = version;
   }
   // D7 (docs/scaling.md §7): with worker processes every process exports the same series
   // names, so each must have its own instance or counters from several processes

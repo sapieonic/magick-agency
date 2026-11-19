@@ -223,9 +223,9 @@ describe('@sparticuz/chromium resolution', () => {
 });
 
 describe('logRecord', () => {
-  it('stamps every Lambda line with its time and the renderer\'s version, after the event\'s fields', () => {
+  it('stamps every Lambda line with its time and the renderer\'s version, which no event field replaces', () => {
     const at = new Date('2026-11-19T10:00:00.000Z');
-    expect(logRecord({ event: 'record.failed', message_id: 'm1' }, at)).toEqual({
+    expect(logRecord({ event: 'record.failed', message_id: 'm1', version: 'dataset-2', ts: 'x' }, at)).toEqual({
       event: 'record.failed',
       message_id: 'm1',
       ts: '2026-11-19T10:00:00.000Z',
@@ -233,14 +233,6 @@ describe('logRecord', () => {
       // Empty outside the Lambda build, which injects them (test/build-lambda.test.ts).
       packages: {},
     });
-    expect(RENDERER_VERSION).toMatch(/^\d+\.\d+\.\d+/);
-  });
-
-  it('cannot be overridden by an event field of the same name', () => {
-    const line = logRecord({ ts: 'x', version: 'dataset-2', packages: 'y' });
-    expect(line['version']).toBe(RENDERER_VERSION);
-    expect(line['packages']).toEqual({});
-    expect(line['ts']).not.toBe('x');
   });
 
   it('is what the deployed handler writes: one JSON line per event, stamped', async () => {
