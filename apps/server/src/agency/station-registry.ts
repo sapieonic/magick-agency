@@ -84,13 +84,6 @@ export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 
   canTakeFloorAssist?: boolean;
 };
 
-/**
- * Every frame the dialer runtime sends a station: `AgencyStationServerFrame`, the floor assist frames
- * included (contracts `agency/floor-assist.ts`; they were staged outside the union until the app could
- * decode them, LF16). Kept as the registry's own name for what `send` takes.
- */
-export type StationFrame = AgencyStationServerFrame;
-
 /** The heartbeat grace this station is held to: `heartbeat_grace_ms` for its client kind. */
 export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number {
   return stationHeartbeatGraceMs(entry.clientKind);
@@ -644,7 +637,7 @@ export class StationRegistry {
    * The same for `AGENCY_STATION_FLOOR_ASSIST_EVENTS` (`supervisor_message`, `help_answered`,
    * `help_cleared`; LF4, LF5): sent only to a station that can receive them (`canTakeFloorAssist`).
    */
-  send(sessionId: string, frame: StationFrame, expectedWs?: WebSocket): boolean {
+  send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
     const entry = this.stations.get(sessionId);
     const ws = entry?.ws;
     // Remembered before any refusal: the request has ended whether or not this socket takes the frame.
@@ -718,12 +711,12 @@ export class StationRegistry {
 const INBOUND_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_INBOUND_EVENTS);
 
 /** Whether `event` is sent only to a station that can take inbound calls (`AGENCY_STATION_INBOUND_EVENTS`). */
-function isInboundEvent(event: StationFrame['event']): boolean {
+function isInboundEvent(event: AgencyStationServerFrame['event']): boolean {
   return INBOUND_EVENTS.has(event);
 }
 
 const FLOOR_ASSIST_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_FLOOR_ASSIST_EVENTS);
 
-function isFloorAssistEvent(event: StationFrame['event']): boolean {
+function isFloorAssistEvent(event: AgencyStationServerFrame['event']): boolean {
   return FLOOR_ASSIST_EVENTS.has(event);
 }

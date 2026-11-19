@@ -55,6 +55,7 @@ import {
   type AgencyHelpAnswerHow,
   type AgencyHelpClearedReason,
   type AgencySessionHelp,
+  type AgencyStationServerFrame,
 } from '@magick-agency/contracts/agency';
 import type {
   AgencyFloorAssistRepository,
@@ -63,7 +64,6 @@ import type {
 } from '../db/repositories/agency.repository.js';
 import type { PlatformCreateAuditLogInput } from '../audit/platform/audit-logger.js';
 import { SYSTEM_AUDIT_ACTOR, type AuditActorFields } from '../audit/platform/audit-actor.js';
-import type { StationFrame } from './station-registry.js';
 
 const log = createChildLogger({ component: 'agency-floor-assist' });
 
@@ -83,7 +83,7 @@ export interface FloorAssistDeps {
   repo: Pick<AgencyFloorAssistRepository,
     'raise' | 'cancel' | 'answer' | 'endWithSession' | 'expireDue' | 'openForSession' | 'insertMessage' | 'markDelivered'>;
   /** Send a frame to the session's station wherever it is held; false when none took it. */
-  send(sessionId: string, frame: StationFrame): boolean;
+  send(sessionId: string, frame: AgencyStationServerFrame): boolean;
   /** Whether THIS process holds the session's station, open and able to receive the floor assist frames. */
   canReceive(sessionId: string): boolean;
   /** Display names by user id (`agentNamesOrNone`): a missing or null name is sent as null. */
@@ -323,7 +323,7 @@ export class FloorAssistService {
     log.info({ sessionId: row.session_id, reason }, 'Need help cleared');
   }
 
-  private frame(sessionId: string, frame: StationFrame): void {
+  private frame(sessionId: string, frame: AgencyStationServerFrame): void {
     this.safely(() => { this.deps.send(sessionId, frame); });
   }
 
