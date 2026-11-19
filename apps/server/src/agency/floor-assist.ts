@@ -4,9 +4,9 @@
  * **message** to an agent's station.
  *
  * One service per process, in the runtime (`runtime.floorAssist`). Every Need help transition is one
- * conditional statement (`db/repositories/agency/floor-assist.repository.ts`), and this service acts
- * only on a row the statement returned, so for each request ended there is exactly one audit row,
- * one metric increment and one `help_cleared` frame, whoever ends it and however many try at once:
+ * statement (`db/repositories/agency/floor-assist.repository.ts`), and this service acts only on a
+ * row the statement returned, so for each request ended there is exactly one audit row, one metric
+ * increment and one `help_cleared` frame, whoever ends it and however many try at once:
  *
  *  - **raise** (the agent, `POST /sessions/:id/help`): a request already open is answered unchanged
  *    (idempotent, no second audit row); one past the expiry is expired first (`expired`, audited),
@@ -19,8 +19,9 @@
  *    as cleared (the floor's `help`, the station's `ready.help`), so nothing waits on the sweep for
  *    correctness; the sweep ({@link FloorAssistService.sweep}, every {@link HELP_SWEEP_INTERVAL_MS}
  *    in the primary) clears the columns, sends `help_cleared { expired }` and writes the audit row,
- *    up to one interval late. A raise, cancel, answer or end on a session expires that session's
- *    request first, so each of those sees the same state the floor shows.
+ *    up to one interval late. A raise, cancel, answer or end that finds the session's request past
+ *    the expiry expires it in the same statement instead (audited as `expired`), so each of those
+ *    sees the same state the floor shows.
  *  - **the session ending** (`leaveSession`): `help_cleared { session_ended }`, before the station is
  *    detached, so a console still attached hears it.
  *
@@ -137,11 +138,10 @@ export class FloorAssistService {
 
   /** The agent raises a request on their own session (the route has checked it is theirs, live, on a call or in wrap-up). */
   async raise(session: FloorAssistSession, callId: string | null): Promise<HelpRaiseOutcome> {
-    await this.expireSession(session.id);
     const result = await this.deps.repo.raise({
       sessionId: session.id, tenantId: session.tenant_id, accountId: session.account_id, callId, expiryMs: this.expiryMs,
     });
-    for (const row of result.expiredMeanwhile) this.cleared(row, 'expired', SYSTEM_AUDIT_ACTOR);
+    if (result.expired) this.cleared(result.expired, 'expired', SYSTEM_AUDIT_ACTOR);
     if (result.raised) {
       this.safely(() => trackHelpRaised());
       this.audit(session, 'agency_session.help_raised', { actor_type: 'human', user_id: session.agent_user_id }, {
@@ -165,11 +165,14 @@ export class FloorAssistService {
     return row ? toSessionHelp(row) : null;
   }
 
-  /** The agent cancels their open request; false when none was open. */
+  /** The agent cancels their open request; false when none was open (one past the expiry is expired instead). */
   async cancel(session: FloorAssistSession): Promise<boolean> {
-    await this.expireSession(session.id);
     const row = await this.deps.repo.cancel(session.id, session.tenant_id, this.expiryMs);
     if (!row) return false;
+    if (row.expired) {
+      this.cleared(row, 'expired', SYSTEM_AUDIT_ACTOR);
+      return false;
+    }
     this.cleared(row, 'cancelled', { actor_type: 'human', user_id: session.agent_user_id });
     return true;
   }
@@ -180,9 +183,12 @@ export class FloorAssistService {
    */
   async answer(input: { sessionId: string; tenantId: string; byUserId: string; how: AgencyHelpAnswerHow }): Promise<boolean> {
     try {
-      await this.expireSession(input.sessionId);
       const row = await this.deps.repo.answer(input.sessionId, input.tenantId, input.byUserId, this.expiryMs);
       if (!row) return false;
+      if (row.expired) {
+        this.cleared(row, 'expired', SYSTEM_AUDIT_ACTOR);
+        return false;
+      }
       const raisedAt = new Date(row.raised_at);
       const seconds = (new Date(row.answered_at).getTime() - raisedAt.getTime()) / 1000;
       this.safely(() => trackHelpCleared('answered', seconds));
@@ -204,9 +210,8 @@ export class FloorAssistService {
   /** The session ended (`leaveSession`). Never throws: a leave must not fail on it. */
   async endWithSession(sessionId: string): Promise<void> {
     try {
-      await this.expireSession(sessionId);
       const row = await this.deps.repo.endWithSession(sessionId, this.expiryMs);
-      if (row) this.cleared(row, 'session_ended', SYSTEM_AUDIT_ACTOR);
+      if (row) this.cleared(row, row.expired ? 'expired' : 'session_ended', SYSTEM_AUDIT_ACTOR);
     } catch (err) {
       log.warn({ err, sessionId }, 'Could not clear the Need help of a session that ended; it expires on its own');
     }
@@ -221,7 +226,7 @@ export class FloorAssistService {
     if (this.sweeping) return this.sweeping;
     this.sweeping = (async () => {
       try {
-        const rows = await this.deps.repo.expireDue(this.expiryMs, { sweep: true });
+        const rows = await this.deps.repo.expireDue(this.expiryMs);
         for (const row of rows) this.cleared(row, 'expired', SYSTEM_AUDIT_ACTOR);
         return rows.length;
       } catch (err) {
@@ -305,12 +310,6 @@ export class FloorAssistService {
         }
       }
     }
-  }
-
-  /** The session's request, if it is past the expiry: expired now (and audited) before anything else reads or changes it. */
-  private async expireSession(sessionId: string): Promise<void> {
-    const rows = await this.deps.repo.expireDue(this.expiryMs, { sessionId });
-    for (const row of rows) this.cleared(row, 'expired', SYSTEM_AUDIT_ACTOR);
   }
 
   /** A request a clearing transition ended: metric, audit row, frame. */

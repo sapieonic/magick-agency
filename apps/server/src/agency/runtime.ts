@@ -329,7 +329,7 @@ export class AgencyRuntime {
         cancel: (sessionId, tenantId, expiryMs) => agencyFloorAssistRepository.cancel(sessionId, tenantId, expiryMs),
         answer: (sessionId, tenantId, byUserId, expiryMs) => agencyFloorAssistRepository.answer(sessionId, tenantId, byUserId, expiryMs),
         endWithSession: (sessionId, expiryMs) => agencyFloorAssistRepository.endWithSession(sessionId, expiryMs),
-        expireDue: (expiryMs, opts) => agencyFloorAssistRepository.expireDue(expiryMs, opts),
+        expireDue: (expiryMs) => agencyFloorAssistRepository.expireDue(expiryMs),
         openForSession: (sessionId, tenantId, accountId, expiryMs) =>
           agencyFloorAssistRepository.openForSession(sessionId, tenantId, accountId, expiryMs),
         insertMessage: (input) => agencyFloorAssistRepository.insertMessage(input),

@@ -1040,7 +1040,7 @@ a rate-limit key and never an auth input.
   through `callCore` to `api/routes/agency/floor-assist.ts`, which runs in the process holding the
   agent's station (owners `session_param` and `body_session`, `api/core-owners.ts`). The rules and
   side effects are one service per process, `agency/floor-assist.ts` (`runtime.floorAssist`): every
-  Need help transition is one conditional statement on the session row
+  Need help transition is one statement on the session row
   (`db/repositories/agency/floor-assist.repository.ts`, `0052_floor_assist.sql`), and only a row it
   returned gets its frame (`help_answered`, `help_cleared`), audit row and metric, so a request ends
   exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (the

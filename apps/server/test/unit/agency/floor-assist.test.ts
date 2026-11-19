@@ -43,10 +43,10 @@ let repo: Record<string, ReturnType<typeof vi.fn>>;
 beforeEach(() => {
   vi.clearAllMocks();
   repo = {
-    raise: vi.fn(async () => ({ raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: 'call-1' }, expiredMeanwhile: [] })),
-    cancel: vi.fn(async () => ended()),
-    answer: vi.fn(async () => ({ ...ended(), answered_at: new Date(RAISED.getTime() + 42_000) })),
-    endWithSession: vi.fn(async () => ended()),
+    raise: vi.fn(async () => ({ raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: 'call-1' }, expired: null })),
+    cancel: vi.fn(async () => ended({ expired: false })),
+    answer: vi.fn(async () => ({ ...ended(), expired: false, answered_at: new Date(RAISED.getTime() + 42_000) })),
+    endWithSession: vi.fn(async () => ended({ expired: false })),
     expireDue: vi.fn(async () => []),
     openForSession: vi.fn(async () => null),
     insertMessage: vi.fn(async () => ({ id: 'msg-1', sent_at: new Date('2026-11-19T10:01:00.000Z') })),
@@ -85,18 +85,18 @@ describe('raise', () => {
   });
 
   it('raising again while one is open is idempotent: the open one answered, no audit row, no metric', async () => {
-    repo['raise']!.mockResolvedValue({ raised: false, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expiredMeanwhile: [] });
+    repo['raise']!.mockResolvedValue({ raised: false, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expired: null });
     expect(await service().raise(SESSION, 'call-2')).toEqual({ raised: false, help: { raised_at: RAISED.toISOString(), call_id: null } });
     expect(deps.audits).toEqual([]);
     expect(metrics.raised).not.toHaveBeenCalled();
   });
 
-  it('expires a request past its 15 minutes FIRST (help_cleared expired, audited by the system), then raises a new one', async () => {
+  it('a request past its 15 minutes, expired by the raise\'s statement: help_cleared expired, audited by the system, before the new one\'s row', async () => {
     const old = new Date('2026-11-19T09:40:00.000Z');
-    repo['expireDue']!.mockResolvedValueOnce([ended({ raised_at: old })]);
+    repo['raise']!.mockResolvedValue({
+      raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expired: ended({ raised_at: old }),
+    });
     await service().raise(SESSION, null);
-    expect(repo['expireDue']).toHaveBeenCalledWith(AGENCY_HELP_EXPIRY_MS, { sessionId: SESSION.id });
-    expect(repo['expireDue']!.mock.invocationCallOrder[0]).toBeLessThan(repo['raise']!.mock.invocationCallOrder[0]!);
     expect(events()).toEqual([{ event: 'help_cleared', raised_at: old.toISOString(), reason: 'expired' }]);
     expect(deps.audits.map((a) => [a['action'], a['actor_type']])).toEqual([
       ['agency_session.help_expired', 'system'], ['agency_session.help_raised', 'human'],
@@ -104,14 +104,8 @@ describe('raise', () => {
     expect(metrics.cleared).toHaveBeenCalledWith('expired');
   });
 
-  it('a request the repository expired in between is reported too', async () => {
-    repo['raise']!.mockResolvedValue({ raised: true, help: { session_id: SESSION.id, raised_at: RAISED, call_id: null }, expiredMeanwhile: [ended()] });
-    await service().raise(SESSION, null);
-    expect(deps.audits.map((a) => a['action'])).toEqual(['agency_session.help_expired', 'agency_session.help_raised']);
-  });
-
   it('a session that left meanwhile: no help, nothing written', async () => {
-    repo['raise']!.mockResolvedValue({ raised: false, help: null, expiredMeanwhile: [] });
+    repo['raise']!.mockResolvedValue({ raised: false, help: null, expired: null });
     expect(await service().raise(SESSION, null)).toEqual({ raised: false, help: null });
     expect(deps.audits).toEqual([]);
   });
@@ -172,11 +166,30 @@ describe('every clearing path: the frames, one audit row, one metric', () => {
     await expect(service().endWithSession(SESSION.id)).resolves.toBeUndefined();
   });
 
+  it('a cancel, an answer or the session ending that found the request past its 15 minutes: help_cleared expired, audited by the system, and nothing else', async () => {
+    const s = service();
+    const ways: Array<[string, () => Promise<unknown>]> = [
+      ['cancel', () => s.cancel(SESSION)],
+      ['answer', () => s.answer({ sessionId: SESSION.id, tenantId: 't-1', byUserId: 'sup-1', how: 'listen' })],
+      ['endWithSession', () => s.endWithSession(SESSION.id)],
+    ];
+    for (const [method, run] of ways) {
+      deps.frames.length = 0;
+      deps.audits.length = 0;
+      metrics.cleared.mockClear();
+      repo[method]!.mockResolvedValueOnce(ended({ expired: true }));
+      expect(await run(), method).toBe(method === 'endWithSession' ? undefined : false);
+      expect(events(), method).toEqual([{ event: 'help_cleared', raised_at: RAISED.toISOString(), reason: 'expired' }]);
+      expect(deps.audits.map((a) => [a['action'], a['actor_type']]), method).toEqual([['agency_session.help_expired', 'system']]);
+      expect(metrics.cleared.mock.calls, method).toEqual([['expired']]);
+    }
+  });
+
   it('the sweep: each expired request once, help_cleared expired, audited by the system; a failing pass never throws', async () => {
     const other = ended({ session_id: '22222222-2222-4222-8222-222222222222', campaign_id: null, call_id: null });
     repo['expireDue']!.mockResolvedValueOnce([ended(), other]);
     expect(await service().sweep()).toBe(2);
-    expect(repo['expireDue']).toHaveBeenCalledWith(AGENCY_HELP_EXPIRY_MS, { sweep: true });
+    expect(repo['expireDue']).toHaveBeenCalledWith(AGENCY_HELP_EXPIRY_MS);
     expect(deps.frames.map(([id, f]) => [id, f['reason']])).toEqual([[SESSION.id, 'expired'], [other.session_id, 'expired']]);
     // A soft-phone session's row carries no campaign.
     expect(deps.audits[1]).not.toHaveProperty('campaign_id');
