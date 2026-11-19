@@ -243,6 +243,6 @@ describe('GET /promises/summary', () => {
       to: '2026-11-18T18:30:00.000Z',
     });
     expect(deps.promiseSummary).toHaveBeenCalledWith(TENANT, ACCOUNT, new Date('2026-11-17T18:30:00.000Z'), new Date('2026-11-18T18:30:00.000Z'));
-    expect(deps.promiseCampaignIds).toHaveBeenCalledWith(TENANT, ACCOUNT, ['running', 'stopping', 'paused']);
+    expect(deps.promiseCampaignIds).toHaveBeenCalledWith(TENANT, ACCOUNT);
   });
 });

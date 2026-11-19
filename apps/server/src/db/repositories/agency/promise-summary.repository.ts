@@ -18,6 +18,7 @@
  * promises (`test/integration/agency/promise-summary-repository.test.ts` pins the plans).
  */
 import { getPool } from '@magick-agency/db';
+import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 
 /** One campaign's promises in a window, as the summary serves it. */
 export interface AgencyPromiseSummaryRow {
@@ -58,7 +59,7 @@ export const PROMISE_SUMMARY_SQL = `
 
 /**
  * The account's active campaigns whose stored outcome catalog has an entry with
- * `requires_promise: true` ($1 tenant, $2 account, $3 the active statuses). An empty catalog means
+ * `requires_promise: true` ($1 tenant, $2 account, $3 the active statuses: Home's, {@link AGENCY_HOME_ACTIVE_STATUSES}). An empty catalog means
  * the default one, which has none. Only a campaign's catalog can ask for a promise: the soft
  * phone's and an inbound route's refuse `requires_promise` when saved (`allowPromise: false`), and
  * a call outside a campaign resolves to one of those or the default, so no other catalog is read.
@@ -88,9 +89,9 @@ export class AgencyPromiseSummaryRepository {
     }));
   }
 
-  /** The account's campaigns in `statuses` whose catalog asks for a promise, by id. */
-  async promiseCampaignIds(tenantId: string, accountId: string, statuses: readonly string[]): Promise<string[]> {
-    const { rows } = await getPool().query<{ id: string }>(PROMISE_CAMPAIGNS_SQL, [tenantId, accountId, [...statuses]]);
+  /** The account's active campaigns (Home's set: running, stopping, paused) whose catalog asks for a promise, by id. */
+  async promiseCampaignIds(tenantId: string, accountId: string): Promise<string[]> {
+    const { rows } = await getPool().query<{ id: string }>(PROMISE_CAMPAIGNS_SQL, [tenantId, accountId, [...AGENCY_HOME_ACTIVE_STATUSES]]);
     return rows.map((r) => r.id);
   }
 }

@@ -10,7 +10,6 @@ import {
   AGENCY_PROMISES_QUERY_ERROR_CODE,
   type AgencyPromisesSummaryResponse,
 } from '@magick-agency/contracts/api/agency/promises';
-import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
@@ -61,18 +60,19 @@ export interface FloorRouteDeps {
   /** The dialer flag, else the 403 sent (`dialerEnabled`). */
   dialerEnabled(request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
   promiseSummary(tenantId: string, accountId: string, from: Date, to: Date): Promise<AgencyPromiseSummaryRow[]>;
-  promiseCampaignIds(tenantId: string, accountId: string, statuses: readonly string[]): Promise<string[]>;
+  /** The account's active campaigns whose catalog asks for a promise. */
+  promiseCampaignIds(tenantId: string, accountId: string): Promise<string[]>;
   now(): Date;
 }
 
-export const defaultFloorRouteDeps: FloorRouteDeps = {
+const defaultFloorRouteDeps: FloorRouteDeps = {
   callCore,
   names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'floor'),
   listenFlags: readListenFlags,
   maxPerCall: () => config.agency.listen.maxPerCall,
   dialerEnabled,
   promiseSummary: (t, a, from, to) => agencyPromiseSummaryRepository.summary(t, a, from, to),
-  promiseCampaignIds: (t, a, statuses) => agencyPromiseSummaryRepository.promiseCampaignIds(t, a, statuses),
+  promiseCampaignIds: (t, a) => agencyPromiseSummaryRepository.promiseCampaignIds(t, a),
   now: () => new Date(),
 };
 
@@ -200,7 +200,7 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
       if (!parsed.ok) return sendRefusal(reply, 400, AGENCY_PROMISES_QUERY_ERROR_CODE, parsed.message);
       const [rows, promiseCampaignIds] = await Promise.all([
         deps.promiseSummary(scoped.tenantId, scoped.accountId, parsed.from, parsed.to),
-        deps.promiseCampaignIds(scoped.tenantId, scoped.accountId, AGENCY_HOME_ACTIVE_STATUSES),
+        deps.promiseCampaignIds(scoped.tenantId, scoped.accountId),
       ]);
       const body: AgencyPromisesSummaryResponse = {
         campaigns: rows.map((r) => ({

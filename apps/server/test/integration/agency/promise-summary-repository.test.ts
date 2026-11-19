@@ -149,7 +149,7 @@ describe('summary', () => {
 
 describe('promiseCampaignIds', () => {
   it('the account\'s active campaigns whose catalog has a requires_promise entry', async () => {
-    const ids = await agencyPromiseSummaryRepository.promiseCampaignIds(T, A, ['running', 'stopping', 'paused']);
+    const ids = await agencyPromiseSummaryRepository.promiseCampaignIds(T, A);
     expect(ids).toEqual([c1.id, c2.id].sort());
   });
 });
