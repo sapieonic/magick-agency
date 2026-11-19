@@ -164,6 +164,18 @@ describe('Need help on the station', () => {
     expect(ended.helpEndedAt).toBe(R1);
   });
 
+  it('ignores a ready.help naming the request this station already saw cleared', () => {
+    const done = cleared(answered(raised()), R1, 'answered');
+    const stale = stationReducer(done, {
+      type: 'ready',
+      frame: { event: 'ready', session_id: 'sess-1', state: 'on_call', help: { raised_at: R1, call_id: 'call-1' } },
+      wrapup: null,
+    });
+    expect(stale.help).toBeNull();
+    expect(stale.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    expect(stale.helpEndedAt).toBe(R1);
+  });
+
   it('drops a notice about an older request when ready states a newer open one', () => {
     const lapsed = cleared(raised(R1), R1, 'expired');
     const other = stationReducer(lapsed, {

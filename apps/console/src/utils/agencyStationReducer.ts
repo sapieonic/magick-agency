@@ -536,12 +536,16 @@ function answeredNoticeFor(notice: StationHelpNotice | null, raisedAt: string): 
  * is open (it was answered, cancelled, lapsed or ended while the socket was away, and the frame
  * that said so went to the socket that had gone). A request that ended unseen ends here without a
  * word: the station cannot tell how. A different open request retires a notice about an older one.
+ * One stated with the `raised_at` of the request this station saw cleared (`helpEndedAt`) is stale,
+ * and read as none.
  */
 function readyHelp(
   state: StationState,
   stated: AgencySessionHelp | undefined,
 ): Pick<StationState, 'help' | 'helpNotice' | 'helpEndedAt'> {
-  const help = stated && typeof stated.raised_at === 'string'
+  // A request this station already saw end is not open, whatever a ready says: the server keeps no
+  // memory of the clears it sent, so a ready racing one can still state it.
+  const help = stated && typeof stated.raised_at === 'string' && stated.raised_at !== state.helpEndedAt
     ? { raised_at: stated.raised_at, call_id: typeof stated.call_id === 'string' ? stated.call_id : null }
     : null;
   if (help === null) {
