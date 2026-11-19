@@ -8,7 +8,7 @@ const COMING_SOON = 'Coming soon';
  * The console's one "Coming soon" mark: a small badge beside a control or a heading for something
  * that is planned and has nothing behind it yet.
  */
-export function ComingSoonBadge() {
+function ComingSoonBadge() {
   return (
     <span className={styles.badge} data-testid="coming-soon">
       {COMING_SOON}

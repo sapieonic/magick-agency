@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
 import { ApiError } from '../../api/client';
 import {
-  MESSAGE_MAX_CHARS,
   helpAgo,
   helpKey,
   helpKeys,
@@ -48,10 +48,10 @@ describe('a message (LF5, LF17)', () => {
     expect(messageLength('నమస్తే')).toBe([...'నమస్తే'].length);
     expect(messageFits('   ')).toBe(false);
     expect(messageFits('a')).toBe(true);
-    expect(messageFits('a'.repeat(MESSAGE_MAX_CHARS))).toBe(true);
-    expect(messageFits(` ${'a'.repeat(MESSAGE_MAX_CHARS)} `)).toBe(true);
-    expect(messageFits('a'.repeat(MESSAGE_MAX_CHARS + 1))).toBe(false);
-    expect(MESSAGE_MAX_CHARS).toBe(500);
+    expect(messageFits('a'.repeat(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS))).toBe(true);
+    expect(messageFits(` ${'a'.repeat(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS)} `)).toBe(true);
+    expect(messageFits('a'.repeat(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS + 1))).toBe(false);
+    expect(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS).toBe(500);
   });
 
   it('is refused in the console’s words, naming the agent', () => {
