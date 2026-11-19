@@ -2,6 +2,7 @@ import { memo, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Bell,
+  BellRing,
   Check,
   ChevronDown,
   ChevronRight,
@@ -11,31 +12,58 @@ import {
   Clock,
   Coffee,
   Gauge,
+  Headphones,
   Hourglass,
+  LifeBuoy,
+  MessageCircle,
   MicOff,
   PhoneMissed,
   PhoneOff,
   ShieldAlert,
   TrendingUp,
   TriangleAlert,
+  UserPlus,
   Users,
+  Volume2,
+  VolumeX,
   type LucideIcon,
 } from 'lucide-react';
 import { useHomeAcks } from '../../../hooks/useHomeAcks';
 import { useTenant } from '../../../contexts/TenantContext';
-import { homeNeeds, homeWaiting, type HomeAttentionItem } from '../../../utils/agency/home';
+import { useListen } from '../../../components/listen/ListenProvider';
+import { HELP_KIND_PREFIX, homeNeeds, homeWaiting, type HomeAttentionItem } from '../../../utils/agency/home';
+import type { MessageTarget } from '../../../utils/agency/floorAssist';
+import { listenToLabel } from '../../../utils/listen/listenCopy';
 import { attentionFor } from '../../../utils/agency/liveFloor';
 import { formatTimeOrDate } from '../../../utils/format/date';
 import { formatCount, plural } from '../../../utils/format/number';
-import { ComingSoonButton } from '../../../components/common/ComingSoon';
 import styles from './LiveFloor.module.css';
 
 /** Whether Needs you now could check breaks over the limit (the floor read): see `breaks`. */
 export type BreaksChecked = 'checked' | 'checking' | 'unchecked';
 
+/**
+ * Floor assist on the rows (LF4, LF5, LF28, LF29), present only while its flag is on: Talk to agent
+ * and Send reminder (`agency.supervise`, the page's gate), Need help's Listen on the floor's clock,
+ * and the chime's toggle.
+ */
+export interface NeedsYouNowAssist {
+  onMessage: (target: MessageTarget) => void;
+  /** The floor read's clock offset, for Listen (as the cards start it). */
+  clockOffsetMs: number;
+  chime: { on: boolean; toggle: () => void };
+}
+
+/** "Give to free agents" on late callbacks (LF7, LF30): the campaigns it is offered on, and the opener. */
+export interface NeedsYouNowHandOff {
+  offered: ReadonlySet<string>;
+  onGive: (campaign: { id: string; name: string }) => void;
+}
+
 /** The row's icon, by what it is about. */
 function rowIcon(item: HomeAttentionItem): LucideIcon {
   const { kind } = item;
+  if (kind.startsWith(HELP_KIND_PREFIX)) return LifeBuoy;
   if (kind.startsWith('stall:auto_paused')) return CirclePause;
   if (kind === 'stall:dnc_unavailable') return ShieldAlert;
   if (kind === 'stall:no_dialable_caller_ids') return PhoneOff;
@@ -56,8 +84,10 @@ function rowIcon(item: HomeAttentionItem): LucideIcon {
  * (`homeAttention`), so the sidebar badge counts this list: the dangers and warnings, never an
  * information row, never a row put aside with "Got it". Live floor changes three things, each a
  * pure rule: one row for every campaign on the default calling hours (`groupCallingHours`), the
- * order (`HOME_RANKS`), and on late callbacks whose owner is away, a "Give to free agents" that is
- * coming. With a campaign picked it shows that campaign's rows and says how many it leaves out
+ * order (`HOME_RANKS`), and the floor's own rows (Need help, breaks over their limit) with their
+ * actions: Listen, Talk to agent and Send reminder while floor assist is on (`assist`), and on late
+ * callbacks whose owner is away, "Give to free agents" where it is offered (`handOff`). With a
+ * campaign picked it shows that campaign's rows and says how many it leaves out
  * (not counting rows put aside). Never an all-clear from a read it could not refresh, nor while the
  * floor, where breaks over the limit come from, is unread (`breaks`).
  */
@@ -69,6 +99,8 @@ export const NeedsYouNow = memo(function NeedsYouNow({
   lastUpdated,
   breaks = 'checked',
   onShowAll,
+  assist = null,
+  handOff = null,
 }: {
   items: readonly HomeAttentionItem[];
   campaignId: string | null;
@@ -82,6 +114,10 @@ export const NeedsYouNow = memo(function NeedsYouNow({
    */
   breaks?: BreaksChecked;
   onShowAll: () => void;
+  /** Floor assist's actions and chime; null while its flag is off (nothing shows). */
+  assist?: NeedsYouNowAssist | null;
+  /** Give to free agents; null while contact assignment is off. */
+  handOff?: NeedsYouNowHandOff | null;
 }) {
   const { tenantId, accountId } = useTenant();
   // "Got it" (B28a): rows the reader put aside, until they get worse or tomorrow.
@@ -106,12 +142,25 @@ export const NeedsYouNow = memo(function NeedsYouNow({
           )}
         </h2>
         <p className={styles.cardNote}>Each item clears itself once it’s fixed. “Got it” hides one until it gets worse, or until tomorrow</p>
+        {assist && (
+          <button
+            type="button"
+            className={`btn-secondary ${styles.smallButton}`}
+            aria-pressed={assist.chime.on}
+            onClick={assist.chime.toggle}
+            title="Play a sound when an agent presses Need help. Kept for this browser."
+            data-testid="home-help-chime"
+          >
+            {assist.chime.on ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
+            {assist.chime.on ? 'Need help sound on' : 'Need help sound off'}
+          </button>
+        )}
       </div>
 
       {needs.length > 0 ? (
         <ul className={styles.attentionList} data-testid="home-attention">
           {needs.map((item) => (
-            <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} />
+            <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} assist={assist} handOff={handOff} />
           ))}
         </ul>
       ) : stale ? (
@@ -148,7 +197,7 @@ export const NeedsYouNow = memo(function NeedsYouNow({
           <h3 className={styles.waitingTitle}>For your information</h3>
           <ul className={styles.attentionList}>
             {waiting.map((item) => (
-              <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} />
+              <AttentionRow key={item.id} item={item} now={now} onAcknowledge={item.ackable ? acknowledge : undefined} assist={assist} handOff={handOff} />
             ))}
           </ul>
         </div>
@@ -178,12 +227,19 @@ export const NeedsYouNow = memo(function NeedsYouNow({
 });
 
 /** One row; `onAcknowledge` offers "Got it" (left out on a row already put aside). */
-function AttentionRow({ item, now, onAcknowledge }: {
+function AttentionRow({ item, now, onAcknowledge, assist = null, handOff = null }: {
   item: HomeAttentionItem;
   now: Date;
   onAcknowledge?: (item: HomeAttentionItem) => void;
+  assist?: NeedsYouNowAssist | null;
+  handOff?: NeedsYouNowHandOff | null;
 }) {
   const Icon = rowIcon(item);
+  const listen = useListen();
+  const { agent } = item;
+  const call = agent?.call ?? null;
+  const canListen = Boolean(listen?.canListen && call?.listenable);
+  const giveTo = item.handOff && item.campaign && handOff?.offered.has(item.campaign.id) ? item.campaign : null;
   const [reviewing, setReviewing] = useState(false);
   const reviewId = useId();
   return (
@@ -230,14 +286,38 @@ function AttentionRow({ item, now, onAcknowledge }: {
             Got it
           </button>
         )}
-        {item.comingSoon && (
-          <ComingSoonButton
+        {agent && call && canListen && listen && (
+          <button
+            type="button"
             className={`btn-secondary ${styles.smallButton}`}
-            tooltip={item.comingSoon.tooltip}
-            testId={`home-soon-${item.id}`}
+            onClick={() => listen.listen(call, assist?.clockOffsetMs ?? 0)}
+            aria-label={listenToLabel(agent.name)}
           >
-            {item.comingSoon.label}
-          </ComingSoonButton>
+            <Headphones size={14} aria-hidden="true" />
+            Listen
+          </button>
+        )}
+        {agent && assist && (
+          <button
+            type="button"
+            className={`btn-secondary ${styles.smallButton}`}
+            onClick={() => assist.onMessage({ sessionId: agent.sessionId, name: agent.name, ...(agent.reminder !== undefined ? { reminder: agent.reminder } : {}) })}
+            aria-label={agent.reminder !== undefined ? `Send ${agent.name} a reminder` : `Talk to ${agent.name}`}
+          >
+            {agent.reminder !== undefined ? <BellRing size={14} aria-hidden="true" /> : <MessageCircle size={14} aria-hidden="true" />}
+            {agent.reminder !== undefined ? 'Send reminder' : 'Talk'}
+          </button>
+        )}
+        {giveTo && handOff && (
+          <button
+            type="button"
+            className={`btn-secondary ${styles.smallButton}`}
+            onClick={() => handOff.onGive(giveTo)}
+            aria-label={`Give ${giveTo.name}’s late callbacks to free agents`}
+          >
+            <UserPlus size={14} aria-hidden="true" />
+            Give to free agents
+          </button>
         )}
         {item.review ? (
           <button

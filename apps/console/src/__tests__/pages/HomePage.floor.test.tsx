@@ -162,7 +162,8 @@ describe('the agent cards', () => {
     // The chips count the floor's rows.
     expect(screen.getByTestId('home-chip-all').textContent).toBe('All 5');
     expect(screen.getByTestId('home-chip-offline').textContent).toBe('Offline 1');
-    expect(screen.getByTestId('home-chip-help').textContent).toBe('Need helpComing soon');
+    // Floor assist's flag is off (no provider): no Need help chip.
+    expect(screen.queryByTestId('home-chip-help')).toBeNull();
   });
 
   it('filter by a chip, and by the campaign filter', async () => {
@@ -223,18 +224,16 @@ describe('the agent cards', () => {
     await waitFor(() => expect(mocks.getAgencyFloor.mock.calls.length).toBeGreaterThan(reads));
   });
 
-  it('show Talk, Join and Send reminder as disabled controls that are coming soon', async () => {
+  it('show Join as coming soon (LF8), and no Talk or Send reminder while floor assist is off', async () => {
     renderHome();
     await screen.findByTestId('home-agent-grid');
     const ravi = screen.getByTestId('home-agent-ravi');
-    for (const name of ['Talk to Ravi Kumar', 'Join Ravi Kumar’s call']) {
-      const button = within(ravi).getByRole('button', { name });
-      expect(button.getAttribute('aria-disabled')).toBe('true');
-      expect(document.getElementById(button.getAttribute('aria-describedby')!)!.textContent).toMatch(/Coming soon\.$/);
-    }
-    // Reminders only for a break over the limit; nothing to talk to an absent agent about.
-    expect(within(ravi).queryByRole('button', { name: /reminder/ })).toBeNull();
-    expect(within(screen.getByTestId('home-agent-priya')).getByRole('button', { name: 'Send Priya M a reminder' }).getAttribute('aria-disabled')).toBe('true');
+    const join = within(ravi).getByRole('button', { name: 'Join Ravi Kumar’s call' });
+    expect(join.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(join.getAttribute('aria-describedby')!)!.textContent).toMatch(/Coming soon\.$/);
+    // Floor assist's flag is off (no provider): its controls are hidden, not coming soon.
+    expect(within(ravi).queryByRole('button', { name: /Talk to/ })).toBeNull();
+    expect(within(screen.getByTestId('home-agent-priya')).queryByRole('button', { name: /reminder/ })).toBeNull();
     expect(within(screen.getByTestId('home-agent-naveen')).queryAllByRole('button')).toHaveLength(0);
   });
 
@@ -395,6 +394,19 @@ describe('the grid on a new read', () => {
     expect(renders()).toBe(first + 1);
     expect(screen.getByTestId('home-agent-ravi').textContent).toContain('43 conversations today');
   });
+
+  it('re-renders no card for an open Need help request read again, and only the card whose request changed', () => {
+    const rows = FLOOR().agents.map((row, i) => (i < 2 ? { ...row, help: { raised_at: minutesAgo(1), call_id: 'call-1' } } : row));
+    const now = Date.now();
+    const view = render(grid(rows, now, 0));
+    const first = renders();
+    view.rerender(grid(structuredClone(rows), now + 5_000, 3));
+    expect(renders()).toBe(first);
+    const next = structuredClone(rows);
+    next[1] = { ...next[1]!, help: null };
+    view.rerender(grid(next, now + 10_000, 3));
+    expect(renders()).toBe(first + 1);
+  });
 });
 
 describe('breaks over the limit', () => {
@@ -486,13 +498,14 @@ describe('breaks over the limit', () => {
     }
   });
 
-  it('are a row in Needs you now with a coming-soon Send reminder, left off the sidebar badge', async () => {
+  it('are a row in Needs you now, saying the rule, left off the sidebar badge', async () => {
     renderHome();
     const row = await screen.findByTestId('home-attention-break-overrun:priya');
     expect(row.textContent).toContain('Priya M on Tea for 42 min');
-    expect(row.textContent).toContain('Any break over 30 minutes is flagged. Limits per break reason are coming soon.');
-    const remind = within(row).getByRole('button', { name: 'Send reminder' });
-    expect(remind.getAttribute('aria-disabled')).toBe('true');
+    expect(row.textContent).toContain('It has no limit of its own, so it is flagged after 30 min.');
+    expect(row.textContent).not.toContain('coming soon');
+    // Send reminder only while floor assist is on (HomePage.assist.test.tsx).
+    expect(within(row).queryByRole('button', { name: /reminder/ })).toBeNull();
     expect(within(row).getByRole('link', { name: /Open the floor/ }).getAttribute('href')).toBe('/agency/campaigns/c1/agents');
     // On the page's own count, not the sidebar's.
     expect(screen.getByTestId('home-attention-count').textContent).toBe('1, 1');

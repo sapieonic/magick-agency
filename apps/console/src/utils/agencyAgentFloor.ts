@@ -1,3 +1,4 @@
+import { AGENCY_BREAK_DEFAULT_LIMIT_MINUTES } from '@magick-agency/contracts/agency/breaks';
 import type {
   AgencyAgentLiveState,
   AgencySupervisorAgent,
@@ -48,8 +49,17 @@ export const WRAPUP_OVERRUN_GRACE_SECONDS = 60;
 /** Rank 2's multiplier on average handle time. A call at 2× AHT is an outlier. */
 export const CALL_OVERRUN_AHT_MULTIPLE = 2;
 
-/** Rank 3. Half an hour is longer than any break the console offers. */
-export const LONG_BREAK_SECONDS = 30 * 60;
+/**
+ * Rank 3 without a limit of the break's own (LF6, LF20): the floor's one rule, 30 minutes
+ * (`AGENCY_BREAK_DEFAULT_LIMIT_MINUTES`). A break reason with a `limit_minutes` is measured
+ * against that instead ({@link FloorThresholds.breakLimitMinutes}).
+ */
+export const LONG_BREAK_SECONDS = AGENCY_BREAK_DEFAULT_LIMIT_MINUTES * 60;
+
+/** The minutes a break may run before rank 3: its reason's limit, else the floor's 30. */
+export function breakLimitMinutesOf(limit: number | null | undefined): number {
+  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? limit : AGENCY_BREAK_DEFAULT_LIMIT_MINUTES;
+}
 
 /**
  * The risk ranking, worst first. **The order is load-bearing** and is pinned
@@ -66,7 +76,8 @@ export const LONG_BREAK_SECONDS = 30 * 60;
  *                        force-return control exists for.
  * 2. `call_overrun`    — a conversation running far past normal. Might need a
  *                        supervisor; might be a stuck leg.
- * 3. `long_break`      — a break that has outlasted any break.
+ * 3. `long_break`      — a break past its reason's limit, or the floor's 30
+ *                        minutes for a reason with none (LF6).
  * 4. `disconnected`    — the station socket is gone. Last, among the warnings,
  *                        because it is the one where the agent may already know
  *                        and be reconnecting.
@@ -120,6 +131,12 @@ export interface FloorThresholds {
    * when the console has no idea what normal is here.
    */
   ahtSeconds?: number | null;
+  /**
+   * The limit of the break reason the agent is on, in minutes (LF6, LF20: the Live floor's row
+   * carries it as `break_limit_minutes`). `null`/`undefined` is the floor's one rule, 30 minutes
+   * ({@link breakLimitMinutesOf}); the campaign Agents tab passes none. Never the soft phone.
+   */
+  breakLimitMinutes?: number | null;
 }
 
 /**
@@ -187,14 +204,16 @@ export function floorRisk(
     }
   }
 
-  // 3. On break beyond half an hour. Not the soft phone: that "break" is the
-  //    agent working calls by hand (`docs/softphone.md` §2), and half an hour of
-  //    it is a shift, not an agent who walked away. The mobile app's device-away
-  //    break IS flagged: half an hour with the app in the background is exactly
-  //    an agent worth a supervisor's look. So is its phone-call pause (IQ51): an
-  //    ordinary break, and half an hour of a personal call on shift is worth one too.
+  // 3. On break beyond its reason's limit, or half an hour without one (LF6).
+  //    Not the soft phone: that "break" is the agent working calls by hand
+  //    (`docs/softphone.md` §2), and half an hour of it is a shift, not an agent
+  //    who walked away; whatever limit is passed, it never applies there. The
+  //    mobile app's device-away break IS flagged: half an hour with the app in
+  //    the background is exactly an agent worth a supervisor's look. So is its
+  //    phone-call pause (IQ51): an ordinary break, and half an hour of a personal
+  //    call on shift is worth one too.
   if (agent.state === 'break' && !isOnSoftphone(agent) && elapsedMs !== null) {
-    if (elapsedMs > LONG_BREAK_SECONDS * 1000) return 'long_break';
+    if (elapsedMs > breakLimitMinutesOf(thresholds.breakLimitMinutes) * 60_000) return 'long_break';
   }
 
   /*
@@ -221,10 +240,19 @@ export function floorRisk(
 export const AGENCY_FLOOR_RISK_NOTE: Record<AgencyFloorRisk, string | null> = {
   wrapup_overrun: 'Wrap-up has run past this campaign’s window.',
   call_overrun: 'On a call far longer than this campaign’s average.',
-  long_break: 'On break for more than 30 minutes.',
+  long_break: `On break for more than ${AGENCY_BREAK_DEFAULT_LIMIT_MINUTES} minutes.`,
   disconnected: 'Station disconnected — no heartbeat.',
   none: null,
 };
+
+/**
+ * {@link AGENCY_FLOOR_RISK_NOTE} for one agent: a long break names its reason's limit (LF6), "Past
+ * the 15-minute limit for Tea.", and keeps the 30-minute sentence for a reason with none.
+ */
+export function floorRiskNote(risk: AgencyFloorRisk, breakLimitMinutes?: number | null, breakLabel?: string | null): string | null {
+  if (risk !== 'long_break' || typeof breakLimitMinutes !== 'number') return AGENCY_FLOOR_RISK_NOTE[risk];
+  return `Past the ${formatCount(breakLimitMinutesOf(breakLimitMinutes))}-minute limit for ${breakLabel ?? 'this break'}.`;
+}
 
 /**
  * The same risk as a *column-width* label — what the row's Actions cell shows.
@@ -254,7 +282,8 @@ export const AGENCY_FLOOR_RISK_FLAG: Record<AgencyFloorRisk, string | null> = {
 export const AGENCY_FLOOR_RISK_CLAUSE: Record<AgencyFloorRisk, string | null> = {
   wrapup_overrun: 'past the wrap-up window',
   call_overrun: 'on a call past twice the handle-time average',
-  long_break: 'on a break longer than 30 minutes',
+  // The campaign Agents tab's summary: its rows carry no limit, so its rule is the floor's 30 minutes.
+  long_break: `on a break longer than ${AGENCY_BREAK_DEFAULT_LIMIT_MINUTES} minutes`,
   disconnected: 'with no station heartbeat',
   none: null,
 };

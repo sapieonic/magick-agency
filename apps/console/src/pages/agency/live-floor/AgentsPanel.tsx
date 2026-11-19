@@ -12,7 +12,7 @@ import {
   type FloorChipFilter,
 } from '../../../utils/agency/liveFloorAgents';
 import { formatCount } from '../../../utils/format/number';
-import { ComingSoonBadge } from '../../../components/common/ComingSoon';
+import type { MessageTarget } from '../../../utils/agency/floorAssist';
 import { AgentGrid } from './AgentGrid';
 import styles from './LiveFloor.module.css';
 
@@ -24,14 +24,20 @@ export interface AgentsPanelFloor {
   clockOffsetMs: number;
   stale: boolean;
   onChanged: () => void;
+  /**
+   * Floor assist (LF4, LF5): the page's message dialog, or null while its flag is off, when the
+   * cards offer no Talk or Send reminder and the panel no Need help chip.
+   */
+  onMessage?: ((target: MessageTarget) => void) | null;
 }
 
 /**
  * Agents: a card per agent (`AgentGrid`, from the floor read, B28b) with state chips that filter
  * it, the chips counted from the same rows. Until the floor answers, or when it cannot be read,
  * the panel is Phase 1's: the chips counted from each campaign's `agents_by_state` on the board,
- * and a link to each campaign's Agents tab. "Need help" is a state agents cannot raise yet
- * (Phase 3): its chip is marked coming soon and counts nothing.
+ * and a link to each campaign's Agents tab. While floor assist is on, a "Need help" chip counts the
+ * agents asking for help (LF4: on a call or in wrap-up as well, so it overlaps their state's chip)
+ * and filters the grid to them; the board knows nothing of requests, so its chips have none.
  */
 export function AgentsPanel({
   reads,
@@ -55,11 +61,11 @@ export function AgentsPanel({
           <Users size={18} aria-hidden="true" />
           Agents
         </h2>
-        {floor ? <FloorChips rows={floor.rows} filter={filter} onFilter={setFilter} /> : <BoardChips reads={reads} />}
+        {floor ? <FloorChips rows={floor.rows} filter={filter} onFilter={setFilter} showHelp={Boolean(floor.onMessage)} /> : <BoardChips reads={reads} />}
         {floor?.stale && <span className={styles.staleTag} data-testid="home-agents-stale">Not refreshed</span>}
       </div>
       {floor ? (
-        <AgentGrid cards={floor.cards} filter={filter} clockOffsetMs={floor.clockOffsetMs} onChanged={floor.onChanged} />
+        <AgentGrid cards={floor.cards} filter={filter} clockOffsetMs={floor.clockOffsetMs} onChanged={floor.onChanged} onMessage={floor.onMessage ?? null} />
       ) : (
         <BoardFloor reads={reads} failed={floorFailed} onRetry={onRetryFloor} />
       )}
@@ -67,23 +73,15 @@ export function AgentsPanel({
   );
 }
 
-function NeedHelpChip() {
-  return (
-    <li className={`${styles.chip} ${styles.chipSoon}`} data-state="help" data-testid="home-chip-help">
-      <i aria-hidden="true" />
-      Need help
-      <ComingSoonBadge />
-    </li>
-  );
-}
-
 /** The chips over the floor's rows: buttons that filter the grid (`aria-pressed`). */
-function FloorChips({ rows, filter, onFilter }: {
+function FloorChips({ rows, filter, onFilter, showHelp }: {
   rows: readonly AgencyFloorAgent[];
   filter: FloorChipFilter;
   onFilter: (filter: FloorChipFilter) => void;
+  /** Floor assist is on: the Need help chip. */
+  showHelp: boolean;
 }) {
-  const { total, counts } = floorStateCounts(rows);
+  const { total, help, counts } = floorStateCounts(rows);
   const chip = (id: FloorChipFilter, text: string) => (
     <li key={id}>
       <button
@@ -102,7 +100,7 @@ function FloorChips({ rows, filter, onFilter }: {
   return (
     <ul className={styles.chips} aria-label="Show agents by state" data-testid="home-agent-chips">
       {chip('all', `All ${formatCount(total)}`)}
-      <NeedHelpChip />
+      {(showHelp || filter === 'help') && chip('help', `Need help ${formatCount(help)}`)}
       {FLOOR_CARD_STATES
         // The soft phone's chip only while someone is on it (or it is the filter): most accounts have none.
         .filter((state) => state !== 'softphone' || counts.softphone > 0 || filter === 'softphone')
@@ -119,7 +117,6 @@ function BoardChips({ reads }: { reads: readonly HomeCampaignRead[] }) {
       <li className={`${styles.chip} ${styles.chipAll}`} data-testid="home-chip-all">
         {`All ${formatCount(chips.total)}`}
       </li>
-      <NeedHelpChip />
       {AGENT_CHIPS.map((chip) => (
         <li key={chip.id} className={styles.chip} data-state={chip.id} data-testid={`home-chip-${chip.id}`}>
           <i aria-hidden="true" />

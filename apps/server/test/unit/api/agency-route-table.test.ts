@@ -119,14 +119,6 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /proxy/agency/inbound/calls/:_/ring/decline', 'mobile app native ring Decline (Mode B, token only)'],
   ['POST /proxy/agency/inbound/calls/:_/ring/accept', 'mobile app takes a ring it answered (Mode B)'],
   ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
-  // Floor assist (the Live floor's Phase 3, LF4, LF5; `proxy-agency-floor-assist.routes.ts`): served
-  // ahead of their clients. Each moves into `console-paths.json` as the console gains its caller
-  // (Need help's raise and cancel have: the agent's station, `apps/console/src/api/agency.ts`; the
-  // mobile app's station calls them too, `apps/mobile/lib/core/station/station_api.dart`).
-  ['POST /proxy/agency/sessions/:_/messages', 'a supervisor\'s message to an agent\'s station, Talk to agent and Send reminder (LF5; console client to come)'],
-  // The Live floor's account-wide callbacks list (LF22): the console's Callbacks page calls it once
-  // Phase 3's console lands; that change moves it to the console path inventory.
-  ['GET /proxy/agency/callbacks', 'the account\'s callbacks list (LF22; the console\'s Callbacks page, Phase 3)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */

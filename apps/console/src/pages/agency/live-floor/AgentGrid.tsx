@@ -1,12 +1,13 @@
 import { createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor';
-import { BellRing, Headphones, LogIn, MessageCircle, Smartphone, TriangleAlert } from 'lucide-react';
+import { BellRing, Headphones, LifeBuoy, LogIn, MessageCircle, Smartphone, TriangleAlert } from 'lucide-react';
 import { formatTime } from '@magick-agency/web-ui/format';
 import { AgentFloorDrawer } from '../../../components/agency/AgentFloorDrawer';
 import { ComingSoonButton } from '../../../components/common/ComingSoon';
 import { useListen, type ListenContextValue } from '../../../components/listen/ListenProvider';
 import { useNow, usePageVisible } from '../../../hooks/useNow';
-import { AGENCY_FLOOR_RISK_NOTE, AGENCY_FLOOR_TICK_MS, INBOUND_CALL_FLOOR_LABEL, isWarningRisk, type AgencyFloorRisk } from '../../../utils/agencyAgentFloor';
+import { AGENCY_FLOOR_TICK_MS, INBOUND_CALL_FLOOR_LABEL, floorRiskNote, isWarningRisk, type AgencyFloorRisk } from '../../../utils/agencyAgentFloor';
+import { reminderText, type MessageTarget } from '../../../utils/agency/floorAssist';
 import { elapsedSince, formatDuration } from '../../../utils/agencyClock';
 import { initialsFor } from '../../../utils/initials';
 import { listenToLabel, notListenableCopy } from '../../../utils/listen/listenCopy';
@@ -38,8 +39,11 @@ import styles from './LiveFloor.module.css';
  * A card's actions: Listen when the call can be listened to (the Live calls list's own start, so
  * the shell's listening bar takes over; a disabled Listen with the list's reason when it cannot;
  * none for a reader who cannot listen at all), Make available on a stuck wrap-up (the campaign
- * floor's drawer, with its confirmation), and Talk to agent, Join call and Send reminder, which are
- * coming (Phase 3 and 4) and shown as such.
+ * floor's drawer, with its confirmation), Talk to agent on a live session and Send reminder on a
+ * break past its limit while floor assist is on (`onMessage`, the page's one message dialog, LF5,
+ * LF29; hidden while it is off), and Join call, which is coming (Phase 4, LF8) and shown as such.
+ * An agent asking for help (LF4, LF28) is first in the ranking and their card is red, with a
+ * "Needs help" tag (never colour alone).
  *
  * The drawer holds the agent's session id, never a copy of the card: it reads the agent from every
  * new floor, as the campaign floor's does, and closes once the session is gone or no longer offers
@@ -56,11 +60,14 @@ export function AgentGrid({
   filter,
   clockOffsetMs,
   onChanged,
+  onMessage = null,
 }: {
   cards: readonly FloorCard[];
   filter: FloorChipFilter;
   clockOffsetMs: number;
   onChanged: () => void;
+  /** Opens the page's message dialog (Talk, Send reminder); null while floor assist is off. Stable. */
+  onMessage?: ((target: MessageTarget) => void) | null;
 }) {
   const shown = useMemo(() => cardsInState(cards, filter), [cards, filter]);
   // The row each card was last drawn from, by agent: kept while the next read says the same.
@@ -88,7 +95,9 @@ export function AgentGrid({
   if (shown.length === 0) {
     return (
       <p className={styles.quiet} data-testid="home-agent-grid-empty">
-        {cards.length === 0 ? 'No agents are on the floor or assigned to an active campaign.' : 'No agent is in this state right now.'}
+        {cards.length === 0
+          ? 'No agents are on the floor or assigned to an active campaign.'
+          : filter === 'help' ? 'No agent is asking for help right now.' : 'No agent is in this state right now.'}
       </p>
     );
   }
@@ -104,6 +113,7 @@ export function AgentGrid({
               state={card.state}
               displayName={card.displayName}
               onMakeAvailable={makeAvailable}
+              onMessage={onMessage}
             />
           ))}
         </ul>
@@ -186,31 +196,40 @@ function ListenButton({ call, displayName, onListen }: {
  * One agent's card, from primitives and the kept row ({@link AgentGrid}), so the memo holds: an
  * equal read on the same risk renders no card.
  */
-const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMakeAvailable }: {
+const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMakeAvailable, onMessage }: {
   row: AgencyFloorAgent;
   risk: AgencyFloorRisk;
   state: FloorCardState;
   displayName: string;
   /** Opens Make available's drawer for a session: one setter for every card, so a card re-renders only when it changes. */
   onMakeAvailable: (sessionId: string | null) => void;
+  /** The page's message dialog, or null while floor assist is off: one stable callback for every card. */
+  onMessage: ((target: MessageTarget) => void) | null;
 }) {
   const listen = useListen();
   const badges = floorBadges(row);
   const reasonId = useId();
   const live = state !== 'offline';
   const call = liveCallOf(row);
-  const warning = isWarningRisk(risk) ? AGENCY_FLOOR_RISK_NOTE[risk] : null;
+  const warning = isWarningRisk(risk) ? floorRiskNote(risk, row.break_limit_minutes ?? null, row.break_label) : null;
+  const sessionId = row.session_id;
   const notListenable = listen?.canListen && call && !call.listenable && call.not_listenable_reason
     ? notListenableCopy(call.not_listenable_reason)
     : null;
 
   return (
-    <li className={styles.agentCard} data-stripe={stripeTone({ risk, state })} data-testid={`home-agent-${row.agent_user_id}`}>
+    <li className={styles.agentCard} data-stripe={stripeTone({ risk, state, row })} data-testid={`home-agent-${row.agent_user_id}`}>
       <div className={styles.agentWho}>
         <span className={styles.avatar} data-state={state} aria-hidden="true">{initialsFor(displayName)}</span>
         <div className={styles.agentName}>
           <b>{displayName}</b>
           <span className={styles.stateTag} data-state={state}>{FLOOR_CARD_LABELS[state]}</span>
+          {row.help && (
+            <span className={`${styles.agentBadge} ${styles.agentBadgeHelp}`} data-testid={`home-agent-help-${row.agent_user_id}`}>
+              <LifeBuoy size={12} aria-hidden="true" />
+              Needs help
+            </span>
+          )}
           {badges.mobile && (
             <span className={styles.agentBadge} title="On the mobile app">
               <Smartphone size={12} aria-hidden="true" />
@@ -254,20 +273,32 @@ const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMak
               <Headphones size={15} aria-hidden="true" />
             </button>
           ) : null)}
-          {live && (
-            <ComingSoonButton compact className={`btn-secondary ${styles.iconButton}`} label={`Talk to ${displayName}`} tooltip={`Send ${displayName} a message they see on their screen.`}>
+          {live && onMessage && sessionId && (
+            <button
+              type="button"
+              className={`btn-secondary ${styles.iconButton}`}
+              onClick={() => onMessage({ sessionId, name: displayName })}
+              aria-label={`Talk to ${displayName}`}
+              title={`Send ${displayName} a message they see on their screen`}
+            >
               <MessageCircle size={15} aria-hidden="true" />
-            </ComingSoonButton>
+            </button>
           )}
           {row.call && (
             <ComingSoonButton compact className={`btn-secondary ${styles.iconButton}`} label={`Join ${displayName}’s call`} tooltip="Speak on the call, to the customer and the agent.">
               <LogIn size={15} aria-hidden="true" />
             </ComingSoonButton>
           )}
-          {risk === 'long_break' && (
-            <ComingSoonButton compact className={`btn-secondary ${styles.iconButton}`} label={`Send ${displayName} a reminder`} tooltip={`Remind ${displayName} that their break is over.`}>
+          {risk === 'long_break' && onMessage && sessionId && (
+            <button
+              type="button"
+              className={`btn-secondary ${styles.iconButton}`}
+              onClick={() => onMessage({ sessionId, name: displayName, reminder: reminderText(row.break_label, row.break_limit_minutes) })}
+              aria-label={`Send ${displayName} a reminder`}
+              title={`Remind ${displayName} that their break is over`}
+            >
               <BellRing size={15} aria-hidden="true" />
-            </ComingSoonButton>
+            </button>
           )}
           {offersMakeAvailable({ row, risk }) && (
             <button type="button" className={`btn-danger ${styles.smallButton}`} onClick={() => onMakeAvailable(row.session_id)} aria-label={`Make ${displayName} available`}>
