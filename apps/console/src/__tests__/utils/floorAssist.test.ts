@@ -212,12 +212,11 @@ describe('the chime’s sound (fails silently)', () => {
 });
 
 describe('give late callbacks to free agents (LF7, LF30)', () => {
-  it('is offered on strict and preferred with assignment on, never on pool or an unknown mode', () => {
-    expect(offersHandOff(true, 'strict')).toBe(true);
-    expect(offersHandOff(true, 'preferred')).toBe(true);
-    expect(offersHandOff(true, 'pool')).toBe(false);
-    expect(offersHandOff(true, undefined)).toBe(false);
-    expect(offersHandOff(false, 'strict')).toBe(false);
+  it('is offered on strict and preferred, never on pool or an unknown mode', () => {
+    expect(offersHandOff('strict')).toBe(true);
+    expect(offersHandOff('preferred')).toBe(true);
+    expect(offersHandOff('pool')).toBe(false);
+    expect(offersHandOff(undefined)).toBe(false);
   });
 
   it('asks with the counts, names the receivers, and says why nothing would move', () => {

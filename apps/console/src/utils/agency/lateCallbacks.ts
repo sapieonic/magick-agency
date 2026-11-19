@@ -8,13 +8,13 @@ import { plural } from '../format/number';
  */
 
 /**
- * Whether the late-callbacks row offers "Give to free agents": contact assignment on (its routes'
- * flag; without it no campaign is strict or preferred) and the campaign's mode read and not `pool`
- * (LF7: no agent owns a callback there). A mode not read yet, or whose read failed, offers nothing:
- * the row keeps its link to the campaign's Callbacks tab.
+ * Whether the late-callbacks row offers "Give to free agents", with contact assignment on (its
+ * routes' flag; the page offers nothing without it): the campaign's mode read and not `pool` (LF7:
+ * no agent owns a callback there). A mode not read yet, or whose read failed, offers nothing: the
+ * row keeps its link to the campaign's Callbacks tab.
  */
-export function offersHandOff(assignmentOn: boolean, mode: AgencyAssignmentMode | undefined): boolean {
-  return assignmentOn && (mode === 'strict' || mode === 'preferred');
+export function offersHandOff(mode: AgencyAssignmentMode | undefined): boolean {
+  return mode === 'strict' || mode === 'preferred';
 }
 
 /** `409 late_callbacks_pool_mode`: the mode changed under the page. */
