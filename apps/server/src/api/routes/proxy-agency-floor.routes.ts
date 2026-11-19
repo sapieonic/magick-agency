@@ -14,12 +14,12 @@ import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore, type CoreCallRequest, type CoreCallResult } from '../core-dispatch.js';
-import { readListenFlags, type ListenFlags } from '../../agency/listen/listen-access.js';
+import { listenFlagsFrom, type ListenFlags } from '../../agency/listen/listen-access.js';
 import { agentNamesOrNone } from '../../agency/agency-agent-identity.js';
 import { parseFloorFrom, parsePromisesWindow } from '../../agency/floor.js';
 import { agencyPromiseSummaryRepository, type AgencyPromiseSummaryRow } from '../../db/repositories/agency.repository.js';
 import { config } from '../../config/index.js';
-import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
+import { FLAGS, getFeatureFlagService, type FlagSnapshot } from '../../feature-flags/index.js';
 import { accountOrRefuse } from './helpers/account-scope.js';
 import { dialerEnabled } from './helpers/dialer-gate.js';
 import { noStoreHook } from './helpers/no-store.js';
@@ -43,10 +43,11 @@ const log = createChildLogger({ component: 'proxy-agency-floor' });
  *    with each agent's name and, on each call, whether the reader may listen to it. Listenability
  *    is the live calls list's rule (`notListenableReason`) for a reader holding
  *    `agency.calls.listen` while the listening flag is on for the account; otherwise no call is
- *    listenable and none says why. The floor does NOT need the listening flag (the live calls
- *    routes refuse without it): a flag store that cannot be read makes every call unlistenable,
- *    never the floor a 503. Each row's `help` (LF4) is served only while `agency_floor_assist_enabled`
- *    is on for the account; off or unreadable, every row's is null, never the floor a 503.
+ *    listenable and none says why. Each row's `help` (LF4) is served only while
+ *    `agency_floor_assist_enabled` is on for the account. Both flags come from ONE strict snapshot
+ *    of the account's flags per poll. The floor needs neither (the live calls routes refuse without
+ *    the listening flag): a flag store that cannot be read makes every call unlistenable and every
+ *    row's `help` null, never the floor a 503.
  *  - `GET /promises/summary?from=&to=`: the promises to pay recorded in the window, per campaign
  *    (`AgencyPromiseSummaryRepository`, SQL only, this layer's own read as the insights reads
  *    are), and the account's active campaigns whose catalog asks for a promise.
@@ -56,28 +57,25 @@ const log = createChildLogger({ component: 'proxy-agency-floor' });
 export interface FloorRouteDeps {
   callCore(req: CoreCallRequest): Promise<CoreCallResult>;
   names(ids: Iterable<string | null>, tenantId: string): Promise<Map<string, string | null>>;
-  /** Both listening flags for the account; REJECTS when they cannot be read (`readListenFlags`). */
-  listenFlags(tenantId: string, accountId: string): Promise<ListenFlags>;
+  /** The account's flags, one strict snapshot (listening, LS1, LS4; floor assist, LF11); REJECTS when they cannot be read. */
+  flags(tenantId: string, accountId: string): Promise<FlagSnapshot>;
   maxPerCall(): number;
   /** The dialer flag, else the 403 sent (`dialerEnabled`). */
   dialerEnabled(request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
   promiseSummary(tenantId: string, accountId: string, from: Date, to: Date): Promise<AgencyPromiseSummaryRow[]>;
   /** The account's active campaigns whose catalog asks for a promise. */
   promiseCampaignIds(tenantId: string, accountId: string): Promise<string[]>;
-  /** `agency_floor_assist_enabled` for the account (LF11); REJECTS when it cannot be read. */
-  floorAssistEnabled(tenantId: string, accountId: string): Promise<boolean>;
   now(): Date;
 }
 
 const defaultFloorRouteDeps: FloorRouteDeps = {
   callCore,
   names: (ids, tenantId) => agentNamesOrNone(ids, tenantId, 'floor'),
-  listenFlags: readListenFlags,
+  flags: (tenantId, accountId) => getFeatureFlagService().strictSnapshot({ tenantId, accountId }),
   maxPerCall: () => config.agency.listen.maxPerCall,
   dialerEnabled,
   promiseSummary: (t, a, from, to) => agencyPromiseSummaryRepository.summary(t, a, from, to),
   promiseCampaignIds: (t, a) => agencyPromiseSummaryRepository.promiseCampaignIds(t, a),
-  floorAssistEnabled: (tenantId, accountId) => getFeatureFlagService().isEnabled(FLAGS.agency_floor_assist_enabled, { tenantId, accountId }),
   now: () => new Date(),
 };
 
@@ -106,10 +104,20 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
     return { tenantId: request.tenantId!, accountId };
   }
 
-  /** Whether the floor carries Need help (LF11): false while the flag is off, or when it cannot be read. */
-  async function floorAssist(tenantId: string, accountId: string): Promise<boolean> {
+  /** The account's flags for this poll (one strict snapshot), or null when they cannot be read. */
+  async function accountFlags(tenantId: string, accountId: string): Promise<FlagSnapshot | null> {
     try {
-      return await deps.floorAssistEnabled(tenantId, accountId);
+      return await deps.flags(tenantId, accountId);
+    } catch (err) {
+      log.warn({ err, tenantId }, 'floor: the account flags could not be read; no call is listenable and no row carries help');
+      return null;
+    }
+  }
+
+  /** Whether the floor carries Need help (LF11): false while the flag is off, or when it cannot be read. */
+  function floorAssist(flags: FlagSnapshot | null, tenantId: string): boolean {
+    try {
+      return flags?.isEnabled(FLAGS.agency_floor_assist_enabled) ?? false;
     } catch (err) {
       log.warn({ err, tenantId }, 'floor: the floor assist flag could not be read; no row carries help');
       return false;
@@ -117,10 +125,11 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
   }
 
   /** The listening flags, or null when listening is not offered on this floor (off, or unreadable). */
-  async function listening(tenantId: string, accountId: string): Promise<ListenFlags | null> {
+  function listening(flags: FlagSnapshot | null, tenantId: string): ListenFlags | null {
+    if (!flags) return null;
     try {
-      const flags = await deps.listenFlags(tenantId, accountId);
-      return flags.enabled ? flags : null;
+      const listen = listenFlagsFrom(flags);
+      return listen.enabled ? listen : null;
     } catch (err) {
       log.warn({ err, tenantId }, 'floor: the listening flags could not be read; no call is listenable');
       return null;
@@ -139,13 +148,14 @@ export async function proxyAgencyFloorRoutes(app: FastifyInstance, opts: ProxyAg
 
       const me = request.user!.id;
       const canListen = hasPermission(request.membership!.role, 'agency.calls.listen');
-      const [result, flags, assist] = await Promise.all([
+      const [result, snapshot] = await Promise.all([
         deps.callCore({
           method: 'GET', path: '/agency/floor', query: { from: parsed.from.toISOString() }, ...scoped,
         }),
-        canListen ? listening(scoped.tenantId, scoped.accountId) : Promise.resolve(null),
-        floorAssist(scoped.tenantId, scoped.accountId),
+        accountFlags(scoped.tenantId, scoped.accountId),
       ]);
+      const flags = canListen ? listening(snapshot, scoped.tenantId) : null;
+      const assist = floorAssist(snapshot, scoped.tenantId);
       if (result.status !== 200) return reply.code(result.status).send(result.body);
       if (!isCoreFloor(result.body)) {
         log.error({ tenantId: scoped.tenantId }, 'floor: the internal handler answered an unrecognised body');

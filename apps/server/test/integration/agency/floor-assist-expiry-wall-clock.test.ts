@@ -53,16 +53,18 @@ describe('Need help expires on the real clock', () => {
     const answered = await session();
     const raisedLeft = await service.raise(left, null);
     await service.raise(answered, null);
-    const open = await agencyFloorAssistRepository.openForAccount(left.tenant_id, left.account_id, EXPIRY_MS);
-    expect(open.map((r) => r.session_id).sort()).toEqual([left.id, answered.id].sort());
+    /** The sessions whose request a read serves as open (every read's rule, `helpOpenSql`, on this test's expiry). */
+    const openOf = async () => (await Promise.all([left, answered].map((s) =>
+      agencyFloorAssistRepository.openForSession(s.id, s.tenant_id, s.account_id, EXPIRY_MS)))).flatMap((r) => (r ? [r.session_id] : []));
+    expect((await openOf()).sort()).toEqual([left.id, answered.id].sort());
 
     // Answered well before its expiry: never expires.
     await sleep(500);
     expect(await service.answer({ sessionId: answered.id, tenantId: answered.tenant_id, byUserId: left.agent_user_id, how: 'message' })).toBe(true);
 
-    // Past the expiry, no sweep yet: the floor no longer serves it (lazy expiry on read).
+    // Past the expiry, no sweep yet: no read serves it any more (lazy expiry on read).
     await sleep(EXPIRY_MS);
-    expect(await agencyFloorAssistRepository.openForAccount(left.tenant_id, left.account_id, EXPIRY_MS)).toEqual([]);
+    expect(await openOf()).toEqual([]);
     expect(frames.filter(([, f]) => f['reason'] === 'expired')).toEqual([]);
 
     // The sweep's timer, on real time, expires it: once.

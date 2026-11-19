@@ -1043,8 +1043,8 @@ a rate-limit key and never an auth input.
   Need help transition is one statement on the session row
   (`db/repositories/agency/floor-assist.repository.ts`, `0052_floor_assist.sql`), and only a row it
   returned gets its frame (`help_answered`, `help_cleared`), audit row and metric, so a request ends
-  exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (the
-  console's 5 s poll), never a push. A listen answers it when the listener socket goes live
+  exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (read
+  with the floor's rows, `FLOOR_ROWS_SQL`; the console's 5 s poll), never a push. A listen answers it when the listener socket goes live
   (`listen-socket.ts`'s `onListenLive`), a message when the agent's station took its
   `supervisor_message` frame; the session ending clears it in `leaveSession`; the 15-minute expiry is
   applied on every read against the database's clock, and a sweep in the primary every 15 s

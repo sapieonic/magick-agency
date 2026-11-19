@@ -6,7 +6,8 @@
  *    session on any of its campaigns, or a soft-phone session, `campaign_id` NULL), with its
  *    campaign, its unsettled inbound call (the per-campaign floor's lateral, `supervisorAgents`),
  *    the window its wrap-up takes (an inbound wrap-up's captured on its call, else the campaign's;
- *    none for a timerless campaign), and whether the person is staffed on an active campaign;
+ *    none for a timerless campaign), whether the person is staffed on an active campaign, and
+ *    the session's open Need help (LF4: open and fresh on the database's clock, `helpOpenSql`);
  *    then one row per agent staffed on an ACTIVE campaign (`running`, `stopping`, `paused`) with
  *    no open session in the account, with when their last session in THIS account ended (never a
  *    later one in another account).
@@ -49,7 +50,9 @@ import type { AgencyAgentLiveState, AgencyClientKind } from '@magick-agency/cont
 import { AGENCY_INBOUND_OUTCOME_LAPSE_MS, type AgencyBreakReason } from '@magick-agency/contracts/agency';
 import { AGENCY_HOME_ACTIVE_STATUSES } from '@magick-agency/contracts/api/agency/home';
 import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
+import { AGENCY_HELP_EXPIRY_MS } from '@magick-agency/contracts/agency';
 import { CONVERSATION_ATTEMPT_SQL, inboundUnsettledCallLateralSql } from './sql-fragments.js';
+import { helpOpenSql } from './floor-assist.repository.js';
 
 /** The campaign statuses whose staffed agents are on the floor with no session: Home's active set, the same list. */
 export const FLOOR_ACTIVE_STATUSES = AGENCY_HOME_ACTIVE_STATUSES;
@@ -83,17 +86,25 @@ export interface AgencyFloorRow {
   staffed: boolean;
   /** No open session: when their last session in the account ended, if at or after `from`. */
   left_at: Date | null;
+  /** The open session's open Need help (LF4): when it was raised; null when none is open (or past its expiry). */
+  help_raised_at: Date | null;
+  /** The call it was raised on; null with no open request, or one raised in wrap-up. */
+  help_call_id: string | null;
 }
 
 /**
  * The floor's rows: $1 tenant, $2 account, $3 `from`, $4 the active statuses, $5 the inbound default
  * window in seconds ({@link INBOUND_DEFAULT_WRAPUP_SECONDS}), $6 the inbound backstop in ms
- * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}). Exported for its plan test.
+ * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}), $7 the Need help expiry in ms ({@link AGENCY_HELP_EXPIRY_MS}).
+ * Exported for its plan test.
  */
 export const FLOOR_ROWS_SQL = `
   WITH open_sessions AS (
     SELECT DISTINCT ON (s.agent_user_id)
-           s.id, s.agent_user_id, s.campaign_id, s.state, s.state_since, s.break_reason, s.client_kind
+           s.id, s.agent_user_id, s.campaign_id, s.state, s.state_since, s.break_reason, s.client_kind,
+           -- The open Need help (LF4), by the rule every read applies: open and fresh on the database's clock.
+           CASE WHEN ${helpOpenSql('$7')} THEN s.help_raised_at END AS help_raised_at,
+           CASE WHEN ${helpOpenSql('$7')} THEN s.help_call_id END AS help_call_id
       FROM agency_agent_sessions s
      WHERE s.tenant_id = $1::uuid AND s.account_id = $2::uuid AND s.left_at IS NULL
      ORDER BY s.agent_user_id, s.joined_at DESC, s.id DESC
@@ -120,7 +131,8 @@ export const FLOOR_ROWS_SQL = `
          COALESCE(ib.on_call, false) AS on_inbound_call,
          COALESCE(ib.outcome_owed, false) AS inbound_outcome_owed,
          EXISTS (SELECT 1 FROM staffed st WHERE st.agent_user_id = o.agent_user_id) AS staffed,
-         NULL::timestamptz AS left_at
+         NULL::timestamptz AS left_at,
+         o.help_raised_at, o.help_call_id
     FROM open_sessions o
     LEFT JOIN agency_campaigns cam ON cam.id = o.campaign_id AND cam.tenant_id = $1::uuid
     -- The session's unsettled inbound call (on_call, outcome_owed, its captured window): the
@@ -129,7 +141,8 @@ export const FLOOR_ROWS_SQL = `
   UNION ALL
   SELECT NULL::uuid, st.agent_user_id, NULL::uuid, NULL::varchar, NULL::int, NULL::jsonb,
          'offline'::varchar, NULL::timestamptz, NULL::varchar, NULL::varchar, false, false, true,
-         CASE WHEN last.left_at >= $3::timestamptz THEN last.left_at END
+         CASE WHEN last.left_at >= $3::timestamptz THEN last.left_at END,
+         NULL::timestamptz, NULL::uuid
     FROM staffed st
     -- Their last session in the account: sessions of one agent in one tenant never overlap
     -- (uq_agency_agent_live_tenant), so the newest joined is the last to end. The walk goes back
@@ -178,6 +191,7 @@ export class AgencyFloorRepository {
   async floorRows(tenantId: string, accountId: string, from: Date): Promise<AgencyFloorRow[]> {
     const { rows } = await getPool().query<AgencyFloorRow>(FLOOR_ROWS_SQL, [
       tenantId, accountId, from, [...FLOOR_ACTIVE_STATUSES], INBOUND_DEFAULT_WRAPUP_SECONDS, AGENCY_INBOUND_OUTCOME_LAPSE_MS,
+      AGENCY_HELP_EXPIRY_MS,
     ]);
     const out = rows.map((r): AgencyFloorRow => ({
       ...r,

@@ -62,14 +62,19 @@ export function parsePromisesWindow(rawFrom: unknown, rawTo: unknown): { ok: tru
 }
 
 /**
- * The label of a break code: a reserved code's own (`RESERVED_BREAK_REASON_LABELS`), else the
- * campaign catalog's as the break menu resolves it (`resolveBreakReasons`: the default catalog when
- * the campaign lists none). Null for no code, or a code neither knows.
+ * The label and limit of a break code, the catalog resolved once: a reserved code's own label
+ * (`RESERVED_BREAK_REASON_LABELS`) and no limit, else the campaign catalog's entry as the break menu
+ * resolves it (`resolveBreakReasons`: the default catalog when the campaign lists none; the limit
+ * as `breakLimitMinutes` reads it). Both null for no code, or a code neither knows.
  */
-export function floorBreakLabel(code: string | null, catalog: AgencyBreakReason[] | null): string | null {
-  if (!code) return null;
-  if (isReservedBreakReason(code)) return RESERVED_BREAK_REASON_LABELS[code as AgencyReservedBreakReason];
-  return resolveBreakReasons(catalog).find((r) => r.code === code)?.label ?? null;
+export function floorBreak(
+  code: string | null,
+  catalog: AgencyBreakReason[] | null,
+): { label: string | null; limit_minutes: number | null } {
+  if (!code) return { label: null, limit_minutes: null };
+  if (isReservedBreakReason(code)) return { label: RESERVED_BREAK_REASON_LABELS[code as AgencyReservedBreakReason], limit_minutes: null };
+  const reason = resolveBreakReasons(catalog).find((r) => r.code === code);
+  return { label: reason?.label ?? null, limit_minutes: reason?.limit_minutes ?? null };
 }
 
 /**

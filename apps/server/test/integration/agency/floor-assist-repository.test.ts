@@ -14,7 +14,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
 }));
 
 const {
-  agencyFloorAssistRepository: repo, OPEN_HELP_FOR_ACCOUNT_SQL, SWEEP_EXPIRED_SQL, LIVE_CALL_FOR_SESSION_SQL, HELP_SWEEP_BATCH,
+  agencyFloorAssistRepository: repo, agencyFloorRepository, SWEEP_EXPIRED_SQL, LIVE_CALL_FOR_SESSION_SQL, HELP_SWEEP_BATCH,
 } = await import('../../../src/db/repositories/agency.repository.js');
 const { registerFloorRoutes, clearFloorCallsTodayCacheForTests } = await import('../../../src/api/routes/agency/floor.js');
 
@@ -44,6 +44,12 @@ interface Session { id: string; tenant_id: string; account_id: string; agent_use
 async function session(over: Record<string, unknown> = {}): Promise<Session> {
   const campaign = await insertAgencyCampaign({ status: 'running', ...(over['tenant_id'] ? { tenant_id: over['tenant_id'] } : {}), ...(over['account_id'] ? { account_id: over['account_id'] } : {}) });
   return await insertAgentSession(campaign.id as string, { state: 'on_call', ...over }) as unknown as Session;
+}
+
+/** The sessions the account's floor rows carry an open Need help on (`FLOOR_ROWS_SQL`, the expiry applied in the read). */
+async function floorHelp(tenantId: string, accountId: string): Promise<string[]> {
+  const rows = await agencyFloorRepository.floorRows(tenantId, accountId, new Date(Date.now() - 3_600_000));
+  return rows.flatMap((r) => (r.help_raised_at !== null && r.session_id !== null ? [r.session_id] : []));
 }
 
 const raise = (s: Session, callId: string | null = null) =>
@@ -124,11 +130,11 @@ describe('the 15-minute expiry, against the database clock', () => {
     const call = randomUUID();
     await raise(s, call);
     const raisedAt = await backdate(s, EXPIRY - 2_000);
-    expect((await repo.openForAccount(T, A, EXPIRY)).map((r) => r.session_id)).toEqual([s.id]);
+    expect(await floorHelp(T, A)).toEqual([s.id]);
     expect(await repo.expireDue(EXPIRY)).toEqual([]);
     await backdate(s, EXPIRY + 1_000);
     const expiredAt = (await row(s)).help_raised_at!;
-    expect(await repo.openForAccount(T, A, EXPIRY)).toEqual([]);
+    expect(await floorHelp(T, A)).toEqual([]);
     expect(await repo.openForSession(s.id, T, A, EXPIRY)).toBeNull();
     const swept = await repo.expireDue(EXPIRY);
     expect(swept).toEqual([{
@@ -315,8 +321,8 @@ describe('the floor\'s read', () => {
     await repo.answer(answered.id, T, randomUUID(), EXPIRY);
     await backdate(expired, EXPIRY + 1);
     await pool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE id = $1`, [left.id]);
-    expect((await repo.openForAccount(T, A, EXPIRY)).map((r) => r.session_id).sort()).toEqual([open.id, soft.id].sort());
-    expect((await repo.openForAccount(T, OTHER_ACCOUNT, EXPIRY)).map((r) => r.session_id)).toEqual([otherAccount.id]);
+    expect((await floorHelp(T, A)).sort()).toEqual([open.id, soft.id].sort());
+    expect(await floorHelp(T, OTHER_ACCOUNT)).toEqual([otherAccount.id]);
   });
 
   it('the internal floor handler serves each open session\'s help, null on the rest', async () => {
@@ -411,8 +417,7 @@ describe('the plans', () => {
     }
   }
 
-  it('the floor\'s read and the sweep walk the partial index of requests not answered', async () => {
-    expect(await plan(OPEN_HELP_FOR_ACCOUNT_SQL, [T, A, EXPIRY])).toContain('idx_agency_agent_sessions_help_open');
+  it('the sweep walks the partial index of requests not answered', async () => {
     expect(await plan(SWEEP_EXPIRED_SQL, [EXPIRY, HELP_SWEEP_BATCH])).toContain('idx_agency_agent_sessions_help_open');
   });
 

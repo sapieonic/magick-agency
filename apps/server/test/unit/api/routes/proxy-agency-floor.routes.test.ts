@@ -62,16 +62,22 @@ let caller: { role: MembershipRole; accountId?: string | null };
 let app: FastifyInstance;
 let floor: { agents: CoreFloorAgent[]; totals: { on_shift: number; assigned: number }; as_of: string };
 let deps: FloorRouteDeps & { calls: CoreCallRequest[]; coreAnswer: CoreCallResult | null };
+/** The account's flags as the snapshot `deps.flags` answers resolves them, by key. */
+let flagValues: Record<string, boolean>;
 
 beforeEach(async () => {
   caller = { role: 'account_admin' };
   floor = { agents: [onCall(), away()], totals: { on_shift: 1, assigned: 2 }, as_of: NOW.toISOString() };
+  flagValues = { agency_live_listen_enabled: true, agency_live_listen_unrecorded: true, agency_floor_assist_enabled: true };
   const d = {
     calls: [] as CoreCallRequest[],
     coreAnswer: null as CoreCallResult | null,
     callCore: vi.fn(async (req: CoreCallRequest) => { d.calls.push(req); return d.coreAnswer ?? json(200, floor); }),
     names: vi.fn(async () => new Map<string, string | null>([[AGENT, 'Agent Smith']])),
-    listenFlags: vi.fn(async () => ({ enabled: true, unrecordedAllowed: true })),
+    flags: vi.fn(async () => ({
+      isEnabled: (flag: { key: string }) => flagValues[flag.key] ?? false,
+      getValue: (flag: { key: string }) => flagValues[flag.key],
+    })),
     maxPerCall: () => 2,
     dialerEnabled: vi.fn(async () => true),
     promiseSummary: vi.fn(async () => [
@@ -79,7 +85,6 @@ beforeEach(async () => {
       { campaign_id: null, promises: 1, with_amount: 0, amount_total: '0.00' },
     ]),
     promiseCampaignIds: vi.fn(async () => ['c-1']),
-    floorAssistEnabled: vi.fn(async () => true),
     now: () => NOW,
   };
   deps = d as never;
@@ -208,7 +213,7 @@ describe('GET /floor', () => {
       onCall({ agent_user_id: ME, session_id: 's-3', call: { ...onCall().call!, call_id: 'c3' } }),
       onCall({ agent_user_id: 'a-4', session_id: 's-4', call: { ...onCall().call!, call_id: 'c4', listener_user_ids: [ME, OTHER_LISTENER] } }),
     ];
-    (deps.listenFlags as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: true, unrecordedAllowed: false });
+    flagValues['agency_live_listen_unrecorded'] = false;
     const calls = (await getFloor()).json().agents.map((a: { call: { listenable: boolean; not_listenable_reason: string | null } }) => [a.call.listenable, a.call.not_listenable_reason]);
     expect(calls).toEqual([
       [false, 'listen_limit_call'],
@@ -217,18 +222,20 @@ describe('GET /floor', () => {
       // The reader's own open listen does not count against them.
       [true, null],
     ]);
-    expect(deps.listenFlags).toHaveBeenCalledWith(TENANT, ACCOUNT);
+    // One snapshot of the account's flags per poll, for listening and floor assist alike.
+    expect(deps.flags).toHaveBeenCalledTimes(1);
+    expect(deps.flags).toHaveBeenCalledWith(TENANT, ACCOUNT);
   });
 
   it('listening off for the account: the floor is served, every call unlistenable with no reason', async () => {
-    (deps.listenFlags as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: false, unrecordedAllowed: true });
+    flagValues['agency_live_listen_enabled'] = false;
     const res = await getFloor();
     expect(res.statusCode).toBe(200);
     expect(res.json().agents[0].call).toMatchObject({ customer_name: 'Ada', listenable: false, not_listenable_reason: null });
   });
 
   it('the listening flags unreadable: the floor is served (never a 503), every call unlistenable', async () => {
-    (deps.listenFlags as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
+    (deps.flags as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
     const res = await getFloor();
     expect(res.statusCode).toBe(200);
     expect(res.json().agents[0].call).toMatchObject({ listenable: false, not_listenable_reason: null });
@@ -236,15 +243,15 @@ describe('GET /floor', () => {
 
   it('Need help (LF4) only while floor assist is on: off, every row\'s help is null; the flag read for the account', async () => {
     expect((await getFloor()).json().agents[0].help).toEqual({ raised_at: '2026-11-18T09:59:00.000Z', call_id: CALL });
-    expect(deps.floorAssistEnabled).toHaveBeenCalledWith(TENANT, ACCOUNT);
-    (deps.floorAssistEnabled as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    expect(deps.flags).toHaveBeenCalledWith(TENANT, ACCOUNT);
+    flagValues['agency_floor_assist_enabled'] = false;
     const off = await getFloor();
     expect(off.statusCode).toBe(200);
     expect(off.json().agents.map((a: { help: unknown }) => a.help)).toEqual([null, null]);
   });
 
   it('the floor assist flag unreadable: the floor is served (never a 503), no row carries help', async () => {
-    (deps.floorAssistEnabled as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
+    (deps.flags as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
     const res = await getFloor();
     expect(res.statusCode).toBe(200);
     expect(res.json().agents[0]).toMatchObject({ help: null, calls_today: 12 });

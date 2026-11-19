@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { AGENCY_INBOUND_OUTCOME_LAPSE_MS } from '@magick-agency/contracts/agency';
+import { AGENCY_HELP_EXPIRY_MS, AGENCY_INBOUND_OUTCOME_LAPSE_MS } from '@magick-agency/contracts/agency';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertAccount, insertTenant, insertUser } from '../setup/factories.js';
 import {
@@ -181,7 +181,7 @@ describe('floorRows', () => {
       await client.query(
         `INSERT INTO agency_agent_sessions (id, tenant_id, account_id, campaign_id, agent_user_id, state, joined_at)
          VALUES ($1, $2, $3, $4, $5, 'available', now())`, [newer, T, A, c1.id, users['tea']]);
-      const { rows } = await client.query(FLOOR_ROWS_SQL, [T, A, FROM, ['running', 'stopping', 'paused'], INBOUND_DEFAULT_WRAPUP_SECONDS, AGENCY_INBOUND_OUTCOME_LAPSE_MS]);
+      const { rows } = await client.query(FLOOR_ROWS_SQL, [T, A, FROM, ['running', 'stopping', 'paused'], INBOUND_DEFAULT_WRAPUP_SECONDS, AGENCY_INBOUND_OUTCOME_LAPSE_MS, AGENCY_HELP_EXPIRY_MS]);
       const tea = rows.filter((r: { agent_user_id: string }) => r.agent_user_id === users['tea']);
       expect(tea.map((r: { session_id: string }) => r.session_id)).toEqual([newer]);
     } finally {
@@ -411,7 +411,7 @@ describe('the plan, on a seeded table', () => {
   }
 
   it('reads the account\'s open sessions on uq_agency_agent_live_tenant by the tenant, never the sessions table whole', async () => {
-    const p = await plan(FLOOR_ROWS_SQL, [T, A, FROM, ['running', 'stopping', 'paused'], INBOUND_DEFAULT_WRAPUP_SECONDS, AGENCY_INBOUND_OUTCOME_LAPSE_MS]);
+    const p = await plan(FLOOR_ROWS_SQL, [T, A, FROM, ['running', 'stopping', 'paused'], INBOUND_DEFAULT_WRAPUP_SECONDS, AGENCY_INBOUND_OUTCOME_LAPSE_MS, AGENCY_HELP_EXPIRY_MS]);
     const live = p.filter((n) => n['Index Name'] === 'uq_agency_agent_live_tenant');
     expect(live.length).toBe(1);
     expect(String(live[0]!['Index Cond'])).toMatch(/tenant_id = /);

@@ -55,7 +55,6 @@ export {
   agencyFloorAssistRepository,
   HELP_SWEEP_BATCH,
   LIVE_CALL_FOR_SESSION_SQL,
-  OPEN_HELP_FOR_ACCOUNT_SQL,
   SWEEP_EXPIRED_SQL,
 } from './agency/floor-assist.repository.js';
 export type {

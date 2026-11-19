@@ -32,6 +32,13 @@ const OPEN = 'help_raised_at IS NOT NULL AND help_answered_at IS NULL';
 /** Raised less than `$n` ms ago. */
 const fresh = (param: string) => `help_raised_at > now() - ${param}::bigint * interval '1 millisecond'`;
 
+/**
+ * A session's request is open and fresh (`$n` the expiry in ms), over the session row's bare column
+ * names: the rule every read applies (the station's `ready.help` here, the floor's rows in
+ * `floor.repository.ts`), on the database's clock.
+ */
+export const helpOpenSql = (param: string): string => `${OPEN} AND ${fresh(param)}`;
+
 /** Raised `$n` ms ago or more: expired. */
 const expired = (param: string) => `help_raised_at <= now() - ${param}::bigint * interval '1 millisecond'`;
 
@@ -171,13 +178,6 @@ const RAISE_SQL = `
          raised.help_raised_at AS raised_at, raised.help_call_id AS call_id
     FROM prior LEFT JOIN raised ON true`;
 
-/** An account's open requests on open sessions: the floor read. `$3` the expiry in ms. Exported for its plan test. */
-export const OPEN_HELP_FOR_ACCOUNT_SQL = `
-  SELECT id AS session_id, help_raised_at AS raised_at, help_call_id AS call_id
-    FROM agency_agent_sessions
-   WHERE tenant_id = $1::uuid AND account_id = $2::uuid AND left_at IS NULL
-     AND ${OPEN} AND ${fresh('$3')}`;
-
 /**
  * The call the session is connected to now (`agency_calls.id`), on any spine: a bridged campaign
  * attempt the session holds, its bridged soft-phone call, or its connected inbound call; the most
@@ -239,7 +239,7 @@ export class AgencyFloorAssistRepository {
       `SELECT id AS session_id, help_raised_at AS raised_at, help_call_id AS call_id
          FROM agency_agent_sessions
         WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND left_at IS NULL
-          AND ${OPEN} AND ${fresh('$4')}`,
+          AND ${helpOpenSql('$4')}`,
       [sessionId, tenantId, accountId, expiryMs],
     );
     return rows[0] ?? null;
@@ -282,12 +282,6 @@ export class AgencyFloorAssistRepository {
       for (const { expired: _expired, ...row } of rows) out.push(row);
       if (rows.length < HELP_SWEEP_BATCH) return out;
     }
-  }
-
-  /** The account's open requests on its open sessions (the floor read). */
-  async openForAccount(tenantId: string, accountId: string, expiryMs: number): Promise<OpenHelpRow[]> {
-    const { rows } = await getPool().query<OpenHelpRow>(OPEN_HELP_FOR_ACCOUNT_SQL, [tenantId, accountId, expiryMs]);
-    return rows;
   }
 
   /** The call the session is connected to now (`agency_calls.id`), or null. */
