@@ -141,7 +141,7 @@ describe('buildResourceAttributes', () => {
 
   it('carries each bundled package\'s version as its own attribute', () => {
     const attrs = buildResourceAttributes({}, {
-      version, hostname, packageVersions: { contracts: '0.26.0', db: '0.24.0', 'report-renderer': '0.4.3' },
+      version, hostname, packageVersions: { contracts: '0.26.0', db: '0.24.0', 'web-ui': '0.3.1' },
     });
     expect(attrs).toEqual({
       'service.name': 'magick-agency',
@@ -149,7 +149,8 @@ describe('buildResourceAttributes', () => {
       'deployment.environment': 'development',
       'magick_agency.package.contracts.version': '0.26.0',
       'magick_agency.package.db.version': '0.24.0',
-      'magick_agency.package.report-renderer.version': '0.4.3',
+      // A hyphen in a package's name is `_` within the attribute's name component.
+      'magick_agency.package.web_ui.version': '0.3.1',
     });
   });
 

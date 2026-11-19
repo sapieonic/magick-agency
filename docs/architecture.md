@@ -871,8 +871,9 @@ key on `request.ip`, which trusts exactly `TRUST_PROXY_HOPS` proxies (Q9).
 
 The mobile app names itself in `X-Client` (`magick-agency-mobile/<semver>+<build> (<ios|android>
 <osver>; <model>)`); the console and super-admin send `<originator>/<version>`
-(`magick-agency-console/0.29.0`), which is still `web`, and anything else is a bare `web`
-(`utils/client-header.ts`). An app-wide `onRequest` hook (`api/middleware/client-log-context.ts`)
+(`magick-agency-console/<version>`), which is still `web` with the name and version read (any other
+single `<name>/<version>` is read the same way, as the caller's claim), and anything else is a bare
+`web` (`utils/client-header.ts`). An app-wide `onRequest` hook (`api/middleware/client-log-context.ts`)
 puts it on every log line the request produces as `client`, with `clientApp` / `clientVersion` for
 an app that names itself and `clientPlatform` for the mobile app, through the ambient log context.
 It is never a rate-limit key and never an auth input.

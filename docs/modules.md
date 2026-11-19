@@ -645,7 +645,7 @@ Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`,
 | `apps/server/test/unit/api/middleware/rate-limit.scope.test.ts` | 3 |
 | `apps/server/test/unit/api/middleware/rate-limit.user-bucket.test.ts` | 4 |
 | `apps/server/test/unit/api/middleware/tenant-context.middleware.test.ts` | 25 |
-| `apps/server/test/unit/api/client-log-context.test.ts` | 3 |
+| `apps/server/test/unit/api/client-log-context.test.ts` | 4 |
 
 ### `apps/server/src/api/responses/`
 
@@ -1329,11 +1329,12 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
-| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 35 |
+| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 37 |
+| `apps/server/test/unit/build/package-versions.test.ts` (the bundled packages' versions the build injects: `dependencies` only, never the runtime-loaded renderer; read back by `@magick-agency/observability`) | 4 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
 | `apps/server/test/unit/utils/recording-proxy.test.ts` (with Plivo's regional media hosts proxied and a host with an empty label refused) | 48 |
 | `apps/server/test/unit/utils/recording-proxy-diagnosis.test.ts` (RC1 404 for a call that did not ask; RC3 every "could not reach" answer's status, `reason`, log fields and counter, hosts only, never the URL; the 504 headers timeout; RC4 redirect hosts off by default, exact, hops only, no credential) | 21 |
-| `apps/server/test/unit/utils/client-header.test.ts` | 5 |
+| `apps/server/test/unit/utils/client-header.test.ts` | 7 |
 | `apps/server/test/unit/utils/recording-url.test.ts` | 13 |
 | `apps/server/test/unit/utils/trace-context.test.ts` | 4 |
 | `apps/server/test/unit/utils/redact-url.test.ts` | 23 |
@@ -1759,7 +1760,7 @@ Files: `crypto.ts`, `index.ts`, `log-context.ts`, `logger.ts`, `meter.ts`, `metr
 
 | Test file | Cases |
 |---|---|
-| `packages/observability/test/logger.test.ts` | 4 |
+| `packages/observability/test/logger.test.ts` | 5 |
 | `packages/observability/test/metric-instruments.test.ts` (the settable gauge: every label set observed; `retire` reports once and goes) | 3 |
 | `packages/observability/test/metrics-agency.test.ts` (with the `agency_listen_*` labels and the active gauge) | 11 |
 | `packages/observability/test/metrics-platform.test.ts` (the push senders' instruments and `trackPushSend`) | 3 |
@@ -1897,7 +1898,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts` (a
 | `apps/console/src/__tests__/api/error-analytics.test.ts` | 5 |
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
-| `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
+| `apps/console/src/__tests__/api/originator-header.test.ts` | 8 |
 | `apps/console/src/__tests__/api/reports.test.ts` | 13 |
 | `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
 | `apps/console/src/__tests__/api/stationDevice.test.ts` | 5 |
@@ -2471,7 +2472,7 @@ Files: `saRoutes.ts`, `super-admin.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 35 |
+| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 36 |
 | `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 65 |
 
 ### `apps/super-admin/src/components/`
@@ -2647,7 +2648,7 @@ Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts
 
 | Test file | Cases |
 |---|---|
-| `apps/report-renderer/test/lambda.test.ts` | 9 |
+| `apps/report-renderer/test/lambda.test.ts` | 14 |
 | `apps/report-renderer/test/build-lambda.test.ts` | 2 |
 | `apps/report-renderer/test/chromium-layer.test.ts` | 1 |
 

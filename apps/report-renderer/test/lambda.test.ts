@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { createHmac } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { SQSEvent } from 'aws-lambda';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   REPORT_SIGNATURE_HEADER,
   REPORT_TIMESTAMP_HEADER,
@@ -22,7 +22,7 @@ import {
   type ReportRenderCallback,
   type ReportRenderMessage,
 } from '@magick-agency/contracts/reports';
-import { createHandler, logRecord, type HandlerDeps } from '../src/lambda';
+import { createHandler, handler, logRecord, type HandlerDeps } from '../src/lambda';
 import { RENDERER_VERSION } from '../src/version';
 import { CALLBACK_BACKOFF_MS } from '../src/lambda/callback';
 import { chromiumSpecifier, loadSparticuzChromium } from '../src/lambda/chromium';
@@ -223,16 +223,38 @@ describe('@sparticuz/chromium resolution', () => {
 });
 
 describe('logRecord', () => {
-  it('stamps every Lambda line with its time and the renderer\'s version; the event\'s fields follow', () => {
+  it('stamps every Lambda line with its time and the renderer\'s version, after the event\'s fields', () => {
     const at = new Date('2026-11-19T10:00:00.000Z');
     expect(logRecord({ event: 'record.failed', message_id: 'm1' }, at)).toEqual({
+      event: 'record.failed',
+      message_id: 'm1',
       ts: '2026-11-19T10:00:00.000Z',
       version: RENDERER_VERSION,
       // Empty outside the Lambda build, which injects them (test/build-lambda.test.ts).
       packages: {},
-      event: 'record.failed',
-      message_id: 'm1',
     });
     expect(RENDERER_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('cannot be overridden by an event field of the same name', () => {
+    const line = logRecord({ ts: 'x', version: 'dataset-2', packages: 'y' });
+    expect(line['version']).toBe(RENDERER_VERSION);
+    expect(line['packages']).toEqual({});
+    expect(line['ts']).not.toBe('x');
+  });
+
+  it('is what the deployed handler writes: one JSON line per event, stamped', async () => {
+    vi.stubEnv('AGENCY_REPORTS_CALLBACK_SECRET', '');
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      // No secret: the record fails before any S3 or Chromium work, and is logged.
+      const result = await handler({ Records: [{ messageId: 'm1', body: '{}' }] } as unknown as SQSEvent);
+      expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'm1' }]);
+      const lines = spy.mock.calls.map(([text]) => JSON.parse(String(text)) as Record<string, unknown>);
+      expect(lines).toEqual([expect.objectContaining({ event: 'record.failed', message_id: 'm1', version: RENDERER_VERSION, packages: {} })]);
+    } finally {
+      spy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 });

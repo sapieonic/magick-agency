@@ -145,9 +145,13 @@ export function processInstanceSuffix(env: Env): string | null {
 /** A bundled package's name as it may appear in an attribute key. */
 const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 
-/** The resource attribute carrying a bundled workspace package's version. */
+/**
+ * The resource attribute carrying a bundled workspace package's version. A hyphen in the
+ * package's name is `_` (OTel's separator within a name component, and what Loki and
+ * Prometheus would make of it anyway).
+ */
 export function packageVersionAttribute(name: string): string {
-  return `magick_agency.package.${name}.version`;
+  return `magick_agency.package.${name.replaceAll('-', '_')}.version`;
 }
 
 export function buildResourceAttributes(
@@ -162,7 +166,7 @@ export function buildResourceAttributes(
   };
   // Every workspace package bundled into this build, with its own release-please version
   // (`magick_agency.package.db.version`, …; `magick_agency_package_db_version` in Loki and on
-  // `target_info`). A resource attribute rides on every exported log, span and metric at no
+  // `target_info`; apps/server/scripts/package-versions.mjs decides which are bundled). A resource attribute rides on every exported log, span and metric at no
   // per-series cost, so a line in Grafana names the release of each package behind it.
   for (const [name, version] of Object.entries(opts.packageVersions ?? {})) {
     if (PACKAGE_NAME.test(name) && version) attrs[packageVersionAttribute(name)] = version;

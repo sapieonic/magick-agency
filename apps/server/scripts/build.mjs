@@ -4,22 +4,15 @@
 // package.json must declare every third-party dependency it reaches.
 import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
+import { bundledPackageVersions } from './package-versions.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 const workspace = /^@magick-agency\//;
 
-// The workspace packages esbuild bundles in: every @magick-agency/* the server declares
-// (report-renderer is a devDependency because it is only ever bundled, never installed).
-// Their versions go on the OTel resource and the listening line (packages/observability/src/version.ts).
-const packageVersions = Object.fromEntries(
-  Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })
-    .filter((name) => workspace.test(name))
-    .sort()
-    .map((name) => {
-      const dep = JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8'));
-      return [name.replace(workspace, ''), dep.version];
-    }),
+// The bundled workspace packages' versions, for the OTel resource and the listening line.
+const packageVersions = bundledPackageVersions(pkg, (name) =>
+  JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')),
 );
 
 await build({

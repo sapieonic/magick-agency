@@ -34,9 +34,12 @@ export interface HandlerDeps extends PostDeps {
   tmpDir?: string;
 }
 
-/** One Lambda log record: time and versions first, the event's own fields after. */
+/**
+ * One Lambda log record: the event's own fields, then the time and versions, which an event
+ * field of the same name cannot replace.
+ */
 export function logRecord(line: Record<string, unknown>, at: Date = new Date()): Record<string, unknown> {
-  return { ts: at.toISOString(), version: RENDERER_VERSION, packages: BUNDLED_PACKAGE_VERSIONS, ...line };
+  return { ...line, ts: at.toISOString(), version: RENDERER_VERSION, packages: BUNDLED_PACKAGE_VERSIONS };
 }
 
 function jsonLog(line: Record<string, unknown>): void {

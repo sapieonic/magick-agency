@@ -10,8 +10,10 @@ import type { AgencyClientKind } from '@magick-agency/contracts/agency';
  *
  * The web UIs send `X-Client: <app>/<semver>`, the app being their originator
  * (`magick-agency-console`, `magick-agency-super-admin`): still `web`, with `app` and
- * `version` read so every line names which build of which UI sent it. A header in no
- * known shape (a browser's user agent, a curl) is a bare `web`.
+ * `version` read so every line names which build of which UI sent it. Any other single
+ * `<name>/<version>` token is read the same way and logged as given (`curl/8.5.0` is app
+ * `curl`), so `clientApp` is what the caller says it is, not proof it is one of ours. A
+ * header in no such shape (a browser's user agent, with its spaces) is a bare `web`.
  *
  * **Client-declared and unverified.** It picks the liveness intervals a session is
  * served and labels logs; it is never an auth input, never a rate-limit key, and never
@@ -41,8 +43,12 @@ const VERSION = /^[0-9A-Za-z.+-]{1,40}$/;
 
 const PLATFORM = /^\((ios|android)\b/i;
 
-/** A web UI's name: lower-case words and hyphens, as an originator is. Nothing that could smuggle a log field. */
-const APP = /^[a-z][a-z0-9-]{0,39}$/;
+/**
+ * An app's name, lower-cased: what the console's brand ids allow (`VALID_BRAND_ID`,
+ * apps/console/src/brand/load-brand.ts) plus the `-console` / `-super-admin` suffix, bounded.
+ * Nothing that could smuggle a log field.
+ */
+const APP = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 /** `<app>/<version>` from a web UI: one token, no detail. */
 function parseWebApp(header: string): ParsedClientHeader {

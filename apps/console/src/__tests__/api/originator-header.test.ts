@@ -125,7 +125,7 @@ describe('X-Client header', () => {
     expect(expected).toBe(`magick-agency-console/${version}`);
   });
 
-  it('is sent on apiFetch, and options.headers cannot drop it', async () => {
+  it('is sent on apiFetch alongside a caller\'s own headers', async () => {
     mocks.fetch.mockResolvedValue(okJson());
     await apiFetch('/api/example', { headers: { 'X-Custom': 'v' } });
     expect(headersOf()['X-Client']).toBe(expected);

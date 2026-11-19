@@ -14,7 +14,7 @@ export const ORIGINATOR_HEADER = 'x-mgkvc-originator';
 export const ORIGINATOR = `${brand.id}-super-admin`;
 
 /**
- * `X-Client: <originator>/<version>` (`magick-agency-super-admin/0.29.0`): which build of this UI
+ * `X-Client: <originator>/<version>` (`magick-agency-super-admin/<version>`): which build of this UI
  * sent a request. The server reads it into `clientApp` / `clientVersion` on every log line
  * the request produces (`apps/server/src/utils/client-header.ts`), as it does for the mobile
  * app. Logging only: never an auth input or a rate-limit key.

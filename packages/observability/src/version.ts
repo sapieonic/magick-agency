@@ -9,8 +9,9 @@ declare const __MAGICK_AGENCY_VERSION__: string | undefined;
 
 /**
  * The versions of the workspace packages bundled into the server (`contracts`, `db`,
- * `domain`, `observability`, `report-renderer`), keyed by the name after `@magick-agency/`.
- * Injected by the same build from each package's package.json; empty outside a build.
+ * `domain`, `observability`), keyed by the name after `@magick-agency/`. Injected by the
+ * same build from each package's package.json (apps/server/scripts/package-versions.mjs);
+ * empty outside a build.
  * The server puts them on its OTel resource and its listening line, so a log line in
  * Grafana says which release of every package produced it, not only the server's.
  */
