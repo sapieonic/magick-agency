@@ -1,14 +1,10 @@
 import { useEffect, useState } from 'react';
 
-/**
- * Tracks whether a CSS media query currently matches, updating live as the viewport changes.
- * Where the environment has no `matchMedia` (jsdom, unless a test stubs it) nothing matches.
- */
+/** Tracks whether a CSS media query currently matches, updating live as the viewport changes. */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => (hasMatchMedia() ? window.matchMedia(query).matches : false));
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
 
   useEffect(() => {
-    if (!hasMatchMedia()) return undefined;
     const mql = window.matchMedia(query);
     const handleChange = () => setMatches(mql.matches);
     handleChange();
@@ -17,8 +13,4 @@ export function useMediaQuery(query: string): boolean {
   }, [query]);
 
   return matches;
-}
-
-function hasMatchMedia(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function';
 }
