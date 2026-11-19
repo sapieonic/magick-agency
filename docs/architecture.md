@@ -1025,6 +1025,30 @@ a rate-limit key and never an auth input.
   attempts: the floor's rows 5–7 ms, its calls 1.5 ms, today's conversations 35 ms (the window's
   attempts; kept 30 s per account), the promises summary under 2 ms.
 
+  **Live floor Phase 3, floor assist (LF4, LF5, LF11–LF19).** Behind `agency_floor_assist_enabled`
+  (off by default). `api/routes/proxy-agency-floor-assist.routes.ts` serves the agent's Need help
+  (`POST`/`DELETE /proxy/agency/sessions/:id/help`, `agency.station.connect`, the caller's own session)
+  and a supervisor's message (`POST /proxy/agency/sessions/:id/messages`, `agency.supervise`), each
+  through `callCore` to `api/routes/agency/floor-assist.ts`, which runs in the process holding the
+  agent's station (owners `session_param` and `body_session`, `api/core-owners.ts`). The rules and
+  side effects are one service per process, `agency/floor-assist.ts` (`runtime.floorAssist`): every
+  Need help transition is one conditional statement on the session row
+  (`db/repositories/agency/floor-assist.repository.ts`, `0052_floor_assist.sql`), and only a row it
+  returned gets its frame (`help_answered`, `help_cleared`), audit row and metric, so a request ends
+  exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (the
+  console's 5 s poll), never a push. A listen answers it when the listener socket goes live
+  (`listen-socket.ts`'s `onListenLive`), a message when the agent's station took its
+  `supervisor_message` frame; the session ending clears it in `leaveSession`; the 15-minute expiry is
+  applied on every read against the database's clock, and a sweep in the primary every 15 s
+  (`bootstrap/agency.ts`) clears the expired ones, sending the frame and writing the row. The floor
+  assist frames go only to a station that can receive them (`StationRegistry`'s
+  `canTakeFloorAssist`: a console, or a phone declaring `floor_assist`, staged until the app's wire
+  package decodes them), so a message with no such station is `409 agent_not_live`. Messages are
+  kept in `agency_supervisor_messages` and deleted after 90 days by the retention purge
+  (`maintenance/retention-purge.ts`, every run). With media workers the sweep's frames reach the
+  worker holding the station through the station directory (`cluster/station-directory.ts`'s
+  `send`, IPC `station.send`).
+
 ## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
 
 Off by default: with neither set, everything above is one process, exactly as described. Design

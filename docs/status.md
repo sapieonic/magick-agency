@@ -2362,6 +2362,27 @@ Known limits: the dialler-conversations count reads the day's attempts deploymen
 filters to the account (an account-first index would bound it); Will pay shows Successes for a
 moment until the promises read answers. Test counts below.
 
+### Live floor Phase 3, Need help and supervisor messages 2026-11-19 (LF4, LF5, LF11–LF19, server)
+
+The server half of Phase 3's floor assist, behind `agency_floor_assist_enabled` (off by default,
+LF11). **Need help** (LF4): the agent raises it on their own live session, on a call or in wrap-up,
+with `POST /proxy/agency/sessions/:id/help` and cancels it with `DELETE` (the session row's
+`help_raised_at`, `help_call_id`, `help_answered_at`, `help_answered_by`, `0052_floor_assist.sql`);
+every `agency.supervise` holder sees it on the floor read (`AgencyFloorAgent.help`, polled every
+5 s, no push). It clears exactly once: a supervisor's listen going live on the agent's call, their
+message reaching the agent's station, the agent's cancel, 15 minutes (read on every read; a 15 s
+sweep in the primary sends the frame and writes the row), or the session ending; the station hears
+`help_answered` and `help_cleared`, each end is one audit row, and an expiry warns
+(`agy-help-unanswered`). **Messages** (LF5): `POST /proxy/agency/sessions/:id/messages`
+(`agency.supervise`), 1 to 500 characters, sent as `supervisor_message` to the agent's live station
+or refused `409 agent_not_live`; kept 90 days in `agency_supervisor_messages` (the retention purge,
+every run), one audit row each. The three station frames and the app's `floor_assist` capability
+are staged outside the agent fixtures' vocabularies until the app's change decodes them (LF16), so a
+message to a phone is `agent_not_live` until then. Not built here: the console's controls (Need
+help on the station, the alert and chime, Talk and Send reminder) and the app's; break limits,
+giving late callbacks to free agents and the account-wide Callbacks list are built beside it on
+their own branch. Test counts below.
+
 ## Test counts
 
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
@@ -3293,7 +3314,8 @@ files are listed in [`modules.md`](modules.md).
 ## Not built
 
 **Live floor** (LF4–LF8, open): Phase 3, Need help from a station, messages from a supervisor to
-an agent (Talk to agent, Send reminder), break limits per reason, giving late callbacks to free
+an agent (Talk to agent, Send reminder) on the console and the app (their server is built,
+2026-11-19, LF4, LF5, LF11–LF19), break limits per reason, giving late callbacks to free
 agents, the account-wide Callbacks list (its schema is a migration numbered 0052 or later); Phase 4, Join
 call and whisper (reopens "listen only"). Their controls are on the console as Coming soon; the
 agent app has none.
