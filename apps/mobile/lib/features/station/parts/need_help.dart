@@ -178,11 +178,8 @@ class _Line extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final (fg, bg) = switch (tone) {
-      Tone.ok => (t.success, t.successSubtle),
-      Tone.warn => (t.warning, t.warningSubtle),
-      _ => (t.danger, t.dangerSubtle),
-    };
+    final fg = tone.fg(t);
+    final bg = tone.bg(t);
     return AppCard(
       color: bg,
       borderColor: fg.withValues(alpha: 0.4),
