@@ -368,23 +368,21 @@ class StationSocket {
     return _mintToken();
   }
 
+  /// Whether the next connect declares `inbound`. Off only while an attach must not answer a ring
+  /// (N5: the server takes an attach with `caps=inbound` during an un-answered ring as its answer;
+  /// one without it ends the ring instead). Read at every connect, whoever starts it.
+  bool declareInbound = true;
+
   /// What this build takes beyond its session's own work, declared on every upgrade
   /// (`caps=inbound,floor_assist`). Without `inbound` the server offers this station no inbound
   /// calls and sends it neither `inbound_call` nor `customer_waiting`; it is left out while
   /// [declareInbound] is off. `floor_assist` (LF16) is always declared: without it the server
   /// sends no supervisor message or Need help answer, and refuses a supervisor's message to this
   /// agent (`409 agent_not_live`).
-  static const capabilities = [StationCapability.inbound, StationCapability.floorAssist];
-
-  /// Whether the next connect declares [capabilities]. Off only while an attach must not answer
-  /// a ring (N5: the server takes an attach with `caps=inbound` during an un-answered ring as its
-  /// answer; one without it ends the ring instead). Read at every connect, whoever starts it.
-  bool declareInbound = true;
-
   Uri _withQuery(Uri url) => url.replace(
         queryParameters: StationCapability.withQuery(
           <String, String>{...url.queryParameters, 'client': 'mobile', 'media': _media.wire},
-          declareInbound ? capabilities : const [StationCapability.floorAssist],
+          [if (declareInbound) StationCapability.inbound, StationCapability.floorAssist],
         ),
       );
 
