@@ -2396,7 +2396,30 @@ minutes (its stats read carries no limit, LF33); Need help is not on the console
 phone views nor the app's soft phone screens (LF24, LF39); the Callbacks page's campaign filter
 lists the board's first 25 campaigns. Test counts below.
 
+### Every package's version in logs 2026-11-19
+
+Each deployable now says which release of every package produced a line (`operations.md` "Where the
+running version shows"). The server's bundled packages (`contracts`, `db`, `domain`,
+`observability`: its `dependencies`, checked against what esbuild inlined at build time) are OTel
+resource attributes, `magick_agency.package.<name>.version`, on every exported log, span and
+metric, and the listening line logs them as `packages`. The console and super-admin send
+`X-Client: <originator>/<version>` (web-ui's `clientHeaders`), which the server logs as
+`clientApp` / `clientVersion` on every line of the request; the console's PostHog events carry
+`$app_version`. The report renderer Lambda stamps `version` and its bundled `contracts` on every
+CloudWatch line. Not covered: the console's station and listener WebSockets (a browser cannot set
+the header), and the packages inside a web build, which the app's release tag gives.
+
 ## Test counts
+
+**Every package's version in logs, 2026-11-19.** Branch `claude-mgkvc/exciting-maxwell-7q5umu`
+(after an independent review's fixes and the `/simplify` cleanup), on the final tree, in a cloud
+container with no Postgres or Redis. From the root: `pnpm test:grafana` 34, `pnpm test:release` 10,
+`pnpm test:tooling` 20; `pnpm lint` clean in every touched package; the server's `pnpm build` clean.
+Unit: `apps/server` 10550 passed + 1 expected fail, 3 failed (534 files): the three
+`inbound-recordings.test.ts` decode cases, which need `mpg123` and `sndfile-programs` (not
+installed here) and fail the same on the base commit; `apps/console` 7838 (422 files),
+`apps/super-admin` 510 (37 files), `apps/report-renderer` 96 + 2 skipped (13 files),
+`packages/web-ui` 245 (22 files), `packages/observability` 24 (5 files). Integration not run.
 
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
 
