@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { createChildLogger } from '@magick-agency/observability';
-import { SOFTPHONE_BREAK_REASON, type AgencyHelpResponse, type AgencySupervisorMessageResponse } from '@magick-agency/contracts/agency';
+import type { AgencyHelpResponse, AgencySupervisorMessageResponse } from '@magick-agency/contracts/agency';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { FLOOR_ASSIST_REFUSAL_MESSAGES, normaliseMessageText, senderNameForFrame } from '../../../agency/floor-assist.js';
+import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
 import type { AgencyAgentSessionRecord } from '../../../db/models/agency.model.js';
 import {
   agencyAgentSessionRepository,
@@ -12,7 +13,7 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import { sendRefusal } from '../helpers/refusal.js';
-import { requireOwnedSession } from './helpers.js';
+import { requireOwnedSession, sendSessionEnded } from './helpers.js';
 
 const log = createChildLogger({ component: 'agency-floor-assist-routes' });
 
@@ -46,7 +47,7 @@ async function onCallOrWrapup(runtime: AgencyRuntime, session: AgencyAgentSessio
   // A soft-phone call: the session stays on the `soft_phone` break through it (docs/softphone.md §2).
   if (lease?.manualCallId || runtime.softphone.hasLiveCall(session.id)) return true;
   if (runtime.inbound?.findCallForSession(session.id)?.phase === 'connected') return true;
-  if (session.kind === 'softphone' || (state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON)) {
+  if (session.kind === 'softphone' || onSoftphoneBreak({ state }, session)) {
     // Its call ended and owes its outcome: the soft phone's wrap-up.
     return (await agencyManualCallRepository.findUnsettledForSession(session.id)) !== null;
   }
@@ -68,20 +69,20 @@ export async function registerFloorAssistRoutes(sub: FastifyInstance, runtime: A
   sub.post('/sessions/:id/help', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
-    if (!(await onCallOrWrapup(runtime, session))) {
-      return sendRefusal(reply, 409, 'help_not_on_call', FLOOR_ASSIST_REFUSAL_MESSAGES.help_not_on_call);
-    }
-    // The call it is raised on, for the floor's card and its Listen; null in wrap-up. Never fails the raise.
-    const callId = await agencyFloorAssistRepository.liveCallIdForSession(session.id, session.tenant_id).catch((err: unknown) => {
-      log.warn({ err, sessionId: session.id }, 'Could not read the call Need help was raised on; raising it without one');
-      return null;
-    });
-    const out = await runtime.floorAssist.raise(session, callId);
-    if (!out.help) {
-      // The session left between the ownership check and the raise.
-      return reply.code(409).send({ error: 'Session Ended', code: 'session_ended', message: 'This session has ended. Start a new one.' });
-    }
-    const body: AgencyHelpResponse = { session_id: session.id, help: out.help };
+    const [onCall, callId] = await Promise.all([
+      onCallOrWrapup(runtime, session),
+      // The call it is raised on, for the floor's card and its Listen; null in wrap-up. Read beside
+      // the check (neither needs the other), and never fails the raise.
+      agencyFloorAssistRepository.liveCallIdForSession(session.id, session.tenant_id).catch((err: unknown) => {
+        log.warn({ err, sessionId: session.id }, 'Could not read the call Need help was raised on; raising it without one');
+        return null;
+      }),
+    ]);
+    if (!onCall) return sendRefusal(reply, 409, 'help_not_on_call', FLOOR_ASSIST_REFUSAL_MESSAGES.help_not_on_call);
+    const help = await runtime.floorAssist.raise(session, callId);
+    // The session left between the ownership check and the raise.
+    if (!help) return sendSessionEnded(reply);
+    const body: AgencyHelpResponse = { session_id: session.id, help };
     return reply.send(body);
   });
 

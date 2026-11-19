@@ -36,6 +36,7 @@ import {
 } from '../../../agency/assignment/operation.js';
 import { guardSupervisedCampaign, refuse } from './shared.js';
 import { isUuid } from '../../../utils/uuid.js';
+import { sendRefusal } from '../helpers/refusal.js';
 
 const log = createChildLogger({ component: 'proxy-agency-assignment' });
 
@@ -70,12 +71,8 @@ function invalid(reply: FastifyReply, details: Record<string, string>): FastifyR
  */
 function refusePoolHandOff(reply: FastifyReply, campaign: AgencyCampaignRecord, op: CanonicalAssignment): boolean {
   if (op.kind !== AGENCY_LATE_CALLBACKS_KIND || campaign.assignment_mode !== 'pool') return false;
-  const code: AgencyLateCallbacksRefusalCode = 'late_callbacks_pool_mode';
-  reply.code(409).send({
-    error: 'Conflict',
-    code,
-    message: 'This campaign shares one queue: no agent owns a callback, so there are none to give to free agents.',
-  });
+  sendRefusal<AgencyLateCallbacksRefusalCode>(reply, 409, 'late_callbacks_pool_mode',
+    'This campaign shares one queue: no agent owns a callback, so there are none to give to free agents.');
   return true;
 }
 

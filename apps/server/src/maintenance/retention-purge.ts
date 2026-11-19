@@ -77,6 +77,25 @@ export const PURGE_TARGETS: PurgeTarget[] = [
   },
 ];
 
+/**
+ * Delete `target`'s rows older than `cutoff` in batches of {@link BATCH_SIZE} until a batch comes
+ * back short, telling `counted` each batch's rows as it commits; in dry-run mode, count them once.
+ */
+async function purgeTarget(target: PurgeTarget, cutoff: Date, dryRun: boolean, counted: (rows: number) => void): Promise<void> {
+  const pool = getPool();
+  if (dryRun) {
+    const result = await pool.query<{ n: number }>(target.countSql, [cutoff]);
+    counted(result.rows[0]?.n ?? 0);
+    return;
+  }
+  let deleted: number;
+  do {
+    const result = await pool.query(target.deleteSql, [cutoff, BATCH_SIZE]);
+    deleted = result.rowCount ?? 0;
+    counted(deleted);
+  } while (deleted === BATCH_SIZE);
+}
+
 export interface RetentionPurgeReport {
   dry_run: boolean;
   /** `AGENCY_RETENTION_DAYS`, or null when unset (no row purge ran). */
@@ -178,25 +197,13 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
   );
 
   try {
-    const pool = getPool();
-
     if (cutoff) {
       for (const target of PURGE_TARGETS) {
         const reportKey = target.table;
-        if (dryRun) {
-          const result = await pool.query<{ n: number }>(target.countSql, [cutoff]);
-          report.tables[reportKey] = result.rows[0]?.n ?? 0;
-        } else {
-          let total = 0;
-          let deleted: number;
-          do {
-            const result = await pool.query(target.deleteSql, [cutoff, BATCH_SIZE]);
-            deleted = result.rowCount ?? 0;
-            total += deleted;
-          } while (deleted === BATCH_SIZE);
-          report.tables[reportKey] = total;
-          log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
-        }
+        let total = 0;
+        await purgeTarget(target, cutoff, dryRun, (rows) => { total += rows; });
+        report.tables[reportKey] = total;
+        if (!dryRun) log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
       }
     }
 
@@ -382,28 +389,23 @@ export const DELETE_OLD_SUPERVISOR_MESSAGES_SQL = `WITH old_messages AS MATERIAL
        )
        DELETE FROM agency_supervisor_messages m USING old_messages WHERE m.id = old_messages.id`;
 
+/** The messages step's target: its own table and cutoff, outside {@link PURGE_TARGETS}' window. */
+const SUPERVISOR_MESSAGES_TARGET: PurgeTarget = {
+  table: 'agency_supervisor_messages',
+  countSql: 'SELECT count(*)::int AS n FROM agency_supervisor_messages WHERE sent_at < $1',
+  deleteSql: DELETE_OLD_SUPERVISOR_MESSAGES_SQL,
+};
+
 /**
  * The Live floor's supervisor messages (LF5): kept {@link AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS}
- * days from when they were sent, then deleted, in batches, adding each batch to
+ * days from when they were sent, then deleted, in batches ({@link purgeTarget}), adding each batch to
  * `report.supervisor_messages_deleted` as it commits. A fixed policy (Manas, LF5), so it runs on
  * every run whatever `AGENCY_RETENTION_DAYS` says. In dry-run mode it counts.
  */
 async function purgeSupervisorMessages(dryRun: boolean, report: RetentionPurgeReport): Promise<void> {
-  const pool = getPool();
   const cutoff = new Date(Date.now() - AGENCY_SUPERVISOR_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-  if (dryRun) {
-    const result = await pool.query<{ n: number }>(
-      'SELECT count(*)::int AS n FROM agency_supervisor_messages WHERE sent_at < $1', [cutoff],
-    );
-    report.supervisor_messages_deleted = result.rows[0]?.n ?? 0;
-    return;
-  }
-  let deleted: number;
-  do {
-    const result = await pool.query(DELETE_OLD_SUPERVISOR_MESSAGES_SQL, [cutoff, BATCH_SIZE]);
-    deleted = result.rowCount ?? 0;
-    report.supervisor_messages_deleted += deleted;
-  } while (deleted === BATCH_SIZE);
+  await purgeTarget(SUPERVISOR_MESSAGES_TARGET, cutoff, dryRun, (rows) => { report.supervisor_messages_deleted += rows; });
+  if (dryRun) return;
   if (report.supervisor_messages_deleted > 0) {
     log.info({ messagesDeleted: report.supervisor_messages_deleted }, 'Supervisor messages past their 90 days deleted');
   }

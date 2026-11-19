@@ -65,13 +65,13 @@ class FakeWs {
 
 interface StationEntry {
   sessionId: string; campaignId: string | null; tenantId: string; accountId: string; agentUserId: string;
-  ws: FakeWs; clientKind: 'web' | 'mobile'; canTakeInbound: boolean;
+  ws: FakeWs; clientKind: 'web' | 'mobile'; caps: ReadonlySet<string>;
 }
 
 class FakeStations {
   readonly entries = new Map<string, StationEntry>();
-  add(e: Omit<StationEntry, 'ws' | 'clientKind' | 'canTakeInbound'>): StationEntry {
-    const entry = { clientKind: 'web' as const, canTakeInbound: true, ...e, ws: new FakeWs() };
+  add(e: Omit<StationEntry, 'ws' | 'clientKind' | 'caps'>): StationEntry {
+    const entry = { clientKind: 'web' as const, caps: new Set(['inbound', 'floor_assist']), ...e, ws: new FakeWs() };
     this.entries.set(e.sessionId, entry);
     return entry;
   }

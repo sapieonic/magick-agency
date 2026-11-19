@@ -3,15 +3,17 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   AGENCY_STATION_CLOSE,
+  AGENCY_STATION_FLOOR_ASSIST_CAPABILITY,
   AGENCY_STATION_FLOOR_ASSIST_EVENTS,
   AGENCY_STATION_INBOUND_EVENTS,
   type AgencyClientKind,
+  type AgencyStationCapability,
   type AgencyStationServerFrame,
 } from '@magick-agency/contracts/agency';
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
-import { stationCanTakeFloorAssist, stationCanTakeInbound } from './station-upgrade.js';
+import { stationCaps } from './station-upgrade.js';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -37,59 +39,34 @@ interface StationEntry {
    */
   clientKind: AgencyClientKind;
   /**
-   * Whether this SOCKET can take inbound calls (docs/inbound.md §4.3): every console, and a phone
-   * that declared `caps=inbound` on its upgrade (`stationCanTakeInbound`). Set at every attach, so
-   * a reattach from another device or an older build states its own; never read from the session
-   * row. Decides whether the inbound frames are sent ({@link StationRegistry.send}) and whether the
-   * inbound connector offers the station a caller.
+   * What this SOCKET can do beyond the dialer's own frames (`stationCaps`: a console has every
+   * capability, a phone those it declared on its upgrade). Set at every attach, so a reattach from
+   * another device or an older build states its own; never read from the session row. Decides which
+   * frames are sent ({@link StationRegistry.send}, {@link CAPABILITY_FOR_EVENT}); `inbound`
+   * (docs/inbound.md §4.3) also whether the inbound connector offers the station a caller, and
+   * `floor_assist` (LF4, LF5) whether a supervisor's message has a station to go to
+   * ({@link StationRegistry.canReceiveFloorAssist}).
    */
-  canTakeInbound: boolean;
-  /**
-   * Whether this SOCKET can receive the floor assist frames (LF4, LF5): every console, and a phone
-   * that declared the capability (`stationCanTakeFloorAssist`). Set at every attach, as
-   * {@link canTakeInbound}. Decides whether those frames are sent ({@link StationRegistry.send}) and
-   * whether a supervisor's message has a station to go to ({@link StationRegistry.canReceiveFloorAssist}).
-   */
-  canTakeFloorAssist: boolean;
+  caps: ReadonlySet<AgencyStationCapability>;
   /**
    * Last sign of life: attach, every client `ping`, and — for a `mobile` station only —
    * every protocol pong or ping. Liveness is derived from this.
    */
   lastSeen: number;
-  /**
-   * The `raised_at` of every `help_cleared` frame {@link StationRegistry.send} was handed for this
-   * entry (the last {@link HELP_CLEARED_KEPT}), whether or not the socket took it. Read once, by the
-   * station attach, before its `ready`: a request it read as open but whose clearing frame was sent
-   * to this socket in between is left out of `ready.help` ({@link StationRegistry.helpClearedOn},
-   * LF12, LF15).
-   */
-  helpCleared: string[];
 }
 
-/** How many `help_cleared` frames an entry remembers: one request is open at a time, so a few. */
-const HELP_CLEARED_KEPT = 8;
-
 /** A station as it was when it detached (`onDetached`): who it was, with no socket. */
-export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind' | 'canTakeInbound'>>;
+export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind' | 'caps'>>;
 
 /**
- * What `attach` takes: the entry, with the client kind defaulting to `web` and the inbound
- * capability to `stationCanTakeInbound` of a station that declared nothing (a console can, a phone
- * cannot; the station socket passes its upgrade's own answer).
+ * What `attach` takes: the entry, with the client kind defaulting to `web` and the capabilities to
+ * `stationCaps` of a station that declared nothing (a console has them all, a phone none; the
+ * station socket passes its upgrade's own answer).
  */
-export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'canTakeInbound' | 'canTakeFloorAssist' | 'helpCleared'> & {
+export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'caps'> & {
   clientKind?: AgencyClientKind;
-  canTakeInbound?: boolean;
-  /** The floor assist frames (LF4, LF5); absent: `stationCanTakeFloorAssist` of a station that declared nothing. */
-  canTakeFloorAssist?: boolean;
+  caps?: ReadonlySet<AgencyStationCapability>;
 };
-
-/**
- * Every frame the dialer runtime sends a station: `AgencyStationServerFrame`, the floor assist frames
- * included (contracts `agency/floor-assist.ts`; they were staged outside the union until the app could
- * decode them, LF16). Kept as the registry's own name for what `send` takes.
- */
-export type StationFrame = AgencyStationServerFrame;
 
 /** The heartbeat grace this station is held to: `heartbeat_grace_ms` for its client kind. */
 export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number {
@@ -155,10 +132,9 @@ export class StationRegistry {
   /** Register a newly-opened station socket and claim ownership of the agent. */
   async attach(input: StationAttachInput): Promise<void> {
     const clientKind = input.clientKind ?? 'web';
-    const entry: Omit<StationEntry, 'lastSeen' | 'helpCleared'> = {
+    const entry: Omit<StationEntry, 'lastSeen'> = {
       // With no answer given, the upgrade's rule for a station that declared nothing.
-      ...input, clientKind, canTakeInbound: input.canTakeInbound ?? stationCanTakeInbound({ client: clientKind, caps: [] }),
-      canTakeFloorAssist: input.canTakeFloorAssist ?? stationCanTakeFloorAssist({ client: clientKind, caps: [] }),
+      ...input, clientKind, caps: input.caps ?? stationCaps({ client: clientKind, caps: [] }),
     };
     // Supersede any prior socket for this session (a reconnect that raced the old
     // socket's close). The prior socket is closed so it cannot go on relaying.
@@ -184,10 +160,10 @@ export class StationRegistry {
     // Whatever probed the prior entry stops with it: a probe belongs to one socket, and a
     // superseded socket's pongs must not keep its replacement alive.
     this.stopProbe(entry.sessionId);
-    this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now(), helpCleared: [] });
+    this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
     if (entry.clientKind === 'mobile') this.startProbe(entry.sessionId, entry.ws);
     await this.claimOwnership(entry.sessionId);
-    log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind, canTakeInbound: entry.canTakeInbound },
+    log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind, canTakeInbound: entry.caps.has('inbound') },
       'Station socket attached');
     for (const listener of this.attachListeners) {
       try {
@@ -264,7 +240,7 @@ export class StationRegistry {
     this.stopProbe(sessionId);
     const station: StationDetached = {
       sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId,
-      agentUserId: entry.agentUserId, clientKind: entry.clientKind, canTakeInbound: entry.canTakeInbound,
+      agentUserId: entry.agentUserId, clientKind: entry.clientKind, caps: entry.caps,
     };
     for (const listener of this.detachListeners) {
       try { listener(sessionId, station); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
@@ -549,7 +525,7 @@ export class StationRegistry {
 
   /**
    * IQ56: of `sessionIds`, those whose station THIS process holds, each with whether it can take
-   * inbound calls (`canTakeInbound`: every console, and a phone that declared `caps=inbound`). A
+   * inbound calls (`caps` has `inbound`: every console, and a phone that declared `caps=inbound`). A
    * session missing from the map has no station here (none at all, or one a media worker holds).
    * Process-local and synchronous: the capability is on the live socket, never in Redis or the row.
    */
@@ -557,7 +533,7 @@ export class StationRegistry {
     const out = new Map<string, boolean>();
     for (const id of sessionIds) {
       const entry = this.stations.get(id);
-      if (entry) out.set(id, entry.canTakeInbound);
+      if (entry) out.set(id, entry.caps.has('inbound'));
     }
     return out;
   }
@@ -569,18 +545,7 @@ export class StationRegistry {
    */
   canReceiveFloorAssist(sessionId: string): boolean {
     const entry = this.stations.get(sessionId);
-    return !!entry && entry.canTakeFloorAssist && entry.ws.readyState === 1 /* OPEN */;
-  }
-
-  /**
-   * Whether a `help_cleared` for the request raised at `raisedAt` (ISO) was handed to {@link send}
-   * for the session while `ws` was its station. The station attach asks it just before `ready`, so a
-   * request it read as open, then cleared (and its frame sent to this socket) before `ready` went
-   * out, is not put back on screen by `ready.help` (LF15). False for a socket that is not the entry.
-   */
-  helpClearedOn(sessionId: string, ws: WebSocket, raisedAt: string): boolean {
-    const entry = this.stations.get(sessionId);
-    return !!entry && entry.ws === ws && entry.helpCleared.includes(raisedAt);
+    return !!entry && entry.caps.has('floor_assist') && entry.ws.readyState === 1 /* OPEN */;
   }
 
   /** The live socket for an agent, if this replica holds it. */
@@ -632,37 +597,25 @@ export class StationRegistry {
    * re-mints and reconnects, and `ready` carries the state again) and this returns false,
    * so a dial tick treats the agent as not there, as for a socket that is gone.
    *
-   * ── The inbound events ──────────────────────────────────────────────────
-   * An event in `AGENCY_STATION_INBOUND_EVENTS` (the inbound call frames) is sent only to a station
-   * that can take inbound calls (`canTakeInbound`: every console, and a phone that declared
-   * `caps=inbound`), whoever asks: an app build that did not declare it has no wire type for them
-   * (docs/inbound.md §4.3, §6; IQ43, IQ46). Enforced here, the one send path, so the rule does not
-   * rest on every inbound caller of `send` having already ruled such a station out. Dropped,
-   * logged at `debug`, and answered false (not delivered).
-   *
-   * ── The floor assist events ─────────────────────────────────────────────
-   * The same for `AGENCY_STATION_FLOOR_ASSIST_EVENTS` (`supervisor_message`, `help_answered`,
-   * `help_cleared`; LF4, LF5): sent only to a station that can receive them (`canTakeFloorAssist`).
+   * ── The capability events ───────────────────────────────────────────────
+   * An event that needs a capability ({@link CAPABILITY_FOR_EVENT}) is sent only to a station that
+   * has it (`caps`: every console, and a phone that declared it), whoever asks: an app build that did
+   * not declare it has no wire type for those frames. `AGENCY_STATION_INBOUND_EVENTS` (the inbound
+   * call frames) need `inbound` (docs/inbound.md §4.3, §6; IQ43, IQ46);
+   * `AGENCY_STATION_FLOOR_ASSIST_EVENTS` (`supervisor_message`, `help_answered`, `help_cleared`;
+   * LF4, LF5) need `floor_assist`. Enforced here, the one send path, so the rule does not rest on
+   * every caller of `send` having already ruled such a station out. Dropped, logged at `debug`, and
+   * answered false (not delivered).
    */
-  send(sessionId: string, frame: StationFrame, expectedWs?: WebSocket): boolean {
+  send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
     const entry = this.stations.get(sessionId);
     const ws = entry?.ws;
-    // Remembered before any refusal: the request has ended whether or not this socket takes the frame.
-    if (entry && frame.event === 'help_cleared') {
-      entry.helpCleared.push(frame.raised_at);
-      if (entry.helpCleared.length > HELP_CLEARED_KEPT) entry.helpCleared.shift();
-    }
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
-    if (!entry.canTakeInbound && isInboundEvent(frame.event)) {
+    const needs = CAPABILITY_FOR_EVENT.get(frame.event);
+    if (needs !== undefined && !entry.caps.has(needs)) {
       // `debug`: an expected path (e.g. a cancelled offer's closing `inbound_call` to the older app
       // build that took the session over), not a fault.
-      log.debug({ sessionId, event: frame.event, clientKind: entry.clientKind },
-        'Inbound station frame not sent to a station that cannot take inbound calls');
-      return false;
-    }
-    if (!entry.canTakeFloorAssist && isFloorAssistEvent(frame.event)) {
-      log.debug({ sessionId, event: frame.event, clientKind: entry.clientKind },
-        'Floor assist station frame not sent to a station that cannot receive it');
+      log.debug({ sessionId, event: frame.event, clientKind: entry.clientKind }, CAPABILITY_REFUSAL_LOG[needs]);
       return false;
     }
     // "Answer this socket, or answer nobody" — never "answer whoever is here now".
@@ -715,15 +668,17 @@ export class StationRegistry {
   }
 }
 
-const INBOUND_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_INBOUND_EVENTS);
+/**
+ * The capability each capability-scoped event needs (`StationRegistry.send`): the inbound call
+ * frames `inbound`, the floor assist frames `floor_assist`. An event not here goes to every station.
+ */
+const CAPABILITY_FOR_EVENT: ReadonlyMap<AgencyStationServerFrame['event'], AgencyStationCapability> = new Map([
+  ...AGENCY_STATION_INBOUND_EVENTS.map((event) => [event, 'inbound'] as const),
+  ...AGENCY_STATION_FLOOR_ASSIST_EVENTS.map((event) => [event, AGENCY_STATION_FLOOR_ASSIST_CAPABILITY] as const),
+]);
 
-/** Whether `event` is sent only to a station that can take inbound calls (`AGENCY_STATION_INBOUND_EVENTS`). */
-function isInboundEvent(event: StationFrame['event']): boolean {
-  return INBOUND_EVENTS.has(event);
-}
-
-const FLOOR_ASSIST_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_FLOOR_ASSIST_EVENTS);
-
-function isFloorAssistEvent(event: StationFrame['event']): boolean {
-  return FLOOR_ASSIST_EVENTS.has(event);
-}
+/** The `debug` line for a frame not sent to a station without the capability it needs. */
+const CAPABILITY_REFUSAL_LOG: Readonly<Record<AgencyStationCapability, string>> = {
+  inbound: 'Inbound station frame not sent to a station that cannot take inbound calls',
+  floor_assist: 'Floor assist station frame not sent to a station that cannot receive it',
+};

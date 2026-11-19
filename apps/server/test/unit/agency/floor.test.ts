@@ -5,7 +5,7 @@ import {
 } from '@magick-agency/contracts/api/agency/floor';
 import { AGENCY_PROMISES_SUMMARY_MAX_DAYS } from '@magick-agency/contracts/api/agency/promises';
 import { RESERVED_BREAK_REASON_LABELS } from '@magick-agency/contracts/agency';
-import { floorBreakLabel, floorTotals, parseFloorFrom, parsePromisesWindow } from '../../../src/agency/floor.js';
+import { floorBreak, floorTotals, parseFloorFrom, parsePromisesWindow } from '../../../src/agency/floor.js';
 
 /**
  * The Live floor's pure rules (`src/agency/floor.ts`, decision B28b): the floor's `from`, the
@@ -65,21 +65,23 @@ describe('parsePromisesWindow', () => {
   });
 });
 
-describe('floorBreakLabel', () => {
-  it('labels a reserved code with its own label, whatever the catalog', () => {
-    expect(floorBreakLabel('soft_phone', null)).toBe(RESERVED_BREAK_REASON_LABELS.soft_phone);
-    expect(floorBreakLabel('device_away', [{ code: 'device_away', label: 'Sneaky' }] as never)).toBe(RESERVED_BREAK_REASON_LABELS.device_away);
+describe('floorBreak', () => {
+  it('labels a reserved code with its own label, whatever the catalog, and gives it no limit', () => {
+    expect(floorBreak('soft_phone', null)).toEqual({ label: RESERVED_BREAK_REASON_LABELS.soft_phone, limit_minutes: null });
+    expect(floorBreak('device_away', [{ code: 'device_away', label: 'Sneaky', limit_minutes: 5 }] as never))
+      .toEqual({ label: RESERVED_BREAK_REASON_LABELS.device_away, limit_minutes: null });
   });
 
-  it('labels a catalog code from the campaign catalog, else the default catalog when it lists none', () => {
-    expect(floorBreakLabel('tea', [{ code: 'tea', label: 'Tea', is_paid: true }] as never)).toBe('Tea');
-    expect(floorBreakLabel('lunch', [])).toBe('Lunch');
-    expect(floorBreakLabel('lunch', null)).toBe('Lunch');
+  it('labels and limits a catalog code from the campaign catalog, else the default catalog when it lists none', () => {
+    expect(floorBreak('tea', [{ code: 'tea', label: 'Tea', is_paid: true }] as never)).toEqual({ label: 'Tea', limit_minutes: null });
+    expect(floorBreak('tea', [{ code: 'tea', label: 'Chai', limit_minutes: 10 }] as never)).toEqual({ label: 'Chai', limit_minutes: 10 });
+    expect(floorBreak('lunch', [])).toEqual({ label: 'Lunch', limit_minutes: 30 });
+    expect(floorBreak('lunch', null)).toEqual({ label: 'Lunch', limit_minutes: 30 });
   });
 
   it('is null without a code or for a code nobody knows', () => {
-    expect(floorBreakLabel(null, [])).toBeNull();
-    expect(floorBreakLabel('gone_fishing', [{ code: 'tea', label: 'Tea' }] as never)).toBeNull();
+    expect(floorBreak(null, [])).toEqual({ label: null, limit_minutes: null });
+    expect(floorBreak('gone_fishing', [{ code: 'tea', label: 'Tea' }] as never)).toEqual({ label: null, limit_minutes: null });
   });
 });
 

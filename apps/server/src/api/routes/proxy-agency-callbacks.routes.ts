@@ -3,7 +3,6 @@ import {
   AGENCY_CALLBACKS_QUERY_ERROR_CODE,
   type AgencyCallbacksPage,
 } from '@magick-agency/contracts/api/agency/callbacks';
-import { encodeKeysetCursor } from '@magick-agency/domain/keyset-cursor';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
@@ -14,6 +13,7 @@ import {
   agencyCallbacksRepository,
   type CallbacksListCampaignRow,
   type CallbacksPageInput,
+  toKeysetPage,
   type CallbacksPageRow,
 } from '../../db/repositories/agency.repository.js';
 import { callbackCodes } from '../../db/repositories/agency/assignment-sql.js';
@@ -98,13 +98,14 @@ export async function proxyAgencyCallbacksRoutes(app: FastifyInstance, opts: Pro
         after,
         take: limit + 1,
       });
-      const shown = rows.slice(0, limit);
-      const names = await deps.names(shown.map((r) => r.owner_id), tenantId);
-      const last = shown.at(-1);
+      // The page and its cursor from the `limit + 1` read (`toKeysetPage`), keyed by the due time to
+      // the microsecond and the contact; the owners' names read for the rows shown only.
+      const page = toKeysetPage(rows.map((r) => ({ ...r, cursor_at: r.due_key, id: r.contact_id })), limit, (r) => r);
+      const names = await deps.names(page.rows.map((r) => r.owner_id), tenantId);
       const body: AgencyCallbacksPage = {
-        rows: shown.map((r) => callbacksRow(r, byId.get(r.campaign_id)!, names)),
-        next_cursor: rows.length > limit && last ? encodeKeysetCursor({ at: last.due_key, id: last.contact_id }) : null,
-        limit,
+        rows: page.rows.map((r) => callbacksRow(r, byId.get(r.campaign_id)!, names)),
+        next_cursor: page.next_cursor,
+        limit: page.limit,
         due,
         as_of: now.toISOString(),
       };

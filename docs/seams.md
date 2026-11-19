@@ -51,8 +51,8 @@ internal `POST /api/v1/agency/sessions/:id/help`, `…/help/cancel` (owner `sess
 `POST /api/v1/agency/supervisor-messages` (owner `body_session`) through `callCore`. Its background
 work is the Need help expiry sweep, started and stopped by `bootstrap/agency.ts` (the primary
 only). No seam is added or changed: the floor assist frames ride the station registry's `send`, and
-with media workers the station directory's (`station.send` over IPC), both now typed to carry them
-(`StationFrame`, `agency/station-registry.ts`).
+with media workers the station directory's (`station.send` over IPC), both typed
+`AgencyStationServerFrame`, of which they are members.
 Beside it, `api/routes/proxy-agency-callbacks.routes.ts`
 (decisions LF1, LF22): the account's `GET /proxy/agency/callbacks`, with the same hooks and gate,
 served by the public layer from SQL (no `callCore`), its query validated with its own 400.

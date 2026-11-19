@@ -219,7 +219,7 @@ const ringPush = (deviceRowId: string, callId?: string) => until('the ring push'
 
 /** The app's station attaching as `station-socket.ts` does: the registry, the restore after `ready`, the frame, the bind. */
 async function attach(c: Connector, sessionId: string, userId: string, canTakeInbound = true): Promise<FakeStationEntry> {
-  const entry = stations.add({ sessionId, campaignId, tenantId: T, accountId: A, agentUserId: userId, clientKind: 'mobile', canTakeInbound });
+  const entry = stations.add({ sessionId, campaignId, tenantId: T, accountId: A, agentUserId: userId, clientKind: 'mobile', caps: new Set(canTakeInbound ? ['inbound'] as const : []) });
   const restored = await c.reattachStation(sessionId, entry.ws as never);
   if (restored.call) stations.send(sessionId, { event: 'inbound_call', call: restored.call });
   c.bindAcceptedRing(sessionId);
@@ -389,7 +389,7 @@ describe('a ring and its answer', () => {
     expect(await c.ringAccept(call.id, token, { agentUserId: away.userId, deviceId: away.deviceId })).toMatchObject({ ok: true });
     expect(await agents.get(away.sessionId)).toMatchObject({ state: 'reserved', inboundCallId: call.id });
     // An older build takes the session: never shown the call; the ring ends and the agent goes to the pool.
-    stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', canTakeInbound: false });
+    stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', caps: new Set() });
     await c.onStationCannotTakeInbound(away.sessionId);
     await drain();
     expect(await row(call.id)).toMatchObject({ state: 'queued', session_id: null, ring_result: 'cancelled' });
@@ -404,7 +404,7 @@ describe('a ring and its answer', () => {
     const { call } = await caller(c);
     await ringPush(away.deviceRowId);
     // The app attaches without declaring it can take inbound calls: never an answer.
-    const entry = stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', canTakeInbound: false });
+    const entry = stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', caps: new Set() });
     await c.onStationCannotTakeInbound(away.sessionId);
     await drain();
     expect(await row(call.id)).toMatchObject({ state: 'queued', session_id: null, ring_result: 'cancelled', accepted_at: null });
@@ -426,7 +426,7 @@ describe('a ring and its answer', () => {
     const token = String((await ringPush(away.deviceRowId))['offer_token']);
     expect(await c.ringAccept(call.id, token, { agentUserId: away.userId, deviceId: away.deviceId })).toMatchObject({ ok: true });
     // The station attaches and its socket drops before the bind runs.
-    const entry = stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', canTakeInbound: true });
+    const entry = stations.add({ sessionId: away.sessionId, campaignId, tenantId: T, accountId: A, agentUserId: away.userId, clientKind: 'mobile', caps: new Set(['inbound']) });
     await c.reattachStation(away.sessionId, entry.ws as never);
     c.bindAcceptedRing(away.sessionId);
     await stations.close(away.sessionId, async () => {

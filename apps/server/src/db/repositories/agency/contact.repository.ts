@@ -35,7 +35,7 @@ import {
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
 import type { ContactPromiseWrite } from '../../../agency/promise-to-pay.js';
-import { contactBucketSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
+import { contactBucketSql, lateCallbackSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
   type OverrideGrant,
@@ -647,16 +647,8 @@ export class AgencyContactRepository {
       `WITH due AS MATERIALIZED (
          SELECT c.id, c.assigned_user_id
            FROM agency_contacts c
-          WHERE c.campaign_id = $1::uuid
-            AND c.state = 'pending'
-            AND c.assigned_user_id IS NOT NULL
-            AND c.next_attempt_at <= now() - make_interval(mins => $2::int)${input.callbackCodes.length === 0 ? `
+          WHERE ${lateCallbackSql('c', '$1', '$3', 'now() - make_interval(mins => $2::int)')}${input.callbackCodes.length === 0 ? `
             AND c.callback_source IS NOT NULL` : ''}
-            AND ${contactBucketSql('c', '$3')} = 'callback'
-            AND NOT EXISTS (
-              SELECT 1 FROM agency_agent_sessions s
-               WHERE s.campaign_id = $1::uuid AND s.agent_user_id = c.assigned_user_id
-                 AND ${presentSessionSql('s')})
           ORDER BY c.next_attempt_at
           LIMIT $5
             FOR UPDATE OF c SKIP LOCKED

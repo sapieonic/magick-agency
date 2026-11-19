@@ -14,7 +14,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
 }));
 
 const {
-  agencyFloorAssistRepository: repo, OPEN_HELP_FOR_ACCOUNT_SQL, SWEEP_EXPIRED_SQL, LIVE_CALL_FOR_SESSION_SQL, HELP_SWEEP_BATCH,
+  agencyFloorAssistRepository: repo, agencyFloorRepository, SWEEP_EXPIRED_SQL, LIVE_CALL_FOR_SESSION_SQL, HELP_SWEEP_BATCH,
 } = await import('../../../src/db/repositories/agency.repository.js');
 const { registerFloorRoutes, clearFloorCallsTodayCacheForTests } = await import('../../../src/api/routes/agency/floor.js');
 
@@ -46,6 +46,12 @@ async function session(over: Record<string, unknown> = {}): Promise<Session> {
   return await insertAgentSession(campaign.id as string, { state: 'on_call', ...over }) as unknown as Session;
 }
 
+/** The sessions the account's floor rows carry an open Need help on (`FLOOR_ROWS_SQL`, the expiry applied in the read). */
+async function floorHelp(tenantId: string, accountId: string): Promise<string[]> {
+  const rows = await agencyFloorRepository.floorRows(tenantId, accountId, new Date(Date.now() - 3_600_000));
+  return rows.flatMap((r) => (r.help_raised_at !== null && r.session_id !== null ? [r.session_id] : []));
+}
+
 const raise = (s: Session, callId: string | null = null) =>
   repo.raise({ sessionId: s.id, tenantId: s.tenant_id, accountId: s.account_id, callId, expiryMs: EXPIRY });
 
@@ -68,9 +74,9 @@ describe('raise', () => {
     const s = await session();
     const call = randomUUID();
     const first = await raise(s, call);
-    expect(first).toMatchObject({ raised: true, help: { session_id: s.id, call_id: call }, expiredMeanwhile: [] });
+    expect(first).toMatchObject({ raised: true, help: { session_id: s.id, call_id: call }, expired: null });
     const again = await raise(s, randomUUID());
-    expect(again).toMatchObject({ raised: false, help: { session_id: s.id, call_id: call }, expiredMeanwhile: [] });
+    expect(again).toMatchObject({ raised: false, help: { session_id: s.id, call_id: call }, expired: null });
     expect(again.help!.raised_at.getTime()).toBe(first.help!.raised_at.getTime());
     expect(await row(s)).toMatchObject({ help_call_id: call, help_answered_at: null, help_answered_by: null });
   });
@@ -85,65 +91,89 @@ describe('raise', () => {
   it('after an answer a new raise is a new request: the answer is cleared', async () => {
     const s = await session();
     await raise(s);
-    expect(await repo.answer(s.id, T, randomUUID(), EXPIRY)).not.toBeNull();
+    expect(await repo.answer(s.id, T, randomUUID(), EXPIRY)).toMatchObject({ expired: false });
     const next = await raise(s);
-    expect(next.raised).toBe(true);
+    expect(next).toMatchObject({ raised: true, expired: null });
     expect(await row(s)).toMatchObject({ help_answered_at: null, help_answered_by: null });
   });
 
   it('never on a session that has left, nor across tenants or accounts', async () => {
     const left = await session({ left_at: new Date(), state: 'offline' });
-    expect(await raise(left)).toEqual({ raised: false, help: null, expiredMeanwhile: [] });
+    expect(await raise(left)).toEqual({ raised: false, help: null, expired: null });
     const s = await session();
     expect(await repo.raise({ sessionId: s.id, tenantId: OTHER_TENANT, accountId: A, callId: null, expiryMs: EXPIRY }))
-      .toEqual({ raised: false, help: null, expiredMeanwhile: [] });
+      .toEqual({ raised: false, help: null, expired: null });
     expect(await repo.raise({ sessionId: s.id, tenantId: T, accountId: OTHER_ACCOUNT, callId: null, expiryMs: EXPIRY }))
-      .toEqual({ raised: false, help: null, expiredMeanwhile: [] });
+      .toEqual({ raised: false, help: null, expired: null });
     expect((await row(s)).help_raised_at).toBeNull();
   });
 
-  it('a request found expired in between is expired by the raise (returned once) and a new one raised', async () => {
+  it('a request past the expiry is expired by the raise, in the same statement (returned once, as it was), and a new one raised', async () => {
     const s = await session();
-    await raise(s);
+    const call = randomUUID();
+    await raise(s, call);
     const old = await backdate(s, EXPIRY + 1_000);
     const out = await raise(s);
     expect(out.raised).toBe(true);
-    expect(out.expiredMeanwhile.map((r) => r.raised_at.getTime())).toEqual([old.getTime()]);
+    expect(out.expired).toEqual({
+      session_id: s.id, tenant_id: T, account_id: A, campaign_id: s.campaign_id, agent_user_id: s.agent_user_id,
+      raised_at: old, call_id: call,
+    });
+    expect(out.help!.raised_at.getTime()).toBeGreaterThan(old.getTime());
+    expect(await repo.expireDue(EXPIRY)).toEqual([]);
   });
 });
 
 describe('the 15-minute expiry, against the database clock', () => {
-  it('a second before it the request is open (floor, answer); at it, it is not, and the sweep clears it once with what it held', async () => {
+  it('a second before it the request is open (floor, sweep); at it, it is not, and the sweep clears it once with what it held', async () => {
     const s = await session();
     const call = randomUUID();
     await raise(s, call);
     const raisedAt = await backdate(s, EXPIRY - 2_000);
-    expect((await repo.openForAccount(T, A, EXPIRY)).map((r) => r.session_id)).toEqual([s.id]);
-    expect(await repo.expireDue(EXPIRY, { sweep: true })).toEqual([]);
+    expect(await floorHelp(T, A)).toEqual([s.id]);
+    expect(await repo.expireDue(EXPIRY)).toEqual([]);
     await backdate(s, EXPIRY + 1_000);
     const expiredAt = (await row(s)).help_raised_at!;
-    expect(await repo.openForAccount(T, A, EXPIRY)).toEqual([]);
+    expect(await floorHelp(T, A)).toEqual([]);
     expect(await repo.openForSession(s.id, T, A, EXPIRY)).toBeNull();
-    expect(await repo.answer(s.id, T, randomUUID(), EXPIRY)).toBeNull();
-    expect(await repo.cancel(s.id, T, EXPIRY)).toBeNull();
-    expect(await repo.endWithSession(s.id, EXPIRY)).toBeNull();
-    const swept = await repo.expireDue(EXPIRY, { sweep: true });
+    const swept = await repo.expireDue(EXPIRY);
     expect(swept).toEqual([{
       session_id: s.id, tenant_id: T, account_id: A, campaign_id: s.campaign_id, agent_user_id: s.agent_user_id,
       raised_at: expiredAt, call_id: call,
     }]);
     expect(raisedAt.getTime()).toBeGreaterThan(expiredAt.getTime());
     expect(await row(s)).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null });
-    expect(await repo.expireDue(EXPIRY, { sweep: true })).toEqual([]);
+    expect(await repo.expireDue(EXPIRY)).toEqual([]);
   });
 
-  it('one session\'s expiry touches only that session; the sweep pages through more than a batch', async () => {
+  it('past it, an answer, a cancel or the session ending expires the request instead (expired, with what it held), and only the first', async () => {
+    for (const first of ['answer', 'cancel', 'end'] as const) {
+      const s = await session();
+      const call = randomUUID();
+      await raise(s, call);
+      const expiredAt = await backdate(s, EXPIRY + 1_000);
+      const transitions = {
+        answer: () => repo.answer(s.id, T, randomUUID(), EXPIRY),
+        cancel: () => repo.cancel(s.id, T, EXPIRY),
+        end: () => repo.endWithSession(s.id, EXPIRY),
+      };
+      expect(await transitions[first](), first).toEqual({
+        session_id: s.id, tenant_id: T, account_id: A, campaign_id: s.campaign_id, agent_user_id: s.agent_user_id,
+        raised_at: expiredAt, call_id: call, expired: true, ...(first === 'answer' ? { answered_at: null } : {}),
+      });
+      expect(await row(s), first).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null });
+      for (const next of Object.values(transitions)) expect(await next(), first).toBeNull();
+      expect(await repo.expireDue(EXPIRY), first).toEqual([]);
+    }
+  });
+
+  it('a transition on one session expires only that session; the sweep pages through more than a batch', async () => {
     const sessions = await Promise.all(Array.from({ length: HELP_SWEEP_BATCH + 3 }, () => session()));
     await pool().query(
       `UPDATE agency_agent_sessions SET help_raised_at = now() - interval '16 minutes' WHERE id = ANY($1::uuid[])`,
       [sessions.map((s) => s.id)]);
-    expect((await repo.expireDue(EXPIRY, { sessionId: sessions[0]!.id })).map((r) => r.session_id)).toEqual([sessions[0]!.id]);
-    const swept = await repo.expireDue(EXPIRY, { sweep: true });
+    expect(await repo.cancel(sessions[0]!.id, T, EXPIRY)).toMatchObject({ session_id: sessions[0]!.id, expired: true });
+    const swept = await repo.expireDue(EXPIRY);
     expect(swept).toHaveLength(HELP_SWEEP_BATCH + 2);
     expect(new Set(swept.map((r) => r.session_id)).size).toBe(HELP_SWEEP_BATCH + 2);
   });
@@ -153,49 +183,52 @@ describe('the 15-minute expiry, against the database clock', () => {
     await raise(s);
     await repo.answer(s.id, T, randomUUID(), EXPIRY);
     await backdate(s, EXPIRY * 2);
-    expect(await repo.expireDue(EXPIRY, { sweep: true })).toEqual([]);
+    expect(await repo.expireDue(EXPIRY)).toEqual([]);
+    expect(await repo.cancel(s.id, T, EXPIRY)).toBeNull();
+    expect(await repo.endWithSession(s.id, EXPIRY)).toBeNull();
   });
 });
 
 describe('each request ends exactly once', () => {
+  /** A transition's result as who ended the request: the transition, the expiry (`expired`), or nobody. */
+  const by = (name: 'answer' | 'cancel' | 'end') => (r: { expired: boolean } | null) => (r === null ? null : r.expired ? 'expiry' : name);
+
   /**
-   * Every transition on one session at once, the sweep (twice) and the session's own expiry among
-   * them, over requests on BOTH sides of the expiry: `due` ones backdated a minute past it, `fresh`
-   * ones a minute short of it, so which side each request is on never depends on how long a round
-   * trip takes. The sweeps are issued first or last (`sweepFirst`), so each order of arrival at
-   * Postgres is exercised. Answers, per session, which calls won.
+   * Every transition on one session at once, and the sweep (twice), over requests on BOTH sides of
+   * the expiry: `due` ones backdated a minute past it, `fresh` ones a minute short of it, so which
+   * side each request is on never depends on how long a round trip takes. The sweeps are issued
+   * first or last (`sweepFirst`), so each order of arrival at Postgres is exercised. Answers, per
+   * session, which calls ended the request as themselves (`transitions`) and how many expired it
+   * (a transition that found it past the expiry, or a sweep).
    */
   async function raceAll(sessions: Array<{ s: Session; due: boolean }>, sweepFirst: boolean) {
     for (const { s, due } of sessions) {
       await raise(s);
       await backdate(s, due ? EXPIRY + 60_000 : EXPIRY - 60_000);
     }
-    const sweeps = sweepFirst
-      ? [repo.expireDue(EXPIRY, { sweep: true }), repo.expireDue(EXPIRY, { sweep: true })]
-      : [];
+    const sweeps = sweepFirst ? [repo.expireDue(EXPIRY), repo.expireDue(EXPIRY)] : [];
     const perSession = sessions.map(({ s }) => [
-      repo.answer(s.id, T, randomUUID(), EXPIRY).then((r) => (r ? 'answer' : null)),
-      repo.cancel(s.id, T, EXPIRY).then((r) => (r ? 'cancel' : null)),
-      repo.endWithSession(s.id, EXPIRY).then((r) => (r ? 'end' : null)),
-      repo.answer(s.id, T, randomUUID(), EXPIRY).then((r) => (r ? 'answer' : null)),
-      repo.expireDue(EXPIRY, { sessionId: s.id }).then((r) => r.map((x) => x.session_id)),
-    ] as const);
-    if (!sweepFirst) sweeps.push(repo.expireDue(EXPIRY, { sweep: true }), repo.expireDue(EXPIRY, { sweep: true }));
-    const [flat, sweptLists] = await Promise.all([Promise.all(perSession.flatMap((calls) => calls)), Promise.all(sweeps)]);
+      repo.answer(s.id, T, randomUUID(), EXPIRY).then(by('answer')),
+      repo.cancel(s.id, T, EXPIRY).then(by('cancel')),
+      repo.endWithSession(s.id, EXPIRY).then(by('end')),
+      repo.answer(s.id, T, randomUUID(), EXPIRY).then(by('answer')),
+    ]);
+    if (!sweepFirst) sweeps.push(repo.expireDue(EXPIRY), repo.expireDue(EXPIRY));
+    const [flat, sweptLists] = await Promise.all([Promise.all(perSession.flat()), Promise.all(sweeps)]);
     const expiredBy = sweptLists.flat().map((r) => r.session_id);
     return sessions.map(({ s }, i) => {
-      const results = flat.slice(i * 5, i * 5 + 5);
-      const transitions = results.slice(0, 4).filter((r): r is 'answer' | 'cancel' | 'end' => typeof r === 'string');
-      const ownExpiry = (results[4] as string[]).filter((id) => id === s.id).length;
+      const results = flat.slice(i * 4, i * 4 + 4);
+      const transitions = results.filter((r) => r !== null && r !== 'expiry');
+      const ownExpiry = results.filter((r) => r === 'expiry').length;
       const swept = expiredBy.filter((id) => id === s.id).length;
       return { transitions, expired: ownExpiry + swept };
     });
   }
 
-  it('answer, cancel, end with the session, its own expiry and two sweeps racing: exactly one wins every request; a due one only by an expiry, a fresh one never by one', async () => {
-    // FALSIFIED: with `fresh()` dropped from the answer's WHERE, a due request is answered instead
-    // of expired; with the expiry dropped from the sweep's pick, a fresh request is swept in the
-    // rounds whose sweeps reach Postgres first. Both red.
+  it('answer, cancel, end with the session and two sweeps racing: exactly one ends every request; a due one only as expired, a fresh one never', async () => {
+    // FALSIFIED: with the expiry dropped from the answer's `expired` (a due request answered), a
+    // due request is answered instead of expired; with the expiry dropped from the sweep's pick, a
+    // fresh request is swept in the rounds whose sweeps reach Postgres first. Both red.
     for (let round = 0; round < 6; round++) {
       const sessions = await Promise.all([true, false, true, false].map(async (due) => ({ s: await session(), due })));
       const outcome = await raceAll(sessions, round % 2 === 0);
@@ -207,11 +240,11 @@ describe('each request ends exactly once', () => {
         else expect(expired, label).toBe(0);
       });
       // Nothing is left for a later sweep: each request ended in the race.
-      expect(await repo.expireDue(EXPIRY, { sweep: true }), `round ${round}`).toEqual([]);
+      expect(await repo.expireDue(EXPIRY), `round ${round}`).toEqual([]);
     }
   });
 
-  it('the sweep and an answer racing: past the expiry the sweep takes it, short of it the answer does, never both; at the edge itself, at most one', async () => {
+  it('the sweep and an answer racing: past the expiry it is expired (by whichever reaches it first), short of it the answer takes it, never both; at the edge itself, at most one', async () => {
     // Both sides deterministically (a minute either side of the expiry, so no round trip moves a
     // request across it), several sessions at once per round; then the edge itself, where either
     // may win but never both. FALSIFIED as the test above: each mutation reds this one too.
@@ -223,14 +256,14 @@ describe('each request ends exactly once', () => {
         await backdate(s, sides[i] ? EXPIRY + 60_000 : EXPIRY - 60_000);
       }
       // The sweep issued first in half the rounds, last in the others.
-      const sweep = round % 2 === 0 ? repo.expireDue(EXPIRY, { sweep: true }) : null;
-      const answering = Promise.all(sessions.map((s) => repo.answer(s.id, T, randomUUID(), EXPIRY)));
-      const [answers, swept] = await Promise.all([answering, sweep ?? repo.expireDue(EXPIRY, { sweep: true })]);
+      const sweep = round % 2 === 0 ? repo.expireDue(EXPIRY) : null;
+      const answering = Promise.all(sessions.map((s) => repo.answer(s.id, T, randomUUID(), EXPIRY).then(by('answer'))));
+      const [answers, swept] = await Promise.all([answering, sweep ?? repo.expireDue(EXPIRY)]);
       const sweptIds = new Set(swept.map((r) => r.session_id));
       sessions.forEach((s, i) => {
         const label = `round ${round}, session ${i} (${sides[i] ? 'past' : 'short'})`;
-        expect(answers[i] !== null, label).toBe(!sides[i]);
-        expect(sweptIds.has(s.id), label).toBe(sides[i]);
+        expect(answers[i] === 'answer', label).toBe(!sides[i]);
+        expect(Number(answers[i] === 'expiry') + Number(sweptIds.has(s.id)), label).toBe(sides[i] ? 1 : 0);
       });
     }
     for (let round = 0; round < 6; round++) {
@@ -238,23 +271,23 @@ describe('each request ends exactly once', () => {
       await raise(s);
       await backdate(s, EXPIRY + (round % 2 === 0 ? 1 : -1) * 5);
       const [answered, swept] = await Promise.all([
-        repo.answer(s.id, T, randomUUID(), EXPIRY),
-        repo.expireDue(EXPIRY, { sweep: true }),
+        repo.answer(s.id, T, randomUUID(), EXPIRY).then(by('answer')),
+        repo.expireDue(EXPIRY),
       ]);
       expect([answered !== null, swept.length === 1].filter(Boolean).length, `edge round ${round}`).toBeLessThanOrEqual(1);
-      // Neither (the sweep ran just short of the edge, the answer just past it): a later sweep takes it.
-      if (answered === null && swept.length === 0) expect(await repo.expireDue(EXPIRY, { sweep: true }), `edge round ${round}`).toHaveLength(1);
+      // Neither (the sweep ran just short of the edge, the answer just past it... and found nothing): a later sweep takes it.
+      if (answered === null && swept.length === 0) expect(await repo.expireDue(EXPIRY), `edge round ${round}`).toHaveLength(1);
     }
   });
 
   it('answer keeps the raise and stamps who answered; a second answer is nothing', async () => {
     const s = await session();
     const raised = (await raise(s, null)).help!;
-    const by = randomUUID();
-    const answered = await repo.answer(s.id, T, by, EXPIRY);
-    expect(answered).toMatchObject({ session_id: s.id, raised_at: raised.raised_at, call_id: null, agent_user_id: s.agent_user_id });
-    expect(answered!.answered_at.getTime()).toBeGreaterThanOrEqual(raised.raised_at.getTime());
-    expect(await row(s)).toMatchObject({ help_raised_at: raised.raised_at, help_answered_by: by });
+    const answerer = randomUUID();
+    const answered = await repo.answer(s.id, T, answerer, EXPIRY);
+    expect(answered).toMatchObject({ session_id: s.id, raised_at: raised.raised_at, call_id: null, agent_user_id: s.agent_user_id, expired: false });
+    expect(answered!.expired === false && answered!.answered_at.getTime()).toBeGreaterThanOrEqual(raised.raised_at.getTime());
+    expect(await row(s)).toMatchObject({ help_raised_at: raised.raised_at, help_answered_by: answerer });
     expect(await repo.answer(s.id, T, randomUUID(), EXPIRY)).toBeNull();
     // Another tenant cannot answer it.
     const t = await session();
@@ -267,10 +300,10 @@ describe('each request ends exactly once', () => {
     const call = randomUUID();
     const raised = (await raise(s, call)).help!;
     expect(await repo.cancel(s.id, OTHER_TENANT, EXPIRY)).toBeNull();
-    expect(await repo.cancel(s.id, T, EXPIRY)).toMatchObject({ session_id: s.id, raised_at: raised.raised_at, call_id: call });
+    expect(await repo.cancel(s.id, T, EXPIRY)).toMatchObject({ session_id: s.id, raised_at: raised.raised_at, call_id: call, expired: false });
     expect(await row(s)).toEqual({ help_raised_at: null, help_call_id: null, help_answered_at: null, help_answered_by: null });
     await raise(s);
-    expect(await repo.endWithSession(s.id, EXPIRY)).toMatchObject({ session_id: s.id });
+    expect(await repo.endWithSession(s.id, EXPIRY)).toMatchObject({ session_id: s.id, expired: false });
     expect(await repo.endWithSession(s.id, EXPIRY)).toBeNull();
   });
 });
@@ -288,8 +321,8 @@ describe('the floor\'s read', () => {
     await repo.answer(answered.id, T, randomUUID(), EXPIRY);
     await backdate(expired, EXPIRY + 1);
     await pool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE id = $1`, [left.id]);
-    expect((await repo.openForAccount(T, A, EXPIRY)).map((r) => r.session_id).sort()).toEqual([open.id, soft.id].sort());
-    expect((await repo.openForAccount(T, OTHER_ACCOUNT, EXPIRY)).map((r) => r.session_id)).toEqual([otherAccount.id]);
+    expect((await floorHelp(T, A)).sort()).toEqual([open.id, soft.id].sort());
+    expect(await floorHelp(T, OTHER_ACCOUNT)).toEqual([otherAccount.id]);
   });
 
   it('the internal floor handler serves each open session\'s help, null on the rest', async () => {
@@ -384,8 +417,7 @@ describe('the plans', () => {
     }
   }
 
-  it('the floor\'s read and the sweep walk the partial index of requests not answered', async () => {
-    expect(await plan(OPEN_HELP_FOR_ACCOUNT_SQL, [T, A, EXPIRY])).toContain('idx_agency_agent_sessions_help_open');
+  it('the sweep walks the partial index of requests not answered', async () => {
     expect(await plan(SWEEP_EXPIRED_SQL, [EXPIRY, HELP_SWEEP_BATCH])).toContain('idx_agency_agent_sessions_help_open');
   });
 

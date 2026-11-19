@@ -2,7 +2,6 @@ import type { AgencyClientKind, AgencyStationCapability, AgencyStationMediaForma
 import {
   AGENCY_CLIENT_KINDS,
   AGENCY_STATION_CAPABILITIES,
-  AGENCY_STATION_FLOOR_ASSIST_CAPABILITY,
   AGENCY_STATION_MEDIA_FORMATS,
 } from '@magick-agency/contracts/agency';
 
@@ -14,7 +13,7 @@ import {
  *    with protocol pings and held to `MOBILE_STATION_HEARTBEAT_GRACE_MS`
  *    (`StationRegistry`), and the attach writes it to `agency_agent_sessions.client_kind`.
  *    It also sets the inbound default: a `web` station can always take inbound calls, a
- *    `mobile` one only with `caps=inbound` ({@link stationCanTakeInbound}, IQ46).
+ *    `mobile` one only with `caps=inbound` ({@link stationHas}, IQ46).
  *  - `media=pcm16|alaw8` (absent: `pcm16`, contracts `AgencyStationMediaFormat`). Parsed
  *    and validated here so an unknown value is refused before attach like an unknown
  *    client; the station handler tags the socket with it for the bridge
@@ -23,9 +22,9 @@ import {
  *    Unlike the two above, never refused: an unknown value is ignored (an app newer than
  *    this server must still get a station, and a 1008 is terminal for the app), and a
  *    repeated `caps` parameter is the union. `inbound`: whether a mobile station can be put
- *    through to inbound callers and sent their frames ({@link stationCanTakeInbound});
+ *    through to inbound callers and sent their frames;
  *    `floor_assist`: whether it is sent a supervisor's messages and its Need help's answers
- *    ({@link stationCanTakeFloorAssist}).
+ *    (both {@link stationHas}).
  *
  * One parser for all three, so every station entry point refuses the same inputs the same
  * way. Client-declared and never trusted for anything security-relevant: the token is
@@ -44,22 +43,20 @@ export const DEFAULT_STATION_UPGRADE: Readonly<StationUpgradeQuery> = Object.fre
 });
 
 /**
- * Whether a station attaching with `query` can take inbound calls (docs/inbound.md §4.3): a
- * console always; a phone only when it declared `caps=inbound`, so every app build that cannot
- * decode the inbound frames stays out of the pool and is never sent them.
+ * Whether a station attaching with `query` has capability `cap`: a console always; a phone only
+ * when it declared it, so an app build that cannot decode a capability's frames is never sent them.
+ * `inbound` (docs/inbound.md §4.3): put through to inbound callers and sent their frames, every
+ * other app build staying out of the pool. `floor_assist` (LF4, LF5; contracts
+ * `agency/floor-assist.ts`): sent a supervisor's messages and its Need help's answers, a message to
+ * any other app build being `409 agent_not_live`.
  */
-export function stationCanTakeInbound(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): boolean {
-  return query.client !== 'mobile' || query.caps.includes('inbound');
+export function stationHas(query: Pick<StationUpgradeQuery, 'client' | 'caps'>, cap: AgencyStationCapability): boolean {
+  return query.client !== 'mobile' || query.caps.includes(cap);
 }
 
-/**
- * Whether a station attaching with `query` can receive the floor assist frames (LF4, LF5:
- * `supervisor_message`, `help_answered`, `help_cleared`; contracts `agency/floor-assist.ts`): a console
- * always; a phone only when it declared {@link AGENCY_STATION_FLOOR_ASSIST_CAPABILITY}, so an app build
- * that cannot show a message is never sent one, and a message to it is `409 agent_not_live`.
- */
-export function stationCanTakeFloorAssist(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): boolean {
-  return query.client !== 'mobile' || query.caps.includes(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY);
+/** Every capability a station attaching with `query` has ({@link stationHas}): what its registry entry keeps. */
+export function stationCaps(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): ReadonlySet<AgencyStationCapability> {
+  return new Set(AGENCY_STATION_CAPABILITIES.filter((cap) => stationHas(query, cap)));
 }
 
 export type StationUpgradeQueryResult =

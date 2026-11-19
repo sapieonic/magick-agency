@@ -100,11 +100,8 @@ export interface AgencyFloorAgent {
    * (the soft phone, the app's pauses) and for a code the catalog does not know. The console's
    * long-break risk compares the break's time with it, and with
    * `AGENCY_BREAK_DEFAULT_LIMIT_MINUTES` (30) when it is null; never on the soft phone.
-   *
-   * Always present in this server's answer. Optional only so a client built against an earlier one
-   * reads its absence as null (no limit of its own: the 30-minute rule).
    */
-  break_limit_minutes?: number | null;
+  break_limit_minutes: number | null;
   /** The session holds a live inbound call (offered or connected), as `AgencySupervisorAgent.on_inbound_call`. */
   on_inbound_call: boolean;
   /** The session's inbound call ended and still owes its outcome, as `AgencySupervisorAgent.inbound_outcome_owed`. */
@@ -140,11 +137,8 @@ export interface AgencyFloorAgent {
    * on every floor read, not waited for), on a row with no open session, and on every row while
    * `agency_floor_assist_enabled` is off for the account. This read is how every `agency.supervise`
    * holder in the account is alerted: the console polls it every 5 s.
-   *
-   * Always sent by this server (null when there is none). Optional in the type only so a client
-   * written before Phase 3 still compiles; read absent as null.
    */
-  help?: AgencySessionHelp | null;
+  help: AgencySessionHelp | null;
 }
 
 /** Distinct people. */

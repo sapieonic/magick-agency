@@ -16,9 +16,10 @@
  *
  * Routing never reads it: the owner of a session is `slotFor(sessionId)`, attached or not.
  */
-import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import type { AgencyStationCapability, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import type { PacingStations } from '../agency/pacing-engine.js';
-import type { StationFrame } from '../agency/station-registry.js';
+
+const NO_CAPS: ReadonlySet<AgencyStationCapability> = new Set();
 
 interface Entry {
   slot: number;
@@ -32,7 +33,7 @@ export interface StationDirectoryDeps {
   /** Send a campaign frame to every ready worker. */
   broadcastToWorkers: (campaignId: string, frame: AgencyStationServerFrame) => void;
   /** Send one session's frame to the worker in `slot`; false when that worker has no open channel. */
-  sendToWorker: (slot: number, sessionId: string, frame: StationFrame) => boolean;
+  sendToWorker: (slot: number, sessionId: string, frame: AgencyStationServerFrame) => boolean;
 }
 
 export class StationDirectory implements PacingStations {
@@ -103,13 +104,13 @@ export class StationDirectory implements PacingStations {
   }
 
   /**
-   * The station's campaign. `canTakeInbound` is always false here: with media workers no inbound
-   * caller is put through to an agent (IB8; IQ13: every open route answers with the call-back
-   * message), so pacing never holds a worker's station back for one.
+   * The station's campaign. No capability is known here (`caps` is empty): with media workers no
+   * inbound caller is put through to an agent (IB8; IQ13: every open route answers with the
+   * call-back message), so pacing never holds a worker's station back for one.
    */
-  get(sessionId: string): { campaignId: string | null; canTakeInbound: boolean } | undefined {
+  get(sessionId: string): { campaignId: string | null; caps: ReadonlySet<AgencyStationCapability> } | undefined {
     const e = this.entries.get(sessionId);
-    return e ? { campaignId: e.campaignId, canTakeInbound: false } : undefined;
+    return e ? { campaignId: e.campaignId, caps: NO_CAPS } : undefined;
   }
 
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number {
@@ -119,7 +120,7 @@ export class StationDirectory implements PacingStations {
     return n;
   }
 
-  send(sessionId: string, frame: StationFrame): boolean {
+  send(sessionId: string, frame: AgencyStationServerFrame): boolean {
     if (!this.isLocallyOwned(sessionId)) return false;
     return this.deps.sendToWorker(this.entries.get(sessionId)!.slot, sessionId, frame);
   }

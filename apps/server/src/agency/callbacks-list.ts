@@ -11,6 +11,7 @@ import {
   type AgencyCallbacksDue,
 } from '@magick-agency/contracts/api/agency/callbacks';
 import { decodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
+import type { CallbacksPageRow } from '../db/repositories/agency.repository.js';
 import { isUuid } from '../utils/uuid.js';
 import { matchName } from './inbound/match-name.js';
 
@@ -68,16 +69,8 @@ export function parseCallbacksQuery(query: Record<string, unknown> | undefined):
   };
 }
 
-/** What a row of the read carries, as `callbacksRow` needs it. */
-export interface CallbacksListSourceRow {
-  contact_id: string;
-  campaign_id: string;
-  context: Record<string, unknown> | null;
-  owner_id: string | null;
-  owner_live: boolean;
-  inbound: boolean;
-  due_at: Date;
-}
+/** What a row of the read carries, as `callbacksRow` needs it: all but the cursor's key. */
+export type CallbacksListSourceRow = Omit<CallbacksPageRow, 'due_key'>;
 
 /**
  * One wire row: the campaign's name and mode from the active campaigns read, the customer's name

@@ -286,14 +286,19 @@ export async function requireOwnedSession(
     return null;
   }
   if (session.left_at) {
-    const err: AgencyActionErrorResponse = {
-      error: 'Session Ended', code: 'session_ended',
-      message: 'This session has ended. Start a new one.',
-    };
-    reply.code(409).send(err);
+    sendSessionEnded(reply);
     return null;
   }
   return session;
+}
+
+/** `409 session_ended`: the session the caller acts on has ended (re-bootstrap rather than retry). */
+export function sendSessionEnded(reply: FastifyReply): FastifyReply {
+  const err: AgencyActionErrorResponse = {
+    error: 'Session Ended', code: 'session_ended',
+    message: 'This session has ended. Start a new one.',
+  };
+  return reply.code(409).send(err);
 }
 
 /**

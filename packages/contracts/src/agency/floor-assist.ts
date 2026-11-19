@@ -32,22 +32,16 @@
  * days (`agency_supervisor_messages`, `0052_floor_assist.sql`).
  *
  * ── The station frames, and which stations get them ─────────────────────────
- * {@link AgencyStationFloorAssistFrame}: `supervisor_message`, `help_answered`, `help_cleared`. A
- * console station always gets them. A mobile station gets them only when its upgrade declares the
- * capability {@link AGENCY_STATION_FLOOR_ASSIST_CAPABILITY} (`caps=…`), so an app build that cannot
- * show a message is never sent one and a message to it is `409 agent_not_live`, never a message
- * nobody sees (as the inbound frames, `AGENCY_STATION_INBOUND_EVENTS`).
- *
- * The three frames are members of `AgencyStationServerFrame` (`./station.ts`), and
- * {@link AgencyStationFloorAssistFrame} names them as a subset for the server's one check of which
- * stations get them. They were staged outside it until the app's wire package could decode them
- * (LF16); the app's Phase 3 change moved them in with its Dart types, its fixtures
- * (`fixtures/agent/station.json`, `fixtures/agent/floor-assist.json`) and the literals, and its
- * station declares `caps=floor_assist` on every upgrade.
+ * `supervisor_message`, `help_answered`, `help_cleared` ({@link AGENCY_STATION_FLOOR_ASSIST_EVENTS},
+ * members of `AgencyStationServerFrame`, `./station.ts`). A console station always gets them. A
+ * mobile station gets them only when its upgrade declares the capability
+ * {@link AGENCY_STATION_FLOOR_ASSIST_CAPABILITY} (`caps=…`), so an app build that cannot show a
+ * message is never sent one and a message to it is `409 agent_not_live`, never a message nobody
+ * sees (as the inbound frames, `AGENCY_STATION_INBOUND_EVENTS`).
  */
 
 import type { AllListed } from '../primitives';
-import type { AgencyStationCapability } from './station';
+import type { AgencyStationCapability, AgencyStationServerFrame } from './station';
 
 // ─── Need help ───────────────────────────────────────────────────────────────
 
@@ -166,18 +160,13 @@ export interface AgencyStationHelpClearedFrame {
   reason: AgencyHelpClearedReason;
 }
 
-/** The floor assist frames: members of `AgencyStationServerFrame`, named together for the check of which stations get them. */
-export type AgencyStationFloorAssistFrame =
-  | AgencyStationSupervisorMessageFrame
-  | AgencyStationHelpAnsweredFrame
-  | AgencyStationHelpClearedFrame;
-
-/** The floor assist frames' events: sent only to a station that can receive them. */
+/**
+ * The floor assist frames' events: sent only to a station that can receive them
+ * ({@link AGENCY_STATION_FLOOR_ASSIST_CAPABILITY}; the server drops them for any other station in
+ * one place, `StationRegistry.send`).
+ */
 export const AGENCY_STATION_FLOOR_ASSIST_EVENTS = [
   'supervisor_message',
   'help_answered',
   'help_cleared',
-] as const satisfies readonly AgencyStationFloorAssistFrame['event'][];
-
-const _allFloorAssistEventsListed: AllListed<AgencyStationFloorAssistFrame['event'], typeof AGENCY_STATION_FLOOR_ASSIST_EVENTS> = true;
-void _allFloorAssistEventsListed;
+] as const satisfies readonly AgencyStationServerFrame['event'][];

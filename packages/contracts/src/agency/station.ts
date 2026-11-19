@@ -227,8 +227,8 @@ export type AgencyStationServerFrame =
   | AgencyStationInboundCallFrame
   | AgencyStationCustomerWaitingFrame
   // Floor assist (LF4, LF5, LF16): a supervisor's message, and how the agent's Need help was answered
-  // or ended (`./floor-assist.ts`, `AgencyStationFloorAssistFrame`). Only to a station that can show
-  // them (`AGENCY_STATION_FLOOR_ASSIST_EVENTS`): every console, a phone that declared `caps=floor_assist`.
+  // or ended (`./floor-assist.ts`). Only to a station that can show them
+  // (`AGENCY_STATION_FLOOR_ASSIST_EVENTS`): every console, a phone that declared `caps=floor_assist`.
   | AgencyStationSupervisorMessageFrame
   | AgencyStationHelpAnsweredFrame
   | AgencyStationHelpClearedFrame;

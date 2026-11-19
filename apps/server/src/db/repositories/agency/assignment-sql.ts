@@ -41,6 +41,28 @@ export function presentSessionSql(alias: string): string {
 }
 
 /**
+ * A late callback, on contact `c` of the campaign bound at `campaignParam`: open (`pending`),
+ * owned, due at or before `dueBefore` (an SQL expression), waiting on a callback (the owner's
+ * `callback` bucket, {@link contactBucketSql}: a booked callback, or an inbound one), and whose
+ * owner has no session present on the campaign ({@link presentSessionSql}). The ONE selection the
+ * callback fallback (CA5, `fallBackOverdueCallbacks`: due before `now()` less its grace) and the
+ * late-callbacks hand-off (LF7, LF21: due before `now()`, the supervisor's "now") read, so the two
+ * never drift. Parenthesised.
+ */
+export function lateCallbackSql(alias: string, campaignParam: string, codesParam: string, dueBefore = 'now()'): string {
+  const c = alias;
+  return `(${c}.campaign_id = ${campaignParam}::uuid
+          AND ${c}.state = 'pending'
+          AND ${c}.assigned_user_id IS NOT NULL
+          AND ${c}.next_attempt_at <= ${dueBefore}
+          AND ${contactBucketSql(c, codesParam)} = 'callback'
+          AND NOT EXISTS (
+            SELECT 1 FROM agency_agent_sessions s
+             WHERE s.campaign_id = ${campaignParam}::uuid AND s.agent_user_id = ${c}.assigned_user_id
+               AND ${presentSessionSql('s')}))`;
+}
+
+/**
  * Whether contact `c`'s number is live on its ACCOUNT: some contact of the same tenant and
  * account as `c`, on any campaign, on the same digits (`CONTACT_PHONE_DIGITS_SQL`) is
  * `in_flight` or `connected`, `c` itself included; or the customer is on an INBOUND call to the

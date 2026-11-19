@@ -489,7 +489,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   runs at a time, a move wakes the campaign (`contacts_changed`), and `stop()` waits for one in
   flight within the tick drain bound. The supervisor's "Give to free agents" (LF7, LF21) is one more
   operation on the same routes, `late_callbacks_to_live_agents`: the sweep's selection with no grace
-  (`lateCallbackSql`: overdue callbacks whose owner has no session present on the campaign), dealt
+  (`lateCallbackSql` in `assignment-sql.ts`, the one selection both read, the sweep passing its grace:
+  overdue callbacks whose owner has no session present on the campaign), dealt
   to the staffed agents present on it, fewest callbacks due first (`lateCallbackQuotas`, read inside
   the commit's transaction), planned, locked, gated and written by the one planner; refused on
   `pool` (`409 late_callbacks_pool_mode`). It and the sweep never both move a callback: the commit
@@ -1040,17 +1041,17 @@ a rate-limit key and never an auth input.
   through `callCore` to `api/routes/agency/floor-assist.ts`, which runs in the process holding the
   agent's station (owners `session_param` and `body_session`, `api/core-owners.ts`). The rules and
   side effects are one service per process, `agency/floor-assist.ts` (`runtime.floorAssist`): every
-  Need help transition is one conditional statement on the session row
+  Need help transition is one statement on the session row
   (`db/repositories/agency/floor-assist.repository.ts`, `0052_floor_assist.sql`), and only a row it
   returned gets its frame (`help_answered`, `help_cleared`), audit row and metric, so a request ends
-  exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (the
-  console's 5 s poll), never a push. A listen answers it when the listener socket goes live
+  exactly once whoever races for it. Supervisors learn of a request from the floor read's `help` (read
+  with the floor's rows, `FLOOR_ROWS_SQL`; the console's 5 s poll), never a push. A listen answers it when the listener socket goes live
   (`listen-socket.ts`'s `onListenLive`), a message when the agent's station took its
   `supervisor_message` frame; the session ending clears it in `leaveSession`; the 15-minute expiry is
   applied on every read against the database's clock, and a sweep in the primary every 15 s
   (`bootstrap/agency.ts`) clears the expired ones, sending the frame and writing the row. The floor
-  assist frames go only to a station that can receive them (`StationRegistry`'s
-  `canTakeFloorAssist`: a console, or a phone declaring `caps=floor_assist`, as the app does), so a message with no such station is `409 agent_not_live`. Messages are
+  assist frames go only to a station that can receive them (`floor_assist` in `StationRegistry`'s
+  `caps`: a console, or a phone declaring `caps=floor_assist`, as the app does), so a message with no such station is `409 agent_not_live`. Messages are
   kept in `agency_supervisor_messages` and deleted after 90 days by the retention purge
   (`maintenance/retention-purge.ts`, every run). With media workers the sweep's frames reach the
   worker holding the station through the station directory (`cluster/station-directory.ts`'s

@@ -63,9 +63,9 @@ a barrel over `src/db/repositories/agency/`. Callers and `vi.mock` use the barre
 
 **Station socket** `/proxy/agency/station/:sessionId`: `client=web|mobile` (liveness, written
 to `agency_agent_sessions.client_kind`) and `media=pcm16|alaw8`. An unknown value is refused 1008
-before the single-use token is spent (`parseStationUpgradeQuery`). `caps=` (today `inbound`) is
+before the single-use token is spent (`parseStationUpgradeQuery`). `caps=` (`inbound`, `floor_assist`) is
 never refused: unknown values are ignored. A phone takes inbound calls only with `caps=inbound`, kept
-on the live socket (`StationRegistry`'s `canTakeInbound`), never the session row (IQ46,
+on the live socket (`StationRegistry`'s `caps`), never the session row (IQ46,
 `docs/inbound.md` §6 "Mobile stations"). Detail: `docs/mobile.md`.
 
 ## Rules

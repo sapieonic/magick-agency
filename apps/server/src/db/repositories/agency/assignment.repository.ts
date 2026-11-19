@@ -69,7 +69,7 @@ import {
   type RebalanceLoad,
   type RebalanceQuotas,
 } from '../../../agency/assignment/operation.js';
-import { contactBucketSql, LIVE_STATES_SQL, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
+import { contactBucketSql, lateCallbackSql, LIVE_STATES_SQL, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import { params } from './query-builders.js';
 import { iso } from './projections.js';
 import { contactPhoneDigitsSql } from './sql-fragments.js';
@@ -340,26 +340,6 @@ function rebalanceCtes(
 }
 
 /**
- * The callbacks the late-callbacks hand-off (LF7, LF21) moves, on contact `c` of the campaign bound
- * at `campaignParam`: open (`pending`), owned, due at or before now, waiting on a callback (the
- * owner's `callback` bucket, `contactBucketSql`: a booked callback, or an inbound one), and whose
- * owner has no session present on the campaign (`presentSessionSql`). CA5's own selection
- * (`fallBackOverdueCallbacks`) with no grace: the supervisor's "now". Parenthesised.
- */
-export function lateCallbackSql(alias: string, campaignParam: string, codesParam: string): string {
-  const c = alias;
-  return `(${c}.campaign_id = ${campaignParam}::uuid
-          AND ${c}.state = 'pending'
-          AND ${c}.assigned_user_id IS NOT NULL
-          AND ${c}.next_attempt_at <= now()
-          AND ${contactBucketSql(c, codesParam)} = 'callback'
-          AND NOT EXISTS (
-            SELECT 1 FROM agency_agent_sessions s
-             WHERE s.campaign_id = ${campaignParam}::uuid AND s.agent_user_id = ${c}.assigned_user_id
-               AND ${presentSessionSql('s')}))`;
-}
-
-/**
  * The hand-off's chain: the late callbacks of away owners ({@link lateCallbackSql}), in groups of
  * one number (`group_same_number`), oldest due first, cut into the receivers' cumulative quotas
  * (`lateCallbackQuotas`: the live agents, fewest due first). A group goes whole to the receiver
@@ -520,14 +500,19 @@ export class AgencyAssignmentRepository {
                WHERE a.tenant_id = ${tenant}::uuid AND a.campaign_id = ${campaign}::uuid
                  AND a.user_id = s.agent_user_id AND a.unassigned_at IS NULL)
        ),
-       late AS (SELECT count(*)::int AS n FROM agency_contacts c WHERE ${lateCallbackSql('c', campaign, codes)})
-       SELECT l.uid::text AS agent,
-              (SELECT count(*) FROM agency_contacts c
-                WHERE c.campaign_id = ${campaign}::uuid AND c.assigned_user_id = l.uid
-                  AND c.state = 'pending' AND c.next_attempt_at <= now()
-                  AND ${contactBucketSql('c', codes)} = 'callback')::int AS due,
-              (SELECT n FROM late) AS total
-         FROM live l
+       late AS (SELECT count(*)::int AS n FROM agency_contacts c WHERE ${lateCallbackSql('c', campaign, codes)}),
+       -- Each live agent's callbacks due now on the campaign: one pass over the campaign's due
+       -- callbacks, grouped by owner, rather than a count per agent.
+       due AS (
+         SELECT c.assigned_user_id AS uid, count(*)::int AS n
+           FROM agency_contacts c
+          WHERE c.campaign_id = ${campaign}::uuid AND c.assigned_user_id IN (SELECT uid FROM live)
+            AND c.state = 'pending' AND c.next_attempt_at <= now()
+            AND ${contactBucketSql('c', codes)} = 'callback'
+          GROUP BY c.assigned_user_id
+       )
+       SELECT l.uid::text AS agent, COALESCE(d.n, 0) AS due, (SELECT n FROM late) AS total
+         FROM live l LEFT JOIN due d ON d.uid = l.uid
        UNION ALL
        -- One row with no agent, so the count is read even when nobody is live.
        SELECT NULL, 0, (SELECT n FROM late)`,
@@ -646,7 +631,7 @@ export class AgencyAssignmentRepository {
             skipped_live: row.skipped_live,
             unchanged: row.planned - row.moving,
             to_pool: row.to_pool,
-            per_agent: sortDeltas(op, row.per_agent, op.kind === AGENCY_LATE_CALLBACKS_KIND ? (quotas as LateCallbackQuotas).live : agentOrder(op)),
+            per_agent: sortDeltas(row.per_agent, deltaOrder(op, quotas)),
           },
         };
       }, { pool: getPool() });
@@ -870,14 +855,16 @@ export class AgencyAssignmentRepository {
 }
 
 /**
- * `per_agent` in the operation's own agent order, then by id. The hand-off names no agents: its
- * receivers come first, fewest due first as dealt (`order`), then the away owners by id.
+ * The agent order `per_agent` follows: the operation's own agents. The hand-off names no agents: its
+ * live agents, fewest due first as dealt (`quotas.live`), then (by {@link sortDeltas}) the away
+ * owners by id.
  */
-function sortDeltas(
-  op: CanonicalAssignment,
-  deltas: readonly AgencyAssignmentAgentDelta[],
-  order: readonly string[] = agentOrder(op),
-): AgencyAssignmentAgentDelta[] {
+function deltaOrder(op: CanonicalAssignment, quotas: PlanQuotas | undefined): readonly string[] {
+  return op.kind === AGENCY_LATE_CALLBACKS_KIND ? (quotas as LateCallbackQuotas | undefined)?.live ?? [] : agentOrder(op);
+}
+
+/** `per_agent` in `order` ({@link deltaOrder}), then by id. */
+function sortDeltas(deltas: readonly AgencyAssignmentAgentDelta[], order: readonly string[]): AgencyAssignmentAgentDelta[] {
   const rank = (id: string) => {
     const i = order.indexOf(id);
     return i === -1 ? order.length : i;
@@ -895,17 +882,13 @@ function toPreview(op: CanonicalAssignment, fp: FingerprintRow, quotas?: PlanQuo
     to_pool: fp.to_pool,
     same_number_groups: fp.groups,
   };
+  const order = deltaOrder(op, quotas);
+  const per_agent = sortDeltas(fp.per_agent, order);
   if (op.kind === AGENCY_LATE_CALLBACKS_KIND) {
-    const live = (quotas as LateCallbackQuotas | undefined)?.live ?? [];
-    return {
-      ...common,
-      kind: op.kind,
-      seed: null,
-      per_agent: sortDeltas(op, fp.per_agent, live),
-      live_agent_user_ids: live,
-    };
+    // The hand-off's order is its live agents, fewest due first.
+    return { ...common, kind: op.kind, seed: null, per_agent, live_agent_user_ids: [...order] };
   }
-  return { ...common, kind: op.kind, seed: seedOf(op), per_agent: sortDeltas(op, fp.per_agent) };
+  return { ...common, kind: op.kind, seed: seedOf(op), per_agent };
 }
 
 export const agencyAssignmentRepository = new AgencyAssignmentRepository();

@@ -9,8 +9,7 @@ import {
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
-import type { AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
-import type { StationFrame } from './station-registry.js';
+import type { AgencyStationCapability, AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 
 /**
  * What pacing needs from wherever the agents' station sockets are held: whether a
@@ -28,15 +27,15 @@ export interface PacingStations {
   isLocallyOwned(sessionId: string): boolean;
   ownerOf(sessionId: string): Promise<string | null>;
   /**
-   * The station's campaign, and whether it can take inbound calls (`StationRegistry`'s
-   * `canTakeInbound`, IQ46): only such a station is held back for a waiting inbound caller
-   * (`pacing/inbound-hold-back.ts`). The media workers' directory answers false: with media
-   * workers no inbound caller is put through to an agent (IB8, IQ13), so holding one back is moot.
+   * The station's campaign, and its capabilities (`StationRegistry`'s `caps`, IQ46): only a station
+   * with `inbound` is held back for a waiting inbound caller (`pacing/inbound-hold-back.ts`). The
+   * media workers' directory answers none: with media workers no inbound caller is put through to
+   * an agent (IB8, IQ13), so holding one back is moot.
    */
-  get(sessionId: string): { campaignId: string | null; canTakeInbound: boolean } | undefined;
+  get(sessionId: string): { campaignId: string | null; caps: ReadonlySet<AgencyStationCapability> } | undefined;
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
-  /** One agent's frame; the floor assist frames too (the help sweep's `help_cleared`), so `StationFrame`. */
-  send(sessionId: string, frame: StationFrame): boolean;
+  /** One agent's frame (the help sweep's `help_cleared` among them). */
+  send(sessionId: string, frame: AgencyStationServerFrame): boolean;
 }
 
 /**
@@ -1342,7 +1341,7 @@ export class PacingEngine {
    * inbound calls (see {@link PacingStations.get}).
    */
   private holdableForInbound(sessionId: string): boolean {
-    return this.stations.get(sessionId)?.canTakeInbound === true;
+    return this.stations.get(sessionId)?.caps.has('inbound') === true;
   }
 
   private markDirty(campaignId: string): void {

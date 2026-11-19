@@ -688,7 +688,7 @@ hand-over is §5.4.
 an unknown value ignored and never refused (a 1008 is terminal for the app). A console station can
 always take inbound calls; a `client=mobile` station only when it declared `caps=inbound` (the app
 connects with `client=mobile&media=alaw8&caps=inbound`). The capability belongs to the socket, not
-the session row: `StationRegistry` keeps `canTakeInbound` on the station, set at every attach, and
+the session row: `StationRegistry` keeps the socket's capabilities (`caps`) on the station, set at every attach, and
 every inbound rule reads it (eligibility's `no_inbound_capability`, the release hook and the
 hand-over's `releasableStation`, the could-take count and the queue tile, the send filter, the
 reconnect's restore). A capable phone's audio binds as any station's does, in the format its socket

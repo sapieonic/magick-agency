@@ -2,7 +2,7 @@ import { membershipRepository } from '@magick-agency/db/repositories/membership.
 import type { MembershipRecord } from '@magick-agency/db/models/membership.model';
 import { hasPermission } from '@magick-agency/contracts/rbac';
 import { selectMembership } from '../../rbac/select-membership.js';
-import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
+import { FLAGS, getFeatureFlagService, type FlagSnapshot } from '../../feature-flags/index.js';
 import type { ListenAccessCheck, ListenAccessSubject, ListenAccessVerdict } from './listen-registry.js';
 
 /**
@@ -42,7 +42,11 @@ export interface ListenFlags {
  * and the access check both read them here.
  */
 export async function readListenFlags(tenantId: string, accountId: string): Promise<ListenFlags> {
-  const flags = await getFeatureFlagService().strictSnapshot({ tenantId, accountId });
+  return listenFlagsFrom(await getFeatureFlagService().strictSnapshot({ tenantId, accountId }));
+}
+
+/** Both listening flags from a snapshot already read (a strict one; it throws when a flag cannot be resolved). */
+export function listenFlagsFrom(flags: FlagSnapshot): ListenFlags {
   return {
     enabled: flags.isEnabled(FLAGS.agency_live_listen_enabled),
     unrecordedAllowed: flags.isEnabled(FLAGS.agency_live_listen_unrecorded),

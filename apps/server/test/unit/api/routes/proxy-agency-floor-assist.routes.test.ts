@@ -217,7 +217,6 @@ describe('the account scope and the flag, on all three routes', () => {
     }
     expect(deps.floorAssistEnabled).toHaveBeenCalledWith(TENANT, ACCOUNT);
     expect(deps.calls).toEqual([]);
-    expect(deps.names).not.toHaveBeenCalled();
   });
 
   it('the flag unreadable fails closed (the request fails; nothing forwarded)', async () => {

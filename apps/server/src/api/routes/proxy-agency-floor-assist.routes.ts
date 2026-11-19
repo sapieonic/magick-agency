@@ -82,7 +82,7 @@ export async function proxyAgencyFloorAssistRoutes(app: FastifyInstance, opts: P
     const scoped = await scope(request, reply);
     if (!scoped) return reply;
     const actor = resolveAgencyActor(request);
-    if (!actor.ok) return reply.code(400).send({ error: 'Bad Request', code: actor.code, message: actor.message });
+    if (!actor.ok) return sendRefusal(reply, 400, actor.code, actor.message);
     const result = await deps.callCore({
       method: call.method,
       path: call.path,
@@ -114,14 +114,17 @@ export async function proxyAgencyFloorAssistRoutes(app: FastifyInstance, opts: P
     '/sessions/:id/messages',
     { preHandler: [requirePermission('agency.supervise')] },
     async (request, reply) => {
+      const me = request.user!.id;
+      // The sender's name, read beside the account and flag checks; cut to the frame's length, never
+      // a reason to refuse the message (LF17). A request refused below never waits for it.
+      const fromNameRead = deps.names([me], request.tenantId!).then((names) => senderNameForFrame(names.get(me)));
+      fromNameRead.catch(() => undefined);
       const scoped = await scope(request, reply);
       if (!scoped) return reply;
       const parsed = messageSchema.safeParse(request.body ?? {});
       const text = parsed.success ? normaliseMessageText(parsed.data.text) : null;
       if (text === null) return sendRefusal(reply, 400, 'message_invalid', FLOOR_ASSIST_REFUSAL_MESSAGES.message_invalid);
-      const me = request.user!.id;
-      // Cut to the frame's length, never a reason to refuse the message (LF17).
-      const fromName = senderNameForFrame((await deps.names([me], scoped.tenantId)).get(me));
+      const fromName = await fromNameRead;
       const result = await deps.callCore({
         method: 'POST',
         path: '/agency/supervisor-messages',

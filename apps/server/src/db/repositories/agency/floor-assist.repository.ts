@@ -5,29 +5,27 @@
  *  - **Need help** on the agent's session row (`help_raised_at`, `help_call_id`,
  *    `help_answered_at`, `help_answered_by`). A request is OPEN while raised, not answered and
  *    raised less than the expiry ago (`AGENCY_HELP_EXPIRY_MS`, passed in as `expiryMs` so a test can
- *    shorten it). Every transition is ONE conditional statement whose `WHERE` is the state it leaves,
- *    so two at once (an answer and the sweep, a cancel and a leave) end a request exactly once: the
- *    second waits on the row lock and, under READ COMMITTED, re-reads the row and matches nothing.
- *    The caller writes the audit row, the metric and the frame only for a row a transition returned
- *    (`agency/floor-assist.ts`). Expiry is relative to the database's `now()` everywhere, so a raise,
- *    the floor and the sweep never disagree on the clock.
+ *    shorten it). Every transition is ONE statement, so two at once (an answer and the sweep, a
+ *    cancel and a leave) end a request exactly once: the second waits on the row lock and, under
+ *    READ COMMITTED, re-reads the row and matches nothing. A transition on one session (raise,
+ *    cancel, answer, the session ending) that finds its request past the expiry expires it in that
+ *    same statement and says so (`expired`), so an expired request is never overwritten or answered,
+ *    and is ended once, by whichever statement reaches it first. The caller writes the audit row,
+ *    the metric and the frame only for a row a transition returned (`agency/floor-assist.ts`).
+ *    Expiry is relative to the database's `now()` everywhere, so a raise, the floor and the sweep
+ *    never disagree on the clock.
  *  - **Messages** (`agency_supervisor_messages`): the insert, and the mark that a station took it.
  *    Their 90-day purge is the retention purge's (`maintenance/retention-purge.ts`).
  *
- * The clearing transitions (cancel, expiry, the session ending) set `help_raised_at` and
- * `help_call_id` NULL and must answer what they cleared, which `UPDATE … RETURNING` cannot (it
- * returns the new row), so they pick first: `WITH target AS MATERIALIZED (SELECT … FOR UPDATE)`
- * (packages/db/CLAUDE.md's claim shape), then update the picked rows and return the picked values.
- * The sweep skips a row another transaction holds (`SKIP LOCKED`; the next sweep sees it again if
- * it is still due); a single session's transition waits for it.
+ * Every transition must answer the request as it found it, which `UPDATE … RETURNING` cannot (it
+ * returns the new row), so each picks first: `WITH prior AS MATERIALIZED (SELECT … FOR UPDATE)`
+ * (packages/db/CLAUDE.md's claim shape), then updates the picked row and returns the picked values,
+ * with whether the request was past the expiry. The sweep skips a row another transaction holds
+ * (`SKIP LOCKED`; the next sweep sees it again if it is still due); a single session's transition
+ * waits for it.
  */
 import { getPool } from '@magick-agency/db';
-
-/** Open: raised and not answered. */
-const OPEN = 'help_raised_at IS NOT NULL AND help_answered_at IS NULL';
-
-/** Raised less than `$n` ms ago. */
-const fresh = (param: string) => `help_raised_at > now() - ${param}::bigint * interval '1 millisecond'`;
+import { HELP_OPEN_SQL as OPEN, helpOpenSql } from './sql-fragments.js';
 
 /** Raised `$n` ms ago or more: expired. */
 const expired = (param: string) => `help_raised_at <= now() - ${param}::bigint * interval '1 millisecond'`;
@@ -44,10 +42,18 @@ export interface HelpEndedRow {
   call_id: string | null;
 }
 
-/** A request a supervisor answered. */
-export interface HelpAnsweredRow extends HelpEndedRow {
-  answered_at: Date;
+/**
+ * A request a transition on one session ended, as it was: by the transition itself or, when it was
+ * found past the expiry (`expired`), by the expiry (the caller audits it as expired).
+ */
+export interface HelpClearedRow extends HelpEndedRow {
+  expired: boolean;
 }
+
+/** What {@link AgencyFloorAssistRepository.answer} found: a request it answered, or one past the expiry it expired. */
+export type HelpAnswerResult =
+  | (HelpEndedRow & { expired: false; answered_at: Date })
+  | (HelpEndedRow & { expired: true });
 
 /** An open request, as the floor and the station read it. */
 export interface OpenHelpRow {
@@ -57,13 +63,17 @@ export interface OpenHelpRow {
 }
 
 /** What {@link AgencyFloorAssistRepository.raise} did. */
-export type HelpRaiseResult =
+export type HelpRaiseResult = (
   /** Raised now. */
   | { raised: true; help: OpenHelpRow }
   /** One was open already: it is answered unchanged. */
   | { raised: false; help: OpenHelpRow }
   /** Nothing was raised and nothing is open: the session has left (or is not in this account). */
-  | { raised: false; help: null };
+  | { raised: false; help: null }
+) & {
+  /** The request the raise found past the expiry, expired before this one was raised, as it was; else null. */
+  expired: HelpEndedRow | null;
+};
 
 export interface SupervisorMessageInsert {
   tenantId: string;
@@ -75,14 +85,19 @@ export interface SupervisorMessageInsert {
   text: string;
 }
 
+/** What every transition answers: the updated row `s`, and the request as `prior` picked it. */
+const ENDED_COLUMNS = `s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
+            prior.help_raised_at AS raised_at, prior.help_call_id AS call_id, prior.expired`;
+
 /**
  * Clear the requests `where` picks (`$1` is the expiry in ms): `help_raised_at` and `help_call_id`
- * NULL, answering what each held. `limit` bounds a sweep's batch; `skipLocked` for the sweep only.
+ * NULL, answering what each held and whether it was past the expiry. `limit` bounds a sweep's
+ * batch; `skipLocked` for the sweep only.
  */
 function clearSql(where: string, opts: { limit?: string; skipLocked?: boolean } = {}): string {
   return `
-    WITH target AS MATERIALIZED (
-      SELECT id, help_raised_at, help_call_id
+    WITH prior AS MATERIALIZED (
+      SELECT id, help_raised_at, help_call_id, ${expired('$1')} AS expired
         FROM agency_agent_sessions
        WHERE ${where}
        ORDER BY help_raised_at, id
@@ -91,34 +106,65 @@ function clearSql(where: string, opts: { limit?: string; skipLocked?: boolean } 
     )
     UPDATE agency_agent_sessions s
        SET help_raised_at = NULL, help_call_id = NULL
-      FROM target
-     WHERE s.id = target.id
-    RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
-              target.help_raised_at AS raised_at, target.help_call_id AS call_id`;
+      FROM prior
+     WHERE s.id = prior.id
+    RETURNING ${ENDED_COLUMNS}`;
 }
 
-/**
- * The expired requests, oldest first, at most `$2`, waiting on rows another transaction holds: one
- * session's (`$3`), the first step of every transition on it (`expireDue` with a `sessionId`), or
- * every session's when `$3` is null. Not the sweep's, which is {@link SWEEP_EXPIRED_SQL}.
- */
-export const EXPIRE_DUE_SQL = clearSql(`${OPEN} AND ${expired('$1')} AND ($3::uuid IS NULL OR id = $3::uuid)`, { limit: '$2', skipLocked: false });
-
-/** The sweep's batch: as {@link EXPIRE_DUE_SQL}, skipping rows another transaction holds. Exported for its plan test. */
+/** The sweep's batch: the expired requests, oldest first, at most `$2`, skipping rows another transaction holds. Exported for its plan test. */
 export const SWEEP_EXPIRED_SQL = clearSql(`${OPEN} AND ${expired('$1')}`, { limit: '$2', skipLocked: true });
 
-/** The agent's cancel: `$2` session, `$3` tenant; only an open request (an expired one is the expiry's). */
-const CANCEL_SQL = clearSql(`id = $2::uuid AND tenant_id = $3::uuid AND ${OPEN} AND ${fresh('$1')}`);
+/** The agent's cancel: `$2` session, `$3` tenant; its open request, expired instead when past the expiry. */
+const CANCEL_SQL = clearSql(`id = $2::uuid AND tenant_id = $3::uuid AND ${OPEN}`);
 
-/** The session ended: `$2` session; only an open request (an expired one is the expiry's). */
-const END_WITH_SESSION_SQL = clearSql(`id = $2::uuid AND ${OPEN} AND ${fresh('$1')}`);
+/** The session ended: `$2` session; its open request, expired instead when past the expiry. */
+const END_WITH_SESSION_SQL = clearSql(`id = $2::uuid AND ${OPEN}`);
 
-/** An account's open requests on open sessions: the floor read. `$3` the expiry in ms. Exported for its plan test. */
-export const OPEN_HELP_FOR_ACCOUNT_SQL = `
-  SELECT id AS session_id, help_raised_at AS raised_at, help_call_id AS call_id
-    FROM agency_agent_sessions
-   WHERE tenant_id = $1::uuid AND account_id = $2::uuid AND left_at IS NULL
-     AND ${OPEN} AND ${fresh('$3')}`;
+/**
+ * A supervisor (`$3`) answers the open request of session `$1` (tenant `$2`): it stays raised, now
+ * answered; or, past the expiry (`$4` ms), it is expired instead, cleared as {@link clearSql} clears.
+ */
+const ANSWER_SQL = `
+  WITH prior AS MATERIALIZED (
+    SELECT id, help_raised_at, help_call_id, ${expired('$4')} AS expired
+      FROM agency_agent_sessions
+     WHERE id = $1::uuid AND tenant_id = $2::uuid AND ${OPEN}
+     FOR UPDATE
+  )
+  UPDATE agency_agent_sessions s
+     SET help_answered_at = CASE WHEN prior.expired THEN s.help_answered_at ELSE now() END,
+         help_answered_by = CASE WHEN prior.expired THEN s.help_answered_by ELSE $3::uuid END,
+         help_raised_at = CASE WHEN prior.expired THEN NULL ELSE s.help_raised_at END,
+         help_call_id = CASE WHEN prior.expired THEN NULL ELSE s.help_call_id END
+    FROM prior
+   WHERE s.id = prior.id
+  RETURNING ${ENDED_COLUMNS}, s.help_answered_at AS answered_at`;
+
+/**
+ * Raise a request (call `$4`) on session `$1` (tenant `$2`, account `$3`, not left) unless one is
+ * open (`$5` the expiry in ms). One open and fresh: left as it is and answered (`raised_at` null).
+ * One open past the expiry, or none open (never raised, cleared, or answered): raised now, the
+ * expired one answered as it was (`prior_*` with `expired`). No row: the session has left (or is
+ * not in this account).
+ */
+const RAISE_SQL = `
+  WITH prior AS MATERIALIZED (
+    SELECT id, tenant_id, account_id, campaign_id, agent_user_id, help_raised_at, help_call_id,
+           (${OPEN}) AS open, (${OPEN} AND ${expired('$5')}) AS expired
+      FROM agency_agent_sessions
+     WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND left_at IS NULL
+     FOR UPDATE
+  ), raised AS (
+    UPDATE agency_agent_sessions s
+       SET help_raised_at = now(), help_call_id = $4::uuid, help_answered_at = NULL, help_answered_by = NULL
+      FROM prior
+     WHERE s.id = prior.id AND NOT (prior.open AND NOT prior.expired)
+    RETURNING s.help_raised_at, s.help_call_id
+  )
+  SELECT prior.id AS session_id, prior.tenant_id, prior.account_id, prior.campaign_id, prior.agent_user_id,
+         prior.expired, prior.help_raised_at AS prior_raised_at, prior.help_call_id AS prior_call_id,
+         raised.help_raised_at AS raised_at, raised.help_call_id AS call_id
+    FROM prior LEFT JOIN raised ON true`;
 
 /**
  * The call the session is connected to now (`agency_calls.id`), on any spine: a bridged campaign
@@ -154,34 +200,25 @@ export class AgencyFloorAssistRepository {
   // ── Need help ──────────────────────────────────────────────────────────────
 
   /**
-   * Raise a request on the session (`tenantId`, `accountId` its own, not left) unless one is open.
-   * The caller expires a due request first ({@link expireDue} for the session), so an expired one
-   * is never overwritten unaudited; a request found expired in between is expired here and the raise
-   * tried again (at most twice more), its row in `expiredMeanwhile`.
+   * Raise a request on the session (`tenantId`, `accountId` its own, not left) unless one is open,
+   * in one statement ({@link RAISE_SQL}): a request found past the expiry is expired by it and
+   * answered in `expired`, never overwritten unaudited.
    */
   async raise(input: {
     sessionId: string; tenantId: string; accountId: string; callId: string | null; expiryMs: number;
-  }): Promise<HelpRaiseResult & { expiredMeanwhile: HelpEndedRow[] }> {
-    const expiredMeanwhile: HelpEndedRow[] = [];
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { rows } = await getPool().query<{ raised_at: Date; call_id: string | null }>(
-        `UPDATE agency_agent_sessions
-            SET help_raised_at = now(), help_call_id = $4::uuid, help_answered_at = NULL, help_answered_by = NULL
-          WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND left_at IS NULL
-            AND NOT (${OPEN})
-          RETURNING help_raised_at AS raised_at, help_call_id AS call_id`,
-        [input.sessionId, input.tenantId, input.accountId, input.callId],
-      );
-      if (rows[0]) return { raised: true, help: { session_id: input.sessionId, ...rows[0] }, expiredMeanwhile };
-      const open = await this.openForSession(input.sessionId, input.tenantId, input.accountId, input.expiryMs);
-      if (open) return { raised: false, help: open, expiredMeanwhile };
-      // Neither raised nor open: the session left, or its open request expired since the caller's
-      // expiry pass. Expire that one (audited by the caller) and try again.
-      const due = await this.expireDue(input.expiryMs, { sessionId: input.sessionId });
-      if (due.length === 0) return { raised: false, help: null, expiredMeanwhile };
-      expiredMeanwhile.push(...due);
-    }
-    return { raised: false, help: null, expiredMeanwhile };
+  }): Promise<HelpRaiseResult> {
+    const { rows } = await getPool().query<Omit<HelpEndedRow, 'raised_at' | 'call_id'> & {
+      expired: boolean; prior_raised_at: Date | null; prior_call_id: string | null; raised_at: Date | null; call_id: string | null;
+    }>(RAISE_SQL, [input.sessionId, input.tenantId, input.accountId, input.callId, input.expiryMs]);
+    const r = rows[0];
+    if (!r) return { raised: false, help: null, expired: null };
+    const { session_id, tenant_id, account_id, campaign_id, agent_user_id } = r;
+    const expired: HelpEndedRow | null = r.expired
+      ? { session_id, tenant_id, account_id, campaign_id, agent_user_id, raised_at: r.prior_raised_at!, call_id: r.prior_call_id }
+      : null;
+    return r.raised_at
+      ? { raised: true, help: { session_id, raised_at: r.raised_at, call_id: r.call_id }, expired }
+      : { raised: false, help: { session_id, raised_at: r.prior_raised_at!, call_id: r.prior_call_id }, expired };
   }
 
   /** The session's open request, or null. */
@@ -190,63 +227,49 @@ export class AgencyFloorAssistRepository {
       `SELECT id AS session_id, help_raised_at AS raised_at, help_call_id AS call_id
          FROM agency_agent_sessions
         WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid AND left_at IS NULL
-          AND ${OPEN} AND ${fresh('$4')}`,
+          AND ${helpOpenSql('$4')}`,
       [sessionId, tenantId, accountId, expiryMs],
     );
     return rows[0] ?? null;
   }
 
-  /** The agent cancels: the session's open request, or null when none was open. */
-  async cancel(sessionId: string, tenantId: string, expiryMs: number): Promise<HelpEndedRow | null> {
-    const { rows } = await getPool().query<HelpEndedRow>(CANCEL_SQL, [expiryMs, sessionId, tenantId]);
+  /**
+   * The agent cancels: the session's open request, or null when none was open. `expired`: it was
+   * past the expiry, so it was expired, not cancelled.
+   */
+  async cancel(sessionId: string, tenantId: string, expiryMs: number): Promise<HelpClearedRow | null> {
+    const { rows } = await getPool().query<HelpClearedRow>(CANCEL_SQL, [expiryMs, sessionId, tenantId]);
     return rows[0] ?? null;
   }
 
-  /** The session ended: its open request, or null. */
-  async endWithSession(sessionId: string, expiryMs: number): Promise<HelpEndedRow | null> {
-    const { rows } = await getPool().query<HelpEndedRow>(END_WITH_SESSION_SQL, [expiryMs, sessionId]);
+  /** The session ended: its open request, or null. `expired`: it was past the expiry, so it was expired. */
+  async endWithSession(sessionId: string, expiryMs: number): Promise<HelpClearedRow | null> {
+    const { rows } = await getPool().query<HelpClearedRow>(END_WITH_SESSION_SQL, [expiryMs, sessionId]);
     return rows[0] ?? null;
   }
 
   /**
    * A supervisor (`byUserId`) answered the session's open request: it stays raised, now answered.
-   * Null when none was open (none raised, already answered, cleared, or expired).
+   * `expired`: it was past the expiry, so it was expired instead. Null when none was open (none
+   * raised, already answered, or cleared).
    */
-  async answer(sessionId: string, tenantId: string, byUserId: string, expiryMs: number): Promise<HelpAnsweredRow | null> {
-    const { rows } = await getPool().query<HelpAnsweredRow>(
-      `UPDATE agency_agent_sessions
-          SET help_answered_at = now(), help_answered_by = $3::uuid
-        WHERE id = $1::uuid AND tenant_id = $2::uuid AND ${OPEN} AND ${fresh('$4')}
-        RETURNING id AS session_id, tenant_id, account_id, campaign_id, agent_user_id,
-                  help_raised_at AS raised_at, help_call_id AS call_id, help_answered_at AS answered_at`,
-      [sessionId, tenantId, byUserId, expiryMs],
-    );
+  async answer(sessionId: string, tenantId: string, byUserId: string, expiryMs: number): Promise<HelpAnswerResult | null> {
+    const { rows } = await getPool().query<HelpAnswerResult>(ANSWER_SQL, [sessionId, tenantId, byUserId, expiryMs]);
     return rows[0] ?? null;
   }
 
   /**
-   * Expire the requests left unanswered past the expiry: one session's (`sessionId`, waiting on a
-   * row another transaction holds), or every session's, in batches of {@link HELP_SWEEP_BATCH}
-   * (`sweep`, skipping held rows) until a batch comes back short. Each row is returned once, by the
-   * one statement that cleared it.
+   * The sweep: expire every request left unanswered past the expiry, in batches of
+   * {@link HELP_SWEEP_BATCH} (skipping rows another transaction holds) until a batch comes back
+   * short. Each row is returned once, by the one statement that cleared it.
    */
-  async expireDue(expiryMs: number, opts: { sessionId?: string; sweep?: boolean } = {}): Promise<HelpEndedRow[]> {
-    if (!opts.sweep) {
-      const { rows } = await getPool().query<HelpEndedRow>(EXPIRE_DUE_SQL, [expiryMs, HELP_SWEEP_BATCH, opts.sessionId ?? null]);
-      return rows;
-    }
+  async expireDue(expiryMs: number): Promise<HelpEndedRow[]> {
     const out: HelpEndedRow[] = [];
     for (;;) {
-      const { rows } = await getPool().query<HelpEndedRow>(SWEEP_EXPIRED_SQL, [expiryMs, HELP_SWEEP_BATCH]);
-      out.push(...rows);
+      const { rows } = await getPool().query<HelpClearedRow>(SWEEP_EXPIRED_SQL, [expiryMs, HELP_SWEEP_BATCH]);
+      for (const { expired: _expired, ...row } of rows) out.push(row);
       if (rows.length < HELP_SWEEP_BATCH) return out;
     }
-  }
-
-  /** The account's open requests on its open sessions (the floor read). */
-  async openForAccount(tenantId: string, accountId: string, expiryMs: number): Promise<OpenHelpRow[]> {
-    const { rows } = await getPool().query<OpenHelpRow>(OPEN_HELP_FOR_ACCOUNT_SQL, [tenantId, accountId, expiryMs]);
-    return rows;
   }
 
   /** The call the session is connected to now (`agency_calls.id`), or null. */

@@ -76,7 +76,6 @@ describe('telling Need help requests apart (LF31)', () => {
   it('keys a request by its agent and when it was raised', () => {
     expect(helpKey({ agent_user_id: 'r', help: { raised_at: at, call_id: null } })).toBe(`r@${at}`);
     expect(helpKey({ agent_user_id: 'r', help: null })).toBeNull();
-    expect(helpKey({ agent_user_id: 'r' })).toBeNull();
     expect(helpKeys([{ agent_user_id: 'a', help: null }, { agent_user_id: 'r', help: { raised_at: at, call_id: 'c' } }])).toEqual([`r@${at}`]);
   });
 

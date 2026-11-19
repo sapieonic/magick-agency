@@ -53,14 +53,13 @@ export type { ListenHistoryQuery, ListenHistoryVisitRow } from './agency/listen-
 export {
   AgencyFloorAssistRepository,
   agencyFloorAssistRepository,
-  EXPIRE_DUE_SQL,
   HELP_SWEEP_BATCH,
   LIVE_CALL_FOR_SESSION_SQL,
-  OPEN_HELP_FOR_ACCOUNT_SQL,
   SWEEP_EXPIRED_SQL,
 } from './agency/floor-assist.repository.js';
 export type {
-  HelpAnsweredRow,
+  HelpAnswerResult,
+  HelpClearedRow,
   HelpEndedRow,
   HelpRaiseResult,
   OpenHelpRow,
@@ -186,7 +185,7 @@ export {
   waitingContactSql,
 } from './agency/drilldown-sql.js';
 export type { ContactWaitingBucket } from './agency/drilldown-sql.js';
-export { contactListFilterConditions } from './agency/query-builders.js';
+export { contactListFilterConditions, toKeysetPage } from './agency/query-builders.js';
 export {
   AgencyInsightsRollupRepository,
   agencyInsightsRollupRepository,
