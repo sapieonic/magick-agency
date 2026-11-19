@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   AGENCY_LATE_CALLBACKS_KIND,
   type AgencyLateCallbacksPreview,
@@ -14,7 +13,7 @@ import { useLatestRef } from '../../../hooks/useLatestRef';
 import { useMountedRef } from '../../../hooks/useMountedRef';
 import { errorCode } from '../../../utils/agencyErrors';
 import { stalePreviewOf } from '../../../utils/agencyAssignmentOps';
-import { ASSIGNMENT_REFUSAL_COPY } from '../../../utils/agencyAssignmentCopy';
+import { ASSIGNMENT_REFUSAL_COPY, assignmentRefusal } from '../../../utils/agencyAssignmentCopy';
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
@@ -66,14 +65,9 @@ export function LateCallbacksDialog({
   const mounted = useMountedRef();
 
   const refuse = useCallback((err: unknown, fallback: string) => {
-    const code = errorCode(err);
-    if (code === 'late_callbacks_pool_mode') {
-      onPool(campaign.id);
-      return LATE_CALLBACKS_POOL_COPY;
-    }
-    if (code === 'assignment_disabled') return ASSIGNMENT_REFUSAL_COPY.assignment_disabled;
-    if (code === 'campaign_not_found') return ASSIGNMENT_REFUSAL_COPY.campaign_not_found;
-    return getErrorMessage(err, fallback);
+    if (errorCode(err) !== 'late_callbacks_pool_mode') return assignmentRefusal(err, fallback);
+    onPool(campaign.id);
+    return LATE_CALLBACKS_POOL_COPY;
   }, [campaign.id, onPool]);
 
   // The preview, once per opening: a parent's new callbacks never preview it again.
@@ -149,7 +143,7 @@ export function LateCallbacksDialog({
             {shown.stale && (
               <p className={styles.handOffStale} data-testid="handoff-stale">
                 <AlertTriangle size={15} aria-hidden="true" />
-                <span>Things changed since you looked. This is the up-to-date result: check it and confirm again.</span>
+                <span>{ASSIGNMENT_REFUSAL_COPY.preview_stale}</span>
               </p>
             )}
             <p className={styles.handOffQuestion} data-testid="handoff-question">{lateCallbacksQuestion(shown.preview)}</p>

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { AgencyFloorAgent, AgencyFloorResponse } from '@magick-agency/contracts/api/agency/floor';
 import type { AgencyLateCallbacksPreview } from '@magick-agency/contracts/api/agency/assignment';
 import { ApiError } from '../../api/client';
+import { ASSIGNMENT_REFUSAL_COPY } from '../../utils/agencyAssignmentCopy';
 import { board, floorRow, onBoard, stats } from '../helpers/home';
 
 /**
@@ -450,7 +451,7 @@ describe('Give late callbacks to free agents (LF7, LF30)', () => {
     const dialog = screen.getByRole('dialog');
     await within(dialog).findByTestId('handoff-question');
     fireEvent.click(within(dialog).getByTestId('handoff-give'));
-    expect(await within(dialog).findByTestId('handoff-stale')).toBeTruthy();
+    expect((await within(dialog).findByTestId('handoff-stale')).textContent).toBe(ASSIGNMENT_REFUSAL_COPY.preview_stale);
     expect(within(dialog).getByTestId('handoff-question').textContent).toBe('Give 3 late callbacks to 1 free agent?');
     expect(mocks.commitLateCallbacks).toHaveBeenCalledTimes(1);
     const confirm = within(dialog).getByTestId('handoff-give');

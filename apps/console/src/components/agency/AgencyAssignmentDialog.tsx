@@ -3,7 +3,6 @@ import { AlertTriangle, X } from 'lucide-react';
 import { commitAssignment, previewAssignment } from '../../api/agencyAssignment';
 import { useTenant } from '../../contexts/TenantContext';
 import { useDialogFocus } from '@magick-agency/web-ui/hooks/useDialogFocus';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode } from '../../utils/agencyErrors';
 import {
   trackAgencyAssignmentCommitted,
@@ -13,6 +12,7 @@ import {
 import {
   ASSIGNMENT_KIND_COPY,
   ASSIGNMENT_REFUSAL_COPY,
+  assignmentRefusal,
   CONTACT_BUCKET_LABELS,
   previewSentence,
 } from '../../utils/agencyAssignmentCopy';
@@ -28,7 +28,6 @@ import {
 import { CONTACT_STATE_LABELS } from '../../types/agency-spine';
 import { formatCount, plural } from '../../utils/format/number';
 import type {
-  AgencyAssignmentErrorCode,
   AgencyAssignmentKind,
   AgencyAssignmentPreview,
   AgencyAssignmentResult,
@@ -84,12 +83,6 @@ export interface AgencyAssignmentDialogProps {
   origin: 'roster' | 'progress';
   onClose: () => void;
   onCommitted: (result: AgencyAssignmentResult) => void;
-}
-
-/** A refusal in the console's words: ours for a known code, the server's otherwise. */
-function refusal(err: unknown, fallback: string): string {
-  const code = errorCode(err) as AgencyAssignmentErrorCode | null;
-  return code && code in ASSIGNMENT_REFUSAL_COPY ? ASSIGNMENT_REFUSAL_COPY[code] : getErrorMessage(err, fallback);
 }
 
 /** The commit button's word for each kind. */
@@ -164,7 +157,7 @@ export function AgencyAssignmentDialog({
       });
     } catch (err: unknown) {
       setPreview(null);
-      setError(refusal(err, 'Could not work out what this would change.'));
+      setError(assignmentRefusal(err, 'Could not work out what this would change.'));
     } finally {
       setPreviewing(false);
     }
@@ -201,7 +194,7 @@ export function AgencyAssignmentDialog({
         setPreview(fresh);
         setStale(true);
       } else {
-        setError(refusal(err, 'Nothing was changed.'));
+        setError(assignmentRefusal(err, 'Nothing was changed.'));
       }
     } finally {
       setCommitting(false);
