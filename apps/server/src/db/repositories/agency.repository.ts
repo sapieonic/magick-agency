@@ -50,6 +50,22 @@ export type {
 } from './agency/listen-session.repository.js';
 export { AgencyListenHistoryRepository, agencyListenHistoryRepository, LISTEN_HISTORY_SQL } from './agency/listen-history.repository.js';
 export type { ListenHistoryQuery, ListenHistoryVisitRow } from './agency/listen-history.repository.js';
+export {
+  AgencyFloorAssistRepository,
+  agencyFloorAssistRepository,
+  EXPIRE_DUE_SQL,
+  HELP_SWEEP_BATCH,
+  LIVE_CALL_FOR_SESSION_SQL,
+  OPEN_HELP_FOR_ACCOUNT_SQL,
+  SWEEP_EXPIRED_SQL,
+} from './agency/floor-assist.repository.js';
+export type {
+  HelpAnsweredRow,
+  HelpEndedRow,
+  HelpRaiseResult,
+  OpenHelpRow,
+  SupervisorMessageInsert,
+} from './agency/floor-assist.repository.js';
 export { AgencyLiveCallRepository, agencyLiveCallRepository } from './agency/live-call.repository.js';
 export { AgencyFloorRepository, agencyFloorRepository, FLOOR_ACTIVE_STATUSES } from './agency/floor.repository.js';
 export type { AgencyFloorRow } from './agency/floor.repository.js';

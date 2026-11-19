@@ -79,4 +79,7 @@ export * from './agency/inbound';
 export * from './agency/push-devices';
 export * from './agency/promise';
 export * from './agency/listen';
+export * from './agency/floor-assist';
 export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';
+export type { AgencyFloorAssistErrorCode, AgencyFloorAssistErrorResponse } from './errors';
+export { AGENCY_FLOOR_ASSIST_ERROR_CODES } from './errors';

@@ -18,6 +18,7 @@
  */
 import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import type { PacingStations } from '../agency/pacing-engine.js';
+import type { StationFrame } from '../agency/station-registry.js';
 
 interface Entry {
   slot: number;
@@ -31,7 +32,7 @@ export interface StationDirectoryDeps {
   /** Send a campaign frame to every ready worker. */
   broadcastToWorkers: (campaignId: string, frame: AgencyStationServerFrame) => void;
   /** Send one session's frame to the worker in `slot`; false when that worker has no open channel. */
-  sendToWorker: (slot: number, sessionId: string, frame: AgencyStationServerFrame) => boolean;
+  sendToWorker: (slot: number, sessionId: string, frame: StationFrame) => boolean;
 }
 
 export class StationDirectory implements PacingStations {
@@ -118,7 +119,7 @@ export class StationDirectory implements PacingStations {
     return n;
   }
 
-  send(sessionId: string, frame: AgencyStationServerFrame): boolean {
+  send(sessionId: string, frame: StationFrame): boolean {
     if (!this.isLocallyOwned(sessionId)) return false;
     return this.deps.sendToWorker(this.entries.get(sessionId)!.slot, sessionId, frame);
   }

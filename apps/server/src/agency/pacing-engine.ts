@@ -10,6 +10,7 @@ import {
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
 import type { AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import type { StationFrame } from './station-registry.js';
 
 /**
  * What pacing needs from wherever the agents' station sockets are held: whether a
@@ -34,7 +35,8 @@ export interface PacingStations {
    */
   get(sessionId: string): { campaignId: string | null; canTakeInbound: boolean } | undefined;
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
-  send(sessionId: string, frame: AgencyStationServerFrame): boolean;
+  /** One agent's frame; the floor assist frames too (the help sweep's `help_cleared`), so `StationFrame`. */
+  send(sessionId: string, frame: StationFrame): boolean;
 }
 
 /**

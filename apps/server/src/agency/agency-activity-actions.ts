@@ -227,6 +227,13 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_session.softphone_started', label: 'Switched (or queued a switch) to soft phone', group: 'Staffing' },
   { value: 'agency_session.softphone_ended', label: 'Left soft phone (or withdrew the switch)', group: 'Staffing' },
   { value: 'agency_session.away_ring_ended', label: 'Phone stopped ringing for inbound calls', group: 'Staffing' },
+  // Floor assist (LF4, LF5): filed under the session, with the campaign of a campaign session.
+  { value: 'agency_session.help_raised', label: 'Asked for help', group: 'Staffing' },
+  { value: 'agency_session.help_cancelled', label: 'Cancelled a request for help', group: 'Staffing' },
+  { value: 'agency_session.help_answered', label: 'Request for help answered', group: 'Staffing' },
+  { value: 'agency_session.help_expired', label: 'Request for help expired unanswered', group: 'Staffing' },
+  { value: 'agency_session.help_session_ended', label: 'Request for help ended with the session', group: 'Staffing' },
+  { value: 'agency_session.message_sent', label: 'Supervisor sent a message', group: 'Staffing' },
 ] as const satisfies readonly ActivityActionOption[];
 
 type ServedAction = (typeof CAMPAIGN_ACTIVITY_ACTIONS)[number]['value'];

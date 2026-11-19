@@ -518,6 +518,30 @@ locals {
       },
     ]
 
+    # ── Live floor: Need help (docs/decisions.md LF4) ─────────────────────
+    #
+    # An agent pressed Need help on a call or in wrap-up and no supervisor answered it (a listen or
+    # a message) in 15 minutes (AGENCY_HELP_EXPIRY_MS): the request expired. Each request is counted
+    # once, by the process that ended it (the primary's sweep for an expiry), so the sum is per
+    # deployment. Warns only: a customer was on the line and the supervisors did not respond, a
+    # people problem the floor's lead must hear about, not an outage.
+    "floor" = [
+      {
+        uid  = "agy-help-unanswered"
+        name = "Need help requests are expiring unanswered"
+        # Any expiry in 30m (threshold 0.5): one agent left asking for 15 minutes is worth a word.
+        # Sparse counter: the new-series guard.
+        expr          = "sum by (service_name) (((agency_help_requests_cleared_total{reason=\"expired\",${local.agency}} unless agency_help_requests_cleared_total{reason=\"expired\",${local.agency}} offset 30m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 30m)) or increase(agency_help_requests_cleared_total{reason=\"expired\",${local.agency}}[30m]))"
+        op            = "gt"
+        threshold     = 0.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "An agent's Need help went 15 minutes without a supervisor answering"
+        description   = "agency_help_requests_cleared_total{reason=\"expired\"} advanced in the last 30m on {{ $labels.service_name }}: an agent asked for help on a call or in wrap-up and no supervisor listened in or sent them a message within 15 minutes, so the request expired. The calls are not affected. Find who: the audit log's 'Agent's request for help expired unanswered' rows (action agency_session.help_expired, filed under the session, with its campaign) and the 'Agent asked for help' row before each. Then ask why nobody answered: no supervisor had the Live floor open (Need help reaches supervisors only through it, polled every 5 s), the help alert was muted, or the account's supervisors were all busy. Compare agency_help_requests_raised_total, the other reasons of agency_help_requests_cleared_total and agency_help_answer_seconds in Explore for the floor's usual response (there is no dashboard panel yet). If supervisors say they never saw the request, check the floor read is answering (GET /proxy/agency/floor) and that agency_floor_assist_enabled is on for the account. Runbook: docs/operations.md, 'Alert runbooks', the Live floor."
+      },
+    ]
+
     # ── Analysis: post-call transcription and analysis ───────────────────
     #
     # Analysis is reporting, not dialling: a refused vendor costs no call, so this warns

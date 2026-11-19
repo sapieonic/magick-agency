@@ -39,6 +39,7 @@ function onCall(over: Partial<CoreFloorAgent> = {}): CoreFloorAgent {
     agent_user_id: AGENT, session_id: SESSION, campaign_id: 'c-1', campaign_name: 'Renewals', state: 'on_call',
     state_since: '2026-11-18T09:58:00.000Z', connected: true, client_kind: 'web', break_reason: null, break_label: null,
     on_inbound_call: false, inbound_outcome_owed: false, wrapup_window_seconds: 30, calls_today: 12, left_at: null,
+    help: { raised_at: '2026-11-18T09:59:00.000Z', call_id: CALL },
     call: {
       call_id: CALL, origin: 'campaign', correlation_id: 'att-1', customer_name: 'Ada', connected_at: '2026-11-18T09:58:30.000Z',
       aht_seconds: 182.5, recording: true, listener_user_ids: [],
@@ -51,7 +52,7 @@ function away(): CoreFloorAgent {
   return {
     agent_user_id: AWAY, session_id: null, campaign_id: null, campaign_name: null, state: 'offline', state_since: null,
     connected: null, client_kind: null, break_reason: null, break_label: null, on_inbound_call: false, inbound_outcome_owed: false,
-    wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z',
+    wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z', help: null,
   };
 }
 
@@ -76,6 +77,7 @@ beforeEach(async () => {
       { campaign_id: null, promises: 1, with_amount: 0, amount_total: '0.00' },
     ]),
     promiseCampaignIds: vi.fn(async () => ['c-1']),
+    floorAssistEnabled: vi.fn(async () => true),
     now: () => NOW,
   };
   deps = d as never;
@@ -171,11 +173,13 @@ describe('GET /floor', () => {
             aht_seconds: 182.5, listenable: true, not_listenable_reason: null,
           },
           calls_today: 12, left_at: null,
+          help: { raised_at: '2026-11-18T09:59:00.000Z', call_id: CALL },
         },
         {
           agent_user_id: AWAY, agent_name: null, session_id: null, campaign_id: null, campaign_name: null, state: 'offline',
           state_since: null, connected: null, client_kind: null, break_reason: null, break_label: null, on_inbound_call: false,
           inbound_outcome_owed: false, wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z',
+          help: null,
         },
       ],
       totals: { on_shift: 1, assigned: 2 },
@@ -216,6 +220,22 @@ describe('GET /floor', () => {
     const res = await getFloor();
     expect(res.statusCode).toBe(200);
     expect(res.json().agents[0].call).toMatchObject({ listenable: false, not_listenable_reason: null });
+  });
+
+  it('Need help (LF4) only while floor assist is on: off, every row\'s help is null; the flag read for the account', async () => {
+    expect((await getFloor()).json().agents[0].help).toEqual({ raised_at: '2026-11-18T09:59:00.000Z', call_id: CALL });
+    expect(deps.floorAssistEnabled).toHaveBeenCalledWith(TENANT, ACCOUNT);
+    (deps.floorAssistEnabled as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const off = await getFloor();
+    expect(off.statusCode).toBe(200);
+    expect(off.json().agents.map((a: { help: unknown }) => a.help)).toEqual([null, null]);
+  });
+
+  it('the floor assist flag unreadable: the floor is served (never a 503), no row carries help', async () => {
+    (deps.floorAssistEnabled as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('flag store down'));
+    const res = await getFloor();
+    expect(res.statusCode).toBe(200);
+    expect(res.json().agents[0]).toMatchObject({ help: null, calls_today: 12 });
   });
 
   it('passes the internal handler\'s refusal through; an unrecognised body is a 502', async () => {

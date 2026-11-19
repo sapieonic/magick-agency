@@ -21,6 +21,7 @@
 import type { AgencyAgentLiveState } from '../../agency/campaign-stats';
 import type { AgencyClientKind } from '../../agency/station';
 import type { AgencyCallOrigin } from '../../agency/listen';
+import type { AgencySessionHelp } from '../../agency/floor-assist';
 import type { AgencyLiveCallNotListenableReason } from './live-calls';
 
 /** The furthest back `from` may be, in hours before the server's now (a local midnight is never more than ~26 h ago). */
@@ -121,6 +122,17 @@ export interface AgencyFloorAgent {
    * signed in today"). Always null on a row with an open session.
    */
   left_at: string | null;
+  /**
+   * The open session's open Need help request (LF4, `agency/floor-assist.ts`): when the agent raised
+   * it and the call it was raised on. Null once it is answered, cancelled or expired (expiry is read
+   * on every floor read, not waited for), on a row with no open session, and on every row while
+   * `agency_floor_assist_enabled` is off for the account. This read is how every `agency.supervise`
+   * holder in the account is alerted: the console polls it every 5 s.
+   *
+   * Always sent by this server (null when there is none). Optional in the type only so a client
+   * written before Phase 3 still compiles; read absent as null.
+   */
+  help?: AgencySessionHelp | null;
 }
 
 /** Distinct people. */

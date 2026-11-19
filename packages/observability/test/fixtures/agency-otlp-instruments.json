@@ -172,6 +172,39 @@
     ]
   },
   {
+    "name": "agency_help_answer_seconds",
+    "kind": "Histogram",
+    "description": "How long an answered Need help request waited, from the raise to the supervisor's answer",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        5,
+        15,
+        30,
+        60,
+        120,
+        300,
+        600,
+        900
+      ]
+    },
+    "attributes": []
+  },
+  {
+    "name": "agency_help_requests_cleared_total",
+    "kind": "Counter",
+    "description": "Need help requests ended, by why: answered (a supervisor listened or sent a message), cancelled (by the agent), expired (15 minutes unanswered) or session_ended (the agent left). Each request is counted once",
+    "attributes": [
+      "reason"
+    ]
+  },
+  {
+    "name": "agency_help_requests_raised_total",
+    "kind": "Counter",
+    "description": "Need help requests raised by agents (a repeated raise while one is open is not counted)",
+    "attributes": []
+  },
+  {
     "name": "agency_inbound_answer_seconds",
     "kind": "Histogram",
     "description": "Seconds the inbound answer webhook took to answer the carrier, by result: stream, spoken (a message the carrier speaks), hangup, fallback, refused or timed_out",
@@ -600,6 +633,14 @@
     "name": "agency_reports_subscription_runs_total",
     "kind": "Counter",
     "description": "Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_supervisor_messages_total",
+    "kind": "Counter",
+    "description": "Supervisor messages to an agent's station (Talk to agent, Send reminder), by result: delivered, or agent_not_live (no live station could receive it)",
     "attributes": [
       "result"
     ]

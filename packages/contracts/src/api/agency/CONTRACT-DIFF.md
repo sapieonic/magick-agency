@@ -190,6 +190,14 @@ API layer from the three call tables. Neither has a dialer counterpart. Home's b
 window the session's wrap-up actually takes, not the campaign's configured `wrapup_seconds` that
 `AgencyCampaign` carries: on an inbound wrap-up it is the window captured on the inbound call
 (IQ52), and a timerless campaign (`wrapup_seconds = 0`) serves null, as a soft-phone session does.
+`AgencyFloorAgent.help` (LF4) is the dialer contract's `AgencySessionHelp` (`../../agency/floor-assist.ts`,
+the same type the station's `ready.help` carries) on the open request only: the internal handler
+answers it whatever the flag says, and the public route serves null on every row while
+`agency_floor_assist_enabled` is off for the account (or cannot be read). Optional in the type only,
+so a client written before Phase 3 compiles; the server always sends it. Floor assist's own shapes
+(`AgencyHelpResponse`, `AgencySupervisorMessageRequest` and `…Response`, the three station frames,
+`AgencyFloorAssistErrorCode` in `../../errors.ts` §8) are dialer-contract only: the public routes relay
+the internal handlers' answers unchanged, so they have no console twin here.
 
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,

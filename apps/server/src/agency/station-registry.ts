@@ -3,14 +3,16 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   AGENCY_STATION_CLOSE,
+  AGENCY_STATION_FLOOR_ASSIST_EVENTS,
   AGENCY_STATION_INBOUND_EVENTS,
   type AgencyClientKind,
+  type AgencyStationFloorAssistFrame,
   type AgencyStationServerFrame,
 } from '@magick-agency/contracts/agency';
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
-import { stationCanTakeInbound } from './station-upgrade.js';
+import { stationCanTakeFloorAssist, stationCanTakeInbound } from './station-upgrade.js';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -44,6 +46,13 @@ interface StationEntry {
    */
   canTakeInbound: boolean;
   /**
+   * Whether this SOCKET can receive the floor assist frames (LF4, LF5): every console, and a phone
+   * that declared the capability (`stationCanTakeFloorAssist`). Set at every attach, as
+   * {@link canTakeInbound}. Decides whether those frames are sent ({@link StationRegistry.send}) and
+   * whether a supervisor's message has a station to go to ({@link StationRegistry.canReceiveFloorAssist}).
+   */
+  canTakeFloorAssist: boolean;
+  /**
    * Last sign of life: attach, every client `ping`, and — for a `mobile` station only —
    * every protocol pong or ping. Liveness is derived from this.
    */
@@ -58,10 +67,15 @@ export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaig
  * capability to `stationCanTakeInbound` of a station that declared nothing (a console can, a phone
  * cannot; the station socket passes its upgrade's own answer).
  */
-export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'canTakeInbound'> & {
+export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'canTakeInbound' | 'canTakeFloorAssist'> & {
   clientKind?: AgencyClientKind;
   canTakeInbound?: boolean;
+  /** The floor assist frames (LF4, LF5); absent: `stationCanTakeFloorAssist` of a station that declared nothing. */
+  canTakeFloorAssist?: boolean;
 };
+
+/** Every frame the dialer runtime sends a station: the server frames and the floor assist frames, staged apart (contracts `agency/floor-assist.ts`). */
+export type StationFrame = AgencyStationServerFrame | AgencyStationFloorAssistFrame;
 
 /** The heartbeat grace this station is held to: `heartbeat_grace_ms` for its client kind. */
 export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number {
@@ -130,6 +144,7 @@ export class StationRegistry {
     const entry: Omit<StationEntry, 'lastSeen'> = {
       // With no answer given, the upgrade's rule for a station that declared nothing.
       ...input, clientKind, canTakeInbound: input.canTakeInbound ?? stationCanTakeInbound({ client: clientKind, caps: [] }),
+      canTakeFloorAssist: input.canTakeFloorAssist ?? stationCanTakeFloorAssist({ client: clientKind, caps: [] }),
     };
     // Supersede any prior socket for this session (a reconnect that raced the old
     // socket's close). The prior socket is closed so it cannot go on relaying.
@@ -533,6 +548,16 @@ export class StationRegistry {
     return out;
   }
 
+  /**
+   * Whether this process holds the session's station on an open socket that can receive the floor
+   * assist frames (LF5's "a live station that can receive it"): what a supervisor's message checks
+   * before it is stored and sent. Process-local, as the capability is on the live socket.
+   */
+  canReceiveFloorAssist(sessionId: string): boolean {
+    const entry = this.stations.get(sessionId);
+    return !!entry && entry.canTakeFloorAssist && entry.ws.readyState === 1 /* OPEN */;
+  }
+
   /** The live socket for an agent, if this replica holds it. */
   socketFor(sessionId: string): WebSocket | undefined {
     return this.stations.get(sessionId)?.ws;
@@ -589,8 +614,12 @@ export class StationRegistry {
    * (docs/inbound.md §4.3, §6; IQ43, IQ46). Enforced here, the one send path, so the rule does not
    * rest on every inbound caller of `send` having already ruled such a station out. Dropped,
    * logged at `debug`, and answered false (not delivered).
+   *
+   * ── The floor assist events ─────────────────────────────────────────────
+   * The same for `AGENCY_STATION_FLOOR_ASSIST_EVENTS` (`supervisor_message`, `help_answered`,
+   * `help_cleared`; LF4, LF5): sent only to a station that can receive them (`canTakeFloorAssist`).
    */
-  send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
+  send(sessionId: string, frame: StationFrame, expectedWs?: WebSocket): boolean {
     const entry = this.stations.get(sessionId);
     const ws = entry?.ws;
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
@@ -599,6 +628,11 @@ export class StationRegistry {
       // build that took the session over), not a fault.
       log.debug({ sessionId, event: frame.event, clientKind: entry.clientKind },
         'Inbound station frame not sent to a station that cannot take inbound calls');
+      return false;
+    }
+    if (!entry.canTakeFloorAssist && isFloorAssistEvent(frame.event)) {
+      log.debug({ sessionId, event: frame.event, clientKind: entry.clientKind },
+        'Floor assist station frame not sent to a station that cannot receive it');
       return false;
     }
     // "Answer this socket, or answer nobody" — never "answer whoever is here now".
@@ -654,6 +688,12 @@ export class StationRegistry {
 const INBOUND_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_INBOUND_EVENTS);
 
 /** Whether `event` is sent only to a station that can take inbound calls (`AGENCY_STATION_INBOUND_EVENTS`). */
-function isInboundEvent(event: AgencyStationServerFrame['event']): boolean {
+function isInboundEvent(event: StationFrame['event']): boolean {
   return INBOUND_EVENTS.has(event);
+}
+
+const FLOOR_ASSIST_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_FLOOR_ASSIST_EVENTS);
+
+function isFloorAssistEvent(event: StationFrame['event']): boolean {
+  return FLOOR_ASSIST_EVENTS.has(event);
 }

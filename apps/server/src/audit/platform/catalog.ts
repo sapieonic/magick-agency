@@ -64,6 +64,20 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // (`device_away` on a break, or `offline`). The system actor, unless the agent's own "Stop
   // ringing" or device removal ended it. Ids only.
   'agency_session.away_ring_ended',
+  // Floor assist (LF4, LF5; `agency/floor-assist.ts`): one row per Need help request at each end of
+  // it, filed under the session. `help_raised` (the agent), then exactly one of `help_cancelled` (the
+  // agent), `help_answered` (the supervisor who listened or messaged: `details.how`), `help_expired`
+  // (the system actor: 15 minutes unanswered) or `help_session_ended` (the system actor: the session
+  // ended first); `details.raised_at` names the request, `call_id` its call. `message_sent`: a
+  // supervisor's message to the agent's station (the supervisor; `details` the message id, the agent,
+  // whether a station took it and its length, never the text, which `agency_supervisor_messages`
+  // keeps 90 days).
+  'agency_session.help_raised',
+  'agency_session.help_cancelled',
+  'agency_session.help_answered',
+  'agency_session.help_expired',
+  'agency_session.help_session_ended',
+  'agency_session.message_sent',
   'agency_attempt.hung_up',
   // Wrap-up redial: the agent redialled the customer from wrap-up (`wrapup-redial.ts`).
   'agency_attempt.redialed',

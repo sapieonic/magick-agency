@@ -13,7 +13,14 @@ import type {
 import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
-import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, stationCanTakeInbound, type StationUpgradeQuery } from './station-upgrade.js';
+import {
+  DEFAULT_STATION_UPGRADE,
+  parseStationUpgradeQuery,
+  stationCanTakeFloorAssist,
+  stationCanTakeInbound,
+  type StationUpgradeQuery,
+} from './station-upgrade.js';
+import { openHelpOfSession } from './floor-assist.js';
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { withTimeoutOr } from '../utils/with-timeout.js';
@@ -506,6 +513,8 @@ export async function handleStationSocket(
   // `caps=inbound`. Decides whether it is sent the inbound frames and offered inbound callers, and
   // whether what the session held of an inbound call is let go below.
   const canTakeInbound = stationCanTakeInbound(upgrade);
+  // The same for the floor assist frames (LF4, LF5): a console always, a phone only with the capability.
+  const canTakeFloorAssist = stationCanTakeFloorAssist(upgrade);
   await runtime.stations.attach({
     sessionId,
     campaignId: session.campaign_id,
@@ -516,6 +525,7 @@ export async function handleStationSocket(
     // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
     clientKind: upgrade.client,
     canTakeInbound,
+    canTakeFloorAssist,
   });
 
   // And the same question again, because `attach` has its own await (the ownership
@@ -640,6 +650,9 @@ export async function handleStationSocket(
   const shownState = resumedState === 'reserved' && !activeAttempt && runtime.dialer.hasUnannouncedAttempt(sessionId)
     ? 'available'
     : resumedState;
+  // The session's open Need help (LF4), from the attach's own read of the row, so a reloaded console
+  // still shows "Help requested". Only to a station that hears how it ends (the floor assist frames).
+  const openHelp = canTakeFloorAssist ? openHelpOfSession(session, Date.now()) : undefined;
   const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
@@ -658,6 +671,7 @@ export async function handleStationSocket(
     ...(pendingBreak
       ? { pending_state: 'break' as const, pending_break_reason: pendingBreak.code }
       : {}),
+    ...(openHelp ? { help: openHelp } : {}),
     // The fence above narrows the window; this closes it. `ready` carries this
     // run's whole view of the session, so delivering it to a socket that built
     // its own is strictly worse than delivering it to nobody — the replacement

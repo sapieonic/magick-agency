@@ -10,6 +10,7 @@ import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, Agency
 import type { AgencyStationCustomerWaitingFrame, AgencyStationInboundCallFrame } from './inbound';
 import type { AgencyStationManualCallFrame } from './softphone';
 import type { AgencyContactPromise } from './promise';
+import type { AgencySessionHelp } from './floor-assist';
 import type { AllListed } from '../primitives';
 
 // ─── Which client is on the other end ───────────────────────────────────────
@@ -213,6 +214,9 @@ export type AgencyStationServerFrame =
   // calls (`AGENCY_STATION_INBOUND_EVENTS`).
   | AgencyStationInboundCallFrame
   | AgencyStationCustomerWaitingFrame;
+// Floor assist (LF4, LF5): `supervisor_message`, `help_answered` and `help_cleared` are declared in
+// `./floor-assist.ts` as `AgencyStationFloorAssistFrame`, staged outside this union until the app's
+// wire package decodes them (see that file's note). The server sends either union.
 
 /**
  * The inbound call frames: sent only to a station that can take inbound calls
@@ -316,6 +320,13 @@ export interface AgencyStationReadyFrame {
   pending_state?: AgencyAgentState;
   /** **P2.** Present when `pending_state` is `break`. */
   pending_break_reason?: string;
+  /**
+   * The session's open Need help request (LF4, `./floor-assist.ts`), so a reloaded console or a
+   * relaunched app still shows "Help requested"; absent when none is open. Only to a station that
+   * can receive the floor assist frames (`AGENCY_STATION_FLOOR_ASSIST_CAPABILITY`), which are what
+   * end it.
+   */
+  help?: AgencySessionHelp;
 }
 
 /**

@@ -248,6 +248,43 @@ describe('StationRegistry frame delivery', () => {
     }
   });
 
+  it('sends the floor assist events (LF4, LF5) only to a station that can receive them: a console and a capable phone, never an older phone; canReceiveFloorAssist says which', async () => {
+    const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+    const phoneWs = () => Object.assign(fakeWs(), { on() {}, off() {}, ping() {} });
+    const old = phoneWs();
+    const capable = phoneWs();
+    const desk = fakeWs();
+    await reg.attach({ sessionId: 'old', ws: old as any, ...ENTRY, clientKind: 'mobile', canTakeInbound: true });
+    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', canTakeFloorAssist: true });
+    await reg.attach({ sessionId: 'desk', ws: desk as any, ...ENTRY, agentUserId: 'u2' });
+    try {
+      expect([reg.get('old')!.canTakeFloorAssist, reg.get('capable')!.canTakeFloorAssist, reg.get('desk')!.canTakeFloorAssist])
+        .toEqual([false, true, true]);
+      expect(['old', 'capable', 'desk', 'elsewhere'].map((id) => reg.canReceiveFloorAssist(id))).toEqual([false, true, true, false]);
+      const frames = [
+        { event: 'supervisor_message', id: 'm1', text: 'Offer the 3-month plan', from_name: 'Anitha N', sent_at: '2026-11-19T10:00:00.000Z' },
+        { event: 'help_answered', raised_at: '2026-11-19T09:59:00.000Z', by_name: 'Anitha N', how: 'message' },
+        { event: 'help_cleared', raised_at: '2026-11-19T09:59:00.000Z', reason: 'answered' },
+      ] as const;
+      for (const frame of frames) {
+        expect(reg.send('old', frame), frame.event).toBe(false);
+        expect(reg.send('capable', frame), frame.event).toBe(true);
+        expect(reg.send('desk', frame), frame.event).toBe(true);
+      }
+      expect(old.sent).toEqual([]);
+      expect(desk.sent.map((f) => f.event)).toEqual(['supervisor_message', 'help_answered', 'help_cleared']);
+      // Everything else still reaches the older phone, the inbound frames included (it declared them).
+      expect(reg.send('old', { event: 'agent_state', state: 'available', since: '2026-11-19T10:00:00.000Z' })).toBe(true);
+      // A closed socket can receive nothing.
+      desk.readyState = 3;
+      expect(reg.canReceiveFloorAssist('desk')).toBe(false);
+    } finally {
+      await reg.detach('old');
+      await reg.detach('capable');
+      await reg.detach('desk');
+    }
+  });
+
   it('the capability belongs to the socket: a reattach states its own, and the detach reports the one it had', async () => {
     const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
     const phoneWs = () => Object.assign(fakeWs(), { on() {}, off() {}, ping() {}, close() {} });

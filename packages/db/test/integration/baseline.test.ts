@@ -81,6 +81,8 @@ const EXPECTED_TABLES = [
   'agency_push_devices',
   // live call listening: one row per listen session (0047, docs/listening.md)
   'agency_listen_sessions',
+  // the Live floor's supervisor messages (0052, LF5)
+  'agency_supervisor_messages',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [

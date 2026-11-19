@@ -323,7 +323,7 @@ describe('the internal handler, GET /floor', () => {
         call_id: liveCallId, origin: 'campaign', correlation_id: expect.any(String), customer_name: 'Ada Lovelace',
         connected_at: ago(80_000).toISOString(), aht_seconds: expect.anything(), recording: true, listener_user_ids: [],
       },
-      calls_today: 5, left_at: null,
+      calls_today: 5, left_at: null, help: null,
     });
     expect(JSON.stringify(body)).not.toContain('9811122233');
     expect(of('soft')).toMatchObject({ break_reason: 'soft_phone', break_label: 'Soft phone', campaign_id: null, call: null });

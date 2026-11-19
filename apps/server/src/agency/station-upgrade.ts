@@ -1,5 +1,10 @@
 import type { AgencyClientKind, AgencyStationCapability, AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
-import { AGENCY_CLIENT_KINDS, AGENCY_STATION_CAPABILITIES, AGENCY_STATION_MEDIA_FORMATS } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_CLIENT_KINDS,
+  AGENCY_STATION_CAPABILITIES,
+  AGENCY_STATION_FLOOR_ASSIST_CAPABILITY,
+  AGENCY_STATION_MEDIA_FORMATS,
+} from '@magick-agency/contracts/agency';
 
 /**
  * The station socket's upgrade query, beyond the token: which app is attaching, which
@@ -43,6 +48,20 @@ export const DEFAULT_STATION_UPGRADE: Readonly<StationUpgradeQuery> = Object.fre
  */
 export function stationCanTakeInbound(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): boolean {
   return query.client !== 'mobile' || query.caps.includes('inbound');
+}
+
+/**
+ * Whether a station attaching with `query` can receive the floor assist frames (LF4, LF5:
+ * `supervisor_message`, `help_answered`, `help_cleared`; contracts `agency/floor-assist.ts`): a console
+ * always; a phone only when it declared {@link AGENCY_STATION_FLOOR_ASSIST_CAPABILITY}, so an app build
+ * that cannot show a message is never sent one, and a message to it is `409 agent_not_live`.
+ *
+ * Staged: the capability is not yet in `AGENCY_STATION_CAPABILITIES` (the app's wire package adds it
+ * with its decoders), so `parseCaps` drops it and no phone can declare it yet. The check reads the
+ * parsed list by value, so it starts answering true for a phone the day the capability is listed.
+ */
+export function stationCanTakeFloorAssist(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): boolean {
+  return query.client !== 'mobile' || (query.caps as readonly string[]).includes(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY);
 }
 
 export type StationUpgradeQueryResult =

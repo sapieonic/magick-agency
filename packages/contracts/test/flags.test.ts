@@ -19,12 +19,14 @@ const EXPECTED = {
   // On by default: a narrowing of listening (recorded calls only when off), not a capability (LS4).
   // Client-exposed since LS20: the account's Settings says whether unrecorded calls are included.
   agency_live_listen_unrecorded: { default: true, envVar: 'FF_AGENCY_LIVE_LISTEN_UNRECORDED', clientExposed: true },
+  // Floor assist (LF11): off until a super admin turns it on; the console and the app read it.
+  agency_floor_assist_enabled: { default: false, envVar: 'FF_AGENCY_FLOOR_ASSIST', clientExposed: true },
 } as const;
 
 describe('agency flags', () => {
-  it('are exactly the eleven keys', () => {
+  it('are exactly the twelve keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(11);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(12);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
@@ -49,6 +51,7 @@ describe('agency flags', () => {
       agency_inbound_enabled: false,
       agency_live_listen_enabled: false,
       agency_live_listen_unrecorded: true,
+      agency_floor_assist_enabled: false,
     };
     expect(Object.keys(map)).not.toContain('agency_late_binding');
   });

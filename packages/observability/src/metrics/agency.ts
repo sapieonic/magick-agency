@@ -1153,3 +1153,51 @@ export function trackListenSessionEnded(reason: ListenEndMetricReason, seconds?:
 export function trackListenTapError(stage: ListenTapErrorStage): void {
   agencyListenTapErrorsTotal.inc({ stage });
 }
+
+// ─── Floor assist: Need help and supervisor messages (LF4, LF5) ──────────────
+//
+// An agent's Need help request and a supervisor's message to an agent's station. Counted by the
+// process that made the transition (the one that holds the agent's station; the primary for the
+// expiry sweep and for a session ended from another tenant's join), so with media workers every
+// series is per process: sum them. No tenant, account, session or user ids as labels: the audit
+// rows and `agency_supervisor_messages` name them.
+
+/** Why a Need help request ended (`agency_help_requests_cleared_total`): the contract's `AgencyHelpClearedReason`. */
+export type HelpClearedMetricReason = 'answered' | 'cancelled' | 'expired' | 'session_ended';
+
+/** How a message to an agent's station went (`agency_supervisor_messages_total`). */
+export type SupervisorMessageResult = 'delivered' | 'agent_not_live';
+
+export const agencyHelpRequestsRaisedTotal = counter(meter, 'agency_help_requests_raised_total', {
+  description: 'Need help requests raised by agents (a repeated raise while one is open is not counted)',
+});
+
+export const agencyHelpRequestsClearedTotal = counter<'reason'>(meter, 'agency_help_requests_cleared_total', {
+  description: 'Need help requests ended, by why: answered (a supervisor listened or sent a message), cancelled (by the agent), expired (15 minutes unanswered) or session_ended (the agent left). Each request is counted once',
+});
+
+export const agencyHelpAnswerSeconds = histogram(meter, 'agency_help_answer_seconds', {
+  description: 'How long an answered Need help request waited, from the raise to the supervisor\'s answer',
+  unit: 's',
+  buckets: [5, 15, 30, 60, 120, 300, 600, 900],
+});
+
+export const agencySupervisorMessagesTotal = counter<'result'>(meter, 'agency_supervisor_messages_total', {
+  description: 'Supervisor messages to an agent\'s station (Talk to agent, Send reminder), by result: delivered, or agent_not_live (no live station could receive it)',
+});
+
+/** One request raised. */
+export function trackHelpRaised(): void {
+  agencyHelpRequestsRaisedTotal.inc();
+}
+
+/** One request ended, once per request; an answer with how long it waited. */
+export function trackHelpCleared(reason: HelpClearedMetricReason, answerSeconds?: number): void {
+  agencyHelpRequestsClearedTotal.inc({ reason });
+  if (reason === 'answered' && answerSeconds !== undefined) agencyHelpAnswerSeconds.observe(Math.max(0, answerSeconds));
+}
+
+/** One message sent, or refused for want of a station. */
+export function trackSupervisorMessage(result: SupervisorMessageResult): void {
+  agencySupervisorMessagesTotal.inc({ result });
+}

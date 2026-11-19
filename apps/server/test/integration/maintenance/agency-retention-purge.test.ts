@@ -240,4 +240,31 @@ describe('agency retention purge (integration)', () => {
     await age(call.id, 100);
     expect((await runRetentionPurge()).agency_transcripts_nulled).toBe(0);
   });
+
+  it('deletes supervisor messages sent over 90 days ago, every run whatever the windows, and keeps the rest (LF5)', async () => {
+    const pool = getTestPool();
+    const insert = async (daysAgo: number, text: string) => {
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO agency_supervisor_messages (tenant_id, account_id, session_id, agent_user_id, sender_user_id, text, sent_at, delivered)
+         VALUES ($1, $2, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), $3, now() - make_interval(days => $4), true)
+         RETURNING id`,
+        [DEFAULTS.tenantId, DEFAULTS.accountId, text, daysAgo]);
+      return rows[0]!.id;
+    };
+    await insert(91, 'old one');
+    await insert(200, 'older one');
+    const edge = await insert(89, 'inside the window');
+    const recent = await insert(0, 'today');
+    // No window configured: the step runs all the same.
+    const dry = await runRetentionPurge({ dryRun: true });
+    expect(dry.supervisor_messages_deleted).toBe(2);
+    expect((await pool.query('SELECT count(*)::int AS n FROM agency_supervisor_messages')).rows[0]).toEqual({ n: 4 });
+    const report = await runRetentionPurge();
+    expect(report.error).toBeUndefined();
+    expect(report.supervisor_messages_error).toBeUndefined();
+    expect(report.supervisor_messages_deleted).toBe(2);
+    const kept = (await pool.query<{ id: string }>('SELECT id FROM agency_supervisor_messages ORDER BY sent_at')).rows.map((r) => r.id);
+    expect(kept).toEqual([edge, recent]);
+    expect((await runRetentionPurge()).supervisor_messages_deleted).toBe(0);
+  });
 });

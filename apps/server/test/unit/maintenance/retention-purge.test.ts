@@ -63,7 +63,12 @@ function mockQueries(opts: {
   recordingBatches?: number[];
   /** Makes the recording step's batch statement throw. */
   recordingError?: Error;
+  /** The supervisor messages step's batches (LF5): rows each one deletes. Then none. */
+  messageBatches?: number[];
+  /** Makes the messages step's batch statement throw. */
+  messageError?: Error;
 } = {}) {
+  const messageBatches = [...(opts.messageBatches ?? [])];
   const deleteRowCounts = [...(opts.deleteRowCounts ?? [])];
   const recordingBatches = [...(opts.recordingBatches ?? [])];
   let recordingBatch = 0;
@@ -91,6 +96,11 @@ function mockQueries(opts: {
     }
     if (sql.trimStart().startsWith('UPDATE agency_calls')) {
       return { rows: [], rowCount: opts.updateRowCount ?? 0 };
+    }
+    if (sql.trimStart().startsWith('WITH old_messages AS MATERIALIZED')) {
+      if (opts.messageError) throw opts.messageError;
+      const n = messageBatches.shift() ?? 0;
+      return { rows: [], rowCount: n };
     }
     if (sql.trimStart().startsWith('WITH picked AS MATERIALIZED')) {
       if (opts.recordingError) throw opts.recordingError;
@@ -256,6 +266,47 @@ describe('runRetentionPurge (agency slice)', () => {
     expect(payload.text).toContain('one step failed');
     expect(payload.text).toContain('recording links step FAILED');
     expect(payload.text).toContain('statement timeout');
+  });
+
+  it('deletes supervisor messages past 90 days on every run, whatever the windows, in batches until a short one (LF5)', async () => {
+    mocks.config.retention.agencyRetentionDays = undefined;
+    mocks.config.retention.agencyTranscriptRetentionDays = undefined;
+    mockQueries({ messageBatches: [5000, 5000, 7] });
+    const before = Date.now();
+    const report = await runRetentionPurge();
+    const batches = mocks.query.mock.calls.filter((c) => (c[0] as string).startsWith('WITH old_messages'));
+    expect(batches).toHaveLength(3);
+    const sql = (batches[0]![0] as string).replace(/\s+/g, ' ');
+    // The claim shape packages/db/CLAUDE.md prescribes, on the sent time.
+    expect(sql).toBe('WITH old_messages AS MATERIALIZED ( SELECT id FROM agency_supervisor_messages WHERE sent_at < $1 '
+      + 'ORDER BY sent_at LIMIT $2 FOR UPDATE SKIP LOCKED ) DELETE FROM agency_supervisor_messages m USING old_messages WHERE m.id = old_messages.id');
+    const cutoff = batches[0]![1]![0] as Date;
+    expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(90 * DAY - 1000);
+    expect(before - cutoff.getTime()).toBeLessThanOrEqual(90 * DAY + 1000);
+    expect(batches[0]![1]![1]).toBe(5000);
+    expect(report.supervisor_messages_deleted).toBe(10007);
+    expect(report.supervisor_messages_error).toBeUndefined();
+  });
+
+  it('a failed messages step is its own: logged and reported, the steps after it still run (LF5)', async () => {
+    mocks.config.retention.slackWebhookUrl = 'https://hooks.slack.com/services/T/B/x';
+    mocks.config.retention.agencyTranscriptRetentionDays = 30;
+    mockQueries({ updateRowCount: 2, messageError: new Error('canceling statement due to statement timeout') });
+    const report = await runRetentionPurge();
+    expect(report.error).toBeUndefined();
+    expect(report.supervisor_messages_error).toBe('canceling statement due to statement timeout');
+    expect(report.agency_transcripts_nulled).toBe(2);
+    const payload = JSON.parse((fetch as any).mock.calls[0][1].body);
+    expect(payload.text).toContain('one step failed');
+    expect(payload.text).toContain('supervisor messages step FAILED');
+  });
+
+  it('counts the messages past 90 days without deleting them in a dry run', async () => {
+    mockQueries();
+    const report = await runRetentionPurge({ dryRun: true });
+    expect(executedSql().some((s) => s.includes('DELETE FROM agency_supervisor_messages'))).toBe(false);
+    expect(executedSql().some((s) => s.startsWith('SELECT count') && s.includes('agency_supervisor_messages'))).toBe(true);
+    expect(report.supervisor_messages_deleted).toBe(7);
   });
 
   it('counts those links without clearing them in a dry run', async () => {

@@ -222,6 +222,13 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_session.softphone_started', label: 'Agent switched (or queued a switch) to the soft phone', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.softphone_ended', label: 'Agent left the soft phone (or withdrew a queued switch)', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.away_ring_ended', label: "Agent's phone stopped ringing for inbound calls", group: 'Staffing', product: 'agency' },
+  // Floor assist (LF4, LF5): an agent's Need help and how it ended, and a supervisor's message.
+  { value: 'agency_session.help_raised', label: 'Agent asked for help', group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.help_cancelled', label: 'Agent cancelled their request for help', group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.help_answered', label: "Supervisor answered an agent's request for help", group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.help_expired', label: "Agent's request for help expired unanswered", group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.help_session_ended', label: "Agent's request for help ended with their session", group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.message_sent', label: 'Supervisor sent an agent a message', group: 'Staffing', product: 'agency' },
 
   // Team, and the PLATFORM product — see {@link AuditProduct}. The labels say
   // "invitation" rather than "invite" because the noun is what the reader is

@@ -2,9 +2,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCallOrigin, AgencyClientKind, AgencyAgentLiveState } from '@magick-agency/contracts/agency';
 import type { AgencyFloorTotals } from '@magick-agency/contracts/api/agency/floor';
+import { AGENCY_HELP_EXPIRY_MS, type AgencySessionHelp } from '@magick-agency/contracts/agency';
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import {
+  agencyFloorAssistRepository,
   agencyFloorRepository,
   agencyListenSessionRepository,
   agencyLiveCallRepository,
@@ -13,6 +15,7 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { matchName } from '../../../agency/inbound/match-name.js';
 import { floorBreakLabel, floorTotals, parseFloorFrom } from '../../../agency/floor.js';
+import { toSessionHelp } from '../../../agency/floor-assist.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { isUuid } from '../../../utils/uuid.js';
 import { ahtFor } from './live-calls.js';
@@ -34,6 +37,8 @@ const log = createChildLogger({ component: 'agency-floor' });
  *    `false`), and each agent's conversations since `from` (`callsToday`, kept
  *    {@link FLOOR_CALLS_TODAY_CACHE_MS} per account and `from`).
  *    The call carries the customer's name, never the number: the floor shows no numbers.
+ *    Each open session's open Need help (LF4, `AgencyFloorAssistRepository.openForAccount`, the
+ *    expiry applied in the read), whatever the floor assist flag says: the public layer reads it.
  */
 
 /**
@@ -86,6 +91,8 @@ export interface CoreFloorAgent {
   call: CoreFloorCall | null;
   calls_today: number;
   left_at: string | null;
+  /** The open session's open Need help (LF4), whatever the flag says: the public route nulls it while the flag is off. */
+  help: AgencySessionHelp | null;
 }
 
 /** `GET /api/v1/agency/floor`. */
@@ -142,6 +149,9 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
     const rowsRead = agencyFloorRepository.floorRows(tenantId, accountId, from);
     // Liveness needs only the rows, not the live calls: started as soon as they are in.
     const connectedRead = observed(rowsRead.then((rows) => connectedFor(runtime, sessionIdsOf(rows))));
+    // The account's open Need help requests (LF4): a handful of rows on their partial index, expiry
+    // applied in the read. Started with the rows, awaited with the other per-row reads.
+    const helpRead = observed(agencyFloorAssistRepository.openForAccount(tenantId, accountId, AGENCY_HELP_EXPIRY_MS));
     const [rows, live] = await Promise.all([rowsRead, agencyLiveCallRepository.listLive({ tenantId, accountId })]);
 
     // The call in progress per session: the live list's rows, keyed by the agent's session.
@@ -154,12 +164,14 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
       }
     }
     const calls = [...callBySession.values()];
-    const [listens, aht, connected, callsTodayByAgent] = await Promise.all([
+    const [listens, aht, connected, callsTodayByAgent, openHelp] = await Promise.all([
       agencyListenSessionRepository.listOpenForCalls(tenantId, accountId, calls.map((c) => c.call_id)),
       ahtFor(tenantId, calls.map((c) => c.campaign_id).filter((id): id is string => id !== null)),
       connectedRead,
       callsToday,
+      helpRead,
     ]);
+    const helpBySession = new Map(openHelp.map((h) => [h.session_id, toSessionHelp(h)]));
     const listenersByCall = new Map<string, string[]>();
     for (const l of listens) {
       const onCall = listenersByCall.get(l.call_id);
@@ -197,6 +209,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
           : null,
         calls_today: callsTodayByAgent.get(r.agent_user_id) ?? 0,
         left_at: r.left_at ? new Date(r.left_at).toISOString() : null,
+        help: r.session_id ? helpBySession.get(r.session_id) ?? null : null,
       };
     });
     const body: CoreFloorResponse = { agents, totals: floorTotals(rows), as_of: now.toISOString() };

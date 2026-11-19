@@ -442,3 +442,35 @@ describe('a reconnect mid-ring is told the state the agent was last shown (late 
     expect((await ready(h)).state).toBe('reserved');
   });
 });
+
+describe('a reconnect is told the session\'s open Need help (LF4, LF15)', () => {
+  // FALSIFIED: with `help` dropped from the frame the first case reds; with the capability check
+  // dropped, the phone case does.
+  const RAISED = new Date(Date.now() - 60_000);
+
+  it('carries the open request: when it was raised and on which call', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, help_raised_at: RAISED, help_answered_at: null, help_call_id: 'call-1' });
+    expect((await ready(h)).help).toEqual({ raised_at: RAISED.toISOString(), call_id: 'call-1' });
+  });
+
+  it('omits it when none is open: never raised, answered, or past its 15 minutes', async () => {
+    for (const row of [
+      { help_raised_at: null },
+      { help_raised_at: RAISED, help_answered_at: new Date() },
+      { help_raised_at: new Date(Date.now() - 15 * 60_000 - 1_000), help_answered_at: null },
+    ]) {
+      await h.app.close();
+      h = await harness();
+      repos.session.findById.mockResolvedValue({ ...SESSION, ...row });
+      expect('help' in (await ready(h)), JSON.stringify(row)).toBe(false);
+    }
+  });
+
+  it('not to a phone that cannot receive the floor assist frames (which are what end it)', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, help_raised_at: RAISED, help_answered_at: null, help_call_id: null });
+    const ws = await h.app.injectWS('/api/v1/agency/station/sess-1?token=tok&client=mobile&caps=inbound');
+    await vi.waitFor(() => expect(h.sent.some((f) => f.event === 'ready')).toBe(true));
+    ws.terminate();
+    expect('help' in h.sent.find((f) => f.event === 'ready')).toBe(false);
+  });
+});

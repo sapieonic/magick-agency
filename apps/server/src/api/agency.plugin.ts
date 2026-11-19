@@ -8,6 +8,7 @@ import { proxyAgencyStationRoutes } from './routes/proxy-agency-station.routes.j
 import { proxyAgencyListenRoutes } from './routes/proxy-agency-listen.routes.js';
 import { proxyAgencyLiveCallsRoutes } from './routes/proxy-agency-live-calls.routes.js';
 import { proxyAgencyFloorRoutes } from './routes/proxy-agency-floor.routes.js';
+import { proxyAgencyFloorAssistRoutes } from './routes/proxy-agency-floor-assist.routes.js';
 import { proxyAgencyListenHistoryRoutes } from './routes/proxy-agency-listen-history.routes.js';
 import { dncAvailabilityProbe } from '../agency/dnc-availability.js';
 import { buildCoreHandlers } from './core-handlers.js';
@@ -220,6 +221,16 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // summary. No path params; the query is validated by the routes (400 with their own codes).
   await app.register(async (scope) => {
     await scope.register(proxyAgencyFloorRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── Floor assist: Need help and supervisor messages (`proxy-agency-floor-assist.routes.ts`, LF4, LF5) ──
+  // Under the agent's session paths; a malformed session id is the agent routes' own not-found.
+  await app.register(async (scope) => {
+    scope.addHook('preHandler', rejectMalformedIdParams(
+      { id: { status: 404, body: { error: 'Not Found', message: 'Session not found' } } },
+      { onlyUnder: `${P.proxyAgency}/sessions/` },
+    ));
+    await scope.register(proxyAgencyFloorAssistRoutes, { prefix: P.proxyAgency });
   });
 
   // ── The account's listening history (`proxy-agency-listen-history.routes.ts`, docs/listening.md §12) ──

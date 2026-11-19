@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, stationCanTakeInbound } from '../../../src/agency/station-upgrade.js';
+import {
+  DEFAULT_STATION_UPGRADE,
+  parseStationUpgradeQuery,
+  stationCanTakeFloorAssist,
+  stationCanTakeInbound,
+} from '../../../src/agency/station-upgrade.js';
+import { AGENCY_STATION_CAPABILITIES } from '@magick-agency/contracts/agency';
 import { stationIntervalsFor, STATION_INTERVALS } from '../../../src/api/routes/agency/helpers.js';
 import { MOBILE_STATION_HEARTBEAT_GRACE_MS, STATION_HEARTBEAT_GRACE_MS } from '@magick-agency/domain/timers';
 
@@ -93,6 +99,24 @@ describe('stationCanTakeInbound', () => {
     const capable = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound' });
     expect(old.ok && stationCanTakeInbound(old.query)).toBe(false);
     expect(capable.ok && stationCanTakeInbound(capable.query)).toBe(true);
+  });
+});
+
+describe('stationCanTakeFloorAssist (LF4, LF5)', () => {
+  it('a console always, whatever it declares; a phone only with the floor assist capability', () => {
+    expect(stationCanTakeFloorAssist({ client: 'web', caps: [] })).toBe(true);
+    expect(stationCanTakeFloorAssist(DEFAULT_STATION_UPGRADE)).toBe(true);
+    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: [] })).toBe(false);
+    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound'] })).toBe(false);
+    // The check reads the capability by value: listed, a phone that declares it can.
+    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound', 'floor_assist' as never] })).toBe(true);
+  });
+
+  it('staged: no phone can declare it yet (the app adds it to AGENCY_STATION_CAPABILITIES with its decoders), so every phone is refused messages', () => {
+    // Flip this when the capability is listed: the app's change does both in one commit.
+    expect(AGENCY_STATION_CAPABILITIES as readonly string[]).not.toContain('floor_assist');
+    const phone = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound,floor_assist' });
+    expect(phone.ok && stationCanTakeFloorAssist(phone.query)).toBe(false);
   });
 });
 

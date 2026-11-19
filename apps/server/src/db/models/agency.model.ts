@@ -463,6 +463,18 @@ export interface AgencyAgentSessionRecord {
    */
   away_ring_since: Date | null;
   /**
+   * Need help (0052, LF4): when the agent raised the request; NULL when none. Open while
+   * `help_answered_at` is NULL and it is under `AGENCY_HELP_EXPIRY_MS` old
+   * (`db/repositories/agency/floor-assist.repository.ts`).
+   */
+  help_raised_at: Date | null;
+  /** Need help: the call it was raised on (`agency_calls.id`); NULL in wrap-up. */
+  help_call_id: string | null;
+  /** Need help: when a supervisor answered it; NULL while open. */
+  help_answered_at: Date | null;
+  /** Need help: who answered it. */
+  help_answered_by: string | null;
+  /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;
    * narrow with `isCampaignSession` rather than asserting non-null.

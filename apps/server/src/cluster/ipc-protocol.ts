@@ -15,6 +15,7 @@
  * callback, a class instance or a socket's audio. No media frame ever crosses IPC.
  */
 import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import type { StationFrame } from '../agency/station-registry.js';
 import { parsePacingInvalidationEvent, type PacingInvalidationEvent } from '../agency/pacing/invalidation-bus.js';
 import { parseCacheInvalidation, type CacheInvalidation } from '../cache/cache-invalidation.js';
 import type { DialCommand } from '../agency/dial-dispatcher.js';
@@ -224,7 +225,7 @@ export interface StationAttachedBody { sessionId: string; campaignId: string | n
 export interface StationDetachedBody { sessionId: string }
 export interface StationSnapshotBody { replicaId: string; sessions: Array<{ sessionId: string; campaignId: string | null }> }
 export interface StationBroadcastBody { campaignId: string; frame: AgencyStationServerFrame }
-export interface StationSendBody { sessionId: string; frame: AgencyStationServerFrame }
+export interface StationSendBody { sessionId: string; frame: StationFrame }
 export interface PacingRevokeBody { campaignId: string | null; upTo: number }
 export interface AccountScopeBody { tenantId: string; accountId: string }
 export interface AttemptIdsBody { attemptIds: string[] }
@@ -306,7 +307,7 @@ export function parseStationBroadcast(raw: unknown): StationBroadcastBody | null
 }
 export function parseStationSend(raw: unknown): StationSendBody | null {
   if (!isRecord(raw) || !isId(raw['sessionId']) || !isRecord(raw['frame']) || typeof raw['frame']['event'] !== 'string') return null;
-  return { sessionId: raw['sessionId'], frame: raw['frame'] as unknown as AgencyStationServerFrame };
+  return { sessionId: raw['sessionId'], frame: raw['frame'] as unknown as StationFrame };
 }
 export function parsePacingRevoke(raw: unknown): PacingRevokeBody | null {
   if (!isRecord(raw) || !nullableId(raw['campaignId']) || !isNonNegativeInt(raw['upTo'])) return null;

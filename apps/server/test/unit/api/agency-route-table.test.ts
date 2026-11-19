@@ -119,6 +119,12 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /proxy/agency/inbound/calls/:_/ring/decline', 'mobile app native ring Decline (Mode B, token only)'],
   ['POST /proxy/agency/inbound/calls/:_/ring/accept', 'mobile app takes a ring it answered (Mode B)'],
   ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
+  // Floor assist (the Live floor's Phase 3, LF4, LF5; `proxy-agency-floor-assist.routes.ts`): served
+  // ahead of their clients. The console's station and Live floor and the app's station call them in
+  // their own Phase 3 change, which moves each into `console-paths.json` as it gains its caller.
+  ['POST /proxy/agency/sessions/:_/help', 'Need help raised on the agent\'s own session (LF4; console and app clients to come)'],
+  ['DELETE /proxy/agency/sessions/:_/help', 'Need help cancelled (LF4; console and app clients to come)'],
+  ['POST /proxy/agency/sessions/:_/messages', 'a supervisor\'s message to an agent\'s station, Talk to agent and Send reminder (LF5; console client to come)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */
