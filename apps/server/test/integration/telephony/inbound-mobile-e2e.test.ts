@@ -108,7 +108,8 @@ describe('a phone that declares caps=inbound is put through as a console is (IQ4
   it('offered with the inbound_call frame before any audio, bridged to A-law binary frames both ways, the outcome saved, back to available', async () => {
     const campaignId = await campaign(world);
     const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
-    expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: true });
+    expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ clientKind: 'mobile' });
+    expect(getAgencyRuntime()!.stations.get(phone.sessionId)?.caps.has('inbound')).toBe(true);
     let hangUp = false;
     const call = ring(world, callerScript(() => hangUp));
 
@@ -148,7 +149,8 @@ describe('a phone that declares caps=inbound is put through as a console is (IQ4
   it('an older phone (no caps) is never offered nor sent the frames: alone, the caller is overflowed at once and the tile says nobody can take calls', async () => {
     const campaignId = await campaign(world);
     const old = await joinAgent(world, campaignId, { station: OLD_PHONE });
-    expect(getAgencyRuntime()!.stations.get(old.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: false });
+    expect(getAgencyRuntime()!.stations.get(old.sessionId)).toMatchObject({ clientKind: 'mobile' });
+    expect(getAgencyRuntime()!.stations.get(old.sessionId)?.caps.has('inbound')).toBe(false);
     const [tile] = await getAgencyRuntime()!.inboundCalls.queueTiles(TENANT, ACCOUNT);
     expect(tile).toMatchObject({ eligible_agents: 0, no_agents_available: true });
     const call = ring(world, callerScript(() => false));
@@ -218,7 +220,7 @@ describe('a phone lost during an offer: the caller back at the head of the queue
     const oldLeg = await phone.connectReady();
     await waitFor('the capable leg superseded', () => capableLeg.closed !== null);
     expect(capableLeg.closed!.code).toBe(4409);
-    expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ canTakeInbound: false });
+    expect(getAgencyRuntime()!.stations.get(phone.sessionId)?.caps.has('inbound')).toBe(false);
     // The offer was let go before `ready`: the older build is never told `reserved` for a call it cannot show.
     expect(oldLeg.ready).toMatchObject({ state: 'available' });
     expect(oldLeg.ofEvent('agent_state').map((f) => f['state'])).not.toContain('reserved');
@@ -424,7 +426,8 @@ describe('a capable phone reconnecting during an offer (the 1.5 s before connect
     const first = phone.leg!;
     const leg = await phone.connectReady();
     await waitFor('the first leg superseded', () => first.closed !== null);
-    expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: true });
+    expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ clientKind: 'mobile' });
+    expect(getAgencyRuntime()!.stations.get(phone.sessionId)?.caps.has('inbound')).toBe(true);
     const connected = await spineWhen(call, 'connected to the phone', (r) => r.state === 'connected');
     expect(connected.session_id).toBe(phone.sessionId);
     // The offer stood across the reconnect (never cancelled and re-offered): `ready` says

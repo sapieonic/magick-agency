@@ -407,7 +407,7 @@ describe('the sweep, per station (AgencyRuntime)', () => {
   it('drops a phone silent past its 10s grace on a live inbound call (M1), and only then, as on_inbound_call', async () => {
     const phone = new FakeWs();
     phone.autoPong = false;
-    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile', canTakeInbound: true });
+    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile', caps: new Set(['inbound']) });
     runtime.inbound = { hasLiveCall: (sessionId: string) => sessionId === 'phone' } as never;
 
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS)).toBe(0);

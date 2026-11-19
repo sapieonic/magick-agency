@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_STATION_UPGRADE,
   parseStationUpgradeQuery,
-  stationCanTakeFloorAssist,
-  stationCanTakeInbound,
+  stationCaps,
+  stationHas,
 } from '../../../src/agency/station-upgrade.js';
 import { AGENCY_STATION_CAPABILITIES, AGENCY_STATION_FLOOR_ASSIST_CAPABILITY } from '@magick-agency/contracts/agency';
 import { stationIntervalsFor, STATION_INTERVALS } from '../../../src/api/routes/agency/helpers.js';
@@ -85,31 +85,31 @@ describe('parseStationUpgradeQuery: caps', () => {
   });
 });
 
-describe('stationCanTakeInbound', () => {
+describe('stationHas: inbound', () => {
   it('a console always, whatever it declares; a phone only with caps=inbound', () => {
-    expect(stationCanTakeInbound({ client: 'web', caps: [] })).toBe(true);
-    expect(stationCanTakeInbound({ client: 'web', caps: ['inbound'] })).toBe(true);
-    expect(stationCanTakeInbound(DEFAULT_STATION_UPGRADE)).toBe(true);
-    expect(stationCanTakeInbound({ client: 'mobile', caps: [] })).toBe(false);
-    expect(stationCanTakeInbound({ client: 'mobile', caps: ['inbound'] })).toBe(true);
+    expect(stationHas({ client: 'web', caps: [] }, 'inbound')).toBe(true);
+    expect(stationHas({ client: 'web', caps: ['inbound'] }, 'inbound')).toBe(true);
+    expect(stationHas(DEFAULT_STATION_UPGRADE, 'inbound')).toBe(true);
+    expect(stationHas({ client: 'mobile', caps: [] }, 'inbound')).toBe(false);
+    expect(stationHas({ client: 'mobile', caps: ['inbound'] }, 'inbound')).toBe(true);
   });
 
   it('an older app build (no caps) cannot; one that sends caps=inbound can', () => {
     const old = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8' });
     const capable = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound' });
-    expect(old.ok && stationCanTakeInbound(old.query)).toBe(false);
-    expect(capable.ok && stationCanTakeInbound(capable.query)).toBe(true);
+    expect(old.ok && stationHas(old.query, 'inbound')).toBe(false);
+    expect(capable.ok && stationHas(capable.query, 'inbound')).toBe(true);
   });
 });
 
-describe('stationCanTakeFloorAssist (LF4, LF5, LF16)', () => {
+describe('stationHas: floor_assist (LF4, LF5, LF16)', () => {
   it('a console always, whatever it declares; a phone only with the floor assist capability', () => {
-    expect(stationCanTakeFloorAssist({ client: 'web', caps: [] })).toBe(true);
-    expect(stationCanTakeFloorAssist(DEFAULT_STATION_UPGRADE)).toBe(true);
-    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: [] })).toBe(false);
-    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound'] })).toBe(false);
-    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['floor_assist'] })).toBe(true);
-    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound', 'floor_assist'] })).toBe(true);
+    expect(stationHas({ client: 'web', caps: [] }, 'floor_assist')).toBe(true);
+    expect(stationHas(DEFAULT_STATION_UPGRADE, 'floor_assist')).toBe(true);
+    expect(stationHas({ client: 'mobile', caps: [] }, 'floor_assist')).toBe(false);
+    expect(stationHas({ client: 'mobile', caps: ['inbound'] }, 'floor_assist')).toBe(false);
+    expect(stationHas({ client: 'mobile', caps: ['floor_assist'] }, 'floor_assist')).toBe(true);
+    expect(stationHas({ client: 'mobile', caps: ['inbound', 'floor_assist'] }, 'floor_assist')).toBe(true);
   });
 
   it('the capability is listed, so a phone can declare it: parsed from caps= in contract order, alone or beside inbound', () => {
@@ -117,14 +117,14 @@ describe('stationCanTakeFloorAssist (LF4, LF5, LF16)', () => {
     expect(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY).toBe('floor_assist');
     const both = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'floor_assist,inbound' });
     expect(both).toEqual({ ok: true, query: { client: 'mobile', media: 'alaw8', caps: ['inbound', 'floor_assist'] } });
-    expect(both.ok && stationCanTakeFloorAssist(both.query)).toBe(true);
-    expect(both.ok && stationCanTakeInbound(both.query)).toBe(true);
+    expect(both.ok && stationHas(both.query, 'floor_assist')).toBe(true);
+    expect(both.ok && stationHas(both.query, 'inbound')).toBe(true);
     // The app's attach while a ring must not be answered: floor assist without inbound.
     const alone = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'floor_assist' });
-    expect(alone.ok && [stationCanTakeFloorAssist(alone.query), stationCanTakeInbound(alone.query)]).toEqual([true, false]);
+    expect(alone.ok && [stationHas(alone.query, 'floor_assist'), stationHas(alone.query, 'inbound')]).toEqual([true, false]);
     // An older app build declares only inbound, or nothing: no floor assist frames, so messages are refused.
     const older = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound' });
-    expect(older.ok && stationCanTakeFloorAssist(older.query)).toBe(false);
+    expect(older.ok && stationHas(older.query, 'floor_assist')).toBe(false);
     expect(parseStationUpgradeQuery({ client: 'mobile', caps: 'FLOOR_ASSIST' })).toMatchObject({ ok: true, query: { caps: [] } });
   });
 });
@@ -140,5 +140,14 @@ describe('stationIntervalsFor', () => {
     expect(mobile.heartbeat_grace_ms).toBe(MOBILE_STATION_HEARTBEAT_GRACE_MS);
     // Only the grace differs: the app-level ping still renews the ownership key at heartbeat_ms.
     expect({ ...mobile, heartbeat_grace_ms: STATION_INTERVALS.heartbeat_grace_ms }).toEqual(STATION_INTERVALS);
+  });
+});
+
+describe('stationCaps', () => {
+  it('a console has every capability, whatever it declares; a phone those it declared', () => {
+    expect([...stationCaps(DEFAULT_STATION_UPGRADE)]).toEqual([...AGENCY_STATION_CAPABILITIES]);
+    expect([...stationCaps({ client: 'mobile', caps: [] })]).toEqual([]);
+    expect([...stationCaps({ client: 'mobile', caps: ['floor_assist'] })]).toEqual(['floor_assist']);
+    expect([...stationCaps({ client: 'mobile', caps: ['inbound', 'floor_assist'] })]).toEqual(['inbound', 'floor_assist']);
   });
 });

@@ -130,7 +130,8 @@ describe('a console handing a connected inbound call to a capable phone (continu
     desk.caps = 'inbound';
     const leg = await desk.connectReady();
     await waitFor('the console leg superseded', () => deskLeg.closed !== null);
-    expect(getAgencyRuntime()!.stations.get(desk.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: true });
+    expect(getAgencyRuntime()!.stations.get(desk.sessionId)).toMatchObject({ clientKind: 'mobile' });
+    expect(getAgencyRuntime()!.stations.get(desk.sessionId)?.caps.has('inbound')).toBe(true);
     expect(leg.ready).toMatchObject({ state: 'on_call' });
     await waitFor('the inbound_call frame after ready', () => leg.ofEvent('inbound_call').length > 0);
     expect(leg.ofEvent('inbound_call')[0]).toMatchObject({ call: { id: connected.id, state: 'connected' } });

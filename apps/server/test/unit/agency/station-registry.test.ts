@@ -215,12 +215,12 @@ describe('StationRegistry frame delivery', () => {
     const desk = fakeWs();
     // An older app build: `client=mobile` with no caps (the attach's default for a phone).
     await reg.attach({ sessionId: 'old', ws: old as any, ...ENTRY, clientKind: 'mobile' });
-    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', canTakeInbound: true });
+    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', caps: new Set(['inbound']) });
     await reg.attach({ sessionId: 'desk', ws: desk as any, ...ENTRY, agentUserId: 'u2' });
     try {
-      expect(reg.get('old')!.canTakeInbound).toBe(false);
-      expect(reg.get('capable')!.canTakeInbound).toBe(true);
-      expect(reg.get('desk')!.canTakeInbound).toBe(true);
+      expect(reg.get('old')!.caps.has('inbound')).toBe(false);
+      expect(reg.get('capable')!.caps.has('inbound')).toBe(true);
+      expect(reg.get('desk')!.caps.has('inbound')).toBe(true);
       // IQ56: the floor's column, from the stations held here; a session with none is absent.
       expect(reg.inboundCapabilityBySession(['old', 'capable', 'desk', 'elsewhere'])).toEqual(
         new Map([['old', false], ['capable', true], ['desk', true]]),
@@ -254,11 +254,11 @@ describe('StationRegistry frame delivery', () => {
     const old = phoneWs();
     const capable = phoneWs();
     const desk = fakeWs();
-    await reg.attach({ sessionId: 'old', ws: old as any, ...ENTRY, clientKind: 'mobile', canTakeInbound: true });
-    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', canTakeFloorAssist: true });
+    await reg.attach({ sessionId: 'old', ws: old as any, ...ENTRY, clientKind: 'mobile', caps: new Set(['inbound']) });
+    await reg.attach({ sessionId: 'capable', ws: capable as any, ...ENTRY, agentUserId: 'u3', clientKind: 'mobile', caps: new Set(['floor_assist']) });
     await reg.attach({ sessionId: 'desk', ws: desk as any, ...ENTRY, agentUserId: 'u2' });
     try {
-      expect([reg.get('old')!.canTakeFloorAssist, reg.get('capable')!.canTakeFloorAssist, reg.get('desk')!.canTakeFloorAssist])
+      expect(['old', 'capable', 'desk'].map((id) => reg.get(id)!.caps.has('floor_assist')))
         .toEqual([false, true, true]);
       expect(['old', 'capable', 'desk', 'elsewhere'].map((id) => reg.canReceiveFloorAssist(id))).toEqual([false, true, true, false]);
       const frames = [
@@ -317,14 +317,14 @@ describe('StationRegistry frame delivery', () => {
     const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
     const phoneWs = () => Object.assign(fakeWs(), { on() {}, off() {}, ping() {}, close() {} });
     const detached: Array<{ sessionId: string; canTakeInbound: boolean }> = [];
-    reg.onDetached((_id, st) => detached.push({ sessionId: st.sessionId, canTakeInbound: st.canTakeInbound }));
+    reg.onDetached((_id, st) => detached.push({ sessionId: st.sessionId, canTakeInbound: st.caps.has('inbound') }));
     const first = phoneWs();
-    await reg.attach({ sessionId: 'p', ws: first as any, ...ENTRY, clientKind: 'mobile', canTakeInbound: true });
+    await reg.attach({ sessionId: 'p', ws: first as any, ...ENTRY, clientKind: 'mobile', caps: new Set(['inbound']) });
     expect(reg.send('p', { event: 'inbound_call', call: { id: 'c1' } } as any)).toBe(true);
     // An older build takes the session over (4409 to the first): no caps, so no inbound frames.
     const second = phoneWs();
     await reg.attach({ sessionId: 'p', ws: second as any, ...ENTRY, clientKind: 'mobile' });
-    expect(reg.get('p')!.canTakeInbound).toBe(false);
+    expect(reg.get('p')!.caps.has('inbound')).toBe(false);
     expect(reg.send('p', { event: 'inbound_call', call: { id: 'c1' } } as any)).toBe(false);
     expect(second.sent).toEqual([]);
     // A console on the same session: always can.

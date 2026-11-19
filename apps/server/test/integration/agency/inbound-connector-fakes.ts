@@ -3,7 +3,8 @@
  * suites (`inbound-connector-races.test.ts`, `inbound-connector-review-fixes.test.ts`): everything
  * else (Redis's compare-and-swaps, Postgres's guarded spine writes) is real.
  */
-import { AGENCY_STATION_INBOUND_EVENTS } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_INBOUND_EVENTS, type AgencyStationCapability } from '@magick-agency/contracts/agency';
+import { stationCaps } from '../../../src/agency/station-upgrade.js';
 
 type Lifecycle = import('../../../src/core/webrtc-bridge-manager.js').WebRtcLifecycleEvent;
 
@@ -39,8 +40,8 @@ export class FakeWs {
 export interface FakeStationEntry {
   sessionId: string; campaignId: string | null; tenantId: string; accountId: string; agentUserId: string;
   ws: FakeWs; clientKind: 'web' | 'mobile';
-  /** The registry's `canTakeInbound`: a console, or a phone that declared `caps=inbound`. */
-  canTakeInbound: boolean;
+  /** The registry's `caps`: a console has every capability, a phone those it declared (`caps=inbound`). */
+  caps: ReadonlySet<AgencyStationCapability>;
 }
 
 export class FakeStations {
@@ -70,10 +71,10 @@ export class FakeStations {
     this.entries.set(station.sessionId, entry);
     return entry;
   }
-  add(e: Omit<FakeStationEntry, 'ws' | 'clientKind' | 'canTakeInbound'> & { clientKind?: 'web' | 'mobile'; canTakeInbound?: boolean }): FakeStationEntry {
+  add(e: Omit<FakeStationEntry, 'ws' | 'clientKind' | 'caps'> & { clientKind?: 'web' | 'mobile'; caps?: ReadonlySet<AgencyStationCapability> }): FakeStationEntry {
     const clientKind = e.clientKind ?? 'web';
-    // The registry's default: a console can take inbound calls, a phone only when it says so.
-    const entry = { ...e, clientKind, canTakeInbound: e.canTakeInbound ?? clientKind !== 'mobile', ws: new FakeWs() };
+    // The registry's default: a console has every capability, a phone only those it declares.
+    const entry = { ...e, clientKind, caps: e.caps ?? stationCaps({ client: clientKind, caps: [] }), ws: new FakeWs() };
     this.entries.set(e.sessionId, entry);
     return entry;
   }
@@ -88,7 +89,7 @@ export class FakeStations {
     // The registry's one send-path rule (`StationRegistry.send`): no inbound frame to a station
     // that cannot take inbound calls.
     const event = (frame as { event?: string }).event;
-    if (!entry.canTakeInbound && event !== undefined && INBOUND_EVENTS.has(event)) return false;
+    if (!entry.caps.has('inbound') && event !== undefined && INBOUND_EVENTS.has(event)) return false;
     ws.send(JSON.stringify(frame));
     return true;
   }
