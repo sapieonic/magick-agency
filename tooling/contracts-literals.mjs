@@ -220,7 +220,7 @@ const VOCABULARIES = {
   station_close_codes: ['agency/station.ts#AGENCY_STATION_CLOSE', () => constNumberObject('agency/station.ts', 'AGENCY_STATION_CLOSE')],
   station_server_events: [
     'agency/station.ts#AgencyStationServerFrame',
-    () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts', 'agency/inbound.ts']),
+    () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts', 'agency/inbound.ts', 'agency/floor-assist.ts']),
   ],
   wrapup_hold_reasons: ['agency/actions.ts#AgencyWrapupHoldReason', () => typeUnion('agency/actions.ts', 'AgencyWrapupHoldReason')],
   dnc_scopes: ['agency/actions.ts#AgencyDncScope', () => typeUnion('agency/actions.ts', 'AgencyDncScope')],
@@ -243,7 +243,8 @@ const VOCABULARIES = {
     'agency/station.ts#AGENCY_STATION_MEDIA_FORMATS',
     () => constList('agency/station.ts', 'AGENCY_STATION_MEDIA_FORMATS'),
   ],
-  // `caps=` on the station upgrade: the app sends `caps=inbound` to be offered inbound calls (IQ46).
+  // `caps=` on the station upgrade: the app sends `caps=inbound` to be offered inbound calls (IQ46),
+  // and `caps=floor_assist` to be sent a supervisor's messages and its Need help's answers (LF16).
   station_capabilities: [
     'agency/station.ts#AGENCY_STATION_CAPABILITIES',
     () => constList('agency/station.ts', 'AGENCY_STATION_CAPABILITIES'),
@@ -415,6 +416,17 @@ const VOCABULARIES = {
   ],
   // Promise to pay (PT7): where a contact's latest promise stands, on the agent's panel.
   promise_states: ['agency/promise.ts#AGENCY_PROMISE_STATES', () => constList('agency/promise.ts', 'AGENCY_PROMISE_STATES')],
+  // Floor assist (LF4, LF5, LF15): how a supervisor answered the agent's Need help, why it ended,
+  // and the refusals of its raise and cancel.
+  help_answer_hows: ['agency/floor-assist.ts#AGENCY_HELP_ANSWER_HOWS', () => constList('agency/floor-assist.ts', 'AGENCY_HELP_ANSWER_HOWS')],
+  help_cleared_reasons: [
+    'agency/floor-assist.ts#AGENCY_HELP_CLEARED_REASONS',
+    () => constList('agency/floor-assist.ts', 'AGENCY_HELP_CLEARED_REASONS'),
+  ],
+  floor_assist_error_codes: [
+    'errors.ts#AGENCY_FLOOR_ASSIST_ERROR_CODES',
+    () => constList('errors.ts', 'AGENCY_FLOOR_ASSIST_ERROR_CODES'),
+  ],
 };
 
 /** Each label map the app shows as it is: where it is declared, and how to read it. */

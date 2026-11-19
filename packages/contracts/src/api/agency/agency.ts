@@ -44,6 +44,9 @@ import type {
   AgencyDialActivity,
   AgencyStationInboundCallFrame,
   AgencyStationCustomerWaitingFrame,
+  AgencyStationSupervisorMessageFrame,
+  AgencyStationHelpAnsweredFrame,
+  AgencyStationHelpClearedFrame,
   AgencyQueueIdleReason,
   AgencyQueueState,
   AgencyWrapupHoldReason,
@@ -367,7 +370,12 @@ export type AgencyStationServerFrame =
   // Inbound calls (P2): the call offered to or connected with this agent, and a sticky caller
   // waiting; declared in `../../agency/inbound`, re-exported from `./inbound` unchanged.
   | AgencyStationInboundCallFrame
-  | AgencyStationCustomerWaitingFrame;
+  | AgencyStationCustomerWaitingFrame
+  // Floor assist (LF4, LF5): a supervisor's message, and how the agent's Need help was answered or
+  // ended; declared in `../../agency/floor-assist`, unchanged (no console twin).
+  | AgencyStationSupervisorMessageFrame
+  | AgencyStationHelpAnsweredFrame
+  | AgencyStationHelpClearedFrame;
 
 /**
  * The station socket's close codes (re-mint and retry versus re-bootstrap), declared

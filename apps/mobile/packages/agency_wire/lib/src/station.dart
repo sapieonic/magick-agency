@@ -16,6 +16,7 @@ import 'package:meta/meta.dart';
 
 import 'enums.dart';
 import 'equality.dart';
+import 'floor_assist.dart';
 import 'inbound.dart';
 import 'json.dart';
 import 'softphone.dart';
@@ -52,6 +53,16 @@ enum StationEvent implements WireEnum {
 
   /// A caller sticky to this agent waits for them. See [CustomerWaitingFrame].
   customerWaiting('customer_waiting'),
+
+  /// Floor assist: sent only to a station that declared [StationCapability.floorAssist]
+  /// on its upgrade. A supervisor's message; see [SupervisorMessageFrame].
+  supervisorMessage('supervisor_message'),
+
+  /// A supervisor answered the agent's Need help. See [HelpAnsweredFrame].
+  helpAnswered('help_answered'),
+
+  /// The agent's Need help ended. See [HelpClearedFrame].
+  helpCleared('help_cleared'),
   unknown('');
 
   const StationEvent(this.wire);
@@ -113,6 +124,9 @@ sealed class StationFrame {
         'dial_activity' => DialActivityFrame.fromJson(decoded),
         'inbound_call' => InboundCallFrame.fromJson(decoded),
         'customer_waiting' => CustomerWaitingFrame.fromJson(decoded),
+        'supervisor_message' => SupervisorMessageFrame.fromJson(decoded),
+        'help_answered' => HelpAnsweredFrame.fromJson(decoded),
+        'help_cleared' => HelpClearedFrame.fromJson(decoded),
         _ => UnknownFrame(raw: text, eventRaw: event, reason: 'unknown event'),
       };
       // Any failure, including a TypeError this package did not anticipate,
@@ -194,6 +208,7 @@ final class ReadyFrame extends StationFrame {
     this.pendingBreakReason,
     this.queue,
     this.dialActivity,
+    this.help,
   }) : stateRaw = stateRaw ?? state.wire,
        pendingStateRaw = pendingStateRaw ?? pendingState?.wire;
 
@@ -217,6 +232,7 @@ final class ReadyFrame extends StationFrame {
       pendingBreakReason: j.strOrNull('pending_break_reason'),
       queue: queue == null ? null : QueueState.fromJson(queue),
       dialActivity: DialActivity.tryFromJson(j['dial_activity']),
+      help: SessionHelp.tryFromJson(j['help']),
     );
   }
 
@@ -249,6 +265,12 @@ final class ReadyFrame extends StationFrame {
   /// Present when [pendingState] is `break`.
   final String? pendingBreakReason;
 
+  /// The session's open Need help request (floor assist), so a relaunched app
+  /// still shows "Help requested"; null when none is open (or from a server
+  /// older than the field, or to a station that did not declare
+  /// [StationCapability.floorAssist]). Read leniently, as [dialActivity].
+  final SessionHelp? help;
+
   @override
   StationEvent get event => StationEvent.ready;
 
@@ -264,7 +286,8 @@ final class ReadyFrame extends StationFrame {
       other.pendingStateRaw == pendingStateRaw &&
       other.pendingBreakReason == pendingBreakReason &&
       other.queue == queue &&
-      other.dialActivity == dialActivity;
+      other.dialActivity == dialActivity &&
+      other.help == help;
 
   @override
   int get hashCode => Object.hash(
@@ -278,12 +301,14 @@ final class ReadyFrame extends StationFrame {
     pendingBreakReason,
     queue,
     dialActivity,
+    help,
   );
 
   @override
   String toString() =>
       'ReadyFrame($stateRaw${breakReason == null ? '' : '/$breakReason'}, active: ${activeAttempt?.attemptId}, '
-      'wrapup: ${activeWrapup != null}, missed: ${missedRelease?.attemptId}, pending: $pendingStateRaw)';
+      'wrapup: ${activeWrapup != null}, missed: ${missedRelease?.attemptId}, pending: $pendingStateRaw'
+      '${help == null ? '' : ', help: ${help!.raisedAt.toIso8601String()}'})';
 }
 
 /// The context push: a contact is reserved for this agent and is about to be
@@ -932,6 +957,128 @@ final class CustomerWaitingFrame extends StationFrame {
 
   @override
   String toString() => 'CustomerWaitingFrame($inboundCallId, cleared: $cleared)';
+}
+
+/// A supervisor's message to this agent (floor assist: Talk to agent, Send
+/// reminder). Plain text, never markup; show each [id] once.
+///
+/// Contract: `AgencyStationSupervisorMessageFrame` (`agency/floor-assist.ts`).
+final class SupervisorMessageFrame extends StationFrame {
+  const SupervisorMessageFrame({required this.id, required this.text, this.fromName, required this.sentAt});
+
+  factory SupervisorMessageFrame.fromJson(Map<String, Object?> j) => SupervisorMessageFrame(
+    id: j.str('id'),
+    text: j.str('text'),
+    fromName: j.strOrNull('from_name'),
+    sentAt: j.time('sent_at'),
+  );
+
+  final String id;
+
+  /// Trimmed, 1 to 500 characters.
+  final String text;
+
+  /// The sender's display name; null when the server could not read it (say
+  /// "Your supervisor").
+  final String? fromName;
+
+  /// Server clock.
+  final DateTime sentAt;
+
+  @override
+  StationEvent get event => StationEvent.supervisorMessage;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SupervisorMessageFrame &&
+      other.id == id &&
+      other.text == text &&
+      other.fromName == fromName &&
+      other.sentAt == sentAt;
+
+  @override
+  int get hashCode => Object.hash(id, text, fromName, sentAt);
+
+  /// Never the text: it may hold a customer's details.
+  @override
+  String toString() => 'SupervisorMessageFrame($id, ${text.length} chars)';
+}
+
+/// A supervisor answered this agent's Need help: they are listening to the
+/// call, or sent a message. `help_cleared` with reason `answered` follows at
+/// once and is what ends the request on screen; this one says who and how.
+///
+/// Contract: `AgencyStationHelpAnsweredFrame` (`agency/floor-assist.ts`).
+final class HelpAnsweredFrame extends StationFrame {
+  HelpAnsweredFrame({required this.raisedAt, this.byName, required this.how, String? howRaw})
+    : howRaw = howRaw ?? how.wire;
+
+  factory HelpAnsweredFrame.fromJson(Map<String, Object?> j) {
+    final how = j.str('how');
+    return HelpAnsweredFrame(
+      raisedAt: j.time('raised_at'),
+      byName: j.strOrNull('by_name'),
+      how: HelpAnswerHow.fromWire(how),
+      howRaw: how,
+    );
+  }
+
+  /// The request answered: its [SessionHelp.raisedAt].
+  final DateTime raisedAt;
+
+  /// Who answered; null when their name could not be read.
+  final String? byName;
+  final HelpAnswerHow how;
+  final String howRaw;
+
+  @override
+  StationEvent get event => StationEvent.helpAnswered;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HelpAnsweredFrame && other.raisedAt == raisedAt && other.byName == byName && other.howRaw == howRaw;
+
+  @override
+  int get hashCode => Object.hash(raisedAt, byName, howRaw);
+
+  @override
+  String toString() => 'HelpAnsweredFrame(${raisedAt.toIso8601String()}, $howRaw)';
+}
+
+/// This agent's Need help ended. Clear it only when [raisedAt] is the request
+/// on screen: a late frame about an earlier request never clears a newer one.
+///
+/// Contract: `AgencyStationHelpClearedFrame` (`agency/floor-assist.ts`).
+final class HelpClearedFrame extends StationFrame {
+  HelpClearedFrame({required this.raisedAt, required this.reason, String? reasonRaw})
+    : reasonRaw = reasonRaw ?? reason.wire;
+
+  factory HelpClearedFrame.fromJson(Map<String, Object?> j) {
+    final reason = j.str('reason');
+    return HelpClearedFrame(
+      raisedAt: j.time('raised_at'),
+      reason: HelpClearedReason.fromWire(reason),
+      reasonRaw: reason,
+    );
+  }
+
+  /// The request that ended: its [SessionHelp.raisedAt].
+  final DateTime raisedAt;
+  final HelpClearedReason reason;
+  final String reasonRaw;
+
+  @override
+  StationEvent get event => StationEvent.helpCleared;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HelpClearedFrame && other.raisedAt == raisedAt && other.reasonRaw == reasonRaw;
+
+  @override
+  int get hashCode => Object.hash(raisedAt, reasonRaw);
+
+  @override
+  String toString() => 'HelpClearedFrame(${raisedAt.toIso8601String()}, $reasonRaw)';
 }
 
 // ─── Payload types ──────────────────────────────────────────────────────────

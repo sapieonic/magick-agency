@@ -34,6 +34,7 @@ import 'call_autosave.dart';
 import 'close_softphone.dart';
 import 'contact_context.dart';
 import 'disposition_rules.dart';
+import 'floor_assist.dart';
 import 'hosted_session.dart';
 import 'notes_autosave.dart';
 import 'server_clock.dart';
@@ -66,6 +67,8 @@ final List<Override> stationOverrides = [
   stationTeardownProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier).leaveForSignOut),
   softphoneHostViewProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.softphone))),
   softphoneHostActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
+  supervisorMessagesProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.messages))),
+  dismissSupervisorMessageProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier).dismissSupervisorMessage),
 ];
 
 final class _Session {
@@ -142,6 +145,18 @@ class StationController extends Notifier<StationView?>
   ReleasedFrame? _lastRelease;
   ({String attemptId, String? name})? _nameCache;
   StationViewMapper _mapper = StationViewMapper();
+
+  // Floor assist (LF4, LF5): Need help and a supervisor's messages, from the frames and the help
+  // routes' answers ([FloorAssistState]); a raise or cancel in flight and its refusal.
+  FloorAssistState _assist = FloorAssistState.empty;
+  HelpBusy _helpBusy = HelpBusy.none;
+  String? _helpError;
+
+  /// The banner's messages, rebuilt only when the queue or the applied offset moves, so the
+  /// shell's `select` sees the same list otherwise.
+  List<SupervisorMessageView> _messageViews = const [];
+  List<SupervisorMessageFrame>? _messageViewsFrom;
+  int _messageViewsOffset = 0;
 
   // The soft-phone call's local facts (the call itself is in the reducer).
   /// The ring is muted for [_ringCallId]; any other call rings.
@@ -733,6 +748,11 @@ class StationController extends Notifier<StationView?>
     _inboundHungUpHere = null;
     _cancelInboundCheck();
     _cancelOfferBackstop();
+    _assist = FloorAssistState.empty;
+    _helpBusy = HelpBusy.none;
+    _helpError = null;
+    _messageViews = const [];
+    _messageViewsFrom = null;
   }
 
   // ─── Frames ─────────────────────────────────────────────────────────────
@@ -762,6 +782,9 @@ class StationController extends Notifier<StationView?>
         final check = _absence.ringOffCheck;
         if (check != null) _absence.ringOffCheck = (back: check.back, absenceStart: check.absenceStart, ready: true);
         final hosted = _s?.hosted;
+        // The server's whole view of Need help: the open request, or none (LF15). Before the
+        // dispatch, whose emit carries it.
+        _assist = _assist.onReady(frame.help);
         _dispatch(ReadyAction(
           frame,
           wrapup: activeWrapup == null ? null : openWrapup(activeWrapup, _station.clockOffsetMs, _now()),
@@ -892,6 +915,20 @@ class StationController extends Notifier<StationView?>
         _chimeFor(inboundCall);
       case CustomerWaitingFrame():
         _dispatch(CustomerWaitingAction(frame));
+      case SupervisorMessageFrame():
+        // Sent because the socket declares `caps=floor_assist` (LF16). Never logged with its
+        // text: a message can hold a customer's details.
+        if (_s == null) break;
+        _log.info('supervisor message', {'id': frame.id, 'chars': frame.text.length});
+        _setAssist(_assist.onMessage(frame));
+      case HelpAnsweredFrame():
+        if (_s == null) break;
+        _log.info('help answered', {'how': frame.howRaw});
+        _setAssist(_assist.onAnswered(frame));
+      case HelpClearedFrame():
+        if (_s == null) break;
+        _log.info('help cleared', {'reason': frame.reasonRaw});
+        _setAssist(_assist.onCleared(frame));
       case UnknownFrame(:final eventRaw, :final reason):
         // Expected after a server deploy; never logged whole (it can hold contact data).
         _log.debug('unknown frame', {'event': eventRaw ?? '', 'reason': reason});
@@ -1133,6 +1170,7 @@ class StationController extends Notifier<StationView?>
       awayRang: _absence.rang,
       awayNoRing: _absence.noRing == null || _absence.ringStopped ? null : RingCopy.blockerWhy(_absence.noRing!),
       dialGapHeld: _dialGapTimer != null,
+      help: _helpView(),
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -1158,9 +1196,103 @@ class StationController extends Notifier<StationView?>
                     over: _terminal || _fatal != null,
                   ),
                   softphone: _softphoneView(s),
+                  messages: _supervisorMessages(),
                 ),
         );
   }
+
+  // ─── Floor assist (LF4, LF5) ─────────────────────────────────────────────
+
+  DateTime _toDevice(DateTime server) => correctedInstant(server, _mapper.appliedOffsetMs)!;
+
+  HelpView _helpView() => _assist.helpView(busy: _helpBusy, error: _helpError, toDevice: _toDevice);
+
+  List<SupervisorMessageView> _supervisorMessages() {
+    final offset = _mapper.appliedOffsetMs;
+    if (!identical(_assist.messages, _messageViewsFrom) || offset != _messageViewsOffset) {
+      _messageViewsFrom = _assist.messages;
+      _messageViewsOffset = offset;
+      _messageViews = _assist.messageViews(_toDevice);
+    }
+    return _messageViews;
+  }
+
+  void _setAssist(FloorAssistState next) {
+    if (identical(next, _assist)) return;
+    _assist = next;
+    _emit();
+  }
+
+  @override
+  Future<void> raiseHelp() async {
+    final s = _s;
+    if (s == null || _helpBusy != HelpBusy.none || _assist.help != null || _terminal) return;
+    _helpBusy = HelpBusy.raising;
+    _helpError = null;
+    _assist = _assist.dismissNotice();
+    _emit();
+    try {
+      final answer = await _api.raiseHelp(s.id);
+      if (!_live(s)) return;
+      final open = answer?.help;
+      if (open != null) _assist = _assist.onRaised(open);
+      _log.info('help raised', {'call': open?.callId != null});
+    } catch (e) {
+      if (!_live(s)) return;
+      _helpError = FloorAssistCopy.refusal(e, raising: true);
+      _log.warn('help raise refused', {'error': _errorTag(e)});
+    } finally {
+      if (_live(s)) {
+        _helpBusy = HelpBusy.none;
+        _emit();
+      }
+    }
+  }
+
+  @override
+  Future<void> cancelHelp() async {
+    final s = _s;
+    if (s == null || _helpBusy != HelpBusy.none || _assist.help == null) return;
+    _helpBusy = HelpBusy.cancelling;
+    _helpError = null;
+    _emit();
+    try {
+      await _api.cancelHelp(s.id);
+      if (!_live(s)) return;
+      _assist = _assist.onCancelled();
+      _log.info('help cancelled');
+    } catch (e) {
+      if (!_live(s)) return;
+      // Off for the account, or the session ended: nothing open the agent can still act on.
+      final body = errorBodyOf(e);
+      if (body != null &&
+          (body.floorAssistCode == FloorAssistErrorCode.floorAssistDisabled || body.code == AgencyErrorCode.sessionEnded)) {
+        _assist = _assist.onCancelled();
+      }
+      _helpError = FloorAssistCopy.refusal(e, raising: false);
+      _log.warn('help cancel refused', {'error': _errorTag(e)});
+    } finally {
+      if (_live(s)) {
+        _helpBusy = HelpBusy.none;
+        _emit();
+      }
+    }
+  }
+
+  @override
+  void dismissHelpNotice() {
+    if (_assist.notice == null && _helpError == null) return;
+    _assist = _assist.dismissNotice();
+    _helpError = null;
+    _emit();
+  }
+
+  void dismissSupervisorMessage(String id) => _setAssist(_assist.dismissMessage(id));
+
+  static String _errorTag(Object e) => switch (e) {
+    ApiHttpError(:final status, :final code) => '$status ${code ?? ''}'.trim(),
+    _ => e.runtimeType.toString(),
+  };
 
   SoftphoneHostView _softphoneView(_Session s) {
     final call = _station.manualCall;

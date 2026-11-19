@@ -38,16 +38,16 @@
  * show a message is never sent one and a message to it is `409 agent_not_live`, never a message
  * nobody sees (as the inbound frames, `AGENCY_STATION_INBOUND_EVENTS`).
  *
- * **Staged for the app.** The three frames are their own union, not yet members of
- * `AgencyStationServerFrame`, and the capability is not yet in `AGENCY_STATION_CAPABILITIES`: both
- * are vocabularies the app's wire package must know (`fixtures/agent/literals.json`), and the app
- * adds its decoders in its own change. That change moves the frames into `AgencyStationServerFrame`
- * and the capability into `AGENCY_STATION_CAPABILITIES`, with the Dart types, the fixtures and the
- * literals. Until then no mobile station can declare the capability (an unknown `caps` value is
- * ignored), so every mobile station is one that cannot receive these frames.
+ * The three frames are members of `AgencyStationServerFrame` (`./station.ts`), and
+ * {@link AgencyStationFloorAssistFrame} names them as a subset for the server's one check of which
+ * stations get them. They were staged outside it until the app's wire package could decode them
+ * (LF16); the app's Phase 3 change moved them in with its Dart types, its fixtures
+ * (`fixtures/agent/station.json`, `fixtures/agent/floor-assist.json`) and the literals, and its
+ * station declares `caps=floor_assist` on every upgrade.
  */
 
 import type { AllListed } from '../primitives';
+import type { AgencyStationCapability } from './station';
 
 // ─── Need help ───────────────────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ export interface AgencySupervisorMessageResponse {
 // ─── Station frames ──────────────────────────────────────────────────────────
 
 /** The station capability a mobile station declares to be sent the floor assist frames. See the module note. */
-export const AGENCY_STATION_FLOOR_ASSIST_CAPABILITY = 'floor_assist';
+export const AGENCY_STATION_FLOOR_ASSIST_CAPABILITY = 'floor_assist' satisfies AgencyStationCapability;
 
 /** A supervisor's message to this agent. */
 export interface AgencyStationSupervisorMessageFrame {
@@ -166,7 +166,7 @@ export interface AgencyStationHelpClearedFrame {
   reason: AgencyHelpClearedReason;
 }
 
-/** The floor assist frames. Staged outside `AgencyStationServerFrame` for now: see the module note. */
+/** The floor assist frames: members of `AgencyStationServerFrame`, named together for the check of which stations get them. */
 export type AgencyStationFloorAssistFrame =
   | AgencyStationSupervisorMessageFrame
   | AgencyStationHelpAnsweredFrame

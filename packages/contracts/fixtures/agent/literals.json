@@ -146,7 +146,10 @@
       "queue",
       "dial_activity",
       "inbound_call",
-      "customer_waiting"
+      "customer_waiting",
+      "supervisor_message",
+      "help_answered",
+      "help_cleared"
     ]
   },
   "wrapup_hold_reasons": {
@@ -262,7 +265,8 @@
   "station_capabilities": {
     "source": "packages/contracts/src/agency/station.ts#AGENCY_STATION_CAPABILITIES",
     "values": [
-      "inbound"
+      "inbound",
+      "floor_assist"
     ]
   },
   "stats_bucket_units": {
@@ -766,6 +770,31 @@
       "due_today",
       "missed",
       "followed_up"
+    ]
+  },
+  "help_answer_hows": {
+    "source": "packages/contracts/src/agency/floor-assist.ts#AGENCY_HELP_ANSWER_HOWS",
+    "values": [
+      "listen",
+      "message"
+    ]
+  },
+  "help_cleared_reasons": {
+    "source": "packages/contracts/src/agency/floor-assist.ts#AGENCY_HELP_CLEARED_REASONS",
+    "values": [
+      "cancelled",
+      "expired",
+      "answered",
+      "session_ended"
+    ]
+  },
+  "floor_assist_error_codes": {
+    "source": "packages/contracts/src/errors.ts#AGENCY_FLOOR_ASSIST_ERROR_CODES",
+    "values": [
+      "floor_assist_disabled",
+      "help_not_on_call",
+      "agent_not_live",
+      "message_invalid"
     ]
   }
 }

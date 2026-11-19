@@ -264,10 +264,16 @@ class BreakView extends ConsumerWidget {
               : TickingBuilder(
                   now: now,
                   anchor: since,
-                  builder: (context, at) => Text(
-                    StationCopy.breakFor(formatClock(at.difference(since))),
-                    key: const Key('break-for'),
-                    style: monoStyle(context, size: 13),
+                  builder: (context, at) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        StationCopy.breakFor(formatClock(at.difference(since))),
+                        key: const Key('break-for'),
+                        style: monoStyle(context, size: 13),
+                      ),
+                      if (onBreak?.limitMinutes case final limit?) BreakLimitLine(since: since, at: at, limitMinutes: limit),
+                    ],
                   ),
                 ),
         ),
@@ -289,6 +295,58 @@ class BreakView extends ConsumerWidget {
           LeaveStationButton(busy: busy),
         ],
       ),
+    );
+  }
+}
+
+/// The break's countdown against its reason's limit (Live floor LF6, LF20; the app's LF38): time
+/// left, then, past the limit, time over in the warning tone. Counted from the break's start
+/// ([BreakInfo.since], the `agent_state` frame's `since`) on the screen's one ticking clock. Only on
+/// a break whose reason has a limit; never on a reserved one (the mapper gives those none).
+class BreakLimitLine extends StatelessWidget {
+  const BreakLimitLine({super.key, required this.since, required this.at, required this.limitMinutes});
+
+  final DateTime since;
+  final DateTime at;
+  final int limitMinutes;
+
+  @override
+  Widget build(BuildContext context) {
+    final left = since.add(Duration(minutes: limitMinutes)).difference(at);
+    final over = left.isNegative;
+    final t = context.tokens;
+    final style = monoStyle(context, size: 13);
+    final line = over
+        ? Text(
+            StationCopy.breakOver(formatClock(-left, padMinutes: false), limitMinutes),
+            key: const Key('break-over'),
+            textAlign: TextAlign.center,
+            style: style.copyWith(color: t.warning, fontWeight: FontWeight.w600),
+          )
+        : Text(
+            StationCopy.breakLeft(formatClock(left, padMinutes: false), limitMinutes),
+            key: const Key('break-left'),
+            textAlign: TextAlign.center,
+            style: style.copyWith(color: t.textPrimary),
+          );
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.xs),
+      child: over
+          ? DecoratedBox(
+              decoration: BoxDecoration(color: t.warningSubtle, borderRadius: BorderRadius.circular(Radii.sm)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.schedule, size: 16, color: t.warning),
+                    const SizedBox(width: Space.xs),
+                    Flexible(child: line),
+                  ],
+                ),
+              ),
+            )
+          : line,
     );
   }
 }

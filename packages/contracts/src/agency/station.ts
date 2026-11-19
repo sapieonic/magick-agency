@@ -10,7 +10,12 @@ import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, Agency
 import type { AgencyStationCustomerWaitingFrame, AgencyStationInboundCallFrame } from './inbound';
 import type { AgencyStationManualCallFrame } from './softphone';
 import type { AgencyContactPromise } from './promise';
-import type { AgencySessionHelp } from './floor-assist';
+import type {
+  AgencySessionHelp,
+  AgencyStationHelpAnsweredFrame,
+  AgencyStationHelpClearedFrame,
+  AgencyStationSupervisorMessageFrame,
+} from './floor-assist';
 import type { AllListed } from '../primitives';
 
 // ─── Which client is on the other end ───────────────────────────────────────
@@ -50,14 +55,21 @@ void _allClientKindsListed;
  *    (`client=mobile`) only when it declares `caps=inbound`, so every older app build stays out
  *    of the inbound pool and is never sent the frames.
  *
+ *  - `floor_assist`: the station shows the floor assist frames (`AGENCY_STATION_FLOOR_ASSIST_EVENTS`:
+ *    a supervisor's message, and how the agent's Need help was answered or ended; decisions LF4,
+ *    LF5, LF16). A console station always receives them; a mobile station only when it declares
+ *    `caps=floor_assist`, so an app build that cannot show a message is never sent one, and a
+ *    message to it is refused `409 agent_not_live` rather than shown to nobody. The same value as
+ *    `AGENCY_STATION_FLOOR_ASSIST_CAPABILITY` (`./floor-assist.ts`).
+ *
  * Like {@link AgencyClientKind}, declared by the client and never verified: it decides which frames
  * the socket is sent and whether it is offered a caller, never anything security-relevant. It
  * belongs to the socket, not the session: a reattach (from another device, or an older build)
  * states its own.
  */
-export type AgencyStationCapability = 'inbound';
+export type AgencyStationCapability = 'inbound' | 'floor_assist';
 
-export const AGENCY_STATION_CAPABILITIES = ['inbound'] as const satisfies readonly AgencyStationCapability[];
+export const AGENCY_STATION_CAPABILITIES = ['inbound', 'floor_assist'] as const satisfies readonly AgencyStationCapability[];
 
 const _allStationCapabilitiesListed: AllListed<AgencyStationCapability, typeof AGENCY_STATION_CAPABILITIES> = true;
 void _allStationCapabilitiesListed;
@@ -213,10 +225,13 @@ export type AgencyStationServerFrame =
   // and a sticky caller waiting for them (`./inbound.ts`). Only to a station that can take inbound
   // calls (`AGENCY_STATION_INBOUND_EVENTS`).
   | AgencyStationInboundCallFrame
-  | AgencyStationCustomerWaitingFrame;
-// Floor assist (LF4, LF5): `supervisor_message`, `help_answered` and `help_cleared` are declared in
-// `./floor-assist.ts` as `AgencyStationFloorAssistFrame`, staged outside this union until the app's
-// wire package decodes them (see that file's note). The server sends either union.
+  | AgencyStationCustomerWaitingFrame
+  // Floor assist (LF4, LF5, LF16): a supervisor's message, and how the agent's Need help was answered
+  // or ended (`./floor-assist.ts`, `AgencyStationFloorAssistFrame`). Only to a station that can show
+  // them (`AGENCY_STATION_FLOOR_ASSIST_EVENTS`): every console, a phone that declared `caps=floor_assist`.
+  | AgencyStationSupervisorMessageFrame
+  | AgencyStationHelpAnsweredFrame
+  | AgencyStationHelpClearedFrame;
 
 /**
  * The inbound call frames: sent only to a station that can take inbound calls

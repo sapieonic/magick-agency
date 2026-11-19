@@ -315,7 +315,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/station-registry.test.ts` (with the inbound events sent only to a station that can take inbound calls: a console, a phone with `caps=inbound`, never an older phone; the capability per socket across a reattach, and each detach reporting its own; and the floor assist events (LF16) only to a console or a phone that declared them, `canReceiveFloorAssist`) | 32 |
 | `apps/server/test/unit/agency/station-supersede-stomp.test.ts` | 10 |
 | `apps/server/test/unit/agency/station-token.test.ts` | 6 |
-| `apps/server/test/unit/agency/station-upgrade.test.ts` (`client=`, `media=`, `caps=` and `stationCanTakeInbound`; `stationCanTakeFloorAssist`, staged until the app lists the capability) | 32 |
+| `apps/server/test/unit/agency/station-upgrade.test.ts` (`client=`, `media=`, `caps=` and `stationCanTakeInbound`; `stationCanTakeFloorAssist`: a phone with `caps=floor_assist`, alone or beside `inbound`, never an older build, LF16) | 32 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.redial.test.ts` | 14 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
@@ -1056,7 +1056,7 @@ Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/no
 | `apps/server/test/integration/agency/listen-session-repository.test.ts` (every method on real Postgres: the tenant and account scopes, the open-only reads, a close that wins once and its race, no end before the start, `markLive` and the live-only "Listened to by", the boot reap and a live process's sweep) | 10 |
 | `apps/server/test/integration/agency/floor-repository.test.ts` (B28b, real Postgres: the floor's rows across campaigns, the soft phone, a staffed agent never signed in, one who left today and one before, one live in another account, a session on a completed campaign, an inbound call, the newest of two open sessions; the conversations in the window at its edges and a redial chain once, equal to the grouped stats' `connected` by agent; the internal handler's call in progress with the name and no number, labels, liveness unknown as null, totals, calls today kept apart per account; a third account's `left_at` never another account's later session, and the wrap-up window served (the campaign's, null when timerless, an inbound wrap-up's captured or default); the open sessions on `uq_agency_agent_live_tenant` on a seeded table) | 14 |
 | `apps/server/test/integration/agency/floor-assist-repository.test.ts` (LF4, LF5, real Postgres: raise, again (idempotent, also three at once), after an answer, never on a left session or across tenants and accounts, an expired one expired by the raise; the 15-minute expiry at its edge on the database's clock (rows backdated), one session's or the sweep's across more than a batch, an answered one never; answer, cancel, the session ending and the sweep racing, exactly one each round, and the sweep and an answer at the edge never both; the floor's read (never another account's, tenant's, a left, answered or expired one) and the internal floor handler's `help`; the call raised on per spine, none in wrap-up; messages stored then delivered; the plans on 0052's index and each spine's) | 18 |
-| `apps/server/test/integration/agency/floor-assist-e2e.test.ts` (LF4, LF5, LF11, the whole server on the mock VoiceLink carrier: raise on a call (its call), again, on the floor; answered by a listen going live and by a message (the frames, once, the stored message, one audit row each); cancel; raised in wrap-up then the session's leave (`session_ended`); the 15-minute expiry (backdated) on the floor at once and by the sweep, once; `help_not_on_call`; a colleague's and a supervisor's raise and cancel, another account's agent and a malformed id the 404; agents, operators and the agent themselves refused messages, another account's and another tenant's supervisors the 404; `message_invalid`; `agent_not_live` with no station and on a left session; the flag off on every route and the floor) | 11 |
+| `apps/server/test/integration/agency/floor-assist-e2e.test.ts` (LF4, LF5, LF11, the whole server on the mock VoiceLink carrier: raise on a call (its call), again, on the floor; answered by a listen going live and by a message (the frames, once, the stored message, one audit row each); cancel; raised in wrap-up then the session's leave (`session_ended`); the 15-minute expiry (backdated) on the floor at once and by the sweep, once; `help_not_on_call`; a colleague's and a supervisor's raise and cancel, another account's agent and a malformed id the 404; agents, operators and the agent themselves refused messages, another account's and another tenant's supervisors the 404; `message_invalid`; `agent_not_live` with no station and on a left session; the flag off on every route and the floor; a phone station (LF16): an older build without `caps=floor_assist` refused messages and told no `ready.help`, the app's `caps=inbound,floor_assist` told it and sent the message and its answer) | 12 |
 | `apps/server/test/integration/agency/floor-assist-expiry-wall-clock.test.ts` (wall-clock lane, LF4: a 1.5 s expiry on the database's clock and the sweep's real 200 ms timer: the floor stops serving the request at the expiry before any sweep, the timer expires it once with its frame and audit row, an answered one never) | 1 |
 | `apps/server/test/integration/agency/promise-summary-repository.test.ts` (B28b, real Postgres: promises on the three call tables by when written, per campaign and the null row, amounts exact past a float's precision, a promise without an amount, the window's edges, other accounts and tenants never, the active promise campaigns; each table on its 0050 index) | 6 |
 | `apps/server/test/integration/agency/callbacks-list.test.ts` (LF22, real Postgres through the route: the open callbacks of the account's active campaigns only, overdue and today (the campaign's own midnight), oldest due first across campaigns, paged at 1, 2 and 3 without a gap or a repeat; another account and another tenant see none; the owner live by the CA5 rule; never a number, in a row or a cursor; the plan: each campaign's page on `idx_agency_contacts_callbacks`, never the dialable index or a scan, under 1,000 rows read of 40,000 seeded) | 8 |
@@ -1483,7 +1483,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 | Test file | Cases |
 |---|---|
-| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json` and `inbound.json` included, and the inbound vocabularies of `literals.json`) | 353 |
+| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json`, `inbound.json` and `floor-assist.json` included, and the inbound and floor assist vocabularies of `literals.json`) | 367 |
 | `packages/contracts/test/agent-caller-id.test.ts` | 2 |
 | `packages/contracts/test/assignment.test.ts` | 9 |
 | `packages/contracts/test/breaks.test.ts` (LF6, LF20: the break limit's bounds, 1–240 and the floor's 30, and `isAgencyBreakLimitMinutes`) | 2 |
@@ -2673,7 +2673,8 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls) | ~24 |
-| `apps/mobile/test/app/softphone_navigation_test.dart` | ~28 |
+| `apps/mobile/test/app/softphone_navigation_test.dart` (with floor assist's message seam plugged in) | ~29 |
+| `apps/mobile/test/app/supervisor_message_banner_test.dart` (LF36: the banner above every tab and over a call, never a dialog; the sender and time, "N more messages", Dismiss by id; each announced once, one queued at mount too; a live region, plain text, 48 dp; a 500-character message at 200% text) | 7 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
 
@@ -2718,7 +2719,11 @@ phone's host actions, and closes a soft-phone session without closing over its c
 (`close_softphone.dart`, a port of the console's `closeSoftphoneSession`). After a reconnect it
 checks a soft-phone call it still holds against the server itself (the bootstrap, with backoff), so
 a call that ended while the socket was down lets go of ringback, CallKit and the hold, and it
-carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`). It holds an
+carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`). Floor assist
+(`floor_assist.dart`, `mobile.md` "Floor assist"): `FloorAssistState`, the agent's Need help matched
+by `raised_at` and a supervisor's messages queued once per id, fed by the controller from `ready.help`,
+`help_answered`, `help_cleared`, `supervisor_message` and the help routes' answers; `StationView.help`,
+the messages on `StationHost.messages` (`supervisorMessagesProvider`); `caps=inbound,floor_assist`. It holds an
 inbound call beside the campaign's (`StationState.inbound`, `newerInboundCall`, the let-go copies
 remembered, `inboundOnScreen`; the phase follows it, `effectiveState`), declares `caps=inbound` on
 the socket, chimes once per offer, checks a held inbound call after a reconnect
@@ -2728,7 +2733,7 @@ notes save of a soft-phone or inbound call (`manual:<id>`, `inbound:<id>`): kept
 sent, re-armed by a refused outcome (`outcomeRefused`), flushed on leave (`flushNow`). Test
 helper: `controller_harness.dart`.
 
-Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_device.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/floor_assist.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_device.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|
@@ -2745,7 +2750,8 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/station_queue_test.dart` | ~11 |
 | `apps/mobile/test/core/station/station_reducer_test.dart` (with the inbound phase) | ~32 |
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
-| `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound`) | ~31 |
+| `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound,floor_assist`, `floor_assist` alone while a ring must not be answered) | ~31 |
+| `apps/mobile/test/core/station/station_floor_assist_test.dart` (LF34–LF38: `FloorAssistState` pure, a request matched by `raised_at`, each cleared reason's notice, a null name's words, `ready`'s restatement, messages once per id, bounded; the refusals' words; through the controller from the server's frames and the help routes: the capability, raise, answer by a listen and by a message, cancel, expiry, a late frame for another request, `ready.help`, every refusal of the raise and the cancel, messages on the shell's seam for a campaign and a soft-phone session, forgotten on leave; a break's limit by its code, none on a reserved code) | 22 |
 | `apps/mobile/test/core/station/station_away_ring_test.dart` (Mode B: `away_ring` asked and its 409 fallback, the parked socket and the away notification, the return, why ringing stopped, `resumeForRing` warm and cold, `reportBound` and `reportEnded`) | ~13 |
 
 ### `apps/mobile/lib/core/inbound/`
@@ -2945,11 +2951,14 @@ Files: `call_back.dart`, `missed_access.dart`, `missed_call_tile.dart`, `missed_
 
 Pre-flight (pure grading apart from the device measurements) and the station screens: one
 screen per phase, the call band, contact details, notes, wrap-up and dispositions, sheets and
-link-state screens; the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading
+link-state screens; Need help on the call and wrap-up screens (`parts/need_help.dart`, LF35) and the
+break's countdown against its reason's limit (`BreakLimitLine` in `parts/idle_views.dart`, LF38); a
+supervisor's message banner the shell shows over every tab (`supervisor_message_banner.dart`, LF36);
+the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading
 only `StationView.inbound`), the neutral "A call is coming through · Connecting…" screen, and the banners
 above every layout ("Your customer is waiting", why the last inbound call left).
 
-Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `logic/*`, `parts/*`, `widgets/*`)
+Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `supervisor_message_banner.dart`, `logic/*`, `parts/*`, `widgets/*`)
 
 | Test file | Cases |
 |---|---|
@@ -2957,6 +2966,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/preflight/preflight_screen_test.dart` | ~20 |
 | `apps/mobile/test/features/station/station_a11y_test.dart` | ~15 |
 | `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
+| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help behind the flag, offered on a call and in wrap-up only, asking, open with its ticking age and Cancel, cancelling, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break countdown, over in the warning tone, none without a limit or on a reserved code, 200% text) | 16 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (the waiting screen's "Dialling a customer…", the count line, ringing over "Nothing due now", paused unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: the "Monitoring and recording" button and sheet on the station header and both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 16 |
@@ -3002,7 +3012,9 @@ the inbound vocabularies and `StationCapability` in `enums.dart`), checked again
 
 Mode B: `push_devices.dart` (the push device, its status and bodies, the ring push, the ring-off, push-failure and away-ring codes), the ring fields of `InboundCall`, `ReservedBreakCode.awayRing`, the ring refusals and `ErrorBody.awayRingCode`.
 
-Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_history.dart`, `lib/src/customer_search_number.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/inbound.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`, `lib/src/push_devices.dart`
+Floor assist (LF34): `floor_assist.dart` (`SessionHelp`, `HelpResponse`, `HelpAnswerHow`, `HelpClearedReason`, `FloorAssistErrorCode`), the three frames in `station.dart` (`SupervisorMessageFrame`, `HelpAnsweredFrame`, `HelpClearedFrame`), `ReadyFrame.help` (read leniently), `StationCapability.floorAssist`, `ErrorBody.floorAssistCode`, `BreakReason.limitMinutes` (none outside 1–240 whole minutes) and `FeatureFlags.floorAssistEnabled`, decoded from `station.json` and `floor-assist.json`.
+
+Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_history.dart`, `lib/src/customer_search_number.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/floor_assist.dart`, `lib/src/inbound.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`, `lib/src/push_devices.dart`
 
 | Test file | Cases |
 |---|---|
@@ -3014,11 +3026,11 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 | `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~5 |
 | `apps/mobile/packages/agency_wire/test/inbound_test.dart` (`inbound.json` and the inbound frames of `station.json` decoded, the predicates, the refusals, the Missed shapes) | ~33 |
 | `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~10 |
-| `apps/mobile/packages/agency_wire/test/platform_test.dart` | ~14 |
+| `apps/mobile/packages/agency_wire/test/platform_test.dart` (with floor assist's flag key) | ~15 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
-| `apps/mobile/packages/agency_wire/test/session_test.dart` | ~18 |
+| `apps/mobile/packages/agency_wire/test/session_test.dart` (with break limits) | ~20 |
 | `apps/mobile/packages/agency_wire/test/softphone_test.dart` | ~30 |
-| `apps/mobile/packages/agency_wire/test/station_test.dart` | 63 |
+| `apps/mobile/packages/agency_wire/test/station_test.dart` (with floor assist's frames, `ready.help`, the help answers and refusals, the capability) | 71 |
 | `apps/mobile/packages/agency_wire/test/station_device_test.dart` | 4 |
 | `apps/mobile/packages/agency_wire/test/push_devices_test.dart` (`fixtures/agent/push.json` decoded, the vocabularies, an unknown value kept) | ~14 |
 

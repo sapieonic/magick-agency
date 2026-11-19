@@ -6,7 +6,6 @@ import {
   AGENCY_STATION_FLOOR_ASSIST_EVENTS,
   AGENCY_STATION_INBOUND_EVENTS,
   type AgencyClientKind,
-  type AgencyStationFloorAssistFrame,
   type AgencyStationServerFrame,
 } from '@magick-agency/contracts/agency';
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
@@ -74,8 +73,12 @@ export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 
   canTakeFloorAssist?: boolean;
 };
 
-/** Every frame the dialer runtime sends a station: the server frames and the floor assist frames, staged apart (contracts `agency/floor-assist.ts`). */
-export type StationFrame = AgencyStationServerFrame | AgencyStationFloorAssistFrame;
+/**
+ * Every frame the dialer runtime sends a station: `AgencyStationServerFrame`, the floor assist frames
+ * included (contracts `agency/floor-assist.ts`; they were staged outside the union until the app could
+ * decode them, LF16). Kept as the registry's own name for what `send` takes.
+ */
+export type StationFrame = AgencyStationServerFrame;
 
 /** The heartbeat grace this station is held to: `heartbeat_grace_ms` for its client kind. */
 export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number {
