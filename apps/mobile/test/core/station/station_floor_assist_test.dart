@@ -57,8 +57,23 @@ void main() {
       final s = FloorAssistState.empty.onRaised(open);
       expect(s.onAnswered(answeredFrame(earlier, by: 'X')), same(s));
       expect(s.onCleared(clearedFrame(earlier, HelpClearedReason.expired)), same(s));
-      // Nothing shown: nothing to clear.
-      expect(FloorAssistState.empty.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)), same(FloorAssistState.empty));
+      // Nothing shown: nothing to clear, and nothing to tell; only remembered as ended.
+      final unseen = FloorAssistState.empty.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered));
+      expect([unseen.help, unseen.notice, unseen.ended], [null, null, raisedInstant]);
+      expect(unseen.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)), same(unseen));
+      // Another request shown: its own end is what is remembered, not this one's.
+      expect(s.onCleared(clearedFrame(earlier, HelpClearedReason.answered)).ended, isNull);
+    });
+
+    test('a stale ready.help: a request seen to end, shown or not, is never re-opened by a snapshot naming it', () {
+      final unseen = FloorAssistState.empty.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered));
+      expect(unseen.onReady(open), same(unseen));
+      final shown = FloorAssistState.empty.onRaised(open).onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired));
+      expect(shown.onReady(open), same(shown), reason: 'the expiry notice stays');
+      expect(FloorAssistState.empty.onRaised(open).onCancelled().onReady(open).help, isNull);
+      // A newer request still opens.
+      final newer = SessionHelp(raisedAt: raisedInstant.add(const Duration(minutes: 1)));
+      expect(unseen.onReady(newer).help, newer);
     });
 
     test('the same instant in another spelling still matches (UTC compared as instants)', () {
@@ -318,6 +333,18 @@ void main() {
         async.elapse(const Duration(seconds: 2));
         app.run(pending);
         expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.none, 'Anitha N answered with a message.']);
+        app.dispose();
+      });
+    });
+
+    test('help_cleared with nothing shown, then a ready still naming that request: nothing opens', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        app.frame(cleared());
+        expect(app.view!.help, const HelpView());
+        app.readyFrame('on_call', extra: {'help': {'raised_at': raisedAt, 'call_id': 'call-1'}});
+        expect(app.view!.help, const HelpView(), reason: 'the server forgot it ended; this station did not');
         app.dispose();
       });
     });

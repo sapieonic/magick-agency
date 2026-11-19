@@ -20,8 +20,9 @@ import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorM
 /// **A raise in flight.** The frames can beat the raise's answer: a supervisor may answer, and the
 /// request end, before the HTTP reply lands. While raising with nothing shown, `help_answered` is
 /// kept for its `raised_at` and `help_cleared` leaves its notice at once; the `raised_at` of the
-/// last `help_cleared` (or the cancel's answer) is remembered, and a raise's answer naming it is
-/// ignored, so a late reply never re-opens a request that already ended.
+/// last `help_cleared` (or the cancel's answer) is remembered, even with nothing shown, and a
+/// raise's answer or a `ready.help` naming it is ignored, so a late reply or a stale snapshot never
+/// re-opens a request that already ended (the server keeps no memory of what it cleared).
 ///
 /// **Messages.** Each id is queued once (a resent frame never shows twice), oldest first, until
 /// the agent dismisses it. Bounded: past [maxQueued] the oldest is dropped.
@@ -57,8 +58,8 @@ final class FloorAssistState {
   /// Why the last request ended, when the agent should be told: answered or expired.
   final HelpNotice? notice;
 
-  /// The `raised_at` of the last request seen to end (`help_cleared`, the cancel's answer): a raise's
-  /// answer naming it arrived late and opens nothing.
+  /// The `raised_at` of the last request seen to end (`help_cleared`, shown or not; the cancel's
+  /// answer): a raise's answer or a `ready.help` naming it is late or stale and opens nothing.
   final DateTime? ended;
 
   /// The messages to show, oldest first.
@@ -97,9 +98,11 @@ final class FloorAssistState {
   HelpAnswer? _answerOf(DateTime raisedAt) => _same(answerFor, raisedAt) ? answer : null;
 
   /// `ready`: the server's whole view of the request ([ReadyFrame.help]). None open clears the
-  /// one shown, with no notice (the frame that ended it was missed; nothing says how).
+  /// one shown, with no notice (the frame that ended it was missed; nothing says how). One this
+  /// station already saw end ([ended]) is stale and ignored.
   FloorAssistState onReady(SessionHelp? open) {
     if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null);
+    if (_same(ended, open.raisedAt)) return this;
     if (_shows(open.raisedAt)) return help == open ? this : _with(help: open);
     return _open(open);
   }
@@ -132,9 +135,12 @@ final class FloorAssistState {
           : this;
 
   /// `help_cleared`: ends the request shown, or ([raising]) the one a raise in flight is opening,
-  /// whose answer then opens nothing.
+  /// whose answer then opens nothing. With nothing shown and no raise in flight it is only
+  /// remembered as [ended], with no notice, so a stale `ready.help` naming it opens nothing.
   FloorAssistState onCleared(HelpClearedFrame f, {bool raising = false}) {
-    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raising)) return this;
+    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raising)) {
+      return help != null || _same(ended, f.raisedAt) ? this : _with(ended: f.raisedAt);
+    }
     final notice = switch (f.reason) {
       HelpClearedReason.answered => HelpNotice.answered(_answerOf(f.raisedAt)),
       HelpClearedReason.expired => const HelpNotice.expired(),
