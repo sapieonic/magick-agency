@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { mayManageEveryCampaignDnc } from '../../utils/dncScopeWords';
 import { usePermission } from '../../hooks/usePermission';
-import { useAgencyConsole } from './useAgencyConsole';
-import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch } from './station/useStationJoin';
+import { useAgencyConsole, type AgencyConsoleState } from './useAgencyConsole';
+import { STATION_ON_OTHER_DEVICE_COPY, useStationJoin, useLiveSessionTouch, type StationJoin } from './station/useStationJoin';
 import { useStationExit } from './station/useStationExit';
 import { useStationShortcuts } from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
-import { useStationHelp } from './station/useStationHelp';
+import { useStationHelp, type StationHelp } from './station/useStationHelp';
 import {
   FloorAssistAnnouncer,
   SupervisorMessages,
@@ -109,9 +109,62 @@ export default function AgentConsolePage() {
   const [params] = useSearchParams();
   const campaignId = params.get('campaign') ?? '';
   const { tenantId, accountId, role } = useTenant();
-  const { user, memberships } = useAuth();
 
   const join = useStationJoin({ campaignId, tenantId, accountId, role });
+  const { bootstrap } = join;
+  const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
+  const { station } = cons;
+
+  /*
+    ── Floor assist (LF4, LF5, LF24–LF26) ──────────────────────────────────────
+    Need help, in the action bar while the flag is on, and supervisors' messages, laid over every
+    view of the station (the campaign's, an inbound call's, the soft phone's): a message reaches
+    the agent wherever they are, and never moves or covers the controls that act on the call.
+  */
+  const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
+  const help = useStationHelp({
+    offered: floorAssistOn,
+    sessionId: bootstrap?.session_id ?? null,
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    station,
+  });
+  /*
+    What supervisors say, out loud (LF25): held here, above every screen the station shows, and
+    rendered once after it, so moving between the campaign's screen, an inbound call and the soft
+    phone neither remounts the region nor says anything again. The card stack comes after the
+    screen's own controls, so it is after them in Tab order too.
+  */
+  const announced = useFloorAssistAnnouncer(station.supervisorMessages, help.announcement);
+
+  return (
+    <>
+      <StationScreen campaignId={campaignId} join={join} cons={cons} help={help} />
+      <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
+      <FloorAssistAnnouncer lines={announced} />
+    </>
+  );
+}
+
+/**
+ * What the station shows: the screen for a join that did not open (a conflict, the soft phone
+ * elsewhere, another device, an error), or the station on an inbound call, on the soft phone or on
+ * its campaign. The page renders it in one place, so moving between them leaves the page's floor
+ * assist (the cards and their live region) where it is.
+ */
+function StationScreen({
+  campaignId,
+  join,
+  cons,
+  help,
+}: {
+  campaignId: string;
+  join: StationJoin;
+  cons: AgencyConsoleState;
+  help: StationHelp;
+}) {
+  const { tenantId, accountId, role } = useTenant();
+  const { user, memberships } = useAuth();
   const { bootstrap } = join;
 
   const consoleRef = useRef<HTMLDivElement>(null);
@@ -132,7 +185,6 @@ export default function AgentConsolePage() {
   // escalation is gated behind this.
   const mayMarkDncTenantWide = mayManageEveryCampaignDnc(memberships ?? [], tenantId, accountId);
 
-  const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
   const { station, clock, audio } = cons;
   const { connection, agentState, live, release, dialing, missedPings } = station;
   const micNotice = agencyAudioNotice(audio.error);
@@ -212,37 +264,6 @@ export default function AgentConsolePage() {
     accountId,
   });
 
-  /*
-    ── Floor assist (LF4, LF5, LF24–LF26) ──────────────────────────────────────
-    Need help, in the action bar while the flag is on, and supervisors' messages, laid over every
-    view of the station (the campaign's, an inbound call's, the soft phone's): a message reaches
-    the agent wherever they are, and never moves or covers the controls that act on the call.
-  */
-  const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
-  const help = useStationHelp({
-    offered: floorAssistOn,
-    sessionId: bootstrap?.session_id ?? null,
-    tenantId: tenantId ?? undefined,
-    accountId: accountId ?? undefined,
-    station,
-  });
-  const supervisorMessages = (
-    <SupervisorMessages messages={station.supervisorMessages} onDismiss={station.dismissSupervisorMessage} />
-  );
-  /*
-    What supervisors say, out loud (LF25): held here, above every screen this page returns, and
-    rendered once in the same slot of each (`withAnnouncer`), so moving between the campaign's
-    screen, an inbound call and the soft phone neither remounts the region nor says anything again.
-    The card stack comes after each view's own controls, so it is after them in Tab order too.
-  */
-  const announced = useFloorAssistAnnouncer(station.supervisorMessages, help.announcement);
-  const withAnnouncer = (view: ReactNode) => (
-    <>
-      {view}
-      <FloorAssistAnnouncer lines={announced} />
-    </>
-  );
-
   const softphone = useStationSoftphone({
     bootstrap,
     cons,
@@ -309,7 +330,7 @@ export default function AgentConsolePage() {
     frees them.
   */
   if (join.joinConflict) {
-    return withAnnouncer(
+    return (
       <JoinConflictScreen
         conflict={join.joinConflict}
         toCampaign={exit.canExitToCampaign}
@@ -331,7 +352,7 @@ export default function AgentConsolePage() {
     finished.
   */
   if (join.onSoftphoneElsewhere) {
-    return withAnnouncer(
+    return (
       <SoftphoneJoinScreen
         closing={join.closingSoftphone}
         failure={join.closeSoftphoneFailure}
@@ -346,7 +367,7 @@ export default function AgentConsolePage() {
     and another device or window holds it. Nothing moves until the agent says so.
   */
   if (join.onOtherDevice) {
-    return withAnnouncer(
+    return (
       <StationFatal
         message={STATION_ON_OTHER_DEVICE_COPY}
         toCampaign={exit.canExitToCampaign}
@@ -357,7 +378,7 @@ export default function AgentConsolePage() {
   }
 
   if (join.joinError) {
-    return withAnnouncer(
+    return (
       <StationFatal
         message={join.joinError}
         toCampaign={exit.canExitToCampaign}
@@ -418,7 +439,7 @@ export default function AgentConsolePage() {
     outcome (the server refuses `/leave` too), read off the call as the soft phone's is.
   */
   if (inbound.call) {
-    return withAnnouncer(
+    return (
       <div
         className={styles.shell}
         data-testid="station-inbound"
@@ -449,7 +470,6 @@ export default function AgentConsolePage() {
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
-        {supervisorMessages}
         {leaveDialog}
       </div>
     );
@@ -465,7 +485,7 @@ export default function AgentConsolePage() {
   */
   if (softphone.active) {
     const busy = softphone.sp.call !== null;
-    return withAnnouncer(
+    return (
       <div className={styles.shell} data-testid="station-softphone">
         <StationHeader
           user={user}
@@ -519,13 +539,12 @@ export default function AgentConsolePage() {
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
-        {supervisorMessages}
         {leaveDialog}
       </div>
     );
   }
 
-  return withAnnouncer(
+  return (
     /*
       `data-connect-flash` is set ONLY when the audible cue could not carry the
       connect — a muted console, an `AudioContext` the browser refuses to run, or
@@ -768,8 +787,6 @@ export default function AgentConsolePage() {
         softphoneAvailable={softphone.available}
         help={help}
       />
-
-      {supervisorMessages}
 
       {/*
         The shared `ConfirmDialog`, not a console-local one: it already owns the
