@@ -183,6 +183,7 @@ void main() {
     expect(vocabularies.keys.toSet(), {
       ...dartVocabularies.keys,
       'station_close_codes',
+      'help_expiry_ms',
     }, reason: 'a vocabulary was added to tooling/contracts-literals.mjs: map it to a Dart enum here');
   });
 
@@ -267,6 +268,11 @@ void main() {
     for (final c in StationCloseCode.values) {
       expect(ts.values, contains(c.code), reason: '$c is not in AGENCY_STATION_CLOSE');
     }
+  });
+
+  test('help_expiry_ms: the Need help expiry is the contract\'s, in whole minutes', () {
+    expect(vocabularies['help_expiry_ms']!['values'], agencyHelpExpiryMs);
+    expect(agencyHelpExpiryMs % 60000, 0, reason: 'the app says the expiry in whole minutes');
   });
 
   test('the Dart enums decode every TypeScript literal to itself', () {

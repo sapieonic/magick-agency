@@ -1122,8 +1122,17 @@ the flag is on). Break limits are not behind it.
     follows ends it and leaves a notice: "Anitha N is listening to your call." or "Anitha N answered
     with a message.", "Your supervisor …" when the server sends no name, "A supervisor answered your
     request for help." when the `help_answered` was missed. `expired`: "No supervisor answered within
-    15 minutes. Ask again if you still need help.", in the warning tone. `cancelled` (the agent's
-    own) and `session_ended` say nothing. A notice stays until dismissed or the next raise.
+    15 minutes. Ask again if you still need help.", in the warning tone, the minutes from the
+    contract's `AGENCY_HELP_EXPIRY_MS` (`agencyHelpExpiryMs` in `agency_wire`, pinned to
+    `literals.json`'s `help_expiry_ms`). `cancelled` (the agent's own) and `session_ended` say
+    nothing. A notice stays until dismissed or the next raise.
+  - **A cancel that lost the race** (LF35): a supervisor's listen or message can answer the request
+    while the agent's cancel is on its way; the server's cancel then finds nothing open and answers
+    `help: null`, and `help_answered` and `help_cleared {answered}` can land before or after that
+    reply. In every order the agent is told who answered, as above, never only that it was
+    cancelled (the app says nothing on a cancel, as the console does not after an answer): an answer
+    held when the reply lands becomes the notice, and a `help_answered` or `help_cleared {answered}`
+    for the request the cancel ended, arriving after the reply, says it too.
   - **Screen readers.** Only "Help requested" is a live region, said once as the request opens; the
     ticking "asked 0:42 ago" is outside it (inside, it would be said every second over the
     customer). Cancel is a button that acts, and while cancelling reads "Cancelling your request for
@@ -1271,7 +1280,7 @@ packages/
   - Grading lives in pure functions (`preflight_checks.dart`), separate from the measurements (`device_preflight_checks.dart`).
 - **Wire types.** `agency_wire` is written by hand against `packages/contracts`. Drift is caught from both sides:
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
-  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (74: the soft phone's, customer history's, inbound calls' and floor assist's included, with `station_capabilities`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
+  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (75: the soft phone's, customer history's, inbound calls' and floor assist's included, with `station_capabilities`, and one number, `help_expiry_ms`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - The same script writes `labels.json`, the contract's label maps the app shows word for word (`ATTEMPT_STATE_LABELS`, `ATTEMPT_OUTCOME_LABELS`); `attempt_copy_test.dart` holds the call list's labels to it, so the app cannot say "Dialing" while the console says "Dialling".
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
   - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type * as Core from '../src/agency';
+import { AGENCY_HELP_EXPIRY_MS } from '../src/agency/floor-assist';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLabels, buildLiterals, type LabelMap } from '../../../tooling/contracts-literals.mjs';
@@ -773,5 +774,9 @@ describe('fixtures/agent/literals.json', () => {
         INTERNAL_ERROR: 1011,
       },
     });
+  });
+
+  it('extracts the Need help expiry the app says in minutes, as the contract computes it', () => {
+    expect(buildLiterals()['help_expiry_ms']).toMatchObject({ values: AGENCY_HELP_EXPIRY_MS });
   });
 });

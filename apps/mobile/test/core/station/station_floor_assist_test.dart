@@ -103,6 +103,11 @@ void main() {
       expect(FloorAssistCopy.sender(' Anitha N '), 'Anitha N');
     });
 
+    test('the expiry is said in the contract\'s minutes (AGENCY_HELP_EXPIRY_MS, through agency_wire)', () {
+      expect(FloorAssistCopy.expiryMinutes, agencyHelpExpiryMs ~/ Duration.millisecondsPerMinute);
+      expect(FloorAssistCopy.expired, 'No supervisor answered within 15 minutes. Ask again if you still need help.');
+    });
+
     test('ready restates the request: none open clears it with no notice; a newer one replaces it', () {
       final s = FloorAssistState.empty.onRaised(open).onAnswered(answeredFrame(raisedInstant, by: 'A'));
       final none = s.onReady(null);
@@ -131,7 +136,8 @@ void main() {
       // and a repeat of its frames while raising again says nothing new.
       final cancelled = FloorAssistState.empty.onRaised(open).onCancelled();
       expect(cancelled.onRaised(open).help, isNull);
-      expect(cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired), raising: true), same(cancelled));
+      final repeat = cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired), raising: true);
+      expect([repeat.help, repeat.notice], [null, null]);
     });
 
     test('raising again puts the last notice away; the cancel clears the request and says nothing', () {
@@ -142,6 +148,45 @@ void main() {
       final c = FloorAssistState.empty.onRaised(open).onCancelled();
       expect([c.help, c.notice], [null, null]);
       expect(ended.dismissNotice().notice, isNull);
+    });
+
+    test('a cancel that lost the race: answered, then the cancel\'s help: null, then help_cleared; told who, never only cancelled', () {
+      const listening = 'Anitha N is listening to your call.';
+      var s = FloorAssistState.empty.onRaised(open).onAnswered(answeredFrame(raisedInstant, by: 'Anitha N'));
+      s = s.onCancelled();
+      expect([s.help, s.notice?.text, s.ended], [null, listening, raisedInstant], reason: 'the held answer is the notice');
+      final cleared = s.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered));
+      expect([cleared.help, cleared.notice?.text, cleared.answer], [null, listening, null], reason: 'its help_cleared keeps the answer said');
+      expect(cleared.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)), same(cleared));
+      expect(cleared.onReady(open), same(cleared), reason: 'a stale snapshot never re-opens it');
+      expect(cleared.onRaised(open).help, isNull, reason: 'nor a late raise reply');
+    });
+
+    test('a cancel that lost the race, help_cleared first: answered and ended before the cancel\'s help: null, which keeps the notice', () {
+      final s = FloorAssistState.empty
+          .onRaised(open)
+          .onAnswered(answeredFrame(raisedInstant, by: 'Anitha N', how: HelpAnswerHow.message))
+          .onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered));
+      expect(s.notice?.text, 'Anitha N answered with a message.');
+      expect(s.onCancelled(), same(s));
+    });
+
+    test('a cancel that lost the race, its frames after the reply: help_answered tells who; help_cleared alone tells it was answered', () {
+      final cancelled = FloorAssistState.empty.onRaised(open).onCancelled();
+      expect(cancelled.notice, isNull);
+      var s = cancelled.onAnswered(answeredFrame(raisedInstant, by: 'Ravi'));
+      expect([s.help, s.notice?.text], [null, 'Ravi is listening to your call.']);
+      s = s.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered));
+      expect([s.notice?.text, s.answer], ['Ravi is listening to your call.', null]);
+      // help_answered missed: the clear still says a supervisor answered.
+      expect(cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)).notice?.text,
+          'A supervisor answered your request for help.');
+      // The cancel won: its own help_cleared says nothing, and frames about another request nothing either.
+      final won = cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.cancelled));
+      expect([won.help, won.notice, won.cancelled], [null, null, null]);
+      expect(won.onAnswered(answeredFrame(raisedInstant, by: 'X')), same(won), reason: 'its help_cleared closed it');
+      expect(cancelled.onAnswered(answeredFrame(earlier, by: 'X')), same(cancelled));
+      expect(cancelled.onCleared(clearedFrame(earlier, HelpClearedReason.answered)).notice, isNull);
     });
 
     test('messages: each id once, oldest first, dismissed by id, bounded', () {
@@ -278,7 +323,70 @@ void main() {
       });
     });
 
-    test('expired: nobody answered in 15 minutes, said in the warning tone; a late frame about an earlier request is ignored', () {
+    test('a cancel that lost the race: help_answered while the DELETE is out, help: null, then help_cleared: who is listening, not cancelled', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.routes['DELETE $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          return json(200, {'session_id': 'sess-1', 'help': null});
+        };
+        app.onCall('a1');
+        app.run(app.controller.raiseHelp());
+        final pending = app.controller.cancelHelp();
+        async.flushMicrotasks();
+        expect(app.view!.help.stage, HelpStage.cancelling);
+        app.frame(answered());
+        async.elapse(const Duration(seconds: 1));
+        app.run(pending);
+        const said = HelpView(notice: 'Anitha N is listening to your call.', noticeTone: HelpNoticeTone.success);
+        expect(app.view!.help, said);
+        app.frame(cleared());
+        expect(app.view!.help, said);
+        app.dispose();
+      });
+    });
+
+    test('a cancel that lost the race, help_cleared before the reply: the reply keeps who is listening', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.routes['DELETE $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          return json(200, {'session_id': 'sess-1', 'help': null});
+        };
+        app.onCall('a1');
+        app.run(app.controller.raiseHelp());
+        final pending = app.controller.cancelHelp();
+        async.flushMicrotasks();
+        app.frame(answered());
+        app.frame(cleared());
+        const notice = 'Anitha N is listening to your call.';
+        expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.cancelling, notice]);
+        async.elapse(const Duration(seconds: 1));
+        app.run(pending);
+        expect(app.view!.help, const HelpView(notice: notice, noticeTone: HelpNoticeTone.success));
+        app.dispose();
+      });
+    });
+
+    test('a cancel that lost the race, the reply first: the help_answered and help_cleared after it still say who', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.routes['DELETE $helpPath'] = (_) => json(200, {'session_id': 'sess-1', 'help': null});
+        app.onCall('a1');
+        app.run(app.controller.raiseHelp());
+        app.run(app.controller.cancelHelp());
+        expect(app.view!.help, const HelpView());
+        app.frame(answered(by: 'Ravi'));
+        app.frame(cleared());
+        expect(app.view!.help, const HelpView(notice: 'Ravi is listening to your call.', noticeTone: HelpNoticeTone.success));
+        app.dispose();
+      });
+    });
+
+    test('expired: nobody answered in time, said in the warning tone; a late frame about an earlier request is ignored', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST $helpPath'] = (_) => json(200, helpBody());

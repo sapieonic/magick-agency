@@ -12,6 +12,12 @@ import 'package:meta/meta.dart';
 import 'enums.dart';
 import 'json.dart';
 
+/// How long a Need help request stays open unanswered, in milliseconds: 15
+/// minutes from when it was raised (LF4). The app says it in minutes.
+///
+/// Contract: `AGENCY_HELP_EXPIRY_MS` (pinned by `literals_test`).
+const agencyHelpExpiryMs = 15 * 60 * 1000;
+
 /// How a supervisor answered the agent's Need help: they are listening to the
 /// call, or they sent a message (which arrives first, as its own frame).
 ///
@@ -36,7 +42,7 @@ enum HelpClearedReason implements WireEnum {
   /// The agent cancelled it.
   cancelled('cancelled'),
 
-  /// Nobody answered in 15 minutes (`AGENCY_HELP_EXPIRY_MS`).
+  /// Nobody answered in time ([agencyHelpExpiryMs]).
   expired('expired'),
 
   /// A supervisor answered it (`help_answered` came first and says who and how).

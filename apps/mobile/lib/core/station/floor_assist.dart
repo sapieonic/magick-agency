@@ -15,7 +15,8 @@ import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorM
 /// that same instant, or the cancel's answer. A frame about another request (an earlier one, late)
 /// never touches the one shown (LF15). `help_answered` says who and how; the `help_cleared` that
 /// follows ends the request and leaves a notice of the answer ("Anitha N is listening"). An
-/// expiry leaves a notice too; a cancel (the agent's own) and the session ending leave none.
+/// expiry leaves a notice too; a cancel (the agent's own) and the session ending leave none, unless
+/// a supervisor answered before the cancel landed (below).
 ///
 /// **A raise in flight.** The frames can beat the raise's answer: a supervisor may answer, and the
 /// request end, before the HTTP reply lands. While raising with nothing shown, `help_answered` is
@@ -23,6 +24,12 @@ import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorM
 /// last `help_cleared` (or the cancel's answer) is remembered, even with nothing shown, and a
 /// raise's answer or a `ready.help` naming it is ignored, so a late reply or a stale snapshot never
 /// re-opens a request that already ended (the server keeps no memory of what it cleared).
+///
+/// **A cancel that lost the race.** A supervisor may answer while the agent's cancel is on its
+/// way; the server's cancel then finds nothing open and answers `help: null`, and the frames can
+/// land on either side of that reply. Whichever order, the agent is told who answered, never only
+/// that it was cancelled: an answer held when the reply lands becomes the notice ([onCancelled]),
+/// and a `help_answered` or `help_cleared(answered)` for that request after it says so too.
 ///
 /// **Messages.** Each id is queued once (a resent frame never shows twice), oldest first, until
 /// the agent dismisses it. Bounded: past [maxQueued] the oldest is dropped.
@@ -34,6 +41,7 @@ final class FloorAssistState {
     this.answerFor,
     this.notice,
     this.ended,
+    this.cancelled,
     this.messages = const [],
     this.seen = const [],
   });
@@ -49,10 +57,12 @@ final class FloorAssistState {
   /// The open request on screen; null for none.
   final SessionHelp? help;
 
-  /// How [help] was answered, from `help_answered`, until its `help_cleared`.
+  /// How [help] was answered, from `help_answered`, until its `help_cleared` (held past the
+  /// cancel's answer for the request it ended, whose `help_cleared` may still be on its way).
   final HelpAnswer? answer;
 
-  /// The `raised_at` [answer] is about: [help]'s, or the request a raise in flight is opening.
+  /// The `raised_at` [answer] is about: [help]'s, the request a raise in flight is opening, or
+  /// the one the cancel's answer just ended.
   final DateTime? answerFor;
 
   /// Why the last request ended, when the agent should be told: answered or expired.
@@ -61,6 +71,10 @@ final class FloorAssistState {
   /// The `raised_at` of the last request seen to end (`help_cleared`, shown or not; the cancel's
   /// answer): a raise's answer or a `ready.help` naming it is late or stale and opens nothing.
   final DateTime? ended;
+
+  /// The `raised_at` of the request the cancel's answer ended, until its `help_cleared`: a
+  /// supervisor may have answered it before the cancel landed, and its frames can follow the reply.
+  final DateTime? cancelled;
 
   /// The messages to show, oldest first.
   final List<SupervisorMessageFrame> messages;
@@ -74,6 +88,7 @@ final class FloorAssistState {
     Object? answerFor = _keep,
     Object? notice = _keep,
     Object? ended = _keep,
+    Object? cancelled = _keep,
     List<SupervisorMessageFrame>? messages,
     List<String>? seen,
   }) => FloorAssistState(
@@ -82,6 +97,7 @@ final class FloorAssistState {
     answerFor: identical(answerFor, _keep) ? this.answerFor : answerFor as DateTime?,
     notice: identical(notice, _keep) ? this.notice : notice as HelpNotice?,
     ended: identical(ended, _keep) ? this.ended : ended as DateTime?,
+    cancelled: identical(cancelled, _keep) ? this.cancelled : cancelled as DateTime?,
     messages: messages ?? this.messages,
     seen: seen ?? this.seen,
   );
@@ -118,27 +134,51 @@ final class FloorAssistState {
   /// [open] on screen in place of whatever was, with the answer held for it (a raise in flight's).
   FloorAssistState _open(SessionHelp open) {
     final held = _answerOf(open.raisedAt);
-    return _with(help: open, answer: held, answerFor: held == null ? null : open.raisedAt, notice: null);
+    return _with(help: open, answer: held, answerFor: held == null ? null : open.raisedAt, notice: null, cancelled: null);
   }
 
-  /// The cancel's answer (`help: null`): nothing open, and nothing to tell.
+  /// The cancel's answer (`help: null`): nothing open, and nothing to tell, unless a supervisor
+  /// answered first. Their listen or message reached the request before the cancel did (the server
+  /// then finds nothing open, and says only `help: null`): the answer held for it
+  /// (`help_answered` came ahead of this reply) becomes the notice, and stays held for the
+  /// `help_cleared` still on its way. The agent is never told only that it was cancelled.
   FloorAssistState onCancelled() {
     final open = help;
-    if (open == null && answer == null) return this;
-    return _with(help: null, answer: null, answerFor: null, ended: open?.raisedAt ?? ended);
+    if (open == null) return this;
+    final held = _answerOf(open.raisedAt);
+    return _with(
+      help: null,
+      notice: held == null ? notice : HelpNotice.answered(held),
+      ended: open.raisedAt,
+      cancelled: open.raisedAt,
+    );
   }
 
   /// `help_answered`: about the request shown, or ([raising]) the one a raise in flight is opening.
-  FloorAssistState onAnswered(HelpAnsweredFrame f, {bool raising = false}) =>
-      _shows(f.raisedAt) || _inFlight(f.raisedAt, raising)
-          ? _with(answer: HelpAnswer(byName: f.byName, how: f.how), answerFor: f.raisedAt)
-          : this;
+  /// About the request the cancel's answer just ended ([_cancelledFirst]), the cancel lost the race:
+  /// the notice says who answered at once.
+  FloorAssistState onAnswered(HelpAnsweredFrame f, {bool raising = false}) {
+    final answer = HelpAnswer(byName: f.byName, how: f.how);
+    if (_shows(f.raisedAt) || _inFlight(f.raisedAt, raising)) return _with(answer: answer, answerFor: f.raisedAt);
+    if (_cancelledFirst(f.raisedAt)) return _with(answer: answer, answerFor: f.raisedAt, notice: HelpNotice.answered(answer));
+    return this;
+  }
+
+  /// A frame about the request the cancel's answer ended ([cancelled]), with nothing shown since:
+  /// its frames came behind the reply.
+  bool _cancelledFirst(DateTime raisedAt) => help == null && _same(cancelled, raisedAt);
 
   /// `help_cleared`: ends the request shown, or ([raising]) the one a raise in flight is opening,
   /// whose answer then opens nothing. With nothing shown and no raise in flight it is only
-  /// remembered as [ended], with no notice, so a stale `ready.help` naming it opens nothing.
+  /// remembered as [ended], with no notice, so a stale `ready.help` naming it opens nothing;
+  /// except `answered` for the request the cancel's answer just ended ([_cancelledFirst]): a
+  /// supervisor got there first, and the notice says so (with the answer held for it, if any).
   FloorAssistState onCleared(HelpClearedFrame f, {bool raising = false}) {
     if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raising)) {
+      if (_cancelledFirst(f.raisedAt)) {
+        final told = f.reason == HelpClearedReason.answered ? HelpNotice.answered(_answerOf(f.raisedAt)) : this.notice;
+        return _with(answer: null, answerFor: null, notice: told, cancelled: null);
+      }
       return help != null || _same(ended, f.raisedAt) ? this : _with(ended: f.raisedAt);
     }
     final notice = switch (f.reason) {
@@ -203,11 +243,12 @@ final class FloorAssistState {
       other.answerFor == answerFor &&
       other.notice == notice &&
       other.ended == ended &&
+      other.cancelled == cancelled &&
       const ListEquality<SupervisorMessageFrame>().equals(other.messages, messages) &&
       const ListEquality<String>().equals(other.seen, seen);
 
   @override
-  int get hashCode => Object.hash(help, answer, answerFor, notice, ended, Object.hashAll(messages), seen.length);
+  int get hashCode => Object.hash(help, answer, answerFor, notice, ended, cancelled, Object.hashAll(messages), seen.length);
 }
 
 const _keep = Object();
@@ -263,7 +304,11 @@ abstract final class FloorAssistCopy {
     };
   }
 
-  static const expired = 'No supervisor answered within 15 minutes. Ask again if you still need help.';
+  /// How long a request stays open unanswered, in minutes, as the copy says it (the contract's
+  /// `AGENCY_HELP_EXPIRY_MS`, LF4).
+  static const expiryMinutes = agencyHelpExpiryMs ~/ 60000;
+
+  static const expired = 'No supervisor answered within $expiryMinutes minutes. Ask again if you still need help.';
 
   // ── Refusals of the raise and the cancel ──
   static const disabled = 'Need help is turned off for your workspace. Ask your supervisor another way.';

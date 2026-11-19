@@ -772,6 +772,10 @@
       "followed_up"
     ]
   },
+  "help_expiry_ms": {
+    "source": "packages/contracts/src/agency/floor-assist.ts#AGENCY_HELP_EXPIRY_MS",
+    "values": 900000
+  },
   "help_answer_hows": {
     "source": "packages/contracts/src/agency/floor-assist.ts#AGENCY_HELP_ANSWER_HOWS",
     "values": [

@@ -1464,7 +1464,7 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 `ci-scope.mjs` picks what CI runs from the diff of a pull request or a push to `main`, and its guard holds the rules to the files each package's suites read outside the package ([`operations.md`](operations.md), "What CI runs").
 
-`contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (62 vocabularies, the inbound ones and `station_capabilities` included), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
+`contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (75 vocabularies, the inbound ones and `station_capabilities` included, and the numbers it says or acts on: the close codes, `help_expiry_ms`), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
 
 Files: `ci-scope.mjs`, `ci-scope.test.mjs`, `contracts-literals.mjs`, `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
@@ -1483,7 +1483,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 | Test file | Cases |
 |---|---|
-| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json`, `inbound.json` and `floor-assist.json` included, and the inbound and floor assist vocabularies of `literals.json`) | 367 |
+| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json`, `inbound.json` and `floor-assist.json` included, and the inbound and floor assist vocabularies of `literals.json`, the Need help expiry extracted as the contract computes it) | 368 |
 | `packages/contracts/test/agent-caller-id.test.ts` | 2 |
 | `packages/contracts/test/assignment.test.ts` | 9 |
 | `packages/contracts/test/breaks.test.ts` (LF6, LF20: the break limit's bounds, 1–240 and the floor's 30, and `isAgencyBreakLimitMinutes`) | 2 |
@@ -2751,7 +2751,7 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/station_reducer_test.dart` (with the inbound phase) | ~32 |
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
 | `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound,floor_assist`, `floor_assist` alone while a ring must not be answered) | ~31 |
-| `apps/mobile/test/core/station/station_floor_assist_test.dart` (LF34–LF38: `FloorAssistState` pure, a request matched by `raised_at`, each cleared reason's notice, a null name's words, `ready`'s restatement, a stale `ready.help` for a request seen to end (shown or not) ignored, a raise in flight whose request ends before its reply, messages once per id, bounded; the refusals' words; through the controller from the server's frames and the help routes: the capability, raise, answer by a listen and by a message, cancel, expiry, a late frame for another request, a slow raise reply after the answer and `help_cleared` (with and without a reconnect's `ready` between), `help_cleared` with nothing shown then a `ready` still naming it, `ready.help`, every refusal of the raise and the cancel, messages on the shell's seam for a campaign and a soft-phone session, forgotten on leave; a break's limit by its code, none on a reserved code) | 27 |
+| `apps/mobile/test/core/station/station_floor_assist_test.dart` (LF34–LF38: `FloorAssistState` pure, a request matched by `raised_at`, each cleared reason's notice, a null name's words, `ready`'s restatement, a stale `ready.help` for a request seen to end (shown or not) ignored, a raise in flight whose request ends before its reply, a cancel that lost the race to an answer (its frames before, around and after the cancel's `help: null`: who answered is said), the expiry's minutes from `agencyHelpExpiryMs`, messages once per id, bounded; the refusals' words; through the controller from the server's frames and the help routes: the capability, raise, answer by a listen and by a message, cancel, a cancel that lost the race (`help_answered` before the reply, `help_cleared` too, both after it), expiry, a late frame for another request, a slow raise reply after the answer and `help_cleared` (with and without a reconnect's `ready` between), `help_cleared` with nothing shown then a `ready` still naming it, `ready.help`, every refusal of the raise and the cancel, messages on the shell's seam for a campaign and a soft-phone session, forgotten on leave; a break's limit by its code, none on a reserved code) | 34 |
 | `apps/mobile/test/core/station/station_away_ring_test.dart` (Mode B: `away_ring` asked and its 409 fallback, the parked socket and the away notification, the return, why ringing stopped, `resumeForRing` warm and cold, `reportBound` and `reportEnded`) | ~13 |
 
 ### `apps/mobile/lib/core/inbound/`
@@ -3025,7 +3025,7 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 | `apps/mobile/packages/agency_wire/test/decode_budget_test.dart` | ~2 |
 | `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~5 |
 | `apps/mobile/packages/agency_wire/test/inbound_test.dart` (`inbound.json` and the inbound frames of `station.json` decoded, the predicates, the refusals, the Missed shapes) | ~33 |
-| `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~10 |
+| `apps/mobile/packages/agency_wire/test/literals_test.dart` (with `help_expiry_ms` pinned to `agencyHelpExpiryMs`) | 167 |
 | `apps/mobile/packages/agency_wire/test/platform_test.dart` (with floor assist's flag key) | ~15 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
 | `apps/mobile/packages/agency_wire/test/session_test.dart` (with break limits, an infinite one dropped) | ~20 |
