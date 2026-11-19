@@ -6,6 +6,7 @@ import {
   PHONE_CALL_BREAK_REASON,
   PHONE_CALL_BREAK_REASON_LABEL,
   RESERVED_BREAK_REASONS,
+  isAgencyBreakLimitMinutes,
   type AgencyBreakReason,
 } from '@magick-agency/contracts/agency';
 
@@ -34,10 +35,18 @@ import {
  * defaults, so there are no jurisdiction-specific codes, no prescribed labels and
  * nothing that reads as a compliance claim. `is_paid` is omitted rather than
  * guessed — that is a payroll question no default can answer for an operator.
+ *
+ * **Limits (LF6, LF20).** Tea has 15 minutes and Lunch 30 (`limit_minutes`); the others none, so
+ * the floor's 30-minute rule applies to them. Tea is its own code, added after Break, never a
+ * relabelled `break`: a session on `break` today stays on what it chose. These reach exactly the
+ * campaigns that list no reasons of their own (an empty column), because the built-ins are
+ * served at read time, never written: a campaign's saved list is never rewritten, by a migration
+ * or by this read, and keeps the limits its operator gave it (none, until they add some).
  */
 export const DEFAULT_BREAK_REASONS: readonly AgencyBreakReason[] = [
   { code: 'break', label: 'Break' },
-  { code: 'lunch', label: 'Lunch' },
+  { code: 'tea', label: 'Tea', limit_minutes: 15 },
+  { code: 'lunch', label: 'Lunch', limit_minutes: 30 },
   { code: 'meeting', label: 'Meeting' },
   { code: 'training', label: 'Training' },
   { code: 'technical_issue', label: 'Technical issue' },
@@ -66,6 +75,10 @@ export function resolveBreakReasons(
   // `unknown_break_reason`. The device-away break is accepted by that route on its own
   // rules (`api/routes/agency/device-away.ts`), never from the menu: listed here, an
   // agent could pick "app in background" from a browser.
+  //
+  // A stored `limit_minutes` the write would refuse (out of range, not a whole number: a row
+  // written before the rule, or by hand) is dropped from that entry, never the entry itself: the
+  // reason stays on the menu and its break falls back to the floor's 30-minute rule (LF20).
   if (!Array.isArray(configured)) return [...DEFAULT_BREAK_REASONS];
   const valid = configured.filter(
     (r): r is AgencyBreakReason =>
@@ -73,8 +86,30 @@ export function resolveBreakReasons(
       && typeof (r as AgencyBreakReason).code === 'string'
       && (r as AgencyBreakReason).code.length > 0
       && !isReservedBreakReason((r as AgencyBreakReason).code),
-  );
+  ).map(withUsableLimit);
   return valid.length > 0 ? valid : [...DEFAULT_BREAK_REASONS];
+}
+
+/** `reason` without a `limit_minutes` the rule refuses (`isAgencyBreakLimitMinutes`); otherwise itself. */
+function withUsableLimit(reason: AgencyBreakReason): AgencyBreakReason {
+  if (!('limit_minutes' in reason) || isAgencyBreakLimitMinutes(reason.limit_minutes)) return reason;
+  const { limit_minutes: _dropped, ...rest } = reason;
+  return rest;
+}
+
+/**
+ * LF6, LF20: the limit, in minutes, of a break on `code` under this campaign's catalog
+ * (`configured`, resolved as the break menu resolves it, so the built-ins when it lists none).
+ * Null when the reason has no limit of its own, for a reserved code (never one: the soft phone's,
+ * the app's pauses) and for a code the catalog does not know; the floor's 30-minute rule
+ * (`AGENCY_BREAK_DEFAULT_LIMIT_MINUTES`) applies to all of those except the soft phone.
+ */
+export function breakLimitMinutes(
+  code: string | null | undefined,
+  configured: AgencyBreakReason[] | null | undefined,
+): number | null {
+  if (!code || isReservedBreakReason(code)) return null;
+  return resolveBreakReasons(configured).find((r) => r.code === code)?.limit_minutes ?? null;
 }
 
 /** Whether `code` is accepted, and the valid set to echo back when it is not. */

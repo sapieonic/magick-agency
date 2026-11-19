@@ -24,6 +24,7 @@ import {
   AWAY_RING_BREAK,
   breakMustWait,
   BreakRegistry,
+  breakLimitMinutes,
 } from '../../../src/break-manager.js';
 
 describe('resolveBreakReasons', () => {
@@ -222,5 +223,75 @@ describe('BreakRegistry', () => {
     r.queue('s2', { code: 'meeting', label: 'Meeting' });
     expect(r.take('s1')?.code).toBe('lunch');
     expect(r.peek('s2')?.code).toBe('meeting');
+  });
+});
+
+// LF6, LF20: break limits. The write's rule is the contract's `isAgencyBreakLimitMinutes`; the
+// catalog read keeps a stored limit only when that rule accepts it.
+describe('break limits (LF6, LF20)', () => {
+  it('gives the built-ins Tea 15 and Lunch 30, and no other reason a limit', () => {
+    expect(DEFAULT_BREAK_REASONS.map((r) => [r.code, r.limit_minutes ?? null])).toEqual([
+      ['break', null],
+      ['tea', 15],
+      ['lunch', 30],
+      ['meeting', null],
+      ['training', null],
+      ['technical_issue', null],
+      ['admin', null],
+    ]);
+    expect(DEFAULT_BREAK_REASONS.find((r) => r.code === 'tea')?.label).toBe('Tea');
+  });
+
+  it('serves an unconfigured campaign the built-ins with their limits', () => {
+    expect(breakLimitMinutes('tea', [])).toBe(15);
+    expect(breakLimitMinutes('lunch', null)).toBe(30);
+    expect(breakLimitMinutes('break', [])).toBeNull();
+  });
+
+  it('never rewrites a campaign\'s saved list: its Lunch keeps no limit, and Tea is not added', () => {
+    const saved = [{ code: 'lunch', label: 'Lunch' }, { code: 'chai', label: 'Chai', limit_minutes: 10 }];
+    const resolved = resolveBreakReasons(saved);
+    expect(resolved).toEqual(saved);
+    expect(resolved[0]).toBe(saved[0]);
+    expect(resolved.map((r) => r.code)).not.toContain('tea');
+    expect(breakLimitMinutes('lunch', saved)).toBeNull();
+    expect(breakLimitMinutes('chai', saved)).toBe(10);
+    expect(breakLimitMinutes('tea', saved)).toBeNull();
+  });
+
+  it('drops a stored limit the rule refuses, keeping the reason on the menu', () => {
+    const stored = [
+      { code: 'a', label: 'A', limit_minutes: 0 },
+      { code: 'b', label: 'B', limit_minutes: 241 },
+      { code: 'c', label: 'C', limit_minutes: 12.5 },
+      { code: 'd', label: 'D', limit_minutes: '15' },
+      { code: 'e', label: 'E', limit_minutes: null },
+      { code: 'f', label: 'F', limit_minutes: 1, is_paid: true },
+      { code: 'g', label: 'G', limit_minutes: 240 },
+    ] as never;
+    expect(resolveBreakReasons(stored)).toEqual([
+      { code: 'a', label: 'A' },
+      { code: 'b', label: 'B' },
+      { code: 'c', label: 'C' },
+      { code: 'd', label: 'D' },
+      { code: 'e', label: 'E' },
+      { code: 'f', label: 'F', limit_minutes: 1, is_paid: true },
+      { code: 'g', label: 'G', limit_minutes: 240 },
+    ]);
+    expect(breakLimitMinutes('b', stored)).toBeNull();
+    expect(breakLimitMinutes('g', stored)).toBe(240);
+  });
+
+  it('gives a reserved code, an unknown code and no code no limit', () => {
+    // A reserved code cannot be in a catalog (dropped above), so even a hand-written row naming
+    // one with a limit gives it none.
+    const stored = [{ code: 'device_away', label: 'Away', limit_minutes: 5 }, { code: 'lunch', label: 'Lunch', limit_minutes: 20 }];
+    expect(breakLimitMinutes('device_away', stored)).toBeNull();
+    expect(breakLimitMinutes('soft_phone', [])).toBeNull();
+    expect(breakLimitMinutes('phone_call', [])).toBeNull();
+    expect(breakLimitMinutes('away_ring', [])).toBeNull();
+    expect(breakLimitMinutes('nap', stored)).toBeNull();
+    expect(breakLimitMinutes(null, stored)).toBeNull();
+    expect(breakLimitMinutes('lunch', stored)).toBe(20);
   });
 });

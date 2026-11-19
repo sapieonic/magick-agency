@@ -16,8 +16,11 @@ import {
   DEVICE_AWAY_BREAK_REASON,
   PHONE_CALL_BREAK_REASON,
   AWAY_RING_BREAK_REASON,
+  AGENCY_BREAK_LIMIT_MAX_MINUTES,
+  AGENCY_BREAK_LIMIT_MIN_MINUTES,
   RESERVED_BREAK_REASONS,
   SOFTPHONE_BREAK_REASON,
+  isAgencyBreakLimitMinutes,
   type AgencyAttemptOutcome,
   type AgencyAutoDispositionOutcome,
   type AgencyReservedBreakReason,
@@ -759,7 +762,7 @@ export function validateAgencyCampaignConfig(
     issues.push(...validateAbandonmentCeiling(record['abandonment_ceiling_pct']));
   }
   if (record['break_reasons'] !== undefined) {
-    issues.push(...validateBreakReasonsReserved(record['break_reasons']));
+    issues.push(...validateBreakReasons(record['break_reasons']));
   }
   issues.push(...validateBooleanSetting(record, 'allow_wrapup_redial'));
   // Inbound sticky routing (0024, `BOOLEAN NOT NULL DEFAULT true`): the same rule.
@@ -871,20 +874,40 @@ const RESERVED_BREAK_REASON_OWNER: Readonly<Record<AgencyReservedBreakReason, st
 };
 
 /**
- * A campaign's break catalog may not list a reserved reason (`RESERVED_BREAK_REASONS`:
- * the soft phone's {@link SOFTPHONE_BREAK_REASON}, the mobile app's
- * {@link DEVICE_AWAY_BREAK_REASON}). The catalog drops them when read
- * (`resolveBreakReasons`), so neither could ever be offered from the break menu;
- * refusing them at the write tells the operator so instead of storing an entry that
- * silently does nothing. One issue per reserved code listed.
+ * A campaign's break catalog, at the write: one issue per problem, keyed `break_reasons`.
+ *
+ *  - It may not list a reserved reason (`RESERVED_BREAK_REASONS`: the soft phone's
+ *    {@link SOFTPHONE_BREAK_REASON}, the mobile app's {@link DEVICE_AWAY_BREAK_REASON} and its
+ *    pauses). The catalog drops them when read (`resolveBreakReasons`), so none could ever be
+ *    offered from the break menu; refusing them at the write tells the operator so instead of
+ *    storing an entry that silently does nothing. One issue per reserved code listed. So a reserved
+ *    reason never carries a limit either (LF6): it cannot be listed to carry one.
+ *  - LF6, LF20: an entry's `limit_minutes`, when present, is a whole number of minutes from
+ *    {@link AGENCY_BREAK_LIMIT_MIN_MINUTES} to {@link AGENCY_BREAK_LIMIT_MAX_MINUTES}
+ *    (`isAgencyBreakLimitMinutes`, the read's rule too). One issue per entry that breaks it, naming
+ *    its code. `null` is not "no limit": leave the key out.
+ *
+ * Exported for the public API layer (`agency-campaign-config.ts`): same rules, same messages.
  */
-function validateBreakReasonsReserved(value: unknown): CampaignConfigIssue[] {
+export function validateBreakReasons(value: unknown): CampaignConfigIssue[] {
   if (!Array.isArray(value)) return [];
-  const listed = new Set(value.map((r) => (!!r && typeof r === 'object' ? (r as { code?: unknown }).code : undefined)));
-  return RESERVED_BREAK_REASONS.filter((code) => listed.has(code)).map((code) => ({
+  const entries = value.filter((r): r is Record<string, unknown> => !!r && typeof r === 'object' && !Array.isArray(r));
+  const listed = new Set(entries.map((r) => r['code']));
+  const issues: CampaignConfigIssue[] = RESERVED_BREAK_REASONS.filter((code) => listed.has(code)).map((code) => ({
     field: 'break_reasons',
     message: `break_reasons may not list "${code}": it is reserved for ${RESERVED_BREAK_REASON_OWNER[code]}.`,
   }));
+  for (const entry of entries) {
+    if (!('limit_minutes' in entry) || isAgencyBreakLimitMinutes(entry['limit_minutes'])) continue;
+    const code = typeof entry['code'] === 'string' ? entry['code'] : '';
+    // A reserved entry is refused above already; a second message about its limit would only repeat it.
+    if ((RESERVED_BREAK_REASONS as readonly string[]).includes(code)) continue;
+    issues.push({
+      field: 'break_reasons',
+      message: `The limit for "${code}" must be a whole number of minutes from ${AGENCY_BREAK_LIMIT_MIN_MINUTES} to ${AGENCY_BREAK_LIMIT_MAX_MINUTES}. Leave it out for no limit.`,
+    });
+  }
+  return issues;
 }
 
 /**

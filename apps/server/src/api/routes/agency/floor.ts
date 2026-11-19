@@ -11,6 +11,7 @@ import {
   type AgencyFloorRow,
   type AgencyLiveCallRow,
 } from '../../../db/repositories/agency.repository.js';
+import { breakLimitMinutes } from '@magick-agency/domain/break-manager';
 import { matchName } from '../../../agency/inbound/match-name.js';
 import { floorBreakLabel, floorTotals, parseFloorFrom } from '../../../agency/floor.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
@@ -80,6 +81,7 @@ export interface CoreFloorAgent {
   client_kind: AgencyClientKind | null;
   break_reason: string | null;
   break_label: string | null;
+  break_limit_minutes: number | null;
   on_inbound_call: boolean;
   inbound_outcome_owed: boolean;
   wrapup_window_seconds: number | null;
@@ -180,6 +182,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
         client_kind: r.client_kind,
         break_reason: r.break_reason,
         break_label: floorBreakLabel(r.break_reason, r.break_reasons),
+        break_limit_minutes: breakLimitMinutes(r.break_reason, r.break_reasons),
         on_inbound_call: r.on_inbound_call,
         inbound_outcome_owed: r.inbound_outcome_owed,
         wrapup_window_seconds: r.wrapup_seconds,

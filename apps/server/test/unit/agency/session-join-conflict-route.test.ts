@@ -654,6 +654,33 @@ describe('POST /sessions — the happy path stays intact', () => {
     expect(body).not.toHaveProperty('break_reason');
   });
 
+  it('LF6, LF20: carries each break reason\'s limit, the built-ins\' (Tea 15, Lunch 30) on a campaign that lists none', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+    });
+    // No reasons of its own: the built-ins, with their limits.
+    repos.campaign.findById.mockResolvedValue({ ...REQUESTED, break_reasons: [] });
+    const builtIns = (await join()).json().break_reasons as Array<{ code: string; limit_minutes?: number }>;
+    expect(builtIns.find((r) => r.code === 'tea')?.limit_minutes).toBe(15);
+    expect(builtIns.find((r) => r.code === 'lunch')?.limit_minutes).toBe(30);
+    expect(builtIns.find((r) => r.code === 'break')).not.toHaveProperty('limit_minutes');
+
+    // Its own list, as saved: its limits served, a refused one dropped, nothing added.
+    repos.campaign.findById.mockResolvedValue({
+      ...REQUESTED,
+      break_reasons: [
+        { code: 'chai', label: 'Chai', limit_minutes: 10 },
+        { code: 'lunch', label: 'Lunch' },
+        { code: 'nap', label: 'Nap', limit_minutes: 999 },
+      ],
+    });
+    expect((await join()).json().break_reasons).toEqual([
+      { code: 'chai', label: 'Chai', limit_minutes: 10 },
+      { code: 'lunch', label: 'Lunch' },
+      { code: 'nap', label: 'Nap' },
+    ]);
+  });
+
   it('carries the campaign\'s allow_wrapup_redial, as a boolean either way', async () => {
     for (const [stored, served] of [[true, true], [false, false], [undefined, false]] as const) {
       repos.campaign.findById.mockResolvedValue({ ...REQUESTED, allow_wrapup_redial: stored });

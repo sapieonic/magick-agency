@@ -8,6 +8,7 @@ import {
   dispositionPromiseIssues,
   reservedDispositionCodeMessage,
   validateAssignmentSettings,
+  validateBreakReasons,
   validateOutcomeDispositions,
 } from './campaign-config.js';
 
@@ -674,6 +675,11 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   const sticky = record['inbound_sticky_enabled'];
   if (sticky !== undefined && typeof sticky !== 'boolean') {
     issues.push({ field: 'inbound_sticky_enabled', message: 'inbound_sticky_enabled must be a boolean.' });
+  }
+  // The break catalog: no reserved code, and each limit 1–240 whole minutes (LF6, LF20). The
+  // internal handler's rule, imported, so the wizard hears the same refusal before the round trip.
+  if (record['break_reasons'] !== undefined) {
+    issues.push(...validateBreakReasons(record['break_reasons']));
   }
   // Contact assignment and agent retry (0009): the internal handler's rules, imported.
   issues.push(...validateAssignmentSettings(record));

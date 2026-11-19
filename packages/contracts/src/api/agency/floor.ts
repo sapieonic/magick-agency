@@ -92,6 +92,18 @@ export interface AgencyFloorAgent {
    * on a break, or for a code neither knows.
    */
   break_label: string | null;
+  /**
+   * LF6, LF20: the limit of the break reason the agent is on now, in minutes: the campaign
+   * catalog's `limit_minutes` for `break_reason` (its default catalog when it lists none: Tea 15,
+   * Lunch 30). Null when not on a break, for a reason with no limit of its own, for a reserved code
+   * (the soft phone, the app's pauses) and for a code the catalog does not know. The console's
+   * long-break risk compares the break's time with it, and with
+   * `AGENCY_BREAK_DEFAULT_LIMIT_MINUTES` (30) when it is null; never on the soft phone.
+   *
+   * Always present in this server's answer. Optional only so a client built against an earlier one
+   * reads its absence as null (no limit of its own: the 30-minute rule).
+   */
+  break_limit_minutes?: number | null;
   /** The session holds a live inbound call (offered or connected), as `AgencySupervisorAgent.on_inbound_call`. */
   on_inbound_call: boolean;
   /** The session's inbound call ended and still owes its outcome, as `AgencySupervisorAgent.inbound_outcome_owed`. */

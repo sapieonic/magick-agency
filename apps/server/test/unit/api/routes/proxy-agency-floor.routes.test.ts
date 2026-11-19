@@ -43,6 +43,7 @@ function onCall(over: Partial<CoreFloorAgent> = {}): CoreFloorAgent {
       call_id: CALL, origin: 'campaign', correlation_id: 'att-1', customer_name: 'Ada', connected_at: '2026-11-18T09:58:30.000Z',
       aht_seconds: 182.5, recording: true, listener_user_ids: [],
     },
+    break_limit_minutes: null,
     ...over,
   };
 }
@@ -52,6 +53,7 @@ function away(): CoreFloorAgent {
     agent_user_id: AWAY, session_id: null, campaign_id: null, campaign_name: null, state: 'offline', state_since: null,
     connected: null, client_kind: null, break_reason: null, break_label: null, on_inbound_call: false, inbound_outcome_owed: false,
     wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z',
+    break_limit_minutes: null,
   };
 }
 
@@ -171,11 +173,13 @@ describe('GET /floor', () => {
             aht_seconds: 182.5, listenable: true, not_listenable_reason: null,
           },
           calls_today: 12, left_at: null,
+          break_limit_minutes: null,
         },
         {
           agent_user_id: AWAY, agent_name: null, session_id: null, campaign_id: null, campaign_name: null, state: 'offline',
           state_since: null, connected: null, client_kind: null, break_reason: null, break_label: null, on_inbound_call: false,
           inbound_outcome_owed: false, wrapup_window_seconds: null, call: null, calls_today: 3, left_at: '2026-11-18T08:10:00.000Z',
+          break_limit_minutes: null,
         },
       ],
       totals: { on_shift: 1, assigned: 2 },
@@ -183,6 +187,14 @@ describe('GET /floor', () => {
     });
     // The wire never carries the listeners or the recording flag the rule read.
     expect(JSON.stringify(body)).not.toMatch(/listener|recording|phone/);
+  });
+
+  it('LF6, LF20: serves the break\'s limit as the internal handler answers it', async () => {
+    floor.agents = [onCall({
+      state: 'break', break_reason: 'tea', break_label: 'Tea', break_limit_minutes: 15, call: null,
+    })];
+    const agent = (await getFloor()).json().agents[0];
+    expect(agent).toMatchObject({ break_reason: 'tea', break_label: 'Tea', break_limit_minutes: 15 });
   });
 
   it('listenability is the live calls list\'s rule: the cap, an unrecorded call, the reader\'s own call', async () => {
