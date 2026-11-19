@@ -985,7 +985,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`, and identical audio found short transcribed once more, then never again once found short twice, the count carried across attempts in the `AUDIO_TOO_SHORT` tag, TR1) | 62 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` (with RC3's `access_refused` and `access_error` counted on `surface="analysis"`, and identical audio found short transcribed once more, then never again once found short twice, the count carried across attempts in the `AUDIO_TOO_SHORT` tag, TR1) | 61 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
 | `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 26 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
@@ -2010,7 +2010,7 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 | `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | ~59 |
 | `apps/console/src/__tests__/components/SoftphoneInboundNotice.test.tsx` (the note under Call while inbound calls are on: hidden with the flag off, the soft-phone page's and the campaign host's words, gone during a call and in finish mode) | 5 |
 
-`SoftphoneView.test.tsx` drives the view through `useSoftphone` with a fake station socket (`__tests__/helpers/fakeSocket.ts`, `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
+`SoftphoneView.test.tsx` and `SoftphoneInboundNotice.test.tsx` drive the view through `useSoftphone` (the harness, ringback, audio and clock stubs in `__tests__/helpers/softphoneHarness.tsx`; fixtures in `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
 
 ### `apps/console/src/components/listen/` (live call listening)
 

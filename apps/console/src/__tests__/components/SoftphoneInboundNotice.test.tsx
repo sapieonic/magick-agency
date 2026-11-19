@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, act, fireEvent, cleanup } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { screen, act, fireEvent, cleanup } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   flags: new Set<string>(),
@@ -19,14 +18,10 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ isEnabled: (f: string) => mocks.flags.has(f), status: 'ready' }),
 }));
 
-import { useSoftphone } from '../../hooks/useSoftphone';
-import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { SOFTPHONE_INBOUND_NOTICE } from '../../components/softphone/SoftphoneInboundNotice';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
-import { serverClock } from '../../hooks/useServerClock';
-import type { RingbackTone } from '../../utils/softphone/ringback';
-import type { AgencyManualCall } from '../../types/softphone';
 import { BOOTSTRAP, manualCall, step } from '../helpers/softphone';
+import { fakeRingback, mount as mountSoftphone } from '../helpers/softphoneHarness';
 
 /**
  * The stopgap note on the soft phone (`docs/softphone.md` §7, `docs/inbound.md` §12 P3): an
@@ -34,59 +29,8 @@ import { BOOTSTRAP, manualCall, step } from '../helpers/softphone';
  * account the dial pad says so, and where to go to take them. With inbound off it says nothing.
  */
 
-const ringback = {
-  unlock: vi.fn(),
-  start: vi.fn(),
-  stop: vi.fn(),
-  setMuted: vi.fn(),
-  setVolume: vi.fn(),
-  close: vi.fn(),
-  playing: false,
-} as unknown as RingbackTone;
-const audio = { muted: false, sending: false, toggleMute: vi.fn(), resume: vi.fn() };
-const clock = serverClock(0);
-
-function Harness({
-  frameCall,
-  fromCampaign = false,
-  startAllowed = true,
-}: {
-  frameCall: AgencyManualCall | null;
-  fromCampaign?: boolean;
-  startAllowed?: boolean;
-}) {
-  const sp = useSoftphone({
-    tenantId: 't-1',
-    accountId: 'a-1',
-    userId: 'u-1',
-    sessionId: 'sess-sp',
-    connection: 'open',
-    frameCall,
-    clock,
-    audio,
-    surface: 'softphone_page',
-    ringback,
-    presetCampaignId: null,
-    presetNumber: null,
-    startAllowed,
-  });
-  return (
-    <MemoryRouter>
-      <SoftphoneView sp={sp} connection="open" clock={clock} fromCampaign={fromCampaign} />
-    </MemoryRouter>
-  );
-}
-
-async function mount(props: { fromCampaign?: boolean; startAllowed?: boolean } = {}) {
-  const view = render(<Harness frameCall={null} {...props} />);
-  await act(async () => {});
-  return {
-    frame: async (frameCall: AgencyManualCall | null) => {
-      view.rerender(<Harness frameCall={frameCall} {...props} />);
-      await act(async () => {});
-    },
-  };
-}
+const ringback = fakeRingback();
+const mount = (props: { fromCampaign?: boolean; startAllowed?: boolean } = {}) => mountSoftphone({ ringback, ...props });
 
 const notice = () => screen.queryByTestId('softphone-inbound-notice');
 

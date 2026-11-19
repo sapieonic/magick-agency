@@ -11,14 +11,16 @@ import styles from './SoftphoneView.module.css';
  * rang reads as a fault. The way back differs by host: a soft-phone session joins a campaign;
  * a campaign switched to the soft phone (SP7) returns to it.
  */
+const INBOUND_GOES_TO = 'They go to agents on a campaign station, or to Missed calls if none is free.';
+
 export const SOFTPHONE_INBOUND_NOTICE = {
   lead: 'Inbound calls don’t ring on the soft phone.',
-  page: 'They go to agents on a campaign station, or to Missed calls if none is free. Join a campaign to take them.',
-  station: 'They go to agents on a campaign station, or to Missed calls if none is free. Return to your campaign to take them.',
+  page: `${INBOUND_GOES_TO} Join a campaign to take them.`,
+  station: `${INBOUND_GOES_TO} Return to your campaign to take them.`,
 } as const;
 
 /**
- * The note under the dial pad while the soft phone is ready to dial, shown while the account has
+ * The note under Call while the soft phone is ready to dial (`DialPad` renders it), shown while the account has
  * inbound calls on (`agency_inbound_enabled`). The flag is the closest signal the console holds:
  * whether the account has a route or a linked number is read only by `agency.inbound.write`
  * (`/inbound/routes`, `/inbound/numbers`), never by an agent, and no new read is added for a

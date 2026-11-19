@@ -605,10 +605,15 @@ describe('AgencyManualCallRepository (integration)', () => {
 
     it('a pending leg says the AI service holds it up while a queued job was refused, as the call detail does', async () => {
       const session = await insertSoftphoneSession();
-      const job = (callId: string, status: string, errorCode: string | null = null) => getTestPool().query(
-        `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, error_code)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [callId, TENANT, ACCOUNT, status, errorCode],
+      /** A job of the call; `refusedAgo` (an interval) makes it one the vendor refused that long ago. */
+      const job = (
+        callId: string,
+        status: string,
+        { accountId = ACCOUNT, refusedAgo = null }: { accountId?: string; refusedAgo?: string | null } = {},
+      ) => getTestPool().query(
+        `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, error_code, vendor_refused_at)
+         VALUES ($1, $2, $3, $4, CASE WHEN $5::interval IS NULL THEN NULL ELSE 'RATE_LIMITED' END, now() - $5::interval)`,
+        [callId, TENANT, accountId, status, refusedAgo],
       );
       const settled = { state: 'ended', ended_at: new Date(), settled_at: new Date() };
       // Queued, never tried; running; pending with no job; completed.
@@ -632,11 +637,7 @@ describe('AgencyManualCallRepository (integration)', () => {
       // Another call's job (another account's, even: the vendor is the server's) was refused, and
       // nothing has completed since: the vendor's newest answer is a refusal.
       const refusedLeg = await insertWebrtcCall({ campaign_id: null, account_id: OTHER_ACCOUNT, analysis_status: 'pending' });
-      await getTestPool().query(
-        `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, error_code, vendor_refused_at)
-         VALUES ($1, $2, $3, 'queued', 'RATE_LIMITED', now() - interval '1 minute')`,
-        [refusedLeg.id, TENANT, OTHER_ACCOUNT],
-      );
+      await job(refusedLeg.id, 'queued', { accountId: OTHER_ACCOUNT, refusedAgo: '1 minute' });
       expect(await delays()).toEqual([
         [waiting.id, 'vendor_unavailable'], [running.id, null], [noJob.id, null], [done.id, null],
       ]);

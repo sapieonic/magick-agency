@@ -27,7 +27,7 @@ import type { DialerAnalysisDelay } from '@magick-agency/contracts/api/agency/we
  * vendor refused the request (a rate limit, an exhausted quota, a billing stop). One
  * constant, so the write and {@link analysisDelaySql}'s read cannot drift apart.
  */
-export const RATE_LIMITED_ERROR_CODE = 'RATE_LIMITED';
+const RATE_LIMITED_ERROR_CODE = 'RATE_LIMITED';
 
 /**
  * True while the AI vendor's most recent answer was a refusal: the newest refusal of a queued
@@ -47,7 +47,7 @@ export const RATE_LIMITED_ERROR_CODE = 'RATE_LIMITED';
  * of the end of a partial index (0055: `idx_dialer_analysis_jobs_vendor_refused`, whose predicate
  * is spelled exactly as here, and `idx_dialer_analysis_jobs_completed`), not a walk of the queue.
  */
-export const VENDOR_REFUSING_SQL = `((
+const VENDOR_REFUSING_SQL = `((
   SELECT max(vendor_refused.vendor_refused_at) FROM dialer_analysis_jobs vendor_refused
   WHERE vendor_refused.status = 'queued' AND vendor_refused.error_code = '${RATE_LIMITED_ERROR_CODE}'
 ) > COALESCE((

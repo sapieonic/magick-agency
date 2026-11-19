@@ -257,7 +257,7 @@ export function shownAnalysisDelay(
   delay: string | null | undefined,
 ): DialerAnalysisDelay | null {
   if (status !== 'pending' || !delay) return null;
-  return Object.prototype.hasOwnProperty.call(ANALYSIS_DELAY_MESSAGES, delay)
+  return Object.hasOwn(ANALYSIS_DELAY_MESSAGES, delay)
     ? delay as DialerAnalysisDelay
     : null;
 }

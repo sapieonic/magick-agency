@@ -86,12 +86,13 @@
 }
 
 /* Why inbound callers never ring on the soft phone (SoftphoneInboundNotice): under Call, in the
-   accent's quiet tint as standing context (the listen notice's), never a fault's colours. */
+   accent's quiet tint as standing context (the listen notice's), never a fault's colours. The
+   dial form's column gap sets it apart from Call. */
 .inboundNotice {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 14px 0 0;
+  margin: 0;
   padding: 8px 10px;
   border-radius: var(--radius-md, 8px);
   background: var(--accent-subtle);

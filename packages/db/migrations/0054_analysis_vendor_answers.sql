@@ -1,37 +1,16 @@
--- 0054_analysis_vendor_answers.sql — when the AI vendor last refused an analysis job, and when a
--- job last completed (decision AD1: "Summary delayed: the AI service is not available right now").
+-- 0054_analysis_vendor_answers.sql — two nullable TIMESTAMPTZ columns on dialer_analysis_jobs, the
+-- two sides of the summary delay (decision AD1, `docs/decisions.md`; the rule is
+-- `analysisDelaySql`'s JSDoc in `dialer-analysis-job.repository.ts`):
+--   vendor_refused_at  when the AI vendor last refused the job (`requeueRateLimited`)
+--   completed_at       when the job completed with a summary (`completeWithAnalysis`)
+-- No default, no backfill: a job refused or completed before this migration has NULL, and the
+-- next refusal or completion writes one. 0055 indexes both, out of this file's lock.
 --
--- A call's summary reads delayed (`analysis_delay: 'vendor_unavailable'`) when its job is queued
--- and the vendor's most recent answer was a refusal: the newest refusal of a queued job is newer
--- than the newest completion (`analysisDelaySql`, `dialer-analysis-job.repository.ts`). A rule on
--- `error_code = 'RATE_LIMITED'` alone (any queued refused job turns it on) would not do: refused
--- jobs are requeued with the longest backoff and claimed last, so after an outage the notice would
--- stay on through the whole drain while summaries were being written; and no column could say when
--- the refusal happened: `updated_at` moves on every write (heartbeats, a graceful requeue, stale
--- recovery).
---
--- ── vendor_refused_at (new) ───────────────────────────────────────────────────
--- Written only by `requeueRateLimited` (now(), with `error_code = 'RATE_LIMITED'`), cleared by
--- `completeWithAnalysis` and `requeueForManualRetry`. `gracefulRequeue` and `recoverStale` keep it
--- as it was, so a deploy that requeues an old refused job does not make the refusal new again.
---
--- ── completed_at (new) ────────────────────────────────────────────────────────
--- Written only by `completeWithAnalysis` (now()): when the vendor last answered with a summary.
---
--- Both nullable, no default, no backfill. A job refused before this migration has no
--- `vendor_refused_at` and does not count as a refusal: the breaker's state is in memory, so after
--- the deploy the worker claims at once and a vendor still refusing is recorded again within
--- seconds. A job completed before it has no `completed_at`; the first completion after the deploy
--- writes one. 0055 indexes both (built out of this file's ACCESS EXCLUSIVE, 0041 / 0045's split).
---
--- ── Locking ───────────────────────────────────────────────────────────────────
--- ADD COLUMN with no default is catalog-only (no rewrite), but takes ACCESS EXCLUSIVE on
--- dialer_analysis_jobs, which the live server writes: the Up starts with a lock timeout
+-- Locking: ADD COLUMN with no default is catalog-only (no rewrite) but takes ACCESS EXCLUSIVE on
+-- dialer_analysis_jobs, which the live server writes, so the Up starts with a lock timeout
 -- (db-hygiene.md).
 --
--- ── Down ──────────────────────────────────────────────────────────────────────
--- Drops both columns (and with them 0055's indexes, were they still there); a release before this
--- one has no summary delay at all (every pending call shows the ordinary pending copy).
+-- Down: drops both columns (and with them 0055's indexes, were they still there).
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).

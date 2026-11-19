@@ -5,7 +5,6 @@ import { CallDetailsColumn } from './CallDetailsColumn';
 import { OutcomeColumn } from './OutcomeColumn';
 import { SoftphoneActionBar } from './SoftphoneActionBar';
 import { OverrideDialog } from './OverrideDialog';
-import { SoftphoneInboundNotice } from './SoftphoneInboundNotice';
 import { useSoftphoneShortcuts } from './useSoftphoneShortcuts';
 import { contactName } from '../../utils/softphone/callState';
 import type { DispositionPadHandle } from '../agency/DispositionPad';
@@ -98,9 +97,13 @@ export function SoftphoneView({
 
       <div className={station.body} ref={bodyRef} tabIndex={-1} data-testid="softphone-body" data-phase={sp.phase}>
         <section className={station.colContact} aria-label="Dial">
-          <DialPad sp={sp} clock={clock} numberInputRef={numberInputRef} callButtonRef={callButtonRef} />
-          {/* Ready to dial only, under Call: why an inbound caller never rings here. */}
-          {sp.phase === 'ready' && !sp.finishNotice ? <SoftphoneInboundNotice fromCampaign={fromCampaign} /> : null}
+          <DialPad
+            sp={sp}
+            clock={clock}
+            numberInputRef={numberInputRef}
+            callButtonRef={callButtonRef}
+            fromCampaign={fromCampaign}
+          />
         </section>
         <section className={station.colDetail} aria-label="Call details">
           <CallDetailsColumn sp={sp} />
