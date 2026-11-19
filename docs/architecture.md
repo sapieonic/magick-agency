@@ -489,7 +489,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   runs at a time, a move wakes the campaign (`contacts_changed`), and `stop()` waits for one in
   flight within the tick drain bound. The supervisor's "Give to free agents" (LF7, LF21) is one more
   operation on the same routes, `late_callbacks_to_live_agents`: the sweep's selection with no grace
-  (`lateCallbackSql`: overdue callbacks whose owner has no session present on the campaign), dealt
+  (`lateCallbackSql` in `assignment-sql.ts`, the one selection both read, the sweep passing its grace:
+  overdue callbacks whose owner has no session present on the campaign), dealt
   to the staffed agents present on it, fewest callbacks due first (`lateCallbackQuotas`, read inside
   the commit's transaction), planned, locked, gated and written by the one planner; refused on
   `pool` (`409 late_callbacks_pool_mode`). It and the sweep never both move a callback: the commit
