@@ -167,6 +167,53 @@
   }
 }
 
+/* ── The two panes' scroll box (FloorPane) ────────────────────────────────
+   The heading stays put; the body scrolls inside a fixed height, so a long list never pushes the
+   agents' panel down the page. Lifted on a phone-width page (the last rule). */
+
+.paneBody {
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
+  /* Room inside the scroll box's clip for the rows' focus rings. */
+  padding: 3px;
+  margin: -3px;
+}
+
+.paneBody:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Items out of sight below: the bottom edge fades, with "N more below" under it. */
+.paneBody[data-more='true'] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+
+/* The card's own spacing, kept for what now sits inside the scroll box. */
+.paneContent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.paneMore {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+}
+
+@container livefloor (max-width: 600px) {
+  .paneBody {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .paneBody[data-more='true'] {
+    mask-image: none;
+  }
+}
+
 .card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
