@@ -3,6 +3,7 @@ import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorStatus } from '../agencyErrors';
 import { breakLimitMinutesOf } from '../agencyAgentFloor';
+import { browserStorage } from '../browserStorage';
 import { formatCount } from '../format/number';
 
 /**
@@ -111,7 +112,7 @@ const CHIME_KEY = 'magick.liveFloor.helpChime.v1';
  */
 export function readHelpChimeOn(): boolean {
   try {
-    return window.localStorage.getItem(CHIME_KEY) !== 'off';
+    return browserStorage()?.getItem(CHIME_KEY) !== 'off';
   } catch {
     return true;
   }
@@ -120,8 +121,9 @@ export function readHelpChimeOn(): boolean {
 /** Keeps the choice for this browser; storage that throws keeps it for this page only. */
 export function writeHelpChimeOn(on: boolean): void {
   try {
-    if (on) window.localStorage.removeItem(CHIME_KEY);
-    else window.localStorage.setItem(CHIME_KEY, 'off');
+    const storage = browserStorage();
+    if (on) storage?.removeItem(CHIME_KEY);
+    else storage?.setItem(CHIME_KEY, 'off');
   } catch {
     // Blocked or full storage: the page's own state carries the choice until it is reloaded.
   }
