@@ -21,11 +21,6 @@ export function offersHandOff(assignmentOn: boolean, mode: AgencyAssignmentMode 
 export const LATE_CALLBACKS_POOL_COPY =
   'This campaign shares one queue, so no agent owns its callbacks and there are none to give.';
 
-/** The receivers, by name, in the server's order (fewest callbacks due first). */
-export function lateCallbacksReceivers(preview: Pick<AgencyLateCallbacksPreview, 'live_agent_user_ids'>, agentName: (id: string) => string): string[] {
-  return preview.live_agent_user_ids.map(agentName);
-}
-
 /**
  * The preview as one question: "Give 4 late callbacks to 2 free agents?", or why nothing would
  * move: nobody free on the campaign, or no late callback waiting on an agent who is away (the

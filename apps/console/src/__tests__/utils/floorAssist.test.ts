@@ -17,7 +17,6 @@ import { playHelpChime, setHelpChimeContextFactoryForTests, unlockHelpChime, typ
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
-  lateCallbacksReceivers,
   lateCallbacksResultText,
   offersHandOff,
 } from '../../utils/agency/lateCallbacks';
@@ -228,7 +227,6 @@ describe('give late callbacks to free agents (LF7, LF30)', () => {
     expect(lateCallbacksQuestion({ moving: 1, live_agent_user_ids: ['a'] })).toBe('Give 1 late callback to 1 free agent?');
     expect(lateCallbacksQuestion({ moving: 0, live_agent_user_ids: [] })).toMatch(/^No agent is free/);
     expect(lateCallbacksQuestion({ moving: 0, live_agent_user_ids: ['a'] })).toMatch(/^No late callback is waiting/);
-    expect(lateCallbacksReceivers({ live_agent_user_ids: ['d', 'a'] }, name)).toEqual(['Divya S', 'Arjun T']);
     expect(lateCallbacksResultText({
       moved: 4,
       per_agent: [{ agent_user_id: 'a', receiving: 2, giving: 0 }, { agent_user_id: 'n', receiving: 0, giving: 4 }, { agent_user_id: 'd', receiving: 2, giving: 0 }],

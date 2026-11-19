@@ -17,9 +17,9 @@ import { ASSIGNMENT_REFUSAL_COPY, assignmentRefusal } from '../../../utils/agenc
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
-  lateCallbacksReceivers,
   lateCallbacksResultText,
 } from '../../../utils/agency/lateCallbacks';
+import { formatCount, plural } from '../../../utils/format/number';
 import styles from './LiveFloor.module.css';
 
 /** The hand-off's operation: no agents named, the server picks the live ones (LF21). */
@@ -102,7 +102,7 @@ export function LateCallbacksDialog({
 
   const busy = step.kind === 'previewing' || step.kind === 'committing';
   const shown = step.kind === 'preview' || step.kind === 'committing' ? step : null;
-  const receivers = shown ? lateCallbacksReceivers(shown.preview, agentName) : [];
+  const receivers = shown ? shown.preview.live_agent_user_ids.map(agentName) : [];
   const canGive = step.kind === 'preview' && step.preview.moving > 0;
 
   return (
@@ -127,8 +127,8 @@ export function LateCallbacksDialog({
               <button type="button" className="btn-primary" onClick={() => void give()} disabled={!canGive} data-testid="handoff-give">
                 {step.kind === 'committing'
                   ? 'Giving…'
-                  : shown && shown.preview.live_agent_user_ids.length > 0
-                    ? `Give to ${receivers.length === 1 ? '1 agent' : `${receivers.length} agents`}${shown.stale ? ': confirm again' : ''}`
+                  : shown && receivers.length > 0
+                    ? `Give to ${plural(receivers.length, 'agent')}${shown.stale ? ': confirm again' : ''}`
                     : 'Give'}
               </button>
             </>
@@ -153,7 +153,7 @@ export function LateCallbacksDialog({
               </p>
             )}
             {shown.preview.skipped_live > 0 && (
-              <p className={styles.quiet}>{`${shown.preview.skipped_live} on a call or awaiting an outcome won’t move.`}</p>
+              <p className={styles.quiet}>{`${formatCount(shown.preview.skipped_live)} on a call or awaiting an outcome won’t move.`}</p>
             )}
           </>
         )}
