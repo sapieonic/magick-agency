@@ -1115,6 +1115,9 @@ the flag is on). Break limits are not behind it.
     missed). The frames can beat the raise's own reply: while it is in flight, `help_answered` is
     kept and `help_cleared` leaves its notice at once, and a reply naming a request already ended
     (its `help_cleared` or the cancel's answer) opens nothing, so a slow reply never re-opens it.
+    A `help_cleared` with nothing shown and no raise in flight is remembered the same way, with
+    nothing said, and a `ready.help` naming a request already ended is stale and opens nothing: the
+    server does not remember which requests it cleared for a socket, so the app does.
   - **How it ended** (LF35): `help_answered` says who and how; the `help_cleared {answered}` that
     follows ends it and leaves a notice: "Anitha N is listening to your call." or "Anitha N answered
     with a message.", "Your supervisor …" when the server sends no name, "A supervisor answered your
