@@ -43,7 +43,9 @@ in the agency plugin is `api/routes/proxy-agency-floor.routes.ts` (decision B28b
 `GET /proxy/agency/floor` and `GET /proxy/agency/promises/summary`, no path params (the routes
 validate their query with their own 400s), its hooks the session, the tenant context and
 `Cache-Control: no-store`; the floor reaches the internal `GET /api/v1/agency/floor` (owner `none`
-in `api/core-owners.ts`) through `callCore`.
+in `api/core-owners.ts`) through `callCore`. After it, `api/routes/proxy-agency-callbacks.routes.ts`
+(decisions LF1, LF22): the account's `GET /proxy/agency/callbacks`, with the same hooks and gate,
+served by the public layer from SQL (no `callCore`), its query validated with its own 400.
 
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts` and
 by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:

@@ -909,7 +909,10 @@ rows, build them `CONCURRENTLY` first with the server running ([`db-hygiene.md`]
 way first. `0038_table_storage_settings.sql` to `0040_drop_duplicate_indexes.sql` change storage
 settings and indexes only, so going back past them needs no `migrate:down`. Nor does
 `0051_campaign_stopping_at.sql`: an older image ignores the nullable `stopping_at` and reads a stop's
-time from its audit row again.
+time from its audit row again. `0053_account_callbacks_index.sql` (the Live floor's callbacks list)
+adds one on `agency_contacts`, partial (the pending contacts whose last call was a conversation or
+that an inbound miss booked): if `agency_contacts` holds more than about a million rows, build it
+`CONCURRENTLY` first the same way; going back past it needs no `migrate:down` (an index only).
 
 **Going back past live call listening** (`0047_listen_sessions.sql`,
 `0048_listen_sessions_unverified.sql`, `0049_listen_history_index.sql`). No `migrate:down` is
