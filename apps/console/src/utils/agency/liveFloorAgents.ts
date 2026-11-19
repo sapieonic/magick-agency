@@ -140,7 +140,7 @@ export function floorCard(row: AgencyFloorAgent, now: number): FloorCard {
     risk: floorRisk(agent, now, {
       wrapupSeconds: row.wrapup_window_seconds,
       ahtSeconds: row.call?.aht_seconds ?? null,
-      breakLimitMinutes: row.break_limit_minutes ?? null,
+      breakLimitMinutes: row.break_limit_minutes,
     }),
     displayName: agentDisplayName(row),
     elapsedMs: elapsedSince(floorTimerAnchor(row), 0, now),

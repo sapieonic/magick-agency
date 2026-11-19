@@ -211,7 +211,7 @@ const AgentCard = memo(function AgentCard({ row, risk, state, displayName, onMak
   const reasonId = useId();
   const live = state !== 'offline';
   const call = liveCallOf(row);
-  const warning = isWarningRisk(risk) ? floorRiskNote(risk, row.break_limit_minutes ?? null, row.break_label) : null;
+  const warning = isWarningRisk(risk) ? floorRiskNote(risk, row.break_limit_minutes, row.break_label) : null;
   const sessionId = row.session_id;
   const notListenable = listen?.canListen && call && !call.listenable && call.not_listenable_reason
     ? notListenableCopy(call.not_listenable_reason)
