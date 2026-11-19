@@ -4,6 +4,7 @@ import {
   CUE_RELEASE_S,
   CUE_SPECS,
   type CueName,
+  type CueSpec,
   type CueSink,
 } from './agencyCues';
 
@@ -43,54 +44,61 @@ export class WebAudioCueSink implements CueSink {
   }
 
   play(cue: CueName, peakScale: number): void {
-    const spec = CUE_SPECS[cue];
     // Guarded here as well as in the dispatcher: this class is the thing that
     // touches the hardware, and a sink that emits into a suspended context is a
     // silent failure with a cost.
     if (!this.audible()) return;
+    playCueTones(this.ctx, CUE_SPECS[cue], peakScale);
+  }
+}
 
-    let at = this.ctx.currentTime + CUE_LEAD_S;
+/**
+ * Schedules a cue's tones on `ctx` now, each with the cue envelope. Shared with Live floor's Need
+ * help chime (`utils/agency/helpChime.ts`), which plays its own spec into its own context. The
+ * caller checks the context is `running`.
+ */
+export function playCueTones(ctx: CueAudioContext, spec: CueSpec, peakScale: number): void {
+  let at = ctx.currentTime + CUE_LEAD_S;
 
-    for (const tone of spec.tones) {
-      /**
-       * **One oscillator per tone, created fresh and stopped at the end of its
-       * envelope.** Never a running oscillator gated by a gain node: in an
-       * eight-hour tab that is a battery cost, and a stuck tone the moment the
-       * gain ever ends up non-zero.
-       */
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = tone.hz;
+  for (const tone of spec.tones) {
+    /**
+     * **One oscillator per tone, created fresh and stopped at the end of its
+     * envelope.** Never a running oscillator gated by a gain node: in an
+     * eight-hour tab that is a battery cost, and a stuck tone the moment the
+     * gain ever ends up non-zero.
+     */
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = tone.hz;
 
-      const peak = spec.peak * peakScale;
-      const attackEnd = at + CUE_ATTACK_S;
-      const holdEnd = attackEnd + tone.holdS;
-      const releaseEnd = holdEnd + CUE_RELEASE_S;
+    const peak = spec.peak * peakScale;
+    const attackEnd = at + CUE_ATTACK_S;
+    const holdEnd = attackEnd + tone.holdS;
+    const releaseEnd = holdEnd + CUE_RELEASE_S;
 
-      /**
-       * Both ramps are linear. **`exponentialRampToValueAtTime` cannot reach
-       * zero** — it leaves a residual tail that clicks on the next cue, and it is
-       * the standard bug in this exact code. A hard gate with no envelope is
-       * equally wrong: a square-edged sine is a broadband click, and 200 clicks a
-       * day is a fatigue source.
-       */
-      gain.gain.setValueAtTime(0, at);
-      gain.gain.linearRampToValueAtTime(peak, attackEnd);
-      gain.gain.setValueAtTime(peak, holdEnd);
-      gain.gain.linearRampToValueAtTime(0, releaseEnd);
+    /**
+     * Both ramps are linear. **`exponentialRampToValueAtTime` cannot reach
+     * zero** — it leaves a residual tail that clicks on the next cue, and it is
+     * the standard bug in this exact code. A hard gate with no envelope is
+     * equally wrong: a square-edged sine is a broadband click, and 200 clicks a
+     * day is a fatigue source.
+     */
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(peak, attackEnd);
+    gain.gain.setValueAtTime(peak, holdEnd);
+    gain.gain.linearRampToValueAtTime(0, releaseEnd);
 
-      // `ctx.destination` ONLY. The outbound leg is microphone → media frames on
-      // the socket, and the two never meet: there is no route by which the cue can
-      // reach the customer except acoustic bleed from open speakers, which is why
-      // the pre-flight asks for a headset rather than pretending to check.
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.start(at);
-      osc.stop(releaseEnd);
+    // `ctx.destination` ONLY. The outbound leg is microphone → media frames on
+    // the socket, and the two never meet: there is no route by which the cue can
+    // reach the customer except acoustic bleed from open speakers, which is why
+    // the pre-flight asks for a headset rather than pretending to check.
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(at);
+    osc.stop(releaseEnd);
 
-      at = releaseEnd + tone.gapS;
-    }
+    at = releaseEnd + tone.gapS;
   }
 }
 
@@ -134,7 +142,8 @@ export function createUnlockedAudioContext(): AudioContext | null {
  * microphone and playback and never touches this one.
  */
 export function unlockAudioContext(ctx: Pick<AudioContext, 'resume' | 'createBuffer' | 'createBufferSource' | 'destination' | 'sampleRate'>): void {
-  void ctx.resume();
+  // A refused resume is no error: the context stays `suspended` and callers read `ctx.state`.
+  ctx.resume().catch(() => {});
   try {
     const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
     const source = ctx.createBufferSource();

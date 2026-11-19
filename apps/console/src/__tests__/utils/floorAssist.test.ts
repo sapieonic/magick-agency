@@ -26,13 +26,13 @@ import {
   appendCallbackRows,
   callbackContactHref,
   callbackCustomer,
-  callbackDueText,
   callbackOwner,
   callbacksDueOf,
   callbacksEmptyText,
   callbacksErrorText,
 } from '../../utils/agency/accountCallbacks';
 import { CALLBACKS_ERROR, CALLBACKS_REFUSED } from '../../utils/agency/liveFloor';
+import { formatTimeOrDate } from '../../utils/format/date';
 
 /**
  * The Live floor's Phase 3 rules (LF4–LF7, LF28–LF33): messages and their refusals, Send reminder's
@@ -133,10 +133,13 @@ describe('the chime’s sound (fails silently)', () => {
     const ctx = {
       state,
       currentTime: 10,
-      destination: {} as AudioNode,
+      destination: {} as AudioDestinationNode,
       createOscillator: () => ({ type: 'sine', frequency: { value: 0 }, connect: vi.fn(), start: (t: number) => started.push(t), stop: vi.fn() }) as unknown as OscillatorNode,
       createGain: () => ({ gain: param, connect: vi.fn() }) as unknown as GainNode,
       resume: vi.fn(resume),
+      sampleRate: 48000,
+      createBuffer: vi.fn(() => ({}) as AudioBuffer),
+      createBufferSource: vi.fn(() => ({ connect: vi.fn(), start: vi.fn() }) as unknown as AudioBufferSourceNode),
     } satisfies ChimeAudioContext;
     return { ctx, started };
   }
@@ -159,6 +162,8 @@ describe('the chime’s sound (fails silently)', () => {
     expect(ctx.resume).toHaveBeenCalled();
     expect(started).toHaveLength(0);
     expect(() => unlockHelpChime()).not.toThrow();
+    // The toggle's gesture unlocks as the station does: the silent buffer Safari needs, too.
+    expect(ctx.createBufferSource).toHaveBeenCalled();
   });
 
   it('keeps at most one play waiting on a suspended context: never a stacked burst', async () => {
@@ -273,8 +278,8 @@ describe('the Callbacks page’s words (LF32)', () => {
   });
 
   it('says when it is due in the reader’s zone, the date only off today', () => {
-    expect(callbackDueText(row.due_at, new Date('2026-11-19T12:00:00Z'))).toMatch(/^\d{2}:\d{2} [ap]m$/);
-    expect(callbackDueText(row.due_at, new Date('2026-11-21T12:00:00Z'))).toMatch(/19 Nov/);
+    expect(formatTimeOrDate(row.due_at, new Date('2026-11-19T12:00:00Z'))).toMatch(/^\d{2}:\d{2} [ap]m$/);
+    expect(formatTimeOrDate(row.due_at, new Date('2026-11-21T12:00:00Z'))).toMatch(/19 Nov/);
   });
 
   it('links the contact in its campaign, and says what is empty without a wider all-clear', () => {
