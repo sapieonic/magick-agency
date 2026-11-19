@@ -113,18 +113,15 @@ describe('the chime’s setting (LF4: on by default, per browser)', () => {
   });
 
   it('reads as on, and writes nothing, where storage throws', () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
-      throw new Error('blocked');
+    // Blocked site data: reaching `localStorage` at all throws.
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
     });
     expect(readHelpChimeOn()).toBe(true);
     expect(() => writeHelpChimeOn(false)).not.toThrow();
     expect(() => writeHelpChimeOn(true)).not.toThrow();
+    // It did try: a not.toThrow on storage never touched would pass whatever the code does.
+    expect(blocked).toHaveBeenCalledTimes(3);
   });
 });
 

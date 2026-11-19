@@ -243,11 +243,10 @@ describe('the chime (LF31)', () => {
   it('works without storage: on by default, and the page renders', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      for (const method of ['getItem', 'setItem', 'removeItem'] as const) {
-        vi.spyOn(Storage.prototype, method).mockImplementation(() => {
-          throw new Error('blocked');
-        });
-      }
+      // Blocked site data: reaching `localStorage` at all throws, for every reader on the page.
+      const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+        throw new DOMException('blocked', 'SecurityError');
+      });
       renderHome();
       const toggle = await screen.findByTestId('home-help-chime');
       expect(toggle.getAttribute('aria-pressed')).toBe('true');
@@ -257,6 +256,7 @@ describe('the chime (LF31)', () => {
       // Muting still holds for the page.
       fireEvent.click(toggle);
       expect(toggle.getAttribute('aria-pressed')).toBe('false');
+      expect(blocked).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
