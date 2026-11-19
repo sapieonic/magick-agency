@@ -425,7 +425,9 @@ export class DialerAnalysisRunner {
    * (decision TR1): a fetch that returns the same bytes (same length and SHA-256) as
    * audio already found truncated TWICE, earlier in this attempt or in the job's
    * previous ones (`previouslyTruncated`, carried in the requeue's `error_message` with
-   * its count), is not transcribed again and counts as still truncated. Identical
+   * its count, so only from an attempt that ended `AUDIO_TOO_SHORT`: any other ending
+   * replaces the message and the count starts afresh), is not transcribed again and
+   * counts as still truncated. Identical
    * audio found short once is transcribed once more: shortness is read from the
    * transcript's timestamps, and a transcriber can stop early on a complete file. A
    * fetch that returned different audio, normally a longer file the carrier finished

@@ -1688,9 +1688,9 @@ by `requeueRateLimited` (`now()`, beside `error_code = 'RATE_LIMITED'`), cleared
 `completeWithAnalysis` and `requeueForManualRetry`, left as it was by `gracefulRequeue` and
 `recoverStale` (so a deploy does not make an old refusal new). **`completed_at`** `TIMESTAMPTZ`
 (new, nullable, no default): written only by `completeWithAnalysis`. `analysisDelaySql` compares
-the newest refusal of a queued job with the newest completion; before this, any queued
-`RATE_LIMITED` row turned the delay on, which kept it on through a whole post-outage drain (refused
-jobs are claimed last) and walked the queue on every read. `updated_at` could not serve: every write
+the newest refusal of a queued job with the newest completion; a rule on queued `RATE_LIMITED`
+rows alone would keep the delay on through a whole post-outage drain (refused jobs are claimed
+last) and walk the queue on every read. `updated_at` could not serve: every write
 moves it, a heartbeat included. No backfill: a job refused before 0054 does not count (the breaker's
 state is in memory, so after the deploy a vendor still refusing is recorded again within seconds),
 and the first completion after the deploy writes the first `completed_at`. The Up starts with `SET
@@ -1710,8 +1710,11 @@ predicate spelled as `VENDOR_REFUSING_SQL` spells it, so the planner can prove t
 **`idx_dialer_analysis_jobs_completed`** `(completed_at) WHERE completed_at IS NOT NULL` (one entry
 per job completed since 0054; no other read filters on `completed_at`, so no sweep can switch to
 walking it). Plain `CREATE INDEX IF NOT EXISTS` after `SET LOCAL lock_timeout = '10s'`: SHARE on
-`dialer_analysis_jobs` for one read of it per index, writing empty indexes on the release that adds
-0054 (the columns are new), so they cannot be built beforehand on a database without 0054; a database
+`dialer_analysis_jobs` for one read of it per index on the release that adds 0054 (the columns are
+new, NULL on every row): the completions index is built empty, the refusals index takes the queued
+`RATE_LIMITED` rows already there under a NULL key (its predicate is on `status` and `error_code`:
+none normally, about a backlog's worth during an outage). Neither can be built beforehand on a
+database without 0054; a database
 already on 0054 may build them `CONCURRENTLY` first, and an invalid index left under a name by a
 failed concurrent build fails the migration. **Down** drops them; the read falls back to the queued
 refused rows and the completed jobs (correct, slower). **Tests**:

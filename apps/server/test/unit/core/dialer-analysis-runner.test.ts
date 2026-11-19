@@ -674,7 +674,7 @@ describe('DialerAnalysisRunner.run', () => {
       .toEqual({ ...fingerprint('audio 123'), coveredSeconds: 40, shortCount: 1 });
   });
 
-  // ── identical audio: transcribed at most twice per job (TR1) ───────────────
+  // ── identical audio: at most twice across AUDIO_TOO_SHORT attempts (TR1) ──
   // A transcription is paid for. Identical audio found short once is transcribed once
   // more (the transcriber may have missed on a complete file); once found short twice
   // (in this attempt or the job's earlier ones) it is not transcribed again.

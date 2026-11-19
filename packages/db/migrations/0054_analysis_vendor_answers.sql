@@ -3,11 +3,12 @@
 --
 -- A call's summary reads delayed (`analysis_delay: 'vendor_unavailable'`) when its job is queued
 -- and the vendor's most recent answer was a refusal: the newest refusal of a queued job is newer
--- than the newest completion (`analysisDelaySql`, `dialer-analysis-job.repository.ts`). Before this,
--- any queued job carrying `error_code = 'RATE_LIMITED'` turned it on. Refused jobs are requeued
--- with the longest backoff and claimed last, so after an outage the notice stayed on through the
--- whole drain while summaries were being written; and no column could say when the refusal
--- happened: `updated_at` moves on every write (heartbeats, a graceful requeue, stale recovery).
+-- than the newest completion (`analysisDelaySql`, `dialer-analysis-job.repository.ts`). A rule on
+-- `error_code = 'RATE_LIMITED'` alone (any queued refused job turns it on) would not do: refused
+-- jobs are requeued with the longest backoff and claimed last, so after an outage the notice would
+-- stay on through the whole drain while summaries were being written; and no column could say when
+-- the refusal happened: `updated_at` moves on every write (heartbeats, a graceful requeue, stale
+-- recovery).
 --
 -- ── vendor_refused_at (new) ───────────────────────────────────────────────────
 -- Written only by `requeueRateLimited` (now(), with `error_code = 'RATE_LIMITED'`), cleared by
@@ -30,7 +31,7 @@
 --
 -- ── Down ──────────────────────────────────────────────────────────────────────
 -- Drops both columns (and with them 0055's indexes, were they still there); a release before this
--- one reads the delay from `error_code` alone again.
+-- one has no summary delay at all (every pending call shows the ordinary pending copy).
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).

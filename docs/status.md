@@ -2415,10 +2415,12 @@ is the design (`inbound.md` §4.3, §5.1; soft-phone pickup is P3). Changes:
   `completed_at`) and `0055_analysis_vendor_answer_indexes.sql` (two partial indexes, one index
   probe each side). No vendor words reach the API; no Dart change (the app does not read it).
 - **Short recordings** (TR1): the runner fingerprints each fetched recording (bytes and SHA-256)
-  and transcribes identical audio at most twice per job, within an attempt and across attempts
-  (the count rides in the job's `error_message` tag when `error_code = 'AUDIO_TOO_SHORT'`); new or
-  longer audio is always transcribed. Worst case for an unchanged cut-short recording: 2
-  transcriptions per job, down from about 9.
+  and transcribes identical audio at most twice, within an attempt and across attempts that each
+  end `AUDIO_TOO_SHORT` (the count rides in the job's `error_message` tag under that code, so any
+  other ending in between, a vendor 5xx or timeout, a re-fetch that throws, a rate limit or a manual
+  retry, starts it afresh); new or longer audio is always transcribed. An unchanged cut-short
+  recording costs 2 transcriptions per job when every attempt ends short (down from about 9), at
+  worst 2 per attempt.
 - **Alert text**: `agy-analysis-vendor-refusing` and its runbook cover Gemini's 402 prepaid-credit
   stop (no quota ids) as well as a 429. **Not applied:** the rule is still missing from Grafana
   Cloud (404 on 2026-11-19); it needs `terraform apply` in `grafana/`.
@@ -3489,7 +3491,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 | Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings); LF39 open. LF4–LF7 (Phase 3) decided 2026-11-19 and built (`decisions.md`, "Live floor (LF)") |
-| Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice per job); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
+| Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice across attempts that end short, at worst 2 per attempt); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
 
 ## Deployment invariants
 

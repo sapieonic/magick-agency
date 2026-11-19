@@ -18,9 +18,12 @@
 -- Plain CREATE INDEX, not CONCURRENTLY: node-pg-migrate runs a SQL file's Up inside a transaction,
 -- where CONCURRENTLY is refused. It holds SHARE on dialer_analysis_jobs until commit: reads
 -- proceed, writes wait while it is read once. On the release that adds 0054 both columns are NULL
--- everywhere (they are new), so each build is one read of the table that writes an empty index. It
--- cannot be built beforehand on a database without 0054 (the columns do not exist). `IF NOT EXISTS`
--- all the same, so a database already on 0054 can build them CONCURRENTLY first; the check at the
+-- everywhere (they are new), so each build is one read of the table: the completions index is built
+-- empty, but the refusals index's predicate is on `status` and `error_code`, so the queued
+-- `RATE_LIMITED` rows already there enter it under a NULL key (none normally; about a backlog's
+-- worth if the vendor is refusing during the deploy). Neither can be built beforehand on a
+-- database without 0054 (the columns do not exist). `IF NOT EXISTS` all the same, so a database
+-- already on 0054 can build them CONCURRENTLY first; the check at the
 -- end of Up refuses an invalid index such a failed build leaves under a name (db-hygiene.md §2).
 -- `SET LOCAL lock_timeout = '10s'` first: a lock not granted within 10 s fails the migration (the
 -- deploy can be retried) instead of queueing the analysis worker's writes behind the wait.

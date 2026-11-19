@@ -780,8 +780,9 @@ every account the caller belongs to (CH2) where every internal handler is single
   runner re-fetches it in the same attempt (`DIALER_ANALYSIS_RECORDING_FETCH_RETRIES`, default 2,
   delay doubling from `DIALER_ANALYSIS_RECORDING_FETCH_RETRY_DELAY_SECONDS`), then requeues it
   `AUDIO_TOO_SHORT`, an attempt used. A transcription is paid for, so the same audio is
-  transcribed at most twice per job (decision TR1): a fetch whose bytes (length and SHA-256) match
-  audio already found truncated is transcribed once more, since "short" is read from the
+  transcribed at most twice across attempts that each end `AUDIO_TOO_SHORT` (decision TR1): a
+  fetch whose bytes (length and SHA-256) match audio already found truncated is transcribed once
+  more, since "short" is read from the
   transcript's own timestamps and a transcriber can stop early on a complete file; once those
   bytes have come back short twice, in this attempt or earlier ones, a fetch of them is not
   transcribed and counts as still truncated. Different audio is always transcribed, and starts its
@@ -789,10 +790,12 @@ every account the caller belongs to (CH2) where every internal handler is single
   (`[recording sha256=… bytes=… covered=…s shortCount=N]`; a tag without `shortCount`, written
   before it existed, reads as 1), read back only under `error_code = AUDIO_TOO_SHORT` and only while
   the call's current `recording_duration_seconds` still finds it short, so a rate-limited requeue
-  or a manual retry transcribes afresh. The job keeps all its attempts: an unchanged truncated
-  file costs at most 2 transcriptions over the job, later attempts a fetch each, and a carrier that
-  finishes late is still caught. Loki (component `dialer-analysis-runner`): "Skipped transcribing
-  a dialer recording identical to audio already found truncated" (`transcriptionSkipped`,
+  or a manual retry transcribes afresh, as does any other ending in between (a retryable
+  `TRANSCRIPTION_FAILED` from a vendor 5xx or timeout, a re-fetch that throws). The job keeps all
+  its attempts: an unchanged truncated file costs 2 transcriptions over a run of `AUDIO_TOO_SHORT`
+  attempts, later attempts a fetch each, at worst 2 per attempt when other endings come between,
+  and a carrier that finishes late is still caught. Loki (component `dialer-analysis-runner`):
+  "Skipped transcribing a dialer recording identical to audio already found truncated" (`transcriptionSkipped`,
   `shortTranscriptions`, `sincePreviousAttempt`) per skip; "Dialer recording still truncated after
   in-attempt retries" carries the attempt's `transcriptions`, `shortTranscriptions`,
   `recordingUnchanged` (the last fetch matched the truncated audio) and `transcriptionSkipped`;
