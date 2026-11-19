@@ -16,6 +16,9 @@ import { DISPLAY_LOCALE } from './number';
  * past what a float holds exactly is still printed exactly; a whole amount drops `.00`.
  */
 
+/** A plain decimal amount: whole units and up to two decimals (`12500`, `12500.5`, `12500.50`). */
+const AMOUNT = /^(\d+)(?:\.(\d{1,2}))?$/;
+
 const DATE_FORMAT: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' };
 const WHOLE = new Intl.NumberFormat(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 
@@ -28,7 +31,7 @@ export function formatPromiseDate(date: string): string {
 
 /** `12,500`, `12,500.50`, `0`; the raw value when it is not a plain decimal. */
 export function formatPromiseAmount(amount: string): string {
-  const m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(amount.trim());
+  const m = AMOUNT.exec(amount.trim());
   if (!m) return amount;
   // `format` takes the digit string itself (Intl.NumberFormat v3), so nothing is rounded
   // through a float.
@@ -60,8 +63,6 @@ export const PROMISE_STATE_HINTS: Readonly<Record<AgencyPromiseState, string>> =
 };
 
 // ── Sums of amounts (Live floor's Will pay tile) ────────────────────────────
-
-const AMOUNT = /^(\d+)(?:\.(\d{1,2}))?$/;
 
 /** An amount in paise (hundredths), exactly; null when it is not a plain decimal. */
 function minorUnits(amount: string): bigint | null {

@@ -480,16 +480,21 @@ export interface TodayTotals {
  */
 export function todayTotals(page: AgencyGroupPage): TodayTotals | null {
   if (page.total_groups > page.rows.length) return null;
-  return page.rows.reduce<TodayTotals>(
-    (sum, row) => ({
-      dials: sum.dials + row.attempts,
-      conversations: sum.conversations + row.connected,
-      successes: sum.successes + row.successes,
-      talkSeconds: sum.talkSeconds + row.talk_seconds,
-      campaigns: sum.campaigns + 1,
-    }),
-    { dials: 0, conversations: 0, successes: 0, talkSeconds: 0, campaigns: 0 },
-  );
+  return page.rows.reduce<TodayTotals>((sum, row) => {
+    const one = rowTotals(row);
+    return {
+      dials: sum.dials + one.dials,
+      conversations: sum.conversations + one.conversations,
+      successes: sum.successes + one.successes,
+      talkSeconds: sum.talkSeconds + one.talkSeconds,
+      campaigns: sum.campaigns + one.campaigns,
+    };
+  }, { ...NO_DIALS_TODAY });
+}
+
+/** One grouped row (one campaign that dialled today) as today's totals. */
+function rowTotals(row: AgencyGroupPage['rows'][number]): TodayTotals {
+  return { dials: row.attempts, conversations: row.connected, successes: row.successes, talkSeconds: row.talk_seconds, campaigns: 1 };
 }
 
 /**
@@ -503,13 +508,7 @@ export function todayByCampaign(page: AgencyGroupPage): Record<string, TodayTota
   for (const row of page.rows) {
     const id = row.key.campaign_id;
     if (!id) continue;
-    out[id] = {
-      dials: row.attempts,
-      conversations: row.connected,
-      successes: row.successes,
-      talkSeconds: row.talk_seconds,
-      campaigns: 1,
-    };
+    out[id] = rowTotals(row);
   }
   return out;
 }

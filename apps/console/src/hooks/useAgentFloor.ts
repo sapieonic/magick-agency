@@ -12,7 +12,7 @@ import { useVisibleInterval } from './useVisibleInterval';
 export const FLOOR_POLL_MS = 5_000;
 
 /** The floor is stale once its reads have failed for more than this many periods since one answered. */
-export const FLOOR_STALE_PERIODS = 2;
+const FLOOR_STALE_PERIODS = 2;
 
 export interface AgentFloor {
   status: 'loading' | 'ready' | 'error' | 'refused';
