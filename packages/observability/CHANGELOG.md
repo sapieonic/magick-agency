@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.14.0...observability-v0.15.0) (2026-11-18)
+
+
+### Features
+
+* **server,db,observability:** say why the AI vendor refuses call analysis, and alert when it does not stop ([#96](https://github.com/sapieonic/magick-agency/issues/96)) ([915c51e](https://github.com/sapieonic/magick-agency/commit/915c51e2ebc46f9c0e988d3b06977d6d015a3d13))
+
 ## [0.14.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.13.0...observability-v0.14.0) (2026-11-17)
 
 

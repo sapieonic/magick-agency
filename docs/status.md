@@ -2312,23 +2312,30 @@ empty label (`.media.plivo.com`, `aps1..media.plivo.com`), which `recordingHostn
 rather than leave to DNS. VoiceLink's rule is unchanged. Tests that pinned the old exact-only rule,
 updated: `recording-proxy.test.ts` (a Plivo URL on `evil.media.plivo.com` was a 502; it is now a
 media host, replaced by `evilmedia.plivo.com` and the cases above), `recording-access.test.ts` and
-`dialer-analysis-runner.test.ts` (`exactHosts: true` on Plivo's access). The failed jobs: new
-operator script `apps/server/scripts/requeue-recording-host-refusals.ts` (in the image,
-`dist/requeue-recording-host-refusals.js`), a dry run unless `--apply`, selects `failed`
-`TRANSCRIPTION_FAILED` jobs whose message is a host refusal on calls not erased
-(`findRecordingHostRefusals`, by `--host`, `--tenant`, `--since` / `--before`, `--limit`) and
-re-queues each with the existing `requeueForManualRetry` (full attempt budget, never past the
-lifetime ceiling, the call mirrored `pending`). There was no re-analyse route to reuse
-(`requeueForManualRetry` had no caller). A unit test pins the selector's pattern to the message the
-analysis fetch really throws. Runbook: [`operations.md`](operations.md) "Re-analysing calls a
-recording-host refusal failed"; to run after the deploy:
-`node dist/requeue-recording-host-refusals.js --host aps1.media.plivo.com --since 2026-11-17T00:00:00Z`,
-then again with `--apply`. Mutation-checked (each red, then restored with `git checkout`): Plivo's
-access back to exact-only (10 unit and 1 integration red, the aps1 and usw1 accept cases among
-them); the subdomain match without its dot boundary (5 unit and 1 integration red,
+`dialer-analysis-runner.test.ts` (`exactHosts: true` on Plivo's access). The failed jobs: an
+operator script (`requeue-recording-host-refusals`) re-queued them with the existing
+`requeueForManualRetry`; it was removed once staging's had run (next entry). Mutation-checked
+(each red, then restored with `git checkout`): Plivo's access back to exact-only (10 unit and 1
+integration red, the aps1 and usw1 accept cases among them); the subdomain match without its dot boundary (5 unit and 1 integration red,
 `evilmedia.plivo.com` among them); the empty-label guard removed (3 red); the server's refusal
 message reworded (the 2 pattern pins red); the selector widened, without its message match (1 red
-in `packages/db`, 1 in the script's integration test) and without `status = 'failed'` (1 red).
+in `packages/db`, 1 in the script's integration test) and without `status = 'failed'` (1 red); the
+selector and the script are gone since.
+
+### The recording-host re-queue script removed 2026-11-18
+
+The operator script that re-queued the analysis jobs a recording-host refusal had failed
+(`apps/server/scripts/requeue-recording-host-refusals.ts`, bundled as
+`dist/requeue-recording-host-refusals.js`) has done its one job: staging's jobs on
+`aps1.media.plivo.com` were re-queued after the fix deployed, and no other deployment had such
+failures (Manas, 2026-11-18). Plivo's regional media hosts are accepted now, so that refusal cannot
+recur. Removed with it: its unit and integration tests, the repository selector
+`findRecordingHostRefusals` and its pattern `RECORDING_HOST_REFUSAL_MESSAGE` (and their tests in
+`dialer-analysis-job.repository.test.ts`), the build entry, the `analysisAttemptLimitsSchema`
+split in `config/blocks/analysis.ts` (the two ceilings are inline in `dialerAnalysis` again), and
+the runbook in `operations.md`. The host-check fix and its tests stay. Should an allow-list fix
+need failed jobs re-run again, the way back is a general retry of failed analyses over
+`requeueForManualRetry`, which still has no caller.
 
 ### Live floor 2026-11-18 (LF1–LF10, B28b, [`decisions.md`](decisions.md) "Live floor (LF)")
 
@@ -2359,6 +2366,18 @@ moment until the promises read answers. Test counts below.
 **Live floor, 2026-11-18.** Branch `claude-mgkvc/loving-wozniak-s4am09` (Home rebuilt as Live floor, LF1–LF10; the floor and promises reads, B28b; the 0050 migration), every suite run one after another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root: `pnpm lint` clean; `pnpm build` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20; `contracts-literals.mjs --check` up to date (71 vocabularies, 3 label maps). Unit: `apps/server` 10512 passed + 1 expected fail (531 files), `apps/console` 7613 (409 files), `apps/super-admin` 509 (37 files), `packages/contracts` 551 (16 files), `packages/db` 457 (28 files), `packages/web-ui` 244 (21 files). Integration: `packages/db` 835 (92 files); `apps/server` `INTEGRATION_LANE=rest` 3043 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed (7 files). The console was re-run after the review's fixes (console only); the server and db runs are on the tree those fixes left unchanged. After the second review's console fixes (the Make-available drawer, Retry after a refusal, the server's clock, a break's Got it, no all-clear with the floor unread, midnight, the Callbacks page's honest wording, Need help last on the station's bar, the phone's menu dot, Coming soon's press and Escape): `apps/console` 7645 (409 files), `pnpm lint` clean, `pnpm test:tooling` 20. After the second review's server fixes (the effective wrap-up window, guard tests for the per-account calls-today cache, the `left_at` lookup and upper-case lifecycle ids): `apps/server` unit 10516 passed + 1 expected fail (531 files, on the final tree), `INTEGRATION_LANE=rest` 3047 passed + 9 expected fail + 2 skipped (278 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 (7 files; one run first failed in `inbound-ring-e2e.test.ts`, unrelated and green alone 3 of 3 and on the lane's rerun), `packages/contracts` 551; `pnpm build` clean, `pnpm test:grafana` 34, `pnpm test:release` 10, literals up to date. `agency_wire` (`dart test`) not run: no Dart here, and no agent fixture changed.
 
 After the console's cleanup refactors (2026-11-19: one polled daily read for Today so far and the promises, `useNow` and one 5 s risk clock ranking the floor once for the cards and the break rows, derived rank and badge, one late-callbacks figure, Got it split once): `apps/console` 7652 (411 files), `pnpm lint` clean.
+
+**The recording-host re-queue script removed, 2026-11-18.** Branch
+`claude-mgkvc/wizardly-dirac-gxwzam`, on the tree of this entry's commit, every suite run one after
+another (Postgres 16 on 5436 and Redis on 6383 run locally, not in Docker). From the root:
+`pnpm lint` clean; `pnpm test:grafana` 34, `pnpm test:release` 10, `pnpm test:tooling` 20. Unit:
+`apps/server` 10471 passed + 1 expected fail (528 files), `packages/db` 457 (28 files).
+Integration: `packages/db` 829 (91 files); `apps/server` `INTEGRATION_LANE=rest` 3022 passed + 9
+expected fail + 2 skipped (274 files passed, 2 skipped), `INTEGRATION_LANE=wall-clock` 30 passed
+(7 files). The rest lane went red twice before this green run, each time on a different timing
+check that passes alone (`inbound-connector-review-fixes.test.ts` IQ50 "back within the grace",
+`timed out: offered`; `load/concurrency-cap.test.ts`, seed 24301 round 16, counters 11 against 14
+live attempts, which does not reproduce with `LOAD_SEED=24301`); this change touches neither.
 
 **Plivo's regional recording media hosts, 2026-11-18.** Branch `claude-mgkvc/wizardly-dirac-gxwzam`,
 on the tree of this entry's commit, every suite run one after another (Postgres 16 on 5436 and

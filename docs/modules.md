@@ -1334,8 +1334,6 @@ service over a test keyring) against the mock Plivo carrier; `plivo-rig.ts` buil
 | `apps/server/test/integration/flows/feature-flag-rollout.test.ts` | ~4 |
 | `apps/server/test/integration/flows/tts-cache-sweep-scale.test.ts` | ~6 |
 | `apps/server/test/integration/scripts/create-super-admin.test.ts` | ~5 |
-| `apps/server/test/integration/scripts/requeue-recording-host-refusals.test.ts` (the operator re-queue of analysis jobs a recording-host refusal failed: dry run, `--apply`, the lifetime ceiling) | 3 |
-| `apps/server/test/unit/scripts/requeue-recording-host-refusals.test.ts` (its command line, and the selector's pattern pinned to the refusal message the analysis fetch throws) | 16 |
 | `apps/server/test/unit/branding/no-parent-brand.test.ts` | 5 |
 | `apps/server/test/unit/deploy/mobile-app-links.test.ts` | 17 |
 | `apps/server/test/unit/deploy/production-packaging.test.ts` | 18 |
@@ -1571,7 +1569,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/call-analysis-profile.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/claim-limit.test.ts` | 5 |
 | `packages/db/test/integration/repositories/credential-call-insert.repository.test.ts` | ~7 |
-| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` (with `findRecordingHostRefusals`, the operator re-queue's selector) | 14 |
+| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | 11 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number-inbound.repository.test.ts` | 9 |
 | `packages/db/test/integration/repositories/phone-number-sync.repository.test.ts` | 18 |

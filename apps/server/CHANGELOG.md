@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.27.0](https://github.com/sapieonic/magick-agency/compare/server-v0.26.0...server-v0.27.0) (2026-11-18)
+
+
+### Features
+
+* **server,db,observability:** say why the AI vendor refuses call analysis, and alert when it does not stop ([#96](https://github.com/sapieonic/magick-agency/issues/96)) ([915c51e](https://github.com/sapieonic/magick-agency/commit/915c51e2ebc46f9c0e988d3b06977d6d015a3d13))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/db bumped to 0.22.0
+    * @magick-agency/observability bumped to 0.15.0
+
 ## [0.26.0](https://github.com/sapieonic/magick-agency/compare/server-v0.25.0...server-v0.26.0) (2026-11-17)
 
 
