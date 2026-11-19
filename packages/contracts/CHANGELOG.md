@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.24.0...contracts-v0.25.0) (2026-11-19)
+
+
+### Features
+
+* **console,server:** rebuild the supervisor's Home as the Live floor ([#100](https://github.com/sapieonic/magick-agency/issues/100)) ([e15a179](https://github.com/sapieonic/magick-agency/commit/e15a1791a16333cbbc95c836765a8f726824ae55))
+
 ## [0.24.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.23.0...contracts-v0.24.0) (2026-11-17)
 
 
