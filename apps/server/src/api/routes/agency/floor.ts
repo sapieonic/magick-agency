@@ -8,6 +8,7 @@ import {
   agencyFloorRepository,
   agencyListenSessionRepository,
   agencyLiveCallRepository,
+  type AgencyFloorRow,
   type AgencyLiveCallRow,
 } from '../../../db/repositories/agency.repository.js';
 import { matchName } from '../../../agency/inbound/match-name.js';
@@ -43,7 +44,7 @@ const log = createChildLogger({ component: 'agency-floor' });
 export const FLOOR_CALLS_TODAY_CACHE_MS = 30_000;
 
 /** At most this many (account, `from`) counts are kept per process; the least recently read go first. */
-export const FLOOR_CALLS_TODAY_CACHE_MAX = 1_000;
+const FLOOR_CALLS_TODAY_CACHE_MAX = 1_000;
 
 const callsTodayCache = new TtlCache<Map<string, number>>({
   ttlMs: FLOOR_CALLS_TODAY_CACHE_MS, maxEntries: FLOOR_CALLS_TODAY_CACHE_MAX, name: 'floor-calls-today',
@@ -105,6 +106,20 @@ async function connectedFor(runtime: AgencyRuntime, sessionIds: string[]): Promi
   }
 }
 
+/** The open sessions among the floor's rows. */
+function sessionIdsOf(rows: readonly AgencyFloorRow[]): string[] {
+  return rows.flatMap((r) => (r.session_id ? [r.session_id] : []));
+}
+
+/**
+ * `promise`, with a no-op handler attached so a rejection before it is awaited is not reported
+ * unhandled. The promise returned is the same one: awaiting it still throws its error.
+ */
+function observed<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined);
+  return promise;
+}
+
 export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // ── GET /floor?from= ──────────────────────────────────────────────────────
   sub.get('/floor', async (request: FastifyRequest<{ Querystring: { from?: string } }>, reply: FastifyReply) => {
@@ -118,16 +133,19 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
     if (!parsed.ok) return reply.code(400).send({ error: 'Bad Request', message: parsed.message });
     const { from } = parsed;
 
-    const [rows, live, callsToday] = await Promise.all([
-      agencyFloorRepository.floorRows(tenantId, accountId, from),
-      agencyLiveCallRepository.listLive({ tenantId, accountId }),
-      callsTodayCache.getOrLoad(`${tenantId}:${accountId}:${from.toISOString()}`,
-        () => agencyFloorRepository.callsToday(tenantId, accountId, from, now)),
-    ]);
+    // Each agent's calls today: started now and awaited only where the response is built, since no
+    // other read needs them. Each promise started ahead of its await is observed at once
+    // (`observed`), so one that rejects before it is awaited is never an unhandled rejection; the
+    // request still fails with its error, as it did when all three were in one `Promise.all`.
+    const callsToday = observed(callsTodayCache.getOrLoad(`${tenantId}:${accountId}:${from.toISOString()}`,
+      () => agencyFloorRepository.callsToday(tenantId, accountId, from, now)));
+    const rowsRead = agencyFloorRepository.floorRows(tenantId, accountId, from);
+    // Liveness needs only the rows, not the live calls: started as soon as they are in.
+    const connectedRead = observed(rowsRead.then((rows) => connectedFor(runtime, sessionIdsOf(rows))));
+    const [rows, live] = await Promise.all([rowsRead, agencyLiveCallRepository.listLive({ tenantId, accountId })]);
 
     // The call in progress per session: the live list's rows, keyed by the agent's session.
-    const sessionIds = rows.flatMap((r) => (r.session_id ? [r.session_id] : []));
-    const onFloor = new Set(sessionIds);
+    const onFloor = new Set(sessionIdsOf(rows));
     const callBySession = new Map<string, AgencyLiveCallRow>();
     for (const call of live) {
       // Longest on call first: should a session ever hold two, the first (the oldest) is kept.
@@ -136,10 +154,11 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
       }
     }
     const calls = [...callBySession.values()];
-    const [listens, aht, connected] = await Promise.all([
+    const [listens, aht, connected, callsTodayByAgent] = await Promise.all([
       agencyListenSessionRepository.listOpenForCalls(tenantId, accountId, calls.map((c) => c.call_id)),
       ahtFor(tenantId, calls.map((c) => c.campaign_id).filter((id): id is string => id !== null)),
-      connectedFor(runtime, sessionIds),
+      connectedRead,
+      callsToday,
     ]);
     const listenersByCall = new Map<string, string[]>();
     for (const l of listens) {
@@ -176,7 +195,7 @@ export async function registerFloorRoutes(sub: FastifyInstance, runtime: AgencyR
             listener_user_ids: listenersByCall.get(call.call_id) ?? [],
           }
           : null,
-        calls_today: callsToday.get(r.agent_user_id) ?? 0,
+        calls_today: callsTodayByAgent.get(r.agent_user_id) ?? 0,
         left_at: r.left_at ? new Date(r.left_at).toISOString() : null,
       };
     });
