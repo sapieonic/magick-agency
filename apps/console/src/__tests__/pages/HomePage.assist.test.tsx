@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { AgencyFloorAgent, AgencyFloorResponse } from '@magick-agency/contracts/api/agency/floor';
 import type { AgencyLateCallbacksPreview } from '@magick-agency/contracts/api/agency/assignment';
 import { ApiError } from '../../api/client';
+import { ASSIGNMENT_REFUSAL_COPY } from '../../utils/agencyAssignmentCopy';
 import { board, floorRow, onBoard, stats } from '../helpers/home';
 
 /**
@@ -27,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   unlockHelpChime: vi.fn(),
   listen: vi.fn(),
   showToast: vi.fn(),
+  // The real rule, counted: Needs you now calls it once each time it renders.
+  attentionFor: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({
@@ -60,6 +63,11 @@ vi.mock('../../hooks/useMissedCallsAccess', () => ({
 vi.mock('../../components/listen/ListenProvider', () => ({
   useListen: () => ({ canListen: true, listen: mocks.listen }),
 }));
+vi.mock('../../utils/agency/liveFloor', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/agency/liveFloor')>();
+  mocks.attentionFor.mockImplementation(actual.attentionFor);
+  return { ...actual, attentionFor: mocks.attentionFor };
+});
 
 import HomePage from '../../pages/agency/HomePage';
 import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
@@ -267,6 +275,53 @@ describe('the chime (LF31)', () => {
   });
 });
 
+describe('Needs you now on a floor read', () => {
+  async function poll() {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+  }
+  /** The floor read with the server's clock `aheadMs` ahead of the viewer's. */
+  const ahead = (agents: () => AgencyFloorAgent[], aheadMs: number) => async () => ({
+    ...floorOf(agents()),
+    as_of: new Date(Date.now() + aheadMs).toISOString(),
+  });
+
+  it('re-renders nothing for a read that moves only the server clock', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.getAgencyFloor.mockImplementation(ahead(() => [ARJUN(), DIVYA()], 0));
+      renderHome();
+      await screen.findByTestId('home-agent-grid');
+      await screen.findByTestId('home-help-chime');
+      const reads = mocks.getAgencyFloor.mock.calls.length;
+      const renders = mocks.attentionFor.mock.calls.length;
+      // The next read (before the board's): the same floor, the server's clock a minute ahead.
+      mocks.getAgencyFloor.mockImplementation(ahead(() => [ARJUN(), DIVYA()], 60_000));
+      await poll();
+      expect(mocks.getAgencyFloor.mock.calls.length).toBe(reads + 1);
+      expect(mocks.attentionFor.mock.calls.length).toBe(renders);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts Listen on the latest read’s clock', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderHome();
+      await screen.findByTestId('home-attention-help:ravi');
+      mocks.getAgencyFloor.mockImplementation(ahead(() => [RAVI(), PRIYA(), ARJUN()], 60_000));
+      await poll();
+      fireEvent.click(within(screen.getByTestId('home-attention-help:ravi')).getByRole('button', { name: 'Listen to Ravi Kumar’s call' }));
+      expect(mocks.listen).toHaveBeenCalledTimes(1);
+      expect(mocks.listen.mock.calls[0]![1]).toBeGreaterThan(55_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('Talk to agent (LF5, LF29)', () => {
   async function openTalk() {
     renderHome();
@@ -450,7 +505,7 @@ describe('Give late callbacks to free agents (LF7, LF30)', () => {
     const dialog = screen.getByRole('dialog');
     await within(dialog).findByTestId('handoff-question');
     fireEvent.click(within(dialog).getByTestId('handoff-give'));
-    expect(await within(dialog).findByTestId('handoff-stale')).toBeTruthy();
+    expect((await within(dialog).findByTestId('handoff-stale')).textContent).toBe(ASSIGNMENT_REFUSAL_COPY.preview_stale);
     expect(within(dialog).getByTestId('handoff-question').textContent).toBe('Give 3 late callbacks to 1 free agent?');
     expect(mocks.commitLateCallbacks).toHaveBeenCalledTimes(1);
     const confirm = within(dialog).getByTestId('handoff-give');

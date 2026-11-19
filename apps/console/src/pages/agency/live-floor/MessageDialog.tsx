@@ -1,10 +1,10 @@
 import { useId, useState } from 'react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
+import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
 import { sendSupervisorMessage } from '../../../api/agencyFloorAssist';
 import { useTenant } from '../../../contexts/TenantContext';
 import {
-  MESSAGE_MAX_CHARS,
   messageFits,
   messageLength,
   messageRefusal,
@@ -110,8 +110,8 @@ export function MessageDialog({ target, onClose }: { target: MessageTarget; onCl
             }}
             data-testid="message-text"
           />
-          <p id={counterId} className={styles.counter} data-state={length > MESSAGE_MAX_CHARS ? 'invalid' : 'ok'} data-testid="message-counter">
-            {`${formatCount(length)} / ${formatCount(MESSAGE_MAX_CHARS)}`}
+          <p id={counterId} className={styles.counter} data-state={length > AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS ? 'invalid' : 'ok'} data-testid="message-counter">
+            {`${formatCount(length)} / ${formatCount(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS)}`}
           </p>
           {error && (
             <p className="error-text" role="alert" data-testid="message-error">

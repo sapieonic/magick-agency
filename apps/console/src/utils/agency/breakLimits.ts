@@ -1,4 +1,4 @@
-import { DEFAULT_BREAK_REASONS, isReservedBreakReason } from '@magick-agency/domain/break-manager';
+import { DEFAULT_BREAK_REASONS, breakLimitMinutes, isReservedBreakReason } from '@magick-agency/domain/break-manager';
 import {
   AGENCY_BREAK_LIMIT_MAX_MINUTES,
   AGENCY_BREAK_LIMIT_MIN_MINUTES,
@@ -12,15 +12,12 @@ import type { AgencyBreakReason } from '../../types/agency';
  */
 
 /**
- * The limit, in minutes, of a break on `code` under `reasons` (the bootstrap's `break_reasons`),
- * found by code as the label is. Null when the reason has none, when the code is reserved (the soft
- * phone's, the app's pauses: never a limit, LF6) or unknown, and for a stored limit the rule refuses
- * (the server drops those on read; this is the same rule).
+ * The limit, in minutes, of a break on `code` under `reasons` (the bootstrap's `break_reasons`), by
+ * the server's rule (`breakLimitMinutes`). Null before the bootstrap is read (`reasons` empty: the
+ * rule would answer from the built-ins, and a campaign's own list may give that code no limit).
  */
-export function breakLimitFor(code: string | null | undefined, reasons: readonly AgencyBreakReason[]): number | null {
-  if (!code || isReservedBreakReason(code)) return null;
-  const limit = reasons.find((r) => r.code === code)?.limit_minutes;
-  return isAgencyBreakLimitMinutes(limit) ? limit : null;
+export function breakLimitFor(code: string | null | undefined, reasons: AgencyBreakReason[]): number | null {
+  return reasons.length === 0 ? null : breakLimitMinutes(code, reasons);
 }
 
 // ─── The editor (campaign Settings › Agents) ─────────────────────────────────

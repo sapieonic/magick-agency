@@ -145,12 +145,6 @@ beforeEach(() => {
   });
   vi.stubGlobal('WebSocket', FakeWs);
   vi.stubGlobal('AudioContext', FakeAudioContext);
-  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
   window.localStorage.clear();
   window.localStorage.setItem(LISTEN_CONFIRMED_KEY, '1');
 });

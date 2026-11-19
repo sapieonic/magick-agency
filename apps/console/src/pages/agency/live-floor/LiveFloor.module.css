@@ -594,11 +594,6 @@
 .chip[data-state='wrapup'] > i { background: var(--accent); }
 .chip[data-state='break'] > i { background: var(--warning); }
 
-.chipSoon {
-  color: var(--text-muted);
-  border-style: dashed;
-}
-
 .floorLinks ul {
   list-style: none;
   margin: 6px 0 0;

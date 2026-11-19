@@ -49,8 +49,11 @@ export type BreaksChecked = 'checked' | 'checking' | 'unchecked';
  */
 export interface NeedsYouNowAssist {
   onMessage: (target: MessageTarget) => void;
-  /** The floor read's clock offset, for Listen (as the cards start it). */
-  clockOffsetMs: number;
+  /**
+   * The floor read's latest clock offset, for Listen (as the cards start it). Read at the click, so
+   * a poll that only moves the offset never re-renders the list.
+   */
+  clockOffsetMs: () => number;
   chime: { on: boolean; toggle: () => void };
 }
 
@@ -296,7 +299,7 @@ function AttentionRow({ item, now, onAcknowledge, assist = null, handOff = null 
           <button
             type="button"
             className={`btn-secondary ${styles.smallButton}`}
-            onClick={() => listen.listen(call, assist?.clockOffsetMs ?? 0)}
+            onClick={() => listen.listen(call, assist?.clockOffsetMs() ?? 0)}
             aria-label={listenToLabel(agent.name)}
           >
             <Headphones size={14} aria-hidden="true" />

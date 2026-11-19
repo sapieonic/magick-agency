@@ -50,13 +50,9 @@ export const WRAPUP_OVERRUN_GRACE_SECONDS = 60;
 export const CALL_OVERRUN_AHT_MULTIPLE = 2;
 
 /**
- * Rank 3 without a limit of the break's own (LF6, LF20): the floor's one rule, 30 minutes
- * (`AGENCY_BREAK_DEFAULT_LIMIT_MINUTES`). A break reason with a `limit_minutes` is measured
- * against that instead ({@link FloorThresholds.breakLimitMinutes}).
+ * The minutes a break may run before rank 3 (LF6, LF20): its reason's limit, else the floor's one
+ * rule, 30 minutes (`AGENCY_BREAK_DEFAULT_LIMIT_MINUTES`).
  */
-export const LONG_BREAK_SECONDS = AGENCY_BREAK_DEFAULT_LIMIT_MINUTES * 60;
-
-/** The minutes a break may run before rank 3: its reason's limit, else the floor's 30. */
 export function breakLimitMinutesOf(limit: number | null | undefined): number {
   return typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? limit : AGENCY_BREAK_DEFAULT_LIMIT_MINUTES;
 }

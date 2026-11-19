@@ -13,6 +13,7 @@ import { usePromisesToday } from '../../hooks/usePromisesToday';
 import { useNow } from '../../hooks/useNow';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useHelpChime } from '../../hooks/useHelpChime';
+import { useLatestRef } from '../../hooks/useLatestRef';
 import { useAssignmentModes } from '../../hooks/useAssignmentModes';
 import { hasPermission } from '../../utils/permissions';
 import { agentDisplayName } from '../../utils/agencyAgentFloor';
@@ -100,7 +101,6 @@ export default function HomePage() {
   const assistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG) && supervise;
   const assignmentOn = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG) && supervise;
   const [messageTarget, setMessageTarget] = useState<MessageTarget | null>(null);
-  const openMessage = useCallback((target: MessageTarget) => setMessageTarget(target), []);
   const [giving, setGiving] = useState<{ id: string; name: string } | null>(null);
 
   const floorRows = agentFloor.floor?.agents;
@@ -127,10 +127,14 @@ export default function HomePage() {
   // The chime hears every open request on the floor (not only the picked campaign's), once each.
   const chime = useHelpChime(assistOn && floorRows ? helpKeys(floorRows) : null);
   const { on: chimeOn, toggle: toggleChime } = chime;
-  const clockOffsetMs = agentFloor.clockOffsetMs;
+  // Moves on every floor read: held in a ref and read at Listen's click, so the memo below (and the
+  // memoised Needs you now) outlives a poll that changed nothing else.
+  const clockOffsetRef = useLatestRef(agentFloor.clockOffsetMs);
   const assist = useMemo<NeedsYouNowAssist | null>(
-    () => (assistOn ? { onMessage: openMessage, clockOffsetMs, chime: { on: chimeOn, toggle: toggleChime } } : null),
-    [assistOn, openMessage, clockOffsetMs, chimeOn, toggleChime],
+    () => (assistOn
+      ? { onMessage: setMessageTarget, clockOffsetMs: () => clockOffsetRef.current, chime: { on: chimeOn, toggle: toggleChime } }
+      : null),
+    [assistOn, clockOffsetRef, chimeOn, toggleChime],
   );
   // Give to free agents: the campaigns whose late-callbacks row names an away owner, and their modes.
   const handOffCampaigns = useMemo(
@@ -143,7 +147,7 @@ export default function HomePage() {
   const { modes, markPool } = useAssignmentModes(handOffCampaigns, tenantId, accountId, assignmentOn);
   const handOff = useMemo<NeedsYouNowHandOff | null>(() => {
     if (!assignmentOn) return null;
-    const offered = new Set(handOffCampaigns.filter((c) => offersHandOff(assignmentOn, modes[c.id])).map((c) => c.id));
+    const offered = new Set(handOffCampaigns.filter((c) => offersHandOff(modes[c.id])).map((c) => c.id));
     return { offered, onGive: setGiving };
   }, [assignmentOn, handOffCampaigns, modes]);
   const agentName = useCallback((userId: string) => {
@@ -239,7 +243,7 @@ export default function HomePage() {
                 clockOffsetMs: agentFloor.clockOffsetMs,
                 stale: agentFloor.stale,
                 onChanged: agentFloor.reload,
-                onMessage: assistOn ? openMessage : null,
+                onMessage: assistOn ? setMessageTarget : null,
               } : null}
               floorFailed={agentFloor.status === 'error' || agentFloor.status === 'refused'}
               onRetryFloor={retryFloor}

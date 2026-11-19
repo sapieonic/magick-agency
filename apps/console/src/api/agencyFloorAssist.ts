@@ -1,5 +1,6 @@
 import { API_BASE } from '../config';
 import { apiFetch } from './client';
+import { toQuery } from './agencySpine';
 import type {
   AgencySupervisorMessageRequest,
   AgencySupervisorMessageResponse,
@@ -46,11 +47,7 @@ export function listAccountCallbacks(
   tenantId: string,
   accountId: string,
 ): Promise<AgencyCallbacksPage> {
-  const params = new URLSearchParams();
-  if (query.due) params.set('due', query.due);
-  if (query.campaign_id) params.set('campaign_id', query.campaign_id);
-  if (query.cursor) params.set('cursor', query.cursor);
-  if (query.limit !== undefined) params.set('limit', String(query.limit));
-  const search = params.toString();
-  return apiFetch<AgencyCallbacksPage>(`${AGENCY_BASE}/callbacks${search ? `?${search}` : ''}`, {}, tenantId, accountId);
+  const { due, campaign_id, cursor, limit } = query;
+  const search = toQuery({ due, campaign_id, cursor, limit: limit === undefined ? undefined : String(limit) });
+  return apiFetch<AgencyCallbacksPage>(`${AGENCY_BASE}/callbacks${search}`, {}, tenantId, accountId);
 }

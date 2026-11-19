@@ -477,30 +477,24 @@ export function stationReducer(state: StationState, action: StationAction): Stat
 
     case 'help_cleared': {
       const { frame } = action;
+      // An answer that arrived first stays, and an answer told only by the clear is still an answer.
+      const answered: StationHelpNotice | null = frame.reason === 'answered'
+        ? answeredNoticeFor(state.helpNotice, frame.raised_at)
+          ?? { kind: 'answered', raised_at: frame.raised_at, by_name: null, how: null }
+        : null;
       if (state.help === null) {
         // Nothing on screen: remembered as ended, so a raise answer still in flight cannot open it
-        // (it would then stay open forever: no frame about it is coming). An answer that arrived
-        // first stays (and an answer told only by the clear is still an answer); a lapse, a cancel
-        // or a session end says nothing about a request the station is not showing.
-        const held = answeredNoticeFor(state.helpNotice, frame.raised_at);
-        const helpNotice = frame.reason === 'answered'
-          ? held ?? { kind: 'answered' as const, raised_at: frame.raised_at, by_name: null, how: null }
-          : state.helpNotice;
+        // (it would then stay open forever: no frame about it is coming). A lapse, a cancel or a
+        // session end says nothing about a request the station is not showing.
+        const helpNotice = answered ?? state.helpNotice;
         if (state.helpEndedAt === frame.raised_at && helpNotice === state.helpNotice) return state;
         return { ...state, helpNotice, helpEndedAt: frame.raised_at };
       }
       if (state.help.raised_at !== frame.raised_at) return state;
-      let helpNotice: StationHelpNotice | null = null;
-      if (frame.reason === 'answered') {
-        const held = state.helpNotice;
-        helpNotice = held?.kind === 'answered' && held.raised_at === frame.raised_at
-          ? held
-          : { kind: 'answered', raised_at: frame.raised_at, by_name: null, how: null };
-      } else if (frame.reason === 'expired') {
-        helpNotice = { kind: 'expired', raised_at: frame.raised_at };
-      }
       // `cancelled` (the agent's own, from another window or the answer racing this frame) and
       // `session_ended` clear without a word.
+      const helpNotice: StationHelpNotice | null = answered
+        ?? (frame.reason === 'expired' ? { kind: 'expired', raised_at: frame.raised_at } : null);
       return { ...state, help: null, helpNotice, helpEndedAt: frame.raised_at };
     }
 
@@ -542,12 +536,16 @@ function answeredNoticeFor(notice: StationHelpNotice | null, raisedAt: string): 
  * is open (it was answered, cancelled, lapsed or ended while the socket was away, and the frame
  * that said so went to the socket that had gone). A request that ended unseen ends here without a
  * word: the station cannot tell how. A different open request retires a notice about an older one.
+ * One stated with the `raised_at` of the request this station saw cleared (`helpEndedAt`) is stale,
+ * and read as none.
  */
 function readyHelp(
   state: StationState,
   stated: AgencySessionHelp | undefined,
 ): Pick<StationState, 'help' | 'helpNotice' | 'helpEndedAt'> {
-  const help = stated && typeof stated.raised_at === 'string'
+  // A request this station already saw end is not open, whatever a ready says: the server keeps no
+  // memory of the clears it sent, so a ready racing one can still state it.
+  const help = stated && typeof stated.raised_at === 'string' && stated.raised_at !== state.helpEndedAt
     ? { raised_at: stated.raised_at, call_id: typeof stated.call_id === 'string' ? stated.call_id : null }
     : null;
   if (help === null) {

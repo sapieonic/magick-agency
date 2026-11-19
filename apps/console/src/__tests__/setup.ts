@@ -42,3 +42,25 @@ afterEach(() => {
   cleanup();
   resetLiveSessionForTests();
 });
+
+/**
+ * jsdom has no `matchMedia`. A default where no query matches (a desktop browser with no motion or
+ * colour-scheme preference), so code reads it as it would in a browser; a test that needs a phone
+ * or a change of viewport stubs its own (`vi.stubGlobal('matchMedia', …)` or an assignment).
+ */
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}

@@ -282,7 +282,7 @@ describe('Need help, in Needs you now (LF4, LF28)', () => {
       campaign: { id: 'c1', name: 'Q4 collections' },
       ackable: false,
       kind: `help@${ago(2.5)}`,
-      agent: { sessionId: 's-r', agentUserId: 'r', name: 'Ravi Kumar' },
+      agent: { sessionId: 's-r', name: 'Ravi Kumar' },
     });
     // Listen starts on the call as the card's does; no number.
     expect(ravi!.agent!.call).toMatchObject({ call_id: 'call-1', customer_name: 'Ramesh Goud' });
@@ -334,7 +334,6 @@ describe('breaks over the limit, in Needs you now', () => {
       worseBy: 15 * 60,
       agent: {
         sessionId: 's-p',
-        agentUserId: 'p',
         name: 'Priya M',
         reminder: 'Hi, your Tea break has gone past 30 minutes. Please come back to your station when you can. Thank you!',
       },

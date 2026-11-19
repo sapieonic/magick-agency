@@ -81,7 +81,6 @@ export const HELP_KIND_PREFIX = 'help@';
  */
 export interface HomeAgentRef {
   sessionId: string;
-  agentUserId: string;
   name: string;
   /** Send reminder's prefilled words; absent on a row offering Talk. */
   reminder?: string;
@@ -151,9 +150,10 @@ export interface HomeAttentionItem {
    * On a campaign's late-callbacks row, the overdue callbacks whose owner is away (the board's
    * `callbacks_overdue_absent_owner`): Live floor offers "Give to free agents" for them on a
    * `strict` or `preferred` campaign while contact assignment is on (LF7, LF30). The preview's
-   * own count can differ (it reads presence, not the board's 15-minute absence, LF21).
+   * own count can differ (it reads presence, not the board's 15-minute absence, LF21). Present
+   * (true) only when there are some.
    */
-  handOff?: { count: number };
+  handOff?: true;
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -338,7 +338,7 @@ export function homeAttention(
         kind: rule.id,
         count: rule.count ?? null,
         ackable: true,
-        ...(absent > 0 ? { handOff: { count: absent } } : {}),
+        ...(absent > 0 ? { handOff: true as const } : {}),
       });
     }
   }

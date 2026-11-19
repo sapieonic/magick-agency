@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   AGENCY_LATE_CALLBACKS_KIND,
   type AgencyLateCallbacksPreview,
@@ -14,13 +13,13 @@ import { useLatestRef } from '../../../hooks/useLatestRef';
 import { useMountedRef } from '../../../hooks/useMountedRef';
 import { errorCode } from '../../../utils/agencyErrors';
 import { stalePreviewOf } from '../../../utils/agencyAssignmentOps';
-import { ASSIGNMENT_REFUSAL_COPY } from '../../../utils/agencyAssignmentCopy';
+import { ASSIGNMENT_REFUSAL_COPY, assignmentRefusal } from '../../../utils/agencyAssignmentCopy';
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
-  lateCallbacksReceivers,
   lateCallbacksResultText,
 } from '../../../utils/agency/lateCallbacks';
+import { formatCount, plural } from '../../../utils/format/number';
 import styles from './LiveFloor.module.css';
 
 /** The hand-off's operation: no agents named, the server picks the live ones (LF21). */
@@ -66,14 +65,9 @@ export function LateCallbacksDialog({
   const mounted = useMountedRef();
 
   const refuse = useCallback((err: unknown, fallback: string) => {
-    const code = errorCode(err);
-    if (code === 'late_callbacks_pool_mode') {
-      onPool(campaign.id);
-      return LATE_CALLBACKS_POOL_COPY;
-    }
-    if (code === 'assignment_disabled') return ASSIGNMENT_REFUSAL_COPY.assignment_disabled;
-    if (code === 'campaign_not_found') return ASSIGNMENT_REFUSAL_COPY.campaign_not_found;
-    return getErrorMessage(err, fallback);
+    if (errorCode(err) !== 'late_callbacks_pool_mode') return assignmentRefusal(err, fallback);
+    onPool(campaign.id);
+    return LATE_CALLBACKS_POOL_COPY;
   }, [campaign.id, onPool]);
 
   // The preview, once per opening: a parent's new callbacks never preview it again.
@@ -108,7 +102,7 @@ export function LateCallbacksDialog({
 
   const busy = step.kind === 'previewing' || step.kind === 'committing';
   const shown = step.kind === 'preview' || step.kind === 'committing' ? step : null;
-  const receivers = shown ? lateCallbacksReceivers(shown.preview, agentName) : [];
+  const receivers = shown ? shown.preview.live_agent_user_ids.map(agentName) : [];
   const canGive = step.kind === 'preview' && step.preview.moving > 0;
 
   return (
@@ -133,8 +127,8 @@ export function LateCallbacksDialog({
               <button type="button" className="btn-primary" onClick={() => void give()} disabled={!canGive} data-testid="handoff-give">
                 {step.kind === 'committing'
                   ? 'Giving…'
-                  : shown && shown.preview.live_agent_user_ids.length > 0
-                    ? `Give to ${receivers.length === 1 ? '1 agent' : `${receivers.length} agents`}${shown.stale ? ': confirm again' : ''}`
+                  : shown && receivers.length > 0
+                    ? `Give to ${plural(receivers.length, 'agent')}${shown.stale ? ': confirm again' : ''}`
                     : 'Give'}
               </button>
             </>
@@ -149,7 +143,7 @@ export function LateCallbacksDialog({
             {shown.stale && (
               <p className={styles.handOffStale} data-testid="handoff-stale">
                 <AlertTriangle size={15} aria-hidden="true" />
-                <span>Things changed since you looked. This is the up-to-date result: check it and confirm again.</span>
+                <span>{ASSIGNMENT_REFUSAL_COPY.preview_stale}</span>
               </p>
             )}
             <p className={styles.handOffQuestion} data-testid="handoff-question">{lateCallbacksQuestion(shown.preview)}</p>
@@ -159,7 +153,7 @@ export function LateCallbacksDialog({
               </p>
             )}
             {shown.preview.skipped_live > 0 && (
-              <p className={styles.quiet}>{`${shown.preview.skipped_live} on a call or awaiting an outcome won’t move.`}</p>
+              <p className={styles.quiet}>{`${formatCount(shown.preview.skipped_live)} on a call or awaiting an outcome won’t move.`}</p>
             )}
           </>
         )}

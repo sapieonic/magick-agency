@@ -3,6 +3,7 @@ import { MessageSquare, X } from 'lucide-react';
 import type { AgencyStationSupervisorMessageFrame } from '@magick-agency/contracts/agency';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { formatClockTime } from '../../utils/format/date';
+import { plural } from '../../utils/format/number';
 import { messageSender } from '../../utils/agency/stationHelp';
 import styles from './SupervisorMessages.module.css';
 
@@ -137,7 +138,7 @@ export function SupervisorMessages({
       })}
       {waiting > 0 ? (
         <p className={styles.more} data-testid="supervisor-messages-more">
-          {waiting === 1 ? '1 more message' : `${waiting} more messages`}
+          {plural(waiting, 'more message')}
         </p>
       ) : null}
     </section>

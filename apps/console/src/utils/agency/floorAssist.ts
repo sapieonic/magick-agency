@@ -3,6 +3,7 @@ import type { AgencyFloorAgent } from '@magick-agency/contracts/api/agency/floor
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorStatus } from '../agencyErrors';
 import { breakLimitMinutesOf } from '../agencyAgentFloor';
+import { browserStorage } from '../browserStorage';
 import { formatCount } from '../format/number';
 
 /**
@@ -13,9 +14,6 @@ import { formatCount } from '../format/number';
  * no Send reminder, no Need help chip and no sound toggle.
  */
 
-/** The longest message, in characters as the reader sees them (code points, LF17). */
-export const MESSAGE_MAX_CHARS = AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS;
-
 /** A message's length as the server counts it: trimmed, in code points (an emoji is one). */
 export function messageLength(text: string): number {
   return [...text.trim()].length;
@@ -24,7 +22,7 @@ export function messageLength(text: string): number {
 /** Whether the server would take this text (1 to 500 characters once trimmed). */
 export function messageFits(text: string): boolean {
   const length = messageLength(text);
-  return length >= 1 && length <= MESSAGE_MAX_CHARS;
+  return length >= 1 && length <= AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS;
 }
 
 /** Who a message goes to: the agent's live session and their name, and Send reminder's prefilled words. */
@@ -57,7 +55,7 @@ export function messageRefusal(err: unknown, name: string): string {
     case 'agent_not_live':
       return `${name} isn’t on a station that can receive messages right now.`;
     case 'message_invalid':
-      return `Write a message of 1 to ${formatCount(MESSAGE_MAX_CHARS)} characters.`;
+      return `Write a message of 1 to ${formatCount(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS)} characters.`;
     case 'floor_assist_disabled':
       return 'Messages to agents are turned off for this account.';
     default:
@@ -111,7 +109,7 @@ const CHIME_KEY = 'magick.liveFloor.helpChime.v1';
  */
 export function readHelpChimeOn(): boolean {
   try {
-    return window.localStorage.getItem(CHIME_KEY) !== 'off';
+    return browserStorage()?.getItem(CHIME_KEY) !== 'off';
   } catch {
     return true;
   }
@@ -120,8 +118,9 @@ export function readHelpChimeOn(): boolean {
 /** Keeps the choice for this browser; storage that throws keeps it for this page only. */
 export function writeHelpChimeOn(on: boolean): void {
   try {
-    if (on) window.localStorage.removeItem(CHIME_KEY);
-    else window.localStorage.setItem(CHIME_KEY, 'off');
+    const storage = browserStorage();
+    if (on) storage?.removeItem(CHIME_KEY);
+    else storage?.setItem(CHIME_KEY, 'off');
   } catch {
     // Blocked or full storage: the page's own state carries the choice until it is reloaded.
   }

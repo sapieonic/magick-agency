@@ -34,6 +34,10 @@ describe('breakLimitFor (the station’s countdown)', () => {
     expect(breakLimitFor('odd', reasons)).toBeNull();
   });
 
+  it('is null before the bootstrap’s reasons are read, never the built-ins’ limit', () => {
+    expect(breakLimitFor('tea', [])).toBeNull();
+  });
+
   it('is null for every reserved reason, whatever a catalog says', () => {
     const listed = ['soft_phone', 'device_away', 'phone_call', 'away_ring'].map((code) => ({ code, label: code, limit_minutes: 5 }));
     for (const r of listed) expect(breakLimitFor(r.code, listed), r.code).toBeNull();

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
 import { ApiError } from '../../api/client';
 import {
-  MESSAGE_MAX_CHARS,
   helpAgo,
   helpKey,
   helpKeys,
@@ -17,7 +17,6 @@ import { playHelpChime, setHelpChimeContextFactoryForTests, unlockHelpChime, typ
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
-  lateCallbacksReceivers,
   lateCallbacksResultText,
   offersHandOff,
 } from '../../utils/agency/lateCallbacks';
@@ -26,13 +25,13 @@ import {
   appendCallbackRows,
   callbackContactHref,
   callbackCustomer,
-  callbackDueText,
   callbackOwner,
   callbacksDueOf,
   callbacksEmptyText,
   callbacksErrorText,
 } from '../../utils/agency/accountCallbacks';
 import { CALLBACKS_ERROR, CALLBACKS_REFUSED } from '../../utils/agency/liveFloor';
+import { formatTimeOrDate } from '../../utils/format/date';
 
 /**
  * The Live floor's Phase 3 rules (LF4–LF7, LF28–LF33): messages and their refusals, Send reminder's
@@ -49,10 +48,10 @@ describe('a message (LF5, LF17)', () => {
     expect(messageLength('నమస్తే')).toBe([...'నమస్తే'].length);
     expect(messageFits('   ')).toBe(false);
     expect(messageFits('a')).toBe(true);
-    expect(messageFits('a'.repeat(MESSAGE_MAX_CHARS))).toBe(true);
-    expect(messageFits(` ${'a'.repeat(MESSAGE_MAX_CHARS)} `)).toBe(true);
-    expect(messageFits('a'.repeat(MESSAGE_MAX_CHARS + 1))).toBe(false);
-    expect(MESSAGE_MAX_CHARS).toBe(500);
+    expect(messageFits('a'.repeat(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS))).toBe(true);
+    expect(messageFits(` ${'a'.repeat(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS)} `)).toBe(true);
+    expect(messageFits('a'.repeat(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS + 1))).toBe(false);
+    expect(AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS).toBe(500);
   });
 
   it('is refused in the console’s words, naming the agent', () => {
@@ -133,10 +132,13 @@ describe('the chime’s sound (fails silently)', () => {
     const ctx = {
       state,
       currentTime: 10,
-      destination: {} as AudioNode,
+      destination: {} as AudioDestinationNode,
       createOscillator: () => ({ type: 'sine', frequency: { value: 0 }, connect: vi.fn(), start: (t: number) => started.push(t), stop: vi.fn() }) as unknown as OscillatorNode,
       createGain: () => ({ gain: param, connect: vi.fn() }) as unknown as GainNode,
       resume: vi.fn(resume),
+      sampleRate: 48000,
+      createBuffer: vi.fn(() => ({}) as AudioBuffer),
+      createBufferSource: vi.fn(() => ({ connect: vi.fn(), start: vi.fn() }) as unknown as AudioBufferSourceNode),
     } satisfies ChimeAudioContext;
     return { ctx, started };
   }
@@ -159,6 +161,8 @@ describe('the chime’s sound (fails silently)', () => {
     expect(ctx.resume).toHaveBeenCalled();
     expect(started).toHaveLength(0);
     expect(() => unlockHelpChime()).not.toThrow();
+    // The toggle's gesture unlocks as the station does: the silent buffer Safari needs, too.
+    expect(ctx.createBufferSource).toHaveBeenCalled();
   });
 
   it('keeps at most one play waiting on a suspended context: never a stacked burst', async () => {
@@ -208,12 +212,11 @@ describe('the chime’s sound (fails silently)', () => {
 });
 
 describe('give late callbacks to free agents (LF7, LF30)', () => {
-  it('is offered on strict and preferred with assignment on, never on pool or an unknown mode', () => {
-    expect(offersHandOff(true, 'strict')).toBe(true);
-    expect(offersHandOff(true, 'preferred')).toBe(true);
-    expect(offersHandOff(true, 'pool')).toBe(false);
-    expect(offersHandOff(true, undefined)).toBe(false);
-    expect(offersHandOff(false, 'strict')).toBe(false);
+  it('is offered on strict and preferred, never on pool or an unknown mode', () => {
+    expect(offersHandOff('strict')).toBe(true);
+    expect(offersHandOff('preferred')).toBe(true);
+    expect(offersHandOff('pool')).toBe(false);
+    expect(offersHandOff(undefined)).toBe(false);
   });
 
   it('asks with the counts, names the receivers, and says why nothing would move', () => {
@@ -223,7 +226,6 @@ describe('give late callbacks to free agents (LF7, LF30)', () => {
     expect(lateCallbacksQuestion({ moving: 1, live_agent_user_ids: ['a'] })).toBe('Give 1 late callback to 1 free agent?');
     expect(lateCallbacksQuestion({ moving: 0, live_agent_user_ids: [] })).toMatch(/^No agent is free/);
     expect(lateCallbacksQuestion({ moving: 0, live_agent_user_ids: ['a'] })).toMatch(/^No late callback is waiting/);
-    expect(lateCallbacksReceivers({ live_agent_user_ids: ['d', 'a'] }, name)).toEqual(['Divya S', 'Arjun T']);
     expect(lateCallbacksResultText({
       moved: 4,
       per_agent: [{ agent_user_id: 'a', receiving: 2, giving: 0 }, { agent_user_id: 'n', receiving: 0, giving: 4 }, { agent_user_id: 'd', receiving: 2, giving: 0 }],
@@ -273,8 +275,8 @@ describe('the Callbacks page’s words (LF32)', () => {
   });
 
   it('says when it is due in the reader’s zone, the date only off today', () => {
-    expect(callbackDueText(row.due_at, new Date('2026-11-19T12:00:00Z'))).toMatch(/^\d{2}:\d{2} [ap]m$/);
-    expect(callbackDueText(row.due_at, new Date('2026-11-21T12:00:00Z'))).toMatch(/19 Nov/);
+    expect(formatTimeOrDate(row.due_at, new Date('2026-11-19T12:00:00Z'))).toMatch(/^\d{2}:\d{2} [ap]m$/);
+    expect(formatTimeOrDate(row.due_at, new Date('2026-11-21T12:00:00Z'))).toMatch(/19 Nov/);
   });
 
   it('links the contact in its campaign, and says what is empty without a wider all-clear', () => {
