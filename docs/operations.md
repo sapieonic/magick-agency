@@ -1454,10 +1454,12 @@ sends the agent's station `help_cleared` and writes the audit row runs every 15 
 
 ### `agy-analysis-vendor-refusing`
 
-**Means:** the post-call analysis worker has paused on a vendor rate limit (HTTP 429) 8 times in
-a row with no job completed in between (`dialer_analysis_rate_limit_consecutive_pauses` > 7.5,
-while `dialer_analysis_rate_limit_pauses_total` rose in the last 25 minutes), about 45 minutes of
-refused probes. No call is being transcribed or analysed. Dialling is unaffected, and nothing is
+**Means:** the post-call analysis worker has paused 8 times in a row with no job completed in
+between (`dialer_analysis_rate_limit_consecutive_pauses` > 7.5, while
+`dialer_analysis_rate_limit_pauses_total` rose in the last 25 minutes), about 45 minutes of
+refused probes. A pause is any refusal the server treats as a rate limit: any vendor's HTTP 429,
+or Gemini's `RESOURCE_EXHAUSTED` at any status, which includes the 402 Gemini sends when the
+project's prepaid credits run out. No call is being transcribed or analysed. Dialling is unaffected, and nothing is
 lost: rate-limited jobs are requeued without using an attempt. The count lives in each analysis
 process and a restart sets it back to 0, so after a deploy the alert needs another ~45 minutes.
 
@@ -1467,15 +1469,21 @@ process and a restart sets it back to 0, so after a deploy the alert needs anoth
 - `stage`: which call was refused, `transcribe` (the recording) or `analyze` (the transcript).
   Each has its own key, even when both go to the same vendor.
 - `vendor` and `vendorReason`: the provider, and the vendor's own words.
+- `vendorStatus`: the HTTP status. A `402` from Gemini with `vendorCode` `RESOURCE_EXHAUSTED`,
+  no `quotaIds` and a `vendorReason` of "Your prepayment credits are depleted…" is a billing
+  stop: the key's project has run out of prepaid credits. No quota id will appear; do not look
+  for one.
 - `quotaIds` (Gemini): a `…PerDay…` id is a daily quota, which resets at midnight Pacific; a
   `…FreeTier` id is a key without billing.
 - `vendorCode`: `insufficient_quota` (OpenAI) is a billing stop; `RESOURCE_EXHAUSTED` (Gemini)
-  is any quota, so read `quotaIds`.
+  is any quota or a prepaid-credit stop, so read `vendorStatus` and `quotaIds`.
 - `refusingSince`: when this process's run of pauses began. It is per process and starts again at
   a restart, so a run that seems to begin at a boot may have begun before it.
 
-**Do:** for a quota or billing stop, raise the quota or enable billing on the key's project, or set
-another key and recreate the server:
+**Do:** for a prepaid-credit stop (the `402` above), top up the prepaid credits or fix billing in
+Google AI Studio for the key's project. For a quota or billing stop on a `429`, raise the quota or
+enable billing on the key's project. For either, you can instead set another key and recreate the
+server:
 
 | `stage` | Key, in the order the server reads them |
 |---|---|

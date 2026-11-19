@@ -546,9 +546,11 @@ locals {
     #
     # Analysis is reporting, not dialling: a refused vendor costs no call, so this warns
     # (Slack) and never pages. The worker's breaker (apps/server/src/core/
-    # vendor-rate-limit-breaker.ts) pauses claims after a vendor 429 for 30 s, doubling to a
-    # 15-minute cap, and probes one job after each pause; the gauge is its run of
-    # consecutive pauses with no job completed, 0 again as soon as one completes.
+    # vendor-rate-limit-breaker.ts) pauses claims after a vendor refusal the AI layer reads as
+    # a rate limit (any vendor's 429; Gemini's RESOURCE_EXHAUSTED at any status, so a 402
+    # "prepayment credits are depleted" too) for 30 s, doubling to a 15-minute cap, and probes
+    # one job after each pause; the gauge is its run of consecutive pauses with no job
+    # completed, 0 again as soon as one completes.
     "analysis" = [
       {
         uid  = "agy-analysis-vendor-refusing"
@@ -556,7 +558,9 @@ locals {
         # A short per-minute limit reads 1-3 and falls back to 0. The 8th consecutive pause
         # (PERSISTENT_RATE_LIMIT_PAUSES; validate-alerts.test.mjs pins threshold = it - 0.5)
         # comes ~45 minutes after the first (30 s + 1 + 2 + 4 + 8 + 15 + 15 min, ±20 %) with
-        # every probe refused: an exhausted quota or a billing stop, which waiting does not fix.
+        # every probe refused: an exhausted quota or a billing stop (a 429 with a PerDay/FreeTier
+        # quota id, OpenAI's insufficient_quota, or Gemini's 402 for depleted prepaid credits,
+        # which names no quota id), which waiting does not fix.
         # The worker logs that same opening at ERROR. The gauge holds its value between pauses,
         # so no window and no `for`. Each analysis process publishes its own and only zeroes it
         # when a job of its own completes, so a process the vendor's recovery never reached (the
@@ -570,7 +574,7 @@ locals {
         severity      = "warning"
         no_data_state = "OK"
         summary       = "The AI vendor has refused every call analysis for ~45 minutes"
-        description   = "dialer_analysis_rate_limit_consecutive_pauses reached 8 on {{ $labels.service_name }}: the analysis worker has paused 8 times in a row on a vendor rate limit (HTTP 429) and no job has completed for ~45 minutes, so no call is being transcribed or analysed. Dialling is unaffected, and nothing is lost: jobs are requeued without using an attempt and the backlog (dialer_analysis_queue_depth{status=\"queued\"}) drains once the vendor accepts again. Read the worker's ERROR 'AI vendor keeps refusing dialer analysis' (component=dialer-analysis-worker): stage says which call was refused (transcribe or analyze, each with its own key), vendor the provider, and vendorCode, quotaIds, vendorReason and vendorRetryAfterSeconds why. A PerDay or FreeTier quota id (Gemini) or insufficient_quota (OpenAI) is a quota or billing stop: raise the quota or enable billing on the key's project, or set another key and recreate the server (transcribe: DIALER_TRANSCRIBE_API_KEY, else GEMINI_API_KEY, or for Sarvam DIALER_TRANSCRIBE_SARVAM_API_KEY, else SARVAM_API_KEY; analyze: POST_CALL_ANALYSIS_API_KEY, else OPENAI_API_KEY or GEMINI_API_KEY by provider, POST_CALL_ANALYSIS_AZURE_API_KEY for Azure). A daily quota otherwise resets at the vendor's day boundary (midnight Pacific for Gemini). A PerMinute quota id refusing 8 single probes in a row is not traffic (one probe goes out per 12-18 minutes): the key's limit for that model is 0, or something else shares the project's quota. Each process logs INFO 'AI vendor accepted dialer analysis again' when a job of its own completes. Runbook: docs/operations.md, 'Alert runbooks', analysis."
+        description   = "dialer_analysis_rate_limit_consecutive_pauses reached 8 on {{ $labels.service_name }}: the analysis worker has paused 8 times in a row on a vendor refusal it treats as a rate limit (HTTP 429, or Gemini's RESOURCE_EXHAUSTED at any status, such as a 402 when prepaid credits run out) and no job has completed for ~45 minutes, so no call is being transcribed or analysed. Dialling is unaffected, and nothing is lost: jobs are requeued without using an attempt and the backlog (dialer_analysis_queue_depth{status=\"queued\"}) drains once the vendor accepts again. Read the worker's ERROR 'AI vendor keeps refusing dialer analysis' (component=dialer-analysis-worker): stage says which call was refused (transcribe or analyze, each with its own key), vendor the provider, and vendorStatus, vendorCode, quotaIds, vendorReason and vendorRetryAfterSeconds why. vendorStatus 402 with no quotaIds (Gemini, 'prepayment credits are depleted') is a billing stop: top up the prepaid credits or fix billing in Google AI Studio for the key's project. A PerDay or FreeTier quota id (Gemini) or insufficient_quota (OpenAI) is a quota or billing stop: raise the quota or enable billing on the key's project. For either, you can instead set another key and recreate the server (transcribe: DIALER_TRANSCRIBE_API_KEY, else GEMINI_API_KEY, or for Sarvam DIALER_TRANSCRIBE_SARVAM_API_KEY, else SARVAM_API_KEY; analyze: POST_CALL_ANALYSIS_API_KEY, else OPENAI_API_KEY or GEMINI_API_KEY by provider, POST_CALL_ANALYSIS_AZURE_API_KEY for Azure). A daily quota otherwise resets at the vendor's day boundary (midnight Pacific for Gemini). A PerMinute quota id refusing 8 single probes in a row is not traffic (one probe goes out per 12-18 minutes): the key's limit for that model is 0, or something else shares the project's quota. Each process logs INFO 'AI vendor accepted dialer analysis again' when a job of its own completes. Runbook: docs/operations.md, 'Alert runbooks', analysis."
       },
     ]
 
