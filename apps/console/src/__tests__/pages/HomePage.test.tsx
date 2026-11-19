@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { board, onBoard, stats } from '../helpers/home';
+import { ApiError } from '../../api/client';
 
 /**
  * Live floor (B28a, LF1; Home until the redesign, at Home's URL): the gate, the header and its
@@ -403,6 +404,36 @@ describe('the campaign cards', () => {
     fireEvent.click(within(await screen.findByTestId('home-campaign-c2')).getByRole('button', { name: 'Resume Card' }));
     await waitFor(() => expect(mocks.transitionAgencyCampaign).toHaveBeenCalledWith('c2', 'resume', 't-1', 'a-1'));
     expect(mocks.getAgencyCampaign).toHaveBeenCalledWith('c2', 't-1', 'a-1');
+  });
+
+  it('read the board again at once when Resume finds the campaign already running (resumed elsewhere)', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c2', { name: 'Card', status: 'paused' })]));
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'c2', status: 'running' });
+    renderHome();
+    const card = await screen.findByTestId('home-campaign-c2');
+    const reads = mocks.getAgencyHomeBoard.mock.calls.length;
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c2', { name: 'Card' })]));
+    fireEvent.click(within(card).getByRole('button', { name: 'Resume Card' }));
+    // The preflight returns quietly; the board is read at once, not on its next poll.
+    await waitFor(() => expect(mocks.getAgencyHomeBoard.mock.calls.length).toBeGreaterThan(reads));
+    expect(await within(card).findByRole('button', { name: 'Pause Card' })).toBeTruthy();
+    expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
+    expect(mocks.showErrorToast).not.toHaveBeenCalled();
+  });
+
+  it('read the board again at once when Pause meets a 409 because the campaign moved (paused elsewhere)', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4' })]));
+    mocks.transitionAgencyCampaign.mockRejectedValue(new ApiError(409, { code: 'invalid_transition', message: 'Campaign is paused.' }));
+    mocks.getAgencyCampaign.mockResolvedValue({ id: 'c1', status: 'paused' });
+    renderHome();
+    const card = await screen.findByTestId('home-campaign-c1');
+    const reads = mocks.getAgencyHomeBoard.mock.calls.length;
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { name: 'Q4', status: 'paused' })]));
+    fireEvent.click(within(card).getByRole('button', { name: 'Pause Q4' }));
+    await waitFor(() => expect(mocks.getAgencyHomeBoard.mock.calls.length).toBeGreaterThan(reads));
+    expect(await within(card).findByRole('button', { name: 'Resume Q4' })).toBeTruthy();
+    // Repaired, not refused: no toast on a button that has just changed.
+    expect(mocks.showErrorToast).not.toHaveBeenCalled();
   });
 
   it('offer neither while a campaign is stopping', async () => {

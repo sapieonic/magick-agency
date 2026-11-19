@@ -22,7 +22,8 @@ const whenShort = (iso: string) => formatTimeOrDate(iso, new Date());
  * gate for the lifecycle buttons (`canControl`), so the buttons need no other check. A card's
  * action is the header's own (`useCampaignLifecycle`: the click lock, the re-read before Resume,
  * the refusals and their toasts); Pause and Resume ask for no confirmation there, so none here.
- * The board is read again after a change. `willPay` is each promise-recording campaign's
+ * The board is read again after a change, and at once when the card's re-read of the campaign
+ * (before Resume, after a 409) finds a status other than the board's. `willPay` is each promise-recording campaign's
  * count from the promises summary (`willPayByCampaign`, B28b): its card says "71 will pay".
  */
 export const CampaignsPanel = memo(function CampaignsPanel({
@@ -71,14 +72,23 @@ function CampaignCard({ card, onChanged, willPay }: {
   // The status the board last said: the hook reads it at click time.
   const campaignRef = useRef<Pick<AgencyCampaign, 'status'>>({ status: campaign.status });
   campaignRef.current = { status: campaign.status };
+  /*
+    The hook re-reads the campaign before Resume and after a 409, and on either returns quietly
+    when the action is no longer offered. Here that read is also how the board learns it is behind
+    (the campaign moved in another tab): a status other than the board's reads the board again at
+    once, so the card's button is repaired now, not on the next poll up to 10 s later.
+  */
   const refreshCampaign = useCallback(async () => {
     if (!tenantId || !accountId) return null;
+    let latest: AgencyCampaign;
     try {
-      return await getAgencyCampaign(campaign.id, tenantId, accountId);
+      latest = await getAgencyCampaign(campaign.id, tenantId, accountId);
     } catch {
       return null;
     }
-  }, [campaign.id, tenantId, accountId]);
+    if (latest.status !== campaignRef.current.status) onChanged();
+    return latest;
+  }, [campaign.id, tenantId, accountId, onChanged]);
   const lifecycle = useCampaignLifecycle({
     id: campaign.id,
     tenantId: tenantId ?? null,
