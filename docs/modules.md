@@ -2674,7 +2674,7 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 |---|---|
 | `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls) | ~24 |
 | `apps/mobile/test/app/softphone_navigation_test.dart` (with floor assist's message seam plugged in) | ~29 |
-| `apps/mobile/test/app/supervisor_message_banner_test.dart` (LF36: the banner above every tab and over a call, never a dialog; the sender and time, "N more messages", Dismiss by id; each announced once, one queued at mount too; a live region, plain text, 48 dp; a 500-character message at 200% text) | 7 |
+| `apps/mobile/test/app/supervisor_message_banner_test.dart` (LF36: the banner above every tab and over a call, never a dialog; the sender and time, "N more messages", Dismiss by id; each announced once, one queued at mount too; no live region (nothing said twice, nor on a dismissal), plain text, 48 dp; a 500-character message at 200% text) | 7 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
 
@@ -2751,7 +2751,7 @@ Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/co
 | `apps/mobile/test/core/station/station_reducer_test.dart` (with the inbound phase) | ~32 |
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
 | `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound,floor_assist`, `floor_assist` alone while a ring must not be answered) | ~31 |
-| `apps/mobile/test/core/station/station_floor_assist_test.dart` (LF34–LF38: `FloorAssistState` pure, a request matched by `raised_at`, each cleared reason's notice, a null name's words, `ready`'s restatement, messages once per id, bounded; the refusals' words; through the controller from the server's frames and the help routes: the capability, raise, answer by a listen and by a message, cancel, expiry, a late frame for another request, `ready.help`, every refusal of the raise and the cancel, messages on the shell's seam for a campaign and a soft-phone session, forgotten on leave; a break's limit by its code, none on a reserved code) | 22 |
+| `apps/mobile/test/core/station/station_floor_assist_test.dart` (LF34–LF38: `FloorAssistState` pure, a request matched by `raised_at`, each cleared reason's notice, a null name's words, `ready`'s restatement, a raise in flight whose request ends before its reply, messages once per id, bounded; the refusals' words; through the controller from the server's frames and the help routes: the capability, raise, answer by a listen and by a message, cancel, expiry, a late frame for another request, a slow raise reply after the answer and `help_cleared` (with and without a reconnect's `ready` between), `ready.help`, every refusal of the raise and the cancel, messages on the shell's seam for a campaign and a soft-phone session, forgotten on leave; a break's limit by its code, none on a reserved code) | 25 |
 | `apps/mobile/test/core/station/station_away_ring_test.dart` (Mode B: `away_ring` asked and its 409 fallback, the parked socket and the away notification, the return, why ringing stopped, `resumeForRing` warm and cold, `reportBound` and `reportEnded`) | ~13 |
 
 ### `apps/mobile/lib/core/inbound/`
@@ -2966,7 +2966,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/preflight/preflight_screen_test.dart` | ~20 |
 | `apps/mobile/test/features/station/station_a11y_test.dart` | ~15 |
 | `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
-| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help behind the flag, offered on a call and in wrap-up only, asking, open with its ticking age and Cancel, cancelling, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break countdown, over in the warning tone, none without a limit or on a reserved code, 200% text) | 16 |
+| `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help behind the flag, offered on a call and in wrap-up only, asking, open with its ticking age and Cancel, only the status a live region (never the ticking age), Cancel's semantics (acts, then "Cancelling…" and disabled), cancelling, open between calls without a new raise, the answer's notice as a live region and its dismiss, a refusal apart from the action error, 48 dp and its hint, 200% text; the break countdown, left rounded up (never "0:00 left"), over in the warning tone, none without a limit or on a reserved code, 200% text) | 19 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (the waiting screen's "Dialling a customer…", the count line, ringing over "Nothing due now", paused unchanged, the live region only while dialling, 200% text) | 7 |
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: the "Monitoring and recording" button and sheet on the station header and both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 16 |
@@ -3028,7 +3028,7 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 | `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~10 |
 | `apps/mobile/packages/agency_wire/test/platform_test.dart` (with floor assist's flag key) | ~15 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
-| `apps/mobile/packages/agency_wire/test/session_test.dart` (with break limits) | ~20 |
+| `apps/mobile/packages/agency_wire/test/session_test.dart` (with break limits, an infinite one dropped) | ~20 |
 | `apps/mobile/packages/agency_wire/test/softphone_test.dart` | ~30 |
 | `apps/mobile/packages/agency_wire/test/station_test.dart` (with floor assist's frames, `ready.help`, the help answers and refusals, the capability) | 71 |
 | `apps/mobile/packages/agency_wire/test/station_device_test.dart` | 4 |

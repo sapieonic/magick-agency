@@ -1112,13 +1112,19 @@ the flag is on). Break limits are not behind it.
     answer, or `ready.help` after a reconnect or a relaunch, until the `help_cleared` that names that
     same instant, or the cancel's answer. A frame about another request never touches the one shown.
     A `ready` with no `help` clears the one shown, with nothing said (the frame that ended it was
-    missed).
+    missed). The frames can beat the raise's own reply: while it is in flight, `help_answered` is
+    kept and `help_cleared` leaves its notice at once, and a reply naming a request already ended
+    (its `help_cleared` or the cancel's answer) opens nothing, so a slow reply never re-opens it.
   - **How it ended** (LF35): `help_answered` says who and how; the `help_cleared {answered}` that
     follows ends it and leaves a notice: "Anitha N is listening to your call." or "Anitha N answered
     with a message.", "Your supervisor …" when the server sends no name, "A supervisor answered your
     request for help." when the `help_answered` was missed. `expired`: "No supervisor answered within
     15 minutes. Ask again if you still need help.", in the warning tone. `cancelled` (the agent's
     own) and `session_ended` say nothing. A notice stays until dismissed or the next raise.
+  - **Screen readers.** Only "Help requested" is a live region, said once as the request opens; the
+    ticking "asked 0:42 ago" is outside it (inside, it would be said every second over the
+    customer). Cancel is a button that acts, and while cancelling reads "Cancelling your request for
+    help", disabled.
   - **Refusals** (LF37), in the card, never the station's action error line: `403
     floor_assist_disabled` ("Need help is turned off for your workspace…"), `409 help_not_on_call`
     ("You can ask for help during a call, or while you finish one."), `409 session_ended`, a 404 or
@@ -1133,13 +1139,15 @@ the flag is on). Break limits are not behind it.
   clock. Several queue, oldest first: the banner shows one and "2 more messages"; Dismiss shows the
   next. Each id is shown once (a resent frame is ignored), at most 20 are held, and leaving the
   station forgets them. Each is announced to a screen reader once as it arrives ("Message from Anitha
-  N: …", polite), and the banner's text is a live region. A soft-phone session gets them too: the
-  core publishes them beside the shell's signals (`StationHost.messages`,
-  `supervisorMessagesProvider`), not in the campaign view.
+  N: …", polite), sender and text together. The banner is not a live region: one would say a
+  message twice as it arrives and again on a second message or a dismissal, where nothing new
+  arrived. A soft-phone session gets them too: the core publishes them beside the shell's signals
+  (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
 - **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
   `break_reasons`, found by the break's code as its label is), the break card counts down from the
-  `agent_state` frame's `since`: "4:30 left of your 15 min", then "Over your 15 min break by 2:05" in
-  the warning tone, on the card's one ticking clock. None on a reason with no limit, and never on a
+  `agent_state` frame's `since`: "4:30 left of your 15 min" (rounded up, as every countdown here, so
+  "0:00 left" never shows), then "Over your 15 min break by 2:05" in the warning tone, on the card's
+  one ticking clock. None on a reason with no limit, and never on a
   reserved code (the app's own pauses, the soft phone), whatever a catalog says
   (`StationViewMapper.breakLimitMinutes`). A limit edited mid-shift reaches the agent at their next
   join (the server's rule).

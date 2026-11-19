@@ -13,7 +13,9 @@ import 'station_copy.dart';
 /// the top of every tab, over a call too, never as a dialog: nothing waits on it. Plain text, with
 /// who sent it and when. Messages queue, oldest first: the banner shows one and says how many more
 /// are waiting; Dismiss shows the next. Each message is announced to a screen reader once, as it
-/// arrives (politely, after what is being read), and the banner's text is a live region.
+/// arrives (politely, after what is being read), sender and text together. The banner is not a live
+/// region: one would say a message twice as it arrives, and again whenever the banner changes (a
+/// second message queued, a dismissal), where nothing new arrived.
 class SupervisorMessageBanner extends ConsumerStatefulWidget {
   const SupervisorMessageBanner({super.key});
 
@@ -79,7 +81,6 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
               Expanded(
                 child: Semantics(
                   container: true,
-                  liveRegion: true,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

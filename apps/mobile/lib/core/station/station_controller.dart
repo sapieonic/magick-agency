@@ -924,11 +924,12 @@ class StationController extends Notifier<StationView?>
       case HelpAnsweredFrame():
         if (_s == null) break;
         _log.info('help answered', {'how': frame.howRaw});
-        _setAssist(_assist.onAnswered(frame));
+        // While a raise is in flight, about the request it is opening too (its answer can be late).
+        _setAssist(_assist.onAnswered(frame, raising: _helpBusy == HelpBusy.raising));
       case HelpClearedFrame():
         if (_s == null) break;
         _log.info('help cleared', {'reason': frame.reasonRaw});
-        _setAssist(_assist.onCleared(frame));
+        _setAssist(_assist.onCleared(frame, raising: _helpBusy == HelpBusy.raising));
       case UnknownFrame(:final eventRaw, :final reason):
         // Expected after a server deploy; never logged whole (it can hold contact data).
         _log.debug('unknown frame', {'event': eventRaw ?? '', 'reason': reason});

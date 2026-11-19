@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +15,7 @@ import 'shell_harness.dart';
 
 /// A supervisor's message (floor assist, LF5; the app's LF36): the shell shows it at the top of
 /// every tab and over a call, never as a dialog; several queue; Dismiss takes the one shown away;
-/// each is announced to a screen reader once.
+/// each is announced to a screen reader once, and nothing else is (no live region).
 
 class _Messages extends Notifier<List<SupervisorMessageView>> {
   @override
@@ -26,6 +27,21 @@ final _messages = NotifierProvider<_Messages, List<SupervisorMessageView>>(_Mess
 
 SupervisorMessageView msg(String id, {String text = 'Offer the 3-month plan, the waiver is approved.', String from = 'Anitha N'}) =>
     SupervisorMessageView(id: id, text: text, from: from, sentAt: DateTime(2026, 11, 19, 10, 5));
+
+/// The text of every live region on screen.
+List<String> liveRegions(WidgetTester tester) {
+  final out = <String>[];
+  void walk(SemanticsNode n) {
+    if (n.getSemanticsData().flagsCollection.isLiveRegion) out.add(n.label);
+    n.visitChildren((c) {
+      walk(c);
+      return true;
+    });
+  }
+
+  walk(tester.binding.renderViews.first.owner!.semanticsOwner!.rootSemanticsNode!);
+  return out;
+}
 
 void main() {
   late List<String> dismissed;
@@ -112,20 +128,27 @@ void main() {
     String said(Object? m) => ((m! as Map)['data'] as Map)['message'] as String;
 
     testWidgets('each message is announced once as it arrives, politely; a dismissal says nothing again', (tester) async {
+      // With semantics on, so a live region (which a screen reader re-reads whenever its text
+      // changes, beside the announcement) would be seen.
+      final semantics = tester.ensureSemantics();
       final announcements = await pumpBanner(tester);
       c.read(_messages.notifier).set([msg('m1')]);
       await tester.pump();
       await tester.pump();
       expect(announcements.map(said), ['Message from Anitha N: Offer the 3-month plan, the waiver is approved.']);
       expect(((announcements.single! as Map)['data'] as Map)['assertiveness'], isNot(1));
+      expect(liveRegions(tester), isEmpty, reason: 'the announcement says it; a live region would say it twice');
       c.read(_messages.notifier).set([msg('m1'), msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
       await tester.pump();
       await tester.pump();
       expect(announcements.map(said).last, 'Message from Ravi: Wrap up this call');
+      expect(liveRegions(tester), isEmpty, reason: '"1 more message" appearing is not a new message to read out');
       c.read(_messages.notifier).set([msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
       await tester.pump();
       await tester.pump();
       expect(announcements, hasLength(2));
+      expect(liveRegions(tester), isEmpty, reason: 'a dismissal says nothing (LF36)');
+      semantics.dispose();
     });
 
     testWidgets('a message already queued when it mounts is announced too', (tester) async {
@@ -135,12 +158,12 @@ void main() {
       expect(announcements.map(said), ['Message from Anitha N: Offer the 3-month plan, the waiver is approved.']);
     });
 
-    testWidgets('a live region, plain text, a labelled dismiss of 48 dp', (tester) async {
+    testWidgets('no live region, plain text, a labelled dismiss of 48 dp', (tester) async {
       final semantics = tester.ensureSemantics();
       c.read(_messages.notifier).set([msg('m1', text: '<b>Not bold</b> https://example.test')]);
       await pumpBanner(tester);
       expect(find.text('<b>Not bold</b> https://example.test'), findsOneWidget);
-      expect(tester.getSemantics(find.byKey(const Key('supervisor-message-from'))).flagsCollection.isLiveRegion, isTrue);
+      expect(liveRegions(tester), isEmpty);
       expect(find.byTooltip('Dismiss this message'), findsOneWidget);
       expect(tester.getSize(find.byKey(const Key('dismiss-supervisor-message'))).height, greaterThanOrEqualTo(48));
       semantics.dispose();

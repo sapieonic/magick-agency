@@ -312,19 +312,22 @@ class BreakLimitLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final left = since.add(Duration(minutes: limitMinutes)).difference(at);
-    final over = left.isNegative;
+    final limit = since.add(Duration(minutes: limitMinutes));
+    // Left rounds up, as every countdown here does ([secondsLeft]): "0:01 left" until the limit,
+    // then "Over … by 0:00", never "0:00 left" a second early.
+    final left = secondsLeft(limit, at);
+    final over = left == 0;
     final t = context.tokens;
     final style = monoStyle(context, size: 13);
     final line = over
         ? Text(
-            StationCopy.breakOver(formatClock(-left, padMinutes: false), limitMinutes),
+            StationCopy.breakOver(formatClock(at.difference(limit), padMinutes: false), limitMinutes),
             key: const Key('break-over'),
             textAlign: TextAlign.center,
             style: style.copyWith(color: t.warning, fontWeight: FontWeight.w600),
           )
         : Text(
-            StationCopy.breakLeft(formatClock(left, padMinutes: false), limitMinutes),
+            StationCopy.breakLeft(formatClock(Duration(seconds: left), padMinutes: false), limitMinutes),
             key: const Key('break-left'),
             textAlign: TextAlign.center,
             style: style.copyWith(color: t.textPrimary),

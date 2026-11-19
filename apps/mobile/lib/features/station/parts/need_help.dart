@@ -122,31 +122,37 @@ class _OpenRequest extends ConsumerWidget {
           Icon(Icons.support_agent, color: t.warning, size: 22),
           const SizedBox(width: Space.sm),
           Expanded(
-            child: Semantics(
-              container: true,
-              liveRegion: true,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(StationCopy.helpRequested, style: text.titleSmall!.copyWith(color: t.warning)),
-                  if (raisedAt != null)
-                    TickingBuilder(
-                      now: now,
-                      anchor: raisedAt,
-                      builder: (context, at) => Text(
-                        StationCopy.helpRequestedFor(formatClock(at.difference(raisedAt), padMinutes: false)),
-                        key: const Key('help-requested-for'),
-                        style: text.bodySmall!.copyWith(color: t.textPrimary),
-                      ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Only the status is a live region, said once as the request opens. The ticking
+                // "asked 0:42 ago" stays out of it: in one, a screen reader would repeat it every
+                // second over the customer for as long as the request is open.
+                Semantics(
+                  key: const Key('help-requested-status'),
+                  container: true,
+                  liveRegion: true,
+                  child: Text(StationCopy.helpRequested, style: text.titleSmall!.copyWith(color: t.warning)),
+                ),
+                if (raisedAt != null)
+                  TickingBuilder(
+                    now: now,
+                    anchor: raisedAt,
+                    builder: (context, at) => Text(
+                      StationCopy.helpRequestedFor(formatClock(at.difference(raisedAt), padMinutes: false)),
+                      key: const Key('help-requested-for'),
+                      style: text.bodySmall!.copyWith(color: t.textPrimary),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
           ),
           Semantics(
-            label: StationCopy.cancelHelpLabel,
             button: true,
+            enabled: onCancel != null,
+            label: cancelling ? StationCopy.cancellingHelpLabel : StationCopy.cancelHelpLabel,
             excludeSemantics: true,
+            onTap: onCancel,
             child: TextButton(
               key: const Key('cancel-help'),
               onPressed: onCancel,

@@ -389,6 +389,7 @@ abstract final class StationCopy {
   static const cancelHelp = 'Cancel';
   static const cancellingHelp = 'Cancelling…';
   static const cancelHelpLabel = 'Cancel your request for help';
+  static const cancellingHelpLabel = 'Cancelling your request for help';
   static const dismissHelp = 'Dismiss';
 
   // ── A supervisor's message (floor assist, LF5) ──

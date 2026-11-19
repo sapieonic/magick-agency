@@ -1,5 +1,6 @@
 import 'package:agency_wire/agency_wire.dart' show FeatureFlags;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
@@ -76,6 +77,42 @@ void main() {
       await tester.tap(find.byKey(const Key('cancel-help')));
       await tester.pump();
       expect(h.actions.count('cancelHelp'), 1);
+    });
+
+    testWidgets('a screen reader is told "Help requested" once: the ticking "asked … ago" is not in a live region', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final h = await pumpStation(tester, inWrapup(help: open), needHelp: true);
+      final before = liveRegions(tester);
+      expect(before, contains(StationCopy.helpRequested));
+      await h.advance(const Duration(seconds: 3));
+      expect(find.text('Your supervisors can see it · asked 0:45 ago'), findsOneWidget, reason: 'the clock did tick');
+      final after = liveRegions(tester);
+      expect(after, before, reason: 'a live region whose text changes is said again, every second');
+      expect(after.where((l) => l.contains('ago')), isEmpty);
+      semantics.dispose();
+    });
+
+    testWidgets('Cancel to a screen reader: a button that acts, then says it is cancelling and is disabled', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final h = await pumpStation(tester, inWrapup(help: open), needHelp: true);
+      expect(tester.getSemantics(find.byKey(const Key('cancel-help'))), matchesSemantics(
+        label: StationCopy.cancelHelpLabel,
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
+      ));
+      tester.semantics.tap(find.semantics.byLabel(StationCopy.cancelHelpLabel));
+      await tester.pump();
+      expect(h.actions.count('cancelHelp'), 1, reason: 'the screen reader\'s double tap reaches it');
+      await h.setView(inWrapup(help: HelpView(stage: HelpStage.cancelling, raisedAt: open.raisedAt)));
+      expect(tester.getSemantics(find.byKey(const Key('cancel-help'))), matchesSemantics(
+        label: StationCopy.cancellingHelpLabel,
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: false,
+      ));
+      semantics.dispose();
     });
 
     testWidgets('cancelling: Cancel says so and cannot be pressed again', (tester) async {
@@ -186,6 +223,18 @@ void main() {
       expect(find.byIcon(Icons.schedule), findsOneWidget);
     });
 
+    testWidgets('time left rounds up: a millisecond past a whole second still shows that second, and "0:00 left" never shows',
+        (tester) async {
+      await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 10, seconds: 30, milliseconds: 1))));
+      expect(find.text('4:30 left of your 15 min'), findsOneWidget);
+      await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 14, seconds: 59, milliseconds: 999))));
+      expect(find.text('0:01 left of your 15 min'), findsOneWidget);
+      // At the limit itself it is over, by nothing yet.
+      await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 15))));
+      expect(find.byKey(const Key('break-left')), findsNothing);
+      expect(find.text('Over your 15 min break by 0:00'), findsOneWidget);
+    });
+
     testWidgets('none on a break whose reason has no limit, nor on a reserved one', (tester) async {
       await pumpStation(tester, station(phase: AgentPhase.onBreak, onBreak: tea(ago: const Duration(minutes: 3), limit: null)));
       expect(find.byKey(const Key('break-left')), findsNothing);
@@ -206,6 +255,21 @@ void main() {
       expect(find.text('Over your 30 min break by 17:05'), findsOneWidget);
     });
   });
+}
+
+/// The text of every live region on screen.
+List<String> liveRegions(WidgetTester tester) {
+  final out = <String>[];
+  void walk(SemanticsNode n) {
+    if (n.getSemanticsData().flagsCollection.isLiveRegion) out.add(n.label);
+    n.visitChildren((c) {
+      walk(c);
+      return true;
+    });
+  }
+
+  walk(tester.binding.renderViews.first.owner!.semanticsOwner!.rootSemanticsNode!);
+  return out;
 }
 
 extension on HelpView {

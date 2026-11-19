@@ -15,11 +15,25 @@ import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorM
 /// follows ends the request and leaves a notice of the answer ("Anitha N is listening"). An
 /// expiry leaves a notice too; a cancel (the agent's own) and the session ending leave none.
 ///
+/// **A raise in flight.** The frames can beat the raise's answer: a supervisor may answer, and the
+/// request end, before the HTTP reply lands. While raising with nothing shown, `help_answered` is
+/// kept for its `raised_at` and `help_cleared` leaves its notice at once; the `raised_at` of the
+/// last `help_cleared` (or the cancel's answer) is remembered, and a raise's answer naming it is
+/// ignored, so a late reply never re-opens a request that already ended.
+///
 /// **Messages.** Each id is queued once (a resent frame never shows twice), oldest first, until
 /// the agent dismisses it. Bounded: past [maxQueued] the oldest is dropped.
 @immutable
 final class FloorAssistState {
-  const FloorAssistState({this.help, this.answer, this.notice, this.messages = const [], this.seen = const []});
+  const FloorAssistState({
+    this.help,
+    this.answer,
+    this.answerFor,
+    this.notice,
+    this.ended,
+    this.messages = const [],
+    this.seen = const [],
+  });
 
   static const empty = FloorAssistState();
 
@@ -35,8 +49,15 @@ final class FloorAssistState {
   /// How [help] was answered, from `help_answered`, until its `help_cleared`.
   final HelpAnswer? answer;
 
+  /// The `raised_at` [answer] is about: [help]'s, or the request a raise in flight is opening.
+  final DateTime? answerFor;
+
   /// Why the last request ended, when the agent should be told: answered or expired.
   final HelpNotice? notice;
+
+  /// The `raised_at` of the last request seen to end (`help_cleared`, the cancel's answer): a raise's
+  /// answer naming it arrived late and opens nothing.
+  final DateTime? ended;
 
   /// The messages to show, oldest first.
   final List<SupervisorMessageFrame> messages;
@@ -47,45 +68,73 @@ final class FloorAssistState {
   FloorAssistState _with({
     Object? help = _keep,
     Object? answer = _keep,
+    Object? answerFor = _keep,
     Object? notice = _keep,
+    Object? ended = _keep,
     List<SupervisorMessageFrame>? messages,
     List<String>? seen,
   }) => FloorAssistState(
     help: identical(help, _keep) ? this.help : help as SessionHelp?,
     answer: identical(answer, _keep) ? this.answer : answer as HelpAnswer?,
+    answerFor: identical(answerFor, _keep) ? this.answerFor : answerFor as DateTime?,
     notice: identical(notice, _keep) ? this.notice : notice as HelpNotice?,
+    ended: identical(ended, _keep) ? this.ended : ended as DateTime?,
     messages: messages ?? this.messages,
     seen: seen ?? this.seen,
   );
 
+  static bool _same(DateTime? a, DateTime b) => a != null && a.isAtSameMomentAs(b);
+
   bool _shows(DateTime raisedAt) => help != null && help!.raisedAt.isAtSameMomentAs(raisedAt);
+
+  /// A frame about the request a raise in flight is opening: nothing shown yet, and not one that
+  /// already ended.
+  bool _inFlight(DateTime raisedAt, bool raising) => raising && help == null && !_same(ended, raisedAt);
+
+  /// The answer held for [raisedAt], if any.
+  HelpAnswer? _answerOf(DateTime raisedAt) => _same(answerFor, raisedAt) ? answer : null;
 
   /// `ready`: the server's whole view of the request ([ReadyFrame.help]). None open clears the
   /// one shown, with no notice (the frame that ended it was missed; nothing says how).
   FloorAssistState onReady(SessionHelp? open) {
-    if (open == null) return help == null ? this : _with(help: null, answer: null);
+    if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null);
     if (_shows(open.raisedAt)) return help == open ? this : _with(help: open);
-    return _with(help: open, answer: null, notice: null);
+    final held = _answerOf(open.raisedAt);
+    return _with(help: open, answer: held, answerFor: held == null ? null : open.raisedAt, notice: null);
   }
 
-  /// The raise's answer: the request just raised, or the one already open.
-  FloorAssistState onRaised(SessionHelp open) =>
-      _shows(open.raisedAt) ? _with(help: open, notice: null) : _with(help: open, answer: null, notice: null);
+  /// The raise's answer: the request just raised, or the one already open. One that already ended
+  /// while the answer was on its way (its `help_cleared` came first) opens nothing; its notice stays.
+  FloorAssistState onRaised(SessionHelp open) {
+    if (_same(ended, open.raisedAt)) return this;
+    if (_shows(open.raisedAt)) return _with(help: open, notice: null);
+    final held = _answerOf(open.raisedAt);
+    return _with(help: open, answer: held, answerFor: held == null ? null : open.raisedAt, notice: null);
+  }
 
   /// The cancel's answer (`help: null`): nothing open, and nothing to tell.
-  FloorAssistState onCancelled() => help == null && answer == null ? this : _with(help: null, answer: null);
+  FloorAssistState onCancelled() {
+    final open = help;
+    if (open == null && answer == null) return this;
+    return _with(help: null, answer: null, answerFor: null, ended: open?.raisedAt ?? ended);
+  }
 
-  FloorAssistState onAnswered(HelpAnsweredFrame f) =>
-      _shows(f.raisedAt) ? _with(answer: HelpAnswer(byName: f.byName, how: f.how)) : this;
+  /// `help_answered`: about the request shown, or ([raising]) the one a raise in flight is opening.
+  FloorAssistState onAnswered(HelpAnsweredFrame f, {bool raising = false}) =>
+      _shows(f.raisedAt) || _inFlight(f.raisedAt, raising)
+          ? _with(answer: HelpAnswer(byName: f.byName, how: f.how), answerFor: f.raisedAt)
+          : this;
 
-  FloorAssistState onCleared(HelpClearedFrame f) {
-    if (!_shows(f.raisedAt)) return this;
+  /// `help_cleared`: ends the request shown, or ([raising]) the one a raise in flight is opening,
+  /// whose answer then opens nothing.
+  FloorAssistState onCleared(HelpClearedFrame f, {bool raising = false}) {
+    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raising)) return this;
     final notice = switch (f.reason) {
-      HelpClearedReason.answered => HelpNotice.answered(answer),
+      HelpClearedReason.answered => HelpNotice.answered(_answerOf(f.raisedAt)),
       HelpClearedReason.expired => const HelpNotice.expired(),
       HelpClearedReason.cancelled || HelpClearedReason.sessionEnded || HelpClearedReason.unknown => null,
     };
-    return _with(help: null, answer: null, notice: notice);
+    return _with(help: null, answer: null, answerFor: null, notice: notice, ended: f.raisedAt);
   }
 
   FloorAssistState onMessage(SupervisorMessageFrame f) {
@@ -139,12 +188,14 @@ final class FloorAssistState {
       other is FloorAssistState &&
       other.help == help &&
       other.answer == answer &&
+      other.answerFor == answerFor &&
       other.notice == notice &&
+      other.ended == ended &&
       _listEq(other.messages, messages) &&
       _listEq(other.seen, seen);
 
   @override
-  int get hashCode => Object.hash(help, answer, notice, Object.hashAll(messages), seen.length);
+  int get hashCode => Object.hash(help, answer, answerFor, notice, ended, Object.hashAll(messages), seen.length);
 
   static bool _listEq<T>(List<T> a, List<T> b) {
     if (a.length != b.length) return false;

@@ -337,8 +337,9 @@ final class BreakReason {
 
   /// The limit as the contract allows it (a whole number, 1 to 240), else none:
   /// a limit the station cannot count down is not worth losing the catalog over.
+  /// Finite first: `1e400` decodes as infinity, which `toInt` refuses.
   static int? _limit(Object? v) {
-    final n = v is int ? v : (v is double && v == v.roundToDouble() ? v.toInt() : null);
+    final n = v is int ? v : (v is double && v.isFinite && v == v.roundToDouble() ? v.toInt() : null);
     return n != null && n >= minLimitMinutes && n <= maxLimitMinutes ? n : null;
   }
 

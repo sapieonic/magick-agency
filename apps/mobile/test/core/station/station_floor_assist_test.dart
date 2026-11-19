@@ -98,10 +98,32 @@ void main() {
       expect(FloorAssistState.empty.onReady(null), same(FloorAssistState.empty));
     });
 
+    test('a raise in flight: its request answered and ended before the reply lands, the reply opens nothing', () {
+      var s = FloorAssistState.empty
+          .onAnswered(answeredFrame(raisedInstant, by: 'Anitha N'), raising: true)
+          .onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered), raising: true);
+      expect([s.help, s.notice?.text], [null, 'Anitha N is listening to your call.'], reason: 'told at once');
+      s = s.onRaised(open);
+      expect([s.help, s.notice?.text], [null, 'Anitha N is listening to your call.']);
+      // Answered only: the reply opens it with the answer kept, and the help_cleared that follows names who.
+      final answeredFirst = FloorAssistState.empty.onAnswered(answeredFrame(raisedInstant, by: 'Ravi'), raising: true).onRaised(open);
+      expect(answeredFirst.help, open);
+      expect(answeredFirst.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)).notice?.text,
+          'Ravi is listening to your call.');
+      // Not raising, nothing shown: still ignored.
+      expect(FloorAssistState.empty.onAnswered(answeredFrame(raisedInstant)), same(FloorAssistState.empty));
+      // A request that ended (help_cleared, or the cancel's answer) is never re-opened by a late reply,
+      // and a repeat of its frames while raising again says nothing new.
+      final cancelled = FloorAssistState.empty.onRaised(open).onCancelled();
+      expect(cancelled.onRaised(open).help, isNull);
+      expect(cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired), raising: true), same(cancelled));
+    });
+
     test('raising again puts the last notice away; the cancel clears the request and says nothing', () {
       final ended = FloorAssistState.empty.onRaised(open).onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired));
       expect(ended.notice, isNotNull);
-      expect(ended.onRaised(open).notice, isNull);
+      // A new request (its own raised_at; the one that ended is never opened again).
+      expect(ended.onRaised(SessionHelp(raisedAt: raisedInstant.add(const Duration(minutes: 20)))).notice, isNull);
       final c = FloorAssistState.empty.onRaised(open).onCancelled();
       expect([c.help, c.notice], [null, null]);
       expect(ended.dismissNotice().notice, isNull);
@@ -254,6 +276,48 @@ void main() {
             [HelpStage.none, FloorAssistCopy.expired, HelpNoticeTone.warning]);
         app.controller.dismissHelpNotice();
         expect(app.view!.help, const HelpView());
+        app.dispose();
+      });
+    });
+
+    test('a slow raise reply: the answer and help_cleared arrive first; the reply re-opens nothing and the notice stays', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          return json(200, helpBody());
+        };
+        app.onCall('a1');
+        final pending = app.controller.raiseHelp();
+        async.flushMicrotasks();
+        expect(app.view!.help.stage, HelpStage.raising);
+        app.frame(answered());
+        app.frame(cleared());
+        expect(app.view!.help.notice, 'Anitha N is listening to your call.');
+        async.elapse(const Duration(seconds: 2));
+        app.run(pending);
+        expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.none, 'Anitha N is listening to your call.']);
+        app.dispose();
+      });
+    });
+
+    test('a slow raise reply after a reconnect\'s ready opened, then ended, the request: the notice is kept', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          return json(200, helpBody());
+        };
+        app.onCall('a1');
+        final pending = app.controller.raiseHelp();
+        async.flushMicrotasks();
+        app.readyFrame('on_call', extra: {'help': {'raised_at': raisedAt, 'call_id': 'call-1'}});
+        app.frame(answered(how: 'message'));
+        app.frame(cleared());
+        expect(app.view!.help.notice, 'Anitha N answered with a message.');
+        async.elapse(const Duration(seconds: 2));
+        app.run(pending);
+        expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.none, 'Anitha N answered with a message.']);
         app.dispose();
       });
     });
