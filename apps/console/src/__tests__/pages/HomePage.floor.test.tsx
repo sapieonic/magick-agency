@@ -377,6 +377,32 @@ describe('breaks over the limit', () => {
     }
   });
 
+  it('cross the limit on the card and in Needs you now together: one ranking on one clock', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // Six seconds short of the 30-minute limit. Each read says it is now (`as_of`).
+      const since = minutesAgo(29.9);
+      mocks.getAgencyFloor.mockImplementation(async () => floorOf([
+        floorRow('priya', { agent_name: 'Priya M', state: 'break', break_label: 'Tea', state_since: since }),
+      ]));
+      renderHome();
+      await screen.findByTestId('home-agent-priya');
+      const card = () => screen.queryByTestId('home-agent-risk-priya') !== null;
+      const row = () => screen.queryByTestId('home-attention-break-overrun:priya') !== null;
+      expect(card()).toBe(false);
+      expect(row()).toBe(false);
+      for (let step = 0; step < 6; step += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        expect(row()).toBe(card());
+      }
+      expect(card()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('say they were not refreshed while the floor cannot be read', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
