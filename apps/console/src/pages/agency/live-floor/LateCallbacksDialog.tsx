@@ -17,6 +17,7 @@ import { ASSIGNMENT_REFUSAL_COPY, assignmentRefusal } from '../../../utils/agenc
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
+  lateCallbacksReceivers,
   lateCallbacksResultText,
 } from '../../../utils/agency/lateCallbacks';
 import { formatCount, plural } from '../../../utils/format/number';
@@ -36,7 +37,7 @@ type Step =
  * Give late callbacks to free agents (LF7, LF21, LF30): the late-callbacks row's action, on the
  * assignment routes like every operation. Opening it previews (`{ kind:
  * 'late_callbacks_to_live_agents' }`) and asks "Give 4 late callbacks to 2 free agents?", naming
- * the receivers; Give commits with the preview's token; the result says what moved.
+ * the receivers (the preview's `per_agent` lines receiving any, not every free agent); Give commits with the preview's token; the result says what moved.
  *
  * - **The roster moved** (`409 preview_stale`, a second press included): the fresh preview replaces
  *   the one on screen, said so, and the supervisor confirms again; nothing is moved they did not see.
@@ -102,7 +103,8 @@ export function LateCallbacksDialog({
 
   const busy = step.kind === 'previewing' || step.kind === 'committing';
   const shown = step.kind === 'preview' || step.kind === 'committing' ? step : null;
-  const receivers = shown ? shown.preview.live_agent_user_ids.map(agentName) : [];
+  // The agents the plan gives callbacks to, not every free agent (`lateCallbacksReceivers`).
+  const receivers = shown ? lateCallbacksReceivers(shown.preview).map(agentName) : [];
   const canGive = step.kind === 'preview' && step.preview.moving > 0;
 
   return (
@@ -149,7 +151,7 @@ export function LateCallbacksDialog({
             <p className={styles.handOffQuestion} data-testid="handoff-question">{lateCallbacksQuestion(shown.preview)}</p>
             {receivers.length > 0 && (
               <p className={styles.quiet} data-testid="handoff-receivers">
-                {`They go to the agents on this campaign who are free now, fewest callbacks first: ${receivers.join(', ')}.`}
+                {`They go to the free agents with the fewest callbacks due: ${receivers.join(', ')}.`}
               </p>
             )}
             {shown.preview.skipped_live > 0 && (

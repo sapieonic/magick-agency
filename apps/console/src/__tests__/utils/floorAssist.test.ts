@@ -17,6 +17,7 @@ import { playHelpChime, setHelpChimeContextFactoryForTests, unlockHelpChime, typ
 import {
   LATE_CALLBACKS_POOL_COPY,
   lateCallbacksQuestion,
+  lateCallbacksReceivers,
   lateCallbacksResultText,
   offersHandOff,
 } from '../../utils/agency/lateCallbacks';
@@ -221,16 +222,35 @@ describe('give late callbacks to free agents (LF7, LF30)', () => {
   it('asks with the counts, names the receivers, and says why nothing would move', () => {
     const names: Record<string, string> = { a: 'Arjun T', d: 'Divya S' };
     const name = (id: string) => names[id] ?? id;
-    expect(lateCallbacksQuestion({ moving: 4, live_agent_user_ids: ['a', 'd'] })).toBe('Give 4 late callbacks to 2 free agents?');
-    expect(lateCallbacksQuestion({ moving: 1, live_agent_user_ids: ['a'] })).toBe('Give 1 late callback to 1 free agent?');
-    expect(lateCallbacksQuestion({ moving: 0, live_agent_user_ids: [] })).toMatch(/^No agent is free/);
-    expect(lateCallbacksQuestion({ moving: 0, live_agent_user_ids: ['a'] })).toMatch(/^No late callback is waiting/);
+    const even = {
+      moving: 4,
+      per_agent: [{ agent_user_id: 'a', receiving: 2, giving: 0 }, { agent_user_id: 'd', receiving: 2, giving: 0 }, { agent_user_id: 'n', receiving: 0, giving: 4 }],
+      live_agent_user_ids: ['a', 'd'],
+    };
+    expect(lateCallbacksQuestion(even)).toBe('Give 4 late callbacks to 2 free agents?');
+    expect(lateCallbacksReceivers(even)).toEqual(['a', 'd']);
+    expect(lateCallbacksQuestion({ moving: 1, per_agent: [{ agent_user_id: 'a', receiving: 1, giving: 0 }], live_agent_user_ids: ['a'] }))
+      .toBe('Give 1 late callback to 1 free agent?');
+    expect(lateCallbacksQuestion({ moving: 0, per_agent: [], live_agent_user_ids: [] })).toMatch(/^No agent is free/);
+    expect(lateCallbacksQuestion({ moving: 0, per_agent: [], live_agent_user_ids: ['a'] })).toMatch(/^No late callback is waiting/);
     expect(lateCallbacksResultText({
       moved: 4,
       per_agent: [{ agent_user_id: 'a', receiving: 2, giving: 0 }, { agent_user_id: 'n', receiving: 0, giving: 4 }, { agent_user_id: 'd', receiving: 2, giving: 0 }],
     }, name)).toBe('Gave 4 late callbacks: Arjun T 2, Divya S 2.');
     expect(lateCallbacksResultText({ moved: 0, per_agent: [] }, name)).toMatch(/^Nothing moved/);
     expect(LATE_CALLBACKS_POOL_COPY).toMatch(/shares one queue/);
+  });
+
+  it('counts the agents the plan gives callbacks to, not every free agent (one callback, three free)', () => {
+    // The dealing evens out the receivers' due callbacks: one late callback goes to the agent with
+    // the fewest due, and the other two free agents get nothing, so they are not in the question.
+    const one = {
+      moving: 1,
+      per_agent: [{ agent_user_id: 'd', receiving: 1, giving: 0 }, { agent_user_id: 'n', receiving: 0, giving: 1 }],
+      live_agent_user_ids: ['d', 'a', 'p'],
+    };
+    expect(lateCallbacksQuestion(one)).toBe('Give 1 late callback to 1 free agent?');
+    expect(lateCallbacksReceivers(one)).toEqual(['d']);
   });
 });
 

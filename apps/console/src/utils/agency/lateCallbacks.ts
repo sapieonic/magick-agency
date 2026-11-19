@@ -22,15 +22,26 @@ export const LATE_CALLBACKS_POOL_COPY =
   'This campaign shares one queue, so no agent owns its callbacks and there are none to give.';
 
 /**
- * The preview as one question: "Give 4 late callbacks to 2 free agents?", or why nothing would
- * move: nobody free on the campaign, or no late callback waiting on an agent who is away (the
- * board's count reads a 15-minute absence, the hand-off presence, LF21, so they can differ).
+ * Who the preview's plan gives callbacks to: its `per_agent` lines with `receiving` above 0, in the
+ * preview's order (fewest due first). Not `live_agent_user_ids`: that is every free agent, and the
+ * dealing evens out the receivers' due callbacks, so one late callback and three free agents goes to
+ * the one with the fewest due only (LF21).
  */
-export function lateCallbacksQuestion(preview: Pick<AgencyLateCallbacksPreview, 'moving' | 'live_agent_user_ids'>): string {
-  const free = preview.live_agent_user_ids.length;
-  if (free === 0) return 'No agent is free on this campaign right now, so there is nobody to give the late callbacks to.';
-  if (preview.moving === 0) return 'No late callback is waiting on an agent who is away right now. Nothing would move.';
-  return `Give ${plural(preview.moving, 'late callback')} to ${plural(free, 'free agent')}?`;
+export function lateCallbacksReceivers(preview: Pick<AgencyLateCallbacksPreview, 'per_agent'>): string[] {
+  return preview.per_agent.filter((line) => line.receiving > 0).map((line) => line.agent_user_id);
+}
+
+/**
+ * The preview as one question: "Give 4 late callbacks to 2 free agents?" (the agents the plan gives
+ * callbacks to, {@link lateCallbacksReceivers}), or why nothing would move: nobody free on the
+ * campaign, or no late callback waiting on an agent who is away (the board's count reads a 15-minute
+ * absence, the hand-off presence, LF21, so they can differ).
+ */
+export function lateCallbacksQuestion(preview: Pick<AgencyLateCallbacksPreview, 'moving' | 'per_agent' | 'live_agent_user_ids'>): string {
+  if (preview.live_agent_user_ids.length === 0) return 'No agent is free on this campaign right now, so there is nobody to give the late callbacks to.';
+  const receivers = lateCallbacksReceivers(preview).length;
+  if (preview.moving === 0 || receivers === 0) return 'No late callback is waiting on an agent who is away right now. Nothing would move.';
+  return `Give ${plural(preview.moving, 'late callback')} to ${plural(receivers, 'free agent')}?`;
 }
 
 /** What a committed hand-off did: "Gave 4 late callbacks: Arjun T 2, Divya S 2." */

@@ -460,7 +460,7 @@ describe('Give late callbacks to free agents (LF7, LF30)', () => {
     expect(mocks.previewLateCallbacks).toHaveBeenCalledWith('c1', { kind: 'late_callbacks_to_live_agents' }, 't-1', 'a-1');
     const dialog = screen.getByRole('dialog', { name: 'Give late callbacks to free agents' });
     expect((await within(dialog).findByTestId('handoff-question')).textContent).toBe('Give 4 late callbacks to 2 free agents?');
-    expect(within(dialog).getByTestId('handoff-receivers').textContent).toContain('Divya S, Arjun T');
+    expect(within(dialog).getByTestId('handoff-receivers').textContent).toBe('They go to the free agents with the fewest callbacks due: Divya S, Arjun T.');
     const boardReads = mocks.getAgencyHomeBoard.mock.calls.length;
     fireEvent.click(within(dialog).getByRole('button', { name: 'Give to 2 agents' }));
     await waitFor(() => expect(mocks.commitLateCallbacks).toHaveBeenCalledWith(
@@ -497,7 +497,12 @@ describe('Give late callbacks to free agents (LF7, LF30)', () => {
     mocks.commitLateCallbacks
       .mockRejectedValueOnce(new ApiError(409, {
         error: 'Conflict', code: 'preview_stale', message: 'x',
-        preview: PREVIEW({ preview_token: 'tok-2', moving: 3, live_agent_user_ids: ['divya'] }),
+        preview: PREVIEW({
+          preview_token: 'tok-2',
+          moving: 3,
+          per_agent: [{ agent_user_id: 'divya', receiving: 3, giving: 0 }, { agent_user_id: 'naveen', receiving: 0, giving: 3 }],
+          live_agent_user_ids: ['divya'],
+        }),
       }))
       .mockResolvedValueOnce({ kind: 'late_callbacks_to_live_agents', batch_id: 'b2', moved: 3, skipped_live: 0, unchanged: 0, to_pool: 0, per_agent: [{ agent_user_id: 'divya', receiving: 3, giving: 0 }] });
     renderHome();
@@ -515,6 +520,23 @@ describe('Give late callbacks to free agents (LF7, LF30)', () => {
       'c1', { operation: { kind: 'late_callbacks_to_live_agents' }, preview_token: 'tok-2' }, 't-1', 'a-1',
     ));
     expect((await within(dialog).findByTestId('handoff-result')).textContent).toBe('Gave 3 late callbacks: Divya S 3.');
+  });
+
+  it('asks about and names only the agents the plan gives callbacks to, not every free agent', async () => {
+    // One late callback and three free agents: the dealing gives it to the one with the fewest due.
+    mocks.getAgencyFloor.mockImplementation(async () => floorOf([ARJUN(), DIVYA(), PRIYA()]));
+    mocks.previewLateCallbacks.mockResolvedValue(PREVIEW({
+      matched: 1,
+      moving: 1,
+      per_agent: [{ agent_user_id: 'divya', receiving: 1, giving: 0 }, { agent_user_id: 'naveen', receiving: 0, giving: 1 }],
+      live_agent_user_ids: ['divya', 'arjun', 'priya'],
+    }));
+    renderHome();
+    fireEvent.click(await giveButton(await lateRow()));
+    const dialog = screen.getByRole('dialog');
+    expect((await within(dialog).findByTestId('handoff-question')).textContent).toBe('Give 1 late callback to 1 free agent?');
+    expect(within(dialog).getByTestId('handoff-receivers').textContent).toBe('They go to the free agents with the fewest callbacks due: Divya S.');
+    expect(within(dialog).getByTestId('handoff-give').textContent).toBe('Give to 1 agent');
   });
 
   it('says so when nobody is free, and offers no Give', async () => {
