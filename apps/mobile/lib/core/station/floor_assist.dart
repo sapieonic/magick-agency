@@ -1,7 +1,9 @@
 import 'package:agency_wire/agency_wire.dart';
+import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 
 import '../api/api_error.dart';
+import 'station_api.dart' show errorBodyOf;
 import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorMessageView;
 
 /// Floor assist on the station (the Live floor's Phase 3; decisions LF4, LF5, LF13–LF16, and the
@@ -99,8 +101,7 @@ final class FloorAssistState {
   FloorAssistState onReady(SessionHelp? open) {
     if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null);
     if (_shows(open.raisedAt)) return help == open ? this : _with(help: open);
-    final held = _answerOf(open.raisedAt);
-    return _with(help: open, answer: held, answerFor: held == null ? null : open.raisedAt, notice: null);
+    return _open(open);
   }
 
   /// The raise's answer: the request just raised, or the one already open. One that already ended
@@ -108,6 +109,11 @@ final class FloorAssistState {
   FloorAssistState onRaised(SessionHelp open) {
     if (_same(ended, open.raisedAt)) return this;
     if (_shows(open.raisedAt)) return _with(help: open, notice: null);
+    return _open(open);
+  }
+
+  /// [open] on screen in place of whatever was, with the answer held for it (a raise in flight's).
+  FloorAssistState _open(SessionHelp open) {
     final held = _answerOf(open.raisedAt);
     return _with(help: open, answer: held, answerFor: held == null ? null : open.raisedAt, notice: null);
   }
@@ -191,19 +197,11 @@ final class FloorAssistState {
       other.answerFor == answerFor &&
       other.notice == notice &&
       other.ended == ended &&
-      _listEq(other.messages, messages) &&
-      _listEq(other.seen, seen);
+      const ListEquality<SupervisorMessageFrame>().equals(other.messages, messages) &&
+      const ListEquality<String>().equals(other.seen, seen);
 
   @override
   int get hashCode => Object.hash(help, answer, answerFor, notice, ended, Object.hashAll(messages), seen.length);
-
-  static bool _listEq<T>(List<T> a, List<T> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
 }
 
 const _keep = Object();
@@ -275,7 +273,7 @@ abstract final class FloorAssistCopy {
     if (error is ApiNetworkError) return raising ? raiseOffline : cancelOffline;
     if (error is ApiUnauthorized) return error.userMessage;
     if (error is ApiHttpError) {
-      final body = ErrorBody.fromJson(error.body);
+      final body = errorBodyOf(error)!;
       switch (body.floorAssistCode) {
         case FloorAssistErrorCode.floorAssistDisabled:
           return disabled;
