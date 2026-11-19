@@ -162,13 +162,17 @@ describe('each request ends exactly once', () => {
    * Every transition on one session at once, the sweep (twice) and the session's own expiry among
    * them, over requests on BOTH sides of the expiry: `due` ones backdated a minute past it, `fresh`
    * ones a minute short of it, so which side each request is on never depends on how long a round
-   * trip takes. Answers, per session, which calls won.
+   * trip takes. The sweeps are issued first or last (`sweepFirst`), so each order of arrival at
+   * Postgres is exercised. Answers, per session, which calls won.
    */
-  async function raceAll(sessions: Array<{ s: Session; due: boolean }>) {
+  async function raceAll(sessions: Array<{ s: Session; due: boolean }>, sweepFirst: boolean) {
     for (const { s, due } of sessions) {
       await raise(s);
       await backdate(s, due ? EXPIRY + 60_000 : EXPIRY - 60_000);
     }
+    const sweeps = sweepFirst
+      ? [repo.expireDue(EXPIRY, { sweep: true }), repo.expireDue(EXPIRY, { sweep: true })]
+      : [];
     const perSession = sessions.map(({ s }) => [
       repo.answer(s.id, T, randomUUID(), EXPIRY).then((r) => (r ? 'answer' : null)),
       repo.cancel(s.id, T, EXPIRY).then((r) => (r ? 'cancel' : null)),
@@ -176,12 +180,9 @@ describe('each request ends exactly once', () => {
       repo.answer(s.id, T, randomUUID(), EXPIRY).then((r) => (r ? 'answer' : null)),
       repo.expireDue(EXPIRY, { sessionId: s.id }).then((r) => r.map((x) => x.session_id)),
     ] as const);
-    const [flat, sweepA, sweepB] = await Promise.all([
-      Promise.all(perSession.flatMap((calls) => calls)),
-      repo.expireDue(EXPIRY, { sweep: true }),
-      repo.expireDue(EXPIRY, { sweep: true }),
-    ]);
-    const expiredBy = [...sweepA, ...sweepB].map((r) => r.session_id);
+    if (!sweepFirst) sweeps.push(repo.expireDue(EXPIRY, { sweep: true }), repo.expireDue(EXPIRY, { sweep: true }));
+    const [flat, sweptLists] = await Promise.all([Promise.all(perSession.flatMap((calls) => calls)), Promise.all(sweeps)]);
+    const expiredBy = sweptLists.flat().map((r) => r.session_id);
     return sessions.map(({ s }, i) => {
       const results = flat.slice(i * 5, i * 5 + 5);
       const transitions = results.slice(0, 4).filter((r): r is 'answer' | 'cancel' | 'end' => typeof r === 'string');
@@ -192,12 +193,12 @@ describe('each request ends exactly once', () => {
   }
 
   it('answer, cancel, end with the session, its own expiry and two sweeps racing: exactly one wins every request; a due one only by an expiry, a fresh one never by one', async () => {
-    // FALSIFIED: with `fresh()` dropped from the answer's WHERE, a due request is answered as well
-    // as expired (two winners); with `SKIP LOCKED` and the OPEN recheck taken out of the sweep's
-    // pick, a fresh request answered mid-sweep is also expired.
+    // FALSIFIED: with `fresh()` dropped from the answer's WHERE, a due request is answered instead
+    // of expired; with the expiry dropped from the sweep's pick, a fresh request is swept in the
+    // rounds whose sweeps reach Postgres first. Both red.
     for (let round = 0; round < 6; round++) {
       const sessions = await Promise.all([true, false, true, false].map(async (due) => ({ s: await session(), due })));
-      const outcome = await raceAll(sessions);
+      const outcome = await raceAll(sessions, round % 2 === 0);
       sessions.forEach(({ due }, i) => {
         const { transitions, expired } = outcome[i]!;
         const label = `round ${round}, session ${i} (${due ? 'due' : 'fresh'}): ${JSON.stringify(outcome[i])}`;
@@ -213,7 +214,7 @@ describe('each request ends exactly once', () => {
   it('the sweep and an answer racing: past the expiry the sweep takes it, short of it the answer does, never both; at the edge itself, at most one', async () => {
     // Both sides deterministically (a minute either side of the expiry, so no round trip moves a
     // request across it), several sessions at once per round; then the edge itself, where either
-    // may win but never both.
+    // may win but never both. FALSIFIED as the test above: each mutation reds this one too.
     for (let round = 0; round < 4; round++) {
       const sides = [true, false, true, false, true, false];
       const sessions = await Promise.all(sides.map(() => session()));
@@ -221,10 +222,10 @@ describe('each request ends exactly once', () => {
         await raise(s);
         await backdate(s, sides[i] ? EXPIRY + 60_000 : EXPIRY - 60_000);
       }
-      const [answers, swept] = await Promise.all([
-        Promise.all(sessions.map((s) => repo.answer(s.id, T, randomUUID(), EXPIRY))),
-        repo.expireDue(EXPIRY, { sweep: true }),
-      ]);
+      // The sweep issued first in half the rounds, last in the others.
+      const sweep = round % 2 === 0 ? repo.expireDue(EXPIRY, { sweep: true }) : null;
+      const answering = Promise.all(sessions.map((s) => repo.answer(s.id, T, randomUUID(), EXPIRY)));
+      const [answers, swept] = await Promise.all([answering, sweep ?? repo.expireDue(EXPIRY, { sweep: true })]);
       const sweptIds = new Set(swept.map((r) => r.session_id));
       sessions.forEach((s, i) => {
         const label = `round ${round}, session ${i} (${sides[i] ? 'past' : 'short'})`;
