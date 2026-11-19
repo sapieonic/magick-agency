@@ -384,7 +384,44 @@ describe('concurrency', () => {
       expect(pooled).toHaveLength(swept);
       expect(handed).toHaveLength(handOff.ok ? handOff.result.moved : 0);
       for (const e of handed) expect(e.to_user_id).toBe(receiver);
-      expect(handed.length + pooled.length, `round ${round}`).toBe(40);
+      // Not necessarily all 40 between them: when the two meet mid-way the sweep takes the
+      // callbacks the hand-off had not locked yet and the hand-off is stale (the test below pins
+      // that order); the rest stay with their away owner, and the next sweep pass takes them.
+      // Nothing is lost: after one more pass every callback has moved, once.
+      const leftover = handed.length + pooled.length < 40;
+      if (leftover) expect(handOff.ok, `round ${round}`).toBe(false);
+      const next = await sweepCallbackFallback(campaign as never);
+      expect(handed.length + pooled.length + next, `round ${round}`).toBe(40);
+      expect(new Set((await events()).map((e) => e.contact_id)).size, `round ${round}`).toBe(40);
     }
+  });
+
+  it('the two meeting mid-way: the sweep takes what the hand-off has not locked yet, the hand-off is stale, the next pass takes the rest', async () => {
+    // The order the race above can land in, held still: the hand-off's commit locks its callbacks
+    // one by one (by id); a sweep arriving part way skips the locked ones (SKIP LOCKED) and pools
+    // the rest; the hand-off then finds its plan changed and moves nothing. No callback moves twice.
+    const away = randomUUID();
+    const late = [];
+    for (let m = 1; m <= 6; m += 1) late.push(await callback(away, m));
+    await liveAgent();
+    const p = await preview();
+    const lockedIds = late.slice(0, 3).map((c) => c.id);
+    const holder = await getTestPool().connect();
+    try {
+      // What the hand-off's lock statement holds part way through.
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM agency_contacts WHERE id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE', [lockedIds]);
+      expect(await sweepCallbackFallback(campaign as never)).toBe(3);
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+    const done = await commit(p.preview_token);
+    expect(done.ok).toBe(false);
+    for (const c of late) expect(await ownerOf(c.id)).toBe(lockedIds.includes(c.id) ? away : null);
+    expect(await sweepCallbackFallback(campaign as never)).toBe(3);
+    const history = await events();
+    expect(history.map((e) => e.reason)).toEqual(Array(6).fill('callback_fallback'));
+    expect(new Set(history.map((e) => e.contact_id)).size).toBe(6);
   });
 });
