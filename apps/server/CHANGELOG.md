@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.29.0](https://github.com/sapieonic/magick-agency/compare/server-v0.28.0...server-v0.29.0) (2026-11-19)
+
+
+### Features
+
+* **console,server,mobile:** the Live floor's Phase 3 ([#102](https://github.com/sapieonic/magick-agency/issues/102)) ([8ef92ac](https://github.com/sapieonic/magick-agency/commit/8ef92acfc0262adaa4a6c2af0771ef327eea824c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.26.0
+    * @magick-agency/db bumped to 0.24.0
+    * @magick-agency/domain bumped to 0.13.0
+    * @magick-agency/observability bumped to 0.16.0
+  * devDependencies
+    * @magick-agency/report-renderer bumped to 0.4.3
+
 ## [0.28.0](https://github.com/sapieonic/magick-agency/compare/server-v0.27.0...server-v0.28.0) (2026-11-19)
 
 
