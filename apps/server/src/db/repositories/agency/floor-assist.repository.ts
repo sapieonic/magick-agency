@@ -123,6 +123,12 @@ const END_WITH_SESSION_SQL = clearSql(`id = $2::uuid AND ${OPEN}`);
 /**
  * A supervisor (`$3`) answers the open request of session `$1` (tenant `$2`): it stays raised, now
  * answered; or, past the expiry (`$4` ms), it is expired instead, cleared as {@link clearSql} clears.
+ *
+ * Answered at `GREATEST(now(), help_raised_at)`, never `now()` alone: `now()` is the answering
+ * transaction's start, and an answer that waited on the row lock re-reads the row as the holder left
+ * it. When that holder was a raise begun later (the agent raising again over a request past the
+ * expiry, unswept), the answer finds a fresh open request raised after its own `now()`; it answers
+ * that one, at the moment it was raised, never before it (`ck_agency_agent_sessions_help`).
  */
 const ANSWER_SQL = `
   WITH prior AS MATERIALIZED (
@@ -132,7 +138,7 @@ const ANSWER_SQL = `
      FOR UPDATE
   )
   UPDATE agency_agent_sessions s
-     SET help_answered_at = CASE WHEN prior.expired THEN s.help_answered_at ELSE now() END,
+     SET help_answered_at = CASE WHEN prior.expired THEN s.help_answered_at ELSE GREATEST(now(), s.help_raised_at) END,
          help_answered_by = CASE WHEN prior.expired THEN s.help_answered_by ELSE $3::uuid END,
          help_raised_at = CASE WHEN prior.expired THEN NULL ELSE s.help_raised_at END,
          help_call_id = CASE WHEN prior.expired THEN NULL ELSE s.help_call_id END
