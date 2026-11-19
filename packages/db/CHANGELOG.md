@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.23.0](https://github.com/sapieonic/magick-agency/compare/db-v0.22.0...db-v0.23.0) (2026-11-19)
+
+
+### Features
+
+* **console,server:** rebuild the supervisor's Home as the Live floor ([#100](https://github.com/sapieonic/magick-agency/issues/100)) ([e15a179](https://github.com/sapieonic/magick-agency/commit/e15a1791a16333cbbc95c836765a8f726824ae55))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.25.0
+    * @magick-agency/domain bumped to 0.12.2
+
 ## [0.22.0](https://github.com/sapieonic/magick-agency/compare/db-v0.21.0...db-v0.22.0) (2026-11-18)
 
 
