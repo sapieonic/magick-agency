@@ -595,9 +595,10 @@ export async function handleStationSocket(
   // registered this socket and beside the rehydrate (no await between the fence and `ready`), and
   // with the repository's OPEN rule on the database's clock (LF12), never the attach's row and this
   // process's clock: a request cleared after the attach's read was put back on screen by `ready`,
-  // its `help_cleared` already spent. A clear landing between this read and `ready` sent its frame
-  // to this socket, which the registry remembers (`helpClearedOn`, checked at `ready`). Best effort:
-  // a failed read omits the field (the agent's next raise answers the open one).
+  // its `help_cleared` already spent. A clear landing between this read and `ready` sends its frame
+  // to this socket first, and the client ignores a `ready.help` whose `raised_at` it has already
+  // seen cleared. Best effort: a failed read omits the field (the agent's next raise answers the
+  // open one).
   const helpRead = caps.has('floor_assist')
     ? Promise.resolve()
       .then(() => runtime.floorAssist.openHelp({ id: sessionId, tenant_id: session.tenant_id, account_id: session.account_id }))
@@ -664,8 +665,6 @@ export async function handleStationSocket(
   const shownState = resumedState === 'reserved' && !activeAttempt && runtime.dialer.hasUnannouncedAttempt(sessionId)
     ? 'available'
     : resumedState;
-  // The open Need help read above, unless its `help_cleared` reached this socket since (LF15).
-  const openHelp = helpOpen && !runtime.stations.helpClearedOn(sessionId, socket, helpOpen.raised_at) ? helpOpen : undefined;
   const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
@@ -684,7 +683,7 @@ export async function handleStationSocket(
     ...(pendingBreak
       ? { pending_state: 'break' as const, pending_break_reason: pendingBreak.code }
       : {}),
-    ...(openHelp ? { help: openHelp } : {}),
+    ...(helpOpen ? { help: helpOpen } : {}),
     // The fence above narrows the window; this closes it. `ready` carries this
     // run's whole view of the session, so delivering it to a socket that built
     // its own is strictly worse than delivering it to nobody — the replacement

@@ -122,8 +122,6 @@ async function harness(): Promise<Harness> {
   const unannounced = { value: false };
   /** What `attach` last registered — see the `stations` double below. */
   const holder: { ws: unknown } = { ws: undefined };
-  /** The `raised_at` of each `help_cleared` handed to `send` for the registered socket (the real registry's `helpCleared`). */
-  const helpCleared: string[] = [];
 
   const runtime = {
     replicaId: 'r1',
@@ -147,7 +145,7 @@ async function harness(): Promise<Harness> {
      * `holder.ws` rather than by defeating the guard.
      */
     stations: {
-      attach: vi.fn(async (entry: any) => { holder.ws = entry.ws; helpCleared.length = 0; }),
+      attach: vi.fn(async (entry: any) => { holder.ws = entry.ws; }),
       detach: vi.fn(async (_id: string, ws?: unknown) => {
         // Identity-scoped exactly as the real one is: a superseded socket's detach
         // must not evict the socket that replaced it.
@@ -160,12 +158,10 @@ async function harness(): Promise<Harness> {
       // Honours `expectedWs` like the real one, so a mis-scoped send shows up here
       // as a missing frame rather than passing quietly.
       send: vi.fn((_id: string, frame: any, expectedWs?: unknown) => {
-        if (frame.event === 'help_cleared' && holder.ws !== undefined) helpCleared.push(frame.raised_at);
         if (expectedWs !== undefined && holder.ws !== expectedWs) return false;
         sent.push(frame);
         return true;
       }),
-      helpClearedOn: vi.fn((_id: string, ws: unknown, raisedAt: string) => holder.ws === ws && helpCleared.includes(raisedAt)),
     },
     floorAssist: { openHelp: vi.fn().mockResolvedValue(null) },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
@@ -457,9 +453,8 @@ describe('a reconnect mid-ring is told the state the agent was last shown (late 
 
 describe('a reconnect is told the session\'s open Need help (LF4, LF12, LF15)', () => {
   // FALSIFIED: with `help` dropped from the frame the first case reds; with the capability check
-  // dropped, the phone case does; with the `helpClearedOn` check dropped from `ready`, the
-  // clear-between-read-and-ready case does; reading `help` from the attach's row again (the help
-  // read removed), the cleared-before-the-read case does.
+  // dropped, the phone case does; reading `help` from the attach's row again (the help read
+  // removed), the cleared-before-the-read case does.
   const RAISED = new Date(Date.now() - 60_000);
   const OPEN = { raised_at: RAISED.toISOString(), call_id: 'call-1' };
 
@@ -481,25 +476,16 @@ describe('a reconnect is told the session\'s open Need help (LF4, LF12, LF15)', 
     expect('help' in (await ready(h))).toBe(false);
   });
 
-  it('a request read as open, then cleared (its help_cleared sent to this socket) before ready went out, is left off ready', async () => {
+  it('a request read as open, then cleared before ready went out: its help_cleared reaches the socket first, and ready says what was read (the client ignores a ready.help it has seen cleared)', async () => {
     h.openHelp.mockImplementation(async () => {
       // The clear lands while the read is in flight: its UPDATE committed after the read's snapshot,
       // its frame reaches the newly registered socket before `ready` does.
       h.send('sess-1', { event: 'help_cleared', raised_at: OPEN.raised_at, reason: 'cancelled' });
       return OPEN;
     });
-    const frame = await ready(h);
-    expect('help' in frame).toBe(false);
+    expect((await ready(h)).help).toEqual(OPEN);
     const events = h.sent.map((f) => f.event);
     expect(events.indexOf('help_cleared')).toBeLessThan(events.indexOf('ready'));
-  });
-
-  it('a help_cleared for an EARLIER request does not hide the open one', async () => {
-    h.openHelp.mockImplementation(async () => {
-      h.send('sess-1', { event: 'help_cleared', raised_at: new Date(RAISED.getTime() - 5_000).toISOString(), reason: 'answered' });
-      return OPEN;
-    });
-    expect((await ready(h)).help).toEqual(OPEN);
   });
 
   it('a failed read omits it, and ready is still sent', async () => {

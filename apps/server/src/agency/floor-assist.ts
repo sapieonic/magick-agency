@@ -157,7 +157,8 @@ export class FloorAssistService {
    * The session's open request as the station's `ready` carries it (`ready.help`, LF15), or null:
    * the repository's OPEN rule on the database's clock (LF12), never this process's. The station
    * attach reads it after its socket is registered, so a request cleared after this read has its
-   * `help_cleared` sent to that socket (`StationRegistry.helpClearedOn`).
+   * `help_cleared` sent to that socket ahead of `ready` (the client ignores a `ready.help` it has seen
+   * cleared).
    */
   async openHelp(session: Pick<FloorAssistSession, 'id' | 'tenant_id' | 'account_id'>): Promise<AgencySessionHelp | null> {
     const row = await this.deps.repo.openForSession(session.id, session.tenant_id, session.account_id, this.expiryMs);

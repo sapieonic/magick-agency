@@ -53,18 +53,7 @@ interface StationEntry {
    * every protocol pong or ping. Liveness is derived from this.
    */
   lastSeen: number;
-  /**
-   * The `raised_at` of every `help_cleared` frame {@link StationRegistry.send} was handed for this
-   * entry (the last {@link HELP_CLEARED_KEPT}), whether or not the socket took it. Read once, by the
-   * station attach, before its `ready`: a request it read as open but whose clearing frame was sent
-   * to this socket in between is left out of `ready.help` ({@link StationRegistry.helpClearedOn},
-   * LF12, LF15).
-   */
-  helpCleared: string[];
 }
-
-/** How many `help_cleared` frames an entry remembers: one request is open at a time, so a few. */
-const HELP_CLEARED_KEPT = 8;
 
 /** A station as it was when it detached (`onDetached`): who it was, with no socket. */
 export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind' | 'caps'>>;
@@ -74,7 +63,7 @@ export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaig
  * `stationCaps` of a station that declared nothing (a console has them all, a phone none; the
  * station socket passes its upgrade's own answer).
  */
-export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'caps' | 'helpCleared'> & {
+export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'caps'> & {
   clientKind?: AgencyClientKind;
   caps?: ReadonlySet<AgencyStationCapability>;
 };
@@ -143,7 +132,7 @@ export class StationRegistry {
   /** Register a newly-opened station socket and claim ownership of the agent. */
   async attach(input: StationAttachInput): Promise<void> {
     const clientKind = input.clientKind ?? 'web';
-    const entry: Omit<StationEntry, 'lastSeen' | 'helpCleared'> = {
+    const entry: Omit<StationEntry, 'lastSeen'> = {
       // With no answer given, the upgrade's rule for a station that declared nothing.
       ...input, clientKind, caps: input.caps ?? stationCaps({ client: clientKind, caps: [] }),
     };
@@ -171,7 +160,7 @@ export class StationRegistry {
     // Whatever probed the prior entry stops with it: a probe belongs to one socket, and a
     // superseded socket's pongs must not keep its replacement alive.
     this.stopProbe(entry.sessionId);
-    this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now(), helpCleared: [] });
+    this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
     if (entry.clientKind === 'mobile') this.startProbe(entry.sessionId, entry.ws);
     await this.claimOwnership(entry.sessionId);
     log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind, canTakeInbound: entry.caps.has('inbound') },
@@ -559,17 +548,6 @@ export class StationRegistry {
     return !!entry && entry.caps.has('floor_assist') && entry.ws.readyState === 1 /* OPEN */;
   }
 
-  /**
-   * Whether a `help_cleared` for the request raised at `raisedAt` (ISO) was handed to {@link send}
-   * for the session while `ws` was its station. The station attach asks it just before `ready`, so a
-   * request it read as open, then cleared (and its frame sent to this socket) before `ready` went
-   * out, is not put back on screen by `ready.help` (LF15). False for a socket that is not the entry.
-   */
-  helpClearedOn(sessionId: string, ws: WebSocket, raisedAt: string): boolean {
-    const entry = this.stations.get(sessionId);
-    return !!entry && entry.ws === ws && entry.helpCleared.includes(raisedAt);
-  }
-
   /** The live socket for an agent, if this replica holds it. */
   socketFor(sessionId: string): WebSocket | undefined {
     return this.stations.get(sessionId)?.ws;
@@ -632,11 +610,6 @@ export class StationRegistry {
   send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
     const entry = this.stations.get(sessionId);
     const ws = entry?.ws;
-    // Remembered before any refusal: the request has ended whether or not this socket takes the frame.
-    if (entry && frame.event === 'help_cleared') {
-      entry.helpCleared.push(frame.raised_at);
-      if (entry.helpCleared.length > HELP_CLEARED_KEPT) entry.helpCleared.shift();
-    }
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
     const needs = CAPABILITY_FOR_EVENT.get(frame.event);
     if (needs !== undefined && !entry.caps.has(needs)) {
