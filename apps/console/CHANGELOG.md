@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/sapieonic/magick-agency/compare/console-v0.28.0...console-v0.29.0) (2026-11-19)
+
+
+### Features
+
+* **console:** Live floor's Needs you now and Campaigns scroll inside one shared pane ([#105](https://github.com/sapieonic/magick-agency/issues/105)) ([646152b](https://github.com/sapieonic/magick-agency/commit/646152bceb9168ab1c582115eac16ddeee55d74a))
+
 ## [0.28.0](https://github.com/sapieonic/magick-agency/compare/console-v0.27.0...console-v0.28.0) (2026-11-19)
 
 
