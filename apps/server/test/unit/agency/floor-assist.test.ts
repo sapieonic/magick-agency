@@ -152,6 +152,21 @@ describe('every clearing path: the frames, one audit row, one metric', () => {
     expect(deps.audits).toEqual([]);
   });
 
+  it('a listen\'s answerer name, read here, is trimmed and cut as a message\'s from_name is; a blank one is null', async () => {
+    const long = `  ${'Anitha '.repeat(60)}  `;
+    (deps.names as ReturnType<typeof vi.fn>).mockResolvedValue(new Map([['sup-1', long]]));
+    await service().answer({ sessionId: SESSION.id, tenantId: 't-1', byUserId: 'sup-1', how: 'listen' });
+    const byName = events()[0]!['by_name'] as string;
+    expect(byName).toBe(senderNameForFrame(long));
+    expect([...byName].length).toBeLessThanOrEqual(SENDER_NAME_MAX_CHARS);
+    expect(byName.startsWith('Anitha') && byName.endsWith('…')).toBe(true);
+    (deps.names as ReturnType<typeof vi.fn>).mockResolvedValue(new Map([['sup-1', '  Anitha N  ']]));
+    await service().answer({ sessionId: SESSION.id, tenantId: 't-1', byUserId: 'sup-1', how: 'listen' });
+    (deps.names as ReturnType<typeof vi.fn>).mockResolvedValue(new Map([['sup-1', '   ']]));
+    await service().answer({ sessionId: SESSION.id, tenantId: 't-1', byUserId: 'sup-1', how: 'listen' });
+    expect(events().filter((f) => f['event'] === 'help_answered').map((f) => f['by_name']).slice(1)).toEqual(['Anitha N', null]);
+  });
+
   it('an answerer whose name cannot be read is sent as null', async () => {
     (deps.names as ReturnType<typeof vi.fn>).mockResolvedValue(new Map());
     await service().answer({ sessionId: SESSION.id, tenantId: 't-1', byUserId: 'sup-2', how: 'listen' });

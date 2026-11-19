@@ -8,9 +8,12 @@ import {
   insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession, insertManualCall, insertSoftphoneSession,
 } from './agency-factories.js';
 
+/** A client to run the repository's next statement on, in a transaction the test holds; else the pool. */
+const pinned = vi.hoisted(() => ({ client: null as null | import('pg').PoolClient }));
+
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
-  getPool: () => getTestPool(),
+  getPool: () => pinned.client ?? getTestPool(),
 }));
 
 const {
@@ -61,6 +64,17 @@ async function backdate(s: Session, ms: number): Promise<Date> {
     `UPDATE agency_agent_sessions SET help_raised_at = now() - $2::bigint * interval '1 millisecond' WHERE id = $1 RETURNING help_raised_at`,
     [s.id, ms]);
   return rows[0]!.help_raised_at;
+}
+
+/** Until `n` backends of this database wait on a lock. */
+async function waitForLockWaiters(n: number): Promise<void> {
+  for (let i = 0; i < 300; i++) {
+    const { rows } = await pool().query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`);
+    if (rows[0]!.n >= n) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`fewer than ${n} backends ever waited on a lock`);
 }
 
 async function row(s: Session) {
@@ -293,6 +307,49 @@ describe('each request ends exactly once', () => {
     const t = await session();
     await raise(t);
     expect(await repo.answer(t.id, OTHER_TENANT, randomUUID(), EXPIRY)).toBeNull();
+  });
+
+  it('an answer whose transaction began before the agent raised again answers the new request, never before it was raised', async () => {
+    // The answer's now() is its transaction's start. A request past the expiry, unswept: the agent
+    // raises again (the raise holds the row and writes a later now()) while a listen's answer, begun
+    // earlier, waits on the row; it then re-reads the fresh request and answers it. Stamped with its
+    // own now() that answer would precede the raise and break ck_agency_agent_sessions_help.
+    const s = await session();
+    await raise(s);
+    await backdate(s, EXPIRY + 60_000);
+    const answering = await pool().connect();
+    const raising = await pool().connect();
+    try {
+      await answering.query('BEGIN');
+      const answerNow = (await answering.query<{ now: Date }>('SELECT now()')).rows[0]!.now;
+      // A gap a Date (milliseconds) can see between the answer's now() and the raise's.
+      await raising.query('SELECT pg_sleep(0.02)');
+      await raising.query('BEGIN');
+      pinned.client = raising;
+      const raisedAgain = await raise(s);
+      pinned.client = answering;
+      const answerer = randomUUID();
+      const answer = repo.answer(s.id, T, answerer, EXPIRY);
+      pinned.client = null;
+      await waitForLockWaiters(1);
+      await raising.query('COMMIT');
+      expect(raisedAgain).toMatchObject({ raised: true, expired: { session_id: s.id } });
+      const newRaise = raisedAgain.help!.raised_at;
+      expect(newRaise.getTime()).toBeGreaterThan(answerNow.getTime());
+      const answered = await answer;
+      await answering.query('COMMIT');
+      expect(answered).toMatchObject({ session_id: s.id, raised_at: newRaise, expired: false });
+      expect(answered!.expired === false && answered!.answered_at.getTime()).toBeGreaterThanOrEqual(newRaise.getTime());
+      const after = await row(s);
+      expect(after).toMatchObject({ help_raised_at: newRaise, help_answered_by: answerer });
+      expect(after.help_answered_at!.getTime()).toBeGreaterThanOrEqual(newRaise.getTime());
+    } finally {
+      pinned.client = null;
+      await answering.query('ROLLBACK').catch(() => undefined);
+      await raising.query('ROLLBACK').catch(() => undefined);
+      answering.release();
+      raising.release();
+    }
   });
 
   it('cancel and the end of the session clear the columns and answer what they held', async () => {

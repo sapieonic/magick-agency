@@ -30,6 +30,10 @@ import { sendRefusal } from './helpers/refusal.js';
  *    (`400 message_invalid`, LF17); the sender's name read here for the frame and cut to its length
  *    (`senderNameForFrame`), never refused. A session outside the caller's account is the uniform 404.
  *
+ * A malformed `:id` on any of them is that same uniform 404, before the session middleware: the
+ * agency plugin registers this family under `rejectMalformedIdParams` (`agency.plugin.ts`), so the
+ * routes forward `:id` unchecked.
+ *
  * Audit rows, frames and metrics are the runtime's (`agency/floor-assist.ts`), written once per
  * transition wherever it happens (a listen, the expiry sweep and a leave end requests too).
  */
