@@ -326,10 +326,25 @@ final class ResolvedContext {
 /// Contract: `AgencyBreakReason`.
 @immutable
 final class BreakReason {
-  const BreakReason({required this.code, required this.label, this.isPaid});
+  const BreakReason({required this.code, required this.label, this.isPaid, this.limitMinutes});
 
-  factory BreakReason.fromJson(Map<String, Object?> j) =>
-      BreakReason(code: j.str('code'), label: j.str('label'), isPaid: j.boolOrNull('is_paid'));
+  factory BreakReason.fromJson(Map<String, Object?> j) => BreakReason(
+    code: j.str('code'),
+    label: j.str('label'),
+    isPaid: j.boolOrNull('is_paid'),
+    limitMinutes: _limit(j['limit_minutes']),
+  );
+
+  /// The limit as the contract allows it (a whole number, 1 to 240), else none:
+  /// a limit the station cannot count down is not worth losing the catalog over.
+  static int? _limit(Object? v) {
+    final n = v is int ? v : (v is double && v == v.roundToDouble() ? v.toInt() : null);
+    return n != null && n >= minLimitMinutes && n <= maxLimitMinutes ? n : null;
+  }
+
+  /// `AGENCY_BREAK_LIMIT_MIN_MINUTES` / `AGENCY_BREAK_LIMIT_MAX_MINUTES` (`agency/breaks.ts`).
+  static const minLimitMinutes = 1;
+  static const maxLimitMinutes = 240;
 
   final String code;
   final String label;
@@ -337,12 +352,21 @@ final class BreakReason {
   /// Advisory; stored and echoed, nothing branches on it.
   final bool? isPaid;
 
-  @override
-  bool operator ==(Object other) =>
-      other is BreakReason && other.code == code && other.label == label && other.isPaid == isPaid;
+  /// How long this break may last (Live floor LF6, LF20), in minutes; null
+  /// for none. The station counts down from the break's start. A reserved
+  /// reason never has one.
+  final int? limitMinutes;
 
   @override
-  int get hashCode => Object.hash(code, label, isPaid);
+  bool operator ==(Object other) =>
+      other is BreakReason &&
+      other.code == code &&
+      other.label == label &&
+      other.isPaid == isPaid &&
+      other.limitMinutes == limitMinutes;
+
+  @override
+  int get hashCode => Object.hash(code, label, isPaid, limitMinutes);
 }
 
 /// The retry banner: *Retry 1 of "Q3 Winback" — these contacts were …*.

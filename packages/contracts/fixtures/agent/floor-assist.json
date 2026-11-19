@@ -1,0 +1,30 @@
+{
+  "help_response_raised": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "help": {
+      "raised_at": "2026-11-19T10:04:12.512Z",
+      "call_id": "5e0d4c3b-2a19-4f8e-b7d6-c5b4a3928170"
+    }
+  },
+  "help_response_raised_in_wrapup": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "help": {
+      "raised_at": "2026-11-19T10:12:48.090Z",
+      "call_id": null
+    }
+  },
+  "help_response_cleared": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "help": null
+  },
+  "refusal_floor_assist_disabled": {
+    "error": "Forbidden",
+    "code": "floor_assist_disabled",
+    "message": "Need help and messages to agents are not turned on for this account."
+  },
+  "refusal_help_not_on_call": {
+    "error": "Conflict",
+    "code": "help_not_on_call",
+    "message": "You can ask for help during a call, or while you finish one."
+  }
+}

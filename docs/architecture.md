@@ -1050,8 +1050,7 @@ a rate-limit key and never an auth input.
   applied on every read against the database's clock, and a sweep in the primary every 15 s
   (`bootstrap/agency.ts`) clears the expired ones, sending the frame and writing the row. The floor
   assist frames go only to a station that can receive them (`StationRegistry`'s
-  `canTakeFloorAssist`: a console, or a phone declaring `floor_assist`, staged until the app's wire
-  package decodes them), so a message with no such station is `409 agent_not_live`. Messages are
+  `canTakeFloorAssist`: a console, or a phone declaring `caps=floor_assist`, as the app does), so a message with no such station is `409 agent_not_live`. Messages are
   kept in `agency_supervisor_messages` and deleted after 90 days by the retention purge
   (`maintenance/retention-purge.ts`, every run). With media workers the sweep's frames reach the
   worker holding the station through the station directory (`cluster/station-directory.ts`'s

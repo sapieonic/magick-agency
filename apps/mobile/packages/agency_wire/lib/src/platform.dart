@@ -587,6 +587,11 @@ final class FeatureFlags {
   /// The app reads it for the station's standing line only (LS2).
   static const liveListenEnabled = 'agency_live_listen_enabled';
 
+  /// Floor assist (the Live floor's LF4, LF5, LF11): the agent's Need help on
+  /// a call or in wrap-up. The app shows the control from it; a supervisor's
+  /// message is shown whenever one arrives.
+  static const floorAssistEnabled = 'agency_floor_assist_enabled';
+
   final Map<String, Object> values;
 
   bool isOn(String key) => values[key] == true;

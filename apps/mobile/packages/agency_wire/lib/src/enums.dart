@@ -1188,6 +1188,10 @@ enum InboundRingDeclineReason implements WireEnum {
 enum StationCapability implements WireEnum {
   /// Inbound calls are offered to this station.
   inbound('inbound'),
+
+  /// The station shows a supervisor's messages and its Need help's answers
+  /// (floor assist): without it a phone is sent none of those frames.
+  floorAssist('floor_assist'),
   unknown('');
 
   const StationCapability(this.wire);

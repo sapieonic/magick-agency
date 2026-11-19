@@ -14,6 +14,7 @@ import 'package:meta/meta.dart';
 import 'assignment.dart';
 import 'enums.dart';
 import 'equality.dart';
+import 'floor_assist.dart';
 import 'inbound.dart';
 import 'json.dart';
 import 'push_devices.dart';
@@ -161,6 +162,7 @@ final class ErrorBody {
        agentRetryCode = AgentRetryErrorCode.fromWire(codeRaw),
        inboundCode = InboundErrorCode.fromWire(codeRaw),
        awayRingCode = AwayRingRefusalCode.fromWire(codeRaw),
+       floorAssistCode = FloorAssistErrorCode.fromWire(codeRaw),
        allowedCodes = allowedCodes == null ? null : List.unmodifiable(allowedCodes),
        details = details == null ? null : List.unmodifiable(details),
        raw = frozenMap(raw);
@@ -219,6 +221,11 @@ final class ErrorBody {
   /// (Mode B); [AwayRingRefusalCode.unknown] when absent or not one. On any of
   /// them the app falls back to `device_away`.
   final AwayRingRefusalCode awayRingCode;
+
+  /// [codeRaw] as a floor assist refusal (Need help's raise and cancel);
+  /// [FloorAssistErrorCode.unknown] when absent or not one. Read this on the
+  /// help route; its `session_ended` is [code]'s.
+  final FloorAssistErrorCode floorAssistCode;
 
   /// The values that ARE accepted; read against [code], never generically.
   final List<String>? allowedCodes;

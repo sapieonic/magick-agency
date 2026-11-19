@@ -64,6 +64,13 @@ final Map<String, Map<String, Decoder>> decoders = {
       'customer_waiting',
       'customer_waiting_cleared',
       'inbound_call_push_accepted',
+      'ready_help_open',
+      'supervisor_message',
+      'supervisor_message_unnamed',
+      'help_answered_listen',
+      'help_answered_message_unnamed',
+      'help_cleared_answered',
+      'help_cleared_expired',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -269,6 +276,13 @@ final Map<String, Map<String, Decoder>> decoders = {
     'uplink_probe_response': (j) => j['received_bytes']! as int,
     'error_not_staffed': ErrorBody.fromJson,
   },
+  'floor-assist.json': {
+    'help_response_raised': HelpResponse.fromJson,
+    'help_response_raised_in_wrapup': HelpResponse.fromJson,
+    'help_response_cleared': HelpResponse.fromJson,
+    'refusal_floor_assist_disabled': ErrorBody.fromJson,
+    'refusal_help_not_on_call': ErrorBody.fromJson,
+  },
   'customer-history.json': {
     'search_request': (j) => CustomerSearchRequest(
       by: CustomerSearchBy.fromWire(j['by']! as String),
@@ -396,6 +410,8 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
     f.state,
     ...inboundCallEnums(f.inboundCall ?? (throw StateError('inbound_call did not decode'))),
   ],
+  final HelpAnsweredFrame f => [f.how],
+  final HelpClearedFrame f => [f.reason],
   final InboundCallResponse r => inboundCallEnums(r.call),
   final InboundCallDispositionResponse r => [r.contactState, ...inboundCallEnums(r.call)],
   final InboundCallDncResponse r => [r.scope, r.contactState],
@@ -424,6 +440,8 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   // `session_refusal` is a sign-in code, not an agency one.
   final ErrorBody e when e.codeRaw == null || SessionRefusalCode.fromWire(e.codeRaw) != SessionRefusalCode.unknown =>
     const [],
+  // A floor assist refusal is read through `floorAssistCode`.
+  final ErrorBody e when e.floorAssistCode != FloorAssistErrorCode.unknown => [e.floorAssistCode],
   // An away-ring refusal is read through `awayRingCode`.
   final ErrorBody e when e.awayRingCode != AwayRingRefusalCode.unknown => [e.awayRingCode],
   // An inbound refusal is read through `inboundCode`.

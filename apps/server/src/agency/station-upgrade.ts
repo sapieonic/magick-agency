@@ -22,8 +22,10 @@ import {
  *  - `caps=<capability>,…` (absent or empty: none; contracts `AgencyStationCapability`).
  *    Unlike the two above, never refused: an unknown value is ignored (an app newer than
  *    this server must still get a station, and a 1008 is terminal for the app), and a
- *    repeated `caps` parameter is the union. Today `inbound`: whether a mobile station can
- *    be put through to inbound callers and sent their frames ({@link stationCanTakeInbound}).
+ *    repeated `caps` parameter is the union. `inbound`: whether a mobile station can be put
+ *    through to inbound callers and sent their frames ({@link stationCanTakeInbound});
+ *    `floor_assist`: whether it is sent a supervisor's messages and its Need help's answers
+ *    ({@link stationCanTakeFloorAssist}).
  *
  * One parser for all three, so every station entry point refuses the same inputs the same
  * way. Client-declared and never trusted for anything security-relevant: the token is
@@ -55,13 +57,9 @@ export function stationCanTakeInbound(query: Pick<StationUpgradeQuery, 'client' 
  * `supervisor_message`, `help_answered`, `help_cleared`; contracts `agency/floor-assist.ts`): a console
  * always; a phone only when it declared {@link AGENCY_STATION_FLOOR_ASSIST_CAPABILITY}, so an app build
  * that cannot show a message is never sent one, and a message to it is `409 agent_not_live`.
- *
- * Staged: the capability is not yet in `AGENCY_STATION_CAPABILITIES` (the app's wire package adds it
- * with its decoders), so `parseCaps` drops it and no phone can declare it yet. The check reads the
- * parsed list by value, so it starts answering true for a phone the day the capability is listed.
  */
 export function stationCanTakeFloorAssist(query: Pick<StationUpgradeQuery, 'client' | 'caps'>): boolean {
-  return query.client !== 'mobile' || (query.caps as readonly string[]).includes(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY);
+  return query.client !== 'mobile' || query.caps.includes(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY);
 }
 
 export type StationUpgradeQueryResult =

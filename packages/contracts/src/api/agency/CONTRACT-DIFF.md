@@ -197,7 +197,11 @@ answers it whatever the flag says, and the public route serves null on every row
 so a client written before Phase 3 compiles; the server always sends it. Floor assist's own shapes
 (`AgencyHelpResponse`, `AgencySupervisorMessageRequest` and `…Response`, the three station frames,
 `AgencyFloorAssistErrorCode` in `../../errors.ts` §8) are dialer-contract only: the public routes relay
-the internal handlers' answers unchanged, so they have no console twin here.
+the internal handlers' answers unchanged, so they have no console twin here. The three frames
+(`supervisor_message`, `help_answered`, `help_cleared`) are members of both server-frame unions, the
+dialer's `AgencyStationServerFrame` and this one, as the dialer's types unchanged; they were staged
+outside both until the app could decode them (LF16), and `AgencyStationCapability` gained
+`floor_assist` with them (the app's station declares `caps=floor_assist`).
 
 Live floor Phase 3, break limits and callbacks (decisions LF6, LF7, LF20–LF22).
 `AgencyBreakReason.limit_minutes` (optional, 1–240 whole minutes) is declared once, in the dialer

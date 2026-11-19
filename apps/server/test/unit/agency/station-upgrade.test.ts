@@ -5,7 +5,7 @@ import {
   stationCanTakeFloorAssist,
   stationCanTakeInbound,
 } from '../../../src/agency/station-upgrade.js';
-import { AGENCY_STATION_CAPABILITIES } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CAPABILITIES, AGENCY_STATION_FLOOR_ASSIST_CAPABILITY } from '@magick-agency/contracts/agency';
 import { stationIntervalsFor, STATION_INTERVALS } from '../../../src/api/routes/agency/helpers.js';
 import { MOBILE_STATION_HEARTBEAT_GRACE_MS, STATION_HEARTBEAT_GRACE_MS } from '@magick-agency/domain/timers';
 
@@ -102,21 +102,30 @@ describe('stationCanTakeInbound', () => {
   });
 });
 
-describe('stationCanTakeFloorAssist (LF4, LF5)', () => {
+describe('stationCanTakeFloorAssist (LF4, LF5, LF16)', () => {
   it('a console always, whatever it declares; a phone only with the floor assist capability', () => {
     expect(stationCanTakeFloorAssist({ client: 'web', caps: [] })).toBe(true);
     expect(stationCanTakeFloorAssist(DEFAULT_STATION_UPGRADE)).toBe(true);
     expect(stationCanTakeFloorAssist({ client: 'mobile', caps: [] })).toBe(false);
     expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound'] })).toBe(false);
-    // The check reads the capability by value: listed, a phone that declares it can.
-    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound', 'floor_assist' as never] })).toBe(true);
+    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['floor_assist'] })).toBe(true);
+    expect(stationCanTakeFloorAssist({ client: 'mobile', caps: ['inbound', 'floor_assist'] })).toBe(true);
   });
 
-  it('staged: no phone can declare it yet (the app adds it to AGENCY_STATION_CAPABILITIES with its decoders), so every phone is refused messages', () => {
-    // Flip this when the capability is listed: the app's change does both in one commit.
-    expect(AGENCY_STATION_CAPABILITIES as readonly string[]).not.toContain('floor_assist');
-    const phone = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound,floor_assist' });
-    expect(phone.ok && stationCanTakeFloorAssist(phone.query)).toBe(false);
+  it('the capability is listed, so a phone can declare it: parsed from caps= in contract order, alone or beside inbound', () => {
+    expect(AGENCY_STATION_CAPABILITIES).toEqual(['inbound', 'floor_assist']);
+    expect(AGENCY_STATION_FLOOR_ASSIST_CAPABILITY).toBe('floor_assist');
+    const both = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'floor_assist,inbound' });
+    expect(both).toEqual({ ok: true, query: { client: 'mobile', media: 'alaw8', caps: ['inbound', 'floor_assist'] } });
+    expect(both.ok && stationCanTakeFloorAssist(both.query)).toBe(true);
+    expect(both.ok && stationCanTakeInbound(both.query)).toBe(true);
+    // The app's attach while a ring must not be answered: floor assist without inbound.
+    const alone = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'floor_assist' });
+    expect(alone.ok && [stationCanTakeFloorAssist(alone.query), stationCanTakeInbound(alone.query)]).toEqual([true, false]);
+    // An older app build declares only inbound, or nothing: no floor assist frames, so messages are refused.
+    const older = parseStationUpgradeQuery({ client: 'mobile', media: 'alaw8', caps: 'inbound' });
+    expect(older.ok && stationCanTakeFloorAssist(older.query)).toBe(false);
+    expect(parseStationUpgradeQuery({ client: 'mobile', caps: 'FLOOR_ASSIST' })).toMatchObject({ ok: true, query: { caps: [] } });
   });
 });
 

@@ -14,7 +14,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * backdated on the database's clock, the sweep run); messages delivered and stored, `409
  * agent_not_live` with no station or a left session; permission and isolation on every route (a
  * colleague's session, a supervisor's raise for an agent, another account's and another tenant's
- * supervisors, agents and operators sending messages); the flag off on every route.
+ * supervisors, agents and operators sending messages); the flag off on every route; a phone station
+ * (LF16): an app build without `caps=floor_assist` refused messages and told no open request, the app
+ * declaring it told `ready.help` and sent the message and its answer.
  */
 
 const env = vi.hoisted(() => {
@@ -138,6 +140,24 @@ async function stationFor(campaignId: string, agent: User): Promise<Station> {
   runtime.wrapup.cancel(st.sessionId, 'agent_returned');
   await runtime.agents.set(st.sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
   await agencyAgentSessionRepository.setState(st.sessionId, 'available');
+  return st;
+}
+
+/**
+ * Another station socket on `sessionId`, as the app attaches one (`client=mobile&media=alaw8`, and
+ * `caps=` as given): a reattach, so it supersedes the session's earlier socket.
+ */
+async function phoneSocket(sessionId: string, caps: string | null): Promise<Station> {
+  const { token } = await getAgencyRuntime()!.tokens.mint(sessionId);
+  const port = new URL(rig!.origin).port;
+  const st: Station = {
+    sessionId, frames: [],
+    ws: new WebSocket(
+      `ws://127.0.0.1:${port}/proxy/agency/station/${sessionId}?token=${token}&client=mobile&media=alaw8${caps === null ? '' : `&caps=${caps}`}`),
+  };
+  st.ws.on('message', (raw, isBinary) => { if (!isBinary) st.frames.push(JSON.parse(raw.toString()) as Record<string, unknown>); });
+  stations.push(st);
+  await waitFor('phone station ready', () => st.frames.some((f) => f['event'] === 'ready'));
   return st;
 }
 
@@ -441,6 +461,44 @@ describe('messages, end to end', () => {
     const left = await http(supervisor, 'POST', `/proxy/agency/sessions/${st.sessionId}/messages`, { text: 'hello' });
     expect([left.statusCode, left.json().code]).toEqual([409, 'agent_not_live']);
     expect((await pool().query('SELECT count(*)::int AS n FROM agency_supervisor_messages')).rows[0]).toEqual({ n: 0 });
+  });
+});
+
+describe('a phone station (LF16): the frames only to one that declared caps=floor_assist', () => {
+  it('an older app build (no floor_assist) is refused messages and told no open request on ready; the app declaring it gets ready.help, the message and the answer', async () => {
+    // A minute's wrap-up after the call: the agent raises Need help in it, with no live call to
+    // carry across the reattaches.
+    const call = await liveCall({ campaign: { wrapup_seconds: 60 } });
+    const sid = call.station.sessionId;
+    await hangUp(call);
+    const help = (await http(call.agent, 'POST', `/proxy/agency/sessions/${sid}/help`)).json().help as { raised_at: string; call_id: null };
+    expect(help).toEqual({ raised_at: expect.any(String), call_id: null });
+
+    // An older build: `caps=inbound` only. No `ready.help`, and a message has no station to go to.
+    const older = await phoneSocket(sid, 'inbound');
+    expect(older.frames.find((f) => f['event'] === 'ready')).not.toHaveProperty('help');
+    await waitFor('the older phone attached', () => getAgencyRuntime()!.stations.get(sid)?.clientKind === 'mobile');
+    expect(getAgencyRuntime()!.stations.canReceiveFloorAssist(sid)).toBe(false);
+    const refused = await http(supervisor, 'POST', `/proxy/agency/sessions/${sid}/messages`, { text: 'Offer the 3-month plan' });
+    expect([refused.statusCode, refused.json().code]).toEqual([409, 'agent_not_live']);
+    expect((await pool().query('SELECT count(*)::int AS n FROM agency_supervisor_messages')).rows[0]).toEqual({ n: 0 });
+    // Not answered by the refused message: still open on the floor.
+    expect(await floorHelp(supervisor, sid)).toEqual(help);
+
+    // The app's upgrade: `caps=inbound,floor_assist`. `ready` carries the open request.
+    const phone = await phoneSocket(sid, 'inbound,floor_assist');
+    expect(phone.frames.find((f) => f['event'] === 'ready')).toMatchObject({ event: 'ready', session_id: sid, help });
+    await waitFor('the app attached', () => getAgencyRuntime()!.stations.canReceiveFloorAssist(sid));
+    const sent = await http(supervisor, 'POST', `/proxy/agency/sessions/${sid}/messages`, { text: 'Offer the 3-month plan' });
+    expect(sent.statusCode, sent.body).toBe(201);
+    await waitFor('the three frames on the phone', () => helpFrames(phone).length >= 3);
+    expect(helpFrames(phone)).toEqual([
+      { event: 'supervisor_message', id: sent.json().id, text: 'Offer the 3-month plan', from_name: supervisor.name, sent_at: sent.json().sent_at },
+      { event: 'help_answered', raised_at: help.raised_at, by_name: supervisor.name, how: 'message' },
+      { event: 'help_cleared', raised_at: help.raised_at, reason: 'answered' },
+    ]);
+    // Neither earlier socket heard any of it.
+    expect([helpFrames(call.station), helpFrames(older)]).toEqual([[], []]);
   });
 });
 

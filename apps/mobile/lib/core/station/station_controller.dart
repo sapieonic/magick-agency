@@ -892,6 +892,10 @@ class StationController extends Notifier<StationView?>
         _chimeFor(inboundCall);
       case CustomerWaitingFrame():
         _dispatch(CustomerWaitingAction(frame));
+      case SupervisorMessageFrame() || HelpAnsweredFrame() || HelpClearedFrame():
+        // Floor assist: sent only to a station that declares `caps=floor_assist`, which this build
+        // does not yet. Never logged whole (a message can hold a customer's details).
+        _log.debug('floor assist frame', {'event': frame.event.wire});
       case UnknownFrame(:final eventRaw, :final reason):
         // Expected after a server deploy; never logged whole (it can hold contact data).
         _log.debug('unknown frame', {'event': eventRaw ?? '', 'reason': reason});

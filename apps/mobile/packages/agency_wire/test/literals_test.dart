@@ -95,6 +95,10 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'away_ring_refusal_codes': AwayRingRefusalCode.values,
   // Promise to pay (`agency/promise.ts`).
   'promise_states': PromiseState.values,
+  // Floor assist (`agency/floor-assist.ts`, `errors.ts`).
+  'help_answer_hows': HelpAnswerHow.values,
+  'help_cleared_reasons': HelpClearedReason.values,
+  'floor_assist_error_codes': FloorAssistErrorCode.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -148,7 +152,7 @@ final Map<String, List<WireEnum>> appSends = {
   ],
   // The station upgrade's `caps=`, and the Missed list's `status=` and
   // `reason=` filters.
-  'station_capabilities': [StationCapability.inbound],
+  'station_capabilities': [StationCapability.inbound, StationCapability.floorAssist],
   'inbound_follow_up_statuses': [
     for (final v in InboundFollowUpStatus.values)
       if (!v.isUnknown) v,
