@@ -13,6 +13,202 @@ import 'logic/format.dart';
 /// sentences; only what is genuinely different on a phone (Settings instead
 /// of a browser permission, "the app" instead of "this tab") is changed.
 abstract final class StationCopy {
+  // ── The redesign (design-spec §3, AS15): simple Indian English, no jargon ──────────────────
+  // Never on an agent screen: disposition, wrap-up, pacing, session, station, SIP, WebRTC, DNC,
+  // callback, campaign, reserved, available, offline, reconnecting.
+
+  // Top bar.
+  static const more = 'More';
+  static const helpAskedLabel = 'Help asked';
+  static String helpAsked(String clock) => 'Help asked · $clock';
+  static const asking = 'Asking…';
+  static const offlineHelpTitle = 'No internet';
+  static const offlineHelp = 'Call your supervisor to your desk.';
+
+  // ⋮ More.
+  static const myCustomers = 'My customers';
+  static const dialMyself = 'Dial a number myself';
+  static const sound = 'Sound';
+  static const soundTitle = 'Sound and screen';
+  static const soundCalls = 'Sounds';
+  static const soundCallsDetail = 'A sound when a call comes and ends.';
+  static const vibration = 'Vibration';
+  static const vibrationDetail = 'Feel a call come and connect.';
+  static const darkScreen = 'Dark screen';
+  static const darkScreenDetail = 'On this phone only.';
+  static const finishWork = 'Finish work for today';
+
+  // 01 Start of day.
+  static String namaste(String? name) {
+    final first = name == null ? '' : firstName(name);
+    return first.isEmpty ? 'Namaste' : 'Namaste, $first';
+  }
+  static const startSubtitle = 'Press Start work when you are ready.';
+  static const todaysWork = 'Today’s work';
+  static const howWillYouWork = 'How will you work?';
+  static const callsComeToMe = 'Calls come to me';
+  static const iDialTheNumber = 'I dial the number';
+  static const supervisorMayListen = 'Your supervisor may listen to calls for training.';
+  static const startWork = 'Start work';
+  static const starting = 'Starting…';
+  static const callLater = 'Call later';
+  static String callLaterToday(int n) => '$n today';
+  static const target = 'Target';
+  static String targetCalls(int n) => '$n calls';
+
+  // 02 Ready.
+  static const ready = 'Ready';
+  static const readySubtitle = 'Next call is coming. Stay here.';
+  static const nextCallComing = 'Next call is coming…';
+  static String waiting(String clock) => 'Waiting: $clock';
+  static const myDay = 'My day';
+  static const callsToday = 'Calls today';
+  static const talkTime = 'Talk time';
+  static const willPay = 'Will pay';
+  static const dialled = 'Numbers dialled';
+  static const myCallLaterList = 'My call-later list';
+  static const callLaterComesToYou = 'These calls will come to you on time.';
+  static const callLaterPool = 'We will call them on time. Another agent may get the call.';
+  static String inMinutes(int m) => m <= 0 ? 'now' : (m == 1 ? 'in 1 min' : 'in $m min');
+  static const lastCallNotConnected = 'The last call did not connect. You do not need to do anything.';
+  static const takeABreak = 'Take break';
+
+  // 02c No calls right now.
+  static const noCallsNow = 'No calls right now';
+  static const callsWillStart = 'Calls will start again';
+  static const nothingToDo = 'You do not need to do anything.';
+  static const callsStoppedBySupervisor = 'Your supervisor has stopped calls. Stay on this screen.';
+  static const noCustomersWaiting = 'No customers are waiting. Stay on this screen.';
+  static String nextCallAt(String at) => 'Your next call is at $at.';
+  static String callsStartAt(String at) => 'Calls start at $at.';
+  static const callsStartLater = 'Calls start again later. Stay on this screen.';
+  static const customersWhoRingIn = 'Customers who ring in can still reach you.';
+
+  // 03 Call coming.
+  static const callComing = 'Call coming';
+  static const callComingSubtitle = 'Get ready. Say Namaste first.';
+  static const customerCalling = 'Customer is calling';
+  static const connectsByItself = 'The call connects by itself.';
+  static const amountDue = 'Amount due';
+  static const lastCall = 'Last call';
+  static const whatTheySaid = 'What they said last time';
+  static String callAgainOf(int n, int? limit) => limit == null || limit < n ? 'Calling again' : 'Calling again · $n of $limit';
+
+  // 04 On call.
+  static const recorded = 'Recorded';
+  static const unmute = 'Unmute';
+  static const speaker = 'Speaker';
+  static const onMute = 'You are on mute. The customer cannot hear you.';
+  static const lastCalls = 'Last calls';
+  static const slideToEnd = 'Slide to end call';
+  static const endCall = 'End call';
+  static const endCallHint = 'Slide to the right to end the call';
+  static const ending = 'Ending…';
+  static const turnSoundOn = 'Turn sound on';
+  static String breakAfterThisCall(String label) => '$label after this call';
+
+  // 05 What happened?
+  static const whatHappened = 'What happened?';
+  static const chooseOneThenSave = 'Choose one. Then press Save.';
+  static const timeLeft = 'Time left';
+  static const timeOver = 'Time is over';
+  static const timeOverBanner = 'Time is over. Choose one now. Your supervisor can see that you are still on this screen.';
+  static const heldBanner = 'Your supervisor is holding this screen. Choose one, then press Save.';
+  static const callWasCut = 'The call was cut. Choose what happened, or call again.';
+  static const saveAndNext = 'Save & next call';
+  static const saveAndBreak = 'Save & break';
+  static String callAgainLeft(int n) => 'Call again · $n left';
+  static const callingAgain = 'Calling…';
+  static const chooseOneFirst = 'Choose one first.';
+  static const writeANote = 'Write a note for this one.';
+  static const chooseWhen = 'Choose when to call.';
+  static const timeGone = 'That time is over. Choose a new time.';
+  static const choosePayDate = 'Choose the pay date.';
+  static const amountNotRight = 'Write the amount in numbers only, like 12500.';
+  static const note = 'Note';
+  static const noteHint = 'Write a note…';
+  static const speakNote = 'Speak a note';
+  static const change = 'Change';
+  static const ok = 'OK';
+  static const back = 'Back';
+  static const callWhen = 'Call when?';
+  static const otherTime = 'Other time';
+  static const payDate = 'Pay date';
+  static const otherDate = 'Other date';
+  static const amountOptional = 'Amount (if they said)';
+  static String willPayOn(String date, String? amount) => amount == null ? 'Will pay on $date' : 'Will pay on $date · $amount';
+  static String callLaterOn(String when) => 'Call later · $when';
+  static String callWillComeToYou(String when) => 'This call will come to you on $when.';
+  static String callWillBeMade(String when) => 'We will call on $when. Another agent may get the call.';
+  static String weWillCallAgain(String date) => 'We will call again on $date.';
+  static const dontCallAgain = 'Don’t call again';
+  static const stopCallingTitle = 'Stop calling this customer?';
+  static const stopCallingBody = 'We will not call this number again for this work. You cannot change this later.';
+  static const noGoBack = 'No, go back';
+  static const yesStopCalls = 'Yes, stop calls';
+  static String savedAs(String label) => 'Saved · $label';
+  static const nextCallSoon = 'Your next call comes after this screen.';
+
+  // 06 Which break?
+  static const whichBreak = 'Which break?';
+  static const whichBreakAfterCall = 'It starts after this call.';
+  static const whichBreakNow = 'No calls will come while you are on break.';
+  static String minutes(int m) => '$m min';
+  static const noBreakReasons = 'Breaks are not set up yet. Ask your supervisor.';
+
+  // 07 On break, 08 Break over.
+  static String onBreakTitle(String? label) => label == null || label.trim().isEmpty ? 'On break' : 'On break · $label';
+  static const noCallsWillCome = 'No calls will come now.';
+  static String leftOfYour(String clock, int limit) => '$clock left of your $limit minutes.';
+  static const breakTimeOver = 'Break time is over';
+  static String youAreLate(String clock) => 'You are $clock late. Start calls now.';
+  static String yourBreakWas(int limit) => 'Your break was $limit minutes. Your supervisor can see this.';
+  static String longBreak(int minutes) => 'You have been on break for $minutes minutes.';
+  static const startCallsAgain = 'Start calls again';
+
+  // Paused, you left the app (device_away).
+  static const pausedTitle = 'Paused';
+  static const pausedSubtitle = 'You left the app. No calls came.';
+  static String pausedSince(String at) => 'Paused at $at.';
+  static const pausedRinging = 'This phone rings for customers who call in while you are away.';
+
+  // 09 Internet problem, 10 Call problem.
+  static const internetProblem = 'Internet problem';
+  static const internetProblemSubtitle = 'Calls are stopped. We are trying again.';
+  static const internetStopped = 'Calls are stopped. Press Try again now.';
+  static const whatToDo = 'What to do';
+  static const stepCheckInternet = 'Check the internet cable or Wi-Fi.';
+  static const stepWait = 'Wait. Calls start again by themselves.';
+  static const stepCallSupervisor = 'Still not working? Call your supervisor to your desk.';
+  static const tryAgainNow = 'Try again now';
+  static const tryingAgain = 'Trying again…';
+  static const callProblem = 'Call problem';
+  static const callProblemSubtitle = 'Stay here. We are joining the call again.';
+  static String callKeptFor(String clock) => 'Call is kept for $clock';
+  static const stepDoNotClose = 'Do not close this app.';
+  static const stepSaySorry = 'If the call comes back, say sorry and go on.';
+  static const stepCallAgain = 'If it does not, you can call again.';
+  static const internetSlow = 'Slow internet';
+
+  // 11 Finish work.
+  static const finishWorkTitle = 'Finish work for today?';
+  static const finishWorkSubtitle = 'No more calls will come to you.';
+  static const noKeepWorking = 'No, keep working';
+  static const yesFinishWork = 'Yes, finish work';
+  static const finishing = 'Finishing…';
+  static const finishCallFirst = 'Finish this call first. Leaving now would cut the customer off.';
+
+  // 12 Open on another device.
+  static const otherDeviceTitle = 'Your work is open on another device';
+  static const otherDeviceSubtitle = 'Only one device can take calls at a time.';
+  static const otherDeviceBody = 'No calls will come to this phone now.';
+  static const useThisPhoneNow = 'Use this phone';
+  static const workEnded = 'Your work here has ended';
+  static const workEndedDetail = 'Start again from your list of work.';
+  static const cannotStart = 'Work could not start';
+  static const backToWork = 'Back to my work list';
+  static const opening = 'Opening…';
+
   // ── Phase labels: the header pill and the screen-reader announcement ──
   static const available = 'Available';
   static const offline = 'Offline';
@@ -24,14 +220,14 @@ abstract final class StationCopy {
   /// What the polite live region says when the phase changes. The soft phone
   /// is a break to the dialer, not to the agent: it is said as what it is.
   static String announce(AgentPhase phase, {String? breakLabel, bool deviceAway = false, bool softphone = false}) => switch (phase) {
-    AgentPhase.offline => 'Offline',
-    AgentPhase.available => 'Available. Waiting for a call',
-    AgentPhase.reserved => 'Ringing',
+    AgentPhase.offline => 'Not taking calls yet',
+    AgentPhase.available => 'Ready. Next call is coming',
+    AgentPhase.reserved => 'Call coming',
     AgentPhase.onCall => 'On call',
-    AgentPhase.wrapup => 'Wrap-up',
+    AgentPhase.wrapup => 'What happened?',
     AgentPhase.onBreak when deviceAway => 'Paused because you left the app',
     AgentPhase.onBreak when softphone => onTheSoftphone,
-    AgentPhase.onBreak => breakTitle(breakLabel),
+    AgentPhase.onBreak => onBreakTitle(breakLabel),
   };
   static const onTheSoftphone = 'On the soft phone';
 
@@ -52,11 +248,10 @@ abstract final class StationCopy {
   // `LISTEN_AGENT_FIRST_NOTICE`). Not a live indicator.
   static const listenInfo = 'Monitoring and recording';
   static const listenNotice = 'Calls may be listened to by a supervisor for quality and training.';
-  static const listenFirstDetail = 'You can read this again at any time under $listenInfo, the i button at the top of the screen.';
-  // On a call the band has no info button (the header's is on the waiting, incoming and link
-  // screens), so the notice says where it is between calls. The app's own: the console's station
-  // header has the button on every view.
-  static const listenFirstDetailOnCall = 'You can read this again under $listenInfo, the i button at the top of the screen between calls.';
+  static const listenFirstDetail = 'You can read this again at any time: press ⋮ More, then $listenInfo.';
+  // The standing line is under ⋮ More between calls (on a call the menu holds only Sound), so the
+  // notice on a call says where it is between calls. The app's own words.
+  static const listenFirstDetailOnCall = 'You can read this again between calls: press ⋮ More, then $listenInfo.';
   static const listenFirstDismiss = 'Got it';
 
   // ── Waiting ──
@@ -180,7 +375,7 @@ abstract final class StationCopy {
   static String priorAttempts(int n) => 'Prior attempts ($n)';
   static const thisCampaign = 'This campaign';
   static String moreAttempts(int n) => '+$n more in Details';
-  static String otherCampaign(String? name) => name == null || name.trim().isEmpty ? 'Another campaign' : name;
+  static String otherCampaign(String? name) => name == null || name.trim().isEmpty ? 'Other work' : name;
   static String moreDetails(int n) => 'More details ($n)';
   static const filterFields = 'Filter fields';
   static const filterHint = 'Type to find a field…';
@@ -201,7 +396,7 @@ abstract final class StationCopy {
   static const details = 'Details';
   static const detailsTitle = 'Contact details';
   static const markDnc = 'Mark DNC';
-  static const markingDnc = 'Marking…';
+  static const markingDnc = 'Saving…';
 
   // ── Hang up ──
   static const holdToHangUp = 'Hold to hang up';
@@ -210,8 +405,7 @@ abstract final class StationCopy {
   static const hangUp = 'Hang up';
   static const hangUpHint = 'Press and hold to end the call';
   static const hangUpConfirmTitle = 'End this call?';
-  static const hangUpConfirmBody = 'The customer will be disconnected.';
-  static const hangUpConfirmRinging = 'The call is still connecting. Ending it now stops the dial.';
+  static const hangUpConfirmBody = 'The customer will be cut off.';
   static const keepCall = 'Keep the call';
 
   // ── Mark DNC (agencyDncCopy) ──
@@ -222,18 +416,18 @@ abstract final class StationCopy {
       '$phone won’t be called again by ${campaign.trim().isEmpty ? 'this campaign' : campaign}. Other campaigns in this organisation can still reach them. You can’t undo this from the app — an admin has to remove it.';
 
   // ── Notes (agencyNotes) ──
-  static const notes = 'Notes';
-  static const notesRequired = 'Notes (required)';
+  static const notes = 'Note';
+  static const notesRequired = 'Note (needed)';
   static const notesHint = 'What did the customer say?';
   static String notesStatus(NotesStatus s) => switch (s) {
-    NotesStatus.idle => 'Notes save as you type.',
+    NotesStatus.idle => 'Saves as you type.',
     NotesStatus.saving => 'Saving…',
     NotesStatus.saved => 'Saved',
     NotesStatus.retrying => 'Not saved yet — trying again. Still on this phone.',
     NotesStatus.failed => 'Not saved to the server. Still on this phone — keep the app open.',
-    NotesStatus.closed => 'Notes are closed for this call.',
+    NotesStatus.closed => 'The note is closed for this call.',
   };
-  static const notesChangedElsewhere = 'These notes were also changed elsewhere.';
+  static const notesChangedElsewhere = 'Your supervisor also changed this note.';
 
   // ── Interruptions and the microphone (agencyAudioCopy, for phones) ──
   static const phoneCallTitle = 'Your phone took another call';
@@ -270,16 +464,16 @@ abstract final class StationCopy {
   static const saveOutcome = 'Save outcome';
   static const savingOutcome = 'Saving…';
   static String outcomeSaved(String label) => 'Saved — $label';
-  static const outcomeSavedAnnouncement = 'Outcome saved';
+  static const outcomeSavedAnnouncement = 'Saved';
   static const savedReturning = 'You’ll be available again when wrap-up ends.';
   static String blockCopy(DispositionBlock b) => switch (b) {
-    DispositionBlock.noSelection => 'Pick an outcome to save this call.',
-    DispositionBlock.noteRequired => 'This outcome needs a note.',
-    DispositionBlock.callbackRequired => 'This outcome needs a callback time.',
-    DispositionBlock.callbackInPast => 'That time has already passed. Pick when we should call back.',
-    DispositionBlock.promiseRequired => 'This outcome needs the date the customer promised to pay.',
-    DispositionBlock.promiseDateInvalid => 'Pick a promised date from today up to 30 days ahead.',
-    DispositionBlock.promiseAmountInvalid => 'Enter the amount as a number, with up to two decimal places and no commas.',
+    DispositionBlock.noSelection => chooseOneFirst,
+    DispositionBlock.noteRequired => writeANote,
+    DispositionBlock.callbackRequired => chooseWhen,
+    DispositionBlock.callbackInPast => timeGone,
+    DispositionBlock.promiseRequired => choosePayDate,
+    DispositionBlock.promiseDateInvalid => 'Choose a pay date from today up to 30 days ahead.',
+    DispositionBlock.promiseAmountInvalid => amountNotRight,
   };
 
   // ── Promise to pay (PT1–PT3, PT9) ─────────────────────────────────────────
@@ -328,6 +522,16 @@ abstract final class StationCopy {
     CallbackChoice.tomorrowMorning => 'Tomorrow 10 am',
     CallbackChoice.tomorrowEvening => 'Tomorrow 6 pm',
     CallbackChoice.picked => 'Pick…',
+    CallbackChoice.todayEvening => 'Today 6 pm',
+  };
+
+  /// What happened?'s Call when? chips (05b).
+  static String stationCallbackChip(CallbackChoice c) => switch (c) {
+    CallbackChoice.inOneHour => 'In 1 hour',
+    CallbackChoice.todayEvening => 'Today 6:00 PM',
+    CallbackChoice.tomorrowMorning => 'Tomorrow 10:00 AM',
+    CallbackChoice.tomorrowEvening => 'Tomorrow 6:00 PM',
+    CallbackChoice.picked => 'Other time',
   };
   static String callbackTimezone(String zone) =>
       'Times are in your timezone${zone.isEmpty ? '' : ' ($zone)'}. We don’t have the customer’s — say the time out loud to agree it.';
@@ -344,7 +548,7 @@ abstract final class StationCopy {
   static const connectionLost = 'Connection lost';
   static const connectionLostDetail = 'The customer can’t hear you right now. Reconnect to get back on the call.';
   static const reconnect = 'Reconnect';
-  static const connecting = 'Opening your station…';
+  static const connecting = 'Getting your calls ready…';
 
   static const supersededTitle = 'Your station moved to another device';
   static String supersededBody(String campaign) =>
@@ -358,9 +562,9 @@ abstract final class StationCopy {
 
   static const fatalTitle = 'Can’t open the station';
 
-  static const notHereTitle = 'You’re not at this station';
-  static const notHereDetail = 'Start from your campaigns to take calls.';
-  static String elsewhereTitle(String campaign) => 'Your station is on $campaign';
+  static const notHereTitle = 'This work is not open here';
+  static const notHereDetail = 'Start from your list of work to take calls.';
+  static String elsewhereTitle(String campaign) => 'Your work is open on $campaign';
   static const openIt = 'Open it';
 
   // ── Missed release and errors ──

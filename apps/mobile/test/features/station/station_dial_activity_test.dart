@@ -15,11 +15,10 @@ void main() {
       await pumpStation(tester, station(dialActivity: const DialActivityView(dialling: true, unansweredInARow: 0)));
       expect(find.byKey(const Key('dialling-card')), findsOneWidget);
       expect(find.text('Dialling a customer…'), findsOneWidget);
-      expect(find.text('You’ll be connected as soon as they answer.'), findsOneWidget);
-      expect(find.text('Waiting for a call'), findsNothing);
+      expect(find.text(StationCopy.nextCallComing), findsNothing);
       expect(find.byKey(const Key('unanswered-line')), findsNothing);
-      // Still available: the pill and the actions are today's.
-      expect(find.text('Available'), findsOneWidget);
+      // Still Ready: the band and the action are Ready's.
+      expect(find.byKey(const Key('band-ready')), findsOneWidget);
       expect(find.byKey(const Key('take-break')), findsOneWidget);
     });
 
@@ -29,16 +28,15 @@ void main() {
       expect(find.text('No answer from the last number'), findsOneWidget);
 
       await pumpStation(tester, station(dialActivity: const DialActivityView(dialling: false, unansweredInARow: 3)));
-      expect(find.text('Waiting for a call'), findsOneWidget);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
       expect(find.text('No answer from the last 3 numbers'), findsOneWidget);
-      expect(find.textContaining('Keep this screen open so the next customer reaches you'), findsOneWidget);
       expect(find.text('Dialling a customer…'), findsNothing);
     });
 
     testWidgets('no dial activity: exactly today’s screen', (tester) async {
       await pumpStation(tester, station());
       expect(find.byKey(const Key('waiting-card')), findsOneWidget);
-      expect(find.text('Waiting for a call'), findsOneWidget);
+      expect(find.text(StationCopy.nextCallComing), findsOneWidget);
       expect(find.byKey(const Key('unanswered-line')), findsNothing);
       expect(find.text('Dialling a customer…'), findsNothing);
     });
@@ -50,14 +48,14 @@ void main() {
         station(queue: nothing, dialActivity: const DialActivityView(dialling: true, unansweredInARow: 2)),
       );
       expect(find.text('Dialling a customer…'), findsOneWidget);
-      expect(find.text(StationCopy.nothingDueHeadline), findsNothing);
+      expect(find.text(StationCopy.noCallsNow), findsNothing);
       expect(find.text('No answer from the last 2 numbers'), findsOneWidget);
 
       await pumpStation(
         tester,
         station(queue: nothing, dialActivity: const DialActivityView(dialling: false, unansweredInARow: 2)),
       );
-      expect(find.text(StationCopy.nothingDueHeadline), findsOneWidget);
+      expect(find.text(StationCopy.noCallsNow), findsOneWidget);
       expect(find.byKey(const Key('unanswered-line')), findsNothing);
     });
 
@@ -66,7 +64,7 @@ void main() {
         tester,
         station(dialing: false, dialActivity: const DialActivityView(dialling: true, unansweredInARow: 2)),
       );
-      expect(find.text('Campaign paused — no campaign calls for now'), findsOneWidget);
+      expect(find.text(StationCopy.callsStoppedBySupervisor), findsOneWidget);
       expect(find.text('Dialling a customer…'), findsNothing);
       expect(find.byKey(const Key('unanswered-line')), findsNothing);
     });
@@ -87,7 +85,7 @@ void main() {
       // dial would announce "Waiting for a call" and then "Dialling a customer…".
       await h.setView(station(dialActivity: const DialActivityView(dialling: false, unansweredInARow: 1)));
       expect(node().flagsCollection.isLiveRegion, isFalse);
-      expect(node().label, 'Waiting for a call');
+      expect(node().label, StationCopy.nextCallComing);
 
       // The next dial starts a new run: read out again.
       await h.setView(station(dialActivity: const DialActivityView(dialling: true, unansweredInARow: 1)));
@@ -112,9 +110,13 @@ void main() {
         expect(errors, isEmpty, reason: errors.map((e) => e.toString()).join('\n'));
         expect(tester.takeException(), isNull);
         expect(find.text('No answer from the last 12 numbers'), findsOneWidget);
-        // The count line is on screen, under the headline, not pushed off it.
+        // The count line is under the headline, whole, and on screen once scrolled to (at 200% the
+        // band scrolls with the content).
+        await tester.ensureVisible(find.byKey(const Key('unanswered-line')));
+        await tester.pump();
         final r = tester.getRect(find.byKey(const Key('unanswered-line')));
         expect(r.top >= 0 && r.bottom <= 640 && r.left >= 0 && r.right <= 360, isTrue, reason: '$r');
+        expect(r.top, greaterThan(tester.getRect(find.byKey(const Key('state-headline'))).top));
       }
     });
   });

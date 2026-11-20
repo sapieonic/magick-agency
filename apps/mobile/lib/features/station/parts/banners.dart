@@ -12,47 +12,30 @@ import '../station_providers.dart';
 /// only its own slice of the station, so a notes keystroke or a timer never
 /// rebuilds them.
 
-/// Campaign name, Running/Paused and the weak-connection pill.
-class StationHeader extends ConsumerWidget {
-  const StationHeader({super.key});
+/// "Slow internet": pings are arriving late (two or more missed) while the line is still open. One
+/// line under the band; a line that is down is a screen of its own (Internet problem, Call problem).
+class WeakConnectionLine extends ConsumerWidget {
+  const WeakConnectionLine({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = ref.watch(stationViewProvider.select((v) => v?.campaignName ?? ''));
-    final dialing = ref.watch(stationViewProvider.select((v) => v?.campaignDialing ?? true));
     final weak = ref.watch(stationViewProvider.select((v) => v != null && v.weakConnection && v.link == StationLink.open));
-    final listenNotice = ref.watch(stationListenNoticeProvider);
-    final text = Theme.of(context).textTheme;
+    if (!weak) return const SizedBox.shrink();
+    final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.sm),
-      child: Row(
-        children: [
-          Expanded(
-            child: Semantics(
-              header: true,
-              child: Text(name, style: text.titleLarge, maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
-          ),
-          const SizedBox(width: Space.sm),
-          Flexible(
-            child: Wrap(
-              alignment: WrapAlignment.end,
-              spacing: Space.xs,
-              runSpacing: Space.xs,
-              children: [
-                if (weak)
-                  StatusPill(
-                    StationCopy.weakConnection,
-                    key: const Key('weak-connection'),
-                    tone: Tone.warn,
-                    leading: Icon(Icons.network_check, size: 14, color: context.tokens.warning),
-                  ),
-                StatusPill(dialing ? StationCopy.running : StationCopy.paused, tone: dialing ? Tone.ok : Tone.warn),
-              ],
-            ),
-          ),
-          if (listenNotice) const ListenInfoButton(key: Key('station-info')),
-        ],
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: AppCard(
+        key: const Key('weak-connection'),
+        color: t.warningSubtle,
+        borderColor: t.warning.withValues(alpha: 0.4),
+        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+        child: Row(
+          children: [
+            Icon(Icons.network_check, size: 20, color: t.warning),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(StationCopy.internetSlow, style: Theme.of(context).textTheme.titleSmall!.copyWith(color: t.warning))),
+          ],
+        ),
       ),
     );
   }
@@ -158,47 +141,6 @@ Future<void> showStationInfoSheet(BuildContext context) {
       );
     },
   );
-}
-
-/// Reconnecting / disconnected while no call is on screen: a slim banner
-/// above the idle content (the call screens put this in their band instead).
-class IdleLinkBanner extends ConsumerWidget {
-  const IdleLinkBanner({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final link = ref.watch(stationViewProvider.select((v) => v?.link));
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    switch (link) {
-      case StationLink.reconnecting:
-        return _Banner(
-          key: const Key('idle-reconnecting'),
-          color: t.ember,
-          background: t.emberSubtle,
-          leading: const LiveDot(),
-          title: StationCopy.reconnecting,
-          body: StationCopy.reconnectingIdle,
-        );
-      case StationLink.disconnected:
-        final busy = ref.watch(stationViewProvider.select((v) => v?.busy != StationBusy.none));
-        return _Banner(
-          key: const Key('idle-disconnected'),
-          color: t.danger,
-          background: t.dangerSubtle,
-          leading: Icon(Icons.wifi_off, color: t.danger),
-          title: StationCopy.disconnected,
-          body: StationCopy.disconnectedDetail,
-          action: FilledButton(
-            onPressed: busy ? null : () => ref.read(stationActionsProvider).reconnect(),
-            style: FilledButton.styleFrom(backgroundColor: t.dangerDeep, foregroundColor: t.onAccent),
-            child: Text(StationCopy.reconnect, style: text.labelLarge!.copyWith(color: t.onAccent)),
-          ),
-        );
-      default:
-        return const SizedBox.shrink();
-    }
-  }
 }
 
 class _Banner extends StatelessWidget {

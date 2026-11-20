@@ -14,8 +14,11 @@ import 'parts/inbound_views.dart';
 import 'parts/link_screens.dart';
 import 'parts/on_call_view.dart';
 import 'parts/ringing_view.dart';
+import 'parts/sheets.dart' show switchStationToSoftphone;
 import 'parts/wrapup_view.dart';
 import 'station_copy.dart';
+import 'station_providers.dart';
+import 'station_reads.dart';
 
 /// Which whole screen the station shows. Only a change of stage swaps the
 /// body; everything inside a stage updates in place from its own slice.
@@ -30,8 +33,12 @@ enum StationStage {
   connecting,
   superseded,
   sessionGone,
+  /// Start of day: joined, not taking calls (`offline`).
   offline,
   available,
+
+  /// Internet problem (09): the line is down with no call on screen.
+  internetProblem,
   onBreak,
   away,
   softphone,
@@ -74,6 +81,12 @@ StationStage stationStageOf(StationView? v, String campaignId) {
       return StationStage.sessionGone;
     case StationLink.connecting when !v.callActive:
       return StationStage.connecting;
+    // The line is down with nothing on screen to keep: Internet problem. A call keeps its own
+    // screen (Call problem), and so does the app's own pause, whose socket is parked on purpose.
+    case StationLink.reconnecting || StationLink.disconnected
+        when !v.callActive && v.inbound == null && !(v.phase == AgentPhase.onBreak && (v.onBreak?.isDeviceAway ?? false)) &&
+            !onSoftphoneBreak(v):
+      return StationStage.internetProblem;
     default:
       break;
   }
@@ -132,6 +145,16 @@ class _StationScreenState extends ConsumerState<StationScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    ref.listenManual(
+      stationViewProvider.select((v) => v == null || v.campaignId != widget.campaignId ? null : (link: v.link, phase: v.phase)),
+      (_, next) => _startWork(next),
+      fireImmediately: true,
+    );
+  }
+
+  @override
   void dispose() {
     _notes?.dispose();
     _retired?.dispose();
@@ -140,10 +163,33 @@ class _StationScreenState extends ConsumerState<StationScreen> {
 
   void _onPhase(AgentPhase? prev, AgentPhase? next) {
     if (next == prev || next == null) return;
+    // Back to Ready (after a call, a break): My day and the call-later list are read again; what
+    // was shown stays until the new answer lands.
+    if (next == AgentPhase.available && prev != null) {
+      final v = ref.read(stationViewProvider);
+      if (v != null) refreshStationReads(ref, v.campaignId, callLaterOffered: v.myContactsOffered);
+    }
     // Feel the call arrive and connect without looking. The ring tone itself
     // is the core's.
     if (next == AgentPhase.reserved) unawaited(HapticFeedback.heavyImpact());
     if (next == AgentPhase.onCall) unawaited(HapticFeedback.mediumImpact());
+  }
+
+  /// "Start work" pressed on Start of day before the join ([startWorkIntentProvider]): spent on
+  /// the first open of this station; acted on only if the agent is still not taking calls then.
+  void _startWork(({StationLink link, AgentPhase phase})? s) {
+    if (s == null || s.link != StationLink.open) return;
+    final mode = ref.read(startWorkIntentProvider.notifier).take(widget.campaignId);
+    if (mode == null || s.phase != AgentPhase.offline) return;
+    // Not inside the notification that told us.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (mode == WorkMode.iDial && ref.read(softphoneAvailabilityProvider).startAllowed) {
+        unawaited(switchStationToSoftphone(context));
+      } else {
+        unawaited(ref.read(stationActionsProvider).goAvailable());
+      }
+    });
   }
 
   @override
@@ -152,6 +198,7 @@ class _StationScreenState extends ConsumerState<StationScreen> {
     // The call on screen, campaign or inbound: a new call gets a new notes controller.
     final attemptId = ref.watch(stationViewProvider.select((v) => v?.callId));
     ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
+
     // Built while the station is: a return from a pause is then asked about (IQ50).
     ref.listen(rangWhileAwayProvider, (_, _) {});
 
@@ -164,7 +211,8 @@ class _StationScreenState extends ConsumerState<StationScreen> {
       StationStage.connecting => const ConnectingView(),
       StationStage.superseded => const SupersededView(),
       StationStage.sessionGone => const SessionEndedView(),
-      StationStage.offline => const OfflineView(),
+      StationStage.offline => const StartOfDayView(),
+      StationStage.internetProblem => const InternetProblemView(),
       StationStage.available => const WaitingView(),
       StationStage.onBreak => const BreakView(),
       StationStage.away => const AwayView(),

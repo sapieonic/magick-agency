@@ -9,8 +9,12 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../station_copy.dart';
-import 'banners.dart';
+import '../station_providers.dart';
+import '../widgets/action_buttons.dart';
+import '../widgets/state_band.dart';
 import 'idle_views.dart' show LeaveStationButton;
+import 'layouts.dart';
+import 'top_bar.dart';
 
 /// Full-screen states with no station to work at: moved to another device,
 /// session over, refused, opening. Each has a way off it, so none is a trap.
@@ -18,56 +22,48 @@ import 'idle_views.dart' show LeaveStationButton;
 class _FullScreenMessage extends StatelessWidget {
   const _FullScreenMessage({
     super.key,
+    required this.tone,
     required this.icon,
     required this.title,
     required this.body,
     required this.actions,
+    this.subtitle,
     this.note,
-    this.iconColor,
   });
 
+  final StationTone tone;
   final IconData icon;
-  final Color? iconColor;
   final String title;
+  final String? subtitle;
   final String body;
   final String? note;
   final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     final text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(Space.xl, Space.xxl, Space.xl, Space.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(color: t.bgTertiary, borderRadius: BorderRadius.circular(Radii.lg)),
-                  child: SizedBox.square(dimension: 64, child: Icon(icon, size: 30, color: iconColor ?? t.textSecondary)),
-                ),
-                const SizedBox(height: Space.xl),
-                Semantics(header: true, child: Text(title, style: text.headlineMedium)),
-                const SizedBox(height: Space.md),
-                Text(body, style: text.bodyLarge!.copyWith(color: t.textSecondary)),
-                if (note != null) ...[const SizedBox(height: Space.lg), AppCard(child: Text(note!, style: text.bodyMedium))],
-              ],
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+    final c = context.stateTokens.of(tone);
+    return StationPage(
+      topBar: const StationTopBar(help: false, more: false),
+      banners: false,
+      band: StateBand(tone: tone, icon: icon, title: title, subtitle: subtitle),
+      body: [
+        StationCard(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [const ActionErrorLine(), ...actions],
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(color: c.soft, borderRadius: BorderRadius.circular(Radii.lg)),
+                child: SizedBox.square(dimension: 56, child: Icon(icon, size: 28, color: c.deep)),
+              ),
+              const SizedBox(height: Space.md),
+              Text(body, style: text.titleMedium),
+              if (note != null) ...[const SizedBox(height: Space.sm), Text(note!, style: text.bodyMedium)],
+            ],
           ),
         ),
       ],
+      actions: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: actions),
     );
   }
 }
@@ -78,26 +74,27 @@ class SupersededView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = ref.watch(stationViewProvider.select((v) => v?.campaignName ?? ''));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy != StationBusy.none));
     return _FullScreenMessage(
       key: const Key('superseded'),
-      icon: Icons.swap_horiz,
-      title: StationCopy.supersededTitle,
-      body: StationCopy.supersededBody(name),
+      tone: StationTone.quiet,
+      icon: Icons.devices_other,
+      title: StationCopy.otherDeviceTitle,
+      subtitle: StationCopy.otherDeviceSubtitle,
+      body: StationCopy.otherDeviceBody,
       note: StationCopy.supersededNote,
       actions: [
-        FilledButton(
+        MainActionButton(
           key: const Key('use-this-phone'),
+          label: StationCopy.useThisPhoneNow,
+          icon: Icons.smartphone,
           onPressed: busy ? null : () => ref.read(stationActionsProvider).useThisDevice(),
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-          child: const Text(StationCopy.useThisPhone),
         ),
-        const SizedBox(height: Space.sm),
-        TextButton(
+        const SizedBox(height: Space.xs),
+        QuietActionButton(
           key: const Key('superseded-back'),
+          label: StationCopy.backToWork,
           onPressed: () => _leaveOver(context, ref),
-          child: const Text(StationCopy.backToCampaigns),
         ),
       ],
     );
@@ -120,15 +117,15 @@ class SessionEndedView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return _FullScreenMessage(
       key: const Key('session-ended'),
+      tone: StationTone.quiet,
       icon: Icons.logout,
-      title: StationCopy.sessionEnded,
-      body: StationCopy.sessionEndedDetail,
+      title: StationCopy.workEnded,
+      body: StationCopy.workEndedDetail,
       actions: [
-        FilledButton(
+        MainActionButton(
           key: const Key('back-to-campaigns'),
+          label: StationCopy.backToWork,
           onPressed: () => _leaveOver(context, ref),
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-          child: const Text(StationCopy.backToCampaigns),
         ),
       ],
     );
@@ -144,16 +141,15 @@ class FatalView extends ConsumerWidget {
     final message = ref.watch(stationViewProvider.select((v) => v?.fatal ?? ''));
     return _FullScreenMessage(
       key: const Key('fatal'),
+      tone: StationTone.problem,
       icon: Icons.error_outline,
-      iconColor: context.tokens.danger,
-      title: StationCopy.fatalTitle,
+      title: StationCopy.cannotStart,
       body: message,
       actions: [
-        FilledButton(
+        MainActionButton(
           key: const Key('fatal-back'),
+          label: StationCopy.backToWork,
           onPressed: () => _leaveOver(context, ref),
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-          child: const Text(StationCopy.backToCampaigns),
         ),
       ],
     );
@@ -169,26 +165,26 @@ class NotHereView extends ConsumerWidget {
     final other = ref.watch(stationViewProvider.select((v) => v == null ? null : (id: v.campaignId, name: v.campaignName)));
     return _FullScreenMessage(
       key: const Key('not-here'),
+      tone: StationTone.quiet,
       icon: Icons.headset_off_outlined,
       title: other == null ? StationCopy.notHereTitle : StationCopy.elsewhereTitle(other.name),
       body: StationCopy.notHereDetail,
       actions: [
         if (other != null) ...[
-          FilledButton(
+          MainActionButton(
+            label: StationCopy.openIt,
             onPressed: () => context.go(Routes.station(other.id)),
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            child: const Text(StationCopy.openIt),
           ),
-          const SizedBox(height: Space.sm),
+          const SizedBox(height: Space.xs),
         ],
-        OutlinedButton(onPressed: () => context.go(Routes.home), child: const Text(StationCopy.backToCampaigns)),
+        QuietActionButton(label: StationCopy.backToWork, onPressed: () => context.go(Routes.home)),
       ],
     );
   }
 }
 
-/// Joining / first connect. Leave stays offered: with no network this screen
-/// could otherwise only be left by closing the app.
+/// Joining / first connect. Finish work stays offered: with no network this screen could otherwise
+/// only be left by closing the app.
 class ConnectingView extends ConsumerWidget {
   const ConnectingView({super.key});
 
@@ -196,38 +192,77 @@ class ConnectingView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
-    return Column(
+    final name = ref.watch(stationAgentNameProvider);
+    return StationPage(
       key: const Key('connecting'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const StationHeader(),
-        Expanded(
-          child: Center(
-            child: Semantics(
-              liveRegion: true,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const LiveDot(size: 12),
-                  const SizedBox(height: Space.md),
-                  Text(StationCopy.connecting, style: text.titleMedium, textAlign: TextAlign.center),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+      topBar: const StationTopBar(help: false, more: false),
+      band: StateBand(tone: StationTone.start, icon: Icons.headphones, title: StationCopy.namaste(name), subtitle: StationCopy.opening),
+      body: [
+        const SizedBox(height: Space.xl),
+        Semantics(
+          liveRegion: true,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
             children: [
-              const ActionErrorLine(),
-              LeaveStationButton(busy: busy),
+              const LiveDot(size: 12),
+              const SizedBox(height: Space.md),
+              Text(StationCopy.connecting, style: text.titleMedium, textAlign: TextAlign.center),
             ],
           ),
         ),
       ],
+      actions: LeaveStationButton(busy: busy),
+    );
+  }
+}
+
+/// Internet problem (09): the line is down with no call on screen. Calls are stopped; the station
+/// tries again by itself, and "Try again now" is offered once it has given up (pressed while it is
+/// still trying it would only start the ladder over). What to do, in three steps; the last one is
+/// "Call your supervisor to your desk", because Need help cannot reach anyone now (AS5). Finish work
+/// stays under ⋮ More: leaving is plain HTTP.
+class InternetProblemView extends ConsumerWidget {
+  const InternetProblemView({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final link = ref.watch(stationViewProvider.select((v) => v?.link));
+    final busy = ref.watch(stationViewProvider.select((v) => v?.busy != StationBusy.none));
+    final gaveUp = link == StationLink.disconnected;
+    final text = Theme.of(context).textTheme;
+    return StationPage(
+      key: Key(gaveUp ? 'idle-disconnected' : 'idle-reconnecting'),
+      band: StateBand(
+        key: const Key('band-internet-problem'),
+        tone: StationTone.problem,
+        icon: Icons.wifi_off,
+        title: StationCopy.internetProblem,
+        subtitle: gaveUp ? StationCopy.internetStopped : StationCopy.internetProblemSubtitle,
+      ),
+      body: const [
+        StepsCard(
+          title: StationCopy.whatToDo,
+          tone: StationTone.problem,
+          steps: [StationCopy.stepCheckInternet, StationCopy.stepWait, StationCopy.stepCallSupervisor],
+        ),
+      ],
+      actions: gaveUp
+          ? MainActionButton(
+              key: const Key('reconnect'),
+              label: StationCopy.tryAgainNow,
+              icon: Icons.refresh,
+              onPressed: busy ? null : () => ref.read(stationActionsProvider).reconnect(),
+            )
+          : Padding(
+              padding: const EdgeInsets.symmetric(vertical: Space.sm),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(width: Space.sm),
+                  Flexible(child: Text(StationCopy.tryingAgain, key: const Key('trying-again'), style: text.titleMedium)),
+                ],
+              ),
+            ),
     );
   }
 }

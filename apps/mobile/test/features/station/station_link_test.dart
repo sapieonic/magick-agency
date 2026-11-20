@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/station_copy.dart';
 
 import 'station_harness.dart';
 
@@ -13,14 +14,16 @@ void main() {
   );
 
   group('reconnecting', () {
-    testWidgets('mid-call: ember band, a ring counting to the deadline, controls dimmed', (tester) async {
+    testWidgets('mid-call: Call problem (10), red, the call kept until the deadline, what to do, controls dimmed', (tester) async {
       final h = await pumpStation(tester, onCall(link: StationLink.reconnecting, deadline: t0.add(const Duration(seconds: 6))));
-      expect(find.text('Reconnecting…'), findsOneWidget);
-      expect(find.text('Stay on the line. The customer is still there.'), findsOneWidget);
-      expect(find.byKey(const Key('reconnect-ring')), findsOneWidget);
-      expect(find.text('6'), findsOneWidget);
-      // The "On call" band gives way to the connection's.
+      expect(find.byKey(const Key('band-tone-problem')), findsOneWidget);
+      expect(find.text(StationCopy.callProblem), findsOneWidget);
+      expect(find.text('Call is kept for 0:06'), findsOneWidget);
+      expect(find.text(StationCopy.stepSaySorry), findsOneWidget);
+      // The "On call" band gives way to the line's.
       expect(find.byKey(const Key('band-on-call')), findsNothing);
+      // The customer card stays.
+      expect(find.text('Priya Raman'), findsOneWidget);
 
       final dim = tester.widget<AnimatedOpacity>(
         find.ancestor(of: find.byKey(const Key('control-mute')), matching: find.byType(AnimatedOpacity)).first,
@@ -30,69 +33,86 @@ void main() {
       expect(h.actions.calls, isEmpty);
 
       await h.advance(const Duration(seconds: 2));
-      expect(find.text('4'), findsOneWidget);
-      // Past the deadline the ring stops at zero, never negative.
+      expect(find.text('Call is kept for 0:04'), findsOneWidget);
+      // Past the deadline it stops at zero, never negative.
       await h.advance(const Duration(seconds: 10));
-      expect(find.text('0'), findsOneWidget);
+      expect(find.text('Call is kept for 0:00'), findsOneWidget);
     });
 
-    testWidgets('idle: a slim banner over the waiting screen', (tester) async {
+    testWidgets('idle: Internet problem (09), what to do, and no Try again now while it is still trying', (tester) async {
       await pumpStation(tester, station(link: StationLink.reconnecting));
       expect(find.byKey(const Key('idle-reconnecting')), findsOneWidget);
-      expect(find.text('Waiting for a call'), findsOneWidget);
+      expect(find.text(StationCopy.internetProblem), findsOneWidget);
+      expect(find.text(StationCopy.stepCheckInternet), findsOneWidget);
+      expect(find.byKey(const Key('reconnect')), findsNothing);
+      expect(find.text(StationCopy.nextCallComing), findsNothing);
     });
 
     testWidgets('back to open: the on-call band and live controls return', (tester) async {
       final h = await pumpStation(tester, onCall(link: StationLink.reconnecting, deadline: t0.add(const Duration(seconds: 8))));
       await h.setView(onCall());
       expect(find.byKey(const Key('band-on-call')), findsOneWidget);
+      expect(find.byKey(const Key('call-problem-steps')), findsNothing);
       await tester.tap(find.byKey(const Key('control-mute')));
       expect(h.actions.calls, ['setMuted']);
     });
   });
 
   group('disconnected', () {
-    testWidgets('idle: "Disconnected — you are not receiving calls" with Reconnect', (tester) async {
+    testWidgets('idle: Internet problem, calls are stopped, Try again now', (tester) async {
       final h = await pumpStation(tester, station(link: StationLink.disconnected));
-      expect(find.text('Disconnected — you are not receiving calls'), findsOneWidget);
-      expect(find.text('Reconnect, then go available to start taking calls.'), findsOneWidget);
-      await tester.tap(find.text('Reconnect'));
+      expect(find.byKey(const Key('idle-disconnected')), findsOneWidget);
+      expect(find.text(StationCopy.internetStopped), findsOneWidget);
+      await tester.tap(find.byKey(const Key('reconnect')));
       expect(h.actions.calls, ['reconnect']);
     });
 
-    testWidgets('mid-call it says the customer cannot hear, not "not receiving calls"', (tester) async {
+    testWidgets('mid-call it is Call problem, and Try again now reconnects', (tester) async {
       final h = await pumpStation(tester, onCall(link: StationLink.disconnected));
-      expect(find.text('Connection lost'), findsOneWidget);
-      expect(find.text('The customer can’t hear you right now. Reconnect to get back on the call.'), findsOneWidget);
-      await tester.tap(find.text('Reconnect'));
+      expect(find.text(StationCopy.callProblem), findsOneWidget);
+      expect(find.text(StationCopy.internetProblem), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('reconnect')));
+      await tester.tap(find.byKey(const Key('reconnect')));
       expect(h.actions.calls, ['reconnect']);
+    });
+
+    testWidgets('Need help with no internet: call your supervisor to your desk (AS5)', (tester) async {
+      final h = await pumpStation(tester, onCall(link: StationLink.disconnected), needHelp: true);
+      await tester.tap(find.byKey(const Key('need-help')));
+      await settle(tester);
+      expect(h.actions.calls, isNot(contains('raiseHelp')));
+      expect(find.byKey(const Key('help-offline')), findsOneWidget);
+      expect(find.textContaining(StationCopy.offlineHelp), findsOneWidget);
     });
   });
 
-  testWidgets('superseded: full screen, "Use this phone instead" reclaims', (tester) async {
+  testWidgets('another device (12): its own screen, "Use this phone" takes the work back', (tester) async {
     final h = await pumpStation(tester, onCall(link: StationLink.superseded));
-    expect(find.text('Your station moved to another device'), findsOneWidget);
-    expect(find.textContaining('You opened Q4 Card Renewals somewhere else'), findsOneWidget);
+    expect(find.byKey(const Key('band-tone-quiet')), findsOneWidget);
+    expect(find.text(StationCopy.otherDeviceTitle), findsOneWidget);
+    expect(find.text(StationCopy.otherDeviceSubtitle), findsOneWidget);
     expect(find.byKey(const Key('hang-up')), findsNothing);
+    // No Need help, no ⋮ More here.
+    expect(find.byKey(const Key('station-more')), findsNothing);
     await tester.tap(find.byKey(const Key('use-this-phone')));
     expect(h.actions.calls, ['useThisDevice']);
-    await tester.tap(find.text('Back to campaigns'));
+    await tester.tap(find.text(StationCopy.backToWork));
     await settle(tester);
     expect(find.text('campaigns-home'), findsOneWidget);
     expect(h.actions.calls, ['useThisDevice', 'dismiss'], reason: 'the station that moved is forgotten here');
   });
 
-  testWidgets('session gone: rejoin from the campaign list', (tester) async {
+  testWidgets('work ended: back to the work list', (tester) async {
     final h = await pumpStation(tester, station(link: StationLink.sessionGone));
-    expect(find.text('Session ended'), findsOneWidget);
-    expect(find.text('Rejoin the campaign to take calls.'), findsOneWidget);
+    expect(find.text(StationCopy.workEnded), findsOneWidget);
+    expect(find.text(StationCopy.workEndedDetail), findsOneWidget);
     await tester.tap(find.byKey(const Key('back-to-campaigns')));
     await settle(tester);
     expect(find.text('campaigns-home'), findsOneWidget);
     expect(h.actions.calls, ['dismiss']);
   });
 
-  testWidgets('weak connection pill while the link is open', (tester) async {
+  testWidgets('a slow line is one line under the band while it is still open', (tester) async {
     final h = await pumpStation(tester, station(weak: true));
     expect(find.byKey(const Key('weak-connection')), findsOneWidget);
     await h.setView(station());
@@ -101,13 +121,15 @@ void main() {
 
   testWidgets('connecting, fatal and not-here each have a way off', (tester) async {
     final h = await pumpStation(tester, station(link: StationLink.connecting));
-    expect(find.text('Opening your station…'), findsOneWidget);
+    expect(find.text(StationCopy.connecting), findsOneWidget);
+    expect(find.byKey(const Key('leave')), findsOneWidget);
     await h.setView(station(fatal: 'You aren’t staffed on this campaign.'));
-    expect(find.text('Can’t open the station'), findsOneWidget);
+    expect(find.text(StationCopy.cannotStart), findsOneWidget);
     expect(find.text('You aren’t staffed on this campaign.'), findsOneWidget);
+    expect(find.byKey(const Key('fatal-back')), findsOneWidget);
     await h.setView(null);
-    expect(find.text('You’re not at this station'), findsOneWidget);
-    expect(find.text('Back to campaigns'), findsOneWidget);
+    expect(find.text(StationCopy.notHereTitle), findsOneWidget);
+    expect(find.text(StationCopy.backToWork), findsOneWidget);
   });
 
   testWidgets('system back does not take the call screen away mid-call', (tester) async {
@@ -125,7 +147,7 @@ void main() {
 
   testWidgets('a station on another campaign offers to open it', (tester) async {
     await pumpStation(tester, station(campaignId: 'c2'));
-    expect(find.text('Your station is on Q4 Card Renewals'), findsOneWidget);
-    expect(find.text('Open it'), findsOneWidget);
+    expect(find.text(StationCopy.elsewhereTitle('Q4 Card Renewals')), findsOneWidget);
+    expect(find.text(StationCopy.openIt), findsOneWidget);
   });
 }

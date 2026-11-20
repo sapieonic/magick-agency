@@ -10,7 +10,9 @@ import '../../../core/station/station_view.dart';
 /// on every keystroke so "Save outcome" never stays disabled until a blur.
 
 /// Which callback choice the agent made, so the chip stays selected.
-enum CallbackChoice { inOneHour, tomorrowMorning, tomorrowEvening, picked }
+///
+/// [todayEvening] is offered only on What happened? ([stationCallbackPresets]).
+enum CallbackChoice { inOneHour, tomorrowMorning, tomorrowEvening, picked, todayEvening }
 
 @immutable
 class DispositionForm {
@@ -185,6 +187,19 @@ List<CallbackPreset> callbackPresets(DateTime now) {
     CallbackPreset(CallbackChoice.inOneHour, roundedUp),
     CallbackPreset(CallbackChoice.tomorrowMorning, tomorrow10),
     CallbackPreset(CallbackChoice.tomorrowEvening, tomorrow18),
+  ];
+}
+
+/// What happened?'s Call when? chips (design-spec §3, 05b): In 1 hour, Today 6:00 PM (while that is
+/// still more than an hour away), Tomorrow 10:00 AM, Tomorrow 6:00 PM.
+List<CallbackPreset> stationCallbackPresets(DateTime now) {
+  final base = callbackPresets(now);
+  final local = now.toLocal();
+  final today18 = DateTime(local.year, local.month, local.day, 18);
+  return [
+    base.first,
+    if (today18.difference(local) > const Duration(hours: 1)) CallbackPreset(CallbackChoice.todayEvening, today18),
+    ...base.skip(1),
   ];
 }
 
