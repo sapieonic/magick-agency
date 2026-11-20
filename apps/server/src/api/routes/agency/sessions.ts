@@ -297,8 +297,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // Resolved here rather than in the object literal below so its `await` is
     // plainly outside the frame path.
     // Contact assignment (CA3): this agent's own queue at join, on a `strict` / `preferred`
-    // campaign (undefined for `pool`). Best effort, as the retry context is: a failed read
-    // omits the field rather than refusing the join, and pacing's `queue` frame follows.
+    // campaign; the campaign's shared queue on a `pool` one (agent station BE-5). Best effort, as
+    // the retry context is: a failed read omits the field rather than refusing the join, and
+    // pacing's `queue` frame follows.
     // The two reads are independent and run together, each with its own error handling.
     const [retryContext, queue] = await Promise.all([
       resolveRetryContext(campaign),
@@ -328,7 +329,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // payload always carries a boolean, never `undefined` or `null`.
       allow_wrapup_redial: campaign.allow_wrapup_redial === true,
       // Contact assignment (0009): the campaign's mode and agent-retry setting at join, and
-      // this agent's queue in `strict` / `preferred` mode (absent in `pool` mode).
+      // this agent's queue in `strict` / `preferred` mode, the campaign's in `pool` mode (BE-5).
       assignment_mode: campaign.assignment_mode ?? 'pool',
       allow_agent_retry: campaign.allow_agent_retry === true,
       ...(queue ? { queue } : {}),
