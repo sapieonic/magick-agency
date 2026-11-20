@@ -9,18 +9,21 @@
  * is not certain answers `null` and the client shows `raw`.
  *
  * Money ({@link parseMoneyFact}): an optional rupee sign or word before (`₹`, `Rs`, `Rs.`, `INR`)
- * and after (`/-`, `INR`, `only`), spaces anywhere, then digits grouped the Indian way
- * (`1,25,000`) or the western way (`125,000`) or not at all (`125000`), then at most two
- * decimals. Answers a plain decimal string: no sign, no grouping, no leading zeros, the decimals
+ * and after (`/-`, `INR`, `only`), spaces around them, then digits grouped the Indian way
+ * (`1,25,000`) or the western way (`125,000`) or not at all (`125000`), a single space standing
+ * for a grouping comma (`1 25 000`, `125 000`) but only where the comma would stand, then at
+ * most two decimals. Answers a plain decimal string: no sign, no grouping, no leading zeros, the decimals
  * as written (`"125000"`, `"125000.50"`). Refused (null): a minus sign or brackets, a decimal
- * comma (`12,50`), a grouping that is neither form (`1,2,3`), three or more decimals, words
- * (`1.25 lakh`), an exponent.
+ * comma (`12,50`), a grouping that is neither form (`1,2,3`), spaces that are not a grouping
+ * (`5000 2500` is two amounts, not 50,002,500), spaces and commas mixed, three or more decimals,
+ * words (`1.25 lakh`), an exponent.
  *
  * Date ({@link parseDateFact}): year first (`2026-11-25`, `2026/11/25`, with a time of day after
  * it and no zone), then day first (`25/11/2026`, `25-11-26`, `25.11.2026`, `25 Nov 2026`,
  * `25th November 2026`, `25-Nov-26`), and a named month first (`Nov 25, 2026`), whose order a
  * month name makes certain. Answers `YYYY-MM-DD`, a calendar day: no zone conversion, ever. A
- * two-digit year is 20YY. Refused (null): month first with numbers (`11/25/2026` is never read
+ * two-digit year is the century that puts the date nearest today, within 50 years either side
+ * (`15/08/85` is 1985, `25/11/26` is 2026; `fullYear`). Refused (null): month first with numbers (`11/25/2026` is never read
  * as 25 Nov; `03/04/2026` is read as 3 Apr, day first, as the roster's own country writes it),
  * a day the calendar does not have (`31/02/2026`), a time with a zone (`…T18:30:00Z`: which day
  * it is depends on where you stand), a spreadsheet serial number (`46351`), anything else.
@@ -49,9 +52,15 @@ export function parseMoneyFact(raw: string): string | null {
   text = text.replace(MONEY_PREFIX, '');
   // A suffix may come twice (`12,500/- only`); strip at most two.
   for (let i = 0; i < 2; i++) text = text.replace(MONEY_SUFFIX, '');
-  text = text.replace(/ /g, '');
-  const [integer, decimals, extra] = text.split('.');
-  if (extra !== undefined || integer === undefined || !MONEY_INTEGER.test(integer)) return null;
+  text = text.trim();
+  const [rawInteger, decimals, extra] = text.split('.');
+  if (extra !== undefined || rawInteger === undefined) return null;
+  // A space may stand where a grouping comma would (`1 25 000`, `125 000`), and only there: the
+  // groups must then make one of the two forms, so two amounts side by side (`5000 2500`) are not
+  // read as one. Never spaces and commas in one amount, never a space among the decimals.
+  if (rawInteger.includes(' ') && rawInteger.includes(',')) return null;
+  const integer = rawInteger.replace(/ /g, ',');
+  if (!MONEY_INTEGER.test(integer)) return null;
   if (decimals !== undefined && !/^\d{1,2}$/.test(decimals)) return null;
   const digits = integer.replace(/,/g, '').replace(/^0+(?=\d)/, '');
   return decimals === undefined ? digits : `${digits}.${decimals}`;
@@ -70,9 +79,27 @@ function monthNumber(name: string): number | null {
   return index === -1 ? null : index + 1;
 }
 
-/** A two-digit year is this century's; a four-digit one is taken as written. */
-function fullYear(year: string): number {
-  return year.length === 2 ? 2000 + Number(year) : Number(year);
+/**
+ * The year a date names. A four-digit one is taken as written. A two-digit one is the century that
+ * puts the date nearest `now`, so it lands within 50 years either side of today: on 20 Nov 2026,
+ * `15/08/85` is 1985 (41 years back, not 59 ahead), `25/11/26` is 2026 and `01/01/70` is 2070
+ * (about 43 years ahead; 1970 would be nearly 57 back). A date of birth more than 50 years ago written
+ * with two digits therefore reads in the future: a roster that holds such dates should write four.
+ */
+function fullYear(year: string, month: number, day: number, now: Date): number {
+  if (year.length !== 2) return Number(year);
+  const yy = Number(year);
+  const century = Math.floor(now.getUTCFullYear() / 100) * 100;
+  let best = century + yy;
+  let bestDistance = Infinity;
+  for (const candidate of [century - 100 + yy, century + yy, century + 100 + yy]) {
+    const distance = Math.abs(Date.UTC(candidate, month - 1, day) - now.getTime());
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 /** `YYYY-MM-DD` when the calendar has that day, else null. */
@@ -93,9 +120,10 @@ const NAMED_FIRST = /^([a-z]{3,9})\.?[\s\-]+(\d{1,2})(?:st|nd|rd|th)?,?[\s\-]+(\
 
 /**
  * A date value as `YYYY-MM-DD`, or `null` when it cannot be read for certain. Never month first
- * with numbers. See the module header for the rule.
+ * with numbers. `now` (the clock by default) picks a two-digit year's century. See the module
+ * header for the rule.
  */
-export function parseDateFact(raw: string): string | null {
+export function parseDateFact(raw: string, now: Date = new Date()): string | null {
   if (typeof raw !== 'string') return null;
   const text = raw.replace(SPACES, ' ').trim();
   if (text.length === 0 || text.length > MAX_FACT_CHARS) return null;
@@ -104,12 +132,12 @@ export function parseDateFact(raw: string): string | null {
   if (m) return calendarDay(Number(m[1]), Number(m[2]), Number(m[3]));
 
   m = DAY_FIRST.exec(text);
-  if (m) return calendarDay(fullYear(m[3]!), Number(m[2]), Number(m[1]));
+  if (m) return calendarDay(fullYear(m[3]!, Number(m[2]), Number(m[1]), now), Number(m[2]), Number(m[1]));
 
   m = DAY_FIRST_NAMED.exec(text);
   if (m) {
     const month = monthNumber(m[2]!);
-    return month === null ? null : calendarDay(fullYear(m[3]!), month, Number(m[1]));
+    return month === null ? null : calendarDay(fullYear(m[3]!, month, Number(m[1]), now), month, Number(m[1]));
   }
 
   m = NAMED_FIRST.exec(text);
@@ -127,8 +155,8 @@ export type ContextFactType = 'text' | 'money' | 'date';
  * A value read as its column's type: `parseMoneyFact` for `money`, `parseDateFact` for `date`,
  * and always `null` for `text` (the client shows `raw`).
  */
-export function parseContextFact(raw: string, type: ContextFactType): string | null {
+export function parseContextFact(raw: string, type: ContextFactType, now: Date = new Date()): string | null {
   if (type === 'money') return parseMoneyFact(raw);
-  if (type === 'date') return parseDateFact(raw);
+  if (type === 'date') return parseDateFact(raw, now);
   return null;
 }
