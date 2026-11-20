@@ -4,7 +4,7 @@ import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { DispositionPad, type DispositionPadHandle } from '../DispositionPad';
 import { NotesField } from '../NotesField';
 import { ContactDetail } from '../ContactDetail';
-import { CueFlashBand } from '../StateRail';
+import { CueFlashBand } from '../CueFlashBand';
 import { HoldToConfirmButton, HANGUP_COPY, type HoldToConfirmCopy } from '../HoldToConfirmButton';
 import { formatDuration } from '../../../utils/agencyClock';
 import { resolveContextFields } from '../../../utils/agencyContext';

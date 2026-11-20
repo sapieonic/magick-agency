@@ -28,7 +28,7 @@ import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { InboundCallView, LapseCountdown, TalkTimer } from '../../components/agency/inbound/InboundCallView';
 import { useInboundCall } from '../../hooks/useInboundCall';
 import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
-import { CueFlashBand } from '../../components/agency/StateRail';
+import { CueFlashBand } from '../../components/agency/CueFlashBand';
 import type { DispositionPadHandle } from '../../components/agency/DispositionPad';
 import { JoinConflictScreen, SoftphoneJoinScreen, StationFatal } from '../../components/agency/station/StationJoinScreens';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from '../../components/agency/HoldToConfirmButton';

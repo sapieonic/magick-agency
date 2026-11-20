@@ -11,6 +11,7 @@ import {
   Users,
   Volume2,
 } from 'lucide-react';
+import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
 import type { StationHelp } from '../../../pages/agency/station/useStationHelp';
 import { STATION_COPY, helpAskedLabel } from '../../../utils/agency/stationCopy';
@@ -84,6 +85,8 @@ export function StationFrame({
         <span className={styles.topRight}>
           {needHelp}
           {menu}
+          {/* The station has no sidebar: the release version ends its one bar, as plain text. */}
+          <span className={styles.version}><AppVersion version={__APP_VERSION__} variant="inline" /></span>
         </span>
       </header>
 
