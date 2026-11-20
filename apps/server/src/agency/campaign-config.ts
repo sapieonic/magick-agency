@@ -29,6 +29,7 @@ import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agen
 import { autoDispositionRefusal, isAutoDispositionOutcome } from '@magick-agency/domain/auto-disposition';
 import { contextDisplayIssues } from './customer-facts.js';
 import { agentScriptIssues } from './agent-script.js';
+import { stationTileIssues } from './station-tiles.js';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG — THE INTERNAL HANDLER'S OWN BOUNDARY ───────────
@@ -776,6 +777,8 @@ export function validateAgencyCampaignConfig(
   issues.push(...contextDisplayIssues(record));
   // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`).
   issues.push(...agentScriptIssues(record));
+  // Agent station (BE-13, AS9): the outcomes' and break reasons' icons, and `phone_display`.
+  issues.push(...stationTileIssues(record));
   return issues;
 }
 

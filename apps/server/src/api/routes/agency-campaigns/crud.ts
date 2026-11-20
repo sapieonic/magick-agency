@@ -11,6 +11,7 @@ import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type {
   AgencyAssignmentMode,
+  AgencyPhoneDisplay,
   AgencyCallbackFallback,
   AgencyCampaignStatus,
   AgencyOnUnstaff,
@@ -205,6 +206,8 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       outcome_dispositions: body?.outcome_dispositions,
       // Inbound sticky routing (0024). Omitted ⇒ `true`; shape-checked by `configRejected`.
       inbound_sticky_enabled: body?.inbound_sticky_enabled as boolean | undefined,
+      // Agent station (AS9). Omitted ⇒ `full`; shape-checked by `configRejected`.
+      phone_display: body?.phone_display as AgencyPhoneDisplay | undefined,
       context_display: body?.context_display,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,

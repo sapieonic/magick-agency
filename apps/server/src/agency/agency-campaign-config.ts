@@ -13,6 +13,7 @@ import {
 } from './campaign-config.js';
 import { contextDisplayIssues } from './customer-facts.js';
 import { agentScriptIssues } from './agent-script.js';
+import { stationTileIssues } from './station-tiles.js';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG VALIDATION (public API layer) ───────────────────
@@ -691,6 +692,9 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   issues.push(...contextDisplayIssues(record));
   // Agent station (BE-8): the script's shape, bounds and placeholders (`agent-script.ts`).
   issues.push(...agentScriptIssues(record));
+  // Agent station (BE-13, AS9): the outcomes' and break reasons' icons, and `phone_display`: the
+  // internal handler's rules, imported (`station-tiles.ts`).
+  issues.push(...stationTileIssues(record));
   return issues;
 }
 

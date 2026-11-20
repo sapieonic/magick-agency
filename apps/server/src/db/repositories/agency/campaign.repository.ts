@@ -15,6 +15,7 @@ import {
 } from '../../models/agency.model.js';
 import type {
   AgencyAssignmentMode,
+  AgencyPhoneDisplay,
   AgencyCallbackFallback,
   AgencyCampaignActor,
   AgencyCampaignLineage,
@@ -78,6 +79,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // Agent station (BE-8, 0056): the script, an operator setting patchable at any status; a
   // session reads it at join (the bootstrap). JSONB, so it is in the list below too.
   'agent_script',
+  // Agent station (AS9, 0056): how the station shows the customer's number; an operator setting
+  // patchable at any status, read by a session at join (the bootstrap).
+  'phone_display',
 ]);
 
 /**
@@ -138,6 +142,8 @@ export class AgencyCampaignRepository {
     outcome_dispositions?: unknown;
     /** Omitted ⇒ `true`, the column DEFAULT (0024). */
     inbound_sticky_enabled?: boolean;
+    /** Agent station (AS9, 0056). Omitted ⇒ `full`, the column DEFAULT. */
+    phone_display?: AgencyPhoneDisplay;
   }): Promise<AgencyCampaignRecord> {
     // ── Every placeholder inside a COALESCE must carry its column's type ───────
     //
@@ -172,7 +178,7 @@ export class AgencyCampaignRepository {
     // If you change a default here, change it in the schema too.
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
-         (${CAMPAIGN_INSERT_COLUMNS_SQL})
+         (${CAMPAIGN_INSERT_COLUMNS_SQL}, phone_display)
        VALUES ($1,$2,$3,$4,COALESCE($5,'voicelink'),
                COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
                COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
@@ -180,7 +186,8 @@ export class AgencyCampaignRepository {
                $19, $20, COALESCE($21,false),
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true))
+               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true),
+               COALESCE($32::varchar,'full'))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -213,6 +220,9 @@ export class AgencyCampaignRepository {
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
         // Inbound sticky routing (0024). Omitted ⇒ `true`, the column DEFAULT.
         input.inbound_sticky_enabled ?? null,
+        // Agent station (AS9, 0056): appended after the shared column list, which the retry
+        // campaign's insert also binds (it copies the parent's value itself). Omitted ⇒ `full`.
+        input.phone_display ?? null,
       ],
     );
     return rows[0]!;

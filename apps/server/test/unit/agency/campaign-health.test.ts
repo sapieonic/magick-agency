@@ -50,6 +50,7 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     retry_policy: {} as never, disposition_catalog: [], outcome_dispositions: {}, break_reasons: [],
     context_display: {} as never, record_calls: false, analysis_profile_id: null,
     agent_script: {},
+    phone_display: 'full',
     status: 'running',
     abandonment_ceiling_pct: 3, pause_reason: null, paused_at: null,
     pause_abandonment_rate_pct: null,

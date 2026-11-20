@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { createChildLogger } from '@magick-agency/observability';
-import type { AgencyHelpResponse, AgencySupervisorMessageResponse } from '@magick-agency/contracts/agency';
+import type { AgencyAgentState, AgencyHelpResponse, AgencySupervisorMessageResponse } from '@magick-agency/contracts/agency';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { FLOOR_ASSIST_REFUSAL_MESSAGES, normaliseMessageText, senderNameForFrame } from '../../../agency/floor-assist.js';
 import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
@@ -27,8 +27,10 @@ const log = createChildLogger({ component: 'agency-floor-assist-routes' });
  * attached.
  *
  *  - `POST /sessions/:id/help`: the caller's own live session (`requireOwnedSession`: anyone
- *    else's is the uniform 404, a session that has ended `409 session_ended`), on a call or in
- *    wrap-up (`409 help_not_on_call`); raises the request, or answers the one already open.
+ *    else's is the uniform 404, a session that has ended `409 session_ended`), in any state (agent
+ *    station BE-9, AS5: Ready, on a break, offline after joining as much as on a call or in
+ *    wrap-up; `help_not_on_call` is no longer sent); raises the request with the agent's state
+ *    ({@link helpStateAtRaise}), or answers the one already open.
  *  - `POST /sessions/:id/help/cancel` (the public `DELETE /sessions/:id/help`; `callCore` sends no
  *    body on a DELETE, and the actor rides in the body): cancels the open request, if any.
  *  - `POST /supervisor-messages` (the public `POST /sessions/:id/messages`; owner `body_session`,
@@ -38,20 +40,25 @@ const log = createChildLogger({ component: 'agency-floor-assist-routes' });
  *    `requireOwnedSession`), and a message is a supervisor's on someone else's session.
  */
 
-/** Whether the session's agent is on a call or finishing one: what Need help needs (LF4). */
-async function onCallOrWrapup(runtime: AgencyRuntime, session: AgencyAgentSessionRecord): Promise<boolean> {
+/**
+ * The agent's state when they raise Need help (BE-9, `state_at_raise`): the lease's (the authority;
+ * the row's mirror when Redis could not answer), except that a soft-phone call, which keeps the
+ * session on the `soft_phone` break (docs/softphone.md §2), is `on_call` while it is live and
+ * `wrapup` while it owes its outcome, and a connected inbound call is `on_call`: what the agent is
+ * doing, as the floor shows it ("Needs help · on a call"). Before BE-9 only those call and wrap-up
+ * states could raise at all (LF13).
+ */
+export async function helpStateAtRaise(runtime: AgencyRuntime, session: AgencyAgentSessionRecord): Promise<AgencyAgentState> {
   const lease = await runtime.agents.get(session.id);
-  // The lease is the authority; the row's mirror when Redis could not answer.
   const state = lease?.state ?? session.state;
-  if (state === 'on_call' || state === 'wrapup') return true;
-  // A soft-phone call: the session stays on the `soft_phone` break through it (docs/softphone.md §2).
-  if (lease?.manualCallId || runtime.softphone.hasLiveCall(session.id)) return true;
-  if (runtime.inbound?.findCallForSession(session.id)?.phase === 'connected') return true;
+  if (state === 'on_call' || state === 'wrapup') return state;
+  if (lease?.manualCallId || runtime.softphone.hasLiveCall(session.id)) return 'on_call';
+  if (runtime.inbound?.findCallForSession(session.id)?.phase === 'connected') return 'on_call';
   if (session.kind === 'softphone' || onSoftphoneBreak({ state }, session)) {
     // Its call ended and owes its outcome: the soft phone's wrap-up.
-    return (await agencyManualCallRepository.findUnsettledForSession(session.id)) !== null;
+    if ((await agencyManualCallRepository.findUnsettledForSession(session.id)) !== null) return 'wrapup';
   }
-  return false;
+  return state;
 }
 
 const messageBodySchema = z.object({
@@ -69,8 +76,8 @@ export async function registerFloorAssistRoutes(sub: FastifyInstance, runtime: A
   sub.post('/sessions/:id/help', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
-    const [onCall, callId] = await Promise.all([
-      onCallOrWrapup(runtime, session),
+    const [state, callId] = await Promise.all([
+      helpStateAtRaise(runtime, session),
       // The call it is raised on, for the floor's card and its Listen; null in wrap-up. Read beside
       // the check (neither needs the other), and never fails the raise.
       agencyFloorAssistRepository.liveCallIdForSession(session.id, session.tenant_id).catch((err: unknown) => {
@@ -78,8 +85,7 @@ export async function registerFloorAssistRoutes(sub: FastifyInstance, runtime: A
         return null;
       }),
     ]);
-    if (!onCall) return sendRefusal(reply, 409, 'help_not_on_call', FLOOR_ASSIST_REFUSAL_MESSAGES.help_not_on_call);
-    const help = await runtime.floorAssist.raise(session, callId);
+    const help = await runtime.floorAssist.raise(session, callId, state);
     // The session left between the ownership check and the raise.
     if (!help) return sendSessionEnded(reply);
     const body: AgencyHelpResponse = { session_id: session.id, help };

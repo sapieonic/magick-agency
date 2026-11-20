@@ -51,8 +51,8 @@ describe('Need help expires on the real clock', () => {
     });
     const left = await session();
     const answered = await session();
-    const raisedLeft = await service.raise(left, null);
-    await service.raise(answered, null);
+    const raisedLeft = await service.raise(left, null, 'available');
+    await service.raise(answered, null, 'break');
     /** The sessions whose request a read serves as open (every read's rule, `helpOpenSql`, on this test's expiry). */
     const openOf = async () => (await Promise.all([left, answered].map((s) =>
       agencyFloorAssistRepository.openForSession(s.id, s.tenant_id, s.account_id, EXPIRY_MS)))).flatMap((r) => (r ? [r.session_id] : []));
@@ -78,11 +78,12 @@ describe('Need help expires on the real clock', () => {
     expect(expired).toEqual([[left.id, { event: 'help_cleared', raised_at: raisedLeft!.raised_at, reason: 'expired' }]]);
     expect(audits.filter((a) => a['action'] === 'agency_session.help_expired').map((a) => a['resource_id'])).toEqual([left.id]);
     const { rows } = await getTestPool().query(
-      'SELECT id, help_raised_at IS NULL AS cleared, help_answered_at IS NOT NULL AS answered FROM agency_agent_sessions WHERE id = ANY($1::uuid[]) ORDER BY id',
+      'SELECT id, help_raised_at IS NULL AS cleared, help_answered_at IS NOT NULL AS answered, help_state FROM agency_agent_sessions WHERE id = ANY($1::uuid[]) ORDER BY id',
       [[left.id, answered.id]]);
+    // BE-9: the expiry clears the state with the raise; the answered request keeps the state it was raised in.
     expect(rows).toEqual([
-      { id: left.id, cleared: true, answered: false },
-      { id: answered.id, cleared: false, answered: true },
+      { id: left.id, cleared: true, answered: false, help_state: null },
+      { id: answered.id, cleared: false, answered: true, help_state: 'break' },
     ].sort((a, b) => (a.id < b.id ? -1 : 1)));
   }, 15_000);
 });
