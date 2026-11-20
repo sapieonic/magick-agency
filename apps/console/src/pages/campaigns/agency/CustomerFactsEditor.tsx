@@ -8,8 +8,11 @@ import {
 import {
   CONTEXT_ROLE_LABELS,
   CONTEXT_TYPE_LABELS,
+  columnNamed,
+  columnType,
   roleField,
   roleFixedType,
+  sameColumn,
   typeField,
   withColumnType,
   type FactsForm,
@@ -35,6 +38,11 @@ const ROLE_HINTS: Readonly<Record<AgencyContextRole, string>> = {
  * from, and it says so. A column given the amount due or the due date is read as money or a date
  * whatever its type says (the contract's rule), so its type is shown fixed. Errors come keyed as the
  * server keys them (`context_display.roles.<role>`, `context_display.types.<column>`).
+ *
+ * Column names match as the server matches them, ignoring case: a role or type stored as `amount`
+ * is the list's `Amount` (chosen, never "not in the list"), and a type changed on it keeps one key.
+ * Each select's id is its place in the list, so two names the id would spell alike ("a b", "a-b")
+ * never share one.
  */
 export function CustomerFactsEditor({
   value,
@@ -61,7 +69,7 @@ export function CustomerFactsEditor({
   const fixedTypeOf = (column: string): { role: AgencyContextRole; type: AgencyContextFieldType } | null => {
     for (const role of AGENCY_CONTEXT_ROLES) {
       const fixed = roleFixedType(role);
-      if (fixed && value.roles[role].trim().toLowerCase() === column.trim().toLowerCase()) return { role, type: fixed };
+      if (fixed && value.roles[role].trim() !== '' && sameColumn(value.roles[role], column)) return { role, type: fixed };
     }
     return null;
   };
@@ -71,9 +79,11 @@ export function CustomerFactsEditor({
       <div className={styles.stack} data-testid="customer-facts">
         <h3 className={styles.subhead}>Customer facts</h3>
         <p className={styles.hint} data-testid="customer-facts-empty">
-          {loading
-            ? 'Reading the columns of this campaign’s customer list…'
-            : 'Upload a customer list to this campaign first. Then choose here which column is the customer’s name, place, amount due and due date.'}
+          {readOnly
+            ? 'No customer facts are set for this campaign.'
+            : loading
+              ? 'Reading the columns of this campaign’s customer list…'
+              : 'Upload a customer list to this campaign first. Then choose here which column is the customer’s name, place, amount due and due date.'}
         </p>
         {AGENCY_CONTEXT_ROLES.map((role) => <Fragment key={role}>{errors.render(roleField(role))}</Fragment>)}
       </div>
@@ -91,14 +101,16 @@ export function CustomerFactsEditor({
           const selectId = `${id}-role-${role}`;
           const field = roleField(role);
           const current = value.roles[role];
-          // A column set before that the list no longer offers stays chosen, said as such.
-          const missing = current !== '' && !shown.some((c) => c === current);
+          // The list's own spelling of the chosen column (the server ignores case); a column set
+          // before that the list no longer offers stays chosen, said as such.
+          const listed = current === '' ? undefined : columnNamed(shown, current);
+          const missing = current !== '' && listed === undefined;
           return (
             <div key={role} className="form-group">
               <label htmlFor={selectId}>{CONTEXT_ROLE_LABELS[role]}</label>
               <select
                 id={selectId}
-                value={current}
+                value={listed ?? current}
                 disabled={readOnly}
                 onChange={(event) => onChange({ ...value, roles: { ...value.roles, [role]: event.target.value } })}
                 aria-invalid={errors.message(field) ? true : undefined}
@@ -120,11 +132,11 @@ export function CustomerFactsEditor({
 
       <h4 className={styles.minorHead} id={`${id}-types`}>How each column is read</h4>
       <ul className={styles.typeRows} aria-labelledby={`${id}-types`}>
-        {shown.map((column) => {
-          const selectId = `${id}-type-${column.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+        {shown.map((column, index) => {
+          const selectId = `${id}-type-${index}`;
           const field = typeField(column);
           const fixed = fixedTypeOf(column);
-          const type = fixed?.type ?? value.types[column] ?? 'text';
+          const type = fixed?.type ?? columnType(value, column);
           return (
             <li key={column} className={styles.typeRow}>
               <label htmlFor={selectId} className={styles.typeColumn}>{column}</label>
