@@ -229,6 +229,15 @@ export const CONTEXT_ROLE_LABELS: Readonly<Record<AgencyContextRole, string>> = 
   due_date: 'Due date',
 };
 
+/**
+ * The number display's two choices in a supervisor's words (AS9): campaign Settings' options and the
+ * activity log's before and after. One word for each, whatever the wire calls it (`full`, `masked`).
+ */
+export const PHONE_DISPLAY_LABELS: Readonly<Record<AgencyPhoneDisplay, string>> = {
+  full: 'Full number',
+  masked: 'Hidden number',
+};
+
 /** Each type's words on the page. */
 export const CONTEXT_TYPE_LABELS: Readonly<Record<AgencyContextFieldType, string>> = {
   text: 'Text',

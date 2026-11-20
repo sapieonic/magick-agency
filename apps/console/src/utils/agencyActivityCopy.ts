@@ -9,6 +9,7 @@ import { AGENCY_LISTEN_END_REASON_LABELS } from '../types/listen-history';
 import { AGENCY_CALL_ORIGINS, type AgencyCallOrigin, type AgencyListenEndReason } from '../types/live-calls';
 import { durationWords } from './format/duration';
 import { shortName } from './listen/listenCopy';
+import { PHONE_DISPLAY_LABELS } from './agency/stationSettings';
 import { liveCallPagePath } from './listen/liveCallsTable';
 
 /**
@@ -182,10 +183,7 @@ export const CONFIG_FIELD_LABEL: Readonly<Record<string, string>> = {
 };
 
 /** `phone_display`'s values as campaign Settings names them (AS9), never the wire's. */
-const PHONE_DISPLAY_WORDS: Readonly<Record<string, string>> = {
-  full: 'Full number',
-  masked: 'Hidden number',
-};
+const PHONE_DISPLAY_WORDS: Readonly<Record<string, string>> = PHONE_DISPLAY_LABELS;
 
 function configFieldLabel(field: string): string {
   return CONFIG_FIELD_LABEL[field] ?? field.replace(/_/g, ' ');
