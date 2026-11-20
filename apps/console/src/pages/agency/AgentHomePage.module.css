@@ -1,155 +1,163 @@
-/* Full-viewport and deliberately bare, for the reason `/station` is: this screen
-   renders INSTEAD of a shell, so there is no sidebar and nothing to wander into.
-   An agent arriving here has one decision to make and it is the only thing on
-   the page. */
+/*
+  The agent's work picker (spec §3 01, AS1): the station's frame (Station.module.css) around big
+  tiles, one per list. Colours are web-ui's theme tokens and the --st-* state tokens, so light and
+  dark both work; nothing here is a raw colour. Full-viewport and outside every shell, for the
+  reason `/station` is: this screen renders INSTEAD of a shell, so there is nothing to wander into.
+*/
 
-.shell {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-6, 24px);
-  background: var(--bg-primary);
-}
-
-.card {
+.body {
   width: 100%;
-  max-width: 52ch;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3, 12px);
+  max-width: 1120px;
+  margin: 0 auto;
+  align-content: start;
 }
 
-/* The one-message states (unassigned, error, just-left) stay centred and narrow,
-   matching `AgentLanding`. The LIST does not: a column of choices reads as a
-   column, and centring it would put the first campaign's name in a different
-   place depending on how many campaigns there are. */
-.cardCentred {
-  max-width: 44ch;
-  text-align: center;
-  align-items: center;
+.waiting {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
 }
 
-.title {
+/* The one sentence of a screen with no tiles (none yet, the read failed). */
+.lone {
   margin: 0;
-  font-size: var(--text-xl, 20px);
-  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.5;
   color: var(--text-primary);
 }
 
-.body {
-  margin: 0;
-  font-size: var(--text-sm, 14px);
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-/* The standing line that a supervisor may listen (docs/listening.md LS2). */
-.notice {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
-.list {
+.tiles {
   list-style: none;
-  margin: var(--space-2, 8px) 0 0;
+  margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2, 8px);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 20px;
 }
 
-.row {
+.tileItem {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3, 12px);
-  padding: var(--space-3, 12px) var(--space-4, 16px);
-  border: 1px solid var(--border-subtle, var(--border));
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-secondary, transparent);
-}
-
-.rowMain {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1, 4px);
   min-width: 0;
 }
 
-.name {
-  font-size: var(--text-sm, 14px);
-  font-weight: 600;
+/* A tile: the link itself when the list can be opened, a plain card when it cannot. */
+.tile {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 190px;
+  padding: 24px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
   color: var(--text-primary);
+  text-decoration: none;
+}
+
+a.tile {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+a.tile:hover {
+  border-color: var(--st-go);
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+}
+
+a.tile:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-color: var(--st-go);
+}
+
+/* No way in: the tile stays so the agent can read why, quieter, with nothing to press (AS1). */
+.tile[data-closed='true'] {
+  background: var(--bg-primary);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.tileName {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 
-.meta {
-  font-size: var(--text-xs, 12px);
-  color: var(--text-muted);
+/* What the list is doing: a pale tint of its state's colour, with a picture and words (never colour alone). */
+.tileStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--st-soft-c);
+  color: var(--st-deep-c);
+  font-size: 16px;
+  font-weight: 700;
 }
 
-.action {
-  flex: 0 0 auto;
-  padding: var(--space-2, 8px) var(--space-4, 16px);
-  border-radius: var(--radius-md, 8px);
-  background: var(--accent);
-  color: #fff;
-  font-size: var(--text-sm, 14px);
+.tileStatus svg {
+  flex: none;
+}
+
+.tileLater {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
   font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-/* A campaign that is not taking calls keeps its row and loses its button. The
-   reason is stated in `.meta` beside it — a greyed control with no explanation
-   reads as an outage or a lost permission. */
-.actionMuted {
-  flex: 0 0 auto;
-  padding: var(--space-2, 8px) var(--space-4, 16px);
-  font-size: var(--text-sm, 14px);
-  font-weight: 600;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.footer {
-  margin: var(--space-2, 8px) 0 0;
-  font-size: var(--text-xs, 12px);
-  color: var(--text-muted);
-}
-
-@media (max-width: 480px) {
-  .row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .action,
-  .actionMuted {
-    text-align: center;
-  }
-}
-
-/* The way back, for a viewer/operator who has a platform to return to. Quiet:
-   it is an escape hatch, not the action the page is for — and a dedicated agent
-   never sees it at all. */
-.exit {
-  align-self: flex-start;
-  margin-top: var(--space-3, 12px);
-  font-size: var(--text-sm, 14px);
   color: var(--text-secondary);
-  text-decoration: none;
 }
 
-.exit:hover {
-  color: var(--text-primary);
-  text-decoration: underline;
+.tileLater svg {
+  color: var(--st-coming-deep);
+  flex: none;
 }
 
-.cardCentred .exit {
-  align-self: center;
+/* The tile's one action, drawn as the station's go button; the whole tile is the target. */
+.tileGo {
+  margin-top: auto;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 24px;
+  border-radius: 14px;
+  background: var(--st-go);
+  color: #fff;
+  box-shadow: 0 4px 0 var(--st-go-shadow);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
+.oneAtATime {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .tile {
+    min-height: 0;
+    padding: 20px;
+  }
+
+  .tileName {
+    font-size: 22px;
+  }
+
+  .tileGo {
+    align-self: stretch;
+    justify-content: center;
+  }
+}
