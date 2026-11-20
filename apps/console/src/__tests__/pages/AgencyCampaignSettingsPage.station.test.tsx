@@ -203,14 +203,14 @@ describe('Settings › Script (BE-8)', () => {
     fireEvent.click(screen.getByTestId('script-add-step'));
     const step = screen.getByTestId('script-step-0') as HTMLTextAreaElement;
     fireEvent.focus(step);
-    fireEvent.change(step, { target: { value: 'You owe ' } });
+    fireEvent.change(step, { target: { value: 'You owe today' } });
     step.setSelectionRange(8, 8);
     fireEvent.click(screen.getByTestId('script-chip-amount_due'));
-    expect(step.value).toBe('You owe {amount_due}');
-    expect(within(screen.getByTestId('script-editor')).getByText('20 / 200')).toBeTruthy();
+    expect(step.value).toBe('You owe {amount_due} today');
+    expect(within(screen.getByTestId('script-editor')).getByText('26 / 200')).toBeTruthy();
     save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
-    expect(sentBody().agent_script).toEqual({ opening: 'Hello {name}', steps: [{ text: 'You owe {amount_due}' }] });
+    expect(sentBody().agent_script).toEqual({ opening: 'Hello {name}', steps: [{ text: 'You owe {amount_due} today' }] });
   });
 
   it('stops at twelve steps', async () => {
