@@ -363,6 +363,18 @@ void main() {
       });
     });
 
+    test('every ready frame is counted, so My day is read again on each (the my-day contract)', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        final first = app.view!.readyCount;
+        app.readyFrame('available');
+        expect(app.view!.readyCount, first + 1);
+        app.readyFrame('available');
+        expect(app.view!.readyCount, first + 2, reason: 'a reconnect\'s ready, with nothing else changed');
+        app.dispose();
+      });
+    });
+
     test('a missed release is shown in plain words and can be dismissed', () {
       fakeAsync((async) {
         final app = App(async)..start();
